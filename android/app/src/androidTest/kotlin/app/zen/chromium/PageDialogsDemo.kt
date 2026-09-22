@@ -5,10 +5,11 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
-import android.view.InputDevice
 import android.view.KeyCharacterMap
-import android.view.KeyEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -22,51 +23,68 @@ import kotlin.math.roundToInt
 
 /**
  * Records a page's dialogs on the phone (matrix PUI-27, PUI-28; v2 draft §9.11, §9.12, §9.14,
- * §9.22, §9.23): `alert` / `confirm` / `prompt` as the core's tab-modal `PageDialog`, a §9.23
- * prompt sheet titled after the site, and a `beforeunload` objection as the core's "Leave
- * site?". Every press is a real touch and every outcome is read off the core's state and off
- * what the page's call returned (`window.__log` in the page, read once its dialog has gone: the
- * page is blocked inside the call while the dialog is up), never off the chrome's word alone:
+ * §9.22, §9.23): `alert` / `confirm` / `prompt` as Zenium's own sheet – the §9.23 chassis
+ * ([NativePromptSheet]) drawn natively over the page ([PageDialogSheet]), titled after the site –
+ * and a `beforeunload` objection as "Leave site?" / "Reload site?". Every press is a real touch,
+ * and every outcome is read off what the page's call returned (`window.__log` in the page, read
+ * once its dialog has gone) and off the core's state – never off the chrome's word alone:
  *
- *  1. `alert`: the sheet with "127.0.0.1:18138 says" as its title block and the message as the
- *     description, OK alone in the footer; a touch on OK returns the call to the page;
+ *  1. `alert`: the sheet with "127.0.0.1:18138 says" as its title, the message as body copy, OK
+ *     alone in the footer; a touch on OK returns the call to the page;
  *  2. `confirm`, the page's second dialog of the visit: Chrome's "Don't let this page create
- *     more dialogs" checkbox, unticked; Cancel | OK as peers; OK returns true;
- *  3. `confirm` again: Cancel returns false; the system back cancels the next one too;
- *  4. `prompt`: the §9.12 field prefilled with the default, the focus on the sheet until a tap
- *     moves it into the field with the keyboard (§9.22), the sheet standing on the keyboard, the
- *     typed name returned to the page;
- *  5. the checkbox ticked with an `alert`: the page's next `confirm` and `alert` are answered at
+ *     more dialogs" check row, unticked; Cancel | OK as peers; OK returns true;
+ *  3. `confirm` on a new visit (a reload): Cancel returns false, the system back cancels too,
+ *     and so does a touch on the scrim over the page;
+ *  4. `prompt`: the message as the §9.12 field's label, the field prefilled with the default and
+ *     its value selected, the focus on the sheet until a tap moves it into the field with the
+ *     keyboard (§9.22), the sheet standing on the keyboard, the typed name returned to the page;
+ *  5. a long `alert`: the title block and the footer pinned, the message scrolling between them
+ *     under §9.7's hairline;
+ *  6. an `alert` from a frame of another origin: "An embedded page at 127.0.0.1:18139 says";
+ *  7. the check row ticked with an `alert`: the page's next `confirm` and `alert` are answered at
  *     once with no sheet, until a reload starts a new visit, whose first dialog shows again
- *     without the checkbox;
- *  6. an `alert` a background tab raises (a timer after a pill fling to the other tab) waits in
- *     the core, nothing shown on the other tab; the fling back shows it;
- *  7. a tab switch with the sheet up hides it, the dialog still pending; the return shows it
- *     again. The bar is inert under a sheet (§9.5), so the switch is the core's here, as another
- *     app's link or a notification would make it – the model is the desktop's: hide and show,
- *     never a cancel;
- *  8. `beforeunload` on a link: "Leave site?" with Chrome's line and Cancel | Leave; Cancel
+ *     without the row;
+ *  8. an `alert` a background tab raises (a timer after a pill fling to the other tab) is
+ *     answered as a dismissal at once – nothing shows on the other tab, the call returns – since
+ *     the WebView's one renderer waits in the call for every page and for the chrome;
+ *  9. the sheet is modal and the chrome waits with the page: while the sheet is up the chrome's
+ *     JavaScript does not answer (the §9.23 proof), a touch on the page under the scrim is the
+ *     scrim's – the dialog cancelled, the page's button under it not pressed – and the chrome
+ *     answers again once the sheet has gone;
+ * 10. `beforeunload` on a link: "Leave site?" with Chrome's line and Cancel | Leave; Cancel
  *     keeps the page (its URL and its script state), Leave lets the navigation go;
- *  9. `beforeunload` on the overview card's X: the same question over the overview; Cancel
+ * 11. `beforeunload` on a reload the core asked for: "Reload site?" with Cancel | Reload; Cancel
+ *     keeps the page;
+ * 12. `beforeunload` on the overview card's X: the same question over the overview; Cancel
  *     keeps the tab, its card standing where it was; Leave closes the tab, the card with it.
  *
- * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
- * accessibility bounds of the bar's Menu button), because the WebView's accessibility tree
- * trails the software-rendered emulator by seconds; page positions from the page's own DOM and
- * its view's place on screen. Findings go to `page-dialogs-findings.txt` next to the stills
- * (one PASS or FAIL per claim, ALL CHECKS PASSED at the end); the run fails on any FAIL. The
- * pages come from a loopback server in this process ([DemoServer]); the profile
- * (`page-dialogs-demo-state.json`) holds the demo page (active) and one other tab. Driven by
- * `android-page-dialogs-demo.yml`. See [DemoHarness].
+ * The sheet is read from the accessibility tree: a native `BottomSheetDialog` is a window of its
+ * own whose title is the sheet's ([AccessibilityWindowInfo.getTitle]), and its views report at
+ * once – unlike the WebViews' trees, which trail the software-rendered emulator by seconds. The
+ * chrome's DOM (`getBoundingClientRect`, checked once against the accessibility bounds of the
+ * bar's Menu button) gives the overview card's X; page positions come from the page's own DOM and
+ * its view's place on screen. Nothing is asked of the chrome or of the page while a sheet is up:
+ * the renderer that would answer waits in the page's call. Findings go to
+ * `page-dialogs-findings.txt` next to the stills (one PASS or FAIL per claim, ALL CHECKS PASSED
+ * at the end); the run fails on any FAIL. The pages come from two loopback servers in this
+ * process ([DemoServer]: the site on 18138, the frame's origin on 18139); the profile
+ * (`page-dialogs-demo-state.json`) holds the demo page (active) and one other tab, in the
+ * colour scheme the `theme` argument names (`DEMO_THEME`: the workflow runs light and dark).
+ * Driven by `android-page-dialogs-demo.yml`. See [DemoHarness].
  */
 @RunWith(AndroidJUnit4::class)
 class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialogs", "page-dialogs-demo") {
     override val tag = "PageDialogsDemo"
     private lateinit var server: DemoServer
+    private lateinit var frameServer: DemoServer
     private lateinit var findings: File
     private var failures = 0
     private var shots = 0
     private val host get() = (activity as MainActivity).host
+
+    /** The seeded profile's colour scheme, from the `theme` argument. */
+    override fun patchState(json: String): String =
+        json.replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$THEME\"")
 
     @Test
     fun record() {
@@ -75,15 +93,27 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
             PORT,
             mapOf(
                 "/" to ("text/html; charset=utf-8" to page.toByteArray()),
-                // The same page under another title: scene 9 arms it after scene 8 left for it.
+                // The same page under another title: scenes 11 and 12 arm it after scene 10 left for it.
                 "/second.html" to ("text/html; charset=utf-8" to page.replace("Page dialogs", "Second page").toByteArray()),
                 "/other.html" to DemoServer.page("Another tab", "<p>No dialogs here.</p>")
+            )
+        ).also { it.start() }
+        // The frame's origin: the same host one port up (a different port is a different origin).
+        frameServer = DemoServer(
+            FRAME_PORT,
+            mapOf(
+                "/frame.html" to ("text/html; charset=utf-8" to (
+                    "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">" +
+                        "<style>html,body{margin:0;height:100%}button{width:100%;height:100%;border:0;background:#b56576;color:#fff;font:20px sans-serif}</style></head>" +
+                        "<body><button id=\"go\" onclick=\"alert('Hello from the frame.')\">alert() from an embedded frame</button></body></html>"
+                    ).toByteArray())
             )
         ).also { it.start() }
         try {
             runDemo()
         } finally {
             server.close()
+            frameServer.close()
         }
         if (failures > 0) error("$failures check(s) failed; see page-dialogs-findings.txt")
     }
@@ -91,9 +121,9 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     override fun warmUp() {
         findings = File(out, "page-dialogs-findings.txt")
         findings.writeText(
-            "Zenium Android page dialogs checks (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n\n"
+            "Zenium Android page dialogs checks (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density, $THEME)\n\n"
         )
-        finding("demo server: ${server.selfCheck()}")
+        finding("demo server: ${server.selfCheck()}; frame server: ${frameServer.selfCheck()}")
         awaitLoaded(DEMO, "$ORIGIN/")
         SystemClock.sleep(2_000)
         calibrate()
@@ -103,12 +133,16 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     override fun demo() {
         still("start")
         alertScene()
-        confirmScenes()
+        checkboxScene()
+        cancelScenes()
         promptScene()
+        longScene()
+        embeddedScene()
         suppressionScene()
         backgroundTabScene()
-        switchAwayScene()
+        modalScene()
         leaveOnNavigation()
+        reloadSite()
         leaveOnCardClose()
         still("end")
         finding("\nend: ${describeActive()}")
@@ -117,108 +151,161 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
 
     // --- the scenes ------------------------------------------------------------------------------
 
-    /** 1. alert(): the sheet titled after the site, OK alone; OK returns the call. */
+    /** 1. alert(): the sheet titled after the site, the message as body copy, OK alone; OK returns the call. */
     private fun alertScene() {
-        finding("\n1. alert(): the page's dialog as the phone's sheet; OK dismisses it")
+        finding("\n1. alert(): the page's dialog as Zenium's sheet; OK dismisses it")
         val before = pageLog()
-        tapPageUntil("#alert") { sheetUp("alert") }
-        expect("the sheet rises for the alert", awaitSheet("alert"))
-        expect("the title block names the site: '${sheetTitle()}'", sheetTitle() == "$SITE says")
-        expect("the message is its description: '${sheetDescription()}'", sheetDescription() == "Hello from the page.")
-        expect("no checkbox on the page's first dialog", !inDom(CHECKBOX))
-        expect("no Cancel for an alert, OK alone", footerButton("Cancel") == null && footerButton("OK") != null)
-        expect("the core lists one dialog, the demo tab's", pendingDialogs().let { it.length() == 1 && it.getJSONObject(0).getString("tabId") == DEMO })
+        val sheet = raise("#alert", SAYS)
+        expect("the sheet rises for the alert, its window titled '$SAYS'", sheet != null)
+        if (sheet == null) return
+        expect("the title reads the site: '${sheet.title()}'", sheet.title() == SAYS)
+        expect("the page's message stands as body copy: '${sheet.text("Hello from the page.")?.text}'", sheet.text("Hello from the page.") != null)
+        expect("no check row on the page's first dialog", sheet.check() == null)
+        expect("no Cancel for an alert, OK alone", sheet.peer(CANCEL) == null && sheet.peer("OK") != null)
+        expect("the grip reads 'Dismiss' as a button", sheet.grip()?.className == BUTTON)
+        expect("the focus opened on the sheet's container (§9.22): ${sheet.focusIn()}", sheet.focusIn() == "sheet")
         still("alert")
-        answer("OK")
-        expect("the sheet has gone and the core lists no dialog", awaitUntil(LOOKUP_WAIT) { sheetGone() && pendingDialogs().length() == 0 })
+        answer(sheet, "OK")
         expect("alert() returned to the page", awaitLog { it.getInt("alerts") == before.getInt("alerts") + 1 })
     }
 
-    /** 2 and 3. confirm(): the checkbox from the second dialog on; OK true, Cancel false, back false. */
-    private fun confirmScenes() {
-        finding("\n2. confirm(): the visit's second dialog carries the checkbox; OK returns true")
-        tapPageUntil("#confirm") { sheetUp("confirm") }
-        expect("the sheet rises for the confirm", awaitSheet("confirm"))
-        expect("the message: '${sheetDescription()}'", sheetDescription() == "Delete the draft?")
-        expect(
-            "the checkbox '$SUPPRESS_LABEL' is offered, unticked",
-            inDom(CHECKBOX) && !isChecked() && hasText(SHEET, SUPPRESS_LABEL)
-        )
-        expect("Cancel | OK as the footer's peers", footerButton("Cancel") != null && footerButton("OK") != null)
-        still("confirm")
-        answer("OK")
+    /** 2. confirm(), the visit's second dialog: Chrome's check row unticked; Cancel | OK; OK returns true. */
+    private fun checkboxScene() {
+        finding("\n2. confirm(): the visit's second dialog carries the check row; OK returns true")
+        val sheet = raise("#confirm", SAYS)
+        expect("the sheet rises for the confirm", sheet != null)
+        if (sheet == null) return
+        expect("the message as body copy: 'Delete the draft?'", sheet.text("Delete the draft?") != null)
+        val check = sheet.check()
+        expect("the check row '$SUPPRESS_LABEL' is offered, unticked", check != null && !check.isChecked && check.text?.toString() == SUPPRESS_LABEL)
+        expect("Cancel | OK as the footer's peers", sheet.peer(CANCEL) != null && sheet.peer("OK") != null)
+        still("checkbox")
+        answer(sheet, "OK")
         expect("confirm() returned true", awaitLog { it.getInt("confirms") == 1 && it.optBoolean("confirm", false) })
+    }
 
-        finding("\n3. confirm(): Cancel returns false; the system back cancels too")
-        tapPageUntil("#confirm") { sheetUp("confirm") }
-        expect("the sheet rises", awaitSheet("confirm"))
-        still("confirm-again")
-        answer("Cancel")
-        expect("confirm() returned false", awaitLog { it.getInt("confirms") == 2 && !it.optBoolean("confirm", true) })
-        tapPageUntil("#confirm") { sheetUp("confirm") }
-        expect("the sheet rises once more", awaitSheet("confirm"))
+    /** 3. confirm() on a new visit: Cancel returns false; the system back and the scrim cancel too. */
+    private fun cancelScenes() {
+        finding("\n3. confirm(): Cancel returns false; the system back and the scrim cancel too")
+        newVisit()
+        var sheet = raise("#confirm", SAYS)
+        expect("the sheet rises, no check row on a new visit's first dialog", sheet != null && sheet.check() == null)
+        if (sheet == null) return
+        still("confirm")
+        answer(sheet, CANCEL)
+        expect("confirm() returned false", awaitLog { it.getInt("confirms") == 1 && !it.optBoolean("confirm", true) })
+
+        sheet = raise("#confirm", SAYS)
+        expect("the sheet rises again", sheet != null)
         back()
-        expect("the system back sends the sheet away", awaitUntil(LOOKUP_WAIT) { sheetGone() })
+        expect("the system back sends the sheet away", awaitUntil(LOOKUP_WAIT) { sheetRoot(SAYS) == null })
+        expect("and the page hears false", awaitLog { it.getInt("confirms") == 2 && !it.optBoolean("confirm", true) })
+
+        sheet = raise("#confirm", SAYS)
+        expect("the sheet rises once more", sheet != null)
+        touchScrim("the scrim over the page")
+        expect("a touch on the scrim sends the sheet away", awaitUntil(LOOKUP_WAIT) { sheetRoot(SAYS) == null })
         expect("and the page hears false", awaitLog { it.getInt("confirms") == 3 && !it.optBoolean("confirm", true) })
     }
 
-    /** 4. prompt(): the field prefilled, focused on the tap with the keyboard, the typed value returned. */
+    /** 4. prompt(): the message labels the field, the value selected; a tap focuses it with the keyboard; the typed name returns. */
     private fun promptScene() {
-        finding("\n4. prompt(): the field prefilled; a tap focuses it with the keyboard; the typed name returns")
-        tapPageUntil("#prompt") { sheetUp("prompt") }
-        expect("the sheet rises for the prompt", awaitSheet("prompt"))
-        expect("the message: '${sheetDescription()}'", sheetDescription() == "What is your name?")
-        expect("the field holds the default 'Ada': '${fieldValue()}'", fieldValue() == "Ada")
-        expect("focus opened on the sheet, not in the field (§9.22): ${focusIn()}", awaitUntil(3_000) { focusIn() == "sheet" })
-        expect("the keyboard is down", !imeShown())
+        finding("\n4. prompt(): the message as the field's label, the default selected; a tap brings the keyboard; the typed name returns")
+        newVisit()
+        val sheet = raise("#prompt", SAYS)
+        expect("the sheet rises for the prompt", sheet != null)
+        if (sheet == null) return
+        val field = sheet.field()
+        expect("the message labels the field: 'What is your name?'", sheet.text("What is your name?") != null && field != null)
+        expect("the field holds the default 'Ada': '${field?.text}'", field?.text?.toString() == "Ada")
+        expect("the focus opened on the sheet, not in the field (§9.22): ${sheet.focusIn()}", awaitUntil(3_000) { sheet.focusIn() == "sheet" })
+        expect("the keyboard is down", !keyboardUp())
         still("prompt")
-        val tapped = touchUntil("the prompt's field", { steadyRect { domRect(FIELD) } }, { focusIn() == "field" })
+        val tapped = field != null && touchUntil("the prompt's field", { steadyBounds(field) }, { sheet.focusIn() == "field" })
         expect("a tap moves the focus into the field", tapped)
-        val keyboard = awaitIme(shown = true, timeoutMs = 8_000)
-        expect("and the keyboard comes up", keyboard)
+        expect("and the keyboard comes up", awaitUntil(8_000) { keyboardUp() })
         SystemClock.sleep(1_500)
-        val footer = domRect("$SHEET .zen-sheet-footer")
-        val imeTop = height - imeInset()
-        expect(
-            "the sheet stands on the keyboard: footer bottom ${footer?.bottom} above the keyboard's top $imeTop",
-            footer != null && footer.bottom <= imeTop
-        )
+        val ok = sheet.peer("OK")?.let { steadyBounds(it) }
+        val keyboardTop = keyboardTop()
+        expect("the sheet stands on the keyboard: OK's bottom ${ok?.bottom} above the keyboard's top $keyboardTop", ok != null && keyboardTop != null && ok.bottom <= keyboardTop)
+        val selection = field?.let { it.refresh(); it.textSelectionStart to it.textSelectionEnd }
+        expect("the default is selected, so the first keystroke replaces it: selection $selection", selection == (0 to 3))
         still("prompt-keyboard")
-        // The default text is selected from the field itself, and the name typed over it.
-        jsString("(function(){var e=document.querySelector(${JSONObject.quote(FIELD)});if(e){e.focus();e.select()}return ''})()")
-        SystemClock.sleep(300)
         keys("Grace")
-        expect("the field reads the typed 'Grace': '${fieldValue()}'", awaitUntil(5_000) { fieldValue() == "Grace" })
+        expect("the field reads the typed 'Grace': '${sheet.field()?.text}'", awaitUntil(5_000) { sheet.field()?.text?.toString() == "Grace" })
         still("prompt-typed")
-        val ok = footerButton("OK")
-        if (ok != null && touchPoint(ok) != null && ok.bottom <= height - imeInset()) {
-            answer("OK")
-        } else {
-            finding("  (OK at $ok is under the keyboard: Enter in the field submits instead)")
-            pressKey(KeyEvent.KEYCODE_ENTER)
-        }
-        expect("the sheet has gone", awaitUntil(LOOKUP_WAIT) { sheetGone() })
+        answer(sheet, "OK")
         expect("prompt() returned 'Grace'", awaitLog { it.getInt("prompts") == 1 && it.optString("prompt") == "Grace" })
-        if (!awaitIme(shown = false, timeoutMs = 3_000)) {
+        if (!awaitUntil(3_000) { !keyboardUp() }) {
             finding("  (the keyboard stayed up after the sheet: a back for it)")
             back()
-            awaitIme(shown = false, timeoutMs = 4_000)
+            awaitUntil(4_000) { !keyboardUp() }
         }
         SystemClock.sleep(1_000)
     }
 
-    /** 5. The checkbox ticked: the page's next dialogs are answered at once, until the next navigation. */
-    private fun suppressionScene() {
-        finding("\n5. '$SUPPRESS_LABEL': the page's next dialogs answered at once, until the next navigation")
+    /** 5. A long alert: the title block and the footer pinned, the message scrolling between them under the hairline. */
+    private fun longScene() {
+        finding("\n5. A long alert(): the message scrolls under the pinned title block and above the pinned footer")
+        newVisit()
         val before = pageLog()
-        tapPageUntil("#alert") { sheetUp("alert") }
-        expect("the sheet rises with the checkbox", awaitSheet("alert") && inDom(CHECKBOX))
-        val ticked = touchUntil("the checkbox row", { steadyRect { domRect(CHECKBOX_ROW) } }, { isChecked() })
+        val sheet = raise("#long", SAYS)
+        expect("the sheet rises for the long alert", sheet != null)
+        if (sheet == null) return
+        val scroller = sheet.scroller()
+        val title = sheet.text(SAYS)?.let { steadyBounds(it) }
+        val ok = sheet.peer("OK")?.let { steadyBounds(it) }
+        val cap = touchable.top + 40 * density
+        expect("the body scrolls (the scroller reports a forward scroll)", scroller != null && scroller.isScrollable && scroller.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD })
+        expect("the sheet stands at most 40 dp under the status bar: title top ${title?.top} at or below ${cap.roundToInt()}", title != null && title.top >= cap - 2)
+        still("long")
+        val box = scroller?.let { steadyBounds(it) }
+        if (box != null) {
+            val f = Finger()
+            f.down(box.exactCenterX(), box.bottom - 24 * density)
+            f.settleIn(0f, -NUDGE)
+            f.moveBy(0f, -(box.height() * 0.6f), 400)
+            f.hold(120)
+            f.up()
+        }
+        SystemClock.sleep(600)
+        val scrolled = scroller != null && scroller.refresh() && scroller.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD }
+        expect("a drag scrolls the message (the scroller now offers a scroll back)", scrolled)
+        val titleAfter = sheet.text(SAYS)?.let { steadyBounds(it) }
+        val okAfter = sheet.peer("OK")?.let { steadyBounds(it) }
+        expect("the title block stands pinned: $title before, $titleAfter after", title != null && title == titleAfter)
+        expect("the footer stands pinned: $ok before, $okAfter after", ok != null && ok == okAfter)
+        still("long-scrolled")
+        answer(sheet, "OK")
+        expect("alert() returned", awaitLog { it.getInt("alerts") == before.getInt("alerts") + 1 })
+    }
+
+    /** 6. An alert from a frame of another origin is titled "An embedded page at … says". */
+    private fun embeddedScene() {
+        finding("\n6. alert() from a frame of another origin: 'An embedded page at $FRAME_SITE says'")
+        newVisit()
+        val sheet = raise("#frame", EMBEDDED_SAYS)
+        expect("the sheet rises titled '$EMBEDDED_SAYS'", sheet != null)
+        if (sheet == null) return
+        expect("the frame's message as body copy", sheet.text("Hello from the frame.") != null)
+        still("embedded")
+        answer(sheet, "OK")
+        expect("the frame's alert() returned (the sheet gone)", awaitUntil(LOOKUP_WAIT) { sheetRoot(EMBEDDED_SAYS) == null })
+    }
+
+    /** 7. The check row ticked: the page's next dialogs are answered at once, until the next navigation. */
+    private fun suppressionScene() {
+        finding("\n7. '$SUPPRESS_LABEL': the page's next dialogs answered at once, until the next navigation")
+        val before = pageLog()
+        val sheet = raise("#alert", SAYS)
+        expect("the sheet rises with the check row (the frame's dialog was the visit's first)", sheet != null && sheet.check() != null)
+        if (sheet == null) return
+        val check = sheet.check()
+        val ticked = check != null && touchUntil("the check row", { steadyBounds(check) }, { check.refresh() && check.isChecked })
         expect("a touch on the row ticks it", ticked)
         still("suppress-ticked")
-        answer("OK")
+        answer(sheet, "OK")
         expect("alert() returned", awaitLog { it.getInt("alerts") == before.getInt("alerts") + 1 })
-        watchSheets()
         tapPage("#confirm")
         expect(
             "the page's next confirm() is answered false at once",
@@ -226,111 +313,124 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         )
         tapPage("#alert")
         expect("and its next alert() returns at once", awaitLog(6_000) { it.getInt("alerts") == before.getInt("alerts") + 2 })
-        SystemClock.sleep(1_000)
-        expect("with no sheet on the way (${sheetsSeen()} seen) and nothing pending", sheetsSeen() == 0 && sheetGone() && pendingDialogs().length() == 0)
+        val seen = sheetsSeenFor(1_500)
+        expect("with no sheet on the way ($seen seen)", seen == 0 && sheetRoot(SAYS) == null)
         still("suppressed-no-sheet")
         // A new visit: the reload commits another document, and the page starts over.
-        coreInvoke("tab.reload", JSONObject().put("tabId", DEMO).toString())
-        awaitLoaded(DEMO, "$ORIGIN/")
+        newVisit()
         expect("the reload started the page over", awaitLog { it.getInt("alerts") == 0 })
-        SystemClock.sleep(1_000)
-        tapPageUntil("#alert") { sheetUp("alert") }
-        expect("after the navigation the page's alert shows again", awaitSheet("alert"))
-        expect("as the first of a new visit: no checkbox", !inDom(CHECKBOX))
+        val again = raise("#alert", SAYS)
+        expect("after the navigation the page's alert shows again", again != null)
+        expect("as the first of a new visit: no check row", again != null && again.check() == null)
         still("after-reload")
-        answer("OK")
+        if (again != null) answer(again, "OK")
         expect("alert() returned", awaitLog { it.getInt("alerts") == 1 })
     }
 
-    /** 6. A background tab's alert waits in the core, unseen, until its tab is on screen again. */
+    /** 8. A background tab's alert is answered as a dismissal at once: nothing shows on the other tab, the call returns. */
     private fun backgroundTabScene() {
-        finding("\n6. A dialog from a background tab waits unseen until its tab is on screen again")
+        finding("\n8. A dialog from a background tab is answered at once, unseen: the one renderer waits in the call for every page")
         val before = pageLog()
-        watchSheets()
         tapPage("#later")
         flingLeft()
         expect("the pill fling made the other tab active", awaitUntil(6_000) { activeTabId() == OTHER })
-        expect("the background page's alert is queued in the core", awaitUntil(10_000) { pendingDialogs().length() == 1 })
-        SystemClock.sleep(2_500)
-        expect("nothing shows for it on the other tab (${sheetsSeen()} sheets seen)", sheetsSeen() == 0 && sheetGone() && activeTabId() == OTHER)
-        still("background-pending")
+        val seen = sheetsSeenFor(5_000)
+        expect("the background page's alert() returned at once", awaitLog(6_000) { it.getInt("alerts") == before.getInt("alerts") + 1 })
+        expect("nothing showed for it on the other tab ($seen sheets seen), which stays active", seen == 0 && sheetRoot(SAYS) == null && activeTabId() == OTHER)
+        still("background-dismissed")
         flingRight()
         expect("the fling back made the demo tab active", awaitUntil(6_000) { activeTabId() == DEMO })
-        expect("its sheet rises on the return", awaitSheet("alert"))
-        expect("with the background page's message: '${sheetDescription()}'", sheetDescription() == "Hello from a background tab.")
+        SystemClock.sleep(1_500)
+        expect("nothing is pending for it: no sheet on the return", sheetRoot(SAYS) == null)
         still("background-returned")
-        answer("OK")
-        expect("the page's alert() returned", awaitLog { it.getInt("alerts") == before.getInt("alerts") + 1 })
-        SystemClock.sleep(1_000)
     }
 
-    /** 7. A tab switch with the sheet up hides it, the dialog pending; the return shows it again. */
-    private fun switchAwayScene() {
-        finding("\n7. A tab switch with the dialog up hides it; the return shows it again, still pending")
+    /** 9. The sheet is modal, and the chrome waits with the page while it is up (the §9.23 proof). */
+    private fun modalScene() {
+        finding("\n9. The sheet is modal, and the chrome's JavaScript waits with the page while it is up")
         val before = pageLog()
-        tapPageUntil("#alert") { sheetUp("alert") }
-        expect("the sheet is up", awaitSheet("alert"))
-        finding("  (the bar is inert under a sheet, §9.5: the switch is the core's, as another app's link would make it)")
-        coreInvoke("tab.activate", JSONObject().put("tabId", OTHER).toString())
-        expect("the sheet leaves with its tab", awaitUntil(LOOKUP_WAIT) { sheetGone() && activeTabId() == OTHER })
-        expect("the dialog is still pending in the core", pendingDialogs().length() == 1)
-        still("switched-away")
-        SystemClock.sleep(1_000)
-        coreInvoke("tab.activate", JSONObject().put("tabId", DEMO).toString())
-        expect("the sheet is back on the return", awaitSheet("alert"))
-        still("switched-back")
-        answer("OK")
-        expect("the page's alert() returned", awaitLog { it.getInt("alerts") == before.getInt("alerts") + 1 })
+        val button = pagePoint("#alert")
+        val sheet = raise("#alert", SAYS)
+        expect("the sheet is up", sheet != null)
+        if (sheet == null) return
+        val silent = !chromeAnswersWithin(3_000)
+        expect("the chrome's JavaScript does not answer while the page waits in alert() (3 s asked)", silent)
+        still("modal")
+        if (button != null) {
+            finding("  touch at ${button.x.roundToInt()},${button.y.roundToInt()} on the page's alert() button, under the scrim")
+            Finger().tap(button.x, button.y)
+        }
+        expect("the touch is the scrim's: the sheet goes", awaitUntil(LOOKUP_WAIT) { sheetRoot(SAYS) == null })
+        expect("the chrome's JavaScript answers again", chromeAnswersWithin(10_000))
+        expect("alert() returned once", awaitLog { it.getInt("alerts") == before.getInt("alerts") + 1 })
+        val seen = sheetsSeenFor(2_500)
+        expect("and the page's button under the scrim was not pressed: no second sheet ($seen seen), one alert on record", seen == 0 && pageLog().getInt("alerts") == before.getInt("alerts") + 1)
+        expect("the bar took nothing of it: the URL field is closed", !urlbarOpen())
     }
 
-    /** 8. beforeunload on a link: "Leave site?", Cancel stays, Leave goes. */
+    /** 10. beforeunload on a link: "Leave site?", Cancel stays, Leave goes. */
     private fun leaveOnNavigation() {
-        finding("\n8. beforeunload on a navigation: 'Leave site?'; Cancel stays on the page, Leave goes")
+        finding("\n10. beforeunload on a navigation: 'Leave site?'; Cancel stays on the page, Leave goes")
         tapPage("#arm")
         expect("the page armed its beforeunload handler", awaitLog { it.optBoolean("armed") })
-        tapPageUntil("#link") { sheetUp("beforeunload") }
-        expect("'Leave site?' rises", awaitSheet("beforeunload"))
-        expect("titled 'Leave site?': '${sheetTitle()}'", sheetTitle() == "Leave site?")
-        expect("with Chrome's line: '${sheetDescription()}'", sheetDescription() == "Changes you made may not be saved.")
-        expect("Cancel | Leave as the footer's peers", footerButton("Cancel") != null && footerButton("Leave") != null)
+        var sheet = raise("#link", LEAVE)
+        expect("'Leave site?' rises", sheet != null)
+        if (sheet == null) return
+        expect("with Chrome's line as the description: '$LEAVE_LINE'", sheet.text(LEAVE_LINE) != null)
+        expect("Cancel | Leave as the footer's peers", sheet.peer(CANCEL) != null && sheet.peer("Leave") != null)
         still("leave-site")
-        answer("Cancel")
-        expect("the sheet has gone", awaitUntil(LOOKUP_WAIT) { sheetGone() })
+        answer(sheet, CANCEL)
         SystemClock.sleep(2_000)
         expect("the page stayed: ${activeUrl()}, its script state intact", activeUrl() == "$ORIGIN/" && pageLog().optBoolean("armed"))
         still("leave-cancelled")
-        tapPageUntil("#link") { sheetUp("beforeunload") }
-        expect("'Leave site?' rises again", awaitSheet("beforeunload"))
-        answer("Leave")
+        sheet = raise("#link", LEAVE)
+        expect("'Leave site?' rises again", sheet != null)
+        if (sheet != null) answer(sheet, "Leave")
         expect("the navigation goes on to the second page", awaitUntil(15_000) { activeUrl() == "$ORIGIN/second.html" })
         awaitLoaded(DEMO, "$ORIGIN/second.html")
         SystemClock.sleep(1_500)
         still("left")
     }
 
-    /** 9. beforeunload on the overview card's X: Cancel keeps the card standing, Leave closes the tab. */
-    private fun leaveOnCardClose() {
-        finding("\n9. beforeunload on the card's close: Cancel keeps the tab and its card, Leave closes it")
+    /** 11. beforeunload on a reload the core asked for: "Reload site?"; Cancel keeps the page. */
+    private fun reloadSite() {
+        finding("\n11. beforeunload on a reload: 'Reload site?'; Cancel keeps the page")
         tapPage("#arm")
         expect("the second page armed its handler", awaitLog { it.optBoolean("armed") })
+        fireCore("tab.reload", JSONObject().put("tabId", DEMO).toString())
+        val sheet = awaitSheet(RELOAD)
+        expect("'Reload site?' rises", sheet != null)
+        if (sheet == null) return
+        expect("with Chrome's line and Cancel | Reload", sheet.text(LEAVE_LINE) != null && sheet.peer(CANCEL) != null && sheet.peer("Reload") != null)
+        still("reload-site")
+        answer(sheet, CANCEL)
+        SystemClock.sleep(2_000)
+        expect("the page stayed as it was: ${activeUrl()}, its handler still armed", activeUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
+    }
+
+    /** 12. beforeunload on the overview card's X: Cancel keeps the card standing, Leave closes the tab. */
+    private fun leaveOnCardClose() {
+        finding("\n12. beforeunload on the card's close: Cancel keeps the tab and its card, Leave closes it")
+        expect("the second page's handler is armed", pageLog().optBoolean("armed"))
         openOverview()
         expect("the overview shows the demo card", awaitDom("!!document.querySelector(${JSONObject.quote(CARD)})"))
         still("overview")
-        val asked = touchUntil("the card's X", { steadyRect { domRect(CARD_CLOSE) } }, { sheetUp("beforeunload") }, waitMs = SHEET_WAIT)
+        val asked = touchUntil("the card's X", { steadyRect { domRect(CARD_CLOSE) } }, { sheetRoot(LEAVE) != null }, waitMs = SHEET_WAIT)
         expect("a touch on the X asks 'Leave site?' over the overview", asked)
-        expect("titled 'Leave site?': '${sheetTitle()}'", sheetTitle() == "Leave site?")
+        var sheet = sheet(LEAVE)
+        if (sheet == null) return
         still("close-leave-site")
-        answer("Cancel")
-        expect("the sheet has gone", awaitUntil(LOOKUP_WAIT) { sheetGone() })
+        answer(sheet, CANCEL)
         // The card's exit would have run 900 ms after a close the browser never showed: well past it.
         SystemClock.sleep(3_000)
         expect("the tab stays", tabExists(DEMO))
         expect("its card stands in the grid", inDom(CARD))
         expect("the page is intact: ${activeUrl()}, its handler still armed", activeUrl() == "$ORIGIN/second.html" && pageLog().optBoolean("armed"))
         still("close-cancelled")
-        val again = touchUntil("the card's X", { steadyRect { domRect(CARD_CLOSE) } }, { sheetUp("beforeunload") }, waitMs = SHEET_WAIT)
+        val again = touchUntil("the card's X", { steadyRect { domRect(CARD_CLOSE) } }, { sheetRoot(LEAVE) != null }, waitMs = SHEET_WAIT)
         expect("the X asks again", again)
-        answer("Leave")
+        sheet = sheet(LEAVE)
+        if (sheet != null) answer(sheet, "Leave")
         expect("the tab closes", awaitUntil(10_000) { !tabExists(DEMO) })
         expect("its card has left the grid", awaitDom("!document.querySelector(${JSONObject.quote(CARD)})", 10_000))
         expect("the other tab is what is left", coreState().getJSONObject("tabs").let { it.length() == 1 && it.has(OTHER) })
@@ -338,74 +438,150 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         still("close-left")
     }
 
-    // --- the sheet -------------------------------------------------------------------------------
+    // --- the sheet: the dialog's own window in the accessibility tree ------------------------------
 
-    /** The page dialog sheet of `kind` is up and at rest: not leaving, not inert, drawn. */
-    private fun sheetUp(kind: String): Boolean =
-        jsString(
-            "(function(){var s=document.querySelector('[data-sheet-layer]:not([data-leaving]) $SHEET:not([inert])');" +
-                "if(!s||!s.querySelector('[data-page-dialog=\"$kind\"]'))return '';" +
-                "return getComputedStyle(s).opacity==='0'?'':'up'})()"
-        ) == "up"
-
-    /** No page dialog sheet in the DOM at all (its leave has landed). */
-    private fun sheetGone(): Boolean = !inDom(SHEET)
-
-    /** The sheet is on its way down (a picked answer sends it off at once) or gone. */
-    private fun sheetLeavingOrGone(): Boolean =
-        jsString(
-            "(function(){var s=document.querySelector('$SHEET');if(!s)return 'yes';" +
-                "var l=s.closest('[data-sheet-layer]');return (l&&l.hasAttribute('data-leaving'))||s.hasAttribute('inert')?'yes':''})()"
-        ) == "yes"
-
-    private fun awaitSheet(kind: String, timeoutMs: Long = LOOKUP_WAIT): Boolean = awaitUntil(timeoutMs) { sheetUp(kind) }
-
-    private fun sheetTitle(): String = textOf("$SHEET .zen-sheet-title-block h2")
-
-    private fun sheetDescription(): String = textOf("$SHEET .zen-sheet-title-block p")
-
-    /** A footer button of the sheet by its label, once the sheet has come to rest. */
-    private fun footerButton(label: String): Rect? = steadyRect { textRect("$SHEET .zen-sheet-footer button", label) }
-
-    /**
-     * A touch on the sheet's `label` button, made again when the sheet still stands: the claim
-     * of the step – what the answer did to the page and the core – is read by the caller.
-     */
-    private fun answer(label: String): Boolean {
-        val took = touchUntil("the sheet's $label", { footerButton(label) }, { sheetLeavingOrGone() })
-        if (!took) touchFault("the touch on the sheet's $label did not send the sheet away")
-        return took
+    /** A sheet up: the root of its window and its title. */
+    private inner class Sheet(val root: AccessibilityNodeInfo, val name: String) {
+        /** The first node under the root that `accept`s. */
+        fun node(accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? = walk(root, SHEET_NODES, accept)
+        fun text(text: String): AccessibilityNodeInfo? = node { it.text?.toString() == text }
+        /** The heading's text (the title block's first line). */
+        fun title(): String = node { it.text?.toString() == name }?.text?.toString().orEmpty()
+        /** A footer peer by its label: a `TextView` read as a button. */
+        fun peer(label: String): AccessibilityNodeInfo? = node { it.className == BUTTON && it.text?.toString() == label }
+        fun field(): AccessibilityNodeInfo? = node { it.className == "android.widget.EditText" }
+        fun check(): AccessibilityNodeInfo? = node { it.isCheckable }
+        fun scroller(): AccessibilityNodeInfo? = node { it.className == "android.widget.ScrollView" }
+        fun grip(): AccessibilityNodeInfo? = node { it.contentDescription?.toString() == GRIP_LABEL }
+        /** Where the focus is: the field, the sheet (its container or a control), or nowhere. */
+        fun focusIn(): String {
+            val focused = node { it.isFocused } ?: return "none"
+            return if (focused.className == "android.widget.EditText") "field" else "sheet"
+        }
     }
 
-    private fun fieldValue(): String =
-        jsString("(function(){var e=document.querySelector(${JSONObject.quote(FIELD)});return e?e.value:''})()")
-
-    /** Where the chrome's focus is: the prompt's field, elsewhere in the sheet, or the element's tag. */
-    private fun focusIn(): String =
-        jsString(
-            "(function(){var a=document.activeElement;if(!a||a===document.body)return 'body';" +
-                "if(a.matches(${JSONObject.quote(FIELD)}))return 'field';" +
-                "if(a.closest('$SHEET'))return 'sheet';return a.tagName})()"
-        )
-
-    private fun isChecked(): Boolean =
-        jsString("(function(){var e=document.querySelector('$CHECKBOX');return e&&e.checked?'yes':''})()") == "yes"
-
     /**
-     * Put page dialog sheets on record: a MutationObserver counts every appearance of one, so a
-     * sheet that came and went between two polls is not missed. Each call clears the record.
+     * The root of the sheet's window: the app's window whose title is `title` – a `Dialog`'s
+     * `setTitle` names its window for the accessibility tree – or, failing a title, one whose
+     * first nodes carry the title as a text; null when no such sheet is up.
      */
-    private fun watchSheets() {
-        jsString(
-            "(function(){window.__demoSheets=0;var seen=false;var note=function(){var up=!!document.querySelector('$SHEET');" +
-                "if(up&&!seen)window.__demoSheets++;seen=up};" +
-                "if(window.__demoSheetWatch)window.__demoSheetWatch.disconnect();" +
-                "window.__demoSheetWatch=new MutationObserver(note);" +
-                "window.__demoSheetWatch.observe(document.body,{childList:true,subtree:true});note();return ''})()"
-        )
+    private fun sheetRoot(title: String): AccessibilityNodeInfo? {
+        for (window in ui.windows) {
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+            val root = window.root ?: continue
+            if (root.packageName?.toString() != app.packageName) continue
+            if (window.title?.toString() == title) return root
+            if (walk(root, SHALLOW_NODES) { it.text?.toString() == title } != null) return root
+        }
+        return null
     }
 
-    private fun sheetsSeen(): Int = jsString("(function(){return String(window.__demoSheets||0)})()").toIntOrNull() ?: -1
+    private fun sheet(title: String): Sheet? = sheetRoot(title)?.let { Sheet(it, title) }
+
+    private fun awaitSheet(title: String, timeoutMs: Long = LOOKUP_WAIT): Sheet? {
+        awaitUntil(timeoutMs) { sheetRoot(title) != null }
+        return sheet(title)
+    }
+
+    /** How many of the app's windows are up: one for the activity, one more for a sheet. */
+    private fun appWindows(): Int = ui.windows.count { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.root?.packageName?.toString() == app.packageName }
+
+    /** Watch for `durationMs`: how many times a sheet (a second window of the app's) was seen coming up. */
+    private fun sheetsSeenFor(durationMs: Long): Int {
+        val deadline = SystemClock.uptimeMillis() + durationMs
+        var seen = 0
+        var up = appWindows() > 1
+        if (up) seen++
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(150)
+            val now = appWindows() > 1
+            if (now && !up) seen++
+            up = now
+        }
+        return seen
+    }
+
+    /** Breadth first under `root`, at most `limit` nodes: the first that `accept`s. */
+    private fun walk(root: AccessibilityNodeInfo, limit: Int, accept: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < limit) {
+            val node = queue.removeFirst()
+            visited++
+            if (accept(node)) return node
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return null
+    }
+
+    /**
+     * A real touch on the page's `selector` until the sheet titled `title` is up (the emulator's
+     * WebView reads a tap as a hold now and then, and a hold opens nothing); the sheet, or null.
+     */
+    private fun raise(selector: String, title: String): Sheet? {
+        for (attempt in 1..TOUCH_ATTEMPTS) {
+            if (!tapPage(selector)) return sheet(title)
+            if (awaitUntil(TOUCH_TOOK_WAIT) { sheetRoot(title) != null }) return sheet(title)
+            if (attempt < TOUCH_ATTEMPTS) finding("  (the touch on $selector did not take, attempt $attempt: touching again)")
+        }
+        return sheet(title)
+    }
+
+    /**
+     * A touch on the sheet's `label` peer, made again when the sheet still stands: the claim of
+     * the step – what the answer did to the page and the core – is read by the caller.
+     */
+    private fun answer(sheet: Sheet, label: String): Boolean {
+        for (attempt in 1..TOUCH_ATTEMPTS) {
+            val peer = sheet.peer(label) ?: run {
+                finding("  (no $label on the sheet)")
+                return sheetRoot(sheet.name) == null
+            }
+            if (!touchNode(peer, "the sheet's $label")) return false
+            if (awaitUntil(TOUCH_TOOK_WAIT) { sheetRoot(sheet.name) == null }) return true
+            if (attempt < TOUCH_ATTEMPTS) finding("  (the touch on $label did not take, attempt $attempt: touching again)")
+        }
+        touchFault("the touch on the sheet's $label did not send the sheet away")
+        return false
+    }
+
+    /** A real touch on the middle of `node`'s part inside the touchable band, logged. */
+    private fun touchNode(node: AccessibilityNodeInfo, what: String): Boolean {
+        val bounds = steadyBounds(node) ?: run {
+            finding("  ($what has gone from the tree)")
+            return false
+        }
+        touch(bounds, what)
+        return true
+    }
+
+    /** A touch on the page area above the sheet: the scrim's, which answers as Cancel. */
+    private fun touchScrim(what: String) {
+        val point = PointF(width / 2f, touchable.top + 48 * density)
+        finding("  touch at ${point.x.roundToInt()},${point.y.roundToInt()} on $what")
+        Finger().tap(point.x, point.y)
+    }
+
+    /** The keyboard is up: the IME has a window on screen, or the activity reports its inset. */
+    private fun keyboardUp(): Boolean = keyboard() != null || imeShown()
+
+    /** The keyboard's window on screen (UiAutomation lists the IME as a window of its own), null while it is down. */
+    private fun keyboard(): Rect? =
+        ui.windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.let { Rect().also(it::getBoundsInScreen) }?.takeIf { !it.isEmpty }
+
+    /** Where the keyboard's top edge is (screen px), null while it is down. */
+    private fun keyboardTop(): Int? = keyboard()?.top ?: imeInset().takeIf { it > 0 }?.let { height - it }
+
+    /**
+     * Whether the chrome's JavaScript answers an evaluation within `timeoutMs`: it does not while
+     * a page waits in `alert()` (the one renderer), and does again once the sheet has gone.
+     */
+    private fun chromeAnswersWithin(timeoutMs: Long): Boolean {
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync { host.chrome.evaluateJavascript("'x'") { latch.countDown() } }
+        return latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+    }
 
     // --- the page --------------------------------------------------------------------------------
 
@@ -469,17 +645,13 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         return true
     }
 
-    /**
-     * [tapPage] until `took` holds (the dialog it opens is up), up to [TOUCH_ATTEMPTS] times:
-     * the emulator's WebView reads a tap as a hold now and then, and a hold opens nothing.
-     */
-    private fun tapPageUntil(selector: String, took: () -> Boolean): Boolean {
-        for (attempt in 1..TOUCH_ATTEMPTS) {
-            if (!tapPage(selector)) return took()
-            if (awaitUntil(TOUCH_TOOK_WAIT) { took() }) return true
-            if (attempt < TOUCH_ATTEMPTS) finding("  (the touch on $selector did not take, attempt $attempt: touching again)")
-        }
-        return took()
+    /** A new visit of the demo page: a reload commits another document, and the page's dialog count starts over. */
+    private fun newVisit() {
+        fireCore("tab.reload", JSONObject().put("tabId", DEMO).toString())
+        SystemClock.sleep(500)
+        awaitLoaded(DEMO, "$ORIGIN/")
+        awaitLog { it.getInt("alerts") == 0 && it.getInt("confirms") == 0 && it.getInt("prompts") == 0 }
+        SystemClock.sleep(1_000)
     }
 
     private fun awaitLoaded(tabId: String, url: String, timeoutMs: Long = 20_000) {
@@ -575,7 +747,7 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     }
 
     private fun heldInstead(): Boolean =
-        jsString("(function(){return document.querySelector('.zen-quick-menu, .zen-sheet:not($SHEET)') ? 'held' : ''})()") == "held"
+        jsString("(function(){return document.querySelector('.zen-quick-menu, .zen-sheet') ? 'held' : ''})()") == "held"
 
     /** The overview is on screen and has finished growing in (its root at scale 1). */
     private fun overviewOpen(): Boolean =
@@ -605,30 +777,12 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     private fun domRect(selector: String): Rect? =
         rectFrom(jsString("(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';$RECT_JS})()"))
 
-    /** The box of the first element matching `selector` whose text starts with `prefix`. */
-    private fun textRect(selector: String, prefix: String): Rect? =
-        rectFrom(
-            jsString(
-                "(function(){var p=${JSONObject.quote(prefix)};var e=Array.prototype.find.call(document.querySelectorAll(${JSONObject.quote(selector)})," +
-                    "function(n){return n.textContent.trim().indexOf(p)===0});if(!e)return '';$RECT_JS})()"
-            )
-        )
-
-    private fun textOf(selector: String): String =
-        jsString("(function(){var e=document.querySelector(${JSONObject.quote(selector)});return e?e.textContent.trim():''})()")
-
     private fun inDom(selector: String): Boolean =
         jsString("(function(){return document.querySelector(${JSONObject.quote(selector)})?'yes':''})()") == "yes"
 
-    private fun hasText(selector: String, text: String): Boolean =
-        jsString(
-            "(function(){return Array.prototype.some.call(document.querySelectorAll(${JSONObject.quote(selector)})," +
-                "function(n){return n.textContent.indexOf(${JSONObject.quote(text)})>=0})?'yes':''})()"
-        ) == "yes"
-
     /**
-     * A box read from the DOM once two reads [STEADY_MS] apart agree (a sheet's rows while it
-     * rises report where they are on each frame); the last read when they never do within
+     * A box read from the DOM once two reads [STEADY_MS] apart agree (the overview's cards while
+     * it grows in report where they are on each frame); the last read when they never do within
      * [LOOKUP_WAIT], null when the element never shows.
      */
     private fun steadyRect(read: () -> Rect?): Rect? {
@@ -699,22 +853,15 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         SystemClock.sleep(200)
     }
 
-    private fun pressKey(keyCode: Int) {
-        val now = SystemClock.uptimeMillis()
-        for (action in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
-            val event = KeyEvent(
-                now, SystemClock.uptimeMillis(), action, keyCode, 0, 0,
-                KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD
-            )
-            ui.injectInputEvent(event, true)
-            SystemClock.sleep(30)
-        }
-        SystemClock.sleep(300)
-    }
-
     // --- the core's state ------------------------------------------------------------------------
 
-    private fun pendingDialogs(): JSONArray = coreState().optJSONArray("pageDialogs") ?: JSONArray()
+    /**
+     * Run a core command without waiting on its promise: a `tab.reload` whose page objects has
+     * the renderer – and the chrome's word with it – waiting in the question the moment after.
+     */
+    private fun fireCore(name: String, args: String) {
+        chromeJs("window.zen.invoke(${JSONObject.quote(name)},$args);''")
+    }
 
     private fun activeTabId(): String = activeCoreTab()?.optString("id").orEmpty()
 
@@ -725,8 +872,7 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     private fun describeActive(): String {
         val state = coreState()
         val tab = activeCoreTab(state)
-        return "active ${tab?.optString("id")} ${tab?.optString("url")}, ${state.getJSONObject("tabs").length()} tabs, " +
-            "${state.optJSONArray("pageDialogs")?.length() ?: 0} dialogs pending"
+        return "active ${tab?.optString("id")} ${tab?.optString("url")}, ${state.getJSONObject("tabs").length()} tabs"
     }
 
     // --- findings --------------------------------------------------------------------------------
@@ -751,21 +897,32 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
 
     private companion object {
         private const val PORT = 18138
+        private const val FRAME_PORT = PORT + 1
         private const val SITE = "127.0.0.1:$PORT"
+        private const val FRAME_SITE = "127.0.0.1:$FRAME_PORT"
         private const val ORIGIN = "http://$SITE"
         private const val DEMO = "tab_demo"
         private const val OTHER = "tab_other"
+        /** Chrome's words, as PageDialogSpec has them: the titles and the lines the sheet is read by. */
+        private const val SAYS = "$SITE says"
+        private const val EMBEDDED_SAYS = "An embedded page at $FRAME_SITE says"
+        private const val LEAVE = "Leave site?"
+        private const val RELOAD = "Reload site?"
+        private const val LEAVE_LINE = "Changes you made may not be saved."
         private const val SUPPRESS_LABEL = "Don't let this page create more dialogs"
-        /** The page dialog's sheet (`PhoneSheet` with `className="zen-page-dialog-sheet"`). */
-        private const val SHEET = ".zen-page-dialog-sheet"
-        private const val FIELD = ".zen-page-dialog-sheet input.zen-v2-field"
-        private const val CHECKBOX = ".zen-page-dialog-sheet input.zen-v2-checkbox"
-        private const val CHECKBOX_ROW = ".zen-page-dialog-sheet label.zen-v2-check-row"
+        private const val CANCEL = "Cancel"
+        /** The chassis's grip (`prompt_sheet_dismiss`). */
+        private const val GRIP_LABEL = "Dismiss"
+        private const val BUTTON = "android.widget.Button"
         private const val CARD = ".zen-overview-grid [data-tab-id=\"tab_demo\"]"
         private const val CARD_CLOSE = ".zen-overview-grid [data-tab-id=\"tab_demo\"] [aria-label^=\"Close \"]"
         private const val RECT_JS = "var r=e.getBoundingClientRect();" +
             "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio})"
-        /** How long an element may take to appear in the DOM after a change. */
+        /** The `theme` argument: `dark`, else light (the shared script's `DEMO_THEME`). */
+        private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
+            if (it == "dark") "dark" else "light"
+        }
+        /** How long a sheet may take to come up after a touch, or an element to appear in the DOM after a change. */
         private const val LOOKUP_WAIT = 8_000L
         private const val POLL_MS = 200L
         /** Two reads of a box this far apart agreeing count as at rest ([steadyRect]). */
@@ -780,5 +937,8 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         private const val TOUCH_TOOK_WAIT = 2_500L
         /** And for a touch whose outcome is a sheet rising over a page going away: longer. */
         private const val SHEET_WAIT = 6_000L
+        /** The sheet's own tree is a few dozen nodes; the activity's is thousands (the WebViews): how far a walk goes. */
+        private const val SHEET_NODES = 200
+        private const val SHALLOW_NODES = 60
     }
 }
