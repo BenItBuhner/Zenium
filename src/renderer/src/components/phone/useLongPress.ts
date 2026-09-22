@@ -44,9 +44,10 @@ export interface LongPressOptions {
    * The finger moves past the slop while the hold is on. Returning a drag hands it the rest of
    * the touch – the page under the element does not scroll, the press callback stays quiet and
    * the click that follows is swallowed – and null leaves the move a scroll, as without the
-   * option (the hold is over, nothing fires).
+   * option (the hold is over, nothing fires). The move is the window's own `PointerEvent`: a
+   * draggable hold hears the finger on the window, not on the element (see the hook below).
    */
-  onDrag?: (e: ReactPointerEvent<HTMLElement>) => LongPressDrag | null
+  onDrag?: (e: PointerEvent) => LongPressDrag | null
   /** A hold ended without a drag: the finger lifted (the press callback follows) or the touch was lost. */
   onHoldEnd?: () => void
 }
@@ -60,6 +61,14 @@ export interface LongPressOptions {
  * is left alone; a right click counts as a long press too, for the mouse. With `onDrag`, a held
  * element that is then moved is dragged instead (the new tab page's shortcuts, NTP-06): the
  * touch is the drag's from there, and the hold's own callback does not run.
+ *
+ * A draggable hold (`onDrag`) drives the drag from the window, not from the element's own React
+ * handlers. On Android's WebView the finger's moves after a long press are delivered to the
+ * document, not to the element under it, so the element's `pointermove` never comes and a tile
+ * would lift but never follow. The overview's cards meet the same and answer it the same way
+ * (`useCardLift`): capture the pointer from the down, and listen for the moves and the lift on
+ * the window (capture phase), wherever they land. The element's own handlers leave that touch to
+ * the window from the hold until the next press.
  */
 export function useLongPress(
   onLongPress: (at: LongPressPoint) => void,
@@ -72,8 +81,13 @@ export function useLongPress(
   const swallow = useRef(false)
   const at = useRef<LongPressPoint>({ x: 0, y: 0 })
   const drag = useRef<LongPressDrag | null>(null)
-  /** The element under the hold, and the touch-scroll block it carries while held (see below). */
+  /** The element under the hold, and the blocks it carries while held (the scroll and the window). */
   const holding = useRef<{ el: HTMLElement; unblock: () => void } | null>(null)
+  /**
+   * The pointer a draggable hold handed to the window: the element's own (synthetic) handlers
+   * leave that touch to the window listeners until the next press, so neither drives it twice.
+   */
+  const winPointer = useRef<number | null>(null)
   const callback = useRef(onLongPress)
   const opts = useRef(options)
   useLayoutEffect(() => {
@@ -115,19 +129,20 @@ export function useLongPress(
   }
 
   /** A drag ended (the finger lifted or the touch was lost): the touch is over. */
-  const endDrag = (e: ReactPointerEvent<HTMLElement>, cancelled: boolean): void => {
+  const endDrag = (e: PointerEvent, cancelled: boolean): void => {
     const d = drag.current
     if (!d || touch.current?.id !== e.pointerId) return
     drag.current = null
     clear()
     swallow.current = true
-    d.end(e.nativeEvent, cancelled)
+    d.end(e, cancelled)
   }
 
   return {
     handlers: {
       onPointerDown: (e) => {
         swallow.current = false
+        winPointer.current = null
         if (e.button !== 0 || touch.current) return
         // Controls inside the element keep their own taps; the element itself may be a button.
         const control = (e.target as HTMLElement).closest('button, input')
@@ -136,15 +151,13 @@ export function useLongPress(
         at.current = { x: e.clientX, y: e.clientY }
         held.current = false
         const el = e.currentTarget
-        // A draggable element (the new tab page's tiles, NTP-06) captures its pointer from the
-        // down, as the overview's cards do (`useCardLift`). After the hold the WebView routes the
-        // finger to its own long-press gesture, not to the element, so the moves never reach the
-        // handler and the drag never begins (the tile lifts but never follows); the capture keeps
-        // every event coming here. The browser releases it at the lift, or when a scroll takes the
-        // touch before the hold is up (a pointercancel, which clears the pending hold below).
+        const pointerId = e.pointerId
+        // A draggable element captures its pointer from the down (see the hook's note): the
+        // capture keeps the lift and the loss coming, and the browser releases it on a scroll
+        // that takes the touch before the hold (a pointercancel that clears the pending hold).
         if (opts.current?.onDrag) {
           try {
-            capturePointer(el, e.pointerId)
+            capturePointer(el, pointerId)
           } catch {
             /* the pointer is gone */
           }
@@ -159,14 +172,67 @@ export function useLongPress(
           }
           const o = opts.current
           if (o?.onDrag) {
-            // The finger moving from here is the drag's, not a scroll's: the touch's default is
-            // taken before the browser can make a scroll of it (the bar editor's rows do the
-            // same). Removed with the hold, so a touch that never moved leaves nothing behind.
+            // The finger from here is the drag's, heard on the window (the WebView sends it there
+            // after the long press, not to the element). The scroll is blocked on the element the
+            // touch began on, whose touch events follow it out of the document; both go with the
+            // hold, so a touch that never became a drag leaves nothing behind.
             const block = (ev: TouchEvent): void => {
               if (ev.cancelable) ev.preventDefault()
             }
+            const onWinMove = (ev: PointerEvent): void => {
+              if (touch.current?.id !== ev.pointerId) return
+              if (drag.current) {
+                drag.current.move(ev)
+                return
+              }
+              if (!held.current) return
+              const t = touch.current
+              if (Math.hypot(ev.clientX - t.x, ev.clientY - t.y) < SLOP) return
+              const d = opts.current?.onDrag?.(ev) ?? null
+              if (d) {
+                held.current = false
+                drag.current = d
+                try {
+                  capturePointer(el, ev.pointerId)
+                } catch {
+                  /* the pointer is gone */
+                }
+                d.move(ev)
+              } else {
+                opts.current?.onHoldEnd?.()
+                clear()
+                held.current = false
+              }
+            }
+            const onWinUp = (ev: PointerEvent): void => {
+              if (touch.current?.id !== ev.pointerId) return
+              if (drag.current) endDrag(ev, false)
+              else lift()
+            }
+            const onWinCancel = (ev: PointerEvent): void => {
+              if (touch.current?.id !== ev.pointerId) return
+              if (drag.current) {
+                endDrag(ev, true)
+                return
+              }
+              clear()
+              if (held.current) opts.current?.onHoldEnd?.()
+              held.current = false
+            }
             el.addEventListener('touchmove', block, { passive: false })
-            holding.current = { el, unblock: () => el.removeEventListener('touchmove', block) }
+            window.addEventListener('pointermove', onWinMove, true)
+            window.addEventListener('pointerup', onWinUp, true)
+            window.addEventListener('pointercancel', onWinCancel, true)
+            winPointer.current = pointerId
+            holding.current = {
+              el,
+              unblock: () => {
+                el.removeEventListener('touchmove', block)
+                window.removeEventListener('pointermove', onWinMove, true)
+                window.removeEventListener('pointerup', onWinUp, true)
+                window.removeEventListener('pointercancel', onWinCancel, true)
+              }
+            }
           }
           o?.onHold?.(at.current)
         }, LONG_PRESS_MS)
@@ -174,40 +240,20 @@ export function useLongPress(
       onPointerMove: (e) => {
         const t = touch.current
         if (!t || t.id !== e.pointerId) return
-        if (drag.current) {
-          drag.current.move(e.nativeEvent)
-          return
-        }
+        // A draggable hold's touch is the window's from here; the element leaves it be.
+        if (winPointer.current === e.pointerId) return
         if (Math.hypot(e.clientX - t.x, e.clientY - t.y) < SLOP) return
-        if (held.current) {
-          const d = opts.current?.onDrag?.(e) ?? null
-          if (d) {
-            held.current = false
-            if (timer.current) clearTimeout(timer.current)
-            timer.current = null
-            drag.current = d
-            try {
-              capturePointer(e.currentTarget, e.pointerId)
-            } catch {
-              /* the pointer is gone */
-            }
-            d.move(e.nativeEvent)
-            return
-          }
-          opts.current?.onHoldEnd?.()
-        }
+        // A move past the slop with no drag to hand to is a scroll; a hold that was on ends.
+        if (held.current) opts.current?.onHoldEnd?.()
         clear()
         held.current = false
       },
       onPointerUp: (e) => {
-        if (drag.current) endDrag(e, false)
-        else lift()
+        if (winPointer.current === e.pointerId) return
+        lift()
       },
       onPointerCancel: (e) => {
-        if (drag.current) {
-          endDrag(e, true)
-          return
-        }
+        if (winPointer.current === e.pointerId) return
         clear()
         if (held.current) opts.current?.onHoldEnd?.()
         held.current = false

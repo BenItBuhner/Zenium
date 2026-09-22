@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-  type RefObject
-} from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { NewTabShortcut } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { collectCells, FlipTracker, REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
@@ -65,7 +57,7 @@ export interface TileReorder {
   /** The hold ended without a drag: the tile is put down. */
   unhold: () => void
   /** The held tile is moved: its drag, or null when `url` is not a pinned tile. */
-  drag: (url: string, el: HTMLElement, e: ReactPointerEvent<HTMLElement>) => LongPressDrag | null
+  drag: (url: string, el: HTMLElement, e: PointerEvent) => LongPressDrag | null
 }
 
 interface Session {

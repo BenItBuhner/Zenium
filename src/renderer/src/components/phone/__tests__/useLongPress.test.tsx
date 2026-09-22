@@ -182,6 +182,28 @@ describe('a hold handed to a drag (NTP-06)', () => {
     expect(p.press).not.toHaveBeenCalled()
   })
 
+  it('the moves after the hold reaching the document, not the element, still drive the drag (the WebView’s long press)', () => {
+    // On Android's WebView the finger's moves after a long press land on the document: the
+    // element's own handlers never see them. The hold hears them on the window instead.
+    const p = mount(true)
+    pointer('pointerdown', p.el, 100, 100)
+    elapse(380)
+    expect(p.hold).toHaveBeenCalledTimes(1)
+    const first = pointer('pointermove', document.body, 130, 100)
+    expect(p.drag).toHaveBeenCalledTimes(1)
+    expect(p.moves).toEqual([first])
+    const second = pointer('pointermove', document.body, 200, 110)
+    expect(p.moves).toEqual([first, second])
+    const up = pointer('pointerup', document.body, 200, 110)
+    expect(p.ends).toEqual([[up, false]])
+    expect(p.holdEnd).not.toHaveBeenCalled()
+    elapse(1000)
+    expect(p.press).not.toHaveBeenCalled()
+    // The listeners went with the touch: a stray move on the document is nobody's.
+    pointer('pointermove', document.body, 300, 110)
+    expect(p.moves).toEqual([first, second])
+  })
+
   it('a drag declined leaves the move a scroll: the hold ends, nothing fires', () => {
     const p = mount(null)
     pointer('pointerdown', p.el, 100, 100)
