@@ -136,6 +136,19 @@ export function useLongPress(
         at.current = { x: e.clientX, y: e.clientY }
         held.current = false
         const el = e.currentTarget
+        // A draggable element (the new tab page's tiles, NTP-06) captures its pointer from the
+        // down, as the overview's cards do (`useCardLift`). After the hold the WebView routes the
+        // finger to its own long-press gesture, not to the element, so the moves never reach the
+        // handler and the drag never begins (the tile lifts but never follows); the capture keeps
+        // every event coming here. The browser releases it at the lift, or when a scroll takes the
+        // touch before the hold is up (a pointercancel, which clears the pending hold below).
+        if (opts.current?.onDrag) {
+          try {
+            capturePointer(el, e.pointerId)
+          } catch {
+            /* the pointer is gone */
+          }
+        }
         timer.current = setTimeout(() => {
           timer.current = null
           held.current = true
