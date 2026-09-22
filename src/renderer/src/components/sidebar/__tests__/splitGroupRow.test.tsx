@@ -305,8 +305,12 @@ describe('the split group row stylesheet (§9.35)', () => {
     const threshold = 56 + 16 + 8
     const at = block.indexOf(`@container (width < ${threshold}px)`)
     expect(at, `the ${threshold} px query`).toBeGreaterThanOrEqual(0)
-    const form = block.slice(at, block.indexOf('@container (width < 70px)'))
-    expect(form).toMatch(/\.zen-split-row > \.zen-tab \.zen-tab-title \{\s+display: none;/)
+    const form = block.slice(at, block.indexOf('.zen-split-row-column {', at))
+    // The rail form: the title gone and the close with it (Zen's rail hides the label and the
+    // close together), the favicon centred.
+    expect(form).toMatch(
+      /\.zen-split-row > \.zen-tab \.zen-tab-title,\s+\.zen-split-row > \.zen-tab \.zen-tab-close \{\s+display: none;/
+    )
     expect(form).toMatch(
       /\.zen-split-row:not\(\.zen-split-row-column\) > \.zen-tab \.zen-tab-favicon \{\s+margin-inline: auto;\s+translate: calc\(\(var\(--zen-split-seg-pad-end\) - var\(--zen-split-seg-pad-start\)\) \/ 2\) 0;/
     )
@@ -314,15 +318,25 @@ describe('the split group row stylesheet (§9.35)', () => {
     // query hides a segment's title.
     expect(form).not.toMatch(/\.zen-split-row > \.zen-tab \{/)
     expect(block.slice(0, at)).not.toMatch(/\.zen-tab-title \{[^}]*display: none/)
-    // Below the title's room and above the close's: the two thresholds are independent.
+    // §9.35's 70 for the close lies inside the band, so the close follows the title: one query.
     expect(threshold).toBeGreaterThan(70)
+    expect(block).not.toContain('@container (width < 70px)')
   })
 
-  it('hides the close under 70 px a segment and stacks the rail form with a 2 px inset outline', () => {
-    expect(block).toContain('@container (width < 70px)')
+  it('keeps a segment’s close out of the layout at rest – on hover only, where there is hover – so the title has the room after the favicon', () => {
+    // Zen's `.tabbrowser-tab:not(:hover) .tab-close-button { display: none }`: the tab row's
+    // close at rest is opacity 0 in its 24 + 8 slot, which in a segment would hold 32 of the
+    // title's room while showing nothing ("Left pa…" at 270 where the title had 88.5).
     expect(block).toMatch(
-      /@container \(width < 70px\) \{\s+\.zen-split-row > \.zen-tab \.zen-tab-close \{\s+display: none;/
+      /@media \(hover: hover\) \{\s+\.zen-split-row > \.zen-tab:not\(:hover\) \.zen-tab-close \{\s+display: none;/
     )
+    // The rows keep their opacity form; a coarse pointer, without hover, keeps its shown close.
+    expect(css).toMatch(/\.zen-tab \.zen-tab-close \{\s+opacity: 0;/)
+    expect(css).toMatch(/\.zen-tab:hover \.zen-tab-close \{\s+opacity: 1;/)
+    expect(css).toMatch(/:root\[data-pointer='coarse'\] \.zen-tab \.zen-tab-close,/)
+  })
+
+  it('stacks the rail form in a column with a 2 px inset outline', () => {
     const column = rule('.zen-split-row-column')
     expect(column).toContain('flex-direction: column')
     expect(column).toContain('box-shadow: inset 0 0 0 2px var(--zen-border)')

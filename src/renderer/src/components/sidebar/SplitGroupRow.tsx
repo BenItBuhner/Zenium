@@ -25,7 +25,8 @@ interface Props {
  * title – the title truncating from the end while it has 56 px of room after the favicon and
  * dropped for the favicon alone, centred, below that (Zen's rail form for the segment; the
  * stylesheet's container query on the segment's 80 px content box) – and the close on hover
- * only where the segment has 70 px, a 1 × 16 `--zen-border` hairline centred on each shared
+ * only: out of the layout at rest, as Zen's, so the title has the room, and gone with the title
+ * in the rail form; a 1 × 16 `--zen-border` hairline centred on each shared
  * edge. The container takes the hover fill
  * as one shape and, when the group holds the active tab, the selected fill as one shape with the
  * segments at 60 % over it and no hairlines: the rim reads as the group and the segments as its
