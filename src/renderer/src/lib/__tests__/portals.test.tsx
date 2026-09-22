@@ -21,6 +21,7 @@ import {
   chromeLayer,
   closeAllPopovers,
   holdChromeInert,
+  intrinsicSize,
   openPopoverCount,
   placePopover,
   popoverStyle,
@@ -1677,6 +1678,28 @@ const span = (box: { left: number; width: number }): [number, number] => [
 ]
 const overlaps = (box: { left: number; width: number }, anchor: Rect): boolean =>
   box.left < anchor.x + anchor.width && box.left + box.width > anchor.x
+
+describe('intrinsicSize (§5: a menu is as wide as its longest row)', () => {
+  it('reads the used size from the computed style and rounds it up, so a panel pinned to it never runs short of the row it was measured by', () => {
+    // The offsets round the longest row's fraction of a pixel away; a menu pinned to 269 for a
+    // row of 269.4 put an ellipsis on that row (the app menu's "New Private Window  Ctrl+Shift+N").
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    el.style.width = '269.4px'
+    el.style.height = '660.5px'
+    expect(intrinsicSize(el)).toEqual({ width: 270, height: 661 })
+    el.remove()
+  })
+
+  it('falls back to the offsets where the style carries no used size (no layout)', () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    Object.defineProperty(el, 'offsetWidth', { value: 260, configurable: true })
+    Object.defineProperty(el, 'offsetHeight', { value: 200, configurable: true })
+    expect(intrinsicSize(el)).toEqual({ width: 260, height: 200 })
+    el.remove()
+  })
+})
 
 describe('placePopover (design-language-v2-draft §9.20): widths', () => {
   it('hangs flush from the bottom edge of the bar the anchor sits in, at a fixed width', () => {

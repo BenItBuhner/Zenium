@@ -42,6 +42,7 @@ import {
   SELECTION_TEXT_MAX,
   selectionUrl
 } from '../menus'
+import { HELP_URL, ISSUES_URL } from '../menuBar'
 import { serialiseMenu } from '../rendererMenus'
 
 /**
@@ -369,14 +370,17 @@ function appMenuFolded(h: Harness, win = h.win): string[] {
   return labels(h.shown())
 }
 
-/** The desktop app menu as it was before the phone variant existed. */
+/**
+ * The desktop app menu: Firefox's groups (design language v2 §6 "Menus") – the tabs and windows;
+ * the library; the page's actions; the app's in Firefox's order (Settings, More Tools, Help,
+ * Quit: "settings, tools, help, quit") – with the rest in submenus, so it stands on an 800 px
+ * window. Submenus flattened one level (`labels`); the More Tools and Help submenus are asserted
+ * whole below.
+ */
 const DESKTOP_APP_MENU = [
   'New Tab',
   'Search Tabs…',
-  'New Space…',
-  '-',
   'New Window',
-  'New Blank Window',
   'New Private Window',
   '-',
   'Bookmarks',
@@ -389,85 +393,211 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
   'History',
-  'Recently Closed',
+  'History > Show Full History',
+  'History > -',
+  'History > No recently closed tabs',
   'Downloads',
   'Passwords',
   'Add-ons and Themes',
   '-',
-  'Compact Mode',
-  'Change Theme…',
+  'Find in Page…',
   'Zoom',
   'Zoom > Zoom In',
   'Zoom > Zoom Out',
   'Zoom > Reset Zoom',
-  'Split View',
-  'Split View > Grid',
-  'Split View > Vertical',
-  'Split View > Horizontal',
-  'Split View > -',
-  'Split View > Unsplit View',
-  'Split View > New Empty Split View',
-  'Fullscreen',
-  '-',
-  'Find in Page…',
-  'Reader View',
+  'Zoom > -',
+  'Zoom > Fullscreen',
   'Print…',
   'Save Page As…',
-  'Take Screenshot',
-  'Capture Full Page',
+  'Reader View',
   '-',
-  'Resources',
-  'Resources > Memory 0 MB · CPU 0% · 0 live, 0 frozen',
-  'Resources > -',
-  'Resources > Free Up Memory Now',
-  'Resources > Freeze Other Tabs',
-  'Resources > Wake All Tabs',
-  'Resources > -',
-  'Resources > Resource Settings…',
-  'Keyboard Shortcuts',
   'Settings',
-  'Developer Tools',
-  '-',
-  'About Zenium 1.2.3',
+  'More Tools',
+  'More Tools > New Space…',
+  'More Tools > New Blank Window',
+  'More Tools > -',
+  'More Tools > Compact Mode',
+  'More Tools > Split View',
+  'More Tools > Change Theme…',
+  'More Tools > -',
+  'More Tools > Take Screenshot',
+  'More Tools > Capture Full Page',
+  'More Tools > -',
+  'More Tools > Resources',
+  'More Tools > Developer Tools',
+  'Help',
+  'Help > Zenium Help',
+  'Help > Keyboard Shortcuts',
+  'Help > -',
+  'Help > Report an Issue…',
+  'Help > -',
+  'Help > About Zenium 1.2.3',
   'Quit'
 ]
+
+/** The desktop menu's top level alone: Firefox's count, at most four separators (§6). */
+const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
 
 const DESKTOP_ONLY = [
   'Search Tabs…',
-  'Keyboard Shortcuts',
-  'Compact Mode',
-  'Split View',
-  'Fullscreen',
+  'Help > Keyboard Shortcuts',
+  'More Tools > Compact Mode',
+  'More Tools > Split View',
+  'Zoom > Fullscreen',
   'Quit'
 ]
 
+/** The item labelled `label` anywhere in `items`, submenus included. */
+function deepItem(items: MenuItemTemplate[], label: string): MenuItemTemplate {
+  const found = allItems(items).find((i) => i.label === label)
+  if (!found) throw new Error(`no "${label}" in ${topLabels(items).join(', ')}`)
+  return found
+}
+
 describe('the app menu', () => {
-  it('is unchanged on the desktop', () => {
-    expect(appMenu(harness(DESKTOP))).toEqual(DESKTOP_APP_MENU)
+  it("on the desktop has Firefox's groups: the tabs and windows, the library, the page's actions, the app's (§6)", () => {
+    const h = harness(DESKTOP)
+    expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
+    // The app group closes the menu in Firefox's order and §6's – settings, tools, help, quit –
+    // under the last separator: More Tools is the app's long tail, not the page's.
+    const top = topLabels(h.shown())
+    expect(top.slice(top.lastIndexOf('-') + 1)).toEqual(['Settings', 'More Tools', 'Help', 'Quit'])
+  })
+
+  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {
+    const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
+    // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen.
+    const bare = harness(DESKTOP)
+    appMenu(bare)
+    expect(rows(bare)).toEqual(DESKTOP_APP_MENU_TOP.filter((l) => l !== '-'))
+    expect(rows(bare)).toHaveLength(18)
+    expect(separators(bare.shown())).toBe(3)
+    // A build with a translate host carries Translate Page… (the Linux build: 19), one with a
+    // speech engine Listen to This Page too: 20, "about eighteen", every row Title Case (§9.1).
+    const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
+    appMenu(full)
+    expect(rows(full)).toHaveLength(20)
+    expect(separators(full.shown())).toBe(3)
+    for (const row of rows(full)) expect(row).toMatch(/^[A-Z]/)
+    // With the media hub folded the Now Playing… row and its separator lead: four at most.
+    full.browser.state.media = [
+      { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
+    ]
+    appMenuFolded(full)
+    expect(rows(full)).toHaveLength(21)
+    expect(separators(full.shown())).toBe(4)
+  })
+
+  it('loses nothing the flat menu could do: every one of its thirty-two rows, on a host with every capability, is a row or a submenu row now', () => {
+    /**
+     * The flat menu of main at a8cca556 as the Linux build drew it on a web page with a
+     * translate host, a speech engine and the install surface up (the #299 record's "before"
+     * list): thirty-two rows in six groups. The one claim, on the full capability set – the
+     * host-gated rows (Translate Page…, Listen to This Page, Create Shortcut…) included.
+     */
+    const before = [
+      'New Tab',
+      'Search Tabs…',
+      'New Space…',
+      'New Window',
+      'New Blank Window',
+      'New Private Window',
+      'Bookmarks',
+      'History',
+      'Recently Closed',
+      'Downloads',
+      'Passwords',
+      'Add-ons and Themes',
+      'Compact Mode',
+      'Change Theme…',
+      'Zoom (100%)',
+      'Split View',
+      'Fullscreen',
+      'Find in Page…',
+      'Reader View',
+      'Listen to This Page',
+      'Translate Page…',
+      'Create Shortcut…',
+      'Print…',
+      'Save Page As…',
+      'Take Screenshot',
+      'Capture Full Page',
+      'Resources',
+      'Keyboard Shortcuts',
+      'Settings',
+      'Developer Tools',
+      'About Zenium 1.2.3',
+      'Quit'
+    ]
+    expect(before).toHaveLength(32)
+    const h = pageHarness(
+      { ...DESKTOP, readAloud: true, pinShortcuts: true },
+      { translate: true, speech: true, shortcuts: true }
+    )
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+    appMenu(h)
+    // The History page is the submenu's first row and keeps its chord; with nothing closed the
+    // recently closed block is §9.17's one sentence – a note in the deemphasised ink, not a
+    // greyed command – under the separator.
+    const history = item(h.shown(), 'History').submenu!
+    expect(history[0]).toMatchObject({ label: 'Show Full History', action: 'history.sidebar' })
+    expect(labels(history)).toEqual(['Show Full History', '-', 'No recently closed tabs'])
+    expect(history.at(-1)).toMatchObject({ enabled: false, note: true })
+    expect(history.at(-1)!.click).toBeUndefined()
+    // With a tab closed the block is Chrome's: the header, the entries, Restore All, Clear List
+    // – and every one of the flat menu's thirty-two rows is somewhere in the tree, the top level
+    // still at Firefox's count (twenty rows here, three separators).
+    const closed = h.browser.tabs.createTab(
+      { url: 'https://closed.example/', active: false },
+      h.win
+    )
+    h.browser.tabs.closeTab(closed.id, false, h.win)
+    appMenu(h)
+    const everywhere = allItems(h.shown()).map((i) => i.label)
+    for (const label of before) expect(everywhere, label).toContain(label)
+    expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
+    expect(separators(h.shown())).toBe(3)
+    expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
+      'Show Full History',
+      '-',
+      'Recently Closed',
+      'closed.example',
+      '-',
+      'Restore All',
+      'Clear List'
+    ])
+    expect(deepItem(h.shown(), 'closed.example').action).toBe('tab.reopenClosed')
   })
 
   it('gives a tablet the sidebar layouts\u2019 menu, less what acts on chrome it does not draw (TABLET-01)', () => {
     // Compact Mode is the desktop's hover-revealed sidebar (the tablet's rail is the toolbar's
     // toggle) and the tablet has no bookmarks bar; everything else of the desktop's list is the
-    // tablet's too, its host permitting.
+    // tablet's too, its host permitting. Both rows live in submenus now (§6 "Menus").
     const tabletChrome = DESKTOP_APP_MENU.filter(
-      (label) => label !== 'Compact Mode' && label !== 'Bookmarks > Show Bookmarks Bar'
+      (label) => label !== 'More Tools > Compact Mode' && label !== 'Bookmarks > Show Bookmarks Bar'
     )
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(tabletChrome)
   })
 
   it('on an Android tablet follows the capabilities as on the phone: no windows, no Quit', () => {
-    const menu = appMenu(harness(ANDROID, 'tablet'))
+    const h = harness(ANDROID, 'tablet')
+    const menu = appMenu(h)
+    const everywhere = allItems(h.shown()).map((i) => i.label)
     for (const label of ['New Window', 'New Private Window', 'Quit', 'Compact Mode'])
-      expect(menu).not.toContain(label)
+      expect(everywhere).not.toContain(label)
     // The sidebar layouts' items the phone drops stay: the tablet has the sidebar and a toolbar
-    // whose popovers they open.
-    for (const label of ['Search Tabs…', 'Recently Closed', 'Keyboard Shortcuts', 'Save Page As…'])
+    // whose popovers they open – in the submenus Firefox's groups put them (§6).
+    for (const label of [
+      'Search Tabs…',
+      'History > No recently closed tabs',
+      'Help > Keyboard Shortcuts',
+      'Save Page As…'
+    ])
       expect(menu).toContain(label)
     // No icon row (the toolbar has Forward, the star and Reload) and no Extensions sheet (the
     // toolbar has the actions).
     expect(menu[0]).toBe('New Tab')
-    expect(menu).not.toContain('Extensions')
+    expect(everywhere).not.toContain('Extensions')
   })
 
   it('offers Listen to This Page on a tablet with a speech engine, as on the phone', () => {
@@ -477,6 +607,30 @@ describe('the app menu', () => {
     const h = pageHarness({ ...ANDROID, readAloud: true }, { formFactor: 'tablet', speech: true })
     const menu = appMenu(h)
     expect(menu.indexOf('Listen to This Page')).toBe(menu.indexOf('Reader View') + 1)
+  })
+
+  it("on a tablet with page controls keeps Fullscreen with the window's toggles under More Tools, the zoom being the sheet", () => {
+    const menu = appMenu(harness(ANDROID, 'tablet'))
+    expect(menu).toContain('Zoom…')
+    expect(menu).not.toContain('Zoom > Fullscreen')
+    expect(menu).toContain('More Tools > Fullscreen')
+    expect(menu.indexOf('More Tools > Fullscreen')).toBe(
+      menu.indexOf('More Tools > Change Theme…') + 1
+    )
+  })
+
+  it("Help carries the menu bar's entries: Zenium Help and Report an Issue… open their pages, About closes it", () => {
+    const opened: string[] = []
+    const h = harness(DESKTOP)
+    h.browser.platform.shell.openExternal = (url: string): Promise<void> => {
+      opened.push(url)
+      return Promise.resolve()
+    }
+    appMenu(h)
+    deepItem(h.shown(), 'Zenium Help').click?.()
+    deepItem(h.shown(), 'Report an Issue…').click?.()
+    expect(opened).toEqual([HELP_URL, ISSUES_URL])
+    expect(deepItem(h.shown(), 'About Zenium 1.2.3').enabled).toBe(false)
   })
 
   describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
@@ -499,13 +653,16 @@ describe('the app menu', () => {
       h.browser.state.media = [media(h.tabId)]
       const menu = appMenuFolded(h)
       // Its name alone, the menu's Title Case (§9.1), the ellipsis of a popover opener: the
-      // content is the hub's on the pick, and a native menu row carrying it would widen the
-      // whole menu (§5).
+      // content is the hub's on the pick, and a menu row carrying it would widen the whole
+      // menu (§5).
       expect(menu.slice(0, 3)).toEqual([ROW, '-', 'New Tab'])
       // The rest of the menu is as it was: the row is added at the top, nothing else moves.
       expect(menu.slice(2)).toEqual(without)
-      // The card's artwork leads the row where the host's menus draw an icon.
-      expect(h.items()[0].icon).toBe('https://example.com/art.png')
+      // No picture (§9.29: a renderer-drawn menu's rows are all-or-nothing per menu, and the
+      // app menu's carry none – a glyph column reserved only while a session plays would move
+      // every label between one opening and the next); the artwork is the hub's on the pick.
+      expect(h.items()[0].icon).toBeUndefined()
+      expect(h.items().some((i) => i.icon)).toBe(false)
       h.browser.state.media = []
       expect(appMenuFolded(h)).toEqual(without)
     })
@@ -528,26 +685,28 @@ describe('the app menu', () => {
       expect(appMenuFolded(h)[0]).toBe(ROW)
     })
 
-    it('leads with the hub’s first card: the session’s artwork before a merely playing tab’s', () => {
+    it('is one row for the hub, whatever plays: a session and a merely playing tab together are the one row, its name alone', () => {
       const h = pageHarness(DESKTOP)
       const other = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, h.win)
       h.browser.state.media = [
         media(h.tabId, { session: false, artwork: 'https://example.com/background.png' }),
         media(other.id, { artwork: 'https://video.example.org/poster.jpg' })
       ]
-      expect(appMenuFolded(h)[0]).toBe(ROW)
-      expect(h.items()[0].icon).toBe('https://video.example.org/poster.jpg')
+      const menu = appMenuFolded(h)
+      expect(menu[0]).toBe(ROW)
+      expect(menu.filter((l) => l === ROW)).toHaveLength(1)
+      // Neither card's artwork is on the row: the hub shows its cards on the pick.
+      expect(h.items()[0].icon).toBeUndefined()
     })
 
-    it('has no icon without artwork – never the tab’s favicon, which is not the card’s picture', () => {
+    it('carries no picture with or without artwork – never the artwork, never the tab’s favicon (§9.29)', () => {
       const h = pageHarness(DESKTOP)
       h.browser.tabs.tab(h.tabId)!.favicon = 'https://example.com/favicon.ico'
-      h.browser.state.media = [media(h.tabId, { artwork: null })]
-      expect(appMenuFolded(h)[0]).toBe(ROW)
-      expect(h.items()[0].icon).toBeNull()
-      h.browser.state.media = [media(h.tabId, { artwork: '' })]
-      appMenuFolded(h)
-      expect(h.items()[0].icon).toBeNull()
+      for (const artwork of ['https://example.com/art.png', null, '']) {
+        h.browser.state.media = [media(h.tabId, { artwork })]
+        expect(appMenuFolded(h)[0]).toBe(ROW)
+        expect(h.items()[0].icon).toBeUndefined()
+      }
     })
 
     it('is not there for media whose tab is gone', () => {
@@ -567,7 +726,7 @@ describe('the app menu', () => {
       expect(appMenuFolded(h)).toEqual(without)
       // …while the private window's own menu leads with it.
       expect(appMenuFolded(h, priv)[0]).toBe(ROW)
-      expect(h.items()[0].icon).toBe('https://video.example.org/p.jpg')
+      expect(h.items()[0].icon).toBeUndefined()
       // A synced tab shows in every synced window and so does its row.
       h.browser.state.media = [media(h.tabId)]
       expect(appMenuFolded(h)[0]).toBe(ROW)
@@ -595,23 +754,24 @@ describe('the app menu', () => {
 
   it('keeps the desktop menu until the chrome reports a phone layout', () => {
     const h = harness(ANDROID)
-    expect(appMenu(h)).toContain('Keyboard Shortcuts')
+    expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'phone' })
-    expect(appMenu(h)).not.toContain('Keyboard Shortcuts')
+    expect(appMenu(h)).not.toContain('Help > Keyboard Shortcuts')
+    expect(appMenu(h)).not.toContain('Help')
   })
 
   it('opens Keyboard Shortcuts through page.open: the Settings overlay on its Shortcuts section on the desktop (a tablet with page tabs gets the tab)', () => {
     const desktop = pageHarness(DESKTOP)
     appMenu(desktop)
     desktop.sent.length = 0
-    desktop.click('Keyboard Shortcuts')
+    deepItem(desktop.shown(), 'Keyboard Shortcuts').click?.()
     expect(desktop.sent).toContain('overlay.open')
     expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
 
     const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
     appMenu(tablet)
     tablet.sent.length = 0
-    tablet.click('Keyboard Shortcuts')
+    deepItem(tablet.shown(), 'Keyboard Shortcuts').click?.()
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://settings/shortcuts')
     expect(tablet.sent).not.toContain('overlay.open')
   })
@@ -678,8 +838,22 @@ describe('the app menu', () => {
   })
 
   it('on a phone drops what only a desktop window can use', () => {
-    const menu = appMenu(harness(ANDROID, 'phone'))
+    const h = harness(ANDROID, 'phone')
+    const menu = appMenu(h)
+    const everywhere = allItems(h.shown()).map((i) => i.label)
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
+    for (const label of [
+      'Search Tabs…',
+      'Keyboard Shortcuts',
+      'Compact Mode',
+      'Split View',
+      'Fullscreen',
+      'Quit',
+      // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it.
+      'More Tools',
+      'Help'
+    ])
+      expect(everywhere).not.toContain(label)
     // The host has no windows, extensions, devtools or resource governor.
     for (const label of [
       'New Window',
@@ -689,7 +863,7 @@ describe('the app menu', () => {
       'Developer Tools',
       'Resources'
     ])
-      expect(menu).not.toContain(label)
+      expect(everywhere).not.toContain(label)
   })
 
   it('on a phone opens on the icon row and keeps the page and library items in their desktop order', () => {
@@ -805,11 +979,17 @@ describe('the app menu', () => {
     // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
-    expect(appMenu(h)).not.toContain('Create Shortcut…')
+    expect(appMenu(h)).not.toContain('More Tools > Create Shortcut…')
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
-    expect(appMenu(h)).toContain('Create Shortcut…')
-    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    // Under More Tools, where Chrome's More tools carried "Create shortcut…" – not a top-level
+    // row, so the menu keeps Firefox's count (§6).
+    expect(appMenu(h)).toContain('More Tools > Create Shortcut…')
     expect(appMenu(h)).not.toContain('Create Shortcut…')
+    expect(appMenu(h).indexOf('More Tools > Create Shortcut…')).toBe(
+      appMenu(h).indexOf('More Tools') + 1
+    )
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    expect(appMenu(h)).not.toContain('More Tools > Create Shortcut…')
     // A window that never registered any surface has none.
     expect(h.win.surfaces.size).toBe(0)
   })
@@ -927,7 +1107,7 @@ describe('the app menu', () => {
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).not.toContain('Quit')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'tablet' })
-    expect(appMenu(h)).toContain('Keyboard Shortcuts')
+    expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')
   })
 })
 
@@ -2662,13 +2842,153 @@ describe('a menu asked for from the keyboard', () => {
 })
 
 describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
-  /** The item of that label in the last popup, wherever it sits. */
+  /** The item of that label in the last popup, wherever it sits – in a submenu too. */
   const item = (h: Harness, label: string): MenuItemTemplate => {
-    const found = h.shown().find((i) => i.label === label)
-    if (!found) throw new Error(`no "${label}" in ${topLabels(h.shown()).join(', ')}`)
+    const found = allItems(h.shown()).find((i) => i.label === label)
+    if (!found) throw new Error(`no "${label}" in ${labels(h.shown()).join(', ')}`)
     return found
   }
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
+
+  describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
+    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows. */
+    const REGULAR_TAB_MENU = [
+      'New Tab Below',
+      '-',
+      'Reload Tab',
+      'Mute Tab',
+      'Mute Site',
+      'Unload Tab',
+      'Freeze Tab',
+      'Duplicate Tab',
+      'Pin Tab',
+      'Add to Essentials',
+      'Rename Tab…',
+      'Change Icon…',
+      '-',
+      'Bookmark Tab',
+      'Bookmark All Tabs…',
+      'Move Tab',
+      'Split with Current Tab',
+      'Open in New Container Tab',
+      'Share',
+      '-',
+      'Close Multiple Tabs',
+      'Close Tab',
+      '-',
+      'Reopen Closed Tab'
+    ]
+
+    it('a regular row: twenty rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      const shown = h.shown()
+      expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(20)
+      expect(separators(shown)).toBe(4)
+      // The state group in Firefox's order – Reload, Mute, Unload, Freeze, Duplicate, Pin: the
+      // unload and the freeze are the tab's state, as its mute is, not its place.
+      const top = topLabels(shown)
+      expect(top.slice(top.indexOf('Reload Tab'), top.indexOf('Pin Tab') + 1)).toEqual([
+        'Reload Tab',
+        'Mute Tab',
+        'Mute Site',
+        'Unload Tab',
+        'Freeze Tab',
+        'Duplicate Tab',
+        'Pin Tab'
+      ])
+      expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
+        'Bookmark Tab',
+        'Bookmark All Tabs…',
+        'Move Tab'
+      ])
+      expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([
+        'Move to Space',
+        'Add Tab to New Folder',
+        'Add Route for Domain',
+        '-',
+        'Move Tab to New Window',
+        'Move Tab to Another Window'
+      ])
+      expect(topLabels(item(h, 'Close Multiple Tabs').submenu!)).toEqual([
+        'Close Tabs Above',
+        'Close Tabs Below',
+        'Close Other Tabs'
+      ])
+      expect(topLabels(item(h, 'Share').submenu!)).toEqual([
+        'Copy Link',
+        'Copy Link as Markdown',
+        'Email Link…'
+      ])
+    })
+
+    it('nothing the flat menu did is gone: every one of its rows is in the regrouped menu, at the top or in a submenu', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      const all = allItems(h.shown())
+        .map((i) => i.label)
+        .filter((l): l is string => Boolean(l))
+      // The flat menu's rows for a regular tab (#263, before this regrouping).
+      for (const label of [
+        'New Tab Below',
+        'Reload Tab',
+        'Mute Tab',
+        'Mute Site',
+        'Duplicate Tab',
+        'Rename Tab…',
+        'Change Icon…',
+        'Add to Essentials',
+        'Pin Tab',
+        'Split with Current Tab',
+        'Move to Space',
+        'Add Tab to New Folder',
+        'Add Route for Domain',
+        'Move Tab to New Window',
+        'Move Tab to Another Window',
+        'Open in New Container Tab',
+        'Bookmark Tab',
+        'Bookmark All Tabs…',
+        'Share',
+        'Copy Link',
+        'Copy Link as Markdown',
+        'Email Link…',
+        'Freeze Tab',
+        'Unload Tab',
+        'Close Tabs Above',
+        'Close Tabs Below',
+        'Close Other Tabs',
+        'Close Tab',
+        'Reopen Closed Tab'
+      ])
+        expect(all).toContain(label)
+    })
+
+    it("a pinned row's state rows stand with Pin: Unpin, Reset Pinned Tab, Edit Pinned Tab…; its close is Close Tab (keep pinned) with Remove Tab beside it", () => {
+      const h = pageHarness()
+      h.browser.tabs.togglePin(h.tabId, h.win)
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      const top = topLabels(h.shown())
+      expect(top.slice(top.indexOf('Duplicate Tab') + 1, top.indexOf('Add to Essentials'))).toEqual(
+        ['Unpin Tab', 'Reset Pinned Tab', 'Edit Pinned Tab…']
+      )
+      expect(top.slice(-5)).toEqual([
+        'Close Multiple Tabs',
+        'Close Tab (keep pinned)',
+        'Remove Tab',
+        '-',
+        'Reopen Closed Tab'
+      ])
+      expect(separators(h.shown())).toBe(4)
+    })
+
+    it('every row is Title Case (§9.1)', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      for (const label of topLabels(h.shown()).filter((l) => l !== '-'))
+        expect(label, label).toMatch(/^[A-Z0-9]/)
+    })
+  })
 
   it("the strip's menu is Chrome's trio first, then Zenium's own", () => {
     const h = pageHarness()
@@ -2709,14 +3029,17 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   it("Reopen Closed Tab closes the tab row's menu too, after the close items", () => {
     const h = pageHarness()
     h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
-    expect(topLabels(h.shown()).slice(-7)).toEqual([
-      'Close Tabs Above',
-      'Close Tabs Below',
-      'Close Other Tabs',
+    expect(topLabels(h.shown()).slice(-5)).toEqual([
       '-',
+      'Close Multiple Tabs',
       'Close Tab',
       '-',
       'Reopen Closed Tab'
+    ])
+    expect(topLabels(item(h, 'Close Multiple Tabs').submenu!)).toEqual([
+      'Close Tabs Above',
+      'Close Tabs Below',
+      'Close Other Tabs'
     ])
     expect(enabled(h, 'Reopen Closed Tab')).toBe(false)
   })
@@ -2773,9 +3096,11 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         expect(tabs.closeScope(id, 'others', h.win)).toEqual([h.ids.A, h.ids.B, h.ids.C])
         expect(scopes(h, id)).toEqual({ above: false, below: true, others: true })
         // The items are there, greyed, not gone (§9.30).
-        expect(topLabels(h.shown())).toEqual(
-          expect.arrayContaining(['Close Tabs Above', 'Close Tabs Below', 'Close Other Tabs'])
-        )
+        expect(topLabels(item(h, 'Close Multiple Tabs').submenu!)).toEqual([
+          'Close Tabs Above',
+          'Close Tabs Below',
+          'Close Other Tabs'
+        ])
       }
       tabs.closeOthers(h.ids.P, h.win)
       expect(alive(h)).toEqual(['e', 'p'])

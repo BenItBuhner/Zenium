@@ -31,12 +31,28 @@ export const coverStore = createStore<CoverState>(
  * Whether this host's chrome lies under its page views, so that hiding a page shows whatever the
  * chrome has drawn by then. This is a property of the chassis, not of the layout: the Android
  * host (`Host.kt`) stacks its views this way on a phone, on a tablet and in a DeX window with a
- * mouse alike, so a cover stands in for the page at every form factor there. Electron's
- * compositor has the overlay painted before a page view goes, so the desktop hosts report the
- * hide the moment it is wanted, as they always have.
+ * mouse alike, so a cover stands in for the page at every form factor there. The rest of that
+ * chassis's protocol – the capture mounted ahead of the overlay (`coverPrimed`), the page kept
+ * until the host has drawn the live view back (`pageOffScreen`), the host's layout and draw
+ * events – is Android's alone; the wait for the cover's paint before the hide is every host's
+ * (`hideFollowsCover`).
  */
 export function chromeUnderPages(platform: Platform): boolean {
   return platform === 'android'
+}
+
+/**
+ * Whether a page view's hide waits for its cover's paint (`decideHidden`): on every host. On
+ * Android it must – the chrome lies under the pages. On Electron the page view composites above
+ * the chrome too, and nothing orders the main process's hide of the view after the chrome's next
+ * frame: reported the moment it was wanted, the hide left the window's colour where the page was
+ * for a frame on 4 of 10 opens of the app menu (Xvfb, 1600×1000, #299 F1) – the frame the
+ * display composed between the view's going and the chrome's frame carrying the picture and the
+ * menu. Waiting costs the two frames `trackCover` counts on a page that decodes at all,
+ * `COVER_WAIT_MS` at most.
+ */
+export function hideFollowsCover(): boolean {
+  return true
 }
 
 /**
@@ -47,6 +63,8 @@ export function chromeUnderPages(platform: Platform): boolean {
  * decode and the two frames that carry it. The capture `prepareMenu` takes as the finger lands
  * on the menu button is the case (PERF-2, #269: on the emulator's profile the sheet mounted
  * ~590 ms after the tap and moved ~990 ms after it; the decode and its frames were in between).
+ * The desktop hosts mount the capture once something covers the page, as they always have; the
+ * hide then waits for its paint (`hideFollowsCover`).
  */
 export function coverPrimed(
   platform: Platform,

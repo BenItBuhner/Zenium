@@ -118,6 +118,11 @@ function item(items: MenuItemTemplate[], label: string): MenuItemTemplate {
   return found
 }
 
+/** The tab row's moves live under Firefox's "Move Tab ▸" (v2 §6 Menus). */
+function moveTab(items: MenuItemTemplate[]): MenuItemTemplate[] {
+  return item(items, 'Move Tab').submenu!
+}
+
 const palette = FOLDER_COLOR_ORDER
 const events = (h: Harness, name: string): unknown[] =>
   h.sent.filter((e) => e.name === name).map((e) => e.payload)
@@ -258,11 +263,11 @@ describe('the tab menu’s group items (context-menus-91)', () => {
     const h = harness()
     const tab = h.open('https://a.test/')
     h.browser.menus.showTabContextMenu(tab, h.win)
-    const shown = labels(h.shown())
+    const shown = labels(moveTab(h.shown()))
     expect(shown).toContain('Add Tab to New Folder')
     expect(shown).not.toContain('Move to Folder')
     expect(shown).not.toContain('Remove from Folder')
-    item(h.shown(), 'Add Tab to New Folder').click!()
+    item(moveTab(h.shown()), 'Add Tab to New Folder').click!()
     expect(h.browser.tabs.tab(tab)?.folderId).toBe(Object.keys(h.browser.state.model.folders)[0])
   })
 
@@ -273,7 +278,7 @@ describe('the tab menu’s group items (context-menus-91)', () => {
     const play = h.browser.createFolder(space, 'Play', '🎮', h.win, { rename: false })
     const tab = h.open('https://a.test/', { folderId: docs.id })
     h.browser.menus.showTabContextMenu(tab, h.win)
-    const shown = labels(h.shown())
+    const shown = labels(moveTab(h.shown()))
     expect(shown).toEqual(
       expect.arrayContaining([
         'Move to Folder',
@@ -285,7 +290,7 @@ describe('the tab menu’s group items (context-menus-91)', () => {
       ])
     )
     expect(shown).not.toContain('Add Tab to New Folder')
-    const submenu = item(h.shown(), 'Move to Folder').submenu!
+    const submenu = item(moveTab(h.shown()), 'Move to Folder').submenu!
     expect(submenu.find((i) => i.label === '📁 Docs')).toMatchObject({
       type: 'checkbox',
       checked: true
@@ -297,10 +302,10 @@ describe('the tab menu’s group items (context-menus-91)', () => {
     submenu.find((i) => i.label === '🎮 Play')!.click!()
     expect(h.browser.tabs.tab(tab)?.folderId).toBe(play.id)
     h.browser.menus.showTabContextMenu(tab, h.win)
-    item(h.shown(), 'Remove from Folder').click!()
+    item(moveTab(h.shown()), 'Remove from Folder').click!()
     expect(h.browser.tabs.tab(tab)?.folderId).toBeNull()
     h.browser.menus.showTabContextMenu(tab, h.win)
-    expect(labels(h.shown())).not.toContain('Remove from Folder')
+    expect(labels(moveTab(h.shown()))).not.toContain('Remove from Folder')
   })
 
   it('greys the group items for a pinned tab, which cannot join a folder', () => {
@@ -308,7 +313,7 @@ describe('the tab menu’s group items (context-menus-91)', () => {
     const tab = h.open('https://a.test/')
     h.browser.tabs.togglePin(tab, h.win)
     h.browser.menus.showTabContextMenu(tab, h.win)
-    expect(item(h.shown(), 'Add Tab to New Folder').enabled).toBe(false)
+    expect(item(moveTab(h.shown()), 'Add Tab to New Folder').enabled).toBe(false)
   })
 })
 

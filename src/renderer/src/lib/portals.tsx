@@ -1123,9 +1123,11 @@ export type PopoverAlignment = 'start' | 'end'
 
 export interface PlacePopoverOptions {
   /**
-   * Whether the 60%-of-window height cap applies (default true). `false` only for the surface
-   * §9.20 exempts by name: an extension's manifest popup at its requested size, capped by the
-   * window minus 16 alone.
+   * Whether the 60%-of-window height cap applies (default true). `false` only for the surfaces
+   * the spec exempts by name: an extension's manifest popup at its requested size (§9.20) and
+   * a menu, which takes the room to the window's bottom margin and scrolls only past it (§6
+   * "Menus": the app menu stands whole on an 800 px window) – both held by the window minus 16
+   * alone.
    */
   capHeight?: boolean
   /**
@@ -1206,10 +1208,10 @@ export function placePopover(
   // the window's edge gets the nearest box there is.
   else left = Math.min(Math.max(minLeft, at[preferred]), maxLeft)
 
-  // The 60% cap holds for every chassis popover, an explicit height included: a long menu or a
-  // known-height panel shrinks to it and scrolls under its sticky title (§9.20). Only a surface
-  // §9.20 exempts by name – an extension's manifest popup, its own document – opts out with
-  // `capHeight: false` and is held by the window minus 16 alone.
+  // The 60% cap holds for every chassis popover, an explicit height included: a known-height
+  // panel shrinks to it and scrolls under its sticky title (§9.20). Only a surface the spec
+  // exempts by name – an extension's manifest popup (§9.20), a menu (§6 "Menus") – opts out
+  // with `capHeight: false` and is held by the window minus 16 alone.
   const edge = Math.max(0, viewport.height - 2 * POPOVER_MARGIN)
   const cap = options.capHeight === false ? edge : Math.min(viewport.height * 0.6, edge)
   const wanted = Math.max(0, Math.min(height ?? cap, cap))
@@ -1234,14 +1236,23 @@ export type BesideEdge = 'after' | 'before'
 export const MENU_PANEL_INSET = 7
 
 /**
+ * The cascade seam (§9.20): a child panel overlaps its parent by this much, so the parent's
+ * 1 px hairline and the child's share one pixel and no 2 px seam is drawn where they meet – as
+ * Firefox's and Zen's menus cascade. Gap 0 counted border to border, in other words.
+ */
+export const CASCADE_OVERLAP = 1
+
+/**
  * `placePopover`'s cascade mode (§9.20): where a panel opened from a row of another panel goes –
  * a folder panel's sub-folder, a menu's submenu – in viewport coordinates for a `fixed` element
- * (`popoverStyle` turns it into the inline style). Flush against its parent panel's trailing
- * edge (gap 0), its first row on the row that opened it (`anchor`, `inset` above the row's
- * top). Against the window it follows the same order as a popover under a bar, with
- * `POPOVER_MARGIN`: a panel that would cross the trailing margin flips to the parent's leading
- * side; if neither side fits it slides the least distance inside the margins on the trailing
- * side, still overlapping its parent; wider than the window minus 16 it shrinks to that.
+ * (`popoverStyle` turns it into the inline style). On its parent panel's trailing edge,
+ * overlapping it by `CASCADE_OVERLAP` so the two hairlines share one pixel, its first row on
+ * the row that opened it (`anchor`, `inset` above the row's top). Against the window it
+ * follows the same order as a popover under a bar, with `POPOVER_MARGIN`: a panel that would
+ * cross the trailing margin flips to the parent's leading side (the same one pixel over the
+ * parent's leading hairline); if neither side fits it slides the least distance inside the
+ * margins on the trailing side, still overlapping its parent; wider than the window minus 16
+ * it shrinks to that.
  * Vertically it starts on the row and, when it would cross the bottom margin, flips above – its
  * last row on the row's bottom – when there is more room above than below (or the room below is
  * under `POPOVER_HEIGHT_FLOOR`); otherwise it stays and shrinks to the room left, never taller
@@ -1260,8 +1271,8 @@ export function placeBeside(
   const minLeft = POPOVER_MARGIN
   const maxLeft = viewport.width - POPOVER_MARGIN - width
   const fits = (left: number): boolean => left >= minLeft && left <= maxLeft
-  const after = parent.x + parent.width
-  const before = parent.x - width
+  const after = parent.x + parent.width - CASCADE_OVERLAP
+  const before = parent.x - width + CASCADE_OVERLAP
   let edge: BesideEdge = 'after'
   let left: number
   if (fits(after)) left = after
@@ -1308,6 +1319,24 @@ export function besideOrigin(
  */
 export function layoutRect(el: HTMLElement): Rect {
   return { x: el.offsetLeft, y: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight }
+}
+
+/**
+ * A panel's intrinsic size before `placePopover` pins it: the used width and height from the
+ * computed style, which keep the fraction of a pixel the longest row's text runs to – the
+ * offsets round it away, and a menu pinned to the rounded width (§5: a menu is as wide as its
+ * longest row) puts an ellipsis on that very row – and, like the offsets, ignore the pop
+ * animation's transform. Rounded up, so the pinned box never runs short of its content. Where
+ * there is no layout (tests) the offsets stand in.
+ */
+export function intrinsicSize(el: HTMLElement): Size {
+  const style = getComputedStyle(el)
+  const width = parseFloat(style.width)
+  const height = parseFloat(style.height)
+  return {
+    width: Number.isFinite(width) && width > 0 ? Math.ceil(width) : el.offsetWidth,
+    height: Number.isFinite(height) && height > 0 ? Math.ceil(height) : el.offsetHeight
+  }
 }
 
 /**

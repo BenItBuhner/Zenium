@@ -3313,6 +3313,17 @@ export interface MenuItemDescriptor {
    * buttons (design language v2 §9.3) rather than rows of text, the label as each button's name.
    */
   glyph?: MenuGlyph
+  /**
+   * The chord that runs the item, as the user reads it (`Ctrl+Shift+N`, `⌘⇧N` on macOS): the
+   * mouse popover draws it after the label in the deemphasised ink (§6 menus); the touch sheet
+   * has no keyboard to speak of and leaves it out.
+   */
+  hint?: string
+  /**
+   * A plain sentence, not a command: a menu's empty state (§9.17, "No recently closed tabs").
+   * Drawn in the deemphasised ink on a row that is neither focused nor picked.
+   */
+  note?: boolean
 }
 
 /**
@@ -3339,6 +3350,7 @@ export interface MenuDescriptor {
     | 'newtab'
     | 'topsite'
     | 'app'
+    | 'extension'
     | 'bookmark'
     | 'history'
     | 'download'
