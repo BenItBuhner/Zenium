@@ -43,6 +43,50 @@ export const DESKTOP_CAPTURE_SOURCE_TYPE_CONSTANTS: Record<string, string> = Obj
  */
 export const TAB_CAPTURE_INTERNAL_METHODS = ['resolveStreamId', 'streamState'] as const
 
+/**
+ * `chrome.desktopCapture`'s one: the id `chooseDesktopMedia` answered an extension document
+ * becomes, the moment that document calls `getUserMedia` with it, what the engine takes – a
+ * `desktopCapturer` source id, or a tab stream registered for the document (Chrome's
+ * `DesktopStreamsRegistry` hands the source over the same way, bound to the frame and to the
+ * moment).
+ */
+export const DESKTOP_CAPTURE_INTERNAL_METHODS = ['resolveStreamId'] as const
+
+/** Chrome's `desktopCapture.ChooseDesktopMediaOptions`, checked. */
+export interface DesktopCaptureOptions {
+  /** `systemAudio: "exclude"`: no system-audio box in the picker. */
+  excludeSystemAudio: boolean
+  /** `selfBrowserSurface: "exclude"`: the capturing tab stays out of the tab pane. */
+  excludeSelf: boolean
+}
+
+/** Chrome's `tabs.Tab` as `chooseDesktopMedia`'s `targetTab` needs it: an id and a URL. */
+export interface DesktopCaptureTarget {
+  id: number
+  url: string
+}
+
+/** What `chooseDesktopMedia` answers: Chrome's `(streamId, options)` callback arguments. */
+export interface DesktopCaptureResult {
+  streamId: string
+  options: { canRequestAudioTrack: boolean }
+}
+
+/**
+ * What the shim's `resolveStreamId` gets for an id `chooseDesktopMedia` answered: the
+ * `chromeMediaSource` the engine wants (`desktop` for a screen or window, `tab` for a Zenium
+ * tab), the id to name under it, and whether the pick carries audio (Chrome's `audio_share`:
+ * the picker's box for a screen, the tab's sound for a tab). Without it an audio track the
+ * extension asks for under the id is left out and the stream comes video-only, as Chrome's
+ * does (`DesktopCaptureAccessHandler::ShouldCaptureAudio`); the engine would otherwise open a
+ * loopback device the OS may not have and fail the whole call.
+ */
+export interface DesktopStreamResolution {
+  source: 'desktop' | 'tab'
+  id: string
+  audio: boolean
+}
+
 // Chrome's texts (`chrome/browser/extensions/api/tab_capture/tab_capture_api.cc`).
 export const TAB_CAPTURE_SAME_TAB_ERROR = 'Cannot capture a tab with an active stream.'
 export const TAB_CAPTURE_FINDING_TAB_ERROR = 'Error finding tab to capture.'
@@ -56,20 +100,35 @@ export const TAB_CAPTURE_INVALID_TAB_ERROR = 'Invalid tab specified.'
 export const TAB_CAPTURE_NO_DOCUMENT_ERROR =
   'tabCapture.capture is not available in a service worker; use getMediaStreamId.'
 
-// Chrome's texts (`chrome/browser/extensions/api/desktop_capture/desktop_capture_base.cc`).
+// Chrome's texts (`chrome/browser/extensions/api/desktop_capture/desktop_capture_{api,base}.cc`).
 export const DESKTOP_CAPTURE_NO_SOURCES_ERROR = 'At least one source type must be specified.'
 export const DESKTOP_CAPTURE_INVALID_TAB_ERROR = 'Invalid tab specified.'
+export const DESKTOP_CAPTURE_NO_TAB_ID_ERROR = "targetTab doesn't have id field set."
+export const DESKTOP_CAPTURE_NO_TAB_URL_ERROR = "targetTab doesn't have URL field set."
+export const DESKTOP_CAPTURE_INVALID_ORIGIN_ERROR = 'targetTab.url is not a valid URL.'
+export const DESKTOP_CAPTURE_TAB_URL_NOT_SECURE_ERROR =
+  'URL scheme for the specified tab is not secure.'
+export const DESKTOP_CAPTURE_WORKER_NEEDS_TAB_ERROR =
+  'A target tab is required when called from a service worker context.'
+export const DESKTOP_CAPTURE_TARGET_NOT_FOUND_ERROR = 'The specified target is not found.'
+/**
+ * What a `getUserMedia` with a stream id the registry no longer holds (spent, timed out, another
+ * document's) fails with in Chrome: the engine's `INVALID_STATE`, an `InvalidStateError` to the
+ * page. The shim words this layer's refusal the same way.
+ */
+export const DESKTOP_CAPTURE_INVALID_STATE_ERROR = 'Invalid state'
 
 /** Chrome's `chromeMediaSource` constraint names (`content/public/common/media_stream_request.h`). */
 export const MEDIA_STREAM_SOURCE = 'chromeMediaSource'
 export const MEDIA_STREAM_SOURCE_ID = 'chromeMediaSourceId'
 export const MEDIA_STREAM_SOURCE_TAB = 'tab'
+export const MEDIA_STREAM_SOURCE_DESKTOP = 'desktop'
 
 const CAPTURE_SIGNATURE = 'tabCapture.capture(object options, function callback)'
 const STREAM_ID_SIGNATURE =
   'tabCapture.getMediaStreamId(optional object options, optional function callback)'
-const CHOOSE_SIGNATURE =
-  'desktopCapture.chooseDesktopMedia(array sources, optional tabs.Tab targetTab, function callback)'
+export const CHOOSE_SIGNATURE =
+  'desktopCapture.chooseDesktopMedia(array sources, optional tabs.Tab targetTab, optional object options, function callback)'
 
 /** Chrome's `tabCapture.MediaStreamConstraint`: `mandatory` and an optional `optional`. */
 export interface MediaStreamConstraint {
@@ -222,14 +281,63 @@ export function normalizeDesktopSources(raw: unknown): DesktopCaptureSourceType[
 }
 
 /**
- * What Chrome's picker answers when the user cancels it: an empty stream id and no audio track
- * on offer. The browser layer answers every `chooseDesktopMedia` this way until Zenium has a
- * source picker for extension calls (a UI piece, not an engine one).
+ * `chooseDesktopMedia`'s `targetTab`, checked in Chrome's order: a URL, a valid one, a secure
+ * one, then an id. Absent (or null) means the calling context is the target.
  */
-export const DESKTOP_CAPTURE_CANCELLED = {
-  streamId: '',
-  options: { canRequestAudioTrack: false }
-} as const
+export function normalizeDesktopTarget(raw: unknown): DesktopCaptureTarget | null {
+  if (raw === undefined || raw === null) return null
+  if (!isRecord(raw)) throw signatureError(CHOOSE_SIGNATURE)
+  if (raw.url === undefined) throw new Error(DESKTOP_CAPTURE_NO_TAB_URL_ERROR)
+  if (typeof raw.url !== 'string') throw signatureError(CHOOSE_SIGNATURE)
+  let origin: string
+  try {
+    origin = new URL(raw.url).origin
+  } catch {
+    throw new Error(DESKTOP_CAPTURE_INVALID_ORIGIN_ERROR)
+  }
+  if (origin === 'null' && !/^(chrome-extension|file):/.test(raw.url))
+    throw new Error(DESKTOP_CAPTURE_INVALID_ORIGIN_ERROR)
+  if (!isPotentiallyTrustworthyUrl(raw.url))
+    throw new Error(DESKTOP_CAPTURE_TAB_URL_NOT_SECURE_ERROR)
+  if (raw.id === undefined || raw.id === -1) throw new Error(DESKTOP_CAPTURE_NO_TAB_ID_ERROR)
+  if (typeof raw.id !== 'number' || !Number.isInteger(raw.id))
+    throw signatureError(CHOOSE_SIGNATURE)
+  return { id: raw.id, url: raw.url }
+}
+
+/** `chooseDesktopMedia`'s `options`: the two preferences the picker honours. */
+export function normalizeDesktopOptions(raw: unknown): DesktopCaptureOptions {
+  if (raw === undefined || raw === null) return { excludeSystemAudio: false, excludeSelf: false }
+  if (!isRecord(raw)) throw signatureError(CHOOSE_SIGNATURE)
+  return {
+    excludeSystemAudio: raw.systemAudio === 'exclude',
+    excludeSelf: raw.selfBrowserSurface === 'exclude'
+  }
+}
+
+/**
+ * The source kinds `chooseDesktopMedia`'s `sources` names for the picker's panes (`audio` is
+ * the toggle, not a pane), in the picker's order.
+ */
+export function desktopSourceKinds(
+  sources: readonly DesktopCaptureSourceType[]
+): Array<'screen' | 'window' | 'tab'> {
+  return (['tab', 'window', 'screen'] as const).filter((kind) => sources.includes(kind))
+}
+
+/** Chrome's `(streamId, { canRequestAudioTrack })` callback arguments. */
+export function desktopCaptureResult(
+  streamId: string,
+  canRequestAudioTrack: boolean
+): DesktopCaptureResult {
+  return { streamId, options: { canRequestAudioTrack } }
+}
+
+/**
+ * What Chrome's picker answers when the user cancels it, or `cancelChooseDesktopMedia` closes
+ * it: an empty stream id and no audio track on offer.
+ */
+export const DESKTOP_CAPTURE_CANCELLED: DesktopCaptureResult = desktopCaptureResult('', false)
 
 /** `getCapturedTabs` / `onStatusChanged`: Chrome's `tabCapture.CaptureInfo`. */
 export interface CaptureInfo {
