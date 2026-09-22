@@ -421,7 +421,7 @@ describe('the card and group menus', () => {
       tab('b', 'https://b.example/')
     ])
 
-  it("a held card's rows are menu items in Title Case, the group's own name as given", () => {
+  it("a held card's rows are menu items in Title Case, the group's own name as given; Select Tabs leads (TAB-08)", () => {
     render(grouped())
     pickUp('a')
     const p = at('a', 0.5, 0.5)
@@ -429,6 +429,7 @@ describe('the card and group menus', () => {
     act(() => elapse(300))
     act(() => settleSprings())
     expect(sheetLabels()).toEqual([
+      'Select Tabs',
       'New Group',
       'Add to Research',
       'Close Other Tabs (3)',
@@ -444,6 +445,7 @@ describe('the card and group menus', () => {
     act(() => elapse(300))
     act(() => settleSprings())
     expect(sheetLabels()).toEqual([
+      'Select Tabs',
       'New Group',
       'Remove from Group',
       'Close Other Tabs (3)',

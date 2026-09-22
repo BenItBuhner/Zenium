@@ -40,6 +40,13 @@ interface Props {
   /** The card was swiped off the grid (it is out of sight already): close its tab. */
   onSwipeClose?: (tab: Tab) => void
   lift: Omit<CardLiftOptions, 'tab' | 'onSwipeClose'>
+  /**
+   * The grid is in its select-tabs mode (TAB-08): the card is a checkbox – a tap toggles it
+   * instead of opening the tab, the hold and the swipe are off (the owner turns `lift` off with
+   * it), and the close button gives way to the check. `selected` is drawn as the accent box at
+   * the thumbnail's top-start and the selected outline (v2 §9.6).
+   */
+  selection?: { selected: boolean; onToggle: (tab: Tab) => void }
 }
 
 /**
@@ -49,6 +56,11 @@ interface Props {
  * a little. The outer box is the grid's cell, keyed by the tab id for the glide and the morph.
  * A card holds its tab's picture only while its cell is on screen or a row from it: the grid
  * is not virtualised, its pictures are.
+ *
+ * In the select-tabs mode the card is the checkbox for assistive technology (`role="checkbox"`,
+ * `aria-checked`), the box a presentational span inside it drawn by the shared
+ * `.zen-v2-checkbox` in its span form (§9.34, as the panels' rows do it) – TalkBack reads
+ * "checked" or "not checked" with the card's name; no input, no second copy of the state.
  */
 export function OverviewCard({
   tab,
@@ -59,7 +71,8 @@ export function OverviewCard({
   onPick,
   onClose,
   onSwipeClose,
-  lift
+  lift,
+  selection
 }: Props): JSX.Element {
   const handlers = useCardLift({ tab, ...lift, onSwipeClose: (t) => onSwipeClose?.(t) })
   const held = liftStore.use((s) => (s.tabId === tab.id ? s.phase : 'idle'))
@@ -73,6 +86,8 @@ export function OverviewCard({
   const style: CSSProperties = {}
   if (hidden || departing || held === 'dropping') style.opacity = 0
   else if (held !== 'idle') style.opacity = 0.35
+  const selecting = selection !== undefined
+  const act = (): void => (selection ? selection.onToggle(tab) : onPick(tab))
   return (
     <div
       ref={cellRef}
@@ -82,7 +97,8 @@ export function OverviewCard({
       data-cell={tab.id}
     >
       <div
-        role="button"
+        role={selecting ? 'checkbox' : 'button'}
+        aria-checked={selecting ? selection.selected : undefined}
         tabIndex={0}
         className={cn(
           'zen-overview-card absolute inset-0 flex flex-col overflow-hidden',
@@ -91,6 +107,8 @@ export function OverviewCard({
         data-active={active}
         data-discarded={tab.discarded || undefined}
         data-masked={masked || undefined}
+        data-selecting={selecting || undefined}
+        data-selected={(selecting && selection.selected) || undefined}
         style={style}
         aria-label={tabCardLabel(name, position, count, active, tab.discarded === true)}
         onPointerDown={handlers.onPointerDown}
@@ -99,21 +117,30 @@ export function OverviewCard({
         onPointerCancel={handlers.onPointerCancel}
         onContextMenu={(e) => e.preventDefault()}
         onClick={() => {
-          if (!handlers.swallowsClick()) onPick(tab)
+          if (!handlers.swallowsClick()) act()
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') onPick(tab)
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            act()
+          }
         }}
       >
-        <CardBody tab={tab} closable={onClose ? 'space' : false} visible={visible} />
+        <CardBody tab={tab} closable={onClose && !selecting ? 'space' : false} visible={visible} />
+        {/*
+          The check (§9.6): the shared box at the thumbnail's top-start, a direct child of the
+          card so the primitive's `[aria-checked='true'] > .zen-v2-checkbox` draws it filled.
+        */}
+        {selecting && <span className="zen-v2-checkbox zen-overview-card-check" aria-hidden />}
       </div>
       {/*
         The close sits beside the card's button, not inside it: this WebView reads a focusable,
         named node as one leaf and drops a button nested in it from the tree (A11Y-01, the device
         driver's run 1), so a nested Close was never a TalkBack stop. It is laid over the header's
         end, the 44 the body keeps clear for it, and looks the same as the ghost's drawn one.
+        While tabs are being selected the cards carry no close: the action row closes the picks.
       */}
-      {onClose && (
+      {onClose && !selecting && (
         <button
           type="button"
           className="zen-toolbar-button zen-overview-card-close absolute right-0 top-0 h-8 w-8 rounded-[10px]"

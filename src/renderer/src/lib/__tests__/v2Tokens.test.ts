@@ -118,6 +118,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['  .zen-frame-strips[data-under-overlay] {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
+  // The tab overview's select-tabs mode (components/phone/TabOverview.tsx, OverviewCard.tsx,
+  // TAB-08): the picked card's selected fill and accent ring (§9.6) and the action row's band
+  // in the window fill (§9.29). Its block ends where the lock cover's begins.
+  ['.zen-overview-card[data-selected] {', '/*\n   * The lock cover of "Lock private tabs'],
   // The lock cover of "Lock private tabs when you leave Zenium" (components/phone/
   // PrivateLockCover.tsx, INC-05 / SET-17): the panel-toned base under a locked private tab's
   // blurred picture. Its block ends where the phone sheet chassis begins.
