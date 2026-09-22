@@ -238,8 +238,13 @@ export function RowFavicon({
 }
 
 export interface PhoneListRowProps {
-  /** The 20 glyph or favicon of the leading box. */
-  icon: ReactNode
+  /**
+   * The 20 glyph or favicon of the leading box. A list whose rows have none (the Send to your
+   * devices picker: a device's kind is not known) draws no box at all – the text from the
+   * gutter – rather than an empty column (§10.4: a list in which only some rows would have a
+   * leading element has none).
+   */
+  icon?: ReactNode
   title: string
   subtitle?: ReactNode
   /** A 44 control, or a 13 deemphasised value; hidden while selecting. */
@@ -326,9 +331,11 @@ export function PhoneListRow({
         {selecting ? (
           <span className="zen-v2-checkbox" aria-hidden />
         ) : (
-          <span className="zen-list-lead" aria-hidden>
-            {icon}
-          </span>
+          icon != null && (
+            <span className="zen-list-lead" aria-hidden>
+              {icon}
+            </span>
+          )
         )}
         <span className="zen-list-text">
           <span className="zen-list-title truncate">{title}</span>

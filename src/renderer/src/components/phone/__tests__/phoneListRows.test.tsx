@@ -85,6 +85,25 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
     expect(main.getAttribute('tabindex')).toBe('0')
   })
 
+  it('draws no leading box for a row without a glyph (§10.4: a bare list has no glyph column)', () => {
+    const el = render(
+      <PhoneListRow title="Work laptop" subtitle="Last active 2 h ago" onTap={noop} />
+    )
+    const main = el.querySelector<HTMLElement>('.zen-list-main')!
+    // The text is the accessible row's first child: nothing stands where a glyph would, so the
+    // title starts at the gutter rather than 32 in from it.
+    expect(el.querySelector('.zen-list-lead')).toBeNull()
+    expect(main.firstElementChild!.classList.contains('zen-list-text')).toBe(true)
+    expect(main.getAttribute('aria-label')).toBe('Work laptop')
+    // While rows are being picked the checkbox stands in the lead's place all the same.
+    const picking = render(<PhoneListRow title="Work laptop" selecting onTap={noop} />)
+    expect(
+      picking
+        .querySelector('.zen-list-main')!
+        .firstElementChild!.classList.contains('zen-v2-checkbox')
+    ).toBe(true)
+  })
+
   it('draws a picked row in the --v2-selected fill with the accent-filled checkbox (§9.6)', () => {
     const el = render(
       <PhoneListRow

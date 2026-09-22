@@ -8553,6 +8553,17 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
+/*
+ * A label that is a page's title (a tab of another device): one line, truncating from the end,
+ * as the History page's rows and every list of pages in the product (§6; the #314 ruling) – the
+ * host under it says which page a cut title is, and no row grows a line for a title.
+ */
+.zen-settings-row-truncate .zen-settings-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 .zen-settings-row-danger .zen-settings-label {
   color: var(--v2-danger);
 }
@@ -8568,6 +8579,18 @@
  */
 .zen-settings-row-disabled {
   opacity: 0.4;
+}
+/*
+ * Under the row's .4 the deemphasised parts – a description, a trailing summary – would compound
+ * to .276 of the text (1.9:1 in light); a dependent row's description is the way out ("Turn on
+ * Open tabs in What you sync to see them."), the one sentence the row is there for. §9.30 as
+ * amended on #299: a part that is deemphasised when enabled takes the label's ink while
+ * disabled, so under the .4 nothing in the row falls below .4 of the text. A `data-tone`
+ * description keeps its status ink (the row-tone rules above outrank this by specificity).
+ */
+.zen-settings-row-disabled .zen-settings-description,
+.zen-settings-row-disabled .zen-settings-summary {
+  color: var(--v2-text);
 }
 .zen-settings-row-disabled .zen-v2-button:disabled,
 .zen-settings-row-disabled .zen-v2-icon-button:disabled,
@@ -8976,6 +8999,23 @@
 .zen-settings-sheet-rows {
   display: flex;
   flex-direction: column;
+}
+/*
+ * A sheet's 48 header already holds §9.7's 16 below its title line (§9.16), and a dialog's title
+ * block ends with its 16 to the body (§9.23): the first group's heading drops its 20 above under
+ * either, as under the page's bar (#239's ruling on §10.3, read onto both here on #314) – else
+ * the two spaces add to 36. The pane's rule (`.zen-settings-pane > .zen-settings-body …`,
+ * below) is the same shape. The heading's 4 below and the 20 between groups are untouched.
+ */
+.zen-settings-sheet-body
+  > .zen-settings-sheet-rows
+  > .zen-settings-group:first-child
+  > .zen-settings-heading,
+.zen-settings-dialog-body
+  > .zen-settings-sheet-rows
+  > .zen-settings-group:first-child
+  > .zen-settings-heading {
+  margin-top: 0;
 }
 /*
  * Where two panes fit (§10.5, Zen's about:preferences; `pages/settings/desktop.tsx`): the nav

@@ -58,24 +58,29 @@ import java.util.Locale
  * gate on janky frames is the Android program's and is adopted when it lands.
  */
 @RunWith(AndroidJUnit4::class)
-class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-android", "sync-demo") {
-    override val tag = "SyncDemo"
+open class SyncDemo(
+    stateAsset: String = "sync-demo-state.json",
+    /** The stills' and the notes' prefix: the program's capture name (`<prefix>-notes.txt` beside the stills). */
+    protected val prefix: String = "services-sync-android-android",
+    handshakeDir: String = "sync-demo"
+) : DemoHarness(stateAsset, prefix, handshakeDir) {
+    override val tag: String = "SyncDemo"
     private lateinit var server: DemoServer
-    private lateinit var notes: File
-    private lateinit var frameDumps: File
+    protected lateinit var notes: File
+    protected lateinit var frameDumps: File
     /**
      * The driver's own per-scene table (`scene` below: this PR's reading of `dumpsys gfxinfo`,
      * written into notes.txt), named apart from the harness's `frameScenes` – the record of the
      * scenes measured through `measureFrames` (#268), which this driver moves onto with its next
      * run. Null marks a scene that did not play.
      */
-    private val sceneStats = LinkedHashMap<String, FrameScene?>()
-    private var shots = 0
-    private val startedAt = SystemClock.uptimeMillis()
+    protected val sceneStats = LinkedHashMap<String, FrameScene?>()
+    protected var shots = 0
+    protected val startedAt = SystemClock.uptimeMillis()
     /** How many times the second device has written its file (its second round adds a bookmark). */
-    private var peerRounds = 0
+    protected var peerRounds = 0
     /** The folder's salt, read off this device's file at the first seeding (the other device keeps it). */
-    private var peerSalt: String? = null
+    protected var peerSalt: String? = null
 
     @Test
     fun record() {
@@ -94,9 +99,9 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     override fun warmUp() {
-        notes = File(out, "services-sync-android-android-notes.txt")
+        notes = File(out, "$prefix-notes.txt")
         notes.writeText("Zenium Android sync demo\n\n")
-        frameDumps = File(out, "services-sync-android-android-framestats.txt")
+        frameDumps = File(out, "$prefix-framestats.txt")
         frameDumps.writeText(
             "dumpsys gfxinfo ${app.packageName} framestats, read after each gesture scene (the counters reset before it)\n\n"
         )
@@ -193,7 +198,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * `page.open` is the way on so the recording goes on. The landing's Sync row is a page row: a
      * finger, and the tab must come to the section on it.
      */
-    private fun openSyncSettings() {
+    protected fun openSyncSettings() {
         ensureForeground()
         if (!openMenuItem("Settings")) {
             touchFault("no Settings row in the app menu to touch")
@@ -227,9 +232,36 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         if (activeCoreTab()?.optString("url") != SECTION_URL) coreInvoke("page.open", """{"id":"settings","section":"sync"}""")
         if (awaitPage(SECTION_URL, 12_000) == null) error("the tab did not come to the Sync section")
         awaitSurface(up = true, timeoutMs = 6_000)
-        if (rowBounds(FOLDER_LABEL, 10_000) == null) error("no $FOLDER_LABEL row on the section")
+        if (rowBounds(FOLDER_LABEL, 10_000) == null) {
+            // 35681463729: the section painted (the recording shows it, the chrome's document has
+            // the row), and the tree read none of its rows for ten seconds. The chrome's own row is
+            // the check then – the flow's fingers find their rows through it too ([tapRow]'s second
+            // finger) – and what the tree and the document did read goes to the notes, so a repeat
+            // says which side trailed.
+            val inChrome = chromePoint("[data-row=\"sync-folder\"]")
+            note("  the tree read no $FOLDER_LABEL row on the section; the chrome's document: ${describeChromeRow("sync-folder")}")
+            dumpNames("the Sync section, on the tree")
+            if (inChrome == null) error("no $FOLDER_LABEL row on the section: not on the tree, not in the chrome's document")
+        }
         SystemClock.sleep(800)
     }
+
+    /**
+     * What the chrome's document says of the row `rowId`: its rectangle (CSS px), the start of
+     * its text, and whichever ancestor keeps it from the tree – `inert`, `aria-hidden`, a hidden
+     * visibility or display, opacity 0, a content-visibility – with the count of sheets up.
+     */
+    protected fun describeChromeRow(rowId: String): String =
+        chromeJs(
+            "(function(){var r=document.querySelector('[data-row=' + ${JSONObject.quote(JSONObject.quote(rowId))} + ']');if(!r)return 'no such row';" +
+                "var out=[];var e=r;while(e&&e!==document.documentElement){var cs=getComputedStyle(e);var f=[];" +
+                "if(e.hasAttribute('inert'))f.push('inert');if(e.getAttribute('aria-hidden')==='true')f.push('aria-hidden');" +
+                "if(cs.visibility!=='visible')f.push('visibility='+cs.visibility);if(cs.display==='none')f.push('display=none');" +
+                "if(cs.opacity==='0')f.push('opacity=0');if(cs.contentVisibility&&cs.contentVisibility!=='visible')f.push('content-visibility='+cs.contentVisibility);" +
+                "if(f.length)out.push((e.className||e.tagName)+':'+f.join(','));e=e.parentElement}" +
+                "var b=r.getBoundingClientRect();return {rect:[Math.round(b.left),Math.round(b.top),Math.round(b.width),Math.round(b.height)]," +
+                "text:(r.textContent||'').replace(/\\s+/g,' ').slice(0,48),keeps:out,sheets:document.querySelectorAll('.zen-sheet').length}})()"
+        ).ifEmpty { "(the chrome did not answer)" }
 
     // --- 2. the folder ---------------------------------------------------------------------------
 
@@ -240,7 +272,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * the folder's name: the host persisted the tree's permission and answered the chrome with
      * its URI, which the setup draft holds.
      */
-    private fun grantFolder() {
+    protected fun grantFolder() {
         if (!tapRow(FOLDER_LABEL, "sync-folder", timeoutMs = 12_000) { documentPickerShowing() }) {
             error("the folder row did not bring the system picker up")
         }
@@ -252,11 +284,12 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
             back()
             error("no tree granted")
         }
-        if (!awaitSettled({ rowReads(FOLDER_LABEL, FOLDER) }, 12_000)) {
-            note("  the folder row does not read '$FOLDER': ${rowText(FOLDER_LABEL)}")
+        val read = awaitRowReads(FOLDER_LABEL, "sync-folder", FOLDER, 12_000)
+        if (read == null) {
+            note("  the folder row does not read '$FOLDER': ${rowText(FOLDER_LABEL)}; the chrome's document: ${describeChromeRow("sync-folder")}")
             touchFault("the granted tree did not reach the folder row")
         } else {
-            note("  the folder row reads: ${rowText(FOLDER_LABEL)}")
+            note("  the folder row reads: $read")
         }
         val grants = shell("dumpsys activity uri-grants 2>/dev/null | grep -i zenium | head -n 5").trim()
         if (grants.isNotEmpty()) note("  persisted grants: $grants")
@@ -276,7 +309,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * own touches do ([touchPoint]). False when a step's control never came or never took; the
      * caller reports the fault.
      */
-    private fun pickTree(name: String): Boolean {
+    protected fun pickTree(name: String): Boolean {
         if (!awaitPicker(10_000)) {
             note("  no document picker window came up")
             return false
@@ -335,7 +368,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** Whether the picker is inside `name`: its list's header reads "Files in <name>", or its toolbar's title does, and the bottom button is enabled. */
-    private fun insideFolder(name: String): Boolean {
+    protected fun insideFolder(name: String): Boolean {
         if (pickerNode(USE_LABELS, 0, role = BUTTON, enabled = true) == null) return false
         if (pickerNode(listOf("Files in $name"), 0) != null) return true
         return pickerNodes { node -> node.className?.toString()?.endsWith("Toolbar") == true }
@@ -343,10 +376,10 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** The confirmation DocumentsUI raises on Use this folder (Android 11+): its Allow button, enabled. */
-    private fun permissionDialogShowing(): Boolean = pickerNode(ALLOW_LABELS, 0, role = BUTTON, enabled = true) != null
+    protected fun permissionDialogShowing(): Boolean = pickerNode(ALLOW_LABELS, 0, role = BUTTON, enabled = true) != null
 
     /** The drawer's row for the device's own storage: by its names, else the row that is no known collection. */
-    private fun storageRoot(): AccessibilityNodeInfo? {
+    protected fun storageRoot(): AccessibilityNodeInfo? {
         val deviceName = runCatching { Settings.Global.getString(app.contentResolver, Settings.Global.DEVICE_NAME) }.getOrNull()
         for (label in listOfNotNull(deviceName, Build.MODEL, "Internal storage", "Internal shared storage")) {
             pickerNode(listOf(label), 0)?.let { return it }
@@ -358,7 +391,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         }.firstOrNull { node -> Rect().also(node::getBoundsInScreen).let { it.width() > 0 && it.height() > 0 } }
     }
 
-    private fun clickableAncestor(node: AccessibilityNodeInfo): Boolean {
+    protected fun clickableAncestor(node: AccessibilityNodeInfo): Boolean {
         var n: AccessibilityNodeInfo? = node
         while (n != null) {
             if (n.isClickable) return true
@@ -376,7 +409,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * Turn on sync, which must leave the form busy or sync on. Then the engine: scrypt-js in the
      * WebView takes its seconds on the emulator, so the wait for `enabled` is generous.
      */
-    private fun turnOnSync(firstTime: Boolean) {
+    protected fun turnOnSync(firstTime: Boolean) {
         if (!tapRow(TURN_ON_LABEL, "sync-turn-on", timeoutMs = 10_000) { findByLabel(PASSPHRASE_TITLE) != null }) {
             error("the Turn on sync row did not open the passphrase sheet")
         }
@@ -418,7 +451,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** A finger on the `index`th secret field of the sheet (top to bottom), then the passphrase typed into it. */
-    private fun fillSecret(index: Int, what: String) {
+    protected fun fillSecret(index: Int, what: String) {
         var typed = 0
         for (attempt in 1..4) {
             if (!secretFocused(index)) {
@@ -450,7 +483,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * second field, once the first brought the keyboard up), one back lowers the keyboard first –
      * the IME consumes that back, the sheet stays (SettingsTouchDemo's rule for its Cancel).
      */
-    private fun focusSecret(index: Int): Boolean {
+    protected fun focusSecret(index: Int): Boolean {
         var field = secretFields().getOrNull(index) ?: run {
             dumpNames("the passphrase sheet")
             error("no secret field $index in the sheet")
@@ -471,20 +504,20 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** The sheet's editable fields, top to bottom (the passphrase, then its confirmation). */
-    private fun secretFields(): List<AccessibilityNodeInfo> = nodes { node ->
+    protected fun secretFields(): List<AccessibilityNodeInfo> = nodes { node ->
         node.packageName?.toString() == app.packageName && node.isEditable && node.isVisibleToUser
     }.filter { node -> Rect().also(node::getBoundsInScreen).let { it.width() > 0 && it.height() > 0 } }
         .sortedBy { node -> Rect().also(node::getBoundsInScreen).top }
 
-    private fun secretFocused(index: Int): Boolean =
+    protected fun secretFocused(index: Int): Boolean =
         chromeValue("String(document.activeElement && document.activeElement.id === ${JSONObject.quote(SECRET_IDS[index])})") == "true"
 
-    private fun secretValue(index: Int): String? {
+    protected fun secretValue(index: Int): String? {
         val raw = chromeJs("(function(){var e=document.getElementById(${JSONObject.quote(SECRET_IDS[index])});return e?e.value:null})()")
         return runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
     }
 
-    private fun clearField(length: Int) {
+    protected fun clearField(length: Int) {
         pressKey(KeyEvent.KEYCODE_MOVE_END)
         repeat(length) {
             pressKey(KeyEvent.KEYCODE_DEL)
@@ -492,10 +525,10 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         }
     }
 
-    private fun formBusy(): Boolean =
+    protected fun formBusy(): Boolean =
         chromeValue("String(!!document.querySelector('[data-testid=\"sync-passphrase-form\"][aria-busy=\"true\"]'))") == "true"
 
-    private fun formState(): String =
+    protected fun formState(): String =
         chromeValue(
             "(function(){var f=document.querySelector('[data-testid=\"sync-passphrase-form\"]');if(!f)return 'no form';" +
                 "var m=f.querySelector('[role=\"alert\"], .zen-settings-validation');return 'busy='+f.getAttribute('aria-busy')+" +
@@ -504,7 +537,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
 
     // --- 4. the toggle ---------------------------------------------------------------------------
 
-    private fun flipOpenTabs() {
+    protected fun flipOpenTabs() {
         val was = scope().getBoolean("openTabs")
         if (!tapRow(OPEN_TABS_LABEL, "sync-scope:openTabs") { scope().getBoolean("openTabs") != was }) {
             touchFault("the Open tabs switch row did not flip under a finger")
@@ -524,7 +557,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * seconds on the device), a Space with one tab and its order record, a bookmark – and from the
      * second round a second bookmark, so a later sync has something new to bring.
      */
-    private fun seedPeer() {
+    protected fun seedPeer() {
         peerRounds++
         val dir = "$FOLDER_PATH/${SyncPeer.DIR_NAME}"
         val salt = peerSalt ?: run {
@@ -553,7 +586,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         note("  tree: ${treeListing()}")
     }
 
-    private fun peerRecords(now: Long, round: Int): List<JSONObject> {
+    protected fun peerRecords(now: Long, round: Int): List<JSONObject> {
         val records = ArrayList<JSONObject>()
         records += SyncPeer.record(
             PEER_SPACE, "space", now,
@@ -594,7 +627,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * already in the list before the finger is noted: the touch is asserted on a sync of its
      * own (`lastSyncAt` moving), the landing on the state after it.
      */
-    private fun syncNow() {
+    protected fun syncNow() {
         val before = syncStatus().optLong("lastSyncAt", 0)
         note("  before the touch: '$PEER_NAME' ${if (peerListed()) "already listed by the 30 s poll" else "not yet in the list"}")
         if (!tapRow(SYNC_NOW_LABEL, "sync-now") { syncStatus().getBoolean("syncing") || syncStatus().optLong("lastSyncAt", 0) > before }) {
@@ -606,13 +639,13 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         assertLanded()
     }
 
-    private fun peerListed(): Boolean {
+    protected fun peerListed(): Boolean {
         val devices = syncStatus().getJSONArray("devices")
         return (0 until devices.length()).any { devices.getJSONObject(it).optString("name") == PEER_NAME }
     }
 
     /** The other device in the list with its last-seen time, and its records in the core's state. */
-    private fun assertLanded() {
+    protected fun assertLanded() {
         val state = coreState()
         val sync = state.getJSONObject("sync")
         val devices = sync.getJSONArray("devices")
@@ -642,7 +675,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** The Space the other device sent, brought to the front so the recording shows its tab in the strip. */
-    private fun showLanded() {
+    protected fun showLanded() {
         val space = coreState().getJSONArray("spaces").let { s -> (0 until s.length()).map(s::getJSONObject) }
             .firstOrNull { it.optString("id") == PEER_SPACE } ?: return
         if (space.optJSONArray("tabIds")?.length() == 0) return
@@ -663,7 +696,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * The disconnect sheet: a finger on the §9.23 checkbox row (it must read checked), a finger
      * on Turn off (sync must be off), then the tree: this device's file gone, the other's kept.
      */
-    private fun turnOffSync() {
+    protected fun turnOffSync() {
         val mine = SyncPeer.deviceFileName(syncStatus().getString("deviceId"))
         if (!tapRow(TURN_OFF_LABEL, "sync-disconnect", timeoutMs = 10_000) { findByLabel(TURN_OFF_TITLE) != null }) {
             error("the Turn off sync row did not open its sheet")
@@ -692,7 +725,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         SystemClock.sleep(600)
     }
 
-    private fun wipeChecked(): Boolean =
+    protected fun wipeChecked(): Boolean =
         chromeValue("String(!!(document.querySelector('[data-testid=\"sync-disconnect-form\"] input[type=checkbox]')||{}).checked)") == "true"
 
     // --- 8. the merge question -------------------------------------------------------------------
@@ -702,7 +735,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * checked), a finger back on Merge, a finger on Continue: the merge must be answered and the
      * sync run – the device and its records back in the core's state.
      */
-    private fun answerMerge() {
+    protected fun answerMerge() {
         if (!tapRow(MERGE_ROW_LABEL, "sync-merge", timeoutMs = 10_000) { findByLabel(MERGE_TITLE) != null }) {
             error("the merge row did not open its sheet")
         }
@@ -724,7 +757,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** A finger on the radio reading `label`; it must read checked (`aria-checked`) afterwards. */
-    private fun pickRadio(label: String, effect: String) {
+    protected fun pickRadio(label: String, effect: String) {
         val node = radioNode(label) ?: run {
             dumpNames("the merge sheet")
             touchFault("no radio reading '$label' in the merge sheet")
@@ -738,7 +771,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         else touchFault("the touch on the radio '$label' did not take: not $effect")
     }
 
-    private fun radioNode(label: String): AccessibilityNodeInfo? =
+    protected fun radioNode(label: String): AccessibilityNodeInfo? =
         findNodeWhere { n -> n.isCheckable && (n.text?.toString() ?: n.contentDescription?.toString())?.startsWith(label) == true }
 
     // --- the page's rows -------------------------------------------------------------------------
@@ -753,7 +786,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * it was needed. A first finger that opened the URL field instead (it landed on the bar) is
      * undone before the second. False when the row is not there or the change never came.
      */
-    private fun tapRow(label: String, rowId: String, timeoutMs: Long = 6_000, settled: () -> Boolean): Boolean {
+    protected fun tapRow(label: String, rowId: String, timeoutMs: Long = 6_000, settled: () -> Boolean): Boolean {
         if (settled()) return true
         if (rowBounds(label, 8_000) == null) Log.w(tag, "no row reading '$label' in the tree") else {
             SystemClock.sleep(400)
@@ -782,11 +815,24 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * up to twice; a row taller than the band is taken once its middle is in it. Polls, since the
      * tree trails the screen on the emulator.
      */
-    private fun rowBounds(text: String, timeoutMs: Long): Rect? {
+    protected fun rowBounds(text: String, timeoutMs: Long): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var reveals = 0
+        var misses = 0
         do {
-            val node = findNode { it == text || it.startsWith(text) }
+            var node = findNode { it == text || it.startsWith(text) }
+            if (node == null) {
+                // Nothing of that name on the active window's tree: after a few polls, the
+                // automation's cache of the tree is flushed (a node it kept from before the page
+                // changed answers for the row that replaced it: 35681463729 read the landing's
+                // tree for ten seconds over the Sync section painted on screen) and every window
+                // on screen is read, in case the focus sits with another.
+                if (++misses % 5 == 0) {
+                    flushTree()
+                    node = findInWindows(app.packageName) { it == text || it.startsWith(text) }
+                    if (node != null) Log.i(tag, "'$text' read off another window's tree (or the flushed cache), not the active window's")
+                }
+            }
             if (node != null) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
                 val band = pageBand()
@@ -805,14 +851,14 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         return null
     }
 
-    private fun revealRow(text: String): Rect? = rowBounds(text, 6_000)
+    protected fun revealRow(text: String): Rect? = rowBounds(text, 6_000)
 
     /**
      * Scroll the page row whose text starts with `text` to the middle of its list, in the chrome:
      * the first `data-row` row or landing category that is laid out, not inert (the landing stays
      * in the document behind a section) and reads so. True when the chrome had such a row.
      */
-    private fun revealInChrome(text: String): Boolean {
+    protected fun revealInChrome(text: String): Boolean {
         val raw = chromeJs(
             "(function(){var t=${JSONObject.quote(text)};var all=document.querySelectorAll('[data-row], .zen-settings-category');" +
                 "for(var i=0;i<all.length;i++){var e=all[i];if(e.closest('[inert]'))continue;var r=e.getBoundingClientRect();if(!r.width||!r.height)continue;" +
@@ -826,10 +872,10 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * of the chrome's bottom bar, read off the chrome ([barTop]). The bar is the chrome's own
      * layer over the page's bottom, and a finger there is the bar's (the URL field opens).
      */
-    private fun pageBand(): Rect = Rect(touchable.left, touchable.top, touchable.right, barTop())
+    protected fun pageBand(): Rect = Rect(touchable.left, touchable.top, touchable.right, barTop())
 
     /** The screen y the chrome's bottom bar begins at; the touchable window's bottom when there is no bar at the bottom edge. */
-    private fun barTop(): Int {
+    protected fun barTop(): Int {
         val raw = chromeJs(
             "(function(){var b=document.querySelector('.zen-phone-bar[data-edge=\"bottom\"]');if(!b)return null;" +
                 "var r=b.getBoundingClientRect();return r.height>0?r.top:null})()"
@@ -848,7 +894,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * finger landed, or null (nothing touched, and a log line) when nothing reads the label in
      * time or no part of the row is inside the band.
      */
-    private fun touchPageRow(label: String): PointF? {
+    protected fun touchPageRow(label: String): PointF? {
         val node = awaitNode(4_000) { it == label || it.startsWith(label) } ?: run {
             Log.w(tag, "nothing on screen reads '$label'")
             return null
@@ -874,27 +920,70 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * chrome's bottom bar): the field closed the harness's way ([closeUrlField]), the outcome in
      * the notes. Nothing when the field is not open.
      */
-    private fun recoverUrlField(what: String) {
+    protected fun recoverUrlField(what: String) {
         val close = closeUrlField()
         if (close == UrlFieldClose.NOT_OPEN) return
         note("  (the finger meant for $what opened the URL field; ${close.describe()})")
     }
 
-    private fun rowText(text: String): String? =
+    protected fun rowText(text: String): String? =
         findNode { it.startsWith(text) }?.let { it.text ?: it.contentDescription }?.toString()
 
-    private fun syncNowRowText(): String = rowText(SYNC_NOW_LABEL) ?: "(no Sync now row)"
+    /** The text of the chrome's row `rowId` (`data-row`), whitespace collapsed; null without the row. */
+    protected fun chromeRowText(rowId: String): String? =
+        chromeValue(
+            "(function(){var r=document.querySelector('[data-row=' + ${JSONObject.quote(JSONObject.quote(rowId))} + ']');" +
+                "return r?(r.textContent||'').replace(/\\s+/g,' ').trim():null})()"
+        ).ifEmpty { null }
 
-    private fun awaitSettled(settled: () -> Boolean, timeoutMs: Long): Boolean {
+    /**
+     * Wait for the row labelled `label` to read `value` at its end – on the tree first (the
+     * row's accessible name, [rowReads]), else in the chrome's document (the row `rowId`'s text):
+     * 35683815482 read the Sync folder row off neither the active window's tree nor the others'
+     * for twelve seconds after the picker's Allow, while the core held the folder and the
+     * recording shows the row with its name. Answers the text read, marked with the side that
+     * answered when it was the document; null when neither reads it in `timeoutMs`.
+     */
+    protected fun awaitRowReads(label: String, rowId: String, value: String, timeoutMs: Long): String? {
+        var fromChrome: String? = null
+        val settled = awaitSettled({
+            if (rowReads(label, value)) return@awaitSettled true
+            val text = chromeRowText(rowId)
+            if (text != null && text.endsWith(value)) {
+                fromChrome = text
+                true
+            } else false
+        }, timeoutMs)
+        if (!settled) return null
+        val onTree = rowText(label)
+        return if (onTree != null && onTree.endsWith(value)) onTree
+        else "${fromChrome ?: chromeRowText(rowId)} (the chrome's document; the tree read ${onTree ?: "no such row"})"
+    }
+
+    protected fun syncNowRowText(): String = rowText(SYNC_NOW_LABEL) ?: "(no Sync now row)"
+
+    /**
+     * Poll `settled` every 250 ms up to `timeoutMs`. Every second of misses the automation's
+     * cache of the tree is flushed (API 34), so a condition read off the tree is read afresh
+     * rather than off nodes the cache kept from before the page changed (see [rowBounds]).
+     */
+    protected fun awaitSettled(settled: () -> Boolean, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var polls = 0
         while (SystemClock.uptimeMillis() < deadline) {
             if (settled()) return true
+            if (++polls % 4 == 0) flushTree()
             SystemClock.sleep(250)
         }
         return settled()
     }
 
-    private fun awaitPage(url: String, timeoutMs: Long): JSONObject? {
+    /** Flush the automation's cache of the accessibility tree (a no-op below API 34). */
+    protected fun flushTree() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) ui.clearCache()
+    }
+
+    protected fun awaitPage(url: String, timeoutMs: Long): JSONObject? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val tab = activeCoreTab()
@@ -905,7 +994,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         return null
     }
 
-    private fun ensureDemoTab() {
+    protected fun ensureDemoTab() {
         if (activeCoreTab()?.optString("id") == DEMO_TAB) return
         coreInvoke("tab.activate", """{"tabId":"$DEMO_TAB"}""")
         awaitSettled({ activeCoreTab()?.optString("id") == DEMO_TAB }, 8_000)
@@ -919,7 +1008,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * summary since the reset before the scene (every frame the window drew), and the times of
      * the frames its `framestats` ring still held at the read, as a cross-check.
      */
-    private class FrameScene(
+    protected class FrameScene(
         val total: Int,
         val janky: Int,
         val jankyPercent: Double,
@@ -942,7 +1031,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * never went) is read all the same but not counted. The stats are the window's – the chrome
      * WebView draws through the app's render thread, so its sheet's frames are these frames.
      */
-    private fun scene(name: String, body: () -> Boolean) {
+    protected fun scene(name: String, body: () -> Boolean) {
         val pkg = app.packageName
         shell("dumpsys gfxinfo $pkg reset")
         SystemClock.sleep(400)
@@ -966,7 +1055,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * The baseline scene: the app menu (the sheet main had before this PR) under a finger on the
      * bar's Menu button, settled, then a back. True when the sheet came and went.
      */
-    private fun openAndDismissMenu(): Boolean {
+    protected fun openAndDismissMenu(): Boolean {
         if (sheetCount() != 0) closeSheets()
         tapMenuButton()
         if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) {
@@ -983,7 +1072,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * sheet). True when the sheet came and went – from the chrome and from the tree, so the
      * flow's own finger on the row afterwards finds no stale title.
      */
-    private fun openAndDismissSheet(rowLabel: String, rowId: String, title: String): Boolean {
+    protected fun openAndDismissSheet(rowLabel: String, rowId: String, title: String): Boolean {
         if (!tapRow(rowLabel, rowId, timeoutMs = 10_000) { findByLabel(title) != null }) {
             note("  the $rowLabel row did not open its sheet for the scene")
             return false
@@ -999,7 +1088,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** A back on the scene's sheet; true once no `.zen-sheet` is in the chrome and `label` has left the tree. */
-    private fun dismissScene(label: String): Boolean {
+    protected fun dismissScene(label: String): Boolean {
         back()
         val closed = awaitSettled({ sheetCount() == 0 }, 8_000)
         val gone = waitForGone(label, 8_000)
@@ -1016,7 +1105,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * (the block headed `Graphics info for pid <ours>` when the package has more than one), and
      * the frame times out of its PROFILEDATA rings; null without a summary.
      */
-    private fun parseGfxInfo(dump: String, elapsedMs: Long): FrameScene? {
+    protected fun parseGfxInfo(dump: String, elapsedMs: Long): FrameScene? {
         val blocks = dump.split("** Graphics info for pid ")
         val mine = blocks.drop(1).firstOrNull { it.startsWith("${Process.myPid()} ") }
             ?: blocks.drop(1).firstOrNull { "Total frames rendered:" in it }
@@ -1039,7 +1128,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** FrameCompleted − IntendedVsync, in ms, for every `Flags == 0` row of every PROFILEDATA block (the columns found by name: they differ by release). */
-    private fun ringFrameTimes(block: String): List<Double> {
+    protected fun ringFrameTimes(block: String): List<Double> {
         val times = ArrayList<Double>()
         val lines = block.lines()
         var i = 0
@@ -1068,7 +1157,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         return times
     }
 
-    private fun describe(s: FrameScene): String {
+    protected fun describe(s: FrameScene): String {
         val ring = if (s.ringMs.isEmpty()) "" else {
             val sorted = s.ringMs.sorted()
             fun at(p: Double) = "%.1f".format(Locale.US, sorted[((sorted.size - 1) * p).toInt()])
@@ -1080,7 +1169,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** The scenes as one table at the end of the notes: the app menu is the before, the PR's sheets the after. */
-    private fun noteFrameTable() {
+    protected fun noteFrameTable() {
         note(
             "\nframe stats (dumpsys gfxinfo ${app.packageName}: the counters reset before each scene and read after it; a scene is the sheet opened with a finger, settled, dismissed with a back; " +
                 "janky is HWUI's count of frames past their deadline; the app menu is the baseline main had before this PR)"
@@ -1101,14 +1190,14 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
 
     // --- sheets ----------------------------------------------------------------------------------
 
-    private fun sheetCount(): Int = chromeValue("String(document.querySelectorAll('.zen-sheet').length)").toIntOrNull() ?: -1
+    protected fun sheetCount(): Int = chromeValue("String(document.querySelectorAll('.zen-sheet').length)").toIntOrNull() ?: -1
 
-    private fun awaitNoSheet() {
+    protected fun awaitNoSheet() {
         val deadline = SystemClock.uptimeMillis() + 8_000
         while (SystemClock.uptimeMillis() < deadline && sheetCount() != 0) SystemClock.sleep(200)
     }
 
-    private fun closeSheets() {
+    protected fun closeSheets() {
         var count = sheetCount()
         repeat(3) {
             if (count <= 0) return
@@ -1121,14 +1210,14 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
 
     // --- the system picker -----------------------------------------------------------------------
 
-    private fun documentPickerShowing(): Boolean = pickerNodes { true }.isNotEmpty()
+    protected fun documentPickerShowing(): Boolean = pickerNodes { true }.isNotEmpty()
 
-    private fun awaitPicker(timeoutMs: Long): Boolean = awaitSettled({ documentPickerShowing() }, timeoutMs)
+    protected fun awaitPicker(timeoutMs: Long): Boolean = awaitSettled({ documentPickerShowing() }, timeoutMs)
 
-    private fun awaitPickerGone(timeoutMs: Long): Boolean = awaitSettled({ !documentPickerShowing() }, timeoutMs)
+    protected fun awaitPickerGone(timeoutMs: Long): Boolean = awaitSettled({ !documentPickerShowing() }, timeoutMs)
 
     /** Nodes of the picker's windows (DocumentsUI, the permission dialog it raises). */
-    private fun pickerNodes(predicate: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> =
+    protected fun pickerNodes(predicate: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> =
         nodes { node -> node.packageName?.toString() in PICKER_PACKAGES && predicate(node) }
 
     /**
@@ -1139,7 +1228,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * first run lost the tree to one finger at the seam of two windows. Each finger and where it
      * landed go to the notes. False when nothing reads the labels in time or no finger took.
      */
-    private fun pickerPress(labels: List<String>, effect: String, role: String? = null, timeoutMs: Long = 5_000, took: () -> Boolean): Boolean {
+    protected fun pickerPress(labels: List<String>, effect: String, role: String? = null, timeoutMs: Long = 5_000, took: () -> Boolean): Boolean {
         for (attempt in 1..3) {
             val node = pickerNode(labels, if (attempt == 1) 8_000 else 3_000, role, enabled = true) ?: run {
                 note("  nothing in the picker reads ${labels.joinToString(" / ") { "'$it'" }} (attempt $attempt)")
@@ -1167,7 +1256,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * emulator, where a touch reaches SystemUI and never the picker. Where the finger landed, or
      * null when no part of the node is inside the touchable window.
      */
-    private fun pickerTouch(node: AccessibilityNodeInfo): PointF? {
+    protected fun pickerTouch(node: AccessibilityNodeInfo): PointF? {
         val bounds = steadyBounds(node) ?: return null
         val point = touchPoint(bounds) ?: return null
         Log.i(tag, "picker touch at ${point.x},${point.y} on '${node.text ?: node.contentDescription}' (bounds $bounds, touchable $touchable)")
@@ -1183,7 +1272,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
      * `android.widget.Button`, an AOSP one is one), enabled when `enabled`; polled for up to
      * `timeoutMs` (one look at 0). Null when none is on screen in time.
      */
-    private fun pickerNode(labels: List<String>, timeoutMs: Long, role: String? = null, enabled: Boolean = false): AccessibilityNodeInfo? {
+    protected fun pickerNode(labels: List<String>, timeoutMs: Long, role: String? = null, enabled: Boolean = false): AccessibilityNodeInfo? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (true) {
             val found = pickerNodes { node ->
@@ -1204,7 +1293,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** Breadth-first search of every window on screen (the app, the picker, the dialogs). */
-    private fun nodes(predicate: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> {
+    protected fun nodes(predicate: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> {
         val roots = ArrayList<AccessibilityNodeInfo>()
         for (window in ui.windows) window.root?.let(roots::add)
         if (roots.isEmpty()) ui.rootInActiveWindow?.let(roots::add)
@@ -1221,7 +1310,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** Every named node on screen (in `packages`) into the notes, for a step that found nothing. */
-    private fun dumpNames(where: String, packages: Set<String> = setOf(app.packageName)) {
+    protected fun dumpNames(where: String, packages: Set<String> = setOf(app.packageName)) {
         val names = nodes { node -> node.packageName?.toString() in packages }
             .mapNotNull { node ->
                 val name = (node.text ?: node.contentDescription ?: node.hintText)?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
@@ -1233,7 +1322,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     // --- keys ------------------------------------------------------------------------------------
 
     /** Type `text` as key events, each stamped as it is injected (a stale stamp is dropped by the dispatcher). */
-    private fun typeText(text: String) {
+    protected fun typeText(text: String) {
         val map = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
         for (ch in text) {
             val events = map.getEvents(charArrayOf(ch)) ?: continue
@@ -1245,7 +1334,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         }
     }
 
-    private fun pressKey(keyCode: Int) {
+    protected fun pressKey(keyCode: Int) {
         val now = SystemClock.uptimeMillis()
         ui.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0), true)
         ui.injectInputEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0), true)
@@ -1253,13 +1342,13 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
 
     // --- the chrome's bridge and the core's state ------------------------------------------------
 
-    private fun chromeValue(code: String): String =
+    protected fun chromeValue(code: String): String =
         runCatching { JSONTokener(chromeJs(code)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
 
-    private fun awaitChrome(code: String, timeoutMs: Long): Boolean =
+    protected fun awaitChrome(code: String, timeoutMs: Long): Boolean =
         awaitSettled({ chromeValue("String(!!($code))") == "true" }, timeoutMs)
 
-    private fun chromePoint(selector: String): PointF? {
+    protected fun chromePoint(selector: String): PointF? {
         val raw = chromeJs(
             "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return null;" +
                 "e.scrollIntoView({block:'center'});var r=e.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()"
@@ -1271,13 +1360,13 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         return PointF(origin[0] + point.getDouble(0).toFloat() * density, origin[1] + point.getDouble(1).toFloat() * density)
     }
 
-    private val host: Host get() = (activity as MainActivity).host
+    protected val host: Host get() = (activity as MainActivity).host
 
-    private fun syncStatus(): JSONObject = coreState().getJSONObject("sync")
+    protected fun syncStatus(): JSONObject = coreState().getJSONObject("sync")
 
-    private fun scope(): JSONObject = syncStatus().getJSONObject("scope")
+    protected fun scope(): JSONObject = syncStatus().getJSONObject("scope")
 
-    private fun describeSync(): String {
+    protected fun describeSync(): String {
         val s = syncStatus()
         return "sync enabled=${s.getBoolean("enabled")} folderName=${s.optString("folderName")} folderLost=${s.optBoolean("folderLost")} " +
             "pendingMerge=${s.optBoolean("pendingMerge")} syncing=${s.optBoolean("syncing")} lastSyncAt=${s.opt("lastSyncAt")} " +
@@ -1285,80 +1374,80 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /** What the tree's `zenium-sync` directory holds, as the shell lists it. */
-    private fun treeListing(): String = shell("ls -l $FOLDER_PATH/${SyncPeer.DIR_NAME} 2>&1").trim().replace('\n', ';')
+    protected fun treeListing(): String = shell("ls -l $FOLDER_PATH/${SyncPeer.DIR_NAME} 2>&1").trim().replace('\n', ';')
 
     /**
      * Run a shell command as adb would. UiAutomation hands the string to `Runtime.exec`, which
      * splits on whitespace and knows nothing of quotes, so the script travels base64-encoded in a
      * single token and `sh` decodes it.
      */
-    private fun shell(script: String): String {
+    protected fun shell(script: String): String {
         val encoded = Base64.encodeToString(script.toByteArray(), Base64.NO_WRAP)
         val descriptor = ui.executeShellCommand("sh -c echo\${IFS}$encoded|base64\${IFS}-d|sh")
         return ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.bufferedReader().readText() }
     }
 
-    private fun snap(name: String) {
+    protected fun snap(name: String) {
         shots++
         shot("${shots.toString().padStart(2, '0')}-$name")
         note("  shot $name")
     }
 
-    private fun note(line: String) {
+    protected fun note(line: String) {
         Log.i(tag, line.trim())
         if (::notes.isInitialized) notes.appendText(line + "\n")
     }
 
     companion object {
-        private const val PORT = 18151
-        private const val DEMO_TAB = "tab_demo"
-        private const val SETTINGS_URL = "zen://settings"
-        private const val SECTION_URL = "zen://settings/sync"
+        internal const val PORT = 18151
+        internal const val DEMO_TAB = "tab_demo"
+        internal const val SETTINGS_URL = "zen://settings"
+        internal const val SECTION_URL = "zen://settings/sync"
         /** The folder on the device's storage the picker is steered to (`/sdcard` is the shell's view of it). */
-        private const val FOLDER = "ZeniumSync"
-        private const val FOLDER_PATH = "/sdcard/$FOLDER"
-        private const val PASSPHRASE = "orbit-lantern-42"
-        private val SECRET_IDS = listOf("sync-passphrase", "sync-confirm")
-        private const val PEER_ID = "device_worklaptop"
-        private const val PEER_NAME = "Work laptop"
-        private const val PEER_SPACE = "space_worklaptop_research"
-        private const val PEER_SPACE_NAME = "Research"
-        private const val PEER_TAB = "tab_worklaptop_1"
-        private const val PEER_TAB_TITLE = "Sync design notes"
-        private const val PEER_TAB_URL = "https://example.com/sync-design-notes"
-        private const val PEER_BOOKMARK = "bm_worklaptop_1"
-        private const val PEER_BOOKMARK_TITLE = "Zenium on GitHub"
-        private const val PEER_BOOKMARK_URL = "https://github.com/BenItBuhner/Zenium"
-        private const val PEER_BOOKMARK_2 = "bm_worklaptop_2"
-        private const val PEER_BOOKMARK_2_TITLE = "Zenium releases"
-        private const val PEER_BOOKMARK_2_URL = "https://github.com/BenItBuhner/Zenium/releases"
+        internal const val FOLDER = "ZeniumSync"
+        internal const val FOLDER_PATH = "/sdcard/$FOLDER"
+        internal const val PASSPHRASE = "orbit-lantern-42"
+        internal val SECRET_IDS = listOf("sync-passphrase", "sync-confirm")
+        internal const val PEER_ID = "device_worklaptop"
+        internal const val PEER_NAME = "Work laptop"
+        internal const val PEER_SPACE = "space_worklaptop_research"
+        internal const val PEER_SPACE_NAME = "Research"
+        internal const val PEER_TAB = "tab_worklaptop_1"
+        internal const val PEER_TAB_TITLE = "Sync design notes"
+        internal const val PEER_TAB_URL = "https://example.com/sync-design-notes"
+        internal const val PEER_BOOKMARK = "bm_worklaptop_1"
+        internal const val PEER_BOOKMARK_TITLE = "Zenium on GitHub"
+        internal const val PEER_BOOKMARK_URL = "https://github.com/BenItBuhner/Zenium"
+        internal const val PEER_BOOKMARK_2 = "bm_worklaptop_2"
+        internal const val PEER_BOOKMARK_2_TITLE = "Zenium releases"
+        internal const val PEER_BOOKMARK_2_URL = "https://github.com/BenItBuhner/Zenium/releases"
         // The page's words (`SYNC_COPY` in lib/syncSetup.ts).
-        private const val FOLDER_LABEL = "Sync folder"
-        private const val TURN_ON_LABEL = "Turn on sync"
-        private const val PASSPHRASE_TITLE = "Create a passphrase"
-        private const val OPEN_TABS_LABEL = "Open tabs"
-        private const val SYNC_NOW_LABEL = "Sync now"
-        private const val TURN_OFF_LABEL = "Turn off sync"
-        private const val TURN_OFF_TITLE = "Turn off sync?"
-        private const val WIPE_LABEL = "Also remove this device\u2019s data from the folder"
-        private const val TURN_OFF_ACTION = "Turn off"
-        private const val MERGE_ROW_LABEL = "This folder already has synced data"
-        private const val MERGE_TITLE = "Combine with the data in this folder?"
-        private const val MERGE_LABEL = "Merge"
-        private const val REPLACE_LABEL = "Keep only this device\u2019s data"
-        private const val CONTINUE_LABEL = "Continue"
+        internal const val FOLDER_LABEL = "Sync folder"
+        internal const val TURN_ON_LABEL = "Turn on sync"
+        internal const val PASSPHRASE_TITLE = "Create a passphrase"
+        internal const val OPEN_TABS_LABEL = "Open tabs"
+        internal const val SYNC_NOW_LABEL = "Sync now"
+        internal const val TURN_OFF_LABEL = "Turn off sync"
+        internal const val TURN_OFF_TITLE = "Turn off sync?"
+        internal const val WIPE_LABEL = "Also remove this device\u2019s data from the folder"
+        internal const val TURN_OFF_ACTION = "Turn off"
+        internal const val MERGE_ROW_LABEL = "This folder already has synced data"
+        internal const val MERGE_TITLE = "Combine with the data in this folder?"
+        internal const val MERGE_LABEL = "Merge"
+        internal const val REPLACE_LABEL = "Keep only this device\u2019s data"
+        internal const val CONTINUE_LABEL = "Continue"
         // The frame scenes' names, as the notes' table and the PR body carry them.
-        private const val SCENE_MENU = "app menu (baseline)"
-        private const val SCENE_PASSPHRASE = "passphrase sheet"
-        private const val SCENE_TURN_OFF = "Turn off sync sheet"
-        private const val SCENE_MERGE = "merge sheet"
-        private val PICKER_PACKAGES = setOf("com.android.documentsui", "com.google.android.documentsui", "com.android.permissioncontroller")
+        internal const val SCENE_MENU = "app menu (baseline)"
+        internal const val SCENE_PASSPHRASE = "passphrase sheet"
+        internal const val SCENE_TURN_OFF = "Turn off sync sheet"
+        internal const val SCENE_MERGE = "merge sheet"
+        internal val PICKER_PACKAGES = setOf("com.android.documentsui", "com.google.android.documentsui", "com.android.permissioncontroller")
         // DocumentsUI's words and classes: the confirmation reads "Use this folder" from Android 11
         // ("Select" before), greyed on the storage root; the dialog it raises has Allow.
-        private val USE_LABELS = listOf("Use this folder", "Select")
-        private val ALLOW_LABELS = listOf("Allow", "OK")
-        private const val BUTTON = "Button"
-        private val PAGE = """
+        internal val USE_LABELS = listOf("Use this folder", "Select")
+        internal val ALLOW_LABELS = listOf("Allow", "OK")
+        internal const val BUTTON = "Button"
+        internal val PAGE = """
             <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Sync demo</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:24px;color:#222}h1{font-size:22px}</style></head>
             <body><h1>Sync demo</h1><p>This tab stands in for a page while Settings › Sync is exercised.</p></body></html>
