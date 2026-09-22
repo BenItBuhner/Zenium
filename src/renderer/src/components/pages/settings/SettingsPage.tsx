@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronLeft, Search, X } from 'lucide-react'
 import {
   INTERNAL_PAGES,
@@ -47,10 +47,19 @@ import { useSheetStack } from './useSheetStack'
  * in landscape): the two-pane layout (`desktop.tsx`, §10.5) – the nav column and the content
  * column, the nav switching sections without a history entry. The page measures itself rather
  * than the window, so a split or a narrow window falls back to the landing and drill-ins.
+ *
+ * The page's one parameter (`InternalPageQuery`) is Privacy's `site`: `zen://settings/privacy?
+ * site=<origin>` is the section asked for a site – the site-information sheet's "Requests
+ * blocked" row – and opens with the site's own group ({@link SITE_ROW}, "Block on <host>") on
+ * screen, where Chrome's order has it one screen down. Chrome's `siteDetails?site=`, less the
+ * page of its own.
  */
 
 /** Width from which the tab shows the two-pane layout (v2 §10.2, §10.5; the pages' shared one). */
 export { TWO_PANE_MIN_WIDTH }
+
+/** The row for the site Privacy was asked for (`tracking.tsx`): the switch its group is brought on screen for. */
+const SITE_ROW = 'tracking-site-current'
 
 interface Props {
   state: UIState
@@ -69,6 +78,19 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   const ref = parseInternalPageUrl(tab.url)
   const current = sections.find((s) => s.id === ref?.section) ?? null
   const twoPane = width >= TWO_PANE_MIN_WIDTH
+  // Privacy asked for a site: its group is scrolled on screen before the paint, once per address
+  // (and again should the layout change under it) – a later visit to the section from the
+  // landing or the nav has no `site` and opens at the top. The row is the opener's site's
+  // (`trackingGroups`); a restored tab without its opener has none, and the page opens at the
+  // top as it would.
+  const site = current?.id === 'privacy' ? (ref?.query?.site ?? null) : null
+  useLayoutEffect(() => {
+    if (!site) return
+    root.current
+      ?.querySelector(`[data-row="${SITE_ROW}"]`)
+      ?.closest('[data-group]')
+      ?.scrollIntoView({ block: 'start' })
+  }, [site, tab.url, twoPane])
   return (
     <div ref={root} className="zen-settings-page" data-layout={twoPane ? 'two-pane' : 'phone'}>
       {twoPane ? (

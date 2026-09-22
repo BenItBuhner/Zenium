@@ -278,6 +278,26 @@ describe('phonePillChips: the chips as data', () => {
     await vi.waitFor(() => expect(uiStore.get().mediaSheet).toBe('t1'))
   })
 
+  it('the shield’s row opens Settings › Privacy asked for the page’s site, and the sheet leaves for the tab', () => {
+    // A phone with page tabs: Settings is a tab, so the sheet is dismissed before it opens
+    // (N3 from #260's review: the site's own group is one screen down – the address names the
+    // site, and the page opens with "Block on github.com" on screen).
+    const s = state(counted, { folders: {}, essentialTabIds: [] })
+    s.capabilities = { ...s.capabilities, pageTabs: true }
+    browserStore.set({ state: s })
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
+    const [blocked] = phonePillChips(s, counted, ctx).filter((c) => c.id === 'blocked')
+    uiStore.set({ siteInfoOpen: true })
+    siteInfoStore.set({ tabId: 't1', anchor: null })
+    blocked!.row!.activate()
+    expect(uiStore.get().siteInfoOpen).toBe(false)
+    expect(invoke).toHaveBeenCalledWith('page.open', {
+      id: 'settings',
+      section: 'privacy',
+      query: { site: 'https://github.com' }
+    })
+  })
+
   it('says on the shield’s row when nothing is blocked here, and speaks nothing of it on a quiet page', () => {
     const quiet = phonePillChips(state(page), page, ctx)
     expect(quiet.find((c) => c.id === 'blocked')?.row?.value).toBe('0')
