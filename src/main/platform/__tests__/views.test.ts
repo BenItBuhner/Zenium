@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { Tab } from '../../../shared/types'
 import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
-import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '../../../shared/fonts'
+import {
+  DEFAULT_FONT_SETTINGS,
+  electronFontDefaults,
+  type PageFontSettings
+} from '../../../shared/fonts'
 import type { SessionManager } from '../sessions'
 import {
   addForeignDebuggerOwner,
@@ -619,17 +623,9 @@ describe('page fonts (CT-25)', () => {
     await settle()
     expect(dbg.log).toEqual(['attach', 'Page.setFontFamilies', 'Page.setFontSizes', 'detach'])
     expect(dbg.attached).toBe(false)
-    // Every family is named, the unchosen ones as the engine's defaults, so a later change can
-    // take a slot back to the engine's own (the protocol has no "unset").
+    // Only the chosen slots are named: the serif and fixed faces stay exactly the engine's.
     expect(sent(dbg, 'Page.setFontFamilies')).toEqual([
-      {
-        fontFamilies: {
-          standard: 'Georgia',
-          serif: 'Times New Roman',
-          sansSerif: 'Inter',
-          fixed: 'Courier New'
-        }
-      }
+      { fontFamilies: { standard: 'Georgia', sansSerif: 'Inter' } }
     ])
     expect(sent(dbg, 'Page.setFontSizes')).toEqual([{ fontSizes: { standard: 20, fixed: 16 } }])
     // The same setting again is nothing to send.
@@ -653,16 +649,15 @@ describe('page fonts (CT-25)', () => {
       'Page.setFontSizes',
       'detach'
     ])
+    expect(sent(dbg, 'Page.setFontFamilies').at(-1)).toEqual({
+      fontFamilies: { fixed: 'Fira Code' }
+    })
     host.applyFonts({ ...DEFAULT_FONT_SETTINGS, size: 24 })
     await settle()
-    // Back to the engine's monospace by name: a fresh agent each time, so "once" never bites.
+    // Back to the engine's own monospace by its name for this OS (the protocol has no "unset");
+    // a fresh agent each time, so "once" never bites.
     expect(sent(dbg, 'Page.setFontFamilies').at(-1)).toEqual({
-      fontFamilies: {
-        standard: 'Times New Roman',
-        serif: 'Times New Roman',
-        sansSerif: 'Arial',
-        fixed: 'Courier New'
-      }
+      fontFamilies: { fixed: electronFontDefaults(process.platform).fixed }
     })
     expect(dbg.attached).toBe(false)
   })
@@ -746,13 +741,9 @@ describe('page fonts (CT-25)', () => {
         'Page.setFontSizes'
       ])
       expect(recycled).toHaveLength(1)
+      // The slot that moved, on the new agent (the other choice already stands in the settings).
       expect(sent(dbg, 'Page.setFontFamilies').at(-1)).toEqual({
-        fontFamilies: {
-          standard: 'Palatino',
-          serif: 'Times New Roman',
-          sansSerif: 'Inter',
-          fixed: 'Courier New'
-        }
+        fontFamilies: { standard: 'Palatino' }
       })
       expect(dbg.attached).toBe(true)
     } finally {

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_FONT_SETTINGS,
-  ELECTRON_FONT_DEFAULTS,
   FONT_SIZE_STEPS,
   MINIMUM_FONT_SIZE_STEPS,
   cdpFontFamilies,
+  cdpFontFamilyChanges,
   chromiumFontPreferences,
+  electronFontDefaults,
   isDefaultFontSettings,
   monospaceFontSize,
   sanitizeFontSettings
@@ -89,16 +90,53 @@ describe('the engine’s terms', () => {
     })
   })
 
-  it('names every family for the protocol, the unchosen ones as the engine’s own', () => {
-    expect(cdpFontFamilies(DEFAULT_FONT_SETTINGS, ELECTRON_FONT_DEFAULTS)).toEqual({
+  it('knows the families Electron gives a page on each OS (Chrome’s, not Blink’s Courier New)', () => {
+    expect(electronFontDefaults('linux')).toEqual({
       standard: 'Times New Roman',
       serif: 'Times New Roman',
       sansSerif: 'Arial',
-      fixed: 'Courier New'
+      fixed: 'Monospace'
     })
-    expect(
-      cdpFontFamilies({ ...DEFAULT_FONT_SETTINGS, serif: 'Georgia' }, ELECTRON_FONT_DEFAULTS).serif
-    ).toBe('Georgia')
+    expect(electronFontDefaults('win32').fixed).toBe('Consolas')
+    expect(electronFontDefaults('darwin')).toEqual({
+      standard: 'Times',
+      serif: 'Times',
+      sansSerif: 'Helvetica',
+      fixed: 'Menlo'
+    })
+    // An OS not accounted for reads as Linux (fontconfig names).
+    expect(electronFontDefaults('freebsd')).toEqual(electronFontDefaults('linux'))
+  })
+
+  it('names every family a page has, the unchosen ones as the engine’s own', () => {
+    const defaults = electronFontDefaults('linux')
+    expect(cdpFontFamilies(DEFAULT_FONT_SETTINGS, defaults)).toEqual(defaults)
+    expect(cdpFontFamilies({ ...DEFAULT_FONT_SETTINGS, serif: 'Georgia' }, defaults)).toEqual({
+      ...defaults,
+      serif: 'Georgia'
+    })
+  })
+
+  it('sends the protocol only the slots that move, never one the user left alone', () => {
+    const defaults = electronFontDefaults('linux')
+    const born = cdpFontFamilies(DEFAULT_FONT_SETTINGS, defaults)
+    // Nothing chosen: nothing to send.
+    expect(cdpFontFamilyChanges(born, born)).toBeNull()
+    // A choice names its slot alone.
+    const chosen = cdpFontFamilies({ ...DEFAULT_FONT_SETTINGS, fixed: 'Fira Code' }, defaults)
+    expect(cdpFontFamilyChanges(born, chosen)).toEqual({ fixed: 'Fira Code' })
+    // Letting it go takes the slot back by naming the engine's own; the others stay unnamed.
+    expect(cdpFontFamilyChanges(chosen, born)).toEqual({ fixed: 'Monospace' })
+    // Two slots moving, one of them back.
+    const two = cdpFontFamilies(
+      { ...DEFAULT_FONT_SETTINGS, standard: 'Georgia', sansSerif: 'Inter' },
+      defaults
+    )
+    expect(cdpFontFamilyChanges(chosen, two)).toEqual({
+      standard: 'Georgia',
+      sansSerif: 'Inter',
+      fixed: 'Monospace'
+    })
   })
 
   it('knows a profile that follows the platform entirely', () => {

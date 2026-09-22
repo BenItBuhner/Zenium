@@ -8,9 +8,10 @@
  */
 
 /**
- * The user's page fonts. A `null` family is the platform's own default (Electron's Times New
- * Roman / Arial / Courier New mapped by fontconfig on Linux; Android's `serif` / `sans-serif` /
- * `monospace`), so a profile that never touched the rows follows the OS like Chrome does.
+ * The user's page fonts. A `null` family is the platform's own default (Chrome's per-platform
+ * families, which Electron installs – `electronFontDefaults` – and fontconfig maps to the
+ * system's faces on Linux; Android's `serif` / `sans-serif` / `monospace`), so a profile that
+ * never touched the rows follows the OS like Chrome does.
  */
 export interface PageFontSettings {
   /** Text a page leaves unstyled (Chrome's "Standard font"). */
@@ -156,33 +157,81 @@ export function chromiumFontPreferences(fonts: PageFontSettings): ChromiumFontPr
   }
 }
 
+/** The setting's family slots, which are also the DevTools protocol's (`fixed` for monospace). */
+export type FontFamilySlot = 'standard' | 'serif' | 'sansSerif' | 'fixed'
+export const FONT_FAMILY_SLOTS: readonly FontFamilySlot[] = [
+  'standard',
+  'serif',
+  'sansSerif',
+  'fixed'
+]
+
 /** The engine's own families, by the setting's names (what a `null` family stands for). */
-export type FontFamilyDefaults = Record<'standard' | 'serif' | 'sansSerif' | 'fixed', string>
+export type FontFamilyDefaults = Record<FontFamilySlot, string>
 
 /**
- * Electron's web preference defaults (`WebContentsPreferences`): the names Chrome ships on
- * Windows, which fontconfig maps to the system's serif / sans / monospace faces on Linux.
+ * The families a page is made with when the setting names none: Electron installs Chrome's
+ * per-platform defaults on every page (`SetFontDefaults`, from Chrome's `locale_settings_*.grd`),
+ * not Blink's own ("Courier New" everywhere). On Linux fontconfig maps the names to the
+ * system's faces (`Monospace` is the generic alias, so the fixed face is the system's). Windows
+ * has "Courier New" for fixed on paper and Consolas wherever ClearType is on – Chrome's alternate
+ * default – which is the case that stands; the other is recorded, not handled.
  */
-export const ELECTRON_FONT_DEFAULTS: FontFamilyDefaults = {
-  standard: 'Times New Roman',
-  serif: 'Times New Roman',
-  sansSerif: 'Arial',
-  fixed: 'Courier New'
+export function electronFontDefaults(platform: string): FontFamilyDefaults {
+  switch (platform) {
+    case 'darwin':
+      return { standard: 'Times', serif: 'Times', sansSerif: 'Helvetica', fixed: 'Menlo' }
+    case 'win32':
+      return {
+        standard: 'Times New Roman',
+        serif: 'Times New Roman',
+        sansSerif: 'Arial',
+        fixed: 'Consolas'
+      }
+    default:
+      return {
+        standard: 'Times New Roman',
+        serif: 'Times New Roman',
+        sansSerif: 'Arial',
+        fixed: 'Monospace'
+      }
+  }
 }
 
 /**
- * The families for `Page.setFontFamilies` (the protocol's names: `fixed` for the monospace
- * family), every one named so a live update can also take a family back to the engine's own
- * (the protocol has no "unset"): the user's choice, else the engine's default for the slot.
+ * The families a page has under the setting, by slot: the user's choice, else the engine's
+ * default for the slot (`electronFontDefaults`).
  */
 export function cdpFontFamilies(
   fonts: PageFontSettings,
   defaults: FontFamilyDefaults
-): Record<'standard' | 'serif' | 'sansSerif' | 'fixed', string> {
+): Record<FontFamilySlot, string> {
   return {
     standard: fonts.standard ?? defaults.standard,
     serif: fonts.serif ?? defaults.serif,
     sansSerif: fonts.sansSerif ?? defaults.sansSerif,
     fixed: fonts.fixed ?? defaults.fixed
   }
+}
+
+/**
+ * What `Page.setFontFamilies` gets to bring an open page from the families it `has` to the
+ * ones `wanted` (both by `cdpFontFamilies`; a page starts with the families it was made with):
+ * the slots that differ – a chosen family, or one chosen before and now let go, which is taken
+ * back by naming the engine's default (the protocol has no "unset"). A slot the user never
+ * touched is never named, so the page keeps exactly the face the engine gave it. `null` when
+ * nothing needs sending.
+ */
+export function cdpFontFamilyChanges(
+  has: Record<FontFamilySlot, string>,
+  wanted: Record<FontFamilySlot, string>
+): Partial<Record<FontFamilySlot, string>> | null {
+  const changes: Partial<Record<FontFamilySlot, string>> = {}
+  let any = false
+  for (const slot of FONT_FAMILY_SLOTS) {
+    if (has[slot] === wanted[slot]) continue
+    changes[slot] = wanted[slot]
+    any = true
+  }
+  return any ? changes : null
 }

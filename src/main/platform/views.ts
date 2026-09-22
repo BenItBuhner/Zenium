@@ -43,10 +43,12 @@ import {
 import type { FormsCommand } from '../../shared/forms'
 import {
   cdpFontFamilies,
+  cdpFontFamilyChanges,
   chromiumFontPreferences,
   DEFAULT_FONT_SETTINGS,
-  ELECTRON_FONT_DEFAULTS,
+  electronFontDefaults,
   type ChromiumFontPreferences,
+  type FontFamilySlot,
   type PageFontSettings
 } from '../../shared/fonts'
 import { defer } from '../../core/platform'
@@ -166,6 +168,8 @@ interface UnloadCheck {
 let pageFonts: ChromiumFontPreferences = chromiumFontPreferences(DEFAULT_FONT_SETTINGS)
 /** The setting behind `pageFonts` (what an open page is brought to). */
 let pageFontSettings: PageFontSettings = DEFAULT_FONT_SETTINGS
+/** The families a page has where the setting names none: Chrome's for this OS, as Electron installs them. */
+const FONT_DEFAULTS = electronFontDefaults(process.platform)
 
 /** One string per font setting, so a page knows whether it has the one that stands. */
 function fontsKey(fonts: PageFontSettings): string {
@@ -246,9 +250,10 @@ export class ElectronTabView implements TabView {
    * each navigation (`applyFonts`, `refreshFonts`).
    */
   private fontsApplied = fontsKey(pageFontSettings)
-  /** The families the page has by name, so `Page.setFontFamilies` (once per session) is sent only for a change. */
-  private familiesApplied = JSON.stringify(
-    cdpFontFamilies(pageFontSettings, ELECTRON_FONT_DEFAULTS)
+  /** The families the page has by slot, so `Page.setFontFamilies` (once per agent) names only what changes. */
+  private familiesApplied: Record<FontFamilySlot, string> = cdpFontFamilies(
+    pageFontSettings,
+    FONT_DEFAULTS
   )
   /** What the page's web preferences were made from: where the engine takes it back to. */
   private readonly fontsBorn = this.fontsApplied
@@ -1184,22 +1189,23 @@ export class ElectronTabView implements TabView {
     if (this.wc.isDestroyed()) return
     // An extension's session is left alone: the change waits for the page's next load.
     if (hasForeignDebuggerOwner(this.wc.id)) return
-    const families = cdpFontFamilies(fonts, ELECTRON_FONT_DEFAULTS)
-    const familiesKey = JSON.stringify(families)
+    const families = cdpFontFamilies(fonts, FONT_DEFAULTS)
+    // Only the slots that move are named: a family the user never chose keeps the engine's face.
+    const changes = cdpFontFamilyChanges(this.familiesApplied, families)
     const sizes = chromiumFontPreferences(fonts)
     try {
       await this.withDebugger(async (session) => {
-        if (familiesKey !== this.familiesApplied) {
+        if (changes) {
           try {
-            await session.sendCommand('Page.setFontFamilies', { fontFamilies: families })
+            await session.sendCommand('Page.setFontFamilies', { fontFamilies: changes })
           } catch (error) {
             if (!/only be set once/i.test(String(error))) throw error
             // A long-lived session (the governor's overrides, the dark theme hold) set families
             // before: a fresh agent takes the new ones, the holds' overrides go back on it.
             await this.recycleSession()
-            await session.sendCommand('Page.setFontFamilies', { fontFamilies: families })
+            await session.sendCommand('Page.setFontFamilies', { fontFamilies: changes })
           }
-          this.familiesApplied = familiesKey
+          this.familiesApplied = families
         }
         await session.sendCommand('Page.setFontSizes', {
           fontSizes: { standard: sizes.defaultFontSize, fixed: sizes.defaultMonospaceFontSize }
