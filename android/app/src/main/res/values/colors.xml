@@ -6,11 +6,15 @@
     <color name="shortcut_private_background">#3F2C7A</color>
 
     <!--
-      The v2 design draft's measured colours (design-language-v2-draft.md §1), for what the app
-      draws natively: the custom tab's toolbar and menu sheet. One block, so the values can be
-      re-tuned once; nothing below is used per-view as a literal.
+      The v2 token block (design-language-v2-draft.md §1; the v2 custom properties main.css
+      declares for light and dark), for what the app draws natively: the custom tab's toolbar
+      and menu sheet, the extension sheet, the native prompt sheet (NativePromptSheet, read
+      through V2Ink). Every value here is the stylesheet's, and V2TokensPinTest holds it so: the
+      test resolves each token for both themes from main.css and fails when a `v2_*` colour
+      below differs, or is not one of the tokens it names – so nothing is retyped, and a re-tune
+      happens in the CSS.
     -->
-    <!-- Window and toolbar chrome without a theme. -->
+    <!-- Window and toolbar chrome without a theme (the sidebar-neutral token). -->
     <color name="v2_window_light">#E9E9E9</color>
     <color name="v2_window_dark">#131313</color>
     <!-- Page. -->
@@ -28,4 +32,16 @@
     <!-- Scrim behind sheets: rgb(0 0 0 / .4) and .55. -->
     <color name="v2_scrim_light">#66000000</color>
     <color name="v2_scrim_dark">#8C000000</color>
+    <!--
+      The control accent under the default space colour (#6264dc): the space colour mixed 40 %
+      into black (light) or white (dark), and what is drawn on it – white, or the text ink. The
+      chrome hands its live theme's pair over (`chrome.setTheme`); these stand in until it has.
+    -->
+    <color name="v2_accent_light">#272858</color>
+    <color name="v2_accent_dark">#C0C1F1</color>
+    <color name="v2_on_accent_light">#FFFFFF</color>
+    <color name="v2_on_accent_dark">#15141A</color>
+    <!-- The danger ink (the zen-danger status ink): a destructive peer's label (Exit page, Remove). -->
+    <color name="v2_danger_light">#C43434</color>
+    <color name="v2_danger_dark">#FF8080</color>
 </resources>

@@ -47,4 +47,7 @@
     <string name="cct_not_now">Not now</string>
     <string name="cct_no_app">No app can open this link</string>
     <string name="cct_find_count">%1$d/%2$d</string>
+
+    <!-- The native prompt sheet's grabber (NativePromptSheet, v2 §9.9): a tap on it is the dismissal. -->
+    <string name="prompt_sheet_dismiss">Dismiss</string>
 </resources>
