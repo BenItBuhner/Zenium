@@ -40,7 +40,7 @@ import { urlbarFieldBox } from '@renderer/lib/layout'
 import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
 import { startQrScan } from '@renderer/lib/qrScan'
 import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
-import { closeUrlbar, showLocalMenu, uiStore, type UrlbarState } from '@renderer/lib/ui'
+import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { useLongPress } from '../phone/useLongPress'
@@ -71,6 +71,7 @@ import {
   type OpenWhere
 } from './omniboxKeys'
 import { PillChip } from './PillChip'
+import { RemoveSuggestionSheet } from './RemoveSuggestionSheet'
 import { suggestionIcon } from './suggestionIcon'
 
 interface Props {
@@ -206,6 +207,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
    * drawn as a ghost where it stood, and spliced out at rest (`rowExit.ts`).
    */
   const [exit, setExit] = useState<RowExit | null>(null)
+  /** The row a hold is asking about (OMN-17): its prompt sheet is up while this is set. */
+  const [asking, setAsking] = useState<Suggestion | null>(null)
   /** The list the exit runs in, and where its items stood before the ghosts left the flow. */
   const exitList = useRef<{ list: HTMLElement; before: Map<HTMLElement, number> } | null>(null)
   const exitStop = useRef<(() => void) | null>(null)
@@ -782,20 +785,13 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
 
   /**
    * The phone's removal (OMN-17, Chrome for Android's): a hold on a removable row asks first –
-   * a §9.13 sheet titled with the question, Remove in the danger ink (§10.4) and Cancel – since
-   * a finger has no Shift+Delete and no X to aim at. The sheet takes the focus from the field
-   * and gives it back when it goes (the keyboard with it), whichever way it is answered.
+   * the §9.23 prompt sheet (`RemoveSuggestionSheet`), Remove in the danger ink (§10.4) beside
+   * Cancel – since a finger has no Shift+Delete and no X to aim at. The sheet takes the focus
+   * from the field and gives it back when it goes (the keyboard with it), whichever way it is
+   * answered; one question at a time.
    */
   const askRemoval = (item: Suggestion): void => {
-    void showLocalMenu(
-      'urlbar',
-      [
-        { label: 'Remove', danger: true, onSelect: () => removeFromCard(item) },
-        { label: 'Cancel', onSelect: () => undefined }
-      ],
-      tab?.id ?? null,
-      { title: 'Remove suggestion from history?' }
-    )
+    setAsking((open) => open ?? item)
   }
 
   /**
@@ -1212,110 +1208,123 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
 
   if (phoneEdge) {
     return (
-      <PhoneSheet
-        edge={phoneEdge}
-        sheetRef={sheetRef}
-        fieldRef={fieldRef}
-        onDismiss={() => close(true)}
-        header={
-          pageHeader ? (
-            <PageHeader
-              tab={pageHeader}
-              edge={phoneEdge}
-              onShare={isShareableUrl(pageHeader.url) ? sharePage : null}
-              onCopy={copyPageLink}
-              onEdit={editPageUrl}
-            />
-          ) : null
-        }
-        rows={rows(true)}
-        hint={results.length === 0 && !text ? placeholder : null}
-        field={
-          <div
-            // The trailing slot's control is a §9.3 icon button, 44 × 44 with the 20 glyph: as
-            // tall as the pill, round, flush with its end, so it is the pill's end cap.
-            className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2"
-            style={fieldGrowFrom(
-              phoneBarForHost(state.settings.phoneBar, phoneBarOffered(state.capabilities))
-            )}
-          >
-            {/* The engine's mark (NTP-09): its favicon when it is not the vendor's default, the
+      <>
+        {/* The hold's question (OMN-17): a §9.23 prompt over the omnibox, in the frame's dialog host. */}
+        {asking && (
+          <RemoveSuggestionSheet
+            item={asking}
+            onClose={() => setAsking(null)}
+            onConfirm={() => removeFromCard(asking)}
+          />
+        )}
+        <PhoneSheet
+          edge={phoneEdge}
+          sheetRef={sheetRef}
+          fieldRef={fieldRef}
+          onDismiss={() => close(true)}
+          header={
+            pageHeader ? (
+              <PageHeader
+                tab={pageHeader}
+                edge={phoneEdge}
+                onShare={isShareableUrl(pageHeader.url) ? sharePage : null}
+                onCopy={copyPageLink}
+                onEdit={editPageUrl}
+              />
+            ) : null
+          }
+          rows={rows(true)}
+          hint={results.length === 0 && !text ? placeholder : null}
+          field={
+            <div
+              // The trailing slot's control is a §9.3 icon button, 44 × 44 with the 20 glyph: as
+              // tall as the pill, round, flush with its end, so it is the pill's end cap.
+              className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2"
+              style={fieldGrowFrom(
+                phoneBarForHost(state.settings.phoneBar, phoneBarOffered(state.capabilities))
+              )}
+            >
+              {/* The engine's mark (NTP-09): its favicon when it is not the vendor's default, the
                 letter tile otherwise; the morph's double draws the same (FakeboxMorphLayer). */}
-            <EngineFieldGlyph engine={engine} fallback="tile" />
-            <input
-              ref={inputRef}
-              value={text}
-              onChange={onChange}
-              onKeyDown={onKeyDown}
-              onCompositionStart={() => (composing.current = true)}
-              onCompositionEnd={() => (composing.current = false)}
-              // The placeholder is the field's name (A11Y-01): this WebView reads a text field's
-              // label and its placeholder both, so a label saying the same words was heard twice.
-              placeholder={placeholder}
-              data-testid="urlbar-input"
-              spellCheck={false}
-              autoComplete="off"
-              autoCapitalize="off"
-              autoCorrect="off"
-              // Chrome's URL keyboard (OMN-25): the `/` and `.` keys up front, Go on the action key,
-              // no capitalisation or correction of what is typed.
-              inputMode="url"
-              enterKeyHint="go"
-              data-zen-menu="urlbar"
-              data-zen-menu-tab={menuTabId}
-              className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--zen-muted)]"
-            />
-            {text ? (
-              <button
-                type="button"
-                className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
-                aria-label="Clear"
-                // Keep the input focused so the keyboard stays where it is.
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={clear}
-              >
-                <X className="h-5 w-5" strokeWidth={1.75} />
-              </button>
-            ) : (
-              (voice || camera) && (
-                // OMN-19 and OMN-22: the empty field offers the mic and the camera where Clear
-                // will be; the listening or scan sheet takes the frame from the bar, and its result
-                // loads where a submit here would. The last control is the 44 px pill's round end
-                // cap; one before it is the §9.3 box.
-                <>
-                  {voice && (
-                    <button
-                      type="button"
-                      className={cn(
-                        'zen-toolbar-button h-11 w-11 shrink-0',
-                        !camera && 'rounded-full'
-                      )}
-                      aria-label="Search by voice"
-                      onClick={() =>
-                        void startVoiceSearch({ tabId: tab?.id ?? null, newTab: submitsToNewTab() })
-                      }
-                    >
-                      <Mic className="h-5 w-5" strokeWidth={1.75} />
-                    </button>
-                  )}
-                  {camera && (
-                    <button
-                      type="button"
-                      className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
-                      aria-label="Scan a QR code"
-                      onClick={() =>
-                        void startQrScan({ tabId: tab?.id ?? null, newTab: submitsToNewTab() })
-                      }
-                    >
-                      <Camera className="h-5 w-5" strokeWidth={1.75} />
-                    </button>
-                  )}
-                </>
-              )
-            )}
-          </div>
-        }
-      />
+              <EngineFieldGlyph engine={engine} fallback="tile" />
+              <input
+                ref={inputRef}
+                value={text}
+                onChange={onChange}
+                onKeyDown={onKeyDown}
+                onCompositionStart={() => (composing.current = true)}
+                onCompositionEnd={() => (composing.current = false)}
+                // The placeholder is the field's name (A11Y-01): this WebView reads a text field's
+                // label and its placeholder both, so a label saying the same words was heard twice.
+                placeholder={placeholder}
+                data-testid="urlbar-input"
+                spellCheck={false}
+                autoComplete="off"
+                autoCapitalize="off"
+                autoCorrect="off"
+                // Chrome's URL keyboard (OMN-25): the `/` and `.` keys up front, Go on the action key,
+                // no capitalisation or correction of what is typed.
+                inputMode="url"
+                enterKeyHint="go"
+                data-zen-menu="urlbar"
+                data-zen-menu-tab={menuTabId}
+                className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--zen-muted)]"
+              />
+              {text ? (
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
+                  aria-label="Clear"
+                  // Keep the input focused so the keyboard stays where it is.
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={clear}
+                >
+                  <X className="h-5 w-5" strokeWidth={1.75} />
+                </button>
+              ) : (
+                (voice || camera) && (
+                  // OMN-19 and OMN-22: the empty field offers the mic and the camera where Clear
+                  // will be; the listening or scan sheet takes the frame from the bar, and its result
+                  // loads where a submit here would. The last control is the 44 px pill's round end
+                  // cap; one before it is the §9.3 box.
+                  <>
+                    {voice && (
+                      <button
+                        type="button"
+                        className={cn(
+                          'zen-toolbar-button h-11 w-11 shrink-0',
+                          !camera && 'rounded-full'
+                        )}
+                        aria-label="Search by voice"
+                        onClick={() =>
+                          void startVoiceSearch({
+                            tabId: tab?.id ?? null,
+                            newTab: submitsToNewTab()
+                          })
+                        }
+                      >
+                        <Mic className="h-5 w-5" strokeWidth={1.75} />
+                      </button>
+                    )}
+                    {camera && (
+                      <button
+                        type="button"
+                        className="zen-toolbar-button h-11 w-11 shrink-0 rounded-full"
+                        aria-label="Scan a QR code"
+                        onClick={() =>
+                          void startQrScan({ tabId: tab?.id ?? null, newTab: submitsToNewTab() })
+                        }
+                      >
+                        <Camera className="h-5 w-5" strokeWidth={1.75} />
+                      </button>
+                    )}
+                  </>
+                )
+              )}
+            </div>
+          }
+        />
+      </>
     )
   }
 

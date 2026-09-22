@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, createElement, type ReactElement } from 'react'
+import { Fragment, act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ClipboardContent, Suggestion, Tab, UIState } from '@shared/types'
 import type { UrlbarState } from '@renderer/lib/ui'
@@ -28,7 +28,8 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { HEADER_SWAP_FADE_MS, Urlbar } = await import('../Urlbar')
 const { isShareableUrl, showsPageHeader } = await import('../omniboxHeader')
-const { pickMenuItem, uiStore } = await import('@renderer/lib/ui')
+const { uiStore } = await import('@renderer/lib/ui')
+const { FrameDialogHost } = await import('@renderer/lib/portals')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -117,13 +118,22 @@ async function render(el: ReactElement): Promise<HTMLElement> {
   return host
 }
 
+/**
+ * The phone omnibox, with the frame's dialog host after it (the shell's order): where the hold's
+ * prompt sheet mounts (OMN-17). The omnibox stays the first child, the tests' scrim.
+ */
 function phone(t: Tab, mode: UrlbarState['mode'] = 'edit'): ReactElement {
-  return createElement(Urlbar, {
-    state: state(t),
-    urlbar: urlbarState(mode),
-    area: null,
-    phoneEdge: 'top'
-  })
+  return createElement(
+    Fragment,
+    null,
+    createElement(Urlbar, {
+      state: state(t),
+      urlbar: urlbarState(mode),
+      area: null,
+      phoneEdge: 'top'
+    }),
+    createElement(FrameDialogHost, { frame: true })
+  )
 }
 
 const commands = (): string[] => invoke.mock.calls.map(([name]) => name)
@@ -744,7 +754,15 @@ describe('removing a suggestion by touch (OMN-17)', () => {
     ) ?? null
   const headingOf = (el: HTMLElement, group: string): HTMLElement | null =>
     el.querySelector<HTMLElement>(`[data-testid="urlbar-group-heading"][data-group="${group}"]`)
-  const menu = (): NonNullable<ReturnType<typeof uiStore.get>['menu']> => uiStore.get().menu!
+  /** The prompt sheet, on the frame's dialog host (v2 §9.23). */
+  const prompt = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('.zen-sheet[role="dialog"]')
+  const promptButtons = (): HTMLButtonElement[] =>
+    Array.from(prompt()?.querySelectorAll<HTMLButtonElement>('.zen-sheet-footer button') ?? [])
+  const promptButton = (label: string): HTMLButtonElement | undefined =>
+    promptButtons().find((b) => b.textContent?.trim() === label)
+  const omnibox = (el: HTMLElement): HTMLElement =>
+    el.querySelector<HTMLElement>('.zen-omnibox-sheet')!
 
   /** A finger held on the row past the hold's 380 ms, then lifted: the click that follows is the hold's. */
   async function hold(el: HTMLElement): Promise<void> {
@@ -764,44 +782,88 @@ describe('removing a suggestion by touch (OMN-17)', () => {
       await Promise.resolve()
     })
   }
-  /** The sheet's answer: the row picked, and its action run once the sheet has been unpainted. */
-  async function answer(label: string): Promise<void> {
-    const item = menu().items.find((i) => i.label === label)!
-    await act(async () => {
-      pickMenuItem(item.id)
-      await new Promise((r) => setTimeout(r, 60))
-    })
-  }
   /**
-   * Wait for the exit spring (real frames) to bring the list to `until`: in short `act` spans,
-   * each of which lets React flush what the frames queued.
+   * Wait for a spring on real frames – the prompt's leave, the row's exit – to bring things to
+   * `until`: in short `act` spans, each of which lets React flush what the frames queued.
    */
-  async function settle(until: () => boolean): Promise<void> {
+  async function settle(until: () => boolean, what = 'the exit'): Promise<void> {
     const start = Date.now()
     while (!until()) {
-      if (Date.now() - start > 4000) throw new Error('the exit did not settle')
+      if (Date.now() - start > 4000) throw new Error(`${what} did not settle`)
       await act(async () => {
         await new Promise((r) => setTimeout(r, 50))
       })
     }
   }
-
+  // The prompt's chassis needs room to stand: happy-dom lays nothing out, and a sheet whose
+  // layer and content measure 0 lands closed the moment it has risen. The layer is 800 px tall
+  // and the sheet's content 300 px, as the overview's prompt tests give theirs.
+  let sizes: Array<[string, PropertyDescriptor | undefined]> = []
+  beforeEach(() => {
+    sizes = ['clientHeight', 'offsetHeight'].map((name) => [
+      name,
+      Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+    ])
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-sheet-scroll') ? 300 : 800
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 300
+    })
+  })
   afterEach(() => {
-    uiStore.set({ menu: null })
+    for (const [name, descriptor] of sizes) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
   })
 
-  it('a hold on a history row asks first: the question as the sheet’s title, Remove in the danger ink, Cancel; nothing picked', async () => {
+  /** The prompt is up: rendered, on the host, before its rise. */
+  async function asked(): Promise<HTMLElement> {
+    await settle(() => prompt() !== null, 'the prompt')
+    return prompt()!
+  }
+  /** The prompt's answer: the button pressed, the sheet's leave run out, its action run once it has gone. */
+  async function answer(label: string): Promise<void> {
+    const button = promptButton(label)
+    expect(button, label).toBeDefined()
+    await act(async () => {
+      button!.click()
+      await Promise.resolve()
+    })
+    await settle(() => prompt() === null, 'the prompt’s leave')
+  }
+
+  it('a hold on a history row asks first on a §9.23 prompt sheet: the question as its title, the suggestion’s text as its description, Cancel | Remove in the danger ink; nothing picked', async () => {
     suggestions = removable
     const el = await render(phone(tab(PAGE)))
     await type(input(el), 'cats')
     await hold(option(rowOf(el, 'Cats – Wikipedia')!))
-    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
-    expect(menu().title).toBe('Remove suggestion from history?')
-    expect(menu().source).toBe('urlbar')
-    expect(menu().items.map((i) => [i.label, Boolean(i.danger)])).toEqual([
-      ['Remove', true],
-      ['Cancel', false]
+    const sheet = await asked()
+    // The title block, not a 48 header (§9.23): the question, the glyph on its start, one paragraph.
+    const block = sheet.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    expect(block).not.toBeNull()
+    expect(sheet.querySelector('.zen-sheet-title')).toBeNull()
+    expect(block.querySelector('h2')!.textContent).toBe('Remove suggestion from history?')
+    expect(block.querySelector('h2 svg')).not.toBeNull()
+    expect(block.querySelector('p')!.textContent).toBe('Cats – Wikipedia — example.com')
+    expect(sheet.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
+    // Cancel | Remove as §9.11 peers in the footer, Remove in the danger ink (§10.4); no rows.
+    expect(
+      promptButtons().map((b) => [b.textContent?.trim(), b.hasAttribute('data-danger')])
+    ).toEqual([
+      ['Cancel', false],
+      ['Remove', true]
     ])
+    expect(sheet.querySelector('.zen-sheet-item')).toBeNull()
+    // Cancel takes the focus as the sheet opens, so a stray Enter removes nothing (§9.22).
+    expect(document.activeElement).toBe(promptButton('Cancel'))
+    // The omnibox under the prompt is inert while it stands (§9.22).
+    expect(omnibox(el).hasAttribute('inert')).toBe(true)
     expect(commands()).not.toContain('urlbar.submit')
     expect(commands()).not.toContain('history.delete')
   })
@@ -812,7 +874,7 @@ describe('removing a suggestion by touch (OMN-17)', () => {
     await type(input(el), 'cats')
     const doomed = rowOf(el, 'Cats – Wikipedia')!
     await hold(option(doomed))
-    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
+    await asked()
     await answer('Remove')
     await act(async () => {
       await vi.waitFor(() => expect(commands()).toContain('history.delete'))
@@ -829,7 +891,7 @@ describe('removing a suggestion by touch (OMN-17)', () => {
     await settle(() => rowOf(el, 'Cats – Wikipedia') === null)
     expect(rowOf(el, 'Cat videos')).not.toBeNull()
     expect(headingOf(el, 'Pages')).not.toBeNull()
-    expect(uiStore.get().menu).toBeNull()
+    expect(prompt()).toBeNull()
   })
 
   it('the heading goes with the group’s last row, and the next heading becomes the outermost', async () => {
@@ -839,7 +901,7 @@ describe('removing a suggestion by touch (OMN-17)', () => {
     expect(headingOf(el, 'Pages')!.hasAttribute('data-outer')).toBe(false)
     const doomed = rowOf(el, 'Cats – Wikipedia')!
     await hold(option(doomed))
-    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
+    await asked()
     await answer('Remove')
     await act(async () => {
       await vi.waitFor(() => expect(commands()).toContain('history.delete'))
@@ -853,16 +915,34 @@ describe('removing a suggestion by touch (OMN-17)', () => {
     expect(headingOf(el, 'Searches')).not.toBeNull()
   })
 
-  it('Cancel keeps the row and deletes nothing', async () => {
+  it('Cancel keeps the row and deletes nothing; the omnibox comes back from inert and the field takes the focus again', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    input(el).focus()
+    await hold(option(rowOf(el, 'Cats – Wikipedia')!))
+    await asked()
+    expect(document.activeElement).not.toBe(input(el))
+    await answer('Cancel')
+    expect(prompt()).toBeNull()
+    expect(commands()).not.toContain('history.delete')
+    expect(rowOf(el, 'Cats – Wikipedia')!.hasAttribute('data-leaving')).toBe(false)
+    expect(omnibox(el).hasAttribute('inert')).toBe(false)
+    // Focus returns to the control that opened the prompt (§9.24): the field.
+    expect(document.activeElement).toBe(input(el))
+  })
+
+  it('a second hold while the question stands asks nothing new', async () => {
     suggestions = removable
     const el = await render(phone(tab(PAGE)))
     await type(input(el), 'cats')
     await hold(option(rowOf(el, 'Cats – Wikipedia')!))
-    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
-    await answer('Cancel')
-    expect(uiStore.get().menu).toBeNull()
-    expect(commands()).not.toContain('history.delete')
-    expect(rowOf(el, 'Cats – Wikipedia')!.hasAttribute('data-leaving')).toBe(false)
+    await asked()
+    await hold(option(rowOf(el, 'Cat videos')!))
+    expect(document.querySelectorAll('.zen-sheet[role="dialog"]')).toHaveLength(1)
+    expect(prompt()!.querySelector('.zen-sheet-title-block p')!.textContent).toBe(
+      'Cats – Wikipedia — example.com'
+    )
   })
 
   it('a right click is the hold, for a mouse; a row the core does not mark removable has none', async () => {
@@ -875,14 +955,19 @@ describe('removing a suggestion by touch (OMN-17)', () => {
       )
       await new Promise((r) => setTimeout(r, 20))
     })
-    expect(uiStore.get().menu).toBeNull()
+    expect(prompt()).toBeNull()
     await act(async () => {
       option(rowOf(el, 'Cat videos')!).dispatchEvent(
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
       )
     })
-    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
-    expect(menu().title).toBe('Remove suggestion from history?')
+    const sheet = await asked()
+    expect(sheet.querySelector('.zen-sheet-title-block h2')!.textContent).toBe(
+      'Remove suggestion from history?'
+    )
+    expect(sheet.querySelector('.zen-sheet-title-block p')!.textContent).toBe(
+      'Cat videos — example.com'
+    )
   })
 
   it('a plain tap on a history row still picks it', async () => {
@@ -890,7 +975,7 @@ describe('removing a suggestion by touch (OMN-17)', () => {
     const el = await render(phone(tab(PAGE)))
     await type(input(el), 'cats')
     await tap(option(rowOf(el, 'Cats – Wikipedia')!))
-    expect(uiStore.get().menu).toBeNull()
+    expect(prompt()).toBeNull()
     expect(callsTo('urlbar.submit')[0]).toMatchObject({ input: WIKI })
   })
 
