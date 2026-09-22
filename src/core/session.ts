@@ -15,7 +15,7 @@ import { displayUrl } from '../shared/url'
 import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-import { createTabRecord, getSpace, insertTabIntoSpace } from './model'
+import { createTabRecord, folderOpened, getSpace, insertTabIntoSpace } from './model'
 import { closedTabIds } from './navigationState'
 
 /** Entries remembered (a window with all its tabs counts as one). */
@@ -382,6 +382,8 @@ export class SessionService {
       if (tab.folderId && m.folders[tab.folderId]?.spaceId !== space.id) tab.folderId = null
       insertTabIntoSpace(m, space, tab, closed.index)
       tab.windowId = tabs.ownerWindowIdFor(tab, space, win)
+      // Back into its group: the group is open again (a saved one no longer, TAB-16).
+      folderOpened(m, tab.folderId, Date.now())
     }
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
     if (closed.navigation && closed.navigation.entries.length > 1)

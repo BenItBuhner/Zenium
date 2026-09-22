@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
@@ -7,18 +7,31 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
+import { viewportStore } from '@renderer/lib/formFactor'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
+import { groupColorChannels, groupsOf } from '@renderer/lib/groups'
+import { isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { SlideMotion } from '@renderer/lib/motion/slide'
-import { pinnedOf, regularOf, stripRows, type StripRow } from '@renderer/lib/selectors'
+import { isPrivateTab } from '@renderer/lib/privateTabs'
+import {
+  isPrivateWindow,
+  pinnedOf,
+  regularOf,
+  stripRows,
+  type StripRow
+} from '@renderer/lib/selectors'
 import { hint, useHint } from '@renderer/lib/shortcuts'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { DEFAULT_FOLDER_ICON } from '../phone/GroupCard'
+import { useLongPress } from '../phone/useLongPress'
 import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
 import { TabItem } from './TabItem'
+import { useGroupFold } from './useGroupFold'
 
 interface Props {
   state: UIState
@@ -37,7 +50,25 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   const zones = dropStore.use((s) => s.zones)
   const pinned = pinnedOf(state, space)
   const regular = regularOf(state, space)
-  const folders = Object.values(state.folders).filter((f) => f.spaceId === space.id)
+  // The space's groups as rows. On a host that keeps private browsing in tabs the space holds
+  // its private tabs among the regular ones, and this panel is a REGULAR surface (a private
+  // window's is private mode itself, and lists its own groups whole): a PRIVATE group
+  // (`isPrivateGroup` – private tabs alone live in it, nothing saved) is no row of it, so no
+  // private group's existence or name shows outside private mode, and a group's private members
+  // are not its rows or its count here (the Groups pane's rule); they list among the loose rows,
+  // where the panel lists the space's private tabs. The desktop's regular spaces hold no private
+  // tab (a private window's live in its own space), so its rows are as they were.
+  const regularSurface = !isPrivateWindow(state)
+  const liveOf = (folderId: string): Tab[] => regular.filter((t) => t.folderId === folderId)
+  const membersOf = (folderId: string): Tab[] =>
+    regularSurface ? regularMembers(liveOf(folderId)) : liveOf(folderId)
+  const folders = groupsOf(state, space.id).filter(
+    (f) => !regularSurface || !isPrivateGroup(f, liveOf(f.id))
+  )
+  const listed = new Set(folders.map((f) => f.id))
+  const loose = regular.filter(
+    (t) => !t.folderId || !listed.has(t.folderId) || (regularSurface && isPrivateTab(t))
+  )
   const activeTabId = space.activeTabId
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
@@ -161,7 +192,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                 <FolderRow
                   key={folder.id}
                   folder={folder}
-                  tabs={regular.filter((t) => t.folderId === folder.id)}
+                  tabs={membersOf(folder.id)}
                   activeTabId={activeTabId}
                   compact={compact}
                   dropKey={dropKey}
@@ -171,10 +202,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                   splitGroups={state.splitGroups}
                 />
               ))}
-              {stripRows(
-                regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
-                state.splitGroups
-              ).map((row) => (
+              {stripRows(loose, state.splitGroups).map((row) => (
                 <StripRowItem
                   key={rowKey(row)}
                   row={row}
@@ -388,6 +416,14 @@ function FolderRow({
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
+  // The tablet's row (TABLET-04, v2 §9.36): the group as a full-width 44 row like Zen's folder –
+  // the colour dot or the saved ring in the glyph slot, the name, the count as a 13 aside, the
+  // chevron trailing, the tabs indented beneath while open – the phone overview's own group
+  // header on the sidebar's grid; the fold on a spring (`useGroupFold`); a SAVED group – its
+  // tabs closed, its pages kept (TAB-16) – as a row whose tap opens it. The desktop's row is as
+  // it was.
+  const tablet = viewportStore.use((v) => v.formFactor === 'tablet')
+  const saved = tablet && tabs.length === 0 && Boolean(folder.savedTabs?.length)
   const lastClick = useRef(0)
   const collapsedBeforeClick = useRef(folder.collapsed)
   const containsActive = tabs.some((t) => t.id === activeTabId)
@@ -396,29 +432,55 @@ function FolderRow({
     run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
   // The header is a tab group's (tabs-14): a press folds or unfolds it; the second press of a
   // double-click undoes the first's fold and opens the group editor bubble (tabs-13) instead, as
-  // does the folder menu's Edit Folder…. It is a strip item (lib/tabStrip.ts) – Chrome's group
+  // does the folder menu's Edit Folder… (the tablet's tap always folds: its menu, on the hold,
+  // has the group's name and colour). It is a strip item (lib/tabStrip.ts) – Chrome's group
   // header: Enter, Space, Left and Right fold it, the arrows reach it from the rows (§9.22) – and
   // the strip's tab stop while it stands for the active tab (folded around it).
   const key = `folder:${folder.id}`
   const tabIndex = useStripTabIndex(key, containsActive && folder.collapsed)
+  const shell = useRef<HTMLDivElement>(null)
+  const header = useRef<HTMLDivElement>(null)
+  const drawn = useGroupFold(shell, header, folder.collapsed, tabs, tablet)
+  const count = saved ? (folder.savedTabs?.length ?? 0) : tabs.length
+  const unit = count === 1 ? 'tab' : 'tabs'
+  const description = tablet
+    ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
+    : `${live ? 'Live folder' : 'Folder'}, ${count} ${unit}`
+  // The tablet row's hold (the phone's group card's, `useLongPress`: a haptic tick at 380 ms, the
+  // menu on the release, the click after it swallowed): the group's menu as a §9.36 popover at
+  // the finger.
+  const press = useLongPress(({ x, y }) =>
+    run('folder.contextMenu', { folderId: folder.id, x: Math.round(x), y: Math.round(y) })
+  )
+  const { onContextMenu: holdMenu, ...hold } = press.handlers
   return (
-    <div className="flex flex-col gap-0.5">
+    <div ref={shell} className="zen-group-fold flex flex-col gap-0.5">
       <div
-        className={cn('zen-tab', compact && 'justify-center px-0')}
+        ref={header}
+        className={cn('zen-tab', compact && 'justify-center px-0', tablet && 'zen-group-row')}
         role="button"
         aria-label={folder.name}
-        aria-description={`${live ? 'Live folder' : 'Folder'}, ${tabs.length} ${tabs.length === 1 ? 'tab' : 'tabs'}`}
-        aria-expanded={!folder.collapsed}
+        aria-description={description}
+        aria-expanded={saved ? undefined : !folder.collapsed}
         data-strip-item={key}
         tabIndex={tabIndex}
         data-active={containsActive && folder.collapsed}
         data-editing={editing || undefined}
         data-drop-into={isDropTarget || undefined}
         data-tab-folder={folder.id}
+        data-saved={saved || undefined}
         onFocus={stripFocusIn}
         onBlur={stripFocusOut}
         onKeyDown={stripKeyDown}
         onClick={() => {
+          if (tablet) {
+            // A hold's release is the menu's, not a tap; the name being edited takes the taps;
+            // a saved group's tap brings its pages back.
+            if (press.swallowsClick() || renaming) return
+            if (saved) run('folder.open', { folderId: folder.id })
+            else toggle()
+            return
+          }
           const now = performance.now()
           if (now - lastClick.current < 400) {
             lastClick.current = 0
@@ -434,66 +496,130 @@ function FolderRow({
           toggle()
         }}
         onContextMenu={(e) => {
+          // The tablet's is the hold's (Chromium raises it during the hold): the menu at the
+          // finger, once.
+          if (tablet) return holdMenu(e)
           e.preventDefault()
           run('folder.contextMenu', { folderId: folder.id, ...contextMenuAnchor(e) })
         }}
+        {...(tablet ? hold : {})}
         title={compact ? folder.name : undefined}
       >
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
-        <span className="text-sm leading-none">{folder.icon}</span>
-        {folder.color && !compact && (
-          // The folder's colour as a swatch with the ink's 20 % hairline (a11y-30, §9.14; the
-          // space glyph's rule), so it keeps an edge on a like-coloured window.
-          <span
-            className="h-2 w-2 shrink-0 rounded-full border border-[rgb(var(--zen-fg-rgb)/0.2)]"
-            style={{ background: FOLDER_COLORS[folder.color] }}
-          />
-        )}
-        {!compact &&
-          (renaming ? (
-            <FolderRename folder={folder} />
-          ) : (
-            <>
-              <span className="min-w-0 flex-1 truncate">{folder.name}</span>
-              {live && (
-                <span
-                  className={cn(
-                    'h-1.5 w-1.5 shrink-0 rounded-full',
-                    liveError
-                      ? 'bg-[var(--v2-danger)]'
-                      : 'zen-live-dot bg-[var(--v2-control-accent)]'
-                  )}
-                  title={liveError ?? 'Live folder – updates automatically'}
-                />
-              )}
-              {/* The count and the chevron are supplementary: the deemphasised ink (§9.29). */}
-              <span className="text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]">
-                {tabs.length}
-              </span>
-              {folder.collapsed ? (
-                <ChevronRight
-                  className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-control-text-deemphasized)]')}
-                />
+        {tablet ? (
+          <>
+            <GroupRowGlyph folder={folder} saved={saved} />
+            {!compact &&
+              (renaming ? (
+                <FolderRename folder={folder} />
               ) : (
-                <ChevronDown
-                  className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-control-text-deemphasized)]')}
-                />
-              )}
-            </>
-          ))}
+                <>
+                  <span className="min-w-0 flex-1 truncate" data-testid="group-row-name">
+                    {folder.name}
+                  </span>
+                  <span className="zen-group-row-count" data-testid="group-row-count">
+                    {count}
+                  </span>
+                  {/* A saved group has nothing to fold: its chevron's box stays, empty, so the
+                      counts of saved and open rows share one edge. */}
+                  {saved ? (
+                    <span className="zen-group-row-chevron" aria-hidden />
+                  ) : folder.collapsed ? (
+                    <ChevronRight className="zen-group-row-chevron" aria-hidden />
+                  ) : (
+                    <ChevronDown className="zen-group-row-chevron" aria-hidden />
+                  )}
+                </>
+              ))}
+          </>
+        ) : (
+          <>
+            <span className="text-sm leading-none">{folder.icon}</span>
+            {folder.color && !compact && (
+              // The folder's colour as a swatch with the ink's 20 % hairline (a11y-30, §9.14; the
+              // space glyph's rule), so it keeps an edge on a like-coloured window.
+              <span
+                className="h-2 w-2 shrink-0 rounded-full border border-[rgb(var(--zen-fg-rgb)/0.2)]"
+                style={{ background: FOLDER_COLORS[folder.color] }}
+              />
+            )}
+            {!compact &&
+              (renaming ? (
+                <FolderRename folder={folder} />
+              ) : (
+                <>
+                  <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+                  {live && (
+                    <span
+                      className={cn(
+                        'h-1.5 w-1.5 shrink-0 rounded-full',
+                        liveError
+                          ? 'bg-[var(--v2-danger)]'
+                          : 'zen-live-dot bg-[var(--v2-control-accent)]'
+                      )}
+                      title={liveError ?? 'Live folder – updates automatically'}
+                    />
+                  )}
+                  {/* The count and the chevron are supplementary: the deemphasised ink (§9.29). */}
+                  <span className="text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]">
+                    {tabs.length}
+                  </span>
+                  {folder.collapsed ? (
+                    <ChevronRight
+                      className={cn(
+                        V2_TRAILING_GLYPH,
+                        'text-[var(--v2-control-text-deemphasized)]'
+                      )}
+                    />
+                  ) : (
+                    <ChevronDown
+                      className={cn(
+                        V2_TRAILING_GLYPH,
+                        'text-[var(--v2-control-text-deemphasized)]'
+                      )}
+                    />
+                  )}
+                </>
+              ))}
+          </>
+        )}
       </div>
-      {!folder.collapsed &&
-        stripRows(tabs, splitGroups).map((row) => (
-          <StripRowItem
-            key={rowKey(row)}
-            row={row}
-            activeTabId={activeTabId}
-            compact={compact}
-            indent
-            parent={key}
-          />
-        ))}
+      {stripRows(drawn, splitGroups).map((row) => (
+        <StripRowItem
+          key={rowKey(row)}
+          row={row}
+          activeTabId={activeTabId}
+          compact={compact}
+          indent
+          parent={key}
+        />
+      ))}
     </div>
+  )
+}
+
+/**
+ * What stands for a group in the tablet row's glyph slot (the favicon's 16 box): a 10 px dot of
+ * its colour for an open group, a 2 px ring of it for a saved one – the Groups pane's two
+ * states – or the folder's own icon where the desktop gave it one, as the phone card's
+ * `GroupBadge` keeps it. `.zen-group-row-glyph` in main.css draws it.
+ */
+function GroupRowGlyph({ folder, saved }: { folder: Folder; saved: boolean }): JSX.Element {
+  const own = folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? folder.icon : null
+  return (
+    <span
+      className="zen-group-row-glyph"
+      data-saved={saved || undefined}
+      data-testid="group-row-glyph"
+      style={{ '--zen-group-rgb': groupColorChannels(folder.color) } as CSSProperties}
+      aria-hidden
+    >
+      {own ? (
+        <span className="zen-group-row-icon">{own}</span>
+      ) : (
+        <span className="zen-group-row-dot" />
+      )}
+    </span>
   )
 }
 
