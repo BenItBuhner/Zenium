@@ -107,7 +107,13 @@ function fakePlatform(
     host,
     viewWords,
     opened,
-    info: { os: (host ? 'linux' : 'android') as PlatformOs, version: '0.0.0' },
+    // A fresh profile's preferred languages are the OS's (CT-41): the same locales the host's
+    // spellchecker reports as the UI's, as on a real host.
+    info: {
+      os: (host ? 'linux' : 'android') as PlatformOs,
+      version: '0.0.0',
+      locales: options.locales ?? ['en-US']
+    },
     capabilities: stub<HostCapabilities>({ windows: Boolean(host), updates: false, agents: false }),
     io: options.io ?? memoryIo(),
     windows: {

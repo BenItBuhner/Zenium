@@ -235,7 +235,13 @@ function harness(options: { host?: FakeHost | null } = {}): Harness {
           return null
         }
       },
-      article: (id: string) => articles.get(id)
+      article: (id: string) => articles.get(id),
+      // As written: no reader translation stands in these tests (`ReaderService.shown`).
+      shown: (article: ReaderArticle) => ({
+        content: article.content,
+        title: article.title,
+        lang: article.lang
+      })
     },
     translate: {
       tabState: () => (translate.source ? { source: translate.source } : null),

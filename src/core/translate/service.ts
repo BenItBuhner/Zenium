@@ -1,4 +1,5 @@
 import type {
+  ReaderTranslateState,
   TranslateBatch,
   TranslateModelInfo,
   TranslatePageSample,
@@ -19,20 +20,25 @@ import {
 import type { Browser } from '../browser'
 import type { TabView, TranslateHost } from '../platform'
 import type { ZenWindow } from '../window'
+import type { ReaderArticle, ReaderArticleTranslation } from '../reader'
 import { JsonStore } from '../store/JsonStore'
+import { articleSampleText, rebuildUnitHtml, type ArticleUnit } from './articleHtml'
 import { decideLanguage, MIN_SAMPLE_CHARS, registryCodeForLabel } from './detect'
 import { WorkerEngine, type TranslationEngine } from './engine'
 import {
   defaultPreferences,
   defaultTarget,
   languageRule,
+  languagesForPreferred,
   offerFor,
+  preferredFromLanguages,
   sanitizePreferences,
   siteOf,
   withLanguageRule,
   withSiteRule,
   type LanguageRule
 } from './languages'
+import { languagesKey, sanitizeLanguages } from '../../shared/languages'
 import { ModelManager } from './models'
 import {
   condenseRecords,
@@ -86,6 +92,23 @@ export interface TranslateSelectionOptions {
   target?: string
 }
 
+export interface TranslateReaderOptions {
+  /** Translate into this language instead of the first preferred one. */
+  target?: string
+  /** The article's language, when the user corrected the detector. */
+  source?: string
+}
+
+/** A reader tab's translation (CT-36): its state for the chrome and the run behind it. */
+interface ReaderEntry {
+  state: ReaderTranslateState
+  /** The article the translation is of; the entry goes when the tab leaves it. */
+  articleId: string
+  /** Bumped when the run is cancelled or restarted; async work checks it before acting. */
+  gen: number
+  abort: AbortController | null
+}
+
 function emptyState(tabId: string): TranslateTabState {
   return {
     tabId,
@@ -105,10 +128,17 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** Pages whose document can be translated in place. */
+/**
+ * Pages whose document can be translated in place: web and file documents. Not the `zen://`
+ * documents – Reader View among them, whose article is translated in the core on the user's
+ * word alone (`translateReader`, CT-36), so no offer bar stands on a reader tab.
+ */
 export function translatablePageUrl(url: string): boolean {
-  return /^(https?|file):\/\//i.test(url) || url.startsWith('zen://reader')
+  return /^(https?|file):\/\//i.test(url)
 }
+
+/** How a reader tab is told to use the Text preferences' Translate row (`open`). */
+const READER_TRANSLATE_HINT = 'Translate this article from the reader’s Text preferences.'
 
 /**
  * Invoke a method of the page runtime, installing the runtime (once per document) when the page
@@ -142,6 +172,8 @@ export class TranslateService {
   private busy = 0
   private sessions = 0
   private readonly tabs = new Map<string, TabEntry>()
+  /** Reader View translations by tab (CT-36). */
+  private readonly readers = new Map<string, ReaderEntry>()
 
   constructor(private readonly browser: Browser) {
     this.host = browser.platform.translate ?? null
@@ -153,6 +185,26 @@ export class TranslateService {
       persisted?.preferences,
       defaultPreferences(this.host?.locales ?? [])
     )
+    // The languages the user reads are the preferred languages setting (CT-41). A profile from
+    // before the setting existed took the OS's languages as it loaded; the languages its
+    // translate document listed (the rows it had) are folded into that list once, so nothing the
+    // user chose is lost, and from here on the setting is the one list.
+    const state = browser.state
+    if (state.languagesDefaulted) {
+      state.languagesDefaulted = false
+      const own = (persisted?.preferences as { preferred?: unknown } | undefined)?.preferred
+      if (Array.isArray(own) && own.length > 0) {
+        const folded = sanitizeLanguages(
+          languagesForPreferred(state.settings.languages, own as string[]),
+          state.settings.languages
+        )
+        if (languagesKey(folded) !== languagesKey(state.settings.languages)) {
+          state.settings.languages = folded
+          state.commit()
+        }
+      }
+    }
+    this.prefs = this.withPreferred(this.prefs)
     const cached = persisted?.registry
     if (cached && Array.isArray(cached.models) && typeof cached.fetchedAt === 'number')
       this.registry.replace(cached.models, cached.fetchedAt)
@@ -185,9 +237,15 @@ export class TranslateService {
     for (const tabId of [...this.tabs.keys()]) {
       if (!this.browser.tabs.tab(tabId)) this.tabs.delete(tabId)
     }
+    for (const [tabId, entry] of [...this.readers]) {
+      if (this.browser.reader.articleOf(tabId)?.id !== entry.articleId)
+        this.dropReader(tabId, entry)
+    }
     const models = this.modelInfo()
     const tabs: Record<string, TranslateTabState> = {}
     for (const [tabId, entry] of this.tabs) tabs[tabId] = entry.state
+    const reader: Record<string, ReaderTranslateState> = {}
+    for (const [tabId, entry] of this.readers) reader[tabId] = entry.state
     return {
       available: this.available,
       preferences: this.prefs,
@@ -198,12 +256,18 @@ export class TranslateService {
         .toISOString()
         .slice(0, 10),
       modelLicense: ModelRegistry.modelLicense,
-      tabs
+      tabs,
+      reader
     }
   }
 
   tabState(tabId: string): TranslateTabState | null {
     return this.tabs.get(tabId)?.state ?? null
+  }
+
+  /** The reader translation's state for a tab (CT-36), null while its reader never translated. */
+  readerState(tabId: string): ReaderTranslateState | null {
+    return this.readers.get(tabId)?.state ?? null
   }
 
   private changed(): void {
@@ -215,9 +279,42 @@ export class TranslateService {
   // ---------------------------------------------------------------------------
 
   setPreferences(patch: Partial<TranslatePreferences>): void {
-    this.prefs = sanitizePreferences({ ...this.prefs, ...patch }, this.prefs)
+    const { preferred, ...rest } = patch
+    this.prefs = this.withPreferred(sanitizePreferences({ ...this.prefs, ...rest }, this.prefs))
     this.persist()
     this.changed()
+    // The languages the user reads are the preferred languages setting: a change to the rows
+    // is written onto the list, which comes back through `onLanguagesChanged`.
+    if (preferred) {
+      this.browser.languages.set(
+        languagesForPreferred(this.browser.state.settings.languages, preferred)
+      )
+    }
+  }
+
+  /**
+   * The preferred languages changed (a Settings row, a sync merge): the languages-you-read list
+   * follows, an open offer for a language now read comes down, the always list loses it.
+   */
+  onLanguagesChanged(): void {
+    const next = this.withPreferred(this.prefs)
+    if (next.preferred.join(',') === this.prefs.preferred.join(',')) return
+    this.prefs = next
+    for (const entry of this.tabs.values())
+      if (
+        entry.state.status === 'offered' &&
+        entry.state.source &&
+        this.prefs.preferred.includes(entry.state.source)
+      )
+        this.update(entry, { status: 'idle' })
+    this.persist()
+    this.changed()
+  }
+
+  /** `prefs` with the languages-you-read list read from the preferred languages setting. */
+  private withPreferred(prefs: TranslatePreferences): TranslatePreferences {
+    const preferred = preferredFromLanguages(this.browser.state.settings.languages)
+    return sanitizePreferences({ ...prefs, preferred }, prefs)
   }
 
   setLanguageRule(language: string, rule: LanguageRule): void {
@@ -275,6 +372,7 @@ export class TranslateService {
 
   stop(): void {
     for (const entry of this.tabs.values()) this.cancel(entry)
+    for (const entry of this.readers.values()) this.cancelReader(entry)
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.idleTimer = null
     this.engine?.dispose()
@@ -437,6 +535,11 @@ export class TranslateService {
    * same-document navigation keeps the translation running.
    */
   onNavigated(tabId: string): void {
+    // A reader translation is of one article: the tab leaving it (the page behind it, another
+    // reader article, anywhere) ends the translation, and the article shows as written again.
+    const reader = this.readers.get(tabId)
+    if (reader && this.browser.reader.articleOf(tabId)?.id !== reader.articleId)
+      this.dropReader(tabId, reader)
     const entry = this.tabs.get(tabId)
     if (!entry || entry.doc === 0) return
     const view = this.browser.tabs.view(tabId)
@@ -623,6 +726,11 @@ export class TranslateService {
 
   /** The menu and command-bar entry to `offer`: a toast, not an error, for other pages. */
   async open(tabId: string, win?: ZenWindow): Promise<void> {
+    if (this.browser.reader.articleOf(tabId)) {
+      // The reader's translate lives in one place, the Text preferences' Translate row.
+      this.browser.toast(READER_TRANSLATE_HINT, 'info', win)
+      return
+    }
     try {
       await this.offer(tabId)
     } catch (error) {
@@ -880,6 +988,252 @@ export class TranslateService {
     const entry = this.tabs.get(tabId)
     if (!entry) return
     this.update(entry, { dismissed: true })
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reader View (CT-36)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * `translate.reader`: translate the Reader View article the tab shows, in the core – the
+   * article's units (`articleHtml.ts`, the page runtime's rules) through the same engine and
+   * models, batched as a page is, each batch swapped into the open document as it comes; the
+   * original kept for the Show original toggle; a reload renders the translation from the core.
+   * The target defaults to the first preferred language; asked again for the same languages a
+   * translation that shows the original shows again, one for other languages is redone. Throws
+   * when the tab shows no reader article, the language cannot be told, or no model reaches the
+   * target; an explicit action, never offered (`translatablePageUrl` is false for `zen://`).
+   */
+  async translateReader(tabId: string, options: TranslateReaderOptions = {}): Promise<void> {
+    const article = this.browser.reader.articleOf(tabId)
+    if (!article) throw new Error('This page cannot be translated.')
+    this.requireHost()
+    let entry = this.readers.get(tabId)
+    if (entry && entry.articleId !== article.id) {
+      this.dropReader(tabId, entry)
+      entry = undefined
+    }
+    if (entry) {
+      // The same languages, translated or under way: nothing to redo; the translation shows.
+      const { status, target, source } = entry.state
+      const sameTarget = !options.target || options.target === target
+      const sameSource = !options.source || options.source === source
+      if ((entry.abort !== null || status === 'translated') && sameTarget && sameSource) {
+        if (entry.state.showOriginal) this.showReaderOriginal(tabId, false)
+        return
+      }
+    }
+    if (!entry) {
+      entry = {
+        state: {
+          tabId,
+          status: 'detecting',
+          source: null,
+          target: null,
+          progress: null,
+          download: null,
+          error: null,
+          showOriginal: false
+        },
+        articleId: article.id,
+        gen: 0,
+        abort: null
+      }
+      this.readers.set(tabId, entry)
+    }
+    this.cancelReader(entry)
+    const gen = entry.gen
+    const controller = new AbortController()
+    entry.abort = controller
+    this.busy++
+    try {
+      if (options.source) {
+        if (!this.registry.languages().includes(options.source))
+          throw new Error(`Zenium has no translation model for ${options.source}.`)
+        entry.state.source = options.source
+      }
+      if (!entry.state.source) {
+        this.updateReader(entry, { status: 'detecting', error: null })
+        entry.state.source = await this.identifyArticle(article)
+        if (entry.gen !== gen) return
+      }
+      const source = entry.state.source
+      if (!source) throw new Error('Zenium could not tell what language this article is in.')
+      const target = options.target ?? entry.state.target ?? defaultTarget(this.prefs, source)
+      if (source === target) throw new Error(`This article is already in ${target}.`)
+      const route = this.registry.route({ from: source, to: target })
+      if (!route) throw new Error(`Zenium has no translation model from ${source} to ${target}.`)
+      const engine = await this.engineReady()
+      if (entry.gen !== gen) return
+      const models = this.requireModels()
+      const toDownload = models.bytesToDownload(route)
+      this.updateReader(entry, {
+        status: toDownload > 0 ? 'downloading' : 'translating',
+        target,
+        error: null,
+        progress: null,
+        download: toDownload > 0 ? { received: 0, total: toDownload } : null,
+        showOriginal: false
+      })
+      await this.prepare(
+        route,
+        engine,
+        (received, total) => {
+          if (entry.gen === gen) this.updateReader(entry, { download: { received, total } })
+        },
+        controller.signal
+      )
+      if (entry.gen !== gen) return
+      this.updateReader(entry, { status: 'translating', download: null })
+      await this.runReader(tabId, entry, gen, engine, route, article, source, target)
+    } catch (error) {
+      if (entry.gen !== gen) return
+      this.updateReader(entry, { status: 'error', error: messageOf(error), download: null })
+      throw error
+    } finally {
+      this.busy--
+      this.touch()
+      if (entry.abort === controller) entry.abort = null
+    }
+  }
+
+  /**
+   * `translate.readerShowOriginal`: show the article as written (`true`) or its translation, the
+   * translation kept either way (and a run in progress carries on, its batches shown again when
+   * the toggle comes back). Read aloud on the tab follows what is shown.
+   */
+  showReaderOriginal(tabId: string, original: boolean): void {
+    const entry = this.readers.get(tabId)
+    const article = this.browser.reader.articleOf(tabId)
+    if (!entry || !article || article.id !== entry.articleId) return
+    const translation = article.translation
+    if (!translation || entry.state.showOriginal === original) return
+    translation.showOriginal = original
+    this.updateReader(entry, { showOriginal: original })
+    this.browser.reader.pushShown(tabId, article)
+    this.browser.readAloud.onReaderTextChanged(tabId)
+  }
+
+  /**
+   * The article's language: Readability's `lang` (the page's `<html lang>`) as the hint, the
+   * detector run on the article's text, reconciled as a page's sample is.
+   */
+  private async identifyArticle(article: ReaderArticle): Promise<string | null> {
+    const split = this.browser.reader.split(article)
+    const text = articleSampleText(split, SAMPLE_CHARS)
+    const detection =
+      text.length >= MIN_SAMPLE_CHARS
+        ? await (await this.engineReady()).detect(text).catch(() => null)
+        : null
+    const sample: TranslatePageSample = {
+      doc: 0,
+      text,
+      lang: article.lang ?? '',
+      contentLanguage: '',
+      notranslate: false,
+      chars: text.length
+    }
+    return decideLanguage(sample, detection, new Set(this.registry.languages())).language
+  }
+
+  /**
+   * Translate the article's units in batches (the first small so the top of the article changes
+   * quickly, the rest filling the engine), the title with the first; each batch rebuilt with the
+   * article's own tags, stored with the article and swapped into the document unless the toggle
+   * shows the original. Resolves once every unit is done.
+   */
+  private async runReader(
+    tabId: string,
+    entry: ReaderEntry,
+    gen: number,
+    engine: TranslationEngine,
+    route: LanguagePair[],
+    article: ReaderArticle,
+    source: string,
+    target: string
+  ): Promise<void> {
+    const split = this.browser.reader.split(article)
+    const translation: ReaderArticleTranslation = {
+      source,
+      target,
+      title: null,
+      units: split.units.map(() => null),
+      showOriginal: false
+    }
+    article.translation = translation
+    const total = split.units.length
+    this.updateReader(entry, { progress: { done: 0, total } })
+    let index = 0
+    let batchSize = FIRST_BATCH
+    let first = true
+    while (first || index < total) {
+      const items: ArticleUnit[] = []
+      let chars = 0
+      while (
+        index < total &&
+        items.length < batchSize.items &&
+        (items.length === 0 || chars < batchSize.chars)
+      ) {
+        const unit = split.units[index++]
+        items.push(unit)
+        chars += unit.source.length
+      }
+      this.touch()
+      const [answers, titles] = await Promise.all([
+        items.length > 0
+          ? engine.translate(
+              items.map((unit) => unit.source),
+              { route, html: true }
+            )
+          : Promise.resolve([] as (string | null)[]),
+        first && article.title
+          ? engine.translate([article.title], { route, html: false })
+          : Promise.resolve(null)
+      ])
+      if (entry.gen !== gen) return
+      items.forEach((unit, k) => {
+        const answer = answers[k]
+        translation.units[unit.id] =
+          answer === null || answer === undefined ? null : rebuildUnitHtml(unit, answer)
+      })
+      if (titles) translation.title = titles[0]?.trim() || null
+      if (!translation.showOriginal) {
+        this.browser.reader.pushShown(
+          tabId,
+          article,
+          items.map((unit) => unit.id)
+        )
+      }
+      this.updateReader(entry, {
+        status: index < total ? 'translating' : 'translated',
+        progress: { done: index, total }
+      })
+      first = false
+      batchSize = BATCH
+    }
+    // What is read follows what is shown: a session on the tab starts over on the translation.
+    if (!translation.showOriginal) this.browser.readAloud.onReaderTextChanged(tabId)
+  }
+
+  private updateReader(entry: ReaderEntry, patch: Partial<ReaderTranslateState>): void {
+    Object.assign(entry.state, patch)
+    this.browser.state.commitVolatile()
+  }
+
+  /** Stop whatever runs for the reader tab; the article keeps whatever it shows. */
+  private cancelReader(entry: ReaderEntry): void {
+    entry.gen++
+    entry.abort?.abort()
+    entry.abort = null
+  }
+
+  /** The tab left the article (or closed): its run stops, the article shows as written again. */
+  private dropReader(tabId: string, entry: ReaderEntry): void {
+    this.cancelReader(entry)
+    if (this.readers.get(tabId) === entry) this.readers.delete(tabId)
+    const article = this.browser.reader.article(entry.articleId)
+    if (article?.translation) article.translation = null
+    this.browser.state.commitVolatile()
   }
 
   /** `translate.selection`: translate the selected text (or `options.text`) of a tab. */

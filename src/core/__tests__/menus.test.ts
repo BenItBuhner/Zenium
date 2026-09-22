@@ -92,7 +92,9 @@ const DESKTOP: HostCapabilities = {
   selectionToolbar: false,
   popupSurface: true,
   qrScan: false,
-  readAloud: false
+  readAloud: false,
+  pageLanguages: false,
+  genericFontFamilies: false
 }
 
 /**
@@ -144,7 +146,9 @@ const ANDROID: HostCapabilities = {
   selectionToolbar: true,
   popupSurface: false,
   qrScan: false,
-  readAloud: false
+  readAloud: false,
+  pageLanguages: false,
+  genericFontFamilies: false
 }
 
 function memoryIo(files: Record<string, string> = {}): StoreIO {
