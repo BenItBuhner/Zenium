@@ -709,7 +709,7 @@ describe('desktop pill on a tablet’s private tab', () => {
     const { applyPrivateLock, privateLockStore, resetPrivateLock, setPrivateLockHost } =
       await import('@renderer/lib/privateLock')
     // The host's prompt, which the user then cancels: the lock stands.
-    const unlock = vi.fn(async (_reason: string) => ({ locked: true }))
+    const unlock = vi.fn(async () => ({ locked: true }))
     setPrivateLockHost({ unlock, verify: async () => false })
     try {
       act(() => applyPrivateLock({ locked: true, screenLock: true }))
