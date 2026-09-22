@@ -456,7 +456,7 @@ describe('entering the mode', () => {
   it("from the header menu's first row: the cards become checkboxes, none checked; the header row is replaced by ×, 'Select tabs' and Select all; the strip is up with every action off (§9.6, §9.30)", async () => {
     show(five())
     // Before: the overview's own header row, cards as buttons, no strip.
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
     expect(checkboxes()).toEqual([])
     expect(byTestId('overview-actions')).toBeNull()
     await enter()
@@ -550,7 +550,7 @@ describe('entering the mode', () => {
     expect(
       [...document.querySelectorAll('[data-cell]')].map((c) => c.getAttribute('data-cell'))
     ).toEqual(['p', 'a', 'b', 'c', 'blank', 'new-tab'])
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
     expect(byTestId('overview-count')?.textContent).toBe('5 tabs')
     expect(commands()).toEqual([])
   })
@@ -588,7 +588,7 @@ describe('entering the mode', () => {
       dispatchBackEvent('commit')
     })
     expect(checkboxes()).toEqual([])
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
     expect(stageStore.get().overview.phase).toBe('open')
     expect(topBackSurface()?.name).not.toBe('overview-selection')
   })
@@ -818,6 +818,6 @@ describe('the grid under the mode', () => {
     act(() => byTestId('overview-pane-private')!.click())
     await land()
     expect(countTitle()).toBeNull()
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
   })
 })

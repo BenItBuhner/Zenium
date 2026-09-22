@@ -1364,9 +1364,13 @@ describe('the private pane', () => {
     act(() => resetOverviewPane())
   })
 
-  it('a host without private tabs has no segment, and a private card never reaches its grid', () => {
+  it('a host without private tabs has no Private segment, and a private card never reaches its grid', () => {
     render(stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], []))
-    expect(host!.querySelector('[role="tablist"]')).toBeNull()
+    // The segment stays for the Recent pane (TAB-02); the Private pane alone needs the host's say.
+    expect([...host!.querySelectorAll('[role="tab"]')].map((b) => b.textContent)).toEqual([
+      'Tabs',
+      'Recent'
+    ])
     expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
   })
 

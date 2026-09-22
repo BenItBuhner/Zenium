@@ -108,9 +108,9 @@ describe('remoteTabsSection', () => {
   })
 
   it('names the open-tabs toggle when sync is on without it', () => {
-    expect(remoteTabsSection({ enabled: true, scope: { openTabs: false } }, [desk], none)).toEqual(
-      { kind: 'tabs-off' }
-    )
+    expect(remoteTabsSection({ enabled: true, scope: { openTabs: false } }, [desk], none)).toEqual({
+      kind: 'tabs-off'
+    })
   })
 
   it('is empty with no device publishing tabs, or every one of them hidden', () => {

@@ -7027,7 +7027,9 @@
  */
 :root[data-form-factor='tablet'] .zen-tablet-sidebar,
 :root[data-form-factor='tablet'] .zen-tablet-drawer-panel,
-:root[data-form-factor='tablet'] :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel) [data-tab-scroller] {
+:root[data-form-factor='tablet']
+  :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel)
+  [data-tab-scroller] {
   touch-action: pan-y;
 }
 
@@ -7668,6 +7670,106 @@
   .zen-v2-segment > [role='tab']::after {
     transition: opacity 120ms var(--zen-ease) !important;
   }
+}
+
+/*
+ * The overview's tab search (TAB-21, `components/phone/OverviewSearch.tsx`): the phone panels'
+ * §9.12 field (`.zen-phone-field`, 40 tall with its glyph and its clear, phonePanels.css)
+ * pinned under the overview's header in the grid's 12 gutter, 8 to the segment. A field is a
+ * page surface; standing on the window backdrop (§9.29) it takes the new tab page's resting
+ * field's treatment (`.zen-ntp-field`): the `--v2-urlbar` fill and the panel's shadow for its
+ * edge in place of the hairline, the page's ink inside as the primitive gives it; the control's
+ * own radius, not the URL bar pill's. A modifier on the primitive, unlayered beside it (§9.34).
+ * The ring on focus is the primitive's, inside the edge. Under it, when a query drops every
+ * card, the grid's one line (§9.17's sentence at 15 and 69% in the window's ink, centred in
+ * the 32 gutter, its first line 48 below the segment) stands over the New Tab card, which the
+ * search never drops.
+ */
+.zen-phone-field.zen-overview-search-field {
+  background: var(--v2-urlbar);
+  box-shadow: var(--v2-shadow-panel);
+}
+.zen-overview-search-empty {
+  padding: 40px 32px 24px;
+  text-align: center;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  color: var(--v2-control-text-deemphasized);
+}
+
+/*
+ * The overview's Recent pane (TAB-02, `components/phone/RecentPane.tsx`): the phone panels'
+ * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
+ * `.zen-v2-heading` with the panels' modifiers) standing on the overview's window backdrop, so
+ * they draw in the window family (§9.29) through the control roles the overview root's
+ * `data-surface="window"` resolves: the theme's ink, its 69% for a row's host and time and for
+ * a group's empty sentence, the window fill for the press – where the panels' own draw in the
+ * page's. A modifier by context on the primitives, unlayered beside them (§9.34), each rule
+ * outranking the primitive's by specificity. The first heading stands under the segment, which
+ * carries its own air, at 4 (§10.3's first heading, as the Groups pane's): the rule names the
+ * pane's list class too, to outrank the panels' first-heading rule (phonePanels.css, the 0
+ * under a pinned field) on specificity, since the two sheets' order is the bundle's.
+ *
+ * A device's heading (§10.3) is the group's one control: the `<h3>` keeps the primitive's beat
+ * and gutter and the button inside it lays the name and the "Last active …" aside (13 at 69%,
+ * tabular) out on the heading's line, then takes §9.3's 44 target around that 20 line – 12
+ * above and below, folded into the heading's 20 / 4 beat by its margins, so the text stays
+ * where the beat put it (the rows below are positioned and win the 8 the box reaches under
+ * them). Pressed, it shows the window fill as a row does.
+ */
+.zen-overview-recent .zen-v2-row {
+  color: var(--v2-control-text);
+}
+.zen-overview-recent .zen-v2-row:active:not([aria-disabled='true'], [data-static]) {
+  background: var(--v2-control-fill);
+}
+@media (hover: hover) {
+  .zen-overview-recent .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {
+    background: var(--v2-control-fill);
+  }
+}
+.zen-overview-recent .zen-list-subtitle,
+.zen-overview-recent .zen-v2-row.zen-recent-empty {
+  color: var(--v2-control-text-deemphasized);
+}
+.zen-overview-recent .zen-v2-heading {
+  color: var(--v2-control-text);
+}
+.zen-overview-recent.zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {
+  margin-top: 4px;
+}
+.zen-overview-recent .zen-v2-heading.zen-recent-device {
+  display: flex;
+  padding: 0;
+}
+.zen-recent-device-button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -12px 0;
+  padding: 12px 16px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-recent-device-button:active {
+  background: var(--v2-control-fill);
+}
+@media (hover: hover) {
+  .zen-recent-device-button:hover {
+    background: var(--v2-control-fill);
+  }
+}
+.zen-recent-device-aside {
+  color: var(--v2-control-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */

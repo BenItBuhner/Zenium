@@ -82,7 +82,7 @@ export type RemoteTabsSection =
   | { kind: 'devices'; devices: RecentDevice[] }
 
 export function remoteTabsSection(
-  sync: Pick<SyncStatus, 'enabled' | 'scope'>,
+  sync: { enabled: SyncStatus['enabled']; scope: Pick<SyncStatus['scope'], 'openTabs'> },
   lists: readonly SyncDeviceTabs[],
   hidden: ReadonlySet<string>
 ): RemoteTabsSection {

@@ -13,8 +13,13 @@ import type { LocalMenuItem } from './ui'
  * the window surfaces blend to the private theme while a private tab is the one in view.
  */
 
-/** The overview's two panes: the space's tabs, and the private ones (TAB-02). */
-export type OverviewPane = 'tabs' | 'private'
+/**
+ * The overview's panes (TAB-02): the space's tabs; the Recent pane – recently closed tabs and
+ * the other devices' open tabs, no cards of its own (`RecentPane`); and the private tabs, on
+ * a host with them. In the segment's order: Tabs, Recent, Private (Chrome's switcher keeps
+ * Incognito last; Recent tabs is a menu page there and a pane here).
+ */
+export type OverviewPane = 'tabs' | 'recent' | 'private'
 
 interface PrivateTabsState {
   /**
