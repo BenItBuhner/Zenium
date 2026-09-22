@@ -15,14 +15,44 @@ class BarHidePlacementTest {
     private val top = 200
     private val bottom = 1500
 
-    private fun frame(edge: BarHideFrame.Edge, offset: Float) =
-        BarHideFrame(edge, offset, travel, if (edge == BarHideFrame.Edge.TOP) top else bottom)
+    private fun frame(edge: BarHideFrame.Edge, offset: Float, tall: Boolean = offset > 0f) =
+        BarHideFrame(edge, offset, travel, if (edge == BarHideFrame.Edge.TOP) top else bottom, tall)
 
     private fun placement(top: Int, bottom: Int, shift: Float = 0f, clip: Int = 0) = BarHidePlacement(top, bottom, shift, clip)
 
     @Test
     fun withNoBarToHideTheChromesLayoutStands() {
         assertEquals(placement(top, bottom), BarHidePlacement.of(top, bottom, null))
+    }
+
+    @Test
+    fun aBarHomeWithThePageStillTallKeepsTheTallLayoutClippedAtTheBarsEdgeUntilTheRest() {
+        // The return's rest, not its first frame, shrinks the page (§11.5 as amended on #270): the
+        // chrome says `tall` for a bar that has come home under a finger still down or a fling not
+        // yet ended, and the page keeps the tall layout of the gesture – the same box as mid-way,
+        // so nothing is laid out – with the whole band clipped: the picture of the short layout.
+        val b = BarHideFrame.Edge.BOTTOM
+        assertEquals(placement(top, bottom + travel, clip = travel), BarHidePlacement.of(top, bottom, frame(b, 0f, tall = true)))
+        // The rest: the chrome says short, and the one relayout lands.
+        assertEquals(placement(top, bottom), BarHidePlacement.of(top, bottom, frame(b, 0f, tall = false)))
+        // Docked at the top the same: the tall box, no slide, the band past the frame's bottom clipped.
+        val t = BarHideFrame.Edge.TOP
+        assertEquals(placement(top, bottom + travel, shift = 0f, clip = travel), BarHidePlacement.of(top, bottom, frame(t, 0f, tall = true)))
+        assertEquals(placement(top, bottom), BarHidePlacement.of(top, bottom, frame(t, 0f, tall = false)))
+        // A frame that says short while the bar is off its edge is read as tall all the same.
+        assertEquals(placement(top, bottom + travel, clip = 44), BarHidePlacement.of(top, bottom, frame(b, 44f, tall = false)))
+    }
+
+    @Test
+    fun theChromesFrameCarriesTheLayoutAndAnOffsetImpliesIt() {
+        val args = { offset: Double, tall: Boolean? ->
+            org.json.JSONObject().put("edge", "bottom").put("offset", offset).put("travel", 50).put("shownEdge", 800).also { if (tall != null) it.put("tall", tall) }
+        }
+        assertEquals(true, BarHideFrame.parse(args(0.0, true), 1.75f)!!.tall)
+        assertEquals(false, BarHideFrame.parse(args(0.0, false), 1.75f)!!.tall)
+        assertEquals(false, BarHideFrame.parse(args(0.0, null), 1.75f)!!.tall)
+        assertEquals(true, BarHideFrame.parse(args(12.0, null), 1.75f)!!.tall)
+        assertEquals(true, BarHideFrame.parse(args(12.0, false), 1.75f)!!.tall)
     }
 
     @Test

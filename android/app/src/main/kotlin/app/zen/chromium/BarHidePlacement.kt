@@ -13,16 +13,23 @@ import kotlin.math.roundToInt
  * (`S`), or tall, into the band, once the bar is hidden and at rest (`H`) – and reports whichever
  * it is in; the report can trail the bar by a frame or two either way, so which one it is is
  * read off the frame's `shownEdge`, not assumed. From that the page's edge on the bar's side
- * follows the bar: at rest the layout is the chrome's own, `S` or `H`, and while the bar is off
- * its edge but not fully the page is laid out tall once (one relayout per gesture, not one per
- * frame, and it never pushes the page's content) and its far edge is clipped to what the bar has
- * left. A bottom-docked bar's page grows at the bottom under the clip; a top-docked bar's page is
- * slid up with the bar and clipped at the frame's bottom, so the content under the bar moves with
- * it and the page holds still under the finger.
+ * follows the bar: at either rest the layout is the chrome's own, `S` or `H`, and while the
+ * frame says the page is `tall` ([BarHideFrame.tall]: from the hide's first frame to the shown
+ * REST) it is laid out tall, its far edge clipped to what the bar has left. Two layouts per
+ * hide-and-return, never one per frame, neither pushing the page's content: the page grows at the
+ * hide's first frame, since the clip that uncovers it as the bar leaves needs content to
+ * uncover, and shrinks at the return's rest, after the bar has arrived – not the frame it
+ * arrives, when the finger may still be down (§11.5 as amended on #270: the return's relayout,
+ * 105 ms on github.com, leaves the gesture's frames entirely). A bar home with the page still
+ * tall is clipped at the bar's edge: the same picture as short. A bottom-docked bar's page grows
+ * at the bottom under the clip; a top-docked bar's page is slid up with the bar and clipped at
+ * the frame's bottom, so the content under the bar moves with it and the page holds still under
+ * the finger.
  *
  * The tall layout has a band less to scroll, so Chromium clamps a page that was within the band
- * of its end: the gesture starts no hide there ([BarHideScrollFilter], [BarHideShare]), and a
- * page in its last band keeps its bar, laid out short, with all of it reachable.
+ * of its end: the gesture starts no hide there from the short layout ([BarHideScrollFilter],
+ * [BarHideShare]), and a page in its last band keeps its bar, laid out short, with all of it
+ * reachable.
  */
 class BarHidePlacement(val top: Int, val bottom: Int, val shiftPx: Float, val clipPx: Int) {
     val height: Int get() = (bottom - top).coerceAtLeast(0)
@@ -51,12 +58,15 @@ class BarHidePlacement(val top: Int, val bottom: Int, val shiftPx: Float, val cl
             var bottom = reportedBottom
             var shift = 0f
             var clip = 0
+            // Tall from the hide's first frame to the shown rest (the frame's word, not the offset's:
+            // a bar home under a finger still down leaves the page tall, clipped at the bar's edge).
+            val tall = frame.tall || o > 0f
             when (frame.edge) {
                 BarHideFrame.Edge.TOP -> {
                     // `S` starts at the shown edge, `H` a band above it; whichever the report is nearer.
                     val shownTop = if (abs(reportedTop - frame.shownEdgePx) <= abs(reportedTop + t - frame.shownEdgePx)) reportedTop else reportedTop + t
                     when {
-                        o <= 0f -> top = shownTop
+                        !tall -> top = shownTop
                         o < t -> {
                             top = shownTop
                             bottom = reportedBottom + t
@@ -68,8 +78,8 @@ class BarHidePlacement(val top: Int, val bottom: Int, val shiftPx: Float, val cl
                 }
                 BarHideFrame.Edge.BOTTOM -> {
                     val shownBottom = if (abs(reportedBottom - frame.shownEdgePx) <= abs(reportedBottom - t - frame.shownEdgePx)) reportedBottom else reportedBottom - t
-                    bottom = if (o <= 0f) shownBottom else shownBottom + t
-                    if (o > 0f && o < t) clip = (t - o).roundToInt()
+                    bottom = if (tall) shownBottom + t else shownBottom
+                    if (tall && o < t) clip = (t - o).roundToInt()
                 }
             }
             return BarHidePlacement(top, bottom, shift, clip)
