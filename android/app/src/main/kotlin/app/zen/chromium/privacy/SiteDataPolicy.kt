@@ -88,7 +88,8 @@ class SiteDataPolicy(
             if (arr == null) return emptyList()
             val out = ArrayList<String>(arr.length())
             for (i in 0 until arr.length()) {
-                val text = SitePattern.normalize(arr.optString(i, "")) ?: continue
+                // Only strings are patterns (the core's `sanitizeSiteDataPolicy` skips the rest too).
+                val text = SitePattern.normalize(arr.opt(i) as? String ?: continue) ?: continue
                 if (text !in out) out.add(text)
             }
             return out

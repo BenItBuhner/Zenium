@@ -382,10 +382,10 @@ class HeaderStageTest {
         // A never-site's own document is first-party traffic that the jar would ride on; the
         // cookie policy's word (`withCookies` false) is the desktop header stage's strip: the
         // request's own Cookie header goes, the jar is not consulted, Set-Cookie is dropped.
-        val jar = FakeCookies().apply { jar = "session=abc" }
+        val store = FakeCookies().apply { this.jar = "session=abc" }
         val fetcher = FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "tracker=1; Path=/", body = "<p>never</p>"))
         val tab = FakeTab(documentUrl = null)
-        val answer = HeaderStage(jar, fetcher).relay(
+        val answer = HeaderStage(store, fetcher).relay(
             EngineSnapshot.EMPTY, tab, navigation("https://never.example/"), mapOf("Accept" to "text/html", "Cookie" to "stale=1"), null,
             Decision.ALLOW, withCookies = false
         )
@@ -394,15 +394,15 @@ class HeaderStageTest {
         assertEquals("<p>never</p>", answer.data.bufferedReader().readText())
         assertFalse(fetcher.headers!!.keys.any { it.equals("Cookie", ignoreCase = true) })
         assertEquals("text/html", fetcher.headers!!["Accept"])
-        assertTrue(jar.stored.isEmpty())
+        assertTrue(store.stored.isEmpty())
         // The same document with cookies: the jar rides and the response's cookies land.
-        val withJar = FakeCookies().apply { jar = "session=abc" }
+        val withJar = FakeCookies().apply { this.jar = "session=abc" }
         val plain = FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "seen=1; Path=/"))
         assertNotNull(HeaderStage(withJar, plain).relay(EngineSnapshot.EMPTY, tab, navigation("https://never.example/"), emptyMap(), null))
         assertEquals("session=abc", plain.headers!!["Cookie"])
         assertEquals(1, withJar.stored.size)
         // A frame of the never-site inside another page, and a same-site one: withheld either way.
-        val frames = FakeCookies().apply { jar = "session=abc" }
+        val frames = FakeCookies().apply { this.jar = "session=abc" }
         val frameFetcher = FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "t=1"))
         val ownFrame = Request("https://never.example/frame", ResourceType.SUB_FRAME, "https://never.example/", thirdParty = false, partition = "default")
         assertNotNull(HeaderStage(frames, frameFetcher).relay(EngineSnapshot.EMPTY, FakeTab(), ownFrame, mapOf("Cookie" to "x=1"), null, Decision.ALLOW, false))
