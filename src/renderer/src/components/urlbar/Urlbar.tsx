@@ -40,14 +40,26 @@ import { urlbarFieldBox } from '@renderer/lib/layout'
 import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
 import { startQrScan } from '@renderer/lib/qrScan'
 import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
-import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
+import { closeUrlbar, showLocalMenu, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
+import { useLongPress } from '../phone/useLongPress'
 import { V2_GLYPH } from '../v2/controls'
 import { Highlighted } from '../v2/Highlighted'
 import { EngineFieldGlyph } from './EngineFieldGlyph'
 import { matchRanges } from './highlight'
 import { isShareableUrl, showsPageHeader } from './omniboxHeader'
+import {
+  ghostBox,
+  headingKey,
+  headingLeavesWith,
+  listOffsets,
+  moverDeltas,
+  runRowExit,
+  withoutExit,
+  type GhostBox,
+  type RowExit
+} from './rowExit'
 import {
   arrowStep,
   clickTarget,
@@ -162,6 +174,13 @@ const rowActionId = (row: number, action: number): string =>
 /** A row the user can remove (the X, Shift+Delete): the core says so (`deletable`). */
 const removable = (row: Suggestion): boolean => Boolean(row.deletable)
 
+/** The list item carrying `attr="value"` (matched as text: ids and labels are not selectors). */
+function childBy(list: HTMLElement, attr: string, value: string): HTMLElement | null {
+  for (const el of list.children)
+    if (el instanceof HTMLElement && el.getAttribute(attr) === value) return el
+  return null
+}
+
 /** Rows that come from the user's own typing or pages, worth remembering as shortcuts. */
 const LEARNABLE_KINDS = new Set<Suggestion['kind']>(['url', 'history', 'search', 'entity'])
 
@@ -182,6 +201,19 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   const [action, setAction] = useState(-1)
   /** Escape's first stage (omnibox-50): the rows are put away, the typed text kept. */
   const [popupClosed, setPopupClosed] = useState(false)
+  /**
+   * A row of the phone card on its way out (OMN-17): still in `results` while its exit runs,
+   * drawn as a ghost where it stood, and spliced out at rest (`rowExit.ts`).
+   */
+  const [exit, setExit] = useState<RowExit | null>(null)
+  /** The list the exit runs in, and where its items stood before the ghosts left the flow. */
+  const exitList = useRef<{ list: HTMLElement; before: Map<HTMLElement, number> } | null>(null)
+  const exitStop = useRef<(() => void) | null>(null)
+  /** The rows as last set, for callbacks that run after their render (a sheet's answer). */
+  const resultsRef = useRef(results)
+  useLayoutEffect(() => {
+    resultsRef.current = results
+  }, [results])
   const inputRef = useRef<HTMLInputElement>(null)
   const fadeResults = useFadeEdges<HTMLUListElement>({ axis: 'y' })
   const requestSeq = useRef(0)
@@ -271,6 +303,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
         ...(phone ? { grouped: true } : {})
       }).catch(() => [] as Suggestion[])
       if (seq !== requestSeq.current) return
+      // A fresh list is laid out whole: an exit in flight has nothing left to leave from.
+      exitStop.current?.()
+      exitStop.current = null
+      setExit(null)
       setResults(list)
       setPopupClosed(false)
       setAction(-1)
@@ -715,17 +751,27 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   const refine = (item: Suggestion): void => setTyped(item.fill, true)
 
   /**
+   * Forget a removable row where it came from: a history row and its entry (`history.delete`,
+   * the one the history page's rows run), a remembered search or destination, an omnibox row
+   * its extension marked deletable.
+   */
+  const forget = (row: Suggestion): boolean => {
+    if (!removable(row)) return false
+    if (row.kind === 'history' && row.url) run('history.delete', { url: row.url })
+    else if (row.kind === 'omnibox') run('urlbar.deleteSuggestion', { input: row.fill })
+    else if (row.url) run('urlbar.forgetShortcut', { url: row.url })
+    else return false
+    return true
+  }
+
+  /**
    * Remove row `index` (Shift+Delete, the X; omnibox-22): a history row and its entry, a
    * remembered search, an omnibox row its extension marked deletable. No confirmation; the
    * highlight moves to the row that takes its place instead of clearing (Chrome).
    */
   const removeRow = (index: number): boolean => {
     const row = results[index]
-    if (!row || !removable(row)) return false
-    if (row.kind === 'history' && row.url) run('history.delete', { url: row.url })
-    else if (row.kind === 'omnibox') run('urlbar.deleteSuggestion', { input: row.fill })
-    else if (row.url) run('urlbar.forgetShortcut', { url: row.url })
-    else return false
+    if (!row || !forget(row)) return false
     const remaining = results.filter((_, i) => i !== index)
     setResults(remaining)
     const next = selectionAfterRemoval(index, remaining.length)
@@ -733,6 +779,78 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     highlight(next, remaining)
     return true
   }
+
+  /**
+   * The phone's removal (OMN-17, Chrome for Android's): a hold on a removable row asks first –
+   * a §9.13 sheet titled with the question, Remove in the danger ink (§10.4) and Cancel – since
+   * a finger has no Shift+Delete and no X to aim at. The sheet takes the focus from the field
+   * and gives it back when it goes (the keyboard with it), whichever way it is answered.
+   */
+  const askRemoval = (item: Suggestion): void => {
+    void showLocalMenu(
+      'urlbar',
+      [
+        { label: 'Remove', danger: true, onSelect: () => removeFromCard(item) },
+        { label: 'Cancel', onSelect: () => undefined }
+      ],
+      tab?.id ?? null,
+      { title: 'Remove suggestion from history?' }
+    )
+  }
+
+  /**
+   * Remove: the entry goes at once; the row leaves on §11.4's collapse (`rowExit.ts`) – its
+   * heading with it when it was its group's last – measured here, before anything moves, and
+   * run from the layout effect below once the ghosts are out of the flow.
+   */
+  const removeFromCard = (item: Suggestion): void => {
+    const current = resultsRef.current
+    const index = current.findIndex((row) => row.id === item.id)
+    // One exit at a time: a second answer while one runs waits for the next list.
+    if (index < 0 || exitStop.current || exitList.current || !forget(current[index])) return
+    const li = document.getElementById(`zen-omnibox-row-${index}`)?.closest('li')
+    const list = li?.parentElement
+    if (!li || !list) {
+      setResults(current.filter((row) => row.id !== item.id))
+      return
+    }
+    const group = headingLeavesWith(current, item) ? item.group! : null
+    const headingEl = group ? childBy(list, 'data-group', group) : null
+    const ghosts: Record<string, GhostBox> = { [item.id]: ghostBox(li) }
+    if (group && headingEl) ghosts[headingKey(group)] = ghostBox(headingEl)
+    exitList.current = { list, before: listOffsets(list) }
+    setExit({ id: item.id, heading: group && headingEl ? group : null, ghosts })
+  }
+
+  // The ghosts are out of the flow and the rows below stand in their final slots: glide them
+  // back from where they were and run the exit; at rest the leaving rows are spliced out.
+  useLayoutEffect(() => {
+    if (!exit) return
+    const finish = (): void => {
+      exitStop.current = null
+      setResults((rows) => rows.filter((row) => row.id !== exit.id))
+      setExit(null)
+    }
+    const measured = exitList.current
+    exitList.current = null
+    const list = measured?.list
+    const row = list ? childBy(list, 'data-row', exit.id) : null
+    if (!measured || !list || !row) {
+      finish()
+      return
+    }
+    const heading = exit.heading ? childBy(list, 'data-group', exit.heading) : null
+    const ghosts = new Set([row, ...(heading ? [heading] : [])])
+    exitStop.current = runRowExit(
+      { row, heading },
+      moverDeltas(measured.before, list, ghosts),
+      finish
+    )
+    return () => {
+      exitStop.current?.()
+      exitStop.current = null
+    }
+  }, [exit])
 
   /**
    * Put the highlight on row `index` (`-1`: none), the field showing the row's text with the
@@ -991,8 +1109,18 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   // trailing text (a page's host, an answer's expression, an engine row's "Search <engine>").
   const firstSearch = results.findIndex((r) => r.kind === 'search')
 
+  // The rows that stay: a leaving row (OMN-17) is drawn as a ghost out of the flow and takes no
+  // part in where the headings fall or which is outermost.
+  const live = withoutExit(results, exit)
+  /** The group of the nearest row that stays, `dir` rows away. */
+  const liveGroup = (i: number, dir: 1 | -1): string | undefined => {
+    let j = i + dir
+    while (results[j] && results[j].id === exit?.id) j += dir
+    return results[j]?.group
+  }
   const rows = (sheet: boolean): JSX.Element[] =>
     results.flatMap((item, i) => {
+      const leaving = exit?.id === item.id
       const row = (
         <SuggestionRow
           key={item.id}
@@ -1015,8 +1143,11 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
               })
           }}
           // The desktop's remove X (omnibox-22) on the rows the core marks removable; the
-          // phone's trailing controls (OMN-09, OMN-14) are as they were.
+          // phone's trailing controls (OMN-09, OMN-14) are as they were, and its removal is a
+          // hold on the row that asks first (OMN-17).
           onRemove={!sheet && removable(item) ? () => removeRow(i) : undefined}
+          onLongPress={sheet && removable(item) ? askRemoval : undefined}
+          ghost={leaving ? exit.ghosts[item.id] : undefined}
           removeId={rowActionId(i, 0)}
           actionFocused={!sheet && i === selected && action === 0}
           onActionKeyDown={onActionKeyDown}
@@ -1032,23 +1163,32 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       // stays across a keystroke keeps its element and only an arriving one fades in (§11.4:
       // in place, on opacity; nothing slides). A bottom-docked card lists its rows in reverse –
       // the first nearest the field – so there the heading follows the group's last row in the
-      // DOM to stand over the group on screen.
+      // DOM to stand over the group on screen. A leaving row's heading goes with it, as a
+      // ghost, only when it was the group's last; otherwise the rows that stay carry it.
       const bottom = sheet && phoneEdge === 'bottom'
-      const boundary = bottom ? results[i + 1]?.group : results[i - 1]?.group
-      const heading =
-        item.group && item.group !== boundary ? (
-          <li
-            key={`group-${item.group}`}
-            role="presentation"
-            className={cn(
-              'zen-v2-heading',
-              sheet ? 'zen-omnibox-sheet-heading' : 'zen-omnibox-heading'
-            )}
-            data-testid="urlbar-group-heading"
-          >
-            {item.group}
-          </li>
-        ) : null
+      const ghostHeading = leaving && exit.heading === item.group
+      const boundary = liveGroup(i, bottom ? 1 : -1)
+      const heads = item.group && (leaving ? ghostHeading : item.group !== boundary)
+      // The outermost heading, at the list's edge, sits 8 in rather than the 20 between groups.
+      const outer = !leaving && (bottom ? live[live.length - 1] : live[0])?.id === item.id
+      const heading = heads ? (
+        <li
+          key={headingKey(item.group!)}
+          role="presentation"
+          className={cn(
+            'zen-v2-heading',
+            sheet ? 'zen-omnibox-sheet-heading' : 'zen-omnibox-heading'
+          )}
+          data-testid="urlbar-group-heading"
+          data-group={item.group}
+          data-outer={outer || undefined}
+          data-leaving={ghostHeading || undefined}
+          aria-hidden={ghostHeading || undefined}
+          style={ghostHeading ? exit.ghosts[headingKey(item.group!)] : undefined}
+        >
+          {item.group}
+        </li>
+      ) : null
       if (!heading) return [row]
       return bottom ? [row, heading] : [heading, row]
     })
@@ -1496,6 +1636,8 @@ const keepFocus = (e: React.PointerEvent): void => {
   e.stopPropagation()
 }
 
+const noop = (): void => undefined
+
 /**
  * The search-ready header (OMN-05, Chrome for Android): the page the bar was opened over – its
  * icon, title and address as a static two-line row – and Share, Copy link and Edit as v2 buttons
@@ -1599,6 +1741,8 @@ function SuggestionRow({
   onRefine,
   clip,
   onReveal,
+  onLongPress,
+  ghost,
   typed = '',
   bare = false
 }: {
@@ -1609,6 +1753,16 @@ function SuggestionRow({
   /** A row of the phone sheet: touch height (44); the desktop list's rows are §6's one line at 50. */
   sheet: boolean
   onPick: (e: React.MouseEvent) => void
+  /**
+   * The phone row's hold (OMN-17): on a removable row it asks to remove the suggestion; a right
+   * click counts as the hold, for a mouse. The tap that ends a hold picks nothing.
+   */
+  onLongPress?: (item: Suggestion) => void
+  /**
+   * The row is on its way out (OMN-17, `rowExit.ts`): drawn as a ghost at this box, out of the
+   * list's flow, inert and hidden from assistive technology, while its exit runs.
+   */
+  ghost?: GhostBox
   /**
    * What the user typed, for the desktop row's bold match (omnibox-21, `highlight.ts`): a
    * keyword mode's terms alone; empty at rest over a page and in zero-suggest, when nothing
@@ -1640,13 +1794,16 @@ function SuggestionRow({
   // A favicon that fails to load leaves the kind's glyph, as Chrome's globe (never a blank cell).
   const [faviconBroken, setFaviconBroken] = useState(false)
   const { Icon, page } = suggestionIcon(item)
+  const hold = useLongPress(onLongPress ? () => onLongPress(item) : noop)
   const pointerProps = {
     onPointerDown: (e: React.PointerEvent) => {
       // Keep the input focused (no blur → no keyboard flicker on phones). A mouse picks on
-      // press like Firefox; a finger picks on tap so the list can still be scrolled.
+      // press like Firefox; a finger picks on tap so the list can still be scrolled. A row with
+      // a hold leaves the right button to it (its context menu is the hold's question).
       e.preventDefault()
-      if (e.pointerType === 'mouse') onPick(e)
-      else touch.current = true
+      if (e.pointerType === 'mouse') {
+        if (!onLongPress || e.button === 0) onPick(e)
+      } else touch.current = true
     },
     onClick: (e: React.MouseEvent) => {
       if (!touch.current) return
@@ -1654,6 +1811,24 @@ function SuggestionRow({
       onPick(e)
     }
   }
+  // The hold's handlers ride along on a row that has one: its recognition swallows the tap that
+  // ends it, so the row is not also picked (`useLongPress`).
+  const optionProps = onLongPress
+    ? {
+        ...hold.handlers,
+        onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
+          pointerProps.onPointerDown(e)
+          hold.handlers.onPointerDown(e)
+        },
+        onClick: (e: React.MouseEvent<HTMLElement>) => {
+          if (hold.swallowsClick()) {
+            touch.current = false
+            return
+          }
+          pointerProps.onClick(e)
+        }
+      }
+    : pointerProps
   // The desktop row's glyph is a §9.3 row glyph – 16 at stroke 1.5 in the lead slot's
   // deemphasised ink (`V2_GLYPH`); the phone sheet's row keeps its own.
   const icon =
@@ -1681,13 +1856,17 @@ function SuggestionRow({
         className="zen-suggestion zen-suggestion-sheet flex shrink-0 items-center pr-2.5"
         data-selected={selected}
         data-kind={item.kind}
+        data-row={item.id}
+        data-leaving={ghost ? true : undefined}
+        aria-hidden={ghost ? true : undefined}
+        style={ghost}
       >
         <div
           id={id}
           role="option"
           aria-selected={selected}
           className="flex min-w-0 flex-1 cursor-default items-center gap-3 self-stretch pl-2.5"
-          {...pointerProps}
+          {...optionProps}
         >
           {icon}
           <span className="min-w-0 flex-1 truncate text-[14px]">

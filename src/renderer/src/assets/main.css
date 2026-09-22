@@ -10383,8 +10383,9 @@
  * glyph edge (the row's 10 inset), in the window's deemphasised ink: the card is a window
  * surface (§9.29), so it reads the control role. A heading that arrives fades in on opacity in
  * its slot over 120 ms (§11.4, the same under reduced motion); the rows around it cut, as
- * Chrome's do on a keystroke, and nothing slides. At a bottom dock the list is reversed and
- * the heading on screen first is the list's last child.
+ * Chrome's do on a keystroke, and nothing slides. The outermost heading is told by the list
+ * (`data-outer`), not by `:first-child`: a row leaving the card (below) stays a child of the
+ * list, out of the flow, until its exit has run.
  */
 .zen-v2-heading.zen-omnibox-sheet-heading {
   flex-shrink: 0;
@@ -10393,9 +10394,21 @@
   color: var(--v2-control-text-deemphasized);
   animation: zen-fade 120ms var(--zen-ease);
 }
-.zen-omnibox-list[data-edge='top'] > .zen-v2-heading.zen-omnibox-sheet-heading:first-child,
-.zen-omnibox-list[data-edge='bottom'] > .zen-v2-heading.zen-omnibox-sheet-heading:last-child {
+.zen-v2-heading.zen-omnibox-sheet-heading[data-outer] {
   margin-top: 8px;
+}
+/*
+ * A row leaving the card (OMN-17, §11.4; components/urlbar/rowExit.ts): a ghost drawn where
+ * the row stood – out of the flow at its measured box, so the rows below already stand in
+ * their final slots and glide back on transform alone – collapsing and fading on the exit
+ * spring while nothing beneath it can be touched.
+ */
+.zen-omnibox-list > [data-leaving] {
+  position: absolute;
+  margin: 0;
+  pointer-events: none;
+  animation: none;
+  will-change: transform, opacity;
 }
 /*
  * The engine's favicon in a field's leading slot (NTP-09, components/urlbar/EngineFieldGlyph):

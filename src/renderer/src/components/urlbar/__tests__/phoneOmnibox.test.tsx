@@ -28,7 +28,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { HEADER_SWAP_FADE_MS, Urlbar } = await import('../Urlbar')
 const { isShareableUrl, showsPageHeader } = await import('../omniboxHeader')
-const { uiStore } = await import('@renderer/lib/ui')
+const { pickMenuItem, uiStore } = await import('@renderer/lib/ui')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -721,6 +721,200 @@ describe('the card’s section headings (OMN-18)', () => {
     await type(input(el), 'cats')
     expect(headings(el).map((h) => h.textContent)).toEqual(['Pages', 'Searches'])
     expect(headings(el)[0]).toBe(pages)
+  })
+})
+
+describe('removing a suggestion by touch (OMN-17)', () => {
+  const WIKI = 'https://en.wikipedia.org/wiki/Cat'
+  const removable = (): Suggestion[] => [
+    row('search', 'cats', 'cats', null),
+    { ...row('history', 'Cats – Wikipedia', 'cats', WIKI), group: 'Pages', deletable: true },
+    {
+      ...row('history', 'Cat videos', 'cats', 'https://videos.example/cats'),
+      group: 'Pages',
+      deletable: true
+    },
+    { ...row('search', 'cats for adoption', 'cats for adoption', null), group: 'Searches' }
+  ]
+  const rowOf = (el: HTMLElement, title: string): HTMLElement | null =>
+    rows(el).find(
+      (li) =>
+        li.getAttribute('data-testid') !== 'urlbar-group-heading' &&
+        option(li).querySelector('span')!.textContent!.trim() === title
+    ) ?? null
+  const headingOf = (el: HTMLElement, group: string): HTMLElement | null =>
+    el.querySelector<HTMLElement>(`[data-testid="urlbar-group-heading"][data-group="${group}"]`)
+  const menu = (): NonNullable<ReturnType<typeof uiStore.get>['menu']> => uiStore.get().menu!
+
+  /** A finger held on the row past the hold's 380 ms, then lifted: the click that follows is the hold's. */
+  async function hold(el: HTMLElement): Promise<void> {
+    const at = {
+      bubbles: true,
+      pointerType: 'touch',
+      pointerId: 7,
+      button: 0,
+      clientX: 40,
+      clientY: 40
+    }
+    await act(async () => {
+      el.dispatchEvent(new PointerEvent('pointerdown', at))
+      await new Promise((r) => setTimeout(r, 420))
+      el.dispatchEvent(new PointerEvent('pointerup', at))
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+  }
+  /** The sheet's answer: the row picked, and its action run once the sheet has been unpainted. */
+  async function answer(label: string): Promise<void> {
+    const item = menu().items.find((i) => i.label === label)!
+    await act(async () => {
+      pickMenuItem(item.id)
+      await new Promise((r) => setTimeout(r, 60))
+    })
+  }
+  /**
+   * Wait for the exit spring (real frames) to bring the list to `until`: in short `act` spans,
+   * each of which lets React flush what the frames queued.
+   */
+  async function settle(until: () => boolean): Promise<void> {
+    const start = Date.now()
+    while (!until()) {
+      if (Date.now() - start > 4000) throw new Error('the exit did not settle')
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+      })
+    }
+  }
+
+  afterEach(() => {
+    uiStore.set({ menu: null })
+  })
+
+  it('a hold on a history row asks first: the question as the sheet’s title, Remove in the danger ink, Cancel; nothing picked', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    await hold(option(rowOf(el, 'Cats – Wikipedia')!))
+    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
+    expect(menu().title).toBe('Remove suggestion from history?')
+    expect(menu().source).toBe('urlbar')
+    expect(menu().items.map((i) => [i.label, Boolean(i.danger)])).toEqual([
+      ['Remove', true],
+      ['Cancel', false]
+    ])
+    expect(commands()).not.toContain('urlbar.submit')
+    expect(commands()).not.toContain('history.delete')
+  })
+
+  it('Remove deletes the entry through history.delete and the row leaves as a ghost before it is spliced out', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    const doomed = rowOf(el, 'Cats – Wikipedia')!
+    await hold(option(doomed))
+    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
+    await answer('Remove')
+    await act(async () => {
+      await vi.waitFor(() => expect(commands()).toContain('history.delete'))
+    })
+    expect(callsTo('history.delete')[0]).toEqual({ url: WIKI })
+    // A ghost at its measured box, out of the flow (`[data-leaving]`, main.css), inert and
+    // unheard, while its exit runs (v2 §11.4).
+    expect(doomed.hasAttribute('data-leaving')).toBe(true)
+    expect(doomed.getAttribute('aria-hidden')).toBe('true')
+    expect(doomed.style.top).not.toBe('')
+    expect(doomed.style.width).not.toBe('')
+    // The other Pages row carries the heading meanwhile: it stays, and is not a ghost.
+    expect(headingOf(el, 'Pages')!.hasAttribute('data-leaving')).toBe(false)
+    await settle(() => rowOf(el, 'Cats – Wikipedia') === null)
+    expect(rowOf(el, 'Cat videos')).not.toBeNull()
+    expect(headingOf(el, 'Pages')).not.toBeNull()
+    expect(uiStore.get().menu).toBeNull()
+  })
+
+  it('the heading goes with the group’s last row, and the next heading becomes the outermost', async () => {
+    suggestions = () => removable().filter((r) => r.title !== 'Cat videos')
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    expect(headingOf(el, 'Pages')!.hasAttribute('data-outer')).toBe(false)
+    const doomed = rowOf(el, 'Cats – Wikipedia')!
+    await hold(option(doomed))
+    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
+    await answer('Remove')
+    await act(async () => {
+      await vi.waitFor(() => expect(commands()).toContain('history.delete'))
+    })
+    const pages = headingOf(el, 'Pages')!
+    expect(pages.hasAttribute('data-leaving')).toBe(true)
+    expect(pages.getAttribute('aria-hidden')).toBe('true')
+    await settle(() => headingOf(el, 'Pages') === null)
+    expect(rowOf(el, 'Cats – Wikipedia')).toBeNull()
+    expect(rowOf(el, 'cats for adoption')).not.toBeNull()
+    expect(headingOf(el, 'Searches')).not.toBeNull()
+  })
+
+  it('Cancel keeps the row and deletes nothing', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    await hold(option(rowOf(el, 'Cats – Wikipedia')!))
+    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
+    await answer('Cancel')
+    expect(uiStore.get().menu).toBeNull()
+    expect(commands()).not.toContain('history.delete')
+    expect(rowOf(el, 'Cats – Wikipedia')!.hasAttribute('data-leaving')).toBe(false)
+  })
+
+  it('a right click is the hold, for a mouse; a row the core does not mark removable has none', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    await act(async () => {
+      option(rowOf(el, 'cats for adoption')!).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      )
+      await new Promise((r) => setTimeout(r, 20))
+    })
+    expect(uiStore.get().menu).toBeNull()
+    await act(async () => {
+      option(rowOf(el, 'Cat videos')!).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      )
+    })
+    await vi.waitFor(() => expect(uiStore.get().menu).not.toBeNull())
+    expect(menu().title).toBe('Remove suggestion from history?')
+  })
+
+  it('a plain tap on a history row still picks it', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    await tap(option(rowOf(el, 'Cats – Wikipedia')!))
+    expect(uiStore.get().menu).toBeNull()
+    expect(callsTo('urlbar.submit')[0]).toMatchObject({ input: WIKI })
+  })
+
+  it('marks the outermost heading for the list’s edge margin at either dock', async () => {
+    suggestions = () => [
+      { ...row('history', 'Cats – Wikipedia', 'cats', WIKI), group: 'Pages', deletable: true },
+      { ...row('search', 'cats for adoption', 'cats for adoption', null), group: 'Searches' }
+    ]
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    expect(headingOf(el, 'Pages')!.hasAttribute('data-outer')).toBe(true)
+    expect(headingOf(el, 'Searches')!.hasAttribute('data-outer')).toBe(false)
+    act(() => root?.unmount())
+    const bottom = await render(
+      createElement(Urlbar, {
+        state: state(tab(PAGE)),
+        urlbar: urlbarState('edit'),
+        area: null,
+        phoneEdge: 'bottom'
+      })
+    )
+    await type(input(bottom), 'cats')
+    expect(headingOf(bottom, 'Pages')!.hasAttribute('data-outer')).toBe(false)
+    expect(headingOf(bottom, 'Searches')!.hasAttribute('data-outer')).toBe(true)
   })
 })
 
