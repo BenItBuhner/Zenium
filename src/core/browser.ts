@@ -3123,6 +3123,10 @@ export class Browser {
         ),
       'translate.selection': ({ tabId, text, target }) =>
         this.translate.translateSelection(tabId, { text, target }),
+      'translate.reader': ({ tabId, target, source }) =>
+        this.translate.translateReader(tabId, { target, source }),
+      'translate.readerShowOriginal': ({ tabId, original }) =>
+        this.translate.showReaderOriginal(tabId, original),
       'translate.setPreferences': (patch) => this.translate.setPreferences(patch),
       'translate.setLanguageRule': ({ language, rule }) =>
         this.translate.setLanguageRule(language, rule),
