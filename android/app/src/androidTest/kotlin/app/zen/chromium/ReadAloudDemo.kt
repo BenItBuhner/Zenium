@@ -585,19 +585,14 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             check("without a voice the sentence steps are disabled with the error state", previous != null && !previous.isEnabled && next != null && !next.isEnabled)
             return
         }
-        // The walk put at the first sentence first, so the steps read the same on every run (the
-        // reading has gone on through the steps before this one); a seek speaks that sentence.
-        // Then a real touch on Pause holds the walk still: the first sentence is the article's
-        // heading, two seconds of speech, and run 4 tapped Next after the model had walked on by
-        // itself (the tap moved 1 -> 2, read against 0 -> 1). Each step is read against the
-        // sentence the walk stood at just before the finger came down; a step speaks (playing).
-        coreInvoke("readAloud.seek", "{\"sentenceIndex\":0}")
-        val atFirst = poll(6_000) { readAloud()?.optInt("sentenceIndex") == 0 && status() == "playing" }
-        val held = holdTheWalk()
+        // The walk parked at the first sentence, held, so the steps read the same on every run (the
+        // reading has gone on through the steps before this one). Each step is then read against
+        // the sentence the walk stood at just before the finger came down; a step speaks (playing).
+        val parked = parkAtFirst()
         val count = readAloud()?.optInt("sentenceCount") ?: 0
         val previous = awaitNode(4_000) { it == "Previous sentence" }
         val next = awaitNode(4_000) { it == "Next sentence" }
-        finding("  at the first sentence (seek: $atFirst, held: $held, status ${status()}, index ${sentenceIndex()}): Previous ${previous?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; Next ${next?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; $count sentences")
+        finding("  at the first sentence (parked: $parked, status ${status()}, index ${sentenceIndex()}): Previous ${previous?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; Next ${next?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; $count sentences")
         check("Previous is disabled at the first sentence", previous != null && !previous.isEnabled)
         check("Next is enabled before the last sentence", next != null && next.isEnabled)
         val before = sentenceIndex()
@@ -625,6 +620,29 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     }
 
     private fun sentenceIndex(): Int = readAloud()?.optInt("sentenceIndex") ?: -1
+
+    /**
+     * The walk parked at the first sentence and held there (index 0, paused), so the scene's
+     * first steps read against a known sentence. The core's `seek` always speaks the sentence it
+     * lands on, so the hold has to land inside it – and the first sentence is the article's
+     * heading, under two seconds of speech. Run 4 tapped Next after the model had walked on by
+     * itself; run 5 held the walk with a real finger on Pause and lost the race by 45 ms (the
+     * finger took 1.9 s to be found in the tree and land on the emulator's software GL: the
+     * heading ended, the walk moved to sentence 1, and Previous read enabled there). So the park
+     * holds through the core itself – `readAloud.pause`, one bridge call behind the seek, and
+     * `speak` sets the index and `playing` synchronously, so the pause always meets the walk at
+     * 0 – and the real finger on Pause is proved in its own scene ("02-paused"). Bounded
+     * re-parks in case the walk still moved on.
+     */
+    private fun parkAtFirst(): Boolean {
+        for (attempt in 1..PARK_TRIES) {
+            coreInvoke("readAloud.seek", "{\"sentenceIndex\":0}")
+            coreInvoke("readAloud.pause")
+            if (poll(4_000) { sentenceIndex() == 0 && status() == "paused" }) return true
+            if (attempt < PARK_TRIES) noteLine("  the walk moved on before the hold (index ${sentenceIndex()}, status ${status()}); parking again (${attempt + 1}/$PARK_TRIES)")
+        }
+        return false
+    }
 
     /**
      * A real touch on Pause (the walk holds at its sentence; the engine stops), so a step is
@@ -1231,5 +1249,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
          * first finger always takes, so this is 1 on hardware ([gestureTries]).
          */
         private const val GESTURE_TRIES_SOFTWARE = 4
+        /** How many seek-and-hold rounds [parkAtFirst] gets to leave the walk paused at the first sentence. */
+        private const val PARK_TRIES = 3
     }
 }
