@@ -472,8 +472,10 @@ function FieldDialog({
 }
 
 /**
- * A prompt (§9.23): the question as the title block, the destructive action trailing (§9.11);
- * Cancel, the first button, takes the focus as the dialog opens.
+ * A prompt (§9.23) at §9.20's notice width: the question as the title block over its line, the
+ * destructive action trailing (§9.11) and nothing else – 320, never the width of the dialog it
+ * covers, so a Remove prompt over an item's 400 dialog reads as a prompt and not a band across
+ * it (§9.5; the #324 lead check). Cancel, the first button, takes the focus as the dialog opens.
  */
 function ConfirmDialog({
   row,
@@ -492,6 +494,7 @@ function ConfirmDialog({
       description={confirm.description ?? row.description}
       under={under}
       onClose={close}
+      width="notice"
       className="zen-settings-dialog-prompt"
     >
       <SheetActions
