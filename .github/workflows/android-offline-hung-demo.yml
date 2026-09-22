@@ -27,12 +27,6 @@ name: Android offline and hung page demo
 # driver, never when the driver failed.
 on:
   workflow_dispatch:
-  # TEMPORARY (W4-5, #319): the branch's pushes run the demo while the PR is in progress; removed
-  # in the final head, as the brief asks. HELD: the acts below are skipped (`if: false`) until the
-  # coordinator's word on the next run – a push under the hold starts a run of skipped jobs, which
-  # the concurrency group turns into a cancel of any act still going.
-  push:
-    branches: [cursor/android-offline-hung-67ce]
 
 permissions:
   contents: read
@@ -44,7 +38,6 @@ concurrency:
 jobs:
   light:
     name: Offline and hung page demo, light
-    if: false
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
@@ -76,7 +69,6 @@ jobs:
 
   dark:
     name: Offline and hung page demo, dark
-    if: false
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
