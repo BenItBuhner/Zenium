@@ -178,13 +178,17 @@ function longTasksCell(record) {
 /** One frame of the sampling profile: `name (file:line:col) N ms`; the bundle is minified, so the position is what resolves through its source map. */
 function frameLabel(f) {
   const name = f.fn || '(anonymous)'
-  const at = f.url ? ` (${code(`${f.url.slice(f.url.lastIndexOf('/') + 1)}:${f.line}:${f.col}`)})` : ''
+  const at = f.url
+    ? ` (${code(`${f.url.slice(f.url.lastIndexOf('/') + 1)}:${f.line}:${f.col}`)})`
+    : ''
   return `${code(name)}${at} ${fixed(f.ms, 1)} ms`
 }
 
 /** The longest task's time on the CPU beside its wall time, when the trace carried thread times: the gap is time off the CPU, not the chrome's work. */
 function cpuNote(t) {
-  return typeof t.longestTaskCpuMs === 'number' ? `, ${fixed(t.longestTaskCpuMs, 0)} on the CPU` : ''
+  return typeof t.longestTaskCpuMs === 'number'
+    ? `, ${fixed(t.longestTaskCpuMs, 0)} on the CPU`
+    : ''
 }
 
 function baselineCell(record) {
