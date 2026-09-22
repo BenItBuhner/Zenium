@@ -52,6 +52,10 @@ export function OverviewSearchField({
           className="zen-phone-field-clear zen-v2-field-clear"
           aria-label={value ? 'Clear search' : 'Close search'}
           data-testid="overview-search-clear"
+          // The press never takes the focus (the omnibox's Clear the same): the input keeps it
+          // and the keyboard stays where it is. Otherwise the button's moment of focus would
+          // send the host a hide, the input's refocus a show right after, and the two race.
+          onPointerDown={(e) => e.preventDefault()}
           onClick={value ? onClear : onClose}
         >
           <X className="h-5 w-5" strokeWidth={1.75} />
