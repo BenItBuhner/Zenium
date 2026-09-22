@@ -20,7 +20,6 @@ import {
   dissolveSplitGroup,
   essentialsForSpace,
   folderOpened,
-  folderTabs,
   getSpace,
   insertTabIntoSpace,
   loadProgressAfter,
@@ -30,6 +29,7 @@ import {
   openerGroupIndex,
   orderedTabsForSpace,
   pinnedTabs,
+  regularFolderTabs,
   regularTabs,
   removeTabFromLists,
   removeTabFromSplit,
@@ -1289,8 +1289,9 @@ export class TabManager {
       }
       insertTabIntoSpace(m, space, tab, index)
     }
-    // Made in a group: the group is open (a saved one no longer), and used now (TAB-16).
-    folderOpened(m, tab.folderId, tab.createdAt)
+    // Made in a group: the group is open (a saved one no longer), and used now (TAB-16). A
+    // private tab is no member of it for the regular profile: it leaves the group as it was.
+    if (!this.isPrivate(tab)) folderOpened(m, tab.folderId, tab.createdAt)
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
     // Opened by another tab: closing it while active returns to the opener until the user
     // switches away from it (tabs-30).
@@ -1574,8 +1575,9 @@ export class TabManager {
     const previousActive = this.tab(win.selectedTabIn(space))
     win.select(space, tab.id)
     tab.lastActiveAt = Date.now()
-    // A member in view is the group in use: the Tab groups pane's "last used" (TAB-16).
-    if (tab.folderId && m.folders[tab.folderId])
+    // A member in view is the group in use: the Tab groups pane's "last used" (TAB-16). A
+    // private member's viewing leaves no trace on the regular profile's group.
+    if (tab.folderId && m.folders[tab.folderId] && !this.isPrivate(tab))
       m.folders[tab.folderId].lastUsedAt = tab.lastActiveAt
     if (previousActive && previousActive.id !== tab.id) {
       previousActive.lastActiveAt = Date.now()
@@ -1755,14 +1757,15 @@ export class TabManager {
    * that page – Chrome's saved group mirrors its live tabs, so members closed one by one leave
    * it before, and the last one is what the group keeps. A group closing as one
    * (`closeFolderTabs`) has its pages set already, the whole group's; a private member leaves
-   * nothing behind, as it leaves no recently closed entry.
+   * nothing behind – no page, no last use – as it leaves no recently closed entry, and the
+   * group's live members are its regular ones (`regularFolderTabs`).
    */
   private saveFolderOnLastClose(tab: Tab, closedAt: number): void {
     const folderId = tab.folderId
-    if (!folderId || this.closingFolders.has(folderId)) return
+    if (!folderId || this.closingFolders.has(folderId) || this.isPrivate(tab)) return
     const folder = this.model.folders[folderId]
-    if (!folder || folderTabs(this.model, folderId).length > 0) return
-    if (!this.isPrivate(tab)) folder.savedTabs = [savedGroupTab(tab)]
+    if (!folder || regularFolderTabs(this.model, folderId).length > 0) return
+    folder.savedTabs = [savedGroupTab(tab)]
     folder.lastUsedAt = closedAt
   }
 
@@ -1776,10 +1779,11 @@ export class TabManager {
     const m = this.model
     const folder = m.folders[folderId]
     if (!folder) return
-    const members = folderTabs(m, folderId)
+    // The group's tabs are its regular members: a private tab in it is none of the group's on
+    // the surface that closes it, and stays, as it was never counted.
+    const members = regularFolderTabs(m, folderId)
     if (members.length === 0) return
-    const kept = members.filter((t) => !this.isPrivate(t))
-    folder.savedTabs = kept.length ? kept.map(savedGroupTab) : null
+    folder.savedTabs = members.map(savedGroupTab)
     folder.lastUsedAt = Date.now()
     this.closingFolders.add(folderId)
     try {
@@ -2266,7 +2270,10 @@ export class TabManager {
     const previous = tab.folderId
     tab.folderId = folderId
     if (previous && previous !== folderId) this.browser.liveFolders.onTabLeftFolder(tabId, previous)
-    if (folderId && folderId !== previous) folderOpened(this.model, folderId, Date.now())
+    // A regular tab joining opens the group (a saved one's pages go, stale) and marks it used; a
+    // private tab is no member of it for the regular profile and leaves it as it was.
+    if (folderId && folderId !== previous && !this.isPrivate(tab))
+      folderOpened(this.model, folderId, Date.now())
     this.browser.state.commit()
   }
 

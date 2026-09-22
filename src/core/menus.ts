@@ -57,7 +57,13 @@ import {
   splitViewSubmenu
 } from './menuBar'
 import { isSendableUrl } from './sync/sendTab'
-import { folderTabs, isSavedFolder, tabVisibleIn } from './model'
+import {
+  folderTabs,
+  isPrivateFolder,
+  isSavedFolder,
+  regularFolderTabs,
+  tabVisibleIn
+} from './model'
 
 type Template = MenuItemTemplate[]
 
@@ -1379,8 +1385,13 @@ export class Menus {
     const space = win.activeSpace()
     const local = Boolean(win.localSpace)
     const otherSpaces = m.spaces.filter((s) => s.id !== (tab.spaceId ?? win.activeSpaceId))
+    // The space's folders to move the tab to; a regular tab's menu names no private group
+    // (`isPrivateFolder`: private browsing leaks nothing outside its mode), a private tab's – on
+    // a host that keeps private browsing in tabs – every folder of its space.
     const folders = Object.values(m.folders).filter(
-      (f) => f.spaceId === (tab.spaceId ?? win.activeSpaceId)
+      (f) =>
+        f.spaceId === (tab.spaceId ?? win.activeSpaceId) &&
+        (tabs.isPrivate(tab) || !isPrivateFolder(m, f))
     )
     const canSplitWithActive = Boolean(active) && active!.id !== tab.id
     const pinnedChanged =
@@ -1685,7 +1696,11 @@ export class Menus {
     const local = Boolean(win.localSpace)
     const nonEssential = selected.filter((t) => !t.essential)
     const allPinned = nonEssential.length > 0 && nonEssential.every((t) => t.pinned)
-    const folders = Object.values(m.folders).filter((f) => f.spaceId === space.id)
+    // As the tab menu's: a selection with a regular tab in it names no private group.
+    const allPrivate = selected.every((t) => tabs.isPrivate(t))
+    const folders = Object.values(m.folders).filter(
+      (f) => f.spaceId === space.id && (allPrivate || !isPrivateFolder(m, f))
+    )
     this.popup(
       [
         {
@@ -2031,7 +2046,9 @@ export class Menus {
   private groupMenu(folder: Folder, win: ZenWindow): Template {
     const { browser } = this
     const id = folder.id
-    const live = folderTabs(browser.state.model, id).length
+    // The group's tabs are its regular members (`regularFolderTabs`): a private tab in it is
+    // none of the count, and Close Group leaves it.
+    const live = regularFolderTabs(browser.state.model, id).length
     const saved = isSavedFolder(browser.state.model, folder)
     const count = saved ? (folder.savedTabs?.length ?? 0) : live
     const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`

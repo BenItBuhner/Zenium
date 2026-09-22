@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER } from '../../shared/defaults'
 import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
-import { createSpace, createTabRecord, isSavedFolder } from '../model'
+import { createSpace, createTabRecord, isPrivateFolder, isSavedFolder } from '../model'
 import type {
   MenuHost,
   MenuItemTemplate,
@@ -565,5 +565,134 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
     h.browser.menus.showFolderContextMenu(folder, h.win)
     expect(labels(h.shown())).toContain('Edit Folder…')
     expect(labels(h.shown())).not.toContain('Rename Group…')
+  })
+})
+
+describe('private browsing and the space’s groups (a private group named on no regular surface)', () => {
+  /** "Move Tab ▸ Move to Folder ▸": the folders a menu offers, by label. */
+  const foldersOffered = (items: MenuItemTemplate[]): string[] => {
+    const move = items.find((i) => i.label === 'Move Tab')?.submenu ?? []
+    const into = move.find((i) => i.label === 'Move to Folder')?.submenu ?? []
+    return labels(into).filter((l) => l !== '-' && l !== 'New Folder…')
+  }
+
+  it('PRIVATE-BROWSING LEAK, fixed: a regular tab’s menu names no group that private tabs alone fill; a private tab’s names every folder of its space', () => {
+    const h = harness('tablet')
+    const m = h.browser.state.model
+    const trip = h.group('Trip')
+    const ghost = h.group('Ghost')
+    const regular = h.open('https://a.test/', { folderId: trip })
+    const loose = h.open('https://loose.test/')
+    // A private tab dropped into Ghost on the tablet's sidebar (`dropTab` has no private guard):
+    // Ghost is now a PRIVATE group – private tabs alone live in it, nothing saved.
+    const p = h.browser.tabs.newPrivateTab('https://p.test/', h.win)!
+    expect(h.browser.tabs.dropTab(p, `folder:${ghost}`, h.win)).toBe(true)
+    expect(m.tabs[p].folderId).toBe(ghost)
+    expect(isPrivateFolder(m, m.folders[ghost])).toBe(true)
+    expect(isPrivateFolder(m, m.folders[trip])).toBe(false)
+
+    // A regular tab's menu: Trip to move to, Ghost's name nowhere in the template.
+    h.browser.menus.showTabContextMenu(loose, h.win)
+    expect(foldersOffered(h.shown())).toEqual(['📁 Trip'])
+    expect(JSON.stringify(h.shown())).not.toContain('Ghost')
+    // A selection with a regular tab in it: the same.
+    h.browser.menus.showSelectionContextMenu([loose, regular], h.win)
+    expect(JSON.stringify(h.shown())).not.toContain('Ghost')
+    // The private tab's own menu is inside private mode: every folder of the space, its own too.
+    h.browser.menus.showTabContextMenu(p, h.win)
+    expect(foldersOffered(h.shown())).toEqual(['📁 Trip', '📁 Ghost'])
+
+    // A regular tab joining Ghost makes it a regular group again, named to every tab's menu;
+    // the private member stays no part of the pane's count (the renderer's `regularMembers`).
+    h.browser.tabs.moveToFolder(loose, ghost)
+    expect(isPrivateFolder(m, m.folders[ghost])).toBe(false)
+    h.browser.menus.showTabContextMenu(regular, h.win)
+    expect(foldersOffered(h.shown())).toEqual(['📁 Trip', '📁 Ghost'])
+  })
+
+  it('a private tab in a group is no member of it for the regular profile: it neither opens a saved group nor counts, marks it neither used nor kept, and Close Group, Delete Group and New Tab in Group leave it be', () => {
+    const h = harness('tablet')
+    const m = h.browser.state.model
+    const trip = h.group('Trip')
+    const a = h.open('https://a.test/', { folderId: trip })
+    h.open('https://b.test/', { folderId: trip })
+    h.open('https://loose.test/')
+
+    // Close Group with a private tab in it: the regular members close to the saved pages, the
+    // private tab – none of the group's "2 Tabs" – stays open where it was.
+    const attached = h.browser.tabs.newPrivateTab('https://p.test/', h.win)!
+    h.browser.tabs.moveToFolder(attached, trip)
+    h.browser.menus.showFolderContextMenu(trip, h.win)
+    expect(labels(h.shown())).toContain('Close Group (2 Tabs)')
+    click(h.shown(), 'Close Group (2 Tabs)')
+    expect(m.folders[trip].savedTabs?.map((t) => t.url)).toEqual([
+      'https://a.test/',
+      'https://b.test/'
+    ])
+    expect(m.tabs[attached]?.folderId).toBe(trip)
+    expect(isSavedFolder(m, m.folders[trip])).toBe(true)
+    expect(isPrivateFolder(m, m.folders[trip])).toBe(false)
+    const lastUsed = m.folders[trip].lastUsedAt
+
+    // A private tab joining a saved group, viewed in it, closing from it: the pages stay, the
+    // group stays saved, its last use as it was – no trace of the private session on it.
+    const q = h.browser.tabs.newPrivateTab('https://q.test/', h.win)!
+    h.browser.tabs.moveToFolder(q, trip)
+    h.browser.tabs.activateTab(q, h.win)
+    expect(isSavedFolder(m, m.folders[trip])).toBe(true)
+    expect(m.folders[trip].savedTabs).toHaveLength(2)
+    expect(m.folders[trip].lastUsedAt).toBe(lastUsed)
+    h.browser.tabs.closeTab(q, true, h.win)
+    expect(m.folders[trip].savedTabs).toHaveLength(2)
+    expect(m.folders[trip].lastUsedAt).toBe(lastUsed)
+
+    // The saved row's menu and tap: Open Group (2 Tabs) brings the pages back as regular tabs
+    // – not the attached private tab into view.
+    h.browser.menus.showFolderContextMenu(trip, h.win)
+    expect(labels(h.shown())).toContain('Open Group (2 Tabs)')
+    const opened = h.browser.openFolder(trip, h.win)!
+    expect(opened).not.toBe(attached)
+    expect(h.browser.tabs.isPrivate(m.tabs[opened])).toBe(false)
+    expect(m.tabs[opened].url).toBe('https://a.test/')
+    expect(m.folders[trip].savedTabs).toBeNull()
+    expect(m.tabs[attached]?.folderId).toBe(trip)
+
+    // New Tab in Group makes a regular tab of the space, after the last regular member, though
+    // the private tab sits last in the group.
+    h.browser.tabs.moveTab(
+      attached,
+      { spaceId: h.win.activeSpaceId, section: 'regular', index: Number.MAX_SAFE_INTEGER },
+      h.win
+    )
+    const made = h.browser.newTabInFolder(trip, h.win)
+    expect(h.browser.tabs.isPrivate(m.tabs[made])).toBe(false)
+    expect(m.tabs[made].containerId).toBe(m.tabs[opened].containerId)
+    expect(m.tabs[made].folderId).toBe(trip)
+
+    // Delete Group closes the group's regular tabs; the private tab, ungrouped, stays open.
+    h.browser.deleteFolder(trip, false)
+    expect(m.folders[trip]).toBeUndefined()
+    expect(m.tabs[opened]).toBeUndefined()
+    expect(m.tabs[made]).toBeUndefined()
+    expect(m.tabs[attached]).toBeDefined()
+    expect(m.tabs[attached].folderId).toBeNull()
+    expect(m.tabs[a]).toBeUndefined()
+  })
+
+  it('touches no desktop menu: a private window’s menus offer no folder, a regular window’s space holds no private tab', () => {
+    const h = harness('desktop', false)
+    const m = h.browser.state.model
+    const trip = h.group('Trip')
+    const a = h.open('https://a.test/', { folderId: trip })
+    const loose = h.open('https://loose.test/')
+    // No private tab reaches a regular space on the desktop: private browsing is a window of its
+    // own, whose tabs live in its own space (`newPrivateTab` is the tab hosts' alone).
+    expect(h.browser.tabs.newPrivateTab('https://p.test/', h.win)).toBeNull()
+    expect(Object.values(m.tabs).some((t) => h.browser.tabs.isPrivate(t))).toBe(false)
+    expect(Object.values(m.folders).some((f) => isPrivateFolder(m, f))).toBe(false)
+    h.browser.menus.showTabContextMenu(loose, h.win)
+    expect(foldersOffered(h.shown())).toEqual(['📁 Trip'])
+    h.browser.menus.showTabContextMenu(a, h.win)
+    expect(foldersOffered(h.shown())).toEqual(['📁 Trip'])
   })
 })

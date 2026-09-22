@@ -1393,6 +1393,46 @@ describe('the private pane', () => {
     expect(tablist()).toBe('Tabs, groups and private tabs')
   })
 
+  it('PRIVATE-BROWSING LEAK, fixed: a group that private tabs alone fill is named on no regular surface of the overview – not a card’s sheet, not the Groups pane, not its count', () => {
+    // Ghost: a PRIVATE group (private tabs alone, nothing saved), made on the tablet's sidebar;
+    // Research: a regular group. The space holds the private tabs among the regular ones.
+    const ghost: Folder = { ...folder, id: 'ghost', name: 'Ghost', color: 'red' }
+    render(
+      withPrivate(
+        stateOf(
+          [
+            tab('a', 'https://a.example/'),
+            tab('m1', 'https://one.example/', { folderId: GROUP }),
+            privateTab('p1', 'https://p1.example/', { folderId: 'ghost' }),
+            privateTab('p2', 'https://p2.example/', { folderId: 'ghost' })
+          ],
+          [folder, ghost]
+        )
+      )
+    )
+    const sheetLabels = (): Array<string | null> =>
+      [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].map((el) => el.textContent)
+    // The Tabs pane: no card of Ghost's, and a held card's sheet offers Research alone.
+    expect(cellKeys()).toEqual([`group:${GROUP}`, 'm1', 'a', NEW_TAB_CELL])
+    expect(host!.textContent).not.toContain('Ghost')
+    pickUp('a')
+    const p = at('a', 0.5, 0.5)
+    letGo(p.x, p.y)
+    act(() => elapse(300))
+    act(() => settleSprings())
+    expect(sheetLabels()).toContain('Add to Research')
+    expect(sheetLabels().some((label) => label?.includes('Ghost'))).toBe(false)
+    expect(document.body.textContent).not.toContain('Ghost')
+    // The Groups pane: Research's row alone, one group counted, Ghost's name nowhere.
+    act(() => host!.querySelector<HTMLElement>('[data-testid="overview-pane-groups"]')!.click())
+    expect(countShown()).toBe('1 group')
+    expect(
+      [...host!.querySelectorAll<HTMLElement>('.zen-list-title')].map((el) => el.textContent)
+    ).toEqual(['Research'])
+    expect(host!.textContent).not.toContain('Ghost')
+    expect(host!.innerHTML).not.toContain('Ghost')
+  })
+
   it('the regular pane shows the space without its private tabs; the private pane every private tab and no regular one', () => {
     render(mixed())
     expect(selected('tabs')).toBe(true)

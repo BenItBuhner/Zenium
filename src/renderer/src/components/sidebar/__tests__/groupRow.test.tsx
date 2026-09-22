@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
-import { DEFAULT_CONTAINER_ID } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { SPRING_GENTLE, type SpringConfig } from '@shared/spring'
 
 vi.mock('@renderer/lib/api', () => ({
@@ -138,7 +138,12 @@ function render(el: ReactElement): void {
  * layout is set after the browser store: the viewport re-derives itself from the window (a
  * desktop's, in happy-dom) whenever that store changes.
  */
-function panel(tabs: Tab[], folders: Folder[], formFactor: 'tablet' | 'desktop' = 'tablet'): void {
+function panel(
+  tabs: Tab[],
+  folders: Folder[],
+  formFactor: 'tablet' | 'desktop' = 'tablet',
+  windowKind: 'synced' | 'private' = 'synced'
+): void {
   const space: Space = {
     id: 'space',
     name: 'Work',
@@ -151,7 +156,7 @@ function panel(tabs: Tab[], folders: Folder[], formFactor: 'tablet' | 'desktop' 
   }
   const state = {
     platform: 'android',
-    window: { kind: 'synced' },
+    window: { kind: windowKind },
     tabs: Object.fromEntries(tabs.map((t) => [t.id, t])),
     spaces: [space],
     activeSpaceId: 'space',
@@ -449,6 +454,84 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(header().querySelector('[data-testid="group-row-name"]')).toBeNull()
     act(() => header().click())
     expect(run).not.toHaveBeenCalled()
+  })
+
+  it('PRIVATE-BROWSING LEAK, fixed: a group that private tabs alone fill is no row of the sidebar – its name nowhere in it – and a group’s private members are not its rows or its count', () => {
+    const privateTab = (id: string, over: Partial<Tab> = {}): Tab =>
+      tab(id, { containerId: PRIVATE_CONTAINER_ID, ...over })
+    // Ghost: private tabs alone, nothing saved – a PRIVATE group (`isPrivateGroup`), which the
+    // sidebar itself can make on a host that keeps private browsing in tabs (the space holds
+    // them among the regular tabs; `regularOf` lists both). Research: one regular member beside
+    // a private one. Trip: two pages saved and a private tab dropped in since.
+    const ghost = folder({ id: 'ghost', name: 'Ghost', color: 'red' })
+    const research = folder()
+    const trip = folder({
+      id: 'trip',
+      name: 'Trip',
+      color: 'green',
+      savedTabs: [
+        { url: 'https://t1.example/', title: 'T1' },
+        { url: 'https://t2.example/', title: 'T2' }
+      ]
+    })
+    const tabs = [
+      tab('home'),
+      privateTab('g1', { folderId: 'ghost' }),
+      privateTab('g2', { folderId: 'ghost' }),
+      tab('alpha', { folderId: 'g' }),
+      privateTab('p1', { folderId: 'g' }),
+      privateTab('t1', { folderId: 'trip' }),
+      tab('gamma')
+    ]
+    panel(tabs, [ghost, research, trip])
+    const panelEl = q<HTMLElement>('[data-tab-list="regular"]')!.parentElement!.parentElement!
+    // No row of Ghost's – no header, no fold – and its name in no text or attribute of the
+    // panel (the rows' labels, the descriptions for TalkBack, the folds' keys).
+    expect(q('[data-tab-folder="ghost"]')).toBeNull()
+    expect(
+      [...document.querySelectorAll<HTMLElement>('[data-tab-folder]')].map(
+        (el) => el.dataset.tabFolder
+      )
+    ).toEqual(['g', 'trip'])
+    expect(panelEl.textContent).not.toContain('Ghost')
+    expect(panelEl.innerHTML).not.toContain('Ghost')
+    expect(panelEl.innerHTML).not.toContain('ghost')
+    // Research counts and holds its regular member alone: the private one is no row of its fold.
+    expect(header().getAttribute('aria-description')).toBe('Tab group, 1 tab')
+    expect(header().querySelector('[data-testid="group-row-count"]')?.textContent).toBe('1')
+    expect(memberRows()).toEqual(['alpha'])
+    // Trip is a SAVED group of its two pages (saved pages are regular), the private tab in it
+    // no part of its count and no row of it.
+    const tripRow = q<HTMLElement>('[data-tab-folder="trip"]')!
+    expect(tripRow.hasAttribute('data-saved')).toBe(true)
+    expect(tripRow.getAttribute('aria-description')).toBe('Tab group, saved, 2 tabs')
+    expect(tripRow.querySelector('[data-testid="group-row-count"]')?.textContent).toBe('2')
+    expect(tripRow.parentElement!.querySelectorAll('[data-tab-id]')).toHaveLength(0)
+    // The private tabs themselves stand where the panel lists the space's private tabs – among
+    // the loose rows, after the groups – as they did; none of them under a group.
+    const loose = [
+      ...document.querySelectorAll<HTMLElement>('[data-tab-list="regular"] > [data-tab-id]')
+    ].map((el) => el.dataset.tabId)
+    expect(loose).toEqual(['home', 'g1', 'g2', 'p1', 't1', 'gamma'])
+    for (const id of ['g1', 'g2', 'p1', 't1'])
+      expect(q(`[data-tab-id="${id}"]`)!.closest('.zen-group-fold')).toBeNull()
+
+    // The desktop's regular spaces hold no private tab, so the predicate touches nothing
+    // there; in a PRIVATE window – private mode itself – the window's own groups stand whole,
+    // their private members their rows, since nothing leaks inside the mode.
+    panel(
+      [
+        privateTab('one', { folderId: 'g' }),
+        privateTab('two', { folderId: 'g' }),
+        privateTab('three')
+      ],
+      [research],
+      'desktop',
+      'private'
+    )
+    expect(q('[data-tab-folder="g"]')).not.toBeNull()
+    expect(header().getAttribute('aria-description')).toBe('Folder, 2 tabs')
+    expect(memberRows()).toEqual(['one', 'two'])
   })
 
   it('leaves the desktop’s folder row as it was', () => {

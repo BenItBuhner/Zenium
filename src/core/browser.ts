@@ -95,10 +95,10 @@ import {
   createSpace,
   cycleSpace,
   deleteFolder,
-  folderTabs,
   getSpace,
   nextFolderColor,
   orderedTabsForSpace,
+  regularFolderTabs,
   reorderContainer,
   reorderSpace,
   sectionIndexOf,
@@ -1539,7 +1539,9 @@ export class Browser {
   newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
     const folder = this.state.model.folders[folderId]
     if (!folder) throw new Error('Folder not found')
-    const members = folderTabs(this.state.model, folderId)
+    // The group's members are its regular ones: a private tab in it lends neither its place
+    // nor its container to a tab the group's menu makes.
+    const members = regularFolderTabs(this.state.model, folderId)
     const last = members[members.length - 1]
     const created = this.tabs.createTab(
       {
@@ -1575,7 +1577,12 @@ export class Browser {
   deleteFolder(folderId: string, unpack: boolean): void {
     this.liveFolders.onFolderDeleted(folderId)
     const closed = deleteFolder(this.state.model, folderId, unpack)
-    for (const id of closed) this.tabs.closeTab(id, true)
+    // A private tab in the group was none of its tabs on the surface that deletes it: it is
+    // loose now (the model ungrouped it) and stays open, as the group's regular tabs close.
+    for (const id of closed) {
+      const tab = this.tabs.tab(id)
+      if (tab && !this.tabs.isPrivate(tab)) this.tabs.closeTab(id, true)
+    }
     this.state.commit()
   }
 
@@ -1599,7 +1606,9 @@ export class Browser {
     const folder = m.folders[folderId]
     if (!folder) return null
     const now = Date.now()
-    const live = folderTabs(m, folderId)
+    // The group's live members are its regular ones: a private tab in it is not what a regular
+    // surface's row opens (`regularFolderTabs`).
+    const live = regularFolderTabs(m, folderId)
     if (live.length > 0) {
       folder.collapsed = false
       folder.lastUsedAt = now

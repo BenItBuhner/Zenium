@@ -14,7 +14,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 import { run } from '@renderer/lib/api'
-import { groupRows, type GroupRow } from '@renderer/lib/groupRows'
+import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
 import { DeleteGroupSheet, GroupRowSheet, GroupsPane } from '../GroupsPane'
@@ -71,16 +71,12 @@ function tab(id: string, folderId: string, lastActiveAt = 0): Tab {
 }
 
 /**
- * The pane's rows for `folders`, their live members being the `tabs` that name them – the
- * private ones (`containerId: 'private'`) fed as the Private pane's, the way `TabOverview` does.
+ * The pane's rows for `folders`, their live members being the `tabs` that name them, private
+ * ones (`containerId: 'private'`) among them the way the space holds them, as `TabOverview`
+ * feeds it.
  */
 function rowsOf(folders: Folder[], tabs: Tab[] = []): ReturnType<typeof groupRows> {
-  const isPrivate = (t: Tab): boolean => t.containerId === 'private'
-  return groupRows(
-    folders,
-    (folderId) => tabs.filter((t) => t.folderId === folderId && !isPrivate(t)),
-    (folderId) => tabs.filter((t) => t.folderId === folderId && isPrivate(t))
-  )
+  return groupRows(folders, (folderId) => tabs.filter((t) => t.folderId === folderId))
 }
 
 let root: Root | null = null
@@ -234,12 +230,18 @@ describe('the Groups pane (TAB-16)', () => {
     )
   })
 
-  it('keeps a group that private tabs alone fill off the pane – the Private pane’s – and counts a mixed one by its regular tabs', () => {
+  it('PRIVATE-BROWSING LEAK, fixed: a group that private tabs alone fill – its existence and its name – is nowhere on the pane, and a group’s private members count for nothing', () => {
     const privateTab = (id: string, folderId: string): Tab =>
       ({ ...tab(id, folderId), containerId: 'private' }) as Tab
-    // Ghost: a folder the tablet's sidebar filled with private tabs alone; Later: no tab at all;
-    // Work: one regular tab beside a private one; Trip: saved pages and a private tab dropped in.
-    const trip = folder('trip', { savedTabs: [{ url: 'https://t.example/', title: 't' }] })
+    // Ghost: a group the tablet's sidebar made of private tabs alone (no regular member, nothing
+    // saved) – a PRIVATE group, the Private pane's; Later: no tab at all; Work: one regular tab
+    // beside a private one; Trip: two saved pages and three private tabs dropped in since.
+    const trip = folder('trip', {
+      savedTabs: [
+        { url: 'https://t1.example/', title: 't1' },
+        { url: 'https://t2.example/', title: 't2' }
+      ]
+    })
     const { rows } = pane(
       [folder('ghost'), folder('later'), folder('work'), trip],
       [
@@ -247,23 +249,49 @@ describe('the Groups pane (TAB-16)', () => {
         privateTab('g2', 'ghost'),
         tab('w1', 'work'),
         privateTab('w2', 'work'),
-        privateTab('t1', 'trip')
+        privateTab('t1', 'trip'),
+        privateTab('t2', 'trip'),
+        privateTab('t3', 'trip')
       ]
     )
+    // The predicate (`isPrivateGroup`): Ghost is private, Later empty, Work open, Trip saved.
+    expect(isPrivateGroup(folder('ghost'), [privateTab('g1', 'ghost')])).toBe(true)
+    expect(isPrivateGroup(folder('later'), [])).toBe(false)
+    expect(isPrivateGroup(folder('work'), [tab('w1', 'work'), privateTab('w2', 'work')])).toBe(
+      false
+    )
+    expect(isPrivateGroup(trip, [privateTab('t1', 'trip')])).toBe(false)
+    // Ghost in neither list: not among the open rows, not among the saved.
+    expect(rows.open.map((row) => row.folder.id)).not.toContain('ghost')
+    expect(rows.saved.map((row) => row.folder.id)).not.toContain('ghost')
     expect(rows.open.map((row) => [row.folder.id, row.kind, row.count])).toEqual([
       ['later', 'empty', 0],
       ['work', 'open', 1]
     ])
+    // Saved pages are regular: Trip is a SAVED group of its two pages, its private tabs no part
+    // of its count, on its row or in TalkBack's sentence.
     expect(rows.saved.map((row) => [row.folder.id, row.kind, row.count])).toEqual([
-      ['trip', 'saved', 1]
+      ['trip', 'saved', 2]
     ])
+    expect(rowNamed('Trip').querySelector('.zen-list-subtitle')?.textContent).toBe('2 tabs')
+    expect(rowNamed('Trip').querySelector('[aria-label]')?.getAttribute('aria-label')).toBe(
+      'Trip, tab group, 2 tabs, saved'
+    )
+    expect(rowNamed('Work').querySelector('.zen-list-subtitle')?.textContent).toBe('1 tab')
+    // The rendered pane: no row of Ghost's, and its name in no text of the pane – rows,
+    // headings, counts, sentences for TalkBack.
     expect(texts('.zen-list-title')).toEqual(['Later', 'Work', 'Trip'])
     expect(texts('.zen-overview-groups-aside')).toEqual(['2', '1'])
-    expect(all('.zen-phone-row').some((row) => row.textContent?.includes('Ghost'))).toBe(false)
-    // A pane of private-only groups alone is a pane at none.
+    expect(all('.zen-phone-row')).toHaveLength(3)
+    const paneEl = q('[data-testid="overview-groups"]')!
+    expect(paneEl.textContent).not.toContain('Ghost')
+    expect(paneEl.innerHTML).not.toContain('Ghost')
+    expect(paneEl.innerHTML).not.toContain('ghost')
+    // A pane of private groups alone is a pane at none: the note, no row, no name.
     pane([folder('ghost')], [privateTab('g1', 'ghost')])
     expect(all('.zen-phone-row')).toHaveLength(0)
     expect(q('.zen-overview-groups > .zen-phone-empty')).not.toBeNull()
+    expect(q('[data-testid="overview-groups"]')!.textContent).not.toContain('Ghost')
   })
 
   it('draws the group’s colour in the row’s glyph: a 12 px dot for an open group, a 2 px ring for a saved one', () => {

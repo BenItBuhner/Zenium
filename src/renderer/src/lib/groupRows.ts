@@ -1,4 +1,5 @@
 import type { Folder, Tab } from '@shared/types'
+import { isPrivateTab } from './privateTabs'
 import { relativeTime } from './utils'
 
 /**
@@ -6,12 +7,33 @@ import { relativeTime } from './utils'
  * listed as. A group with live tabs is OPEN; one whose tabs have closed but that kept their
  * pages (`Folder.savedTabs`) is SAVED, and stays listed until it is opened again or deleted; one
  * with neither (made on the desktop and never filled) is EMPTY – listed with the open ones so it
- * can be renamed or deleted, since the grid has no card for it. A group whose only live members
- * are private tabs is the Private pane's, where they are its cards (v2 §9.34: private groups stay
- * in the Private pane), and is no row of this pane – the tablet's sidebar can make one, dropping a
- * private tab into a folder; the phone's Private pane cannot group.
+ * can be renamed or deleted, since the grid has no card for it. A PRIVATE group
+ * (`isPrivateGroup`) is the Private pane's, where its tabs are its cards (v2 §9.34: private
+ * groups stay in the Private pane), and is no row of this pane.
  */
 export type GroupRowKind = 'open' | 'saved' | 'empty'
+
+/**
+ * Whether `folder`, with `live` its live members, is a PRIVATE group: filled by private tabs
+ * alone – no regular member, nothing saved. Private browsing leaks nothing outside its mode, and
+ * a row or a menu entry for such a group would show a private group's existence and its NAME on
+ * a regular surface: it is no row of the Groups pane or of the tablet's sidebar and no entry of
+ * the Tabs pane's group sheets (the core keeps it out of a regular tab's folder menus the same
+ * way, `isPrivateFolder`). A host that keeps private browsing in tabs can make one – a private
+ * tab dropped into a folder of the space on the tablet's sidebar; the phone's Private pane does
+ * not group. Saved pages are regular (the core keeps no private page when a group closes), so a
+ * group with pages saved and private tabs alone live is a SAVED group, its private members no
+ * part of its count; and a group's private members are never its regular surface's, which counts
+ * and lists its regular tabs.
+ */
+export function isPrivateGroup(folder: Folder, live: readonly Tab[]): boolean {
+  return live.length > 0 && live.every(isPrivateTab) && !folder.savedTabs?.length
+}
+
+/** `live` less the private tabs: the members a regular surface counts and lists. */
+export function regularMembers(live: readonly Tab[]): Tab[] {
+  return live.filter((tab) => !isPrivateTab(tab))
+}
 
 export interface GroupRow {
   folder: Folder
@@ -34,19 +56,19 @@ export interface GroupRows {
 }
 
 /**
- * The pane's rows for `groups` (the space's folders, in the grid's order) and their live members
- * on the Tabs pane (`membersOf`); `privateMembersOf` names a group's live private tabs, which
- * keep a group with no other member and nothing saved off the pane.
+ * The pane's rows for `groups` (the space's folders, in the grid's order), `liveOf` naming a
+ * group's live members, the private ones included: those count for nothing here, and a private
+ * group (`isPrivateGroup`) takes no row.
  */
 export function groupRows(
   groups: readonly Folder[],
-  membersOf: (folderId: string) => Tab[],
-  privateMembersOf: (folderId: string) => Tab[] = () => []
+  liveOf: (folderId: string) => Tab[]
 ): GroupRows {
   const open: GroupRow[] = []
   const saved: GroupRow[] = []
   for (const folder of groups) {
-    const members = membersOf(folder.id)
+    const live = liveOf(folder.id)
+    const members = regularMembers(live)
     if (members.length > 0) {
       const newest = members.reduce((t, tab) => Math.max(t, tab.lastActiveAt), 0)
       open.push({
@@ -62,7 +84,7 @@ export function groupRows(
         count: folder.savedTabs.length,
         lastUsedAt: folder.lastUsedAt ?? null
       })
-    } else if (privateMembersOf(folder.id).length === 0) {
+    } else if (!isPrivateGroup(folder, live)) {
       open.push({ folder, kind: 'empty', count: 0, lastUsedAt: folder.lastUsedAt ?? null })
     }
   }

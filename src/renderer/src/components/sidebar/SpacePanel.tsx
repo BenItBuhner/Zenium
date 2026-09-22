@@ -9,9 +9,17 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
-import { groupColorChannels } from '@renderer/lib/groups'
+import { groupColorChannels, groupsOf } from '@renderer/lib/groups'
+import { isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { SlideMotion } from '@renderer/lib/motion/slide'
-import { pinnedOf, regularOf, stripRows, type StripRow } from '@renderer/lib/selectors'
+import { isPrivateTab } from '@renderer/lib/privateTabs'
+import {
+  isPrivateWindow,
+  pinnedOf,
+  regularOf,
+  stripRows,
+  type StripRow
+} from '@renderer/lib/selectors'
 import { hint, useHint } from '@renderer/lib/shortcuts'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { uiStore } from '@renderer/lib/ui'
@@ -42,7 +50,25 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   const zones = dropStore.use((s) => s.zones)
   const pinned = pinnedOf(state, space)
   const regular = regularOf(state, space)
-  const folders = Object.values(state.folders).filter((f) => f.spaceId === space.id)
+  // The space's groups as rows. On a host that keeps private browsing in tabs the space holds
+  // its private tabs among the regular ones, and this panel is a REGULAR surface (a private
+  // window's is private mode itself, and lists its own groups whole): a PRIVATE group
+  // (`isPrivateGroup` – private tabs alone live in it, nothing saved) is no row of it, so no
+  // private group's existence or name shows outside private mode, and a group's private members
+  // are not its rows or its count here (the Groups pane's rule); they list among the loose rows,
+  // where the panel lists the space's private tabs. The desktop's regular spaces hold no private
+  // tab (a private window's live in its own space), so its rows are as they were.
+  const regularSurface = !isPrivateWindow(state)
+  const liveOf = (folderId: string): Tab[] => regular.filter((t) => t.folderId === folderId)
+  const membersOf = (folderId: string): Tab[] =>
+    regularSurface ? regularMembers(liveOf(folderId)) : liveOf(folderId)
+  const folders = groupsOf(state, space.id).filter(
+    (f) => !regularSurface || !isPrivateGroup(f, liveOf(f.id))
+  )
+  const listed = new Set(folders.map((f) => f.id))
+  const loose = regular.filter(
+    (t) => !t.folderId || !listed.has(t.folderId) || (regularSurface && isPrivateTab(t))
+  )
   const activeTabId = space.activeTabId
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
@@ -166,7 +192,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                 <FolderRow
                   key={folder.id}
                   folder={folder}
-                  tabs={regular.filter((t) => t.folderId === folder.id)}
+                  tabs={membersOf(folder.id)}
                   activeTabId={activeTabId}
                   compact={compact}
                   dropKey={dropKey}
@@ -176,10 +202,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                   splitGroups={state.splitGroups}
                 />
               ))}
-              {stripRows(
-                regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
-                state.splitGroups
-              ).map((row) => (
+              {stripRows(loose, state.splitGroups).map((row) => (
                 <StripRowItem
                   key={rowKey(row)}
                   row={row}

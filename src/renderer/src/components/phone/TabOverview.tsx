@@ -34,7 +34,7 @@ import {
   overviewInteractive,
   type OverviewState
 } from '@renderer/lib/gestures/stage'
-import { groupRows, type GroupRow } from '@renderer/lib/groupRows'
+import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { overviewColumns } from '@renderer/lib/layout'
@@ -214,7 +214,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const essentials = privatePane ? [] : tabsOnPane(essentialsFor(state, space), 'tabs')
   const pinned = privatePane ? [] : tabsOnPane(pinnedOf(state, space), 'tabs')
   const regular = privatePane ? privateTabsOf(state) : tabsOnPane(regularOf(state, space), 'tabs')
-  const groups = privatePane ? [] : groupsOf(state, space.id)
+  // The space's groups, less the PRIVATE ones (`isPrivateGroup`: private tabs alone live in
+  // them, nothing saved) – the Private pane's, whose existence and name no regular surface
+  // shows: not the Tabs pane's group sheets, not the Groups pane, not its count. `liveOf` names
+  // a group's live members, private ones included, the way the space holds them.
+  const liveOf = (folderId: string): Tab[] =>
+    regularOf(state, space).filter((t) => t.folderId === folderId)
+  const groups = privatePane
+    ? []
+    : groupsOf(state, space.id).filter((f) => !isPrivateGroup(f, liveOf(f.id)))
   const count = essentials.length + pinned.length + regular.length
 
   // The last private tab closing ends the session, and the overview returns to the Tabs pane
@@ -810,12 +818,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     departGroup(folder)
     undoable(membersOf(folder.id), () => run('folder.close', { folderId: folder.id }))
   }
-  // The Groups pane's rows (TAB-16, `lib/groupRows.ts`): the space's groups by state. A group
-  // that private tabs alone fill is the Private pane's (its cards there) and takes no row.
-  const privateGrouped = hasPrivate ? privateTabsOf(state).filter((t) => t.folderId) : []
-  const rows = groupRows(groups, membersOf, (folderId) =>
-    privateGrouped.filter((t) => t.folderId === folderId)
-  )
+  // The Groups pane's rows (TAB-16, `lib/groupRows.ts`): the space's groups by state, a group's
+  // private members counting for nothing (a group with pages saved and private tabs alone live
+  // is a saved group).
+  const rows = groupRows(groups, liveOf)
   const rowOf = (folderId: string): GroupRow | null =>
     [...rows.open, ...rows.saved].find((row) => row.folder.id === folderId) ?? null
   const renamingId = uiStore.use((s) => s.renamingFolderId)
