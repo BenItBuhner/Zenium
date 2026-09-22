@@ -842,7 +842,8 @@ describe('RuleEngine.decide against decideLinear', () => {
       stages++
       const linear = engine.decideLinear(ctx)
       const indexed = engine.decide(ctx)
-      if (!same(indexed, linear)) failures.push(`${name}: index ${show(indexed)} / linear ${show(linear)}`)
+      if (!same(indexed, linear))
+        failures.push(`${name}: index ${show(indexed)} / linear ${show(linear)}`)
       const actual = fixtureShape(linear)
       if (JSON.stringify(actual) !== JSON.stringify(expected))
         failures.push(
