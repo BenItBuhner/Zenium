@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   SPRING_GENTLE,
   SPRING_SNAPPY,
+  SPRING_STEP_CLAMP_MS,
   SpringAnimation,
   isAtRest,
   reducedMotion,
@@ -156,5 +159,45 @@ describe('SpringAnimation', () => {
     expect(onFrame).toHaveBeenLastCalledWith(120, 0)
     expect(spring.current).toEqual({ x: 120, v: 0 })
     expect(queue).toHaveLength(0)
+  })
+
+  it('advances a late frame by the step clamp, not by the time it took', () => {
+    const { queue } = frames()
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) })
+    const spring = new SpringAnimation(
+      SPRING_SNAPPY,
+      () => undefined,
+      () => undefined
+    )
+    spring.start(0, 0, 300)
+    // A frame 200 ms after the start (a stalled tab, the emulator's software GPU): the spring
+    // moves as it would in one frame of the clamp's length – so a motion of N ms of its own
+    // time takes N × (frame / clamp) ms of the wall's, the stretch the harness reads off.
+    queue.shift()!(200)
+    expect(spring.current).toEqual(
+      stepSpring({ x: 0, v: 0 }, 300, SPRING_STEP_CLAMP_MS / 1000, SPRING_SNAPPY)
+    )
+    expect(spring.current).not.toEqual(stepSpring({ x: 0, v: 0 }, 300, 0.2, SPRING_SNAPPY))
+  })
+})
+
+/*
+ * The harness reconstructs a spring's own time from the frames the probe saw it write, each
+ * interval clamped as `SpringAnimation.tick` clamps its step (`MotionPerfDemo.kt`'s
+ * `foldNumbers`): its copy of the clamp must be this one, or the stretch it reports drifts from
+ * the product's without a word.
+ */
+describe('the harness twin (MotionPerfDemo.kt)', () => {
+  it('holds the same step clamp', () => {
+    const kotlin = readFileSync(
+      resolve(
+        __dirname,
+        '../../../../../android/app/src/androidTest/kotlin/app/zen/chromium/MotionPerfDemo.kt'
+      ),
+      'utf8'
+    )
+    const twin = /SPRING_STEP_CLAMP_MS\s*=\s*([\d.]+)/.exec(kotlin)
+    expect(twin, 'MotionPerfDemo.kt names SPRING_STEP_CLAMP_MS').not.toBeNull()
+    expect(Number(twin![1])).toBe(SPRING_STEP_CLAMP_MS)
   })
 })
