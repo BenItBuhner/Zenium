@@ -2507,7 +2507,17 @@ function applyPrivate(
         void run('tab.newPrivate', { url })
         onPrivateTab(
           (tab) => tab.url === url,
-          () => afterFrames(2, finish)
+          () => {
+            // The page loaded (the host's `stopLoading`, sent as the frame's document is complete)
+            // before the state is reached: a `then=` step that covers the page – the tablet's
+            // drawer over it – takes its picture first, and the picture of a frame still on its
+            // way is blank. Bounded: a page that never lands is still the state.
+            const loaded = (s: UIState): boolean => {
+              const now = activeTab(s)
+              return now !== null && now.url === url && !now.loading
+            }
+            untilState(loaded, () => afterFrames(2, finish))
+          }
         )
         return
       case 'overview':
