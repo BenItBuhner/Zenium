@@ -51,7 +51,12 @@ export function RecentPane({
   onDeviceMenu: (device: RecentDevice) => void
 }): JSX.Element {
   const closed = useRecentlyClosed()
-  const lists = useRemoteTabs(state.sync.enabled, state.sync.remoteTabsVersion)
+  // The lists are asked for only when they are wanted: sync on, and Open tabs among what it
+  // syncs (the section says why otherwise, without a read).
+  const lists = useRemoteTabs(
+    state.sync.enabled && state.sync.scope.openTabs,
+    state.sync.remoteTabsVersion
+  )
   const hidden = hiddenDevicesStore.use((s) => s.hidden)
   const section = remoteTabsSection(state.sync, lists, hidden)
   const hiddenCount = hiddenDeviceCount(lists, hidden)
