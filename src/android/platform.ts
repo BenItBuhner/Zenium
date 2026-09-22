@@ -166,6 +166,7 @@ export function androidCapabilities({
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,
     secureDns: false,
+    quitsThroughCore: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
     pageTabs: true,

@@ -59,6 +59,7 @@ import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
 import { SyncEngine } from './sync/engine'
 import { SiteInfoService } from './siteInfo'
+import { SiteDataService } from './siteData'
 import { TranslateService } from './translate/service'
 import { PrintService } from './print'
 import { PdfViewerService } from './pdf'
@@ -252,6 +253,8 @@ export class Browser {
   readonly updates: UpdateService
   /** Connection, cookies, storage and permissions of a tab's site (the site-information sheet). */
   readonly siteInfo: SiteInfoService
+  /** Per-site cookie exceptions, clear browsing data on exit and the site-data viewer. */
+  readonly siteData: SiteDataService
   /** Links that leave the web: the confirm sheet and the remembered per-scheme choices. */
   readonly externalProtocols: ExternalProtocolService
   /** The encrypted credential vault and everything the password manager does with it. */
@@ -400,6 +403,7 @@ export class Browser {
       platform.createUpdateHost?.(this) ?? new NoUpdateHost(platform)
     )
     this.siteInfo = new SiteInfoService(this)
+    this.siteData = new SiteDataService(this)
     this.externalProtocols = new ExternalProtocolService(this)
     this.passwords = new PasswordService(this, platform.passwords)
     this.autofill = new AutofillService(this)
@@ -447,6 +451,7 @@ export class Browser {
       autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
       privacy: this.protection.status(),
+      siteData: this.siteData.status(),
       translate: this.translate.uiState(),
       spellcheck: this.spellcheck.uiState(),
       readAloud: this.readAloud.uiState(),
@@ -805,6 +810,13 @@ export class Browser {
     // Every request that waited on the same check quits once.
     if (this.quitting) return true
     this.shutdown()
+    // Clear browsing data on exit, with a budget: what does not finish in time is owed to the
+    // next launch (`SiteDataService.noteExiting` wrote it down in `shutdown`). The services it
+    // cleared through write again, so the profile is flushed once more before the process goes.
+    if (this.siteData.clearsOnExit()) {
+      await this.siteData.runOnExit()
+      this.flushSync()
+    }
     await this.settled()
     this.platform.app.quit()
     return true
@@ -984,6 +996,8 @@ export class Browser {
     this.blocking.start()
     // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
     this.protection.start()
+    // A clear on exit the last close left owed runs now, off the boot path.
+    this.siteData.start()
     // With "restore previous session" off, the last session's tabs are forgotten at once, whether
     // or not a window opens now.
     if (!this.state.settings.restoreSession) this.state.forgetSession()
@@ -1831,6 +1845,7 @@ export class Browser {
     this.passwords.shutdown()
     // The pages on screen have scrolled since their stacks were last read.
     this.tabs.rememberAllNavigation()
+    this.siteData.noteExiting()
     this.state.markExiting()
     this.flushSync()
     this.state.freeze()
@@ -1852,6 +1867,7 @@ export class Browser {
     this.translate.flushSync()
     this.print.flushSync()
     this.webApps.flushSync()
+    this.siteData.flushSync()
   }
 
   private syncShortcuts(): void {
@@ -2625,6 +2641,13 @@ export class Browser {
       'siteInfo.snapshot': ({ tabId }) => this.siteInfo.snapshot(tabId),
       'site.clearCookies': ({ tabId }) => this.siteInfo.clearCookies(tabId),
       'site.clearData': ({ tabId }) => this.siteInfo.clearData(tabId),
+      'siteData.setDefault': ({ default: value }, win) => this.siteData.setDefault(value, win),
+      'siteData.add': ({ list, pattern }) => this.siteData.add(list, pattern),
+      'siteData.addSite': ({ list, url }) => this.siteData.addSite(list, url),
+      'siteData.remove': ({ pattern }) => this.siteData.remove(pattern),
+      'siteData.list': () => this.siteData.list(),
+      'siteData.clearSite': ({ origin }) => this.siteData.clearSite(origin),
+      'siteData.clearAll': () => this.siteData.clearAll(),
       'site.resetPermissions': ({ tabId, permission }) =>
         this.siteInfo.resetPermissions(tabId, permission),
 

@@ -4,6 +4,7 @@
  * command boundary to the chrome; the helpers are the pure half of the classification both hosts
  * feed their raw readings through.
  */
+import type { SiteDataSiteState } from './siteData'
 import type { CertificateError } from './types'
 import { FILE_SITE } from './contentSettings'
 import {
@@ -101,6 +102,11 @@ export interface SiteInfo {
   cookies: SiteCookies
   storage: SiteStorage
   permissions: SitePermission[]
+  /**
+   * The per-site cookie policy's word for the page (`shared/siteData.ts`): allowed, blocked or
+   * cleared on exit by a list entry, or the default; and the pattern adding the site would add.
+   */
+  siteData: SiteDataSiteState
 }
 
 /** Ad and tracker blocking as the site-information popover reports it for one page. */

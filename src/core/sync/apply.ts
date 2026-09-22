@@ -17,6 +17,7 @@ import {
   ORDER_SPACES,
   SETTINGS_RECORD_ID,
   SHORTCUTS_RECORD_ID,
+  SITE_DATA_RECORD_ID,
   applyOrder,
   readBookmarkData,
   readCredentialData,
@@ -37,6 +38,7 @@ const ORDER: Record<SyncRecord['type'], number> = {
   tab: 3,
   bookmark: 4,
   settings: 5,
+  'site-data': 5,
   shortcuts: 6,
   boost: 7,
   credential: 8,
@@ -238,6 +240,12 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         state.settings.newTab = sanitizeNewTabSettings(
           migrateNewTabSettings({ newTab: state.settings.newTab, newTabPhone })
         )
+        break
+      }
+      case 'site-data': {
+        // One document, taken whole like the settings record (the sanitiser reads it).
+        if (r.deleted || r.id !== SITE_DATA_RECORD_ID) break
+        browser.siteData.applySynced(r.data)
         break
       }
       case 'shortcuts': {

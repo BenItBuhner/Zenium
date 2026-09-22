@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Decision, RequestContext } from '../../../core/blocking/rules'
 import type { PrivacyFlags, SafeBrowsingHit } from '../../../shared/privacy'
+import { DEFAULT_SITE_DATA_POLICY } from '../../../shared/siteData'
 import type {
   ElectronPrivacy as PrivacyHostImpl,
   HostResolverConfigurator,
@@ -36,7 +37,8 @@ const FLAGS: PrivacyFlags = {
   gpc: false,
   dnt: false,
   secureDnsMode: 'automatic',
-  secureDnsServers: []
+  secureDnsServers: [],
+  siteData: DEFAULT_SITE_DATA_POLICY
 }
 
 const HIT: SafeBrowsingHit = {

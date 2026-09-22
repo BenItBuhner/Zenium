@@ -5,6 +5,7 @@ import type {
   ThirdPartyCookieMode,
   ThirdPartyCookiePrivateMode
 } from '../../../shared/privacy'
+import { DEFAULT_SITE_DATA_POLICY } from '../../../shared/siteData'
 import { blocksThirdPartyCookies, plaintextAllowed, signalHeaders } from '../policy'
 
 const flags = (overrides: Partial<PrivacyFlags> = {}): PrivacyFlags => ({
@@ -19,6 +20,7 @@ const flags = (overrides: Partial<PrivacyFlags> = {}): PrivacyFlags => ({
   secureDnsMode: 'automatic',
   secureDnsServers: [],
   safeBrowsingBypassed: [],
+  siteData: DEFAULT_SITE_DATA_POLICY,
   ...overrides
 })
 

@@ -1370,9 +1370,20 @@ export interface SiteStorageReading {
   origins: string[]
 }
 
+/** One origin of the site-data viewer as the engine holds it (`SiteDataHost.listOrigins`). */
+export interface SiteDataOriginReading {
+  /** `scheme://host[:port]`. */
+  origin: string
+  /** Cookies a page of the origin receives (Electron: the cookies stored under the host). */
+  cookies: number
+  /** Quota-managed storage in bytes; null where the engine cannot size an origin (Electron). */
+  usageBytes: number | null
+}
+
 /**
- * Cookies and stored data of one site inside a container, for the site-information sheet.
- * Cookie values never cross this boundary – names and attributes are all the chrome shows.
+ * Cookies and stored data of one site inside a container, for the site-information sheet and
+ * the site-data viewer. Cookie values never cross this boundary – names and attributes are all
+ * the chrome shows.
  */
 export interface SiteDataHost {
   /** The cookies a page at `url` receives (its host's and its parent domains'). */
@@ -1380,8 +1391,19 @@ export interface SiteDataHost {
   storage(containerId: string, site: string): Promise<SiteStorageReading>
   /** Remove the cookies a page at `url` receives; resolves with how many went away. */
   clearCookies(containerId: string, url: string): Promise<number>
-  /** Delete the stored data of `site` (hosts that can) or of the given origins (the rest). */
+  /**
+   * Delete the stored data of `site` (hosts that can; an empty `site` asks for the origins
+   * alone) or of the given origins (the rest).
+   */
   clearStorage(containerId: string, site: string, origins: string[]): Promise<void>
+  /**
+   * The site-data viewer's raw material for one container: every origin the engine holds
+   * cookies or quota-managed storage for. `probe` names origins the core knows of (visited,
+   * with permissions) for an engine that cannot enumerate its cookie jar (Android's
+   * `CookieManager`) to look up one by one; an engine that can (Electron) ignores it. Hosts
+   * without the reading leave it out: the viewer then lists the permissions' origins alone.
+   */
+  listOrigins?(containerId: string, probe: string[]): Promise<SiteDataOriginReading[]>
 }
 
 export interface AppHost {

@@ -138,6 +138,7 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Private browsing is a window of its own on desktop (`windows`).
   privateTabs: false,
   secureDns: true,
+  quitsThroughCore: true,
   // `zen://newtab` is served by the zen protocol and bridged by the page preload.
   newTabPage: true,
   // Settings is a page tab in the content area (`pages/settings`, design language v2 §10.5).

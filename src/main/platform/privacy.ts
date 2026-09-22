@@ -10,12 +10,14 @@
  * - HTTPS-only mode: the engine's `upgradeScheme` rule does the upgrading; this module only
  *   watches the decisions for main-frame upgrades and tells the tab, which offers the plaintext
  *   page when https fails.
- * - Third-party cookies and the GPC / DNT signals: {@link PrivacyRequestHandler} edits the
- *   headers after the rule engine (Electron exposes no third-party cookie setting, so the
- *   `Cookie` and `Set-Cookie` headers of third-party requests are dropped; `document.cookie`
- *   in third-party frames is out of reach this way). `navigator.globalPrivacyControl` and
- *   `navigator.doNotTrack` come from the page preload, which asks for the signals over sync IPC
- *   at document start.
+ * - The cookie policy and the GPC / DNT signals: {@link PrivacyRequestHandler} edits the
+ *   headers after the rule engine (Electron exposes no cookie content setting, so the `Cookie`
+ *   and `Set-Cookie` headers are dropped where the policy withholds cookies: a never-site's
+ *   requests, everything under "block all" but the listed sites, third-party requests under
+ *   the third-party rule; `document.cookie` is out of reach this way, which is why the cookie
+ *   jar drops a never-site's cookies as they land: `CookiePolicyEnforcer` in `siteData.ts`).
+ *   `navigator.globalPrivacyControl` and `navigator.doNotTrack` come from the page preload,
+ *   which asks for the signals over sync IPC at document start.
  * - Secure DNS: `app.configureHostResolver`, whenever the mode or the templates change.
  * - The bundled Safe Browsing snapshot (`resources/safebrowsing/<feed>.json`).
  */
@@ -24,7 +26,7 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { BUILTIN_RULE_SETS, type Decision } from '../../core/blocking/rules'
 import type { PrivacyHost } from '../../core/platform'
-import { blocksThirdPartyCookies, signalHeaders } from '../../core/protection/policy'
+import { cookiesWithheld, signalHeaders } from '../../core/protection/policy'
 import type { PrivacyFlags, SafeBrowsingHit } from '../../shared/privacy'
 import { PRIVACY_SIGNALS_CHANNEL, type PrivacySignals } from '../../shared/privacySignals'
 import type { ElectronBlocking } from './blocking'
@@ -84,7 +86,12 @@ export class SafeBrowsingHandler implements RequestHandler {
   }
 }
 
-/** Drops third-party cookies where the policy says so and adds the GPC / DNT request headers. */
+/**
+ * The header stage of the cookie policy: withholds `Cookie` and `Set-Cookie` where the policy
+ * says so – a never-site's requests, every request under "block all cookies" but the listed
+ * sites', third-party requests under the third-party rule (`cookiesWithheld`) – and adds the
+ * GPC / DNT request headers.
+ */
 export class PrivacyRequestHandler implements RequestHandler {
   readonly id = 'privacy'
   readonly order = HANDLER_ORDER.privacy
@@ -94,7 +101,7 @@ export class PrivacyRequestHandler implements RequestHandler {
   onBeforeSendHeaders(request: HostRequest, headers: Record<string, string>): undefined {
     const flags = this.flags()
     if (!flags || !/^(https?|wss?):/i.test(request.ctx.url)) return undefined
-    if (blocksThirdPartyCookies(flags, request.ctx))
+    if (cookiesWithheld(flags, request.ctx))
       applyRequestHeaderOps(headers, [{ header: 'Cookie', operation: 'remove' }])
     for (const [header, value] of Object.entries(signalHeaders(flags)))
       applyRequestHeaderOps(headers, [{ header, operation: 'set', value }])
@@ -104,7 +111,7 @@ export class PrivacyRequestHandler implements RequestHandler {
   onHeadersReceived(request: HostRequest, headers: Record<string, string[]>): undefined {
     const flags = this.flags()
     if (!flags || !/^https?:/i.test(request.ctx.url)) return undefined
-    if (blocksThirdPartyCookies(flags, request.ctx))
+    if (cookiesWithheld(flags, request.ctx))
       applyResponseHeaderOps(headers, [{ header: 'Set-Cookie', operation: 'remove' }])
     return undefined
   }

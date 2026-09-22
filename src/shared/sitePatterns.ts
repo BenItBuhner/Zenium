@@ -7,9 +7,10 @@
  * - `[*.]example.com` covers `example.com` and every subdomain; `example.com` alone covers that
  *   host only. Chrome's "Add site" dialog prepends `[*.]` to a bare host, and so does
  *   {@link sitePatternForHost}: that is what a row added from the site-information sheet gets.
- * - `scheme://` (http, https, ws or wss; `*://` says nothing) and `:port` narrow a pattern to
- *   one scheme or one port; without them a pattern covers every scheme and port. A port cannot
- *   go with a subdomain wildcard in Chrome either.
+ * - `scheme://` (http or https; `*://` says nothing) and `:port` narrow a pattern to one scheme
+ *   or one port; without them a pattern covers every scheme and port. A port cannot go with a
+ *   subdomain wildcard in Chrome either. WebSocket URLs are matched as the http scheme they
+ *   ride on (`ws` as `http`, `wss` as `https`), as Chromium's cookie settings look them up.
  * - Hosts are lowercase DNS names (IDN in punycode, as URLs carry them), dotted-decimal IPv4 or
  *   bracketed IPv6 literals; an IP literal takes no `[*.]`. Paths are not part of the grammar.
  *
@@ -24,7 +25,7 @@ import { parseIpv4, parseIpv6 } from './nonUniqueHost'
 export interface SitePattern {
   /** The canonical text (`https://[*.]example.com:8443`), what the lists store. */
   text: string
-  /** `http`, `https`, `ws` or `wss`; null for any scheme. */
+  /** `http` or `https`; null for any scheme. */
   scheme: string | null
   /** Lowercase host; an IPv6 literal keeps its brackets. */
   host: string
@@ -34,8 +35,10 @@ export interface SitePattern {
   port: number | null
 }
 
-const SCHEMES: readonly string[] = ['http', 'https', 'ws', 'wss']
-const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443, ws: 80, wss: 443 }
+const SCHEMES: readonly string[] = ['http', 'https']
+const DEFAULT_PORTS: Record<string, number> = { http: 80, https: 443 }
+/** WebSocket schemes as the http scheme they are looked up under. */
+const SCHEME_ALIASES: Record<string, string> = { ws: 'http', wss: 'https' }
 const HOST_LABEL = /^(?!-)[a-z0-9_-]{1,63}(?<!-)$/
 const MAX_HOST_LENGTH = 253
 const WILDCARD = '[*.]'
@@ -107,7 +110,8 @@ export function siteAddressOf(url: string | SiteAddress): SiteAddress | null {
   } catch {
     return null
   }
-  const scheme = parsed.protocol.replace(/:$/, '')
+  const raw = parsed.protocol.replace(/:$/, '')
+  const scheme = SCHEME_ALIASES[raw] ?? raw
   const host = parsed.hostname.toLowerCase().replace(/\.$/, '')
   if (!host) return null
   const port = parsed.port ? Number(parsed.port) : (DEFAULT_PORTS[scheme] ?? null)

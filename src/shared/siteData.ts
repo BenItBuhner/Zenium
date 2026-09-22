@@ -6,8 +6,13 @@
  */
 
 import type { BrowsingDataType } from './types'
-import { compareSitePatterns, normalizeSitePattern, parseSitePattern } from './sitePatterns'
-import { matchSitePatterns, type SiteAddress } from './sitePatterns'
+import {
+  compareSitePatterns,
+  matchSitePatterns,
+  normalizeSitePattern,
+  parseSitePattern,
+  type SiteAddress
+} from './sitePatterns'
 
 // ---------------------------------------------------------------------------
 // The policy
@@ -137,16 +142,38 @@ export function resolveSiteData(policy: SiteDataPolicy, url: string | SiteAddres
 }
 
 /**
- * Whether a request for the URL may carry cookies at all under the policy, before the
- * third-party rule: a site on the block list may not; under `blockAll` only the allow and
- * clear-on-exit lists' sites may (a clear-on-exit site keeps its cookies for the session, as
- * Chrome's "session only" setting does). Everything else may.
+ * The policy's word on a request for the URL, before the third-party rule: `blocked` for a
+ * site on the never list, and under `blockAll` for every site the allow and clear-on-exit
+ * lists leave out (a clear-on-exit site keeps its cookies for the session, as Chrome's
+ * "session only" setting does); `allowed` for a listed site, which the third-party rule leaves
+ * alone too (an explicit entry of Chrome's cookie settings does); `default` for the rest.
  */
-export function cookiesBlockedFor(policy: SiteDataPolicy, url: string | SiteAddress): boolean {
+export function cookieVerdict(
+  policy: SiteDataPolicy,
+  url: string | SiteAddress
+): 'blocked' | 'allowed' | 'default' {
   const { state } = resolveSiteData(policy, url)
-  if (state === 'block') return true
-  if (state === 'allow' || state === 'clear-on-exit') return false
-  return policy.blockAll
+  if (state === 'block') return 'blocked'
+  if (state === 'allow' || state === 'clear-on-exit') return 'allowed'
+  return policy.blockAll ? 'blocked' : 'default'
+}
+
+/** Whether a request for the URL may carry no cookies at all under the policy (see {@link cookieVerdict}). */
+export function cookiesBlockedFor(policy: SiteDataPolicy, url: string | SiteAddress): boolean {
+  return cookieVerdict(policy, url) === 'blocked'
+}
+
+/** `siteData.add`'s answer: the canonical pattern that went on the list, or why nothing did. */
+export type SiteDataAddResult = { ok: true; pattern: string } | { ok: false; problem: string }
+
+/** What the site-information sheet shows for one page, and what adding the site to a list adds. */
+export interface SiteDataSiteState {
+  state: SiteDataState
+  /** The list entry that decides, or null for the default. */
+  pattern: string | null
+  /** The pattern "Add to list" would add (`[*.]host`), or null for a page without a site. */
+  addable: string | null
+  default: SiteDataDefault
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +235,19 @@ export interface SiteDataStatus {
   clearsAtNextLaunch: boolean
   /** A launch-time clear is still owed (the marker from the last close is in the profile). */
   pendingClear: boolean
+}
+
+/** The status before the service exists (and of a host without the policy). */
+export function emptySiteDataStatus(): SiteDataStatus {
+  return {
+    default: 'block-third-party',
+    allow: [],
+    clearOnExit: [],
+    block: [],
+    clearOnExitTypes: [],
+    clearsAtNextLaunch: false,
+    pendingClear: false
+  }
 }
 
 /** One origin of the site-data viewer. */

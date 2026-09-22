@@ -80,6 +80,7 @@ const DESKTOP: HostCapabilities = {
   darkenSites: false,
   privateTabs: false,
   secureDns: false,
+  quitsThroughCore: false,
   newTabPage: true,
   pageTabs: false,
   pinShortcuts: false,
@@ -130,6 +131,7 @@ const ANDROID: HostCapabilities = {
   darkenSites: true,
   privateTabs: true,
   secureDns: false,
+  quitsThroughCore: false,
   newTabPage: false,
   pageTabs: true,
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
