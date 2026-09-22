@@ -17,9 +17,14 @@
 //                   checked. A merge that lands between the check and the cut would otherwise
 //                   be tagged unverified (it happened: ten seconds, one release).
 //   --yes           skip the confirmation prompt
+//
+// The Android versionCode is derived from the version (android/app/build.gradle.kts) and caps
+// major ≤ 2100, minor ≤ 99, patch ≤ 99: a bump past a ceiling is refused here with the bump to
+// use instead (after X.Y.99, `minor`), because it would otherwise build everywhere but Android.
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { createInterface } from 'node:readline/promises'
+import { androidVersionCodeProblem } from './version-limits.mjs'
 
 const args = process.argv.slice(2)
 const flags = {
@@ -102,6 +107,14 @@ const restore = () => git('checkout', '--', 'package.json', 'package-lock.json')
 if (git('tag', '--list', tag)) {
   restore()
   fail(`Tag ${tag} already exists`)
+}
+// The Android versionCode is derived from the version and caps each field (patch ≤ 99 above
+// all: after X.Y.99 a patch bump must become a minor one). Refuse here, before the bump lands
+// on the branch and fails the Android job on main's CI and in the Release run.
+const problem = androidVersionCodeProblem(next)
+if (problem) {
+  restore()
+  fail(problem)
 }
 
 console.log(`\n${previous} → ${next}  (tag ${tag} on ${flags.branch}, pushed to ${flags.remote})\n`)
