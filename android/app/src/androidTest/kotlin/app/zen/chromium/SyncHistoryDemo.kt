@@ -247,10 +247,11 @@ class SyncHistoryDemo : SyncDemo("sync-demo-state.json", "services-sync-history-
             .map { "${it.optString("deviceName")} ${it.optJSONArray("tabs")?.length() ?: 0}" }
         note("  sync.tabsFromDevices: $summary")
         check(lists.length() == 2, "the core does not list two devices' tabs: $summary")
-        if (!awaitSettled({ rowReads(REMOTE_TABS_LABEL, REMOTE_TABS_SUMMARY) }, 10_000)) {
-            fail("the Tabs from other devices row does not read '$REMOTE_TABS_SUMMARY': ${rowText(REMOTE_TABS_LABEL)}")
+        val read = awaitRowReads(REMOTE_TABS_LABEL, "sync-remote-tabs", REMOTE_TABS_SUMMARY, 10_000)
+        if (read == null) {
+            fail("the Tabs from other devices row does not read '$REMOTE_TABS_SUMMARY': ${rowText(REMOTE_TABS_LABEL)}; the chrome's document: ${describeChromeRow("sync-remote-tabs")}")
         } else {
-            note("  the row reads: ${rowText(REMOTE_TABS_LABEL)}")
+            note("  the row reads: $read")
         }
     }
 

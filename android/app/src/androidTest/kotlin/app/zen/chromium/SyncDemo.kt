@@ -284,11 +284,12 @@ open class SyncDemo(
             back()
             error("no tree granted")
         }
-        if (!awaitSettled({ rowReads(FOLDER_LABEL, FOLDER) }, 12_000)) {
-            note("  the folder row does not read '$FOLDER': ${rowText(FOLDER_LABEL)}")
+        val read = awaitRowReads(FOLDER_LABEL, "sync-folder", FOLDER, 12_000)
+        if (read == null) {
+            note("  the folder row does not read '$FOLDER': ${rowText(FOLDER_LABEL)}; the chrome's document: ${describeChromeRow("sync-folder")}")
             touchFault("the granted tree did not reach the folder row")
         } else {
-            note("  the folder row reads: ${rowText(FOLDER_LABEL)}")
+            note("  the folder row reads: $read")
         }
         val grants = shell("dumpsys activity uri-grants 2>/dev/null | grep -i zenium | head -n 5").trim()
         if (grants.isNotEmpty()) note("  persisted grants: $grants")
@@ -927,6 +928,37 @@ open class SyncDemo(
 
     protected fun rowText(text: String): String? =
         findNode { it.startsWith(text) }?.let { it.text ?: it.contentDescription }?.toString()
+
+    /** The text of the chrome's row `rowId` (`data-row`), whitespace collapsed; null without the row. */
+    protected fun chromeRowText(rowId: String): String? =
+        chromeValue(
+            "(function(){var r=document.querySelector('[data-row=' + ${JSONObject.quote(JSONObject.quote(rowId))} + ']');" +
+                "return r?(r.textContent||'').replace(/\\s+/g,' ').trim():null})()"
+        ).ifEmpty { null }
+
+    /**
+     * Wait for the row labelled `label` to read `value` at its end – on the tree first (the
+     * row's accessible name, [rowReads]), else in the chrome's document (the row `rowId`'s text):
+     * 35683815482 read the Sync folder row off neither the active window's tree nor the others'
+     * for twelve seconds after the picker's Allow, while the core held the folder and the
+     * recording shows the row with its name. Answers the text read, marked with the side that
+     * answered when it was the document; null when neither reads it in `timeoutMs`.
+     */
+    protected fun awaitRowReads(label: String, rowId: String, value: String, timeoutMs: Long): String? {
+        var fromChrome: String? = null
+        val settled = awaitSettled({
+            if (rowReads(label, value)) return@awaitSettled true
+            val text = chromeRowText(rowId)
+            if (text != null && text.endsWith(value)) {
+                fromChrome = text
+                true
+            } else false
+        }, timeoutMs)
+        if (!settled) return null
+        val onTree = rowText(label)
+        return if (onTree != null && onTree.endsWith(value)) onTree
+        else "${fromChrome ?: chromeRowText(rowId)} (the chrome's document; the tree read ${onTree ?: "no such row"})"
+    }
 
     protected fun syncNowRowText(): String = rowText(SYNC_NOW_LABEL) ?: "(no Sync now row)"
 
