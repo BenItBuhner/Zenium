@@ -474,7 +474,12 @@ describe('AndroidExtensionRuntime: webNavigation from the navigation listener', 
       canGoBack: false,
       canGoForward: false
     })
-    h.runtime.onViewEvent('t2', 'stopLoading', { url: 'https://two.example/' })
+    h.runtime.onViewEvent('t2', 'stopLoading', {
+      url: 'https://two.example/',
+      title: 'Two',
+      canGoBack: false,
+      canGoForward: false
+    })
     const tabId = h.runtime.api.tabs.chromeIdFor('t2')
     const updated = events(h, 'bg1', 'tabs.onUpdated').filter(
       (e) => (e.args as unknown[])[0] === tabId
