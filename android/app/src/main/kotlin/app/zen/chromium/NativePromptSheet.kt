@@ -66,12 +66,12 @@ object PromptSheetSpec {
     fun hairlinePx(density: Float): Int = maxOf(1, Math.round(HAIRLINE_DP * density))
 
     /**
-     * §9.25's arithmetic in the chrome's shape (`BottomSheet.tsx` pads the sheet `Math.max(8,
-     * insets.bottom)` and `.zen-sheet-footer` its padding above that): from the footer's peers to the
-     * sheet's edge is the footer's padding plus the inset or the floor, whichever is larger – so
-     * where the host reports none it is the padding and the floor, and where it reports a bar the
-     * padding and the bar. The chrome and the chassis differ in the padding alone (8 there, 16 here:
-     * `V2TokensPinTest`), so a ruling on it moves [FOOTER_BOTTOM_DP] and nothing of the shape.
+     * §9.25's arithmetic, the chrome's exactly (`BottomSheet.tsx` pads the sheet `Math.max(8,
+     * insets.bottom)` and `.zen-sheet-footer` its 8 above that): from the footer's peers to the
+     * sheet's edge is the footer's padding plus the inset or the floor, whichever is larger – the
+     * one 16 gutter at the bottom edge where the host reports no inset (8 and the 8 floor), and 8
+     * over the host's bar where it reports one (32 over a 24 bar). `V2TokensPinTest` holds the
+     * padding to the CSS's and the two cases to the chrome's.
      */
     fun footerToEdge(padding: Int, floor: Int, inset: Int): Int = padding + maxOf(floor, inset)
 
@@ -134,12 +134,11 @@ object PromptSheetSpec {
 
     /**
      * §9.11 / §9.25: the footer's 16 above its peers (`.zen-sheet-footer`'s `padding-top`), the peers at an
-     * 8 gap, and 16 from the peers to the bottom inset – §9.25's number, the one constant of
-     * [footerToEdge]; main.css's `.zen-sheet-footer` stands at 8 there, the one chassis value the
-     * pin found off the spec (`V2TokensPinTest`).
+     * 8 gap, and its 8 below them (`padding-bottom`) – which over the sheet's 8 floor is §9.25's one 16
+     * gutter at the bottom edge, and over the host's bar the 8 above it ([footerToEdge]).
      */
     const val FOOTER_TOP_DP = 16
-    const val FOOTER_BOTTOM_DP = 16
+    const val FOOTER_BOTTOM_DP = 8
     const val PEER_GAP_DP = 8
     /** `.zen-v2-button`: `min-width: 96px`, `padding: 0 16px`, the label at `--v2-weight-button`. */
     const val BUTTON_MIN_WIDTH_DP = 96
@@ -184,9 +183,10 @@ object PromptSheetSpec {
  * above its two 40 peers splitting the width at 8 – the secondary (Cancel, Wait) leading in the
  * 10 % fill, the primary trailing in the accent fill with the on-accent label or, for a
  * destructive answer, in the 10 % fill with the label in the danger ink (Exit page, Remove) –
- * or one action spanning the row; and §9.25's 16 to the bottom inset, the inset the host's bar
- * or 8 where it reports none ([PromptSheetSpec.footerToEdge]: the padding plus the larger of the
- * floor and the inset, the chrome's arithmetic). The sheet stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
+ * or one action spanning the row; and §9.25's one 16 gutter at the bottom edge – the footer's 8
+ * under the peers over the sheet's 8 floor, or over the host's bar where it reports one
+ * ([PromptSheetSpec.footerToEdge]: the padding plus the larger of the floor and the inset, the
+ * chrome's arithmetic exactly). The sheet stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
  * under the status bar: a long body scrolls between the pinned block and the pinned footer
  * rather than pushing either off. The keyboard lifts the sheet and takes its room from the body.
  *
@@ -645,7 +645,8 @@ class NativePromptSheet(
 
     /**
      * §9.11: peers splitting the width at 8, the primary trailing; one action spans the row. 16
-     * above the peers, and §9.25's 16 below them to the bottom inset the sheet pads for.
+     * above the peers, and 8 below them – over the sheet's 8 floor or the bar it pads for, §9.25's
+     * one 16 gutter at the edge.
      */
     private fun footer(): View {
         val row = LinearLayout(context).apply {
