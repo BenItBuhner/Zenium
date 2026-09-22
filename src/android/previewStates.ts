@@ -19,6 +19,7 @@ import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview, overviewIsOpen } from '@renderer/lib/gestures/stage'
+import { chromeInertHeld } from '@renderer/lib/portals'
 import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
 import { applyPrivateLock, liftLanded, privateLockStore } from '@renderer/lib/privateLock'
 import { rememberThumbnail } from '@renderer/lib/thumbnails'
@@ -1001,7 +1002,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     openOverview(state)
     const then = target.then ?? []
     if (then.length === 0) requestAnimationFrame(() => done(spec))
-    else afterFrames(2, () => steps(then, finish))
+    else whenOverviewUp(() => afterFrames(2, () => steps(then, finish)))
   } else if (target.kind === 'urlbar') {
     applyUrlbar(target, tab?.id ?? null, finish)
   } else {
@@ -2193,6 +2194,23 @@ function whenPageRendered(fn: () => void, deadline = performance.now() + PAGE_RE
     return
   }
   setTimeout(() => whenPageRendered(fn, deadline), 50)
+}
+
+/**
+ * Runs `fn` once the overview is on the stage and takes a press, or after {@link PAGE_RENDER_MS}:
+ * `openOverview` mounts it only once the page's picture is captured (`showOverview`), a round
+ * trip through the host that outlasts a couple of frames when a previous state's overlay or
+ * sheet invalidated the picture; and a sheet the reset dismissed (a menu, `closeMenu`) holds the
+ * window chrome – the overview's root among it – inert until it has landed (`holdChromeInert`).
+ * A step taken before the header exists, or while it is inert, would find nothing to press.
+ */
+function whenOverviewUp(fn: () => void, deadline = performance.now() + PAGE_RENDER_MS): void {
+  const up = document.querySelector('.zen-overview header') && !chromeInertHeld()
+  if (up || performance.now() > deadline) {
+    fn()
+    return
+  }
+  setTimeout(() => whenOverviewUp(fn, deadline), 50)
 }
 
 /** Runs `fn` once the active tab satisfies `test` (at once when it already does). */
