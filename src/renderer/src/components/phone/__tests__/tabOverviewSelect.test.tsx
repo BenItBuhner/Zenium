@@ -564,12 +564,13 @@ describe('entering the mode', () => {
     expect(countTitle()?.textContent).toBe('5 selected')
     expect(byTestId('overview-select-all')?.textContent).toBe('Deselect all')
     // The pinned pick and the blank tab count for Close, not for Group (pinned) or the pages'
-    // actions (blank): the names say what each acts on.
+    // actions (blank): the names say what each acts on, the number the picker's title and the
+    // toast will say.
     expect(actions()).toEqual([
       ['close', 'Close 5 tabs', false],
-      ['group', 'Group 5 tabs', false],
-      ['bookmark', 'Bookmark 5 tabs', false],
-      ['share', 'Share 5 tabs', false]
+      ['group', 'Group 4 tabs', false],
+      ['bookmark', 'Bookmark 4 tabs', false],
+      ['share', 'Share 4 tabs', false]
     ])
     act(() => byTestId('overview-select-all')!.click())
     expect(checkboxes().some(([, on]) => on)).toBe(false)
@@ -618,10 +619,11 @@ describe('the action strip', () => {
   it('each action is off when nothing among the picks is its: a pinned pick alone leaves Group off, a blank tab alone leaves Bookmark and Share off, Close takes any (§9.30)', async () => {
     show(five())
     await enter()
+    // An action that is off names the nothing it has: "Group 0 tabs" for the pinned pick alone.
     tapCard('p')
     expect(actions()).toEqual([
       ['close', 'Close 1 tab', false],
-      ['group', 'Group 1 tab', true],
+      ['group', 'Group 0 tabs', true],
       ['bookmark', 'Bookmark 1 tab', false],
       ['share', 'Share 1 tab', false]
     ])
@@ -630,8 +632,8 @@ describe('the action strip', () => {
     expect(actions()).toEqual([
       ['close', 'Close 1 tab', false],
       ['group', 'Group 1 tab', false],
-      ['bookmark', 'Bookmark 1 tab', true],
-      ['share', 'Share 1 tab', true]
+      ['bookmark', 'Bookmark 0 tabs', true],
+      ['share', 'Share 0 tabs', true]
     ])
   })
 
@@ -698,7 +700,9 @@ describe('the action strip', () => {
     await enter()
     tapCard('p')
     tapCard('a')
-    expect(action('group').getAttribute('aria-label')).toBe('Group 2 tabs')
+    // Two picks, one groupable: the name and the picker's title say the one.
+    expect(action('close').getAttribute('aria-label')).toBe('Close 2 tabs')
+    expect(action('group').getAttribute('aria-label')).toBe('Group 1 tab')
     act(() => action('group').click())
     await land()
     // No group yet: the picker is "New group" alone, titled with the groupable count.

@@ -2776,19 +2776,25 @@
    * the group strip's tray at the card's radius, inset the grid's 12 with 8 to the band – whose
    * slot clips it as it slides up from below on the spring that writes its transform per frame
    * (so no transition on that; the opacity transition is reduced motion's fade, §11.3). The
-   * actions share the band's width as glyph-over-label buttons, 52 tall inside the band's 6
-   * (§9.3's 44 target and then some), full window ink with the 13 label on its 20 line under
-   * the 20 glyph (§9.6: 13 is §4's floor, never smaller), pressed in the window's hover fill
-   * with the shared .98 squeeze; disabled at .4 through.
+   * actions share the band's width as glyph-over-label buttons, 52 tall at the default size
+   * inside the band's 6 (§9.3's 44 target and then some) and taller with the text zoom, full
+   * window ink with the 13 label on its 20 line under the 20 glyph (§9.6: 13 is §4's floor,
+   * never smaller), pressed in the window's hover fill with the shared .98 squeeze; disabled at
+   * .4 through.
    */
   .zen-overview-actions {
+    /* An action's height grows from its label's line box (§4: nothing clamps a row to its
+       unscaled height): the 20 glyph, the 4 gap, the 13 label's 20 line at the text zoom and 4
+       above and below – 52 at the default size, 68 at Android's 1.8; the band adds its 6 padding
+       each side (64 at rest). */
+    --zen-overview-action: calc(20px + 4px + var(--v2-line-small-box) + 8px);
     flex: 0 0 auto;
     padding: 4px 12px 8px;
     overflow: hidden;
   }
   .zen-overview-actions-band {
     display: flex;
-    height: 64px;
+    height: calc(var(--zen-overview-action) + 12px);
     padding: 6px;
     border-radius: var(--zen-card-radius);
     background: var(--v2-window-fill);
@@ -2803,7 +2809,7 @@
     align-items: center;
     justify-content: center;
     gap: 4px;
-    height: 52px;
+    height: var(--zen-overview-action);
     border-radius: 10px;
     color: inherit;
     font-size: var(--v2-font-small);

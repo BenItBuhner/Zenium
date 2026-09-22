@@ -854,13 +854,16 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     exitSelection()
     run('app.share', shareTabsPayload(pages))
   }
-  const named = (verb: string): string =>
-    `${verb} ${chosen.length} ${chosen.length === 1 ? 'tab' : 'tabs'}`
+  // An action's name counts the picks IT acts on, the number the picker's title and the
+  // bookmark toast will say: Close every pick, Group the groupable ones, Bookmark and Share the
+  // pages (a pinned pick among five reads "Group 4 tabs"; a blank tab, "Bookmark 4 tabs").
+  const named = (verb: string, count: number): string =>
+    `${verb} ${count} ${count === 1 ? 'tab' : 'tabs'}`
   const selectionActions: SelectionAction[] = [
     {
       id: 'close',
       label: 'Close',
-      name: named('Close'),
+      name: named('Close', chosen.length),
       glyph: <X className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
       disabled: chosen.length === 0,
       run: closeSelected
@@ -871,7 +874,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           {
             id: 'group',
             label: 'Group',
-            name: named('Group'),
+            name: named('Group', groupable.length),
             glyph: <Group className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
             disabled: groupable.length === 0,
             run: () => setSheet({ kind: 'group-picker' })
@@ -880,7 +883,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     {
       id: 'bookmark',
       label: 'Bookmark',
-      name: named('Bookmark'),
+      name: named('Bookmark', pages.length),
       glyph: <Star className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
       disabled: pages.length === 0,
       run: () => void bookmarkSelected()
@@ -888,7 +891,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     {
       id: 'share',
       label: 'Share',
-      name: named('Share'),
+      name: named('Share', pages.length),
       glyph: <Share2 className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
       disabled: pages.length === 0,
       run: shareSelected

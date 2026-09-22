@@ -1637,6 +1637,27 @@ describe('the system font size above the default (§4 / §9.2, A11Y-05)', () => 
     expect(block('.zen-overview-card-header')).toMatch(/height: var\(--zen-overview-card-header\);/)
   })
 
+  it('grows the select-tabs action strip from its 13 label’s line box, never a fixed height (§4, TAB-08)', () => {
+    // The strip's rules sit inside `@layer components`, so each is read to its own `}`. The
+    // action is the 20 glyph, the 4 gap, the label's line box and 4 above and below (52 at
+    // rest, 68 at Android's 1.8 text zoom); the band is the action plus its 6 padding each side.
+    const rule = (selector: string): string => {
+      const start = css.indexOf(`\n  ${selector} {`)
+      expect(start, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+      return css.slice(start, css.indexOf('}', start))
+    }
+    expect(rule('.zen-overview-actions')).toMatch(
+      /--zen-overview-action: calc\(20px \+ 4px \+ var\(--v2-line-small-box\) \+ 8px\);/
+    )
+    expect(rule('.zen-overview-actions-band')).toMatch(
+      /height: calc\(var\(--zen-overview-action\) \+ 12px\);/
+    )
+    expect(rule('.zen-overview-action')).toMatch(/height: var\(--zen-overview-action\);/)
+    for (const selector of ['.zen-overview-actions-band', '.zen-overview-action']) {
+      expect(rule(selector)).not.toMatch(/height: \d+px/)
+    }
+  })
+
   it('lays the bar’s 44 boxes on the 36 pitch their 32 boxes had, the pill keeping its room (§9.3, the lead’s L1 ruling)', () => {
     // The phone's icon button is the 44 box; the bar's controls overlap by 8 through their
     // margins, as the pill's chips do on their 28, so the pill stays 252 wide on the 412 phone.
