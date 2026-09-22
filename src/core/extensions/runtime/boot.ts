@@ -55,7 +55,17 @@ export interface ExtensionBoot {
   name: string
   version: string
   manifestVersion: 2 | 3
+  /**
+   * The API permissions the extension holds: the manifest's required ones and the optional
+   * ones `permissions.request` granted so far (Chrome's granted set, what `permissions.getAll`
+   * lists). A context's `chrome.<namespace>` exists for these.
+   */
   permissions: string[]
+  /**
+   * The manifest's `optional_permissions` (API ones), not granted yet: the namespaces a later
+   * `permissions.request` may define in a running context, as Chrome's bindings do on a grant.
+   */
+  optionalPermissions: string[]
   hostPermissions: string[]
   /** The raw manifest, for `chrome.runtime.getManifest()`. */
   manifest: Record<string, unknown>
@@ -164,21 +174,29 @@ export interface PageBootConfig {
 
 export type BootConfig = ContentBootConfig | PageBootConfig
 
-/** Build the per-extension boot record from a parsed manifest (static plus registered scripts). */
+/**
+ * Build the per-extension boot record from a parsed manifest (static plus registered scripts).
+ * `grantedOptional`: the optional API permissions the host holds as granted (a
+ * `permissions.request` answered, kept across sessions); they join the required ones in the
+ * boot's granted set and leave the optional list.
+ */
 export function buildExtensionBoot(
   id: string,
   manifest: RuntimeManifest,
   messages: LocaleMessages | null,
   registered: RegisteredContentScript[],
-  isolation: IsolationMode
+  isolation: IsolationMode,
+  grantedOptional: readonly string[] = []
 ): ExtensionBoot {
   const plan = planInjection(id, manifest, registered)
+  const granted = manifest.optionalPermissions.filter((p) => grantedOptional.includes(p))
   return {
     id,
     name: manifest.name,
     version: manifest.version,
     manifestVersion: manifest.manifestVersion,
-    permissions: manifest.permissions,
+    permissions: granted.length > 0 ? [...manifest.permissions, ...granted] : manifest.permissions,
+    optionalPermissions: manifest.optionalPermissions.filter((p) => !granted.includes(p)),
     hostPermissions: manifest.hostPermissions,
     manifest: manifest.raw,
     messages,

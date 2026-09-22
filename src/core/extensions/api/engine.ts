@@ -52,7 +52,15 @@ export interface EngineConfig {
   origin: string
   manifest: Record<string, unknown>
   manifestVersion: 2 | 3
+  /** The API permissions granted: the required ones and the optional ones granted so far. */
   permissions: string[]
+  /**
+   * The manifest's optional API permissions not granted yet. Their namespaces stay undefined
+   * until a `permissions.request` grants one, and are defined then (in this context at once, in
+   * the others on the host's `__zen.grants`), as Chrome's bindings do; `permissions.remove`
+   * deletes them again. Absent or empty: the granted set is all there is.
+   */
+  optionalPermissions?: string[]
   messages: LocaleMessages | null
   uiLanguage: string
   context: EngineContextKind
@@ -695,14 +703,22 @@ export function createEmulatedEngine(
   Object.defineProperty(root, 'chrome', { value: chrome, writable: true, configurable: true })
   let diagnostics: ShimDiagnostics | null = null
   if (!userScript) {
+    // The table carries every declared permission's namespace, the optional ones among them;
+    // the shim defines those whose permission is granted and follows the grants from there
+    // (`ShimOptions.granted`), so `permissions.request` defines a namespace and `remove` deletes
+    // it, as in Chrome. Without optional permissions the granted set is the declared set.
+    const optional = (config.optionalPermissions ?? []).filter(
+      (p) => !config.permissions.includes(p)
+    )
     diagnostics = installExtensionApi(
       shimHost,
       engineApiSpec({
-        permissions: config.permissions,
+        permissions:
+          optional.length > 0 ? [...config.permissions, ...optional] : config.permissions,
         manifestVersion: config.manifestVersion,
         context: contentScript ? 'content' : 'page'
       }),
-      { root }
+      optional.length > 0 ? { root, granted: config.permissions } : { root }
     )
     // The shim always builds `storage`; Chrome only exposes it with the permission.
     if (!granted('storage')) delete chrome.storage

@@ -350,6 +350,9 @@ declare const __zenExtBoot: Boot
         manifest: ext.manifest,
         manifestVersion: ext.manifestVersion,
         permissions: ext.permissions,
+        ...(Array.isArray(ext.optionalPermissions) && ext.optionalPermissions.length > 0
+          ? { optionalPermissions: ext.optionalPermissions }
+          : {}),
         messages: ext.messages,
         uiLanguage: boot.config.uiLanguage,
         context,

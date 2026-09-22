@@ -256,6 +256,18 @@ interface RuntimeData {
   sidePanelOnActionClick: Record<string, boolean>
   /** id → the `chrome.proxy.settings` values it set, by scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
   proxy: Record<string, ScopedValues>
+  /**
+   * id → the optional permissions `permissions.request` granted (API permissions and host
+   * patterns), kept across sessions as Chrome's `ExtensionPrefs` keep the granted set; the
+   * required ones need no record.
+   */
+  grants: Record<string, PersistedGrants>
+}
+
+/** The optional permissions an extension holds beyond its manifest's required ones. */
+export interface PersistedGrants {
+  permissions: string[]
+  origins: string[]
 }
 
 type StorageDoc = { local: StorageItems; sync: StorageItems }
@@ -403,7 +415,8 @@ function emptyData(): RuntimeData {
     listeners: {},
     contextMenus: {},
     sidePanelOnActionClick: {},
-    proxy: {}
+    proxy: {},
+    grants: {}
   }
 }
 
@@ -422,6 +435,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.contextMenus = saved.contextMenus ?? {}
   data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
   data.proxy = saved.proxy ?? {}
+  data.grants = saved.grants ?? {}
   return data
 }
 
@@ -867,6 +881,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.contextMenus[id]
     delete this.data.sidePanelOnActionClick[id]
     delete this.data.proxy[id]
+    delete this.data.grants[id]
     this.startupFired.delete(id)
     this.save()
     // Settle the debounced document first so no pending write brings it back after the remove.
@@ -886,7 +901,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const env = await this.ensureEnv()
     const id = ext.record.id
     const bootFor = (isolation: IsolationMode): ExtensionBoot =>
-      buildExtensionBoot(id, ext.manifest, ext.messages, this.data.registered[id] ?? [], isolation)
+      buildExtensionBoot(
+        id,
+        ext.manifest,
+        ext.messages,
+        this.data.registered[id] ?? [],
+        isolation,
+        this.data.grants[id]?.permissions ?? []
+      )
     const plan = (isolatedWorlds: boolean): ExtensionUnits =>
       planUnits(bootFor(isolatedWorlds ? 'world' : 'with'), ext.manifest, {
         token: env.token,
@@ -1371,6 +1393,41 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   hostsGranted(id: string, hosts: string[]): void {
     this.bridge.send('ext.hosts', { id, hosts })
+  }
+
+  grants(id: string): PersistedGrants | null {
+    return this.data.grants[id] ?? null
+  }
+
+  /**
+   * The optional grants moved (`permissions.request` / `remove`): kept for the next session,
+   * told to every live context of the extension at once (`__zen.grants`, the whole granted set,
+   * so the shim defines the namespaces a grant opens and deletes the ones a removal closes, as
+   * Chrome's bindings do), and written into the extension's boot so a context started later
+   * carries the set too.
+   */
+  setGrants(id: string, grants: PersistedGrants, granted: string[]): void {
+    if (grants.permissions.length > 0 || grants.origins.length > 0) this.data.grants[id] = grants
+    else delete this.data.grants[id]
+    this.save()
+    for (const endpoint of this.router.of(id)) {
+      this.sendTo(endpoint.id, {
+        t: 'event',
+        ns: '__zen',
+        name: 'grants',
+        args: [{ permissions: granted }]
+      })
+    }
+    // The boot for the next context; the caller's answer need not wait for Kotlin's recompile
+    // (the live contexts have the set already).
+    const ext = this.extensions.get(id)
+    if (ext)
+      void this.configure(ext).catch((error: unknown) => {
+        console.warn(
+          `[Zenium] extension ${id}: re-planning after a permission change failed`,
+          error
+        )
+      })
   }
 
   showNotification(extensionId: string, notification: ShownNotification): void {

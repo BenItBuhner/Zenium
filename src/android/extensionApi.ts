@@ -12,6 +12,7 @@ import {
 } from '@core/extensions/api/capture'
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import { parseCssColor, type CssRgba } from '@core/extensions/api/cssColor'
 import type { ScopedValues } from '@core/extensions/api/privacy'
 import type { ProxyConfig } from '@core/extensions/api/proxy'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
@@ -45,6 +46,7 @@ import { AndroidContextMenus } from './extensionContextMenus'
 import { AndroidCookies, type JarReading } from './extensionCookies'
 import type { AndroidDeclarativeNetRequest } from './extensionDnr'
 import type { RequestUpdateCheckAnswer } from './extensionHost'
+import type { PersistedGrants } from './extensionRuntime'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 import { AndroidProxy } from './extensionProxy'
@@ -141,6 +143,14 @@ export interface ApiHost {
   writeCookie(containerId: string, url: string, setCookie: string): Promise<boolean>
   /** The optional host permissions an extension holds right now (`permissions.request` / `remove`); Kotlin's CORS proxy reads them. */
   hostsGranted(id: string, hosts: string[]): void
+  /** The optional permissions (API and host) the extension was granted in this or an earlier session. */
+  grants(id: string): PersistedGrants | null
+  /**
+   * The optional grants moved: `grants` is what the extension holds beyond its required
+   * permissions, `granted` its whole API permission set (required and granted optional), for
+   * the contexts' shims (`__zen.grants`) and the boot of the next context.
+   */
+  setGrants(id: string, grants: PersistedGrants, granted: string[]): void
   /**
    * `tabs.captureVisibleTab`: the tab's on-screen pixels as a `data:` URL, or null when the view
    * cannot be captured (hidden, not painted yet).
@@ -414,8 +424,10 @@ export class ExtensionApi {
   /** `chrome.tts` over the device's speech engine, read aloud's (`extensionTts.ts`). */
   readonly tts: AndroidTts
   private readonly actions = new Map<string, ActionRecord>()
-  /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
+  /** Optional host permissions granted, per extension: this session's and the stored ones (`ExtensionApiHost.grants`). */
   private readonly grantedHosts = new Map<string, Set<string>>()
+  /** Optional API permissions granted, per extension, the same way; their namespaces exist in the contexts while they are here. */
+  private readonly grantedApis = new Map<string, Set<string>>()
   /** Chrome's two `captureVisibleTab` calls per second, per extension. */
   private readonly captureQuota = new CaptureQuota()
 
@@ -520,6 +532,41 @@ export class ExtensionApi {
     this.contextMenus.load(ext)
     this.sidePanel.load(ext)
     this.proxy.load(ext)
+    this.loadGrants(ext)
+  }
+
+  /**
+   * The optional permissions granted in an earlier session come back (Chrome keeps the granted
+   * set in its prefs), less what the manifest no longer offers (an update dropped it); Kotlin's
+   * CORS proxy hears the host patterns again.
+   */
+  private loadGrants(ext: AttachedExtension): void {
+    const id = ext.record.id
+    const stored = this.host.grants(id)
+    const apis = new Set(
+      (stored?.permissions ?? []).filter((p) => ext.manifest.optionalPermissions.includes(p))
+    )
+    const hosts = new Set(
+      (stored?.origins ?? []).filter(
+        (o) =>
+          ext.manifest.optionalHostPermissions.includes(o) ||
+          ext.manifest.hostPermissions.includes(o)
+      )
+    )
+    if (apis.size > 0) this.grantedApis.set(id, apis)
+    else this.grantedApis.delete(id)
+    if (hosts.size > 0) {
+      this.grantedHosts.set(id, hosts)
+      this.host.hostsGranted(id, [...hosts])
+    } else this.grantedHosts.delete(id)
+  }
+
+  /** The API permissions the extension holds: the manifest's required ones and the optional ones granted. */
+  grantedPermissions(ext: AttachedExtension): string[] {
+    const optional = this.grantedApis.get(ext.record.id)
+    return optional && optional.size > 0
+      ? [...ext.manifest.permissions, ...optional]
+      : ext.manifest.permissions
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
@@ -530,6 +577,7 @@ export class ExtensionApi {
     this.proxy.unload(id)
     this.activeTab.forget(id)
     this.grantedHosts.delete(id)
+    this.grantedApis.delete(id)
     this.captureQuota.forget(id)
     this.notifications.forget(id)
     this.tts.forget(id)
@@ -1225,7 +1273,11 @@ export class ExtensionApi {
         write('badgeBackgroundColor', 'color', colorString)
         return undefined
       case 'getBadgeBackgroundColor':
-        return colorArray(state.badgeBackgroundColor)
+        // Unset, Chrome answers transparent black (the toolbar draws its own default); the
+        // desktop answers the same.
+        return state.badgeBackgroundColor === DEFAULT_BADGE_BACKGROUND
+          ? [0, 0, 0, 0]
+          : colorArray(state.badgeBackgroundColor)
       case 'setBadgeTextColor':
         write('badgeTextColor', 'color', colorString)
         return undefined
@@ -1736,25 +1788,43 @@ export class ExtensionApi {
     throw new Error(`chrome.bookmarks.${method} ${NOT_IMPLEMENTED}`)
   }
 
+  /**
+   * `chrome.permissions`: the granted set is the manifest's required permissions plus the
+   * optional ones `request` granted (kept across sessions, as Chrome's prefs keep them). A
+   * declared optional permission is granted without a prompt (the prompt is the UI worker's);
+   * one the manifest does not offer is refused, as in Chrome. A grant or removal reaches every
+   * context of the extension (`ExtensionApiHost.setGrants`: the shims define or delete the
+   * namespaces, the next context boots with the set) and fires `onAdded` / `onRemoved`.
+   */
   private permissionsCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
     const { manifest } = ext
     const id = ext.record.id
     const wanted = asRecord(args[0])
     const permissions = asStringArray(wanted.permissions)
     const origins = asStringArray(wanted.origins)
-    const granted = this.grantedHosts.get(id) ?? new Set<string>()
-    const hosts = (): string[] => [...manifest.hostPermissions, ...granted]
+    const grantedHosts = this.grantedHosts.get(id) ?? new Set<string>()
+    const grantedApis = this.grantedApis.get(id) ?? new Set<string>()
+    const hosts = (): string[] => [...manifest.hostPermissions, ...grantedHosts]
+    const apis = (): string[] => [...manifest.permissions, ...grantedApis]
     const has = (): boolean =>
-      permissions.every((p) => manifest.permissions.includes(p)) &&
+      permissions.every((p) => manifest.permissions.includes(p) || grantedApis.has(p)) &&
       origins.every((o) => hosts().includes(o) || manifest.hostPermissions.includes('<all_urls>'))
+    // Kotlin's CORS proxy hears the host patterns only when they moved; the grants and the
+    // contexts' shims hear every change.
+    const commit = (hostsMoved: boolean): void => {
+      if (grantedHosts.size > 0) this.grantedHosts.set(id, grantedHosts)
+      else this.grantedHosts.delete(id)
+      if (grantedApis.size > 0) this.grantedApis.set(id, grantedApis)
+      else this.grantedApis.delete(id)
+      if (hostsMoved) this.host.hostsGranted(id, [...grantedHosts])
+      this.host.setGrants(id, { permissions: [...grantedApis], origins: [...grantedHosts] }, apis())
+    }
     switch (method) {
       case 'contains':
         return has()
       case 'getAll':
-        return { permissions: manifest.permissions, origins: hosts() }
+        return { permissions: apis(), origins: hosts() }
       case 'request': {
-        // Optional permissions declared in the manifest are granted without a prompt (the prompt
-        // is the UI worker's); what is not declared is refused, as in Chrome.
         const allowed =
           permissions.every(
             (p) => manifest.permissions.includes(p) || manifest.optionalPermissions.includes(p)
@@ -1764,21 +1834,34 @@ export class ExtensionApi {
               manifest.hostPermissions.includes(o) || manifest.optionalHostPermissions.includes(o)
           )
         if (!allowed) return false
-        const added = origins.filter(
-          (o) => !manifest.hostPermissions.includes(o) && !granted.has(o)
+        const addedApis = permissions.filter(
+          (p) => !manifest.permissions.includes(p) && !grantedApis.has(p)
         )
-        if (added.length > 0) {
-          for (const o of added) granted.add(o)
-          this.grantedHosts.set(id, granted)
-          this.host.hostsGranted(id, [...granted])
-        }
+        const addedHosts = origins.filter(
+          (o) => !manifest.hostPermissions.includes(o) && !grantedHosts.has(o)
+        )
+        if (addedApis.length === 0 && addedHosts.length === 0) return true
+        for (const p of addedApis) grantedApis.add(p)
+        for (const o of addedHosts) grantedHosts.add(o)
+        commit(addedHosts.length > 0)
+        this.host.emit(id, 'permissions', 'onAdded', [
+          { permissions: addedApis, origins: addedHosts }
+        ])
         return true
       }
       case 'remove': {
-        // Required permissions cannot be removed; optional ones granted here can.
-        if (origins.some((o) => manifest.hostPermissions.includes(o))) return false
-        const removed = origins.filter((o) => granted.delete(o))
-        if (removed.length > 0) this.host.hostsGranted(id, [...granted])
+        if (
+          permissions.some((p) => manifest.permissions.includes(p)) ||
+          origins.some((o) => manifest.hostPermissions.includes(o))
+        )
+          throw new Error('You cannot remove required permissions.')
+        const removedApis = permissions.filter((p) => grantedApis.delete(p))
+        const removedHosts = origins.filter((o) => grantedHosts.delete(o))
+        if (removedApis.length === 0 && removedHosts.length === 0) return true
+        commit(removedHosts.length > 0)
+        this.host.emit(id, 'permissions', 'onRemoved', [
+          { permissions: removedApis, origins: removedHosts }
+        ])
         return true
       }
     }
@@ -1826,24 +1909,29 @@ export class ExtensionApi {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * A badge colour as `setBadgeBackgroundColor` / `setBadgeTextColor` take it: Chrome's
+ * `[r, g, b, a]` array (integers 0..255, three or four of them) or any CSS colour string
+ * `content::ParseCssColorString` reads (hex, `rgb()` / `rgba()`, `hsl()` / `hsla()`, the named
+ * colours, `white` among them), kept as one `rgba()` string the toolbar draws; null for what
+ * Chrome refuses ("Invalid value for color.").
+ */
 function colorString(value: unknown): string | null {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value) && value.length >= 3) {
-    const [r, g, b, a] = value.map(Number)
-    return `rgba(${r}, ${g}, ${b}, ${a === undefined ? 1 : a / 255})`
+  let rgba: CssRgba | null = null
+  if (typeof value === 'string') rgba = parseCssColor(value)
+  else if (Array.isArray(value) && (value.length === 3 || value.length === 4)) {
+    if (!value.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) return null
+    const [r, g, b, a] = value as number[]
+    rgba = [r, g, b, value.length === 4 ? a : 255]
   }
-  return null
+  if (!rgba) return null
+  const [r, g, b, a] = rgba
+  return `rgba(${r}, ${g}, ${b}, ${(a / 255).toFixed(3)})`
 }
 
-function colorArray(value: string): [number, number, number, number] {
-  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(value)
-  if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16), 255]
-  const rgba = /^rgba?\(([^)]+)\)$/.exec(value)
-  if (rgba) {
-    const [r, g, b, a] = rgba[1].split(',').map((s) => Number(s.trim()))
-    return [r || 0, g || 0, b || 0, a === undefined ? 255 : Math.round(a * 255)]
-  }
-  return [0, 0, 0, 255]
+/** The stored colour back as Chrome's `ColorArray` (`getBadgeBackgroundColor` / `getBadgeTextColor`). */
+function colorArray(value: string): CssRgba {
+  return parseCssColor(value) ?? [0, 0, 0, 0]
 }
 
 function safeOrigin(url: string): string {
