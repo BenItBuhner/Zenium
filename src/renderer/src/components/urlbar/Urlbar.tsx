@@ -1166,7 +1166,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       // in place, on opacity; nothing slides). A bottom-docked card lists its rows in reverse –
       // the first nearest the field – so there the heading follows the group's last row in the
       // DOM to stand over the group on screen. A leaving row's heading goes with it, as a
-      // ghost, only when it was the group's last; otherwise the rows that stay carry it.
+      // ghost, only when it was the group's last; otherwise the rows that stay carry it. A
+      // heading to assistive technology too (TalkBack announces it and can jump by it), not a
+      // presentational list item read as plain text; the options are the rows alone.
       const bottom = sheet && phoneEdge === 'bottom'
       const ghostHeading = leaving && exit.heading === item.group
       const boundary = liveGroup(i, bottom ? 1 : -1)
@@ -1176,7 +1178,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       const heading = heads ? (
         <li
           key={headingKey(item.group!)}
-          role="presentation"
+          role="heading"
+          aria-level={2}
           className={cn(
             'zen-v2-heading',
             sheet ? 'zen-omnibox-sheet-heading' : 'zen-omnibox-heading'

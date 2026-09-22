@@ -679,11 +679,13 @@ describe('the card’s section headings (OMN-18)', () => {
     await type(input(el), 'cats')
     const heads = headings(el)
     expect(heads.map((h) => h.textContent)).toEqual(['Pages', 'Searches', 'Open tabs'])
-    // The shared primitive on the card's own modifier, presentational in the listbox.
+    // The shared primitive on the card's own modifier; a heading to TalkBack (announced as one,
+    // reachable by heading navigation), not a presentational item heard as plain text.
     for (const h of heads) {
       expect(h.className).toContain('zen-v2-heading')
       expect(h.className).toContain('zen-omnibox-sheet-heading')
-      expect(h.getAttribute('role')).toBe('presentation')
+      expect(h.getAttribute('role')).toBe('heading')
+      expect(h.getAttribute('aria-level')).toBe('2')
     }
     expect(order(el)).toEqual([
       'cats',
