@@ -643,8 +643,9 @@ describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () =
     const row = el.querySelector('[data-row="tracking-site-current"]')!
     expect(row.textContent).toContain('Block on news.example')
     expect(scrolled).toHaveBeenCalledTimes(1)
-    expect(scrolled.mock.instances[0]).toBe(row.closest('[data-group]'))
-    expect(scrolled.mock.instances[0]!.getAttribute('data-group')).toBe('tracking-exceptions')
+    const target = scrolled.mock.instances[0] as Element
+    expect(target).toBe(row.closest('[data-group]'))
+    expect(target.getAttribute('data-group')).toBe('tracking-exceptions')
     expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
     scrolled.mockRestore()
   })
@@ -655,7 +656,7 @@ describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () =
     const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
     mountPage(fromSheet('zen://settings/privacy?site=https%3A%2F%2Fnews.example'))
     expect(scrolled).toHaveBeenCalledTimes(1)
-    expect(scrolled.mock.instances[0]!.getAttribute('data-group')).toBe('tracking-exceptions')
+    expect((scrolled.mock.instances[0] as Element).getAttribute('data-group')).toBe('tracking-exceptions')
     act(() => root!.unmount())
     root = null
     // The section reached from the landing or the nav (no `site`): nothing is scrolled to.
