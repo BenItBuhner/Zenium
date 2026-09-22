@@ -14,10 +14,13 @@ import {
   closeClearBrowsingData,
   closeImportDialog,
   closeMediaSheet,
+  onboardingUp,
   openClearBrowsingData,
   openImportDialog,
   openInstallSheet,
   openMediaSheet,
+  openNewTabPageUrlbar,
+  openNewTabShortcutDialog,
   overlayCoversContent,
   panelAloneOverContent,
   uiStore,
@@ -198,5 +201,64 @@ describe('chrome surfaces over the content', () => {
     expect(idle().overlay).toBe('none')
     viewportStore.set({ formFactor: 'desktop' })
     browserStore.set({ state: null })
+  })
+})
+
+describe('the URL bar and the first-run tour', () => {
+  const profileWindow = (onboardingDone: boolean): UIState =>
+    ({
+      settings: { onboardingDone },
+      window: { kind: 'synced', chrome: 'full' },
+      tabs: {}
+    }) as unknown as UIState
+
+  afterEach(() => {
+    uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false }, newTabShortcutDialog: null }))
+    viewportStore.set({ formFactor: 'desktop' })
+    browserStore.set({ state: null })
+  })
+
+  const settled = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
+  it('reads the tour from the state the shells mount it on; nothing until the state is here', () => {
+    expect(onboardingUp()).toBe(false)
+    browserStore.set({ state: profileWindow(false) })
+    expect(onboardingUp()).toBe(true)
+    browserStore.set({ state: profileWindow(true) })
+    expect(onboardingUp()).toBe(false)
+  })
+
+  it("does not open the new tab's bar or the shortcut dialog under the tour; the newtab.opened after the tour opens it", async () => {
+    browserStore.set({ state: profileWindow(false) })
+    // The boot path's `newtab.opened` (a fresh tab's bar 150 ms after the chrome is ready) and
+    // Ctrl+T during the tour: no bar under the tour, whose buttons would take the keyboard
+    // from a field the user cannot see.
+    openNewTabPageUrlbar('t1', undefined, false)
+    await settled()
+    expect(uiStore.get().urlbar.open).toBe(false)
+    expect(run).not.toHaveBeenCalledWith('focus.chrome', undefined)
+    await openNewTabShortcutDialog({
+      tabId: 't1',
+      id: null,
+      title: '',
+      url: 'https://example.org/'
+    })
+    expect(uiStore.get().newTabShortcutDialog).toBeNull()
+    // The tour's last click: the core broadcasts the state that puts the tour away, then the
+    // new tab it opened (`newtab.opened` follows the broadcast). The bar opens over that tab.
+    browserStore.set({ state: profileWindow(true) })
+    openNewTabPageUrlbar('t2', undefined, false)
+    await settled()
+    expect(uiStore.get().urlbar).toMatchObject({ open: true, mode: 'new-tab', tabId: 't2' })
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+  })
+
+  it("leaves the phone's flow alone: its bar is the phone shell's own", async () => {
+    viewportStore.set({ formFactor: 'phone' })
+    browserStore.set({ state: profileWindow(false) })
+    expect(onboardingUp()).toBe(false)
+    openNewTabPageUrlbar('t1', undefined, true)
+    await settled()
+    expect(uiStore.get().urlbar).toMatchObject({ open: true, mode: 'new-tab', tabId: 't1' })
   })
 })

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { handleMenuKey } from '@renderer/lib/menuKeys'
-import { focusableIn, wrapTab } from '@renderer/lib/popover'
+import { focusableIn, returnFocusTo, wrapTab } from '@renderer/lib/popover'
 import { useEscape } from './useEscape'
 
 type Initial = 'first' | 'container' | 'none' | ((root: HTMLElement) => HTMLElement | null)
@@ -13,7 +13,7 @@ type Initial = 'first' | 'container' | 'none' | ((root: HTMLElement) => HTMLElem
  * raised beside a chip in the pill takes no focus on open); Tab wraps inside it; and when it
  * goes while focus is still inside, focus returns to the control that opened it (what had focus
  * when it mounted) – a control of the inert window chrome's once the chrome is back
- * (`returnFocusTo`).
+ * (lib/popover.ts `returnFocusTo`, the Settings dialogs' return too).
  *
  * The chrome layer and the frame dialog host (lib/portals.tsx) place the surface and own the
  * rest: light dismiss, one popover at a time, the scroll and resize that close an anchored
@@ -95,45 +95,6 @@ export function usePopover(
       if (target) returnFocusTo(target)
     }
   }, [opener])
-}
-
-/** How long a refused return waits for the chrome to come back before it is given up. */
-const RETURN_WAIT_MS = 1000
-
-/**
- * Give `target` the focus back: now, or once it can take it. The frame dialog host keeps the
- * window chrome inert through a dialog's way out (lib/portals.tsx: `holdChromeInert` stands
- * until the kept panel's exit animation has ended), so a control of the chrome's – a toolbar
- * button, a button on one of the frame's strips – refuses the focus as the dialog unmounts,
- * and it would fall to `body` with the panel. The refusal is watched for on the inert root: as
- * its `inert` goes the control takes the focus (§9.22), unless something else took it
- * meanwhile (a dialog opened over the way out), the control is gone, or the hold outlasts
- * `RETURN_WAIT_MS` (a dialog stacked on the leaving one, whose own return governs).
- */
-function returnFocusTo(target: HTMLElement): void {
-  target.focus({ preventScroll: true })
-  if (document.activeElement === target) return
-  const held = target.closest<HTMLElement>('[inert]')
-  if (!held || typeof MutationObserver === 'undefined') return
-  let watching = true
-  const stop = (): void => {
-    if (!watching) return
-    watching = false
-    observer.disconnect()
-    document.removeEventListener('focusin', stop, true)
-    clearTimeout(timer)
-  }
-  const observer = new MutationObserver(() => {
-    if (target.closest('[inert]')) return
-    stop()
-    if (!target.isConnected) return
-    const active = document.activeElement
-    if (active && active !== document.body) return
-    target.focus({ preventScroll: true })
-  })
-  observer.observe(held, { attributes: true, attributeFilter: ['inert'] })
-  document.addEventListener('focusin', stop, true)
-  const timer = setTimeout(stop, RETURN_WAIT_MS)
 }
 
 /**
