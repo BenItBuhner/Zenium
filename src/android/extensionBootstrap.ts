@@ -899,11 +899,7 @@ declare const __zenExtBoot: Boot
    * over and answers the value as it is.
    */
   function settleLater(scope: Scope, value: unknown): unknown {
-    if (
-      (typeof value !== 'object' || value === null) &&
-      typeof value !== 'function'
-    )
-      return value
+    if ((typeof value !== 'object' || value === null) && typeof value !== 'function') return value
     let then: unknown
     try {
       then = (value as { then?: unknown }).then

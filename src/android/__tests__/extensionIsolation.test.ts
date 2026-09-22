@@ -142,10 +142,9 @@ describe('the scope proxy of the with-fallback', () => {
     proto.addEventListener = function wrapped(this: unknown, ...args: unknown[]): unknown {
       return original.apply(this, args)
     }
-    const call = new Function(
-      'window',
-      `with (window) { return addEventListener('scroll'); }`
-    ) as (w: unknown) => unknown
+    const call = new Function('window', `with (window) { return addEventListener('scroll'); }`) as (
+      w: unknown
+    ) => unknown
     expect(call(scope)).toBe('native')
     expect(seen).toEqual(['scroll'])
     // Without the snapshot the wrapper's shape hands it back unbound: the with block's `this`.

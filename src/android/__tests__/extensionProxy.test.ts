@@ -23,7 +23,12 @@ const PATH2 = `/data/user/0/app.zen.chromium/files/zen/extensions/${ID2}/1.0.0`
 /** Touch VPN's shape: the `proxy` permission and a worker that sets `fixed_servers`. */
 async function withProxy(
   h: Harness,
-  overrides: { id?: string; installedAt?: number; allowPrivate?: boolean; permissions?: string[] } = {}
+  overrides: {
+    id?: string
+    installedAt?: number
+    allowPrivate?: boolean
+    permissions?: string[]
+  } = {}
 ): Promise<string> {
   const id = overrides.id ?? ID
   const path = id === ID ? undefined : PATH2
@@ -54,7 +59,13 @@ async function withProxy(
     }
   })
   for (const event of ['proxy.settings.onChange', 'proxy.onProxyError'])
-    h.runtime.onMessage({ ep, tabId: null, top: true, origin: '', message: { t: 'listen', event, on: true } })
+    h.runtime.onMessage({
+      ep,
+      tabId: null,
+      top: true,
+      origin: '',
+      message: { t: 'listen', event, on: true }
+    })
   h.runtime.onMessage({ ep, tabId: null, top: true, origin: '', message: { t: 'ready' } })
   return ep
 }
@@ -113,7 +124,9 @@ describe('chrome.proxy.settings on the phone: fixed servers through the WebView 
     expect(events(h, bg, 'proxy.settings.onChange')[1].args).toEqual([
       { value: { mode: 'system' }, levelOfControl: 'controllable_by_this_extension' }
     ])
-    expect((h.saved('extensions-runtime.json').proxy as Record<string, unknown>)[ID]).toBeUndefined()
+    expect(
+      (h.saved('extensions-runtime.json').proxy as Record<string, unknown>)[ID]
+    ).toBeUndefined()
   })
 
   it("Chrome's rule slots become the WebView's scheme filters in order, ftp has nothing to apply to, direct is a direct rule", async () => {
@@ -238,7 +251,9 @@ describe('chrome.proxy.settings on the phone: fixed servers through the WebView 
     // Disabled: the override goes, the value stays for the re-enable.
     await next.runtime.detach(ID)
     expect(next.kt.proxyOverride).toBeNull()
-    expect((next.saved('extensions-runtime.json').proxy as Record<string, unknown>)[ID]).toBeDefined()
+    expect(
+      (next.saved('extensions-runtime.json').proxy as Record<string, unknown>)[ID]
+    ).toBeDefined()
 
     // Uninstalled: nothing comes back.
     await next.runtime.attach(record(next, {}, manifest({ permissions: ['proxy', 'storage'] })))
@@ -280,9 +295,9 @@ describe('chrome.proxy.settings on the phone: fixed servers through the WebView 
       { value: { mode: 'direct' }, scope: 'incognito_persistent' }
     ])
     expect(String(denied.error)).toBe(INCOGNITO_ERROR)
-    expect(String((await call(h, bg, 'proxy', 'get', ['settings', { incognito: true }])).error)).toBe(
-      INCOGNITO_ERROR
-    )
+    expect(
+      String((await call(h, bg, 'proxy', 'get', ['settings', { incognito: true }])).error)
+    ).toBe(INCOGNITO_ERROR)
 
     const allowed = harness()
     const bgP = await withProxy(allowed, { allowPrivate: true })
@@ -292,7 +307,9 @@ describe('chrome.proxy.settings on the phone: fixed servers through the WebView 
       { value: { mode: 'direct' }, scope: 'incognito_persistent' }
     ])
     expect(privateSet.ok).toBe(true)
-    expect((await call(allowed, bgP, 'proxy', 'get', ['settings', { incognito: true }])).result).toEqual({
+    expect(
+      (await call(allowed, bgP, 'proxy', 'get', ['settings', { incognito: true }])).result
+    ).toEqual({
       value: { mode: 'direct' },
       levelOfControl: 'controlled_by_this_extension',
       incognitoSpecific: true

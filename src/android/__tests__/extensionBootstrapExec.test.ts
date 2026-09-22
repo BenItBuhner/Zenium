@@ -105,7 +105,8 @@ describe('content bootstrap: an injection whose value is a promise', () => {
     const hello = posted.find((m) => m.t === 'hello' && m.ext === EXT && m.ctx === 'content')
     expect(hello).toBeDefined()
     const ep = String(hello?.ep)
-    const settles = (): Array<Record<string, unknown>> => posted.filter((m) => m.t === 'execSettled')
+    const settles = (): Array<Record<string, unknown>> =>
+      posted.filter((m) => m.t === 'execSettled')
 
     // A plain value: the injection's answer, nothing posted.
     expect(exec(TOKEN, EXT, 'js', {}, () => ({ images: 3 }))).toEqual({ images: 3 })
@@ -155,7 +156,14 @@ describe('content bootstrap: an injection whose value is a promise', () => {
     await settle()
     const byTicket = (ticket: string): Record<string, unknown> | undefined =>
       settles().find((m) => m.ticket === ticket)
-    expect(new Set([marker.__zenExtPending, failing.__zenExtPending, uncarriable.__zenExtPending, nothing.__zenExtPending]).size).toBe(4)
+    expect(
+      new Set([
+        marker.__zenExtPending,
+        failing.__zenExtPending,
+        uncarriable.__zenExtPending,
+        nothing.__zenExtPending
+      ]).size
+    ).toBe(4)
     expect(byTicket(failing.__zenExtPending)).toMatchObject({
       ok: false,
       result: null,

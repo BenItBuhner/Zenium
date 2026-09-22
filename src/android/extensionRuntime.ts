@@ -1277,7 +1277,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (!pending) return value
     // The frame's endpoint settles the ticket; it must be the extension's, in that tab.
     const endpoint = this.router.endpoint(pending.ep)
-    if (!endpoint || endpoint.extensionId !== request.extensionId || endpoint.tabId !== request.tabId)
+    if (
+      !endpoint ||
+      endpoint.extensionId !== request.extensionId ||
+      endpoint.tabId !== request.tabId
+    )
       throw new Error(FRAME_REMOVED)
     const early = this.earlySettles.get(pending.ticket)
     if (early) {
@@ -1320,7 +1324,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       this.pendingExecs.delete(ticket)
       pending.reject(new Error(FRAME_REMOVED))
     }
-    for (const [ticket, early] of this.earlySettles) if (eps.includes(early.ep)) this.earlySettles.delete(ticket)
+    for (const [ticket, early] of this.earlySettles)
+      if (eps.includes(early.ep)) this.earlySettles.delete(ticket)
   }
 
   async readCookies(containerId: string, url: string): Promise<JarReading> {
