@@ -137,6 +137,20 @@ on:
         required: false
         type: string
         default: soft
+      ref:
+        description: >-
+          The commit, branch or tag to check out, build and run (a sweep of another ref than the
+          workflow's own, as the nightly's dispatch offers); the workflow's own commit when empty
+        required: false
+        type: string
+        default: ''
+      retention-days:
+        description: >-
+          How long the findings artifact is kept (the jank report has its own 90 days); a caller
+          that gathers several jobs' findings into one artifact of its own keeps these shorter
+        required: false
+        type: number
+        default: 14
     outputs:
       emulator-died:
         description: >-
@@ -172,6 +186,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -187,7 +203,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-      - run: npm ci
+      - name: Install the web build's dependencies
+        # The postinstall fetches Electron's headers off the network (electron-builder
+        # install-app-deps); a runner whose connection times out there (ETIMEDOUT, seen on the
+        # nightly's shards) gets two more tries before the job is red for it.
+        run: |
+          for attempt in 1 2 3; do
+            npm ci && exit 0
+            echo "::warning::npm ci did not finish (attempt $attempt of 3)"
+            rm -rf node_modules
+            sleep 20
+          done
+          exit 1
       - name: Build the chrome and page script
         run: npm run build:android:web
       - name: Assemble the debug APK and the demo driver
@@ -304,7 +331,7 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: ${{ inputs.artifact-path }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: ${{ inputs.retention-days }}
       - name: Keep the frame statistics for the release's table
         # Small (the records and the rendered table alone), kept longer than the findings: the
         # release dry-run reads the newest of these on main (android-jank-report.mjs main).

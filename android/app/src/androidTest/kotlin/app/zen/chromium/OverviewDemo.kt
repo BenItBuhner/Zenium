@@ -70,18 +70,20 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(2_500)
 
         // 3. Collapse the Research group (it also keeps the loose cards in reach below).
-        tap("Group Research")
+        tap(groupCard("Research"))
         SystemClock.sleep(2_000)
 
         // 4. Hold a card and let go: its actions. Make a group and name it. Tabs that were never
         //    visited keep their seeded titles, which is what the labels below rely on.
-        val hn = find("Hacker News", "news.ycombinator.com")
+        val hn = find(HN)
         f.press(hn.exactCenterX(), hn.exactCenterY())
         f.hold(600)
         shot("03-card-held")
         f.up()
         SystemClock.sleep(1_500)
-        tap("New group")
+        // The card menu's rows are Title Case since #236 (v2 §9.1, the #207 ruling); this read
+        // "New group" until run 35726774762, the first `overview` sequence after it.
+        tap("New Group")
         SystemClock.sleep(2_000)
         instrumentation.sendStringSync("News")
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
@@ -90,8 +92,8 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         // 5. Drag a card onto another: the merge preview, then a group of the two. The loose
         //    cards sit below the fold now: bring the target (the lower row) into view first, the
         //    source is the row above it.
-        val tea = show("Tea - Wikipedia")
-        val example = show("Example Domain", "example.com")
+        val tea = show(TEA)
+        val example = show(EXAMPLE)
         f.press(example.exactCenterX(), example.exactCenterY())
         f.moveBy(0f, -n, 120)
         f.moveBy(tea.exactCenterX() - example.exactCenterX(), tea.exactCenterY() - example.exactCenterY() + n, 1_000)
@@ -101,8 +103,8 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(3_000)
 
         // 6. Move a tab between groups: Tea out of the new group onto the News group above it.
-        val news = show("Group News")
-        val teaAgain = show("Tea - Wikipedia")
+        val news = show(groupCard("News"))
+        val teaAgain = show(TEA)
         f.press(teaAgain.exactCenterX(), teaAgain.exactCenterY())
         f.moveBy(0f, -n, 120)
         f.moveBy(news.exactCenterX() - teaAgain.exactCenterX(), news.exactCenterY() - teaAgain.exactCenterY() + n, 1_000)
@@ -111,12 +113,12 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(3_000)
 
         // 7. Expand Research again: three groups on screen.
-        tap("Group Research")
+        tap(groupCard("Research"))
         SystemClock.sleep(2_500)
         shot("05-groups")
 
         // 8. Pick a grouped tab: the card grows back into the page.
-        val pick = find("Hacker News", "news.ycombinator.com")
+        val pick = find(HN)
         f.tap(pick.exactCenterX(), pick.exactCenterY())
         SystemClock.sleep(3_500)
 
@@ -132,18 +134,34 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(3_000)
     }
 
-    /** The bounds of the first of these labels on screen; the demo cannot go on without it. */
-    private fun find(vararg labels: String): Rect =
-        findAny(*labels) ?: error("none of ${labels.joinToString()} is on screen")
+    /**
+     * The bounds of a card on screen ([tabCard], [groupCard]: the chrome's names for the cards
+     * carry their place, count and state, so a card is matched on its title or name, not read
+     * whole); the demo cannot go on without it.
+     */
+    private fun find(card: Card): Rect = findByLabel(card) ?: error("no $card is on screen")
 
-    /** Like [find], after scrolling the element fully into the grid's viewport. */
-    private fun show(vararg labels: String): Rect =
-        reveal(*labels) ?: error("none of ${labels.joinToString()} exists")
+    /** Like [find], after scrolling the card fully into the grid's viewport. */
+    private fun show(card: Card): Rect = reveal(card) ?: error("no $card exists")
 
     /** Tap the element with this label once it exists, scrolled into view if it is in the grid. */
     private fun tap(label: String) {
         waitFor(label) ?: error("no $label to tap")
-        val target = show(label)
+        val target = reveal(label) ?: error("no $label exists")
         Finger().tap(target.exactCenterX(), target.exactCenterY())
+    }
+
+    /** [tap] for a group's card: its header, which folds and unfolds the group. */
+    private fun tap(card: Card) {
+        waitFor(card) ?: error("no $card to tap")
+        val target = show(card)
+        Finger().tap(target.exactCenterX(), target.exactCenterY())
+    }
+
+    private companion object {
+        /** The seeded cards the sequence handles, by the titles they carry before and after their pages load. */
+        val HN = tabCard("Hacker News", "news.ycombinator.com")
+        val TEA = tabCard("Tea - Wikipedia")
+        val EXAMPLE = tabCard("Example Domain", "example.com")
     }
 }
