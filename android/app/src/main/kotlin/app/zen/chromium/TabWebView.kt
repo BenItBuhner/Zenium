@@ -1881,7 +1881,9 @@ class TabWebView(
                     return true
                 }
                 Decision.Action.UPGRADE -> if (host.blocking.applyUpgrade(this@TabWebView, target, decision)) return true
-                Decision.Action.ALLOW -> {}
+                // The page may go; a `modifyHeaders` document's edits are the relay's, reached
+                // when its request comes through `shouldInterceptRequest` (Blocking.intercept).
+                Decision.Action.ALLOW, Decision.Action.MODIFY_HEADERS -> {}
             }
             // A link (or script) is about to take the page elsewhere: the last moment it is whole
             // on screen, and the best one for its back preview.

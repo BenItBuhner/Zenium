@@ -488,6 +488,12 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 // relay (HeaderStage); other requests keep the allow.
                 Decision.Action.ALLOW ->
                     if (isDocument && (decision.needsHeaders || withheld)) Verdict.HeaderStage(req, decision, withCookies = !withheld) else Verdict.Pass
+                // A document's header edits are the relay's: it builds the request's headers and
+                // serves the response. A subresource's cannot be honoured from here (WebView
+                // sends the request itself and the relay is for documents only): it goes out
+                // unchanged – the recorded limit of `modifyHeaders` on Android.
+                Decision.Action.MODIFY_HEADERS ->
+                    if (isDocument) Verdict.HeaderStage(req, decision, withCookies = !withheld) else Verdict.Pass
                 Decision.Action.BLOCK -> {
                     if (isMainFrame) {
                         tab.onDocumentBlocked(url)
@@ -646,7 +652,9 @@ sealed class Verdict {
 
     /**
      * A document the request stage allowed subject to its response headers
-     * ([Decision.needsHeaders]), or one the cookie policy sends without cookies (`withCookies`
+     * ([Decision.needsHeaders]), one whose headers `modifyHeaders` rules edit
+     * ([Decision.Action.MODIFY_HEADERS]: the relay sends the edited request headers and serves
+     * the edited response), or one the cookie policy sends without cookies (`withCookies`
      * false: no `Cookie` goes, no `Set-Cookie` is kept): relayed through the [HeaderStage],
      * which decides it again with the real headers. `decision` is the request stage's, so the
      * header stage reports only a decision that names another match (the desktop's `sameMatch`,
