@@ -1123,7 +1123,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         controller.isAppearanceLightNavigationBars = !dark
         // Pages see Zenium's colour scheme, not only the system's: the app's night mode drives
         // `prefers-color-scheme` and the algorithmic darkening in every page WebView (the manifest
-        // handles `uiMode` in place, so nothing reloads).
+        // handles `uiMode` in place, so nothing reloads). The chrome hands `scheme` over as its
+        // own paint crosses to that side (`boot.ts`, `pageScheme.ts`), so the pages flip with it.
         val night = PageTheme.nightMode(scheme)
         if (AppCompatDelegate.getDefaultNightMode() == night) return
         val uiModeBefore = activity.resources.configuration.uiMode
