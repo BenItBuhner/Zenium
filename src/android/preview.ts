@@ -377,10 +377,10 @@ export function createPreviewBridge(): NativeBridge {
     if (e.origin !== location.origin) return
     const report = pdfReportOf(e.data)
     if (!report) return
-    const token = pdfReportTokenOf(e.data) ?? undefined
+    const pdfToken = pdfReportTokenOf(e.data) ?? undefined
     for (const [tabId, frame] of views) {
       if (frame.contentWindow === e.source) {
-        viewEvent(tabId, 'pageMessage', { type: 'pdf', pdf: report, token })
+        viewEvent(tabId, 'pageMessage', { type: 'pdf', pdf: report, pdfToken })
         return
       }
     }

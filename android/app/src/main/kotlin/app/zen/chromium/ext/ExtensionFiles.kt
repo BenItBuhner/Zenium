@@ -1,9 +1,14 @@
 package app.zen.chromium.ext
 
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
+import java.io.SequenceInputStream
 import java.security.SecureRandom
+import java.util.Vector
 
 /**
  * The on-disk layout of installed extensions, the same one the desktop keeps
@@ -208,6 +213,59 @@ class ExtensionFiles(val root: File) {
             if (file == null || !file.isFile) return null
             if (file.length() >= BRIDGE_TEXT_LIMIT) return null
             return runCatching { file.readText() }.getOrNull()
+        }
+
+        /** A served file's body: a stream the WebView drains, and the `Content-Length` it is told. */
+        class ServedBody(val stream: InputStream, val length: Long)
+
+        /**
+         * The body of a file the runtime serves on the extension's origin, streamed from disk
+         * with the optional `open`/`close` brackets around it (the module bracket,
+         * `ExtensionScripts.moduleChromeOpen`/`Close`, ASCII on either side of the file's UTF-8).
+         * The file is never in the heap whole: a page loads its scripts in parallel and the
+         * WebView holds each intercepted body until the renderer drains it, so a wallet whose
+         * popup pulls three hundred module chunks, one of 36 MB, put the whole set (and the
+         * wrap's two `String` copies of the largest) on the Java heap at once and ran the
+         * process out of it. Null when the file cannot be opened.
+         */
+        fun servedBody(file: File, open: String? = null, close: String? = null): ServedBody? {
+            val stream = runCatching { FileInputStream(file) }.getOrNull() ?: return null
+            val length = file.length()
+            if (open.isNullOrEmpty() && close.isNullOrEmpty()) return ServedBody(stream, length)
+            val head = open.orEmpty().toByteArray(Charsets.UTF_8)
+            val tail = close.orEmpty().toByteArray(Charsets.UTF_8)
+            val parts = Vector<InputStream>(3).apply {
+                add(ByteArrayInputStream(head))
+                add(stream)
+                add(ByteArrayInputStream(tail))
+            }
+            return ServedBody(SequenceInputStream(parts.elements()), head.size + length + tail.size)
+        }
+
+        /**
+         * A stylesheet the runtime serves on the extension's origin is at most this long to be
+         * localized; a larger one (none seen: Steam Inventory Helper's 514-flag sheet is 60 KB)
+         * streams as it is, its placeholders in.
+         */
+        const val LOCALIZED_CSS_LIMIT = 2L * 1024 * 1024
+
+        private val MESSAGE_PLACEHOLDER = Regex("__MSG_([A-Za-z0-9_@]+)__")
+
+        /**
+         * A `text/css` body as Chrome's renderer hands it to the page: every `__MSG_name__` replaced
+         * from the extension's substitution map (`ExtensionLocalizationThrottle` in Chromium runs
+         * `SharedL10nMap::ReplaceMessages` over every `chrome-extension://` response whose type is
+         * `text/css`, whatever asked for it: a `<link>`, an `@import`, a `fetch`). The map is the
+         * core's (`ext.configure`'s `served.cssMessages`): the predefined `@@extension_id`,
+         * `@@ui_locale` and `@@bidi_*` and the extension's own messages for the UI locale, keys
+         * lowercased. A name the map has not stays as written, and the text is returned as it
+         * came when it has no placeholder. Steam Inventory Helper's `<link>`-loaded `flag-icon.css`
+         * and `manrope.css` name their 517 images and fonts as
+         * `chrome-extension://__MSG_@@extension_id__/...` (compat round 9, row 4).
+         */
+        fun localizeCss(text: String, messages: Map<String, String>): String {
+            if (messages.isEmpty() || !text.contains("__MSG_")) return text
+            return MESSAGE_PLACEHOLDER.replace(text) { match -> messages[match.groupValues[1].lowercase()] ?: match.value }
         }
 
         private fun stagingToken(): String {

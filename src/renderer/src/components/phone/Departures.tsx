@@ -7,7 +7,7 @@ import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { departed, departStore, releaseDepartures, type Departure } from './departureStore'
 import { GROUP_PAD, GroupBadge } from './GroupCard'
-import { CardBody } from './OverviewCard'
+import { CardBody, NewTabFace } from './OverviewCard'
 
 /** Travel (px) of the exit spring: its progress is 1 − position / this. */
 const EXIT_TRAVEL = 120
@@ -24,7 +24,9 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
  * of a card in the hand. An exit stands still over its card – the same card, drawn again – until
  * `state` no longer has the tab (or group): that commit is the one whose glide closes the gap,
  * so the collapse and the neighbours' glide start on the same frame (v2 §11.4). Under reduced
- * motion a card fades out in place over 120 ms, without the shrink (v2 §11.3).
+ * motion a card fades out in place over 120 ms, without the shrink (v2 §11.3). A card the tab
+ * search drops (`filtered`), and the New Tab card a query takes with it (`new-tab`), leave the
+ * same way, released by the grid's own commit (`TabOverview`).
  */
 export function Departures({
   state,
@@ -35,8 +37,11 @@ export function Departures({
 }): JSX.Element | null {
   const items = departStore.use((s) => s.items)
   useLayoutEffect(() => {
+    // The New Tab card's exit is the grid's to release (a query, not a close, takes it off).
     const gone = items.filter((item) =>
-      item.kind === 'tab' ? !state.tabs[item.tab.id] : !state.folders[item.folder.id]
+      item.kind === 'tab'
+        ? !state.tabs[item.tab.id]
+        : item.kind === 'group' && !state.folders[item.folder.id]
     )
     if (gone.length > 0) releaseDepartures(gone.map((item) => item.key))
   })
@@ -92,6 +97,16 @@ function Exit({ item, activeTabId }: { item: Departure; activeTabId: string | nu
       spring.stop()
     }
   }, [item.key, released])
+  if (item.kind === 'new-tab')
+    return (
+      <div
+        ref={ref}
+        className="zen-overview-new pointer-events-none fixed z-30 flex flex-col items-center justify-center gap-2 text-[var(--zen-muted)]"
+        style={{ ...place(item.rect), willChange: 'transform, opacity' }}
+      >
+        <NewTabFace isPrivate={item.isPrivate} />
+      </div>
+    )
   return item.kind === 'tab' ? (
     <div
       ref={ref}

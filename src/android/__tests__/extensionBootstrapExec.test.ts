@@ -39,6 +39,8 @@ interface Bridge {
 
 const TOKEN = 'exec-test-token'
 const EXT = 'e'.repeat(32)
+/** The page's URL before the boot (the environment's window forwards a global's write to itself). */
+const NativeURL = URL
 
 const group = (): BootGroup => ({
   index: 0,
@@ -189,5 +191,26 @@ describe('content bootstrap: an injection whose value is a promise', () => {
     expect(main.ep).toBe(ep)
     await settle()
     expect(byTicket(main.__zenExtPending)).toMatchObject({ ok: true, result: 'main' })
+
+    // The scope's `URL` answers an extension URL's origin as the extension's pages know it, the
+    // served one (extensionUrlOrigin.ts: Keplr's `new URL(sender.url).origin` against its
+    // popup's `location.origin`): the page's `URL` subclassed in the scope's store, the page's
+    // own keeping the WebView's opaque answer.
+    const served = `https://${EXT}.ext.zenium.invalid`
+    const origins = exec(TOKEN, EXT, 'js', {}, (win: { URL: typeof URL }) => ({
+      chrome: new win.URL(`chrome-extension://${EXT}/background.js`).origin,
+      servedPage: new win.URL(`${served}/popup.html`).origin,
+      other: new win.URL('https://example.com/x').origin,
+      isUrl: new win.URL('https://example.com/') instanceof NativeURL,
+      subclass: Object.getPrototypeOf(win.URL) === NativeURL
+    }))
+    expect(origins).toEqual({
+      chrome: served,
+      servedPage: served,
+      other: 'https://example.com',
+      isUrl: true,
+      subclass: true
+    })
+    expect(new NativeURL(`chrome-extension://${EXT}/background.js`).origin).toBe('null')
   })
 })

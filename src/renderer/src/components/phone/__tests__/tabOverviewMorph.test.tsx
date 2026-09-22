@@ -140,7 +140,9 @@ function stateOf(collapsed = false): UIState {
     window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
     boosts: [],
     extensions: [],
-    bookmarks: []
+    bookmarks: [],
+    // Sync off: the tab search's reach has no other devices to look through (TAB-21).
+    sync: { enabled: false, scope: { openTabs: false } }
   } as unknown as UIState
 }
 

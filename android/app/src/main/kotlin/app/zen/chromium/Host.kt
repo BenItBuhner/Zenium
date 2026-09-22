@@ -208,6 +208,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * nothing was held. An instrumentation driver calls it once its measured scenes are over.
      */
     fun releaseBackgroundWork() = chrome.hostEvent(BackgroundWorkHold.RELEASE_EVENT, null)
+    /**
+     * Test hook, debug builds only: the document tree behind a sync folder string, in place of
+     * the granted SAF tree ([syncOp]). A driver cannot be granted a document tree without a
+     * finger in the system picker (the shell may not issue the grant, and neither may root), so
+     * the tab-search / Recent demo hands the engine a plain directory under the app's files and
+     * seeds another device's documents into it. Null in every normal run; a release build never
+     * reads it. An instrumentation driver sets it on the activity's host.
+     */
+    @Volatile var syncTreeOverride: ((String) -> SyncTree)? = null
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
@@ -922,9 +931,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     private fun syncOp(args: JSONObject, reply: (Any?) -> Unit, op: (SyncFolder) -> Any?) {
         val folder = args.str("folder")
+        val override = if (BuildConfig.DEBUG) syncTreeOverride else null
         io.execute {
             val result = try {
-                op(SyncFolder(SafTree(activity, Uri.parse(folder))))
+                op(SyncFolder(override?.invoke(folder) ?: SafTree(activity, Uri.parse(folder))))
             } catch (e: SyncFolder.FolderLostException) {
                 Rejection("${SyncFolder.LOST_PREFIX} ${e.message}")
             } catch (e: Exception) {
