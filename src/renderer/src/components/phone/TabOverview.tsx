@@ -1285,14 +1285,17 @@ function OverviewMenuSheet({
 }
 
 /**
- * The header while tabs are being selected (TAB-08): Android's contextual action bar in the
- * overview's own header – the leading X is Done, as the platform names its action mode's close
- * (and the back gesture does the same), the count in the title's place as a live region
- * ("3 selected"; "Select tabs" before the first pick, so the mode announces itself), and Select
- * all – Deselect all once every card is picked – as the one trailing action, a v2 button in the
- * window family (§9.29, the overview's button rule). The panels' selection header
- * (`PhoneSelectionHeader`) is the same shape; this one sits in the overview's header element, on
- * the overview's handle, so it cannot be that component.
+ * The header while tabs are being selected (TAB-08; v2 §9.6): Android's contextual action bar
+ * in the overview's own 56 header – its content REPLACES the header row's (the space's name and
+ * count, Spaces, More), never stacks under it, and the Tabs | Private segment stays beneath as
+ * before. The leading X is the platform's action-mode close, named "Done" as Android names it
+ * (the back gesture does the same; a trailing Done is iOS's and is not drawn), the count in the
+ * title's place as a live region ("3 selected"; "Select tabs" before the first pick, so the
+ * mode announces itself), and Select all – Deselect all once every card is picked – as the one
+ * trailing §9.18 secondary `zen-v2-button`, in the window family (§9.29, the overview's button
+ * rule; the app has no text button). The panels' selection header (`PhoneSelectionHeader`) is
+ * the same shape; this one sits in the overview's header element, on the overview's handle, so
+ * it cannot be that component.
  */
 function SelectionHeader({
   count,
@@ -1451,10 +1454,12 @@ function SelectionActions({
 }
 
 /**
- * Group's picker (TAB-08): a 9.13 sheet of the pane's groups – "New Group" first, then each
+ * Group's picker (TAB-08): a 9.13 sheet of the pane's groups – "New group" first, then each
  * group by its name and colour, with how many cards it holds – for the picks a group can take;
  * the rows are the card menu's own ("Add to <name>"), so the two ways of grouping read alike.
- * It is the overview's action sheet, on the frame's dialog host over the grid.
+ * A picker's option row is sentence case (§9.1; the card menu's "New Group" is a menu item and
+ * Title Case, the design gate on #304). It is the overview's action sheet, on the frame's
+ * dialog host over the grid.
  */
 function GroupPickerSheet({
   count,
@@ -1470,7 +1475,7 @@ function GroupPickerSheet({
   onPick: (folderId: string | null) => void
 }): JSX.Element {
   const actions: SheetAction[] = [
-    { id: 'new-group', label: 'New Group', onPick: () => onPick(null) },
+    { id: 'new-group', label: 'New group', onPick: () => onPick(null) },
     ...groups.map(({ folder, count: held }): SheetAction => ({
       id: `group-${folder.id}`,
       label: `Add to ${folder.name} (${held})`,

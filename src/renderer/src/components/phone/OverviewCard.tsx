@@ -43,8 +43,9 @@ interface Props {
   /**
    * The grid is in its select-tabs mode (TAB-08): the card is a checkbox – a tap toggles it
    * instead of opening the tab, the hold and the swipe are off (the owner turns `lift` off with
-   * it), and the close button gives way to the check. `selected` is drawn as the accent box at
-   * the thumbnail's top-start and the selected outline (v2 §9.6).
+   * it), and the close button gives way to the check, which stands in its place at the title
+   * row's trailing end (Chrome's position; v2 §9.6). `selected` is the `--v2-selected` fill over
+   * the card and the accent-filled box, nothing else: the ring is the active card's mark.
    */
   selection?: { selected: boolean; onToggle: (tab: Tab) => void }
 }
@@ -126,10 +127,12 @@ export function OverviewCard({
           }
         }}
       >
-        <CardBody tab={tab} closable={onClose && !selecting ? 'space' : false} visible={visible} />
+        <CardBody tab={tab} closable={selecting || onClose ? 'space' : false} visible={visible} />
         {/*
-          The check (§9.6): the shared box at the thumbnail's top-start, a direct child of the
-          card so the primitive's `[aria-checked='true'] > .zen-v2-checkbox` draws it filled.
+          The check (§9.6): the shared 20 box, laid over the title row's trailing 44 – the slot
+          the row keeps clear for the close, which the mode hides – on the card's own surface,
+          never over the picture; a direct child of the card so the primitive's
+          `[aria-checked='true'] > .zen-v2-checkbox` draws it filled.
         */}
         {selecting && <span className="zen-v2-checkbox zen-overview-card-check" aria-hidden />}
       </div>
