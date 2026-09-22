@@ -50,6 +50,7 @@ import {
   type PageFontSettings
 } from '../../shared/fonts'
 import { defer } from '../../core/platform'
+import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
 import type { PdfRenderOptions } from '../../shared/print'
 import type {
   AgentCapture,
@@ -1118,17 +1119,18 @@ export class ElectronTabView implements TabView {
   /**
    * Bring an open page to the page fonts that stand (`pageFontSettings`), over the DevTools
    * protocol: the web preferences a page's contents were made with cannot be changed after,
-   * so `Page.setFontFamilies` and `Page.setFontSizes` do what a new page's preferences do. Only
-   * through a session of our own: a debugger another owner holds (DevTools on the page, an
-   * extension's `chrome.debugger`) is left alone, and the page takes the change on its next
-   * load (`did-navigate` tries again; the setting's description says so). The minimum font
-   * size has no protocol command: an open page keeps its floor until its contents are remade
-   * (a sleeping tab waking, a new tab).
+   * so `Page.setFontFamilies` and `Page.setFontSizes` do what a new page's preferences do. The
+   * session is Zenium's shared one (`pageDebugger.ts`: the resource governor's overrides keep
+   * it open on most pages); a page an extension's `chrome.debugger` holds is left alone, and
+   * takes the change on its next load (`did-navigate` tries again; the setting's description
+   * says so). The minimum font size has no protocol command: an open page keeps its floor until
+   * its contents are remade (a sleeping tab waking, a new tab).
    *
    * `Page.setFontFamilies` may be sent once per agent lifetime ("Font families can only be set
-   * once"): the session is attached for the commands and detached after, so every change gets a
-   * fresh agent; while another action of ours holds the session (dark theme for sites) a second
-   * family change recycles the session, the override re-sent on the new one.
+   * once"): a page with no session of the governor's gets a fresh agent for every change (the
+   * session is attached for the commands and detached after); on a long-lived session a second
+   * family change recycles the session (`recycleDebugger`: the governor puts its overrides back
+   * on the new one) and the fonts and the dark theme hold are re-sent on it.
    */
   refreshFonts(): void {
     if (this.wc.isDestroyed()) return
@@ -1151,9 +1153,8 @@ export class ElectronTabView implements TabView {
 
   private async sendFonts(fonts: PageFontSettings, key: string): Promise<void> {
     if (this.wc.isDestroyed()) return
-    const dbg = this.wc.debugger
-    // Another owner's session is left alone: the change waits for the page's next load.
-    if (dbg.isAttached() && !this.cdpAttachedHere) return
+    // An extension's session is left alone: the change waits for the page's next load.
+    if (hasForeignDebuggerOwner(this.wc.id)) return
     const families = cdpFontFamilies(fonts, ELECTRON_FONT_DEFAULTS)
     const familiesKey = JSON.stringify(families)
     const sizes = chromiumFontPreferences(fonts)
@@ -1164,12 +1165,9 @@ export class ElectronTabView implements TabView {
             await session.sendCommand('Page.setFontFamilies', { fontFamilies: families })
           } catch (error) {
             if (!/only be set once/i.test(String(error))) throw error
-            // Our own long-lived session (the dark theme hold) set families before: a fresh
-            // agent takes the new ones; the hold's override goes back on the new session.
-            session.detach()
-            session.attach('1.3')
-            if (this.darkeningApplied)
-              await session.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true })
+            // A long-lived session (the governor's overrides, the dark theme hold) set families
+            // before: a fresh agent takes the new ones, the holds' overrides go back on it.
+            await this.recycleSession()
             await session.sendCommand('Page.setFontFamilies', { fontFamilies: families })
           }
           this.familiesApplied = familiesKey
@@ -1182,6 +1180,27 @@ export class ElectronTabView implements TabView {
     } catch {
       /* the page went away, or the engine refused: the next load or change tries again */
     }
+  }
+
+  /**
+   * A fresh agent while an action holds the session (`withDebugger`): the governor drops the
+   * session and puts its own overrides back on a new one (`recycleDebugger`); where it had none
+   * the page is left detached and the hold attaches again. The dark theme override is re-sent,
+   * being the session's.
+   */
+  private async recycleSession(): Promise<void> {
+    await recycleDebugger(this.wc)
+    if (this.wc.isDestroyed()) return
+    const dbg = this.wc.debugger
+    if (!dbg.isAttached()) {
+      dbg.attach('1.3')
+      this.cdpAttachedHere = true
+    } else {
+      // The governor's new session: it stays when the hold ends.
+      this.cdpAttachedHere = false
+    }
+    if (this.darkeningApplied)
+      await dbg.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true })
   }
 
   // --- dark theme for sites (CT-18) -------------------------------------------------
