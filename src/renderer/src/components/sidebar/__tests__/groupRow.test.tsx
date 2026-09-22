@@ -157,6 +157,8 @@ function panel(
   const state = {
     platform: 'android',
     window: { kind: windowKind },
+    // The tablet keeps private browsing in tabs; the desktop in a private window.
+    capabilities: { privateTabs: formFactor === 'tablet' },
     tabs: Object.fromEntries(tabs.map((t) => [t.id, t])),
     spaces: [space],
     activeSpaceId: 'space',
@@ -507,14 +509,14 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(tripRow.getAttribute('aria-description')).toBe('Tab group, saved, 2 tabs')
     expect(tripRow.querySelector('[data-testid="group-row-count"]')?.textContent).toBe('2')
     expect(tripRow.parentElement!.querySelectorAll('[data-tab-id]')).toHaveLength(0)
-    // The private tabs themselves stand where the panel lists the space's private tabs – among
-    // the loose rows, after the groups – as they did; none of them under a group.
+    // The private tabs themselves are no rows of the panel at all (W4-11: the sidebar's REGULAR
+    // pose lists the space's regular tabs and never a private one; the private pose lists them,
+    // `sidebarPrivate.test.tsx`): the loose rows are the regular ones alone.
     const loose = [
       ...document.querySelectorAll<HTMLElement>('[data-tab-list="regular"] > [data-tab-id]')
     ].map((el) => el.dataset.tabId)
-    expect(loose).toEqual(['home', 'g1', 'g2', 'p1', 't1', 'gamma'])
-    for (const id of ['g1', 'g2', 'p1', 't1'])
-      expect(q(`[data-tab-id="${id}"]`)!.closest('.zen-group-fold')).toBeNull()
+    expect(loose).toEqual(['home', 'gamma'])
+    for (const id of ['g1', 'g2', 'p1', 't1']) expect(q(`[data-tab-id="${id}"]`)).toBeNull()
 
     // The desktop's regular spaces hold no private tab, so the predicate touches nothing
     // there; in a PRIVATE window – private mode itself – the window's own groups stand whole,

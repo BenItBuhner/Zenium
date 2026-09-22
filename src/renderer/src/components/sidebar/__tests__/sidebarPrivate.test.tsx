@@ -17,6 +17,7 @@ import { run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { privateLockStore, resetPrivateLock } from '@renderer/lib/privateLock'
 import { browserStore, uiStore } from '@renderer/lib/ui'
+import { PANE_FADE_MS } from '../../phone/PaneSlot'
 import { Sidebar } from '../Sidebar'
 
 /*
@@ -289,18 +290,40 @@ describe('the private pose: a private tab in view', () => {
   })
 
   it('returns to the regular pose as a regular tab comes into view, the private rows gone with it', () => {
-    sidebar({ tabs: regularScene(), active: 'bank' })
-    expect(aside().dataset.pose).toBe('private')
-    sidebar({ tabs: regularScene(), active: 'home' })
-    expect(aside().dataset.pose).toBe('regular')
-    expect(rows()).toEqual(['docs', 'home', 'news'])
-    expect(text()).not.toContain('BANK')
-    // The pose that left fades over the slot as the overview's pane does (§11.4): its still,
-    // a copy of its DOM the reader cannot reach, drawn while the new pose comes up.
-    const still = q<HTMLElement>('[data-testid="pane-still"]')
-    expect(still).not.toBeNull()
-    expect(still!.getAttribute('aria-hidden')).toBe('true')
-    expect(still!.hasAttribute('inert')).toBe(true)
+    // No Web Animations API: the still leaves on its timer (the overview's own fallback).
+    const proto = HTMLElement.prototype as { animate?: unknown }
+    const had = proto.animate
+    proto.animate = undefined
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      sidebar({ tabs: regularScene(), active: 'bank' })
+      expect(aside().dataset.pose).toBe('private')
+      sidebar({ tabs: regularScene(), active: 'home' })
+      expect(aside().dataset.pose).toBe('regular')
+      expect(rows()).toEqual(['docs', 'home', 'news'])
+      // The pose that left fades over the slot as the overview's pane does (§11.4): its still,
+      // a copy of its DOM out of reach of the reader and of touch, no row of the strip and no
+      // hook of anything (nothing finds a private row in it), drawn for the 120 ms the new
+      // pose takes to come up on its own fade, then gone with its titles.
+      const still = q<HTMLElement>('[data-testid="pane-still"]')!
+      expect(still).not.toBeNull()
+      expect(still.getAttribute('aria-hidden')).toBe('true')
+      expect(still.hasAttribute('inert')).toBe(true)
+      expect(
+        still.querySelector(
+          '[data-testid], [data-strip-item], [data-tab-id], [data-tab-list], [data-new-tab], [data-tab-scroller], [data-drop]'
+        )
+      ).toBeNull()
+      expect(q('.zen-sidebar-pose')?.hasAttribute('data-switching')).toBe(true)
+      act(() => vi.advanceTimersByTime(PANE_FADE_MS))
+      expect(q('[data-testid="pane-still"]')).toBeNull()
+      expect(q('.zen-sidebar-pose')?.hasAttribute('data-switching')).toBe(false)
+      expect(text()).not.toContain('BANK')
+      expect(text()).not.toContain('Private')
+    } finally {
+      vi.useRealTimers()
+      proto.animate = had
+    }
   })
 
   it('under the lock: the rows read "Private tab" behind the mask, the list lies inert under the veil, and no second Unlock', () => {
@@ -313,17 +336,26 @@ describe('the private pose: a private tab in view', () => {
     expect(cover.querySelector('[data-testid="private-lock-unlock"]')).toBeNull()
     expect(cover.querySelector('.zen-private-lock-veil')).not.toBeNull()
     expect(cover.querySelector('.zen-private-lock-block')).toBeNull()
+    // The list and its New Private Tab lie under the veil together: their scroller is inert and
+    // out of the accessibility tree until the cover lifts.
     const list = q<HTMLElement>('[data-tab-list="private"]')!
-    expect(list.hasAttribute('inert')).toBe(true)
-    expect(list.getAttribute('aria-hidden')).toBe('true')
+    const covered = list.closest<HTMLElement>('[inert]')!
+    expect(covered).not.toBeNull()
+    expect(covered.getAttribute('aria-hidden')).toBe('true')
+    expect(covered.contains(newTabRow())).toBe(true)
     expect(titles()).toEqual(['Private tab', 'Private tab'])
     for (const row of qa('[data-testid="tab"]')) {
       expect(row.getAttribute('aria-label')).toBe('Private tab')
+      expect(row.dataset.masked).toBe('true')
       expect(row.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
+      // Nothing of the page in the row's slots either: no favicon, no close, no state.
+      expect(row.querySelector('img, .zen-tab-close, button')).toBeNull()
     }
     expect(text()).not.toContain('BANK')
     expect(text()).not.toContain('MAIL')
     expect(text()).not.toContain('secret')
+    // The header stays, the count with it: a count is no identity (the pill's).
+    expect(q('[data-testid="sidebar-private-header"]')?.textContent).toContain('2')
     // The veil alone: no opaque panel under it – the rows are masked already – and the veil in
     // the window's tone, lifting on the cover's own spring with the frame's cover.
     expect(rule(".zen-private-lock[data-variant='veil']")).toContain('background: transparent')
@@ -334,7 +366,23 @@ describe('the private pose: a private tab in view', () => {
     act(() => privateLockStore.set({ locked: true }))
     act(() => privateLockStore.set({ locked: false }))
     expect(titles()).toEqual(['BANK PAGE', 'MAIL PAGE'])
-    expect(q('[data-tab-list="private"]')?.hasAttribute('inert')).toBe(false)
+    expect(q('[data-tab-list="private"]')?.closest('[inert]')).toBeNull()
+    expect(q('[data-testid="tab"][data-masked]')).toBeNull()
+  })
+
+  it('keeps the rows masked while the lift runs, the veil still over them, until the cover lands', () => {
+    // The host released the lock with the cover up over the private tab in front: the frame's
+    // cover lifts on its spring and the sidebar's veil with it (`lifting`, `privateLock.ts`),
+    // the rows behind the mask until it lands.
+    sidebar({ tabs: regularScene(), active: 'bank' })
+    act(() => privateLockStore.set({ locked: true }))
+    act(() => privateLockStore.set({ locked: false, lifting: true }))
+    expect(titles()).toEqual(['Private tab', 'Private tab'])
+    expect(q('[data-tab-list="private"]')?.closest('[inert]')).not.toBeNull()
+    expect(q('[data-testid="private-lock-cover"]')?.dataset.leaving).toBe('true')
+    act(() => privateLockStore.set({ lifting: false }))
+    expect(titles()).toEqual(['BANK PAGE', 'MAIL PAGE'])
+    expect(q('[data-tab-list="private"]')?.closest('[inert]')).toBeNull()
   })
 
   it('in the rail shows the mask alone for the header and the rows’ favicons masked under the lock', () => {
@@ -343,6 +391,11 @@ describe('the private pose: a private tab in view', () => {
     expect(header.textContent?.trim()).toBe('')
     expect(header.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
     expect(rows()).toEqual(['bank', 'mail'])
+    act(() => privateLockStore.set({ locked: true }))
+    for (const row of qa('[data-testid="tab"]')) {
+      expect(row.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
+      expect(row.querySelector('img')).toBeNull()
+    }
   })
 })
 

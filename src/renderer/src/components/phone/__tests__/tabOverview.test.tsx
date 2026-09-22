@@ -1902,7 +1902,7 @@ describe('the private pane', () => {
    * its own 120 ms fade in (the stylesheet's, pinned in (F)); the same under reduced motion.
    */
   const stills = (): HTMLElement[] => [
-    ...host!.querySelectorAll<HTMLElement>('[data-testid="overview-pane-still"]')
+    ...host!.querySelectorAll<HTMLElement>('[data-testid="pane-still"]')
   ]
   /** A stand-in for `element.animate()` that records each call and can finish them all. */
   const recordFades = (): {
