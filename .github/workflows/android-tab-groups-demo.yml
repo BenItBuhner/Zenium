@@ -27,11 +27,6 @@ name: Android tab groups demo
 # the shared default, soft.
 on:
   workflow_dispatch:
-  # TEMPORARY, for the branch's run: GitHub knows a workflow only from an event on its branch, so
-  # this push trigger registers it and is the run (#243's recipe). Removed before the final head.
-  push:
-    branches:
-      - cursor/android-tab-groups-depth-7344
 
 permissions:
   contents: read
