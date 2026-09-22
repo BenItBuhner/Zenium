@@ -38,7 +38,7 @@ class ScreenshotsTest {
         // A small picture is not scaled up.
         assertEquals(200 to 100, Screenshots.fitted(200, 100, 320, 320))
         // The editor's preview: a phone's width, however tall the capture.
-        assertEquals(720 to 8000, Screenshots.fitted(1440, 16000, Screenshots.PREVIEW_MAX_WIDTH))
+        assertEquals(720 to 8000, Screenshots.fitted(1440, 16000, Screenshots.PREVIEW_MAX_WIDTH, Int.MAX_VALUE))
         // Nothing to scale is one pixel, not a division by zero.
         assertEquals(1 to 1, Screenshots.fitted(0, 0, 320, 320))
     }

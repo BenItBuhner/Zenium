@@ -503,7 +503,7 @@ class Share(private val host: Host, private val io: Executor) {
         private const val SCREENSHOT_DELAY_MS = 450L
         private const val FETCH_TIMEOUT_MS = 10_000
 
-        /** The sheet's type for a set of files: their one type, `image/*` for pictures of several kinds, else anything. */
+        /** The sheet's type for a set of files: their one type, the group's wildcard (`image` slash star) for pictures of several kinds, else anything. */
         fun commonMimeType(types: List<String>): String {
             val distinct = types.map { it.ifEmpty { "application/octet-stream" } }.distinct()
             if (distinct.size == 1) return distinct[0]
