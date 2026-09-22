@@ -32,4 +32,15 @@ interface RequestPolicy {
      * this covers the requests in between.
      */
     fun plaintextAllowed(url: String): Boolean
+
+    /**
+     * Whether a document request for `url` (a main frame's, `documentUrl` null, or a frame's
+     * inside `documentUrl`) in the profile `containerId` goes without cookies under the per-site
+     * cookie policy – a site on the never list, every unlisted site under "block all cookies"
+     * (`SiteDataPolicy.verdict`). Such a document is relayed through the header stage, which
+     * sends no `Cookie` and keeps no `Set-Cookie`: the desktop's request multiplexer strips the
+     * same headers in place. The third-party rule is not asked here: WebView's own per-page
+     * switch (`setAcceptThirdPartyCookies`) enforces it on every request, frames included.
+     */
+    fun cookiesWithheld(url: String, documentUrl: String?, containerId: String): Boolean = false
 }

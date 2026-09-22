@@ -2,11 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MenuItemTemplate } from '../../../core/platform'
 
 /*
- * The host's native menu icons (`platform/menus.ts`): a `data:` or remote picture becomes the
- * item's 16 × 16 image. A favicon is square; the app menu's "Now Playing…" row leads with a
- * media session's artwork, which is often wider than tall, and the hub's tile covers such a
- * picture (`object-fit: cover`) – so the host crops it to its centre square before the resize
- * rather than squashing it.
+ * The host's menus (`platform/menus.ts`). The context menus are native: a `data:` or remote
+ * picture becomes the item's 16 × 16 image. A favicon is square; a media session's artwork is
+ * often wider than tall, and the hub's tile covers such a picture (`object-fit: cover`) – so the
+ * host crops it to its centre square before the resize rather than squashing it. The "⋯" app
+ * menu is not native (design language v2 §6 "Menus"): its template goes to the renderer as a
+ * `menu.show` descriptor through `RendererMenuHost`, and a pick comes back by id.
  */
 
 interface FakeImage {
@@ -62,10 +63,11 @@ vi.mock('electron', () => ({
 
 const { ElectronMenus } = await import('../menus')
 
+/** A native (context) menu, as the host builds it for Electron. */
 async function popup(items: MenuItemTemplate[]): Promise<Electron.MenuItemConstructorOptions[]> {
   const menus = new ElectronMenus()
-  const win = { host: { alive: true, win: {} } } as never
-  menus.popup(items, { source: 'app', win })
+  const win = { host: { alive: true, win: {} }, send: vi.fn() } as never
+  menus.popup(items, { source: 'tab', win })
   // A menu with uncached remote icons opens once they are fetched.
   await new Promise((resolve) => setTimeout(resolve, 0))
   const last = built.at(-1)
@@ -80,6 +82,86 @@ beforeEach(() => {
   built.length = 0
   decoded.clear()
   remote.clear()
+})
+
+describe('the app menu is the renderer’s', () => {
+  it('sends the app menu’s template to the renderer as a descriptor – chords as hints, submenus nested – and never builds it natively; a pick runs the item', () => {
+    const menus = new ElectronMenus()
+    const send = vi.fn()
+    const win = { host: { alive: true, win: {} }, send } as never
+    const settings = vi.fn()
+    const closed = vi.fn()
+    menus.popup(
+      [
+        { label: 'New Tab', accelerator: 'Ctrl+T', hint: 'Ctrl+T', click: vi.fn() },
+        { type: 'separator' },
+        {
+          label: 'History',
+          submenu: [{ label: 'Recently Closed', submenu: [{ label: 'Example', click: closed }] }]
+        },
+        { label: 'Settings', click: settings }
+      ],
+      { source: 'app', win, x: 200, y: 44, keyboard: true }
+    )
+    expect(built).toHaveLength(0)
+    expect(send).toHaveBeenCalledTimes(1)
+    const [event, descriptor] = send.mock.calls[0] as [
+      string,
+      import('@shared/types').MenuDescriptor
+    ]
+    expect(event).toBe('menu.show')
+    expect(descriptor.source).toBe('app')
+    expect(descriptor.keyboard).toBe(true)
+    expect(descriptor).toMatchObject({ x: 200, y: 44 })
+    expect(descriptor.items.map((i) => [i.type, i.label, i.hint ?? null])).toEqual([
+      ['normal', 'New Tab', 'Ctrl+T'],
+      ['separator', '', null],
+      ['normal', 'History', null],
+      ['normal', 'Settings', null]
+    ])
+    const recently = descriptor.items[2].submenu?.[0]
+    expect(recently?.label).toBe('Recently Closed')
+    expect(recently?.submenu?.[0].label).toBe('Example')
+    // The pick, by the id the descriptor gave the row, runs the template's handler here.
+    menus.activate(descriptor.id, descriptor.items[3].id)
+    expect(settings).toHaveBeenCalledTimes(1)
+    // The menu is spent: a second pick on it does nothing, and a close of a stale id neither.
+    menus.activate(descriptor.id, recently!.submenu![0].id)
+    expect(closed).not.toHaveBeenCalled()
+    menus.dismiss(descriptor.id)
+  })
+
+  it('a web app window’s "⋯" menu takes the same path', () => {
+    const menus = new ElectronMenus()
+    const send = vi.fn()
+    const win = { host: { alive: true, win: {} }, send, chrome: 'app' } as never
+    menus.popup([{ label: 'Copy URL', click: vi.fn() }], { source: 'app', win })
+    expect(built).toHaveLength(0)
+    expect(send).toHaveBeenCalledWith('menu.show', expect.objectContaining({ source: 'app' }))
+  })
+
+  it('a context menu stays native', async () => {
+    const items = await popup([{ label: 'Reload', accelerator: 'Ctrl+R', hint: 'Ctrl+R' }])
+    expect(items).toEqual([
+      {
+        label: 'Reload',
+        enabled: undefined,
+        type: 'normal',
+        accelerator: 'Ctrl+R',
+        registerAccelerator: false
+      }
+    ])
+  })
+
+  it('an extension button’s context menu is a context menu: native at the button, not the "⋯" panel', () => {
+    const menus = new ElectronMenus()
+    const send = vi.fn()
+    const win = { host: { alive: true, win: {} }, send } as never
+    menus.popup([{ label: 'Options', click: vi.fn() }], { source: 'extension', win, x: 300, y: 44 })
+    expect(send).not.toHaveBeenCalled()
+    expect(built).toHaveLength(1)
+    expect(built[0][0]).toMatchObject({ label: 'Options' })
+  })
 })
 
 describe('native menu icons', () => {

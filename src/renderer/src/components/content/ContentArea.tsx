@@ -4,7 +4,7 @@ import { MonitorSmartphone, Plus, X } from 'lucide-react'
 import type { Rect, SidePanelInfo, SplitGroup, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
-import { chromeUnderPages, coverPrimed } from '@renderer/lib/cover'
+import { coverPrimed, hideFollowsCover } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { fakeboxHoldsChrome, fakeboxMorphStore } from '@renderer/lib/fakeboxMorph'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -262,9 +262,9 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                   <CoverImage
                     tabId={ui.snapshotTabId}
                     src={ui.snapshot}
-                    // The Android chassis swaps the page for this picture at every form factor
-                    // (see lib/cover.ts); the desktop hosts show it as they always have.
-                    cover={chromeUnderPages(state.platform)}
+                    // The page is swapped for this picture on every host: the view goes only
+                    // once the picture is painted (see lib/cover.ts, `hideFollowsCover`).
+                    cover={hideFollowsCover()}
                     className="h-full w-full object-cover object-top"
                   />
                 ) : null}
@@ -286,6 +286,7 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                   !extensionChromeAloneOverContent(ui) &&
                   !(tablet && menuAloneOverContent(ui)) && (
                     <div
+                      data-testid="content-dim"
                       className={cn(
                         'absolute inset-0 bg-black/35 transition-opacity',
                         ui.drag && 'bg-black/20',

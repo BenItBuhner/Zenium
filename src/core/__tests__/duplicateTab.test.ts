@@ -168,6 +168,11 @@ function item(items: MenuItemTemplate[], label: string): MenuItemTemplate {
   return found
 }
 
+/** The tab row's moves live under Firefox's "Move Tab ▸" (v2 §6 Menus). */
+function moveTab(items: MenuItemTemplate[]): MenuItemTemplate[] {
+  return item(items, 'Move Tab').submenu!
+}
+
 const stack: NavigationSnapshot = {
   entries: [
     { url: 'https://a.test/one', title: 'One' },
@@ -257,7 +262,7 @@ describe('Move Tab to New Window / Move Tab to Another Window (tabs-23, context-
     const tab = h.open('https://a.test/')
     h.open('https://a.test/stay')
     h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: tab.id })
-    let items = h.shown()
+    let items = moveTab(h.shown())
     expect(item(items, 'Move Tab to New Window').enabled).not.toBe(false)
     const greyed = item(items, 'Move Tab to Another Window')
     expect(greyed.enabled).toBe(false)
@@ -272,7 +277,7 @@ describe('Move Tab to New Window / Move Tab to Another Window (tabs-23, context-
     const theirs = h.open('https://b.test/', other)
     theirs.title = 'Their page'
     h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: tab.id })
-    items = h.shown()
+    items = moveTab(h.shown())
     const submenu = item(items, 'Move Tab to Another Window')
     expect(submenu.enabled).not.toBe(false)
     expect(submenu.submenu?.map((i) => i.label)).toEqual(['Their page'])
@@ -288,7 +293,7 @@ describe('Move Tab to New Window / Move Tab to Another Window (tabs-23, context-
     const tab = h.open('https://a.test/')
     h.open('https://a.test/stay')
     h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: tab.id })
-    item(h.shown(), 'Move Tab to New Window').click?.()
+    item(moveTab(h.shown()), 'Move Tab to New Window').click?.()
     const windows = h.browser.allWindows()
     expect(windows).toHaveLength(2)
     const torn = windows.find((w) => w !== h.win)

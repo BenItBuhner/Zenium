@@ -23,6 +23,8 @@ export function sourceTitle(source: MenuDescriptor['source']): string {
       return 'Shortcut'
     case 'app':
       return 'Zenium'
+    case 'extension':
+      return 'Extension'
     case 'bookmark':
       return 'Bookmark'
     case 'history':

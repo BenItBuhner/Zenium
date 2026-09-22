@@ -27,6 +27,7 @@ import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.DecisionObserver
 import app.zen.chromium.blocking.Domains
 import app.zen.chromium.blocking.HeaderStage
+import app.zen.chromium.blocking.ProfileCookieStore
 import app.zen.chromium.blocking.RedirectExecutor
 import app.zen.chromium.blocking.Request
 import app.zen.chromium.blocking.ResourceType
@@ -292,15 +293,7 @@ class Extensions(private val host: Host) {
      * writes the cookies of the tab's profile, since WebView neither sends its cookies with a
      * fetch made here nor keeps the `Set-Cookie` of an intercepted response.
      */
-    private val headerStage = HeaderStage(object : HeaderStage.CookieStore {
-        override fun cookieHeader(partition: String, url: String): String? =
-            runCatching { Profiles.cookieManager(partition).getCookie(url) }.getOrNull()?.ifEmpty { null }
-
-        override fun store(partition: String, url: String, setCookie: List<String>) {
-            val manager = runCatching { Profiles.cookieManager(partition) }.getOrNull() ?: return
-            for (cookie in setCookie) manager.setCookie(url, cookie)
-        }
-    })
+    private val headerStage = HeaderStage(ProfileCookieStore)
 
     init {
         // The engine is the process's; the window's runtime is the one that hears it (a custom

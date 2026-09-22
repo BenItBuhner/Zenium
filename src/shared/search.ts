@@ -204,6 +204,43 @@ export function customSearchEngine(
   }
 }
 
+/** Stands in for `%s` while a template is read as a URL; nothing a user types looks like it. */
+const TERMS_MARKER = 'zen-search-terms-marker'
+
+/**
+ * The terms a results page of `engine` was searched for, or null when `url` is not one of its
+ * results pages: the page is at the template's host (`www.` aside) and path and carries the
+ * query parameter the template's `%s` fills; the engine's own additions to the page's URL (a
+ * `sourceid`, a `t=h_`) do not matter, nor does `+` for a space. A template that puts `%s`
+ * in its path is not read (null). Zero-suggest dedupes the default engine's results pages
+ * against its "Recent searches" with this (omnibox-20).
+ */
+export function searchTermsFromUrl(
+  engine: Pick<SearchEngine, 'searchUrl'>,
+  url: string
+): string | null {
+  let template: URL
+  let page: URL
+  try {
+    template = new URL(engine.searchUrl.split('%s').join(TERMS_MARKER))
+    page = new URL(url)
+  } catch {
+    return null
+  }
+  const host = (u: URL): string => u.hostname.replace(/^www\./, '')
+  if (host(template) !== host(page) || template.pathname !== page.pathname) return null
+  let name: string | null = null
+  for (const [key, value] of template.searchParams) {
+    if (value === TERMS_MARKER) {
+      name = key
+      break
+    }
+  }
+  if (name === null) return null
+  const terms = page.searchParams.get(name)?.trim()
+  return terms ? terms : null
+}
+
 /** The host a template searches at (`www.` dropped), for telling one site's engine from another's. */
 export function engineHost(engine: Pick<SearchEngine, 'searchUrl'>): string | null {
   try {

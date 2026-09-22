@@ -3259,6 +3259,17 @@
   .zen-sheet-item-secondary {
     color: var(--v2-text-deemphasized);
   }
+  /* An empty state's sentence as a row of a group (§9.17): the row's metrics in the deemphasised ink, no press. */
+  .zen-sheet-note {
+    display: flex;
+    height: var(--v2-row);
+    align-items: center;
+    padding: 0 16px;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
   /* Groups of rows are told apart by a hairline in the gutter (§6 menus, phone). */
   .zen-sheet-sep {
     height: 1px;
@@ -7841,6 +7852,15 @@
   background: var(--v2-fill);
   outline: none;
 }
+/*
+ * A menu the keyboard opened (`MenuSheet`'s popover from Alt+F / F10 while the page had the
+ * keyboard: the shortcut is the main process's, no key event reaches this document, and
+ * `:focus-visible` has nothing to key on): the row the menu focuses is the cursor from its
+ * first focus (§9.22), not from the first arrow key.
+ */
+.zen-v2-menu-keyboard .zen-v2-menu-item:focus {
+  background: var(--v2-fill);
+}
 @media (hover: hover) {
   .zen-v2-menu-item:hover:not(:disabled) {
     background: var(--v2-fill);
@@ -7852,8 +7872,34 @@
 .zen-v2-menu-item:disabled {
   opacity: 0.4;
 }
+/*
+ * A disabled row is one ink (§9.30): under the row's .4 its shortcut hint and its chevron take
+ * the label's ink, not the 69% ink compounded – which put a dark menu's "Ctrl+Alt+R" at .276 of
+ * the text, 1.9:1 – so nothing in the row falls below .4 of the text, as Firefox's `GrayText`
+ * greys a disabled item's label and accelerator alike. The shared rule: every renderer-drawn
+ * menu's rows (`MenuSheet`, `LocalMenu`, the tablet's) are `.zen-v2-menu-item`.
+ */
+.zen-v2-menu-item:disabled .zen-v2-menu-hint,
+.zen-v2-menu-item:disabled .zen-v2-menu-chevron {
+  color: inherit;
+}
 .zen-v2-menu-item[data-danger] {
   color: var(--v2-danger);
+}
+/*
+ * An empty state's sentence in a menu (§9.17: "No recently closed tabs" – sentence case, no full
+ * stop, the deemphasised ink): a row at the rows' own height and inset, so it sits where a label
+ * would, with no fill, focus or press – it is not a command and is not a menuitem.
+ */
+.zen-v2-menu-note {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: var(--v2-menu-row);
+  padding: 0 8px;
+  color: var(--v2-text-deemphasized);
+  white-space: nowrap;
 }
 .zen-v2-menu-separator {
   flex-shrink: 0;
@@ -7873,6 +7919,15 @@
 }
 .zen-v2-menu-hint + .zen-v2-menu-chevron {
   margin-left: 0;
+}
+/*
+ * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill at full ink
+ * while the in-chrome menu stands, said by the `aria-expanded` the menu sets on it, as the
+ * media hub's and the downloads' toolbar buttons keep theirs while their popovers are up.
+ */
+[data-zen-app-menu-button][aria-expanded='true'] {
+  background: var(--zen-element-bg);
+  opacity: 1;
 }
 
 /*

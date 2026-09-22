@@ -481,6 +481,31 @@ describe('credential records (ID-09)', () => {
     expect(collectLocal(src, defaultScope()).has('cred_login1')).toBe(false)
   })
 
+  it('publishes the site-data policy as its own settings-scope record, gated with the settings', () => {
+    const src = sources()
+    const siteData = {
+      blockAll: false,
+      allow: ['[*.]ok.example'],
+      clearOnExit: [],
+      block: ['never.example']
+    }
+    expect(collectLocal(src, defaultScope()).has('site-data')).toBe(false)
+    const records = collectLocal({ ...src, siteData }, defaultScope())
+    expect(records.get('site-data')).toEqual({ type: 'site-data', data: siteData })
+    expect(
+      collectLocal({ ...src, siteData }, { ...defaultScope(), settings: false }).has('site-data')
+    ).toBe(false)
+    const record: SyncRecord = {
+      id: 'site-data',
+      type: 'site-data',
+      modified: 1,
+      deleted: false,
+      data: siteData
+    }
+    expect(inScope(record, defaultScope())).toBe(true)
+    expect(inScope(record, { ...defaultScope(), settings: false })).toBe(false)
+  })
+
   it('inScope gates credential records on the passwords toggle both ways', () => {
     const record: SyncRecord = {
       id: 'cred_login1',
