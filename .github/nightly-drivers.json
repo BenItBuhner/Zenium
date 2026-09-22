@@ -717,6 +717,14 @@
       "estimate": 3
     },
     {
+      "id": "tab-groups",
+      "class": "TabGroupsDemo",
+      "shard": "phone-d",
+      "mirrors": "android-tab-groups-demo.yml:phone",
+      "dir": "tab-groups-demo",
+      "estimate": 3
+    },
+    {
       "id": "omnibox",
       "class": "OmniboxDemo",
       "shard": "phone-d",
@@ -983,17 +991,20 @@
         "DEMO_THEME": "light"
       },
       "estimate": 3
+    },
+    {
+      "id": "tablet-groups",
+      "class": "TabletGroupsDemo",
+      "shard": "tablet",
+      "mirrors": "android-tab-groups-demo.yml:tablet",
+      "dir": "tablet-groups-demo",
+      "estimate": 2
     }
   ],
   "skip": [
     {
       "workflow": "android-ext-compat-sweep.yml",
       "reason": "the extension program's compatibility sweep (CompatSweep, not a demo driver): two 210-minute jobs over the extension corpus, hours long; that program dispatches it"
-    },
-    {
-      "class": "TabletGroupsDemo",
-      "reason": "not on main yet (#318): once it lands, one line on the tablet shard, e.g. {\"id\": \"tablet-groups\", \"class\": \"TabletGroupsDemo\", \"shard\": \"tablet\", \"mirrors\": \"android-tablet-demo.yml\", \"dir\": \"tablet-groups-demo\", \"env\": {\"DEMO_THEME\": \"light\"}, \"estimate\": 3}",
-      "absent": true
     }
   ]
 }

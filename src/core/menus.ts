@@ -26,6 +26,7 @@ import {
   type BookmarkNode,
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
+  type Folder,
   type MenuAnchor,
   type MenuItemDescriptor,
   type Platform as PlatformOs,
@@ -36,7 +37,7 @@ import {
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
-import { spaceLabel } from '../shared/defaults'
+import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
@@ -56,7 +57,13 @@ import {
   splitViewSubmenu
 } from './menuBar'
 import { isSendableUrl } from './sync/sendTab'
-import { folderTabs, tabVisibleIn } from './model'
+import {
+  folderTabs,
+  isPrivateFolder,
+  isSavedFolder,
+  regularFolderTabs,
+  tabVisibleIn
+} from './model'
 
 type Template = MenuItemTemplate[]
 
@@ -459,8 +466,31 @@ export class Menus {
     const navigable = isNavigableUrl(url)
     const glanceAllowed = state.settings.glanceEnabled && !win.glance
     const open: Template = []
+    // Chrome for Android's pair for a tab in a group (TAB-15): "Open in new tab in group" adds
+    // the new tab to the group, behind the current tab, and "Open in new tab" then opens it
+    // outside the group, after the group's last member. The desktop keeps Chrome desktop's one
+    // item, whose tab joins the group as it always has.
+    const group =
+      win.formFactor !== 'desktop' && tab.folderId ? state.model.folders[tab.folderId] : undefined
     // `mailto:` and `tel:` links have nowhere to open in a tab: only their copy items (Chrome).
     if (navigable) {
+      if (group) {
+        open.push({
+          label: 'Open Link in New Tab in Group',
+          click: () =>
+            tabs.createTab(
+              {
+                url,
+                active: false,
+                afterTabId: tab.id,
+                containerId: tab.containerId,
+                openerTabId: tab.id,
+                folderId: group.id
+              },
+              win
+            )
+        })
+      }
       open.push({
         label: 'Open Link in New Tab',
         click: () =>
@@ -468,9 +498,14 @@ export class Menus {
             {
               url,
               active: false,
-              afterTabId: tab.essential ? undefined : tab.id,
+              afterTabId: tab.essential
+                ? undefined
+                : group
+                  ? (folderTabs(state.model, group.id).at(-1)?.id ?? tab.id)
+                  : tab.id,
               containerId: tab.containerId,
-              openerTabId: tab.id
+              openerTabId: tab.id,
+              joinGroup: group ? false : undefined
             },
             win
           )
@@ -1350,8 +1385,13 @@ export class Menus {
     const space = win.activeSpace()
     const local = Boolean(win.localSpace)
     const otherSpaces = m.spaces.filter((s) => s.id !== (tab.spaceId ?? win.activeSpaceId))
+    // The space's folders to move the tab to; a regular tab's menu names no private group
+    // (`isPrivateFolder`: private browsing leaks nothing outside its mode), a private tab's – on
+    // a host that keeps private browsing in tabs – every folder of its space.
     const folders = Object.values(m.folders).filter(
-      (f) => f.spaceId === (tab.spaceId ?? win.activeSpaceId)
+      (f) =>
+        f.spaceId === (tab.spaceId ?? win.activeSpaceId) &&
+        (tabs.isPrivate(tab) || !isPrivateFolder(m, f))
     )
     const canSplitWithActive = Boolean(active) && active!.id !== tab.id
     const pinnedChanged =
@@ -1656,7 +1696,11 @@ export class Menus {
     const local = Boolean(win.localSpace)
     const nonEssential = selected.filter((t) => !t.essential)
     const allPinned = nonEssential.length > 0 && nonEssential.every((t) => t.pinned)
-    const folders = Object.values(m.folders).filter((f) => f.spaceId === space.id)
+    // As the tab menu's: a selection with a regular tab in it names no private group.
+    const allPrivate = selected.every((t) => tabs.isPrivate(t))
+    const folders = Object.values(m.folders).filter(
+      (f) => f.spaceId === space.id && (allPrivate || !isPrivateFolder(m, f))
+    )
     this.popup(
       [
         {
@@ -1906,6 +1950,10 @@ export class Menus {
     const { state } = this.browser
     const folder = state.model.folders[folderId]
     if (!folder) return
+    if (win.formFactor !== 'desktop') {
+      this.popup(this.groupMenu(folder, win), win, 'folder', anchor)
+      return
+    }
     const live = this.browser.liveFolders.get(folderId)
     const count = folderTabs(state.model, folderId).length
     this.popup(
@@ -1965,7 +2013,8 @@ export class Menus {
               }
             ]) as Template),
         { type: 'separator' },
-        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list).
+        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list)
+        // with the folder. A touch host's group is saved instead, by `groupMenu` above.
         { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
         {
           label: count
@@ -1978,6 +2027,69 @@ export class Menus {
       'folder',
       anchor
     )
+  }
+
+  /**
+   * A tab group's menu on a touch host (TABLET-04: the tablet sidebar chip's hold, a §9.36
+   * popover; the phone's groups have their sheets): Chrome's group header menu with the editor
+   * bubble's name and colour folded in, the bubble being the desktop's. Rename Group…, Colour
+   * (Chrome's nine as radio items, the group's checked), New Tab in Group, Collapse or Expand
+   * Group; then Ungroup – the tabs stay, loose – Close Group (N Tabs) – the tabs close and the
+   * group stays SAVED with their pages (TAB-16) – and Delete Group. A saved group (its tabs
+   * closed, its pages kept) leads with Open Group (N Tabs) and has nothing to fold, ungroup or
+   * close; Delete Group forgets its pages. Title Case throughout (v2 §9.1). Delete Group alone
+   * takes the danger ink (§6: for what destroys the user's own; Close Group destroys nothing
+   * the saved group does not keep, and Chrome's "Close group" is plain), as the phone's group
+   * sheet writes them. The menu is a folder's and never the app menu's, whose renderer-drawn
+   * desktop form (#299) would draw a `danger` item red there too.
+   */
+  private groupMenu(folder: Folder, win: ZenWindow): Template {
+    const { browser } = this
+    const id = folder.id
+    // The group's tabs are its regular members (`regularFolderTabs`): a private tab in it is
+    // none of the count, and Close Group leaves it.
+    const live = regularFolderTabs(browser.state.model, id).length
+    const saved = isSavedFolder(browser.state.model, folder)
+    const count = saved ? (folder.savedTabs?.length ?? 0) : live
+    const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
+    const open: Template = saved
+      ? [{ label: `Open Group (${tabs})`, click: () => browser.openFolder(id, win) }]
+      : []
+    const fold: Template = live
+      ? [
+          {
+            label: folder.collapsed ? 'Expand Group' : 'Collapse Group',
+            click: () => browser.updateFolder(id, { collapsed: !folder.collapsed })
+          }
+        ]
+      : []
+    const closing: Template = live
+      ? [
+          { label: 'Ungroup', click: () => browser.deleteFolder(id, true) },
+          { label: `Close Group (${tabs})`, click: () => browser.closeFolder(id, win) }
+        ]
+      : []
+    return [
+      ...open,
+      {
+        label: 'Rename Group…',
+        click: () => browser.emit('folder.startRename', { folderId: id }, win)
+      },
+      {
+        label: 'Colour',
+        submenu: FOLDER_COLOR_ORDER.map((color) => ({
+          label: FOLDER_COLOR_NAMES[color],
+          type: 'radio' as const,
+          checked: (folder.color ?? null) === color,
+          click: () => browser.updateFolder(id, { color })
+        }))
+      },
+      { label: 'New Tab in Group', click: () => browser.newTabInFolder(id, win) },
+      ...fold,
+      { type: 'separator' },
+      ...closing,
+      { label: 'Delete Group', danger: true, click: () => browser.deleteFolder(id, false) }
+    ]
   }
 
   // ---------------------------------------------------------------------------

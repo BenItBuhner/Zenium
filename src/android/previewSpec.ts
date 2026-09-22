@@ -241,10 +241,17 @@ export type PreviewState =
   | {
       /**
        * The active tab in a group of this many members, made on the spot (the group strip is up
-       * in the bar band); `then` steps are taken once the group has formed.
+       * in the bar band); `then` steps are taken once the group has formed. With `saved`, a
+       * second group is made and closed first, so the space also holds a SAVED group – its tabs
+       * closed, their pages kept (TAB-16) – for the overview's Groups pane and the tablet
+       * sidebar's saved row. `link` names a page: once the steps are taken, the active page's
+       * context menu is raised for a link to it, the way a hold on a link raises it (TAB-15's
+       * Open Link in New Tab in Group is in it while the tab is in the group).
        */
       kind: 'group'
       members: number
+      saved?: boolean
+      link?: string
       then?: PreviewStep[]
     }
   | {
@@ -532,7 +539,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `then=<steps>` takes steps once it has loaded), `group=<n>` for the
  * active tab in a group of n members made on the spot, the group strip up in the bar band (with
  * `then=<steps>` taken once the group has formed: `tap:Show group, Research` presses the strip's
- * show chip, `tap:New tab in Research` its plus chip), `overlay=<kind>` for
+ * show chip, `tap:New tab in Research` its plus chip; `&saved` makes a saved group beside it,
+ * `&link=<url>` raises the page's link menu for that URL after the steps), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet or `menu=tabs` for the Tabs
@@ -625,7 +633,12 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (group !== null && group !== '' && Number.isFinite(Number(group))) {
     const members = Math.min(MAX_PREVIEW_GROUP, Math.max(1, Math.floor(Number(group))))
     const then = parsePreviewSteps(params.get('then'))
-    return then.length > 0 ? { kind: 'group', members, then } : { kind: 'group', members }
+    const state: Extract<PreviewState, { kind: 'group' }> = { kind: 'group', members }
+    if (params.has('saved')) state.saved = true
+    const link = params.get('link')
+    if (link) state.link = link
+    if (then.length > 0) state.then = then
+    return state
   }
   const overlay = params.get('overlay')
   if (overlay !== null && (PREVIEW_OVERLAYS as readonly string[]).includes(overlay)) {

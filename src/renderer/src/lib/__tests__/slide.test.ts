@@ -202,6 +202,61 @@ describe('SlideMotion.flip', () => {
     expect(translationOf(rows[0].style)).toBe(0)
   })
 
+  it('carries a new row’s entry across a detach and re-attach of the same element (StrictMode)', () => {
+    const { motion } = list(2)
+    const fresh = row(2 * SHIFT)
+    motion.attach('r2', fresh.el)
+    motion.flip()
+    runFrames(2)
+    const midway = fresh.style.clipPath
+    expect(midway).not.toBe('')
+    // A dev build's StrictMode detaches the ref and attaches the element again at once.
+    motion.attach('r2', null)
+    motion.attach('r2', fresh.el)
+    expect(fresh.style.clipPath).toBe(midway)
+    expect(motion.has('r2')).toBe(true)
+    settle()
+    expect(fresh.style.clipPath).toBe('')
+    expect(fresh.style.opacity).toBe('')
+    // Its slot was kept too: the next commit finds it laid out, not new, so it does not grow again.
+    motion.flip()
+    expect(fresh.style.clipPath).toBe('')
+    expect(frames.size).toBe(0)
+  })
+
+  it('draws a row whole when it is let go mid-entry, and grows the element that takes its id', () => {
+    const { motion } = list(2)
+    const first = row(2 * SHIFT)
+    motion.attach('r2', first.el)
+    motion.flip()
+    runFrames(2)
+    expect(first.style.clipPath).not.toBe('')
+    // The row re-parented: its element goes, another with the same id arrives in the same commit.
+    const second = row(2 * SHIFT)
+    motion.attach('r2', null)
+    motion.attach('r2', second.el)
+    expect(first.style.clipPath).toBe('')
+    expect(first.style.opacity).toBe('')
+    motion.flip()
+    expect(second.style.clipPath).not.toBe('')
+    settle()
+    expect(second.style.clipPath).toBe('')
+  })
+
+  it('lets a row that leaves for good go at the commit that follows', () => {
+    const { motion } = list(2)
+    const fresh = row(2 * SHIFT)
+    motion.attach('r2', fresh.el)
+    motion.flip()
+    runFrames(2)
+    motion.attach('r2', null)
+    motion.flip()
+    expect(fresh.style.clipPath).toBe('')
+    expect(motion.has('r2')).toBe(false)
+    settle()
+    expect(frames.size).toBe(0)
+  })
+
   it('places a batch of new rows without motion', () => {
     const { motion } = list(2)
     const batch = [3, 4, 5, 6].map((i) => row(i * SHIFT))
