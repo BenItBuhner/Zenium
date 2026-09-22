@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
-import { displayUrl, errorPageUrl, fullUrl } from '../../shared/url'
+import { crashPageUrl, displayUrl, errorPageUrl, fullUrl } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { Browser } from '../browser'
 import type {
@@ -207,6 +207,69 @@ describe('a renderer that goes away in front of the user', () => {
     view.events.onNavigated(view.loads.at(-1)!, false)
     view.events.onCrashed('crashed', 5)
     expect(view.loads.at(-1)).toBe(errorPageUrl(CRASH_ERROR_CODE, 'SIGTRAP', PAGE))
+  })
+
+  it("shows the memory variant for a renderer the system killed in front of the user (Android's !didCrash)", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+    f.sent.length = 0
+
+    view.events.onCrashed('oom-kill')
+
+    // A page in front is offered again, not unloaded: the crash page says why it went.
+    expect(view.loads.at(-1)).toBe(crashPageUrl('Out of Memory', PAGE, { variant: 'memory' }))
+    const after = f.browser.tabs.tab(tab.id)!
+    expect(after.discarded).toBe(false)
+    expect(after.errorCode).toBe(CRASH_ERROR_CODE)
+    expect(toasts(f)).toEqual([])
+  })
+
+  it('unloads a hidden tab the system killed for memory, saying so, like any other hidden loss', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.tabs.createTab({ url: 'https://shown.example/', active: true }, win)
+    const hidden = f.browser.tabs.createTab({ url: PAGE, active: false }, win)
+    f.browser.tabs.load(hidden.id, win)
+    const view = viewOf(f, hidden)
+    view.events.onNavigated(PAGE, false)
+    f.sent.length = 0
+
+    view.events.onCrashed('oom-kill')
+
+    expect(f.browser.tabs.tab(hidden.id)!.discarded).toBe(true)
+    expect(view.loads.some((u) => u.startsWith('zen://error'))).toBe(false)
+    expect(toasts(f)).toEqual([`"crashed.example" ran out of memory and was unloaded.`])
+  })
+
+  it('shows the hung variant for a page the user ended for not responding', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+
+    view.events.onCrashed('hung')
+
+    expect(view.loads.at(-1)).toBe(crashPageUrl('RESULT_CODE_HUNG', PAGE, { variant: 'hung' }))
+  })
+
+  it("marks a repeat within the minute on the host's word, so the page suggests closing other tabs", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+
+    view.events.onCrashed('crashed', undefined, { repeat: true })
+
+    const page = crashPageUrl('CRASHED', PAGE, { variant: 'crash', repeat: true })
+    expect(view.loads.at(-1)).toBe(page)
+    expect(page).toContain('repeat=1')
+    // A first crash carries neither parameter: the URL is the plain crash page's.
+    expect(crashPageUrl('CRASHED', PAGE)).toBe(errorPageUrl(CRASH_ERROR_CODE, 'CRASHED', PAGE))
   })
 
   it('does nothing for a clean exit', () => {

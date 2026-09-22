@@ -400,6 +400,43 @@ export function errorPageUrl(
 }
 
 /**
+ * What the crash page (`zen://error?code=-1`) says besides that the page is gone (ERR-15):
+ * `crash`, the renderer crashed ("Something went wrong"); `memory`, the OS killed it to free
+ * memory while the page was in front; `hung`, the user ended an unresponsive page. A `repeat`
+ * within the minute adds the suggestion to close other tabs and the way to the tab switcher.
+ */
+export type CrashPageVariant = 'crash' | 'memory' | 'hung'
+
+export interface CrashPageOptions {
+  variant?: CrashPageVariant
+  repeat?: boolean
+}
+
+/**
+ * The crash page for `url`, the page whose renderer went away: `codeName` is Chrome's name
+ * for the way it ended (`crashCodeName`), printed on the page's code line.
+ */
+export function crashPageUrl(
+  codeName: string,
+  url: string,
+  options: CrashPageOptions = {}
+): string {
+  const params = new URLSearchParams({ code: '-1', description: codeName, url })
+  if (options.variant && options.variant !== 'crash') params.set('variant', options.variant)
+  if (options.repeat) params.set('repeat', '1')
+  return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+/** The crash page's variant and repeat flag out of its URL's parameters. */
+export function crashPageOptionsOf(params: URLSearchParams): Required<CrashPageOptions> {
+  const variant = params.get('variant')
+  return {
+    variant: variant === 'memory' || variant === 'hung' ? variant : 'crash',
+    repeat: params.get('repeat') === '1'
+  }
+}
+
+/**
  * The interstitials Zenium puts in front of a page: Safe Browsing's warning and HTTPS-only
  * mode's plaintext question. Both are error pages (`zen://error` with a `kind`), so the URL bar,
  * reload and copy treat them like any other page that stands in for `url`.

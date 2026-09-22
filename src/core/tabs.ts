@@ -44,6 +44,8 @@ import {
 import {
   BLANK_URL,
   ERROR_URL_PREFIX,
+  crashPageUrl,
+  type CrashPageVariant,
   errorPageCertificate,
   errorPageUrl,
   extensionPageOf,
@@ -605,6 +607,8 @@ export class TabManager {
             ? { code, url, certificate: details?.certificate ?? null, bypassed: false }
             : null
         failed(certificateError)
+        // An error page that stands for being offline reloads itself when the device is back.
+        this.browser.connectivity.noteFailure(tabId, code)
         const page = errorPageUrl(
           code,
           description || describeNetError(code, ''),
@@ -617,7 +621,7 @@ export class TabManager {
       onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
       onUnsafeNavigation: (url, hit) =>
         this.browser.protection.safeBrowsing.notePendingBlock(tabId, url, hit),
-      onCrashed: (reason, exitCode) => {
+      onCrashed: (reason, exitCode, details) => {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
         if (!tab) return
@@ -625,16 +629,21 @@ export class TabManager {
         this.clearCaptureState(tabId)
         const title = tab.customTitle ?? tab.title
         const outOfMemory = reason === 'oom' || reason === 'memory-eviction'
+        // The OS took the memory back from a page in front of the user (Android's
+        // `!didCrash()` with the renderer at importance): not the page's own heap running out,
+        // so the sad tab says so and offers the page again rather than unloading it.
+        const memoryKill = reason === 'oom-kill'
         const visible = this.allVisibleTabIds().has(tabId)
         // A V8 heap-cap OOM is reported as `oom` on Windows / Android but as a plain `crashed` on
         // Linux. Either way a page nobody is looking at is better unloaded than replaced by an
         // error page in a fresh renderer: keep the tab, drop the page, reload on activation.
         if (outOfMemory || !visible) {
-          const why = outOfMemory ? 'the page ran out of memory' : `the page crashed (${reason})`
+          const memory = outOfMemory || memoryKill
+          const why = memory ? 'the page ran out of memory' : `the page crashed (${reason})`
           this.browser.governor.record('discard', tabId, why, title)
           this.discard(tabId)
           this.browser.toast(
-            outOfMemory
+            memory
               ? `"${title}" ran out of memory and was unloaded.`
               : `"${title}" crashed and was unloaded.`,
             'error',
@@ -645,9 +654,16 @@ export class TabManager {
         // A crash in front of the user is the sad tab (tabs-44): the crash page, for the page
         // the tab was showing, says what happened (no toast doubles it), and `errorCode` marks
         // the row – the crashed favicon – until the next navigation clears it. The address stays
-        // the page's own: the error page shows the URL it stands in for.
+        // the page's own: the error page shows the URL it stands in for. The page's words follow
+        // the way the renderer went (ERR-15): a crash, the OS freeing memory, a page the user
+        // ended for not responding; a second time within the minute suggests closing other tabs.
         const target = this.errorPageTarget(tabId) ?? tab.url
         const code = crashCodeName(reason, exitCode, this.browser.platform.info.os)
+        const variant: CrashPageVariant = memoryKill
+          ? 'memory'
+          : reason === 'hung'
+            ? 'hung'
+            : 'crash'
         update((t) => {
           t.errorCode = CRASH_ERROR_CODE
           t.certificateError = null
@@ -655,7 +671,7 @@ export class TabManager {
           t.waiting = false
           t.progress = 1
         })
-        view()?.loadURL(errorPageUrl(CRASH_ERROR_CODE, code, target))
+        view()?.loadURL(crashPageUrl(code, target, { variant, repeat: details?.repeat === true }))
       },
       onAudioStateChanged: (audible) => {
         update((t) => (t.audible = audible), true)
@@ -1125,6 +1141,7 @@ export class TabManager {
       this.leaveHtmlFullscreen(tabId)
     this.httpsUpgraded.delete(tabId)
     this.clearCaptureState(tabId)
+    this.browser.connectivity.forget(tabId)
     this.browser.protection.safeBrowsing.forgetTab(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.pendingTransition.delete(tabId)
@@ -1594,6 +1611,8 @@ export class TabManager {
     }
     this.releaseHidden(win)
     this.browser.governor.wakeVisible(win)
+    // An offline error page that came back online while hidden reloads on its turn on screen.
+    this.browser.connectivity.onTabsShown(this.visibleTabIds(win))
     win.findResult = null
     this.browser.state.commit()
     if (!opts.keepFocus) win.focusContent()

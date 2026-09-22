@@ -82,6 +82,7 @@ import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
 import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
+import { ConnectivityService } from './connectivity'
 import { DefaultBrowserService } from './defaultBrowser'
 import { ImportService } from './import/service'
 import { BackgroundWork } from './background/work'
@@ -193,6 +194,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'menu.show',
   'menu.app',
   'tabsearch.open',
+  'overview.open',
   'bookmark.star',
   'bookmark.edit',
   'webapp.install',
@@ -269,6 +271,8 @@ export class Browser {
   readonly autofill: AutofillService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
+  /** The device's connectivity: the offline banner's state and the error pages that reload themselves. */
+  readonly connectivity: ConnectivityService
   /** Chrome's "Import bookmarks and settings": other browsers' profiles and picked files (ID-23). */
   readonly imports: ImportService
   /**
@@ -435,6 +439,7 @@ export class Browser {
     this.passwords = new PasswordService(this, platform.passwords)
     this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
+    this.connectivity = new ConnectivityService(this)
     this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
@@ -467,6 +472,7 @@ export class Browser {
       updates: this.updates.status(),
       passwords: this.passwords.status(),
       defaultBrowser: this.defaultBrowser.status(),
+      network: this.connectivity.status(),
       blockedPopups: this.popups.all(),
       permissionRules: this.permissions.rules(),
       permissionDefaults: this.permissions.defaults(CONTENT_SETTINGS.map((s) => s.id)),
@@ -1053,6 +1059,7 @@ export class Browser {
     this.passwords.start()
     this.autofill.start()
     this.defaultBrowser.start()
+    this.connectivity.start()
     this.translate.start()
     this.spellcheck.start()
     this.syncShortcuts()
@@ -2386,6 +2393,12 @@ export class Browser {
     }
     if (message.type === 'interstitial') {
       if (typeof message.action === 'string' && typeof message.url === 'string') {
+        // The crash page's Show tabs (ERR-15): the tab switcher, from the sad tab alone.
+        if (message.action === 'show-tabs') {
+          if (this.tabs.isSadTab(tab))
+            this.emit('overview.open', undefined, this.tabs.windowFor(tabId))
+          return
+        }
         // The certificate interstitial's tab answers first; the other warning pages are the
         // protection service's.
         if (!this.tabs.handleCertificateInterstitial(tabId, message.action, message.url))

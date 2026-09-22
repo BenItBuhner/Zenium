@@ -424,17 +424,34 @@ export interface KeyEventInput extends KeyInput {
   isAutoRepeat: boolean
 }
 
-/** Why a page's renderer went away. */
+/**
+ * Why a page's renderer went away: Electron's `render-process-gone` reasons, and two the Android
+ * host adds for a renderer the OS or the user ended (`RenderProcessGoneDetail`, `RendererExit.kt`):
+ * `oom-kill`, the system killed the renderer for memory while the page was in front (the page's
+ * fault or not; `oom` is a page's own heap running out), and `hung`, the user chose Exit page on
+ * an unresponsive page and the browser ended its renderer.
+ */
 export type CrashReason =
   | 'clean-exit'
   | 'abnormal-exit'
   | 'killed'
   | 'crashed'
   | 'oom'
+  | 'oom-kill'
+  | 'hung'
   | 'launch-failed'
   | 'integrity-failure'
   | 'memory-eviction'
   | string
+
+/** What a host knows about a crash besides its reason. */
+export interface CrashDetails {
+  /**
+   * The same tab's renderer went away less than a minute ago (the Android host counts, since
+   * it outlives the core's renderer): the crash page suggests closing other tabs (ERR-15).
+   */
+  repeat?: boolean
+}
 
 export type InputModifier = 'Shift' | 'Control' | 'Alt' | 'Meta'
 
@@ -538,9 +555,10 @@ export interface TabViewEvents {
   onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
   /**
    * The page's renderer went away; `exitCode` is the process's where the host has it (Electron's
-   * `render-process-gone` details), for the sad tab's code line.
+   * `render-process-gone` details), for the sad tab's code line; `details` what else the host
+   * knows (a repeat within the minute).
    */
-  onCrashed(reason: CrashReason, exitCode?: number): void
+  onCrashed(reason: CrashReason, exitCode?: number, details?: CrashDetails): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
   /** The host's own request engine blocked `count` more requests of this page (Android). */
@@ -1239,6 +1257,20 @@ export interface PrivacyHost {
    * bypasses – the hit, or null for nothing listed (or tables not loaded yet).
    */
   lookupSafeBrowsing?(url: string): Promise<SafeBrowsingHit | null>
+}
+
+/**
+ * The device's connectivity as the host sees it (`core/connectivity.ts`): Android's
+ * `ConnectivityManager` reports a network with internet access that has been validated
+ * (`ConnectivityMonitor.kt`). The host's word is raw – a Wi-Fi to mobile switch reports lost
+ * then available within a second – and the core debounces it before the chrome shows anything.
+ * Hosts without it are online for good: no banner, no self-reloading error pages.
+ */
+export interface ConnectivityHost {
+  /** The host's current verdict. */
+  isOnline(): boolean
+  /** Hear every change of the verdict as the host reports it; returns the unsubscribe. */
+  onChange(listener: (online: boolean) => void): () => void
 }
 
 /**
@@ -2390,6 +2422,8 @@ export interface Platform {
   readonly importHost?: ImportHost
   /** The background worker and the demo harness's hold on the startup sweeps; omit for neither. */
   readonly performance?: PerformanceHost
+  /** The device's connectivity (Android); hosts without it are online for good. */
+  readonly connectivity?: ConnectivityHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost
