@@ -135,9 +135,9 @@ describe('the detail row (§10.4)', () => {
     expect(clamped?.classList.contains('zen-settings-row-pressable')).toBe(true)
     expect(clamped?.classList.contains('zen-settings-row-clamp')).toBe(true)
     // Opt-in only: an action row without the flag keeps its free-wrapping label.
-    expect(h.querySelector('[data-row="plain"]')?.classList.contains('zen-settings-row-clamp')).toBe(
-      false
-    )
+    expect(
+      h.querySelector('[data-row="plain"]')?.classList.contains('zen-settings-row-clamp')
+    ).toBe(false)
   })
 
   it('draws no summary span when the row has none, keeping the chevron', () => {
