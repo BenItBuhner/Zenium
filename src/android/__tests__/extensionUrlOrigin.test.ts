@@ -66,7 +66,9 @@ describe('extensionUrlOrigin', () => {
         return this.parsed.href
       }
       get origin(): string {
-        return this.parsed.protocol === 'chrome-extension:' ? 'chrome-extension://' : this.parsed.origin
+        return this.parsed.protocol === 'chrome-extension:'
+          ? 'chrome-extension://'
+          : this.parsed.origin
       }
     }
     expect(new WebViewURL(`chrome-extension://${ID}/popup.html`).origin).toBe('chrome-extension://')
