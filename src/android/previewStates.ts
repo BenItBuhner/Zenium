@@ -542,21 +542,65 @@ const PREVIEW_GROUP_PAGES = [
   'https://en.wikipedia.org/wiki/Kerning'
 ]
 /**
- * The group the last `group=<n>` state made and the world before it (the tab that was active,
+ * The saved group a `group=<n>&saved` state makes beside the open one (TAB-16): its name, its
+ * colour's pages – closed at once, so only the record stays – and how long ago it counts as last
+ * used, so its row reads "2 h ago" beside the open group's "Just now".
+ */
+const PREVIEW_SAVED_GROUP_NAME = 'Trip planning'
+const PREVIEW_SAVED_GROUP_PAGES = [
+  'https://en.wikipedia.org/wiki/Kyoto',
+  'https://en.wikipedia.org/wiki/Shinkansen',
+  'https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API'
+]
+const PREVIEW_SAVED_GROUP_AGE_MS = 2 * 60 * 60 * 1000
+
+/**
+ * The groups the last `group=<n>` state made and the world before them (the tab that was active,
  * the tabs there were), put back before the next state: a run of stills takes each state from
  * the same loose profile.
  */
-let previewGroup: { folderId: string; activeId: string; tabIds: ReadonlySet<string> } | null = null
+let previewGroup: {
+  folderId: string
+  savedFolderId: string | null
+  activeId: string
+  tabIds: ReadonlySet<string>
+} | null = null
 
 /**
  * Put the active tab in a group of `members`: the space's loose pages join first, then tabs made
  * for the purpose, each filed after the last member so it lands in the group – the way the plus
- * chip's tab does. The strip enters on its spring as the group forms.
+ * chip's tab does. The strip enters on its spring as the group forms. With `saved`, a second
+ * group is made first and closed at once – its pages kept, its record saved – so the space also
+ * holds a saved group, last used a while ago.
  */
-async function makeGroup(activeId: string, members: number): Promise<void> {
+async function makeGroup(
+  browser: Browser,
+  activeId: string,
+  members: number,
+  saved: boolean
+): Promise<void> {
   const state = browserStore.get().state
   if (!state) return
   const space = activeSpace(state)
+  const tabIds = new Set(Object.keys(state.tabs))
+  let savedFolderId: string | null = null
+  if (saved) {
+    savedFolderId = await cmd('folder.create', {
+      spaceId: space.id,
+      name: PREVIEW_SAVED_GROUP_NAME,
+      icon: DEFAULT_FOLDER_ICON,
+      color: 'green',
+      rename: false
+    })
+    for (const url of PREVIEW_SAVED_GROUP_PAGES)
+      await cmd('tab.create', { url, active: false, folderId: savedFolderId })
+    await cmd('folder.close', { folderId: savedFolderId })
+    const folder = browser.state.model.folders[savedFolderId]
+    if (folder) {
+      folder.lastUsedAt = Date.now() - PREVIEW_SAVED_GROUP_AGE_MS
+      browser.state.commit()
+    }
+  }
   const folderId = await cmd('folder.create', {
     spaceId: space.id,
     name: PREVIEW_GROUP_NAME,
@@ -564,7 +608,7 @@ async function makeGroup(activeId: string, members: number): Promise<void> {
     color: 'blue',
     rename: false
   })
-  previewGroup = { folderId, activeId, tabIds: new Set(Object.keys(state.tabs)) }
+  previewGroup = { folderId, savedFolderId, activeId, tabIds }
   await cmd('tab.moveToFolder', { tabId: activeId, folderId })
   const loose = regularOf(state, space).filter(
     (t) => t.id !== activeId && !t.folderId && !isInternalPageUrl(t.url) && t.url !== BLANK_URL
@@ -586,10 +630,11 @@ async function makeGroup(activeId: string, members: number): Promise<void> {
 }
 
 /**
- * The group a previous state made goes and the world before it comes back: the tab that was
+ * The groups a previous state made go and the world before them comes back: the tab that was
  * active then is active again (first, so closing the others never has the core pick a
- * neighbour), the tabs made since – for the group, or in it by its plus chip – close, and the
- * folder is deleted with its tabs unpacked, so the next state starts loose.
+ * neighbour), the tabs made since – for the group, or in it by its plus chip, or by a saved
+ * group's Open – close, and the folders are deleted with their tabs unpacked (the saved one's
+ * record with them), so the next state starts loose.
  */
 async function dissolveGroup(): Promise<void> {
   const made = previewGroup
@@ -603,18 +648,38 @@ async function dissolveGroup(): Promise<void> {
   for (const id of Object.keys(state.tabs)) {
     if (!made.tabIds.has(id)) await cmd('tab.close', { tabId: id, force: true }).catch(quiet)
   }
-  if (state.folders[made.folderId])
-    await cmd('folder.delete', { folderId: made.folderId, unpack: true }).catch(quiet)
+  const folderIds = [made.folderId, made.savedFolderId].filter((id): id is string => id !== null)
+  for (const folderId of folderIds) {
+    if (state.folders[folderId]) await cmd('folder.delete', { folderId, unpack: true }).catch(quiet)
+  }
   // A command's answer comes before the state it changed does: the next state reads the store,
-  // so the store is waited for (bounded) to show the folder gone and the tab back.
+  // so the store is waited for (bounded) to show the folders gone and the tab back.
   await new Promise<void>((resolve) =>
     untilState(
       (s) =>
-        !s.folders[made.folderId] &&
+        folderIds.every((id) => !s.folders[id]) &&
         (restored === null || activeTab(s)?.id === restored) &&
         Object.keys(s.tabs).every((id) => made.tabIds.has(id)),
       resolve
     )
+  )
+}
+
+/**
+ * Raise the active page's context menu for a link to `url`, the way a hold on the link raises it
+ * (`views.ts`: the host's `contextMenu` event with the link's URL), at a point in the page's
+ * upper third – where a phone's link menu sheet leaves the page showing above it, and a tablet's
+ * popover anchors.
+ */
+function holdLink(tabId: string, url: string): void {
+  hostGlobal().viewEvent(
+    tabId,
+    'contextMenu',
+    JSON.stringify({
+      x: Math.round(window.innerWidth / 2),
+      y: Math.round(window.innerHeight / 3),
+      linkURL: url
+    })
   )
 }
 
@@ -747,11 +812,26 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     })
   } else if (target.kind === 'group' && tab) {
     // The state is reached as the group forms (the strip is entering: a driver that wants it
-    // mid-slide captures at once); the steps wait for the entrance to settle.
-    void makeGroup(tab.id, target.members).then(() => {
+    // mid-slide captures at once); the steps wait for the entrance to settle. A `link` is held
+    // once the steps are taken: the page's menu comes up through the core (`menu.show` lands in
+    // the ui store), and the state is reached once its sheet has had a frame to mount.
+    const link = target.link
+    const end = (): void => {
+      if (!link) {
+        finish()
+        return
+      }
+      const unsubscribe = uiStore.subscribe(() => {
+        if (!uiStore.get().menu) return
+        unsubscribe()
+        afterFrames(2, finish)
+      })
+      holdLink(tab.id, link)
+    }
+    void makeGroup(browser, tab.id, target.members, Boolean(target.saved)).then(() => {
       const then = target.then ?? []
-      if (then.length === 0) finish()
-      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+      if (then.length === 0) end()
+      else setTimeout(() => steps(then, end), STEP_SETTLE_MS)
     })
   } else if (target.kind === 'overlay') {
     // The steps, if any, once the overlay is up and settled: a row held for selection mode.

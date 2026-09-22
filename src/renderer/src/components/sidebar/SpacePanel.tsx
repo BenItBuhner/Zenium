@@ -372,9 +372,11 @@ function FolderRow({
     ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
     : `${live ? 'Live folder' : 'Folder'}, ${count} ${unit}`
   // The tablet row's hold (the phone's group card's, `useLongPress`: a haptic tick at 380 ms, the
-  // menu on the release, the click after it swallowed): the group's menu as a popover at the
-  // finger (`TabletMenu` opens at the last press when the descriptor carries no point).
-  const press = useLongPress(() => run('folder.contextMenu', { folderId: folder.id }))
+  // menu on the release, the click after it swallowed): the group's menu as a §9.36 popover at
+  // the finger.
+  const press = useLongPress(({ x, y }) =>
+    run('folder.contextMenu', { folderId: folder.id, x: Math.round(x), y: Math.round(y) })
+  )
   const { onContextMenu: holdMenu, ...hold } = press.handlers
   return (
     <div ref={shell} className="zen-group-fold flex flex-col gap-0.5">
