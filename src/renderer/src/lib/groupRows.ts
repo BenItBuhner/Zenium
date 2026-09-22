@@ -5,9 +5,11 @@ import { relativeTime } from './utils'
  * The overview's Groups pane (TAB-16, Chrome's "Tab groups"): what each of a space's groups is
  * listed as. A group with live tabs is OPEN; one whose tabs have closed but that kept their
  * pages (`Folder.savedTabs`) is SAVED, and stays listed until it is opened again or deleted; one
- * with neither (made on the desktop and never filled, or whose only members were private tabs,
- * which a saved group never keeps) is EMPTY – listed with the open ones so it can be renamed or
- * deleted, since the grid has no card for it.
+ * with neither (made on the desktop and never filled) is EMPTY – listed with the open ones so it
+ * can be renamed or deleted, since the grid has no card for it. A group whose only live members
+ * are private tabs is the Private pane's, where they are its cards (v2 §9.34: private groups stay
+ * in the Private pane), and is no row of this pane – the tablet's sidebar can make one, dropping a
+ * private tab into a folder; the phone's Private pane cannot group.
  */
 export type GroupRowKind = 'open' | 'saved' | 'empty'
 
@@ -31,10 +33,15 @@ export interface GroupRows {
   saved: GroupRow[]
 }
 
-/** The pane's rows for `groups` (the space's folders, in the grid's order) and their live members. */
+/**
+ * The pane's rows for `groups` (the space's folders, in the grid's order) and their live members
+ * on the Tabs pane (`membersOf`); `privateMembersOf` names a group's live private tabs, which
+ * keep a group with no other member and nothing saved off the pane.
+ */
 export function groupRows(
   groups: readonly Folder[],
-  membersOf: (folderId: string) => Tab[]
+  membersOf: (folderId: string) => Tab[],
+  privateMembersOf: (folderId: string) => Tab[] = () => []
 ): GroupRows {
   const open: GroupRow[] = []
   const saved: GroupRow[] = []
@@ -55,7 +62,7 @@ export function groupRows(
         count: folder.savedTabs.length,
         lastUsedAt: folder.lastUsedAt ?? null
       })
-    } else {
+    } else if (privateMembersOf(folder.id).length === 0) {
       open.push({ folder, kind: 'empty', count: 0, lastUsedAt: folder.lastUsedAt ?? null })
     }
   }

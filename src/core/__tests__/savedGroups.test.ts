@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER } from '../../shared/defaults'
 import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
-import { isSavedFolder } from '../model'
+import { createSpace, createTabRecord, isSavedFolder } from '../model'
 import type {
   MenuHost,
   MenuItemTemplate,
@@ -13,6 +13,7 @@ import type {
   TabViewHost,
   WindowHost
 } from '../platform'
+import { PERSISTED_VERSION } from '../state'
 import type { ZenWindow } from '../window'
 
 /**
@@ -23,8 +24,8 @@ import type { ZenWindow } from '../window'
  * group menu (TABLET-04, the tablet sidebar row's hold; `groupMenu`) by the group's state.
  */
 
-function memoryIo(): StoreIO {
-  const files: Record<string, string> = {}
+/** The profile's files by name, `files` being what the store starts from and writes into. */
+function memoryIo(files: Record<string, string> = {}): StoreIO {
   return {
     readSync: (name) => files[name] ?? null,
     write: async (name, text) => {
@@ -58,7 +59,12 @@ interface Harness {
   urls: () => string[]
 }
 
-function harness(formFactor: FormFactor = 'phone', privateTabs = true): Harness {
+/** A browser on a phone (or `formFactor`) over `files`, a profile's store – empty for a first run. */
+function harness(
+  formFactor: FormFactor = 'phone',
+  privateTabs = true,
+  files: Record<string, string> = {}
+): Harness {
   let last: MenuItemTemplate[] = []
   const sent: Harness['sent'] = []
   const menus: MenuHost = {
@@ -73,7 +79,7 @@ function harness(formFactor: FormFactor = 'phone', privateTabs = true): Harness 
       nativeMenus: true,
       privateTabs
     }),
-    io: memoryIo(),
+    io: memoryIo(files),
     windows: {
       create: () =>
         stub<WindowHost>({
@@ -303,14 +309,74 @@ describe('a saved group (TAB-16)', () => {
     expect(m.folders[folder].lastUsedAt).toBe(m.tabs[a].lastActiveAt)
   })
 
-  it('the saved pages and the last use survive the store round trip', () => {
-    const h = harness()
-    const folder = h.group('Trip')
-    h.open('https://a.test/', { folderId: folder })
-    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
-    const stored = JSON.parse(JSON.stringify(h.browser.state.model.folders[folder]))
+  it('an old state file loads through the reader as it is, and the saved pages and the last use come back through it', async () => {
+    // A profile written before saved groups (state.json v2): a folder with the fields of its day
+    // and nothing of TAB-16's – no `savedTabs`, no `lastUsedAt` – holding one tab.
+    const space = createSpace('Work', '')
+    const folder = {
+      id: 'folder_trip',
+      spaceId: space.id,
+      name: 'Trip',
+      icon: '📁',
+      collapsed: false
+    }
+    const tab = createTabRecord({
+      spaceId: space.id,
+      containerId: 'default',
+      url: 'https://a.test/',
+      title: 'a.test',
+      folderId: folder.id
+    })
+    space.tabIds = [tab.id]
+    space.activeTabId = tab.id
+    const old = {
+      version: 2,
+      spaces: [space],
+      tabs: [tab],
+      essentialTabIds: [],
+      activeSpaceId: space.id,
+      settings: {},
+      folders: [folder]
+    }
+    const files = { 'state.json': JSON.stringify(old) }
+
+    // The real reader (`BrowserState.load`, which the browser's start runs) takes the folder
+    // whole: no migration, no version bump, the optionals simply absent and the group as before.
+    const h = harness('phone', true, files)
+    const m = h.browser.state.model
+    expect(m.folders[folder.id]).toEqual(folder)
+    expect('savedTabs' in m.folders[folder.id]).toBe(false)
+    expect('lastUsedAt' in m.folders[folder.id]).toBe(false)
+    expect(isSavedFolder(m, m.folders[folder.id])).toBe(false)
+    expect(m.tabs[tab.id]?.folderId).toBe(folder.id)
+
+    // Closing the group writes the pages and the moment; the file is the current version.
+    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder.id })
+    await h.browser.state.flush()
+    const written = JSON.parse(files['state.json']) as { version: number; folders: unknown[] }
+    expect(written.version).toBe(PERSISTED_VERSION)
+    expect(written.folders).toEqual([
+      {
+        ...folder,
+        savedTabs: [{ url: 'https://a.test/', title: 'a.test', favicon: null }],
+        lastUsedAt: expect.any(Number)
+      }
+    ])
+
+    // Read back through the same reader on a fresh browser: the saved group, its pages in order,
+    // and Open bringing them back into it.
+    const again = harness('phone', true, { 'state.json': files['state.json'] })
+    const stored = again.browser.state.model.folders[folder.id]
     expect(stored.savedTabs).toEqual([{ url: 'https://a.test/', title: 'a.test', favicon: null }])
     expect(typeof stored.lastUsedAt).toBe('number')
+    expect(isSavedFolder(again.browser.state.model, stored)).toBe(true)
+    expect(again.urls()).not.toContain('https://a.test/')
+    again.browser.handleCommand(again.win, 'folder.open', { folderId: folder.id })
+    expect(again.urls()).toContain('https://a.test/')
+    const reopened = again.urls().indexOf('https://a.test/')
+    const reopenedTab = again.browser.tabs.tab(again.win.activeSpace().tabIds[reopened])!
+    expect(reopenedTab.folderId).toBe(folder.id)
+    expect(isSavedFolder(again.browser.state.model, stored)).toBe(false)
   })
 })
 

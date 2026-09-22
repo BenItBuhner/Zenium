@@ -810,8 +810,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     departGroup(folder)
     undoable(membersOf(folder.id), () => run('folder.close', { folderId: folder.id }))
   }
-  // The Groups pane's rows (TAB-16, `lib/groupRows.ts`): the space's groups by state.
-  const rows = groupRows(groups, membersOf)
+  // The Groups pane's rows (TAB-16, `lib/groupRows.ts`): the space's groups by state. A group
+  // that private tabs alone fill is the Private pane's (its cards there) and takes no row.
+  const privateGrouped = hasPrivate ? privateTabsOf(state).filter((t) => t.folderId) : []
+  const rows = groupRows(groups, membersOf, (folderId) =>
+    privateGrouped.filter((t) => t.folderId === folderId)
+  )
   const rowOf = (folderId: string): GroupRow | null =>
     [...rows.open, ...rows.saved].find((row) => row.folder.id === folderId) ?? null
   const renamingId = uiStore.use((s) => s.renamingFolderId)
@@ -1759,10 +1763,11 @@ function GroupSheet({
       label: 'Ungroup',
       onPick: () => run('folder.delete', { folderId: folder.id, unpack: true })
     },
+    // Close Group destroys nothing the saved group does not keep (`folder.close`): the plain
+    // ink, as on the Groups pane's row sheet and the tablet's menu; Delete Group alone is danger.
     {
       id: 'close',
       label: `Close Group (${count} ${count === 1 ? 'Tab' : 'Tabs'})`,
-      destructive: true,
       onPick: () => onCloseGroup(folder)
     },
     {
@@ -1846,7 +1851,12 @@ function PaneSegment({
   ]
   if (hasPrivate) panes.push({ id: 'private', label: 'Private' })
   return (
-    <div role="tablist" aria-label="Tabs, groups and private tabs" className="zen-v2-segment">
+    <div
+      role="tablist"
+      // The list's name says what it holds: Private only where the host has it.
+      aria-label={hasPrivate ? 'Tabs, groups and private tabs' : 'Tabs and groups'}
+      className="zen-v2-segment"
+    >
       {panes.map(({ id, label }) => (
         <button
           key={id}

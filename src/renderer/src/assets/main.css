@@ -7278,7 +7278,9 @@
  */
 :root[data-form-factor='tablet'] .zen-tablet-sidebar,
 :root[data-form-factor='tablet'] .zen-tablet-drawer-panel,
-:root[data-form-factor='tablet'] :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel) [data-tab-scroller] {
+:root[data-form-factor='tablet']
+  :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel)
+  [data-tab-scroller] {
   touch-action: pan-y;
 }
 
@@ -7934,7 +7936,9 @@
  * gutter's end; the first heading stands under the segment (or the space strip), which already
  * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
  * open group, the same as a 2 px ring for a saved one, whose tabs are closed (`--zen-group-color`
- * on the glyph). The pane's empty state is `PrivateEmpty`'s composition (§9.17) in the window ink.
+ * on the glyph). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
+ * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
+ * own 40 is for a list whose field carries 8 under it, and the segment carries none.
  */
 .zen-overview-groups {
   --v2-text: var(--v2-control-text);
@@ -7975,8 +7979,8 @@
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
 }
-.zen-overview-groups-empty p {
-  color: var(--v2-text-deemphasized);
+.zen-overview-groups > .zen-phone-empty {
+  padding-top: 48px;
 }
 
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */

@@ -17,7 +17,7 @@ import { useNow } from '../extensions/useNow'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { GroupRename } from './GroupCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
-import { PhoneGroupHeading, PhoneIconButton, PhoneListRow } from './PhoneList'
+import { PhoneEmptyNote, PhoneGroupHeading, PhoneIconButton, PhoneListRow } from './PhoneList'
 import { PhoneSheet } from './PhoneSheet'
 
 interface Props {
@@ -172,28 +172,16 @@ function GroupGlyph({ folder, saved }: { folder: Folder; saved: boolean }): JSX.
 }
 
 /**
- * The pane with no group in it (§9.17, the Private pane's own composition): title 22/600, one
- * 15 description at 69%, no button – the grid is where a group is made – the block centred
- * with its middle at 45% of the pane, in the window family.
+ * The pane with no group in it: a list's empty room (§9.17, as §9.34 writes it for this pane) –
+ * the phone panels' one-sentence note (`PhoneEmptyNote`: 15/400 at 69%, centred in the 32
+ * gutter, top-anchored), its first line 48 under the segment that stays put above the list
+ * (`.zen-overview-groups > .zen-phone-empty` in main.css: the segment carries no air under it,
+ * so the note takes the 48 itself), no title, no button – the grid is where a group is made. A
+ * child of the pane's flow, as a list's rows are, so it stands in the pane's box under the
+ * segment whatever the pane's height.
  */
 function GroupsEmpty(): JSX.Element {
-  return (
-    <div
-      className="zen-overview-groups-empty relative min-h-0 flex-1"
-      data-testid="overview-groups-empty"
-    >
-      <div
-        className="absolute inset-x-0 flex -translate-y-1/2 flex-col items-center px-8 text-center"
-        style={{ top: '45%' }}
-      >
-        <h2 className="text-[22px] font-semibold leading-7 tracking-[-0.012em]">No tab groups</h2>
-        <p className="mt-2 max-w-[360px] text-[15px] leading-5">
-          Hold a tab’s card and drop it on another to group them; a group whose tabs close stays
-          here, saved
-        </p>
-      </div>
-    </div>
-  )
+  return <PhoneEmptyNote>Hold a tab’s card and drop it on another to group them</PhoneEmptyNote>
 }
 
 /**

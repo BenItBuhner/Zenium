@@ -36,7 +36,9 @@ import kotlin.math.roundToInt
  *     three pages back as the group's tabs in their order, and the Tabs pane shows the card;
  *  8. Delete Group: the §9.23 prompt (Cancel keeps the group; Delete in the danger ink deletes
  *     it) – the group's record goes, its tabs close with one toast whose Undo brings them back
- *     loose; the pane at none reads "No tab groups".
+ *     loose; the pane at none paints §9.17's one sentence – read off the painted boxes, not the
+ *     DOM alone: the note inside the pane's box with height, its first line 48 under the
+ *     segment, the finger's point on the sentence hitting it.
  *
  * Findings in `tab-groups-findings.txt`, stills `tab-groups-NN-<state>.png`, the traced scene
  * in `frames.jsonl`. Driven by `android-tab-groups-demo.yml`'s phone act. See [GroupsDemoBase]
@@ -290,7 +292,29 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         check("its tabs close with it", members.size == 3 && awaitCore { s -> members.none { tabExists(it, s) } }, "members $members, live ${members.filter { tabExists(it) }}")
         val toast = awaitToast("3 tabs closed")
         check("one toast, \"3 tabs closed\"", toast != null, "toast '$toast'")
-        check("the pane at none reads No tab groups", awaitDom(GROUPS_EMPTY, 6_000) && textOf("$GROUPS_EMPTY h2") == "No tab groups", "empty ${textOf("$GROUPS_EMPTY h2")}")
+        // The empty room off the painted boxes, not the DOM alone (the first-line review's ask): the
+        // §9.17 note stands inside the pane's box with height, its sentence's line 48 under the
+        // segment, and the point at the sentence's centre hits the sentence – nothing over it,
+        // nothing clipping it.
+        val painted = awaitDom(GROUPS_EMPTY, 6_000) && awaitUntil(2_000) { (domRect(EMPTY_LINE)?.height() ?: 0f) > 0f }
+        val paneBox = domRect(GROUPS_PANE)
+        val note = domRect(GROUPS_EMPTY)
+        val line = domRect(EMPTY_LINE)
+        val segment = domRect(SEGMENT)
+        val sentence = textOf(EMPTY_LINE)
+        val hit = jsBoolean(
+            "(function(){var p=document.querySelector(${JSONObject.quote(EMPTY_LINE)});if(!p)return false;var b=p.getBoundingClientRect();" +
+                "var e=document.elementFromPoint(b.left+b.width/2,b.top+b.height/2);return !!e&&(e===p||p.contains(e))})()"
+        )
+        check(
+            "the pane at none paints the §9.17 sentence inside its box, 48 under the segment",
+            painted && paneBox != null && note != null && line != null && segment != null &&
+                note.height() > 0f && line.height() > 0f && paneBox.contains(note) && paneBox.contains(line) &&
+                abs(line.top - segment.bottom - 48f) <= 1.5f && hit &&
+                sentence == "Hold a tab’s card and drop it on another to group them",
+            "pane $paneBox, note $note, line $line, segment $segment, hit $hit, text '$sentence'"
+        )
+        finding("  (the empty room: pane $paneBox, note $note, sentence $line, segment $segment)")
         check("the header counts no group", textOf(COUNT) == "0 groups", "count '${textOf(COUNT)}'")
         SystemClock.sleep(600)
         still("deleted-empty")
@@ -425,7 +449,10 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         private const val GROUPS_PANE = "[data-testid=\"overview-groups\"]"
         private const val OPEN_SECTION = "[data-testid=\"overview-groups-open\"]"
         private const val SAVED_SECTION = "[data-testid=\"overview-groups-saved\"]"
-        private const val GROUPS_EMPTY = "[data-testid=\"overview-groups-empty\"]"
+        /** The pane's §9.17 note at none (`PhoneEmptyNote` in the pane's flow) and its one sentence. */
+        private const val GROUPS_EMPTY = "$GROUPS_PANE > .zen-phone-empty"
+        private const val EMPTY_LINE = "$GROUPS_EMPTY > p"
+        private const val SEGMENT = "[role=\"tablist\"].zen-v2-segment"
         private const val ROW = "$GROUPS_PANE .zen-phone-row"
         private const val RENAME_ROW = "[data-testid=\"overview-group-rename\"]"
         private const val COUNT = "[data-testid=\"overview-count\"]"

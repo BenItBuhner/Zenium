@@ -70,9 +70,17 @@ function tab(id: string, folderId: string, lastActiveAt = 0): Tab {
   } as unknown as Tab
 }
 
-/** The pane's rows for `folders`, their live members being the `tabs` that name them. */
+/**
+ * The pane's rows for `folders`, their live members being the `tabs` that name them – the
+ * private ones (`containerId: 'private'`) fed as the Private pane's, the way `TabOverview` does.
+ */
 function rowsOf(folders: Folder[], tabs: Tab[] = []): ReturnType<typeof groupRows> {
-  return groupRows(folders, (folderId) => tabs.filter((t) => t.folderId === folderId))
+  const isPrivate = (t: Tab): boolean => t.containerId === 'private'
+  return groupRows(
+    folders,
+    (folderId) => tabs.filter((t) => t.folderId === folderId && !isPrivate(t)),
+    (folderId) => tabs.filter((t) => t.folderId === folderId && isPrivate(t))
+  )
 }
 
 let root: Root | null = null
@@ -226,6 +234,38 @@ describe('the Groups pane (TAB-16)', () => {
     )
   })
 
+  it('keeps a group that private tabs alone fill off the pane – the Private pane’s – and counts a mixed one by its regular tabs', () => {
+    const privateTab = (id: string, folderId: string): Tab =>
+      ({ ...tab(id, folderId), containerId: 'private' }) as Tab
+    // Ghost: a folder the tablet's sidebar filled with private tabs alone; Later: no tab at all;
+    // Work: one regular tab beside a private one; Trip: saved pages and a private tab dropped in.
+    const trip = folder('trip', { savedTabs: [{ url: 'https://t.example/', title: 't' }] })
+    const { rows } = pane(
+      [folder('ghost'), folder('later'), folder('work'), trip],
+      [
+        privateTab('g1', 'ghost'),
+        privateTab('g2', 'ghost'),
+        tab('w1', 'work'),
+        privateTab('w2', 'work'),
+        privateTab('t1', 'trip')
+      ]
+    )
+    expect(rows.open.map((row) => [row.folder.id, row.kind, row.count])).toEqual([
+      ['later', 'empty', 0],
+      ['work', 'open', 1]
+    ])
+    expect(rows.saved.map((row) => [row.folder.id, row.kind, row.count])).toEqual([
+      ['trip', 'saved', 1]
+    ])
+    expect(texts('.zen-list-title')).toEqual(['Later', 'Work', 'Trip'])
+    expect(texts('.zen-overview-groups-aside')).toEqual(['2', '1'])
+    expect(all('.zen-phone-row').some((row) => row.textContent?.includes('Ghost'))).toBe(false)
+    // A pane of private-only groups alone is a pane at none.
+    pane([folder('ghost')], [privateTab('g1', 'ghost')])
+    expect(all('.zen-phone-row')).toHaveLength(0)
+    expect(q('.zen-overview-groups > .zen-phone-empty')).not.toBeNull()
+  })
+
   it('draws the group’s colour in the row’s glyph: a 12 px dot for an open group, a 2 px ring for a saved one', () => {
     pane(
       [
@@ -322,15 +362,54 @@ describe('the Groups pane (TAB-16)', () => {
     expect(uiStore.get().renamingFolderId).toBeNull()
   })
 
-  it('at none reads "No tab groups" in §9.17’s composition, no button', () => {
+  it('at none is a list’s §9.17 sentence – the phone panels’ note, in the pane’s flow under the segment, with height and inside the pane’s box', () => {
     pane([])
-    const empty = q<HTMLElement>('[data-testid="overview-groups-empty"]')!
-    expect(empty.querySelector('h2')?.textContent).toBe('No tab groups')
-    expect(empty.querySelector('h2')?.className).toContain('text-[22px]')
-    expect(empty.querySelector('p')?.className).toContain('text-[15px]')
-    expect(empty.querySelector('button')).toBeNull()
+    const paneEl = q<HTMLElement>('[data-testid="overview-groups"]')!
+    const note = q<HTMLElement>('.zen-overview-groups > .zen-phone-empty')!
+    expect(note).not.toBeNull()
+
+    // The FORM: `PhoneEmptyNote` – one sentence in one paragraph, sentence case, no full stop; no
+    // title-plus-description pair (the page form is the Private pane's, not a list's), no button
+    // (the grid is where a group is made), no row and no heading beside it.
+    expect(note.querySelectorAll('p')).toHaveLength(1)
+    expect(note.querySelector('h1, h2, h3')).toBeNull()
+    expect(note.querySelector('button')).toBeNull()
+    const sentence = note.querySelector('p')!.textContent!
+    expect(sentence).toBe('Hold a tab’s card and drop it on another to group them')
+    expect(sentence).toMatch(/^[A-Z]/)
+    expect(sentence).not.toMatch(/[.;!?]/)
     expect(all('.zen-phone-row')).toHaveLength(0)
     expect(all('.zen-v2-heading')).toHaveLength(0)
+
+    // The BOX. happy-dom lays nothing out, so the box is pinned by what makes it: the note is
+    // the pane's one child, IN FLOW – no `absolute`, no translate, no `flex-1` of a block parent
+    // (the pane root is a scrolling block, not a flex column) and no inline geometry – so it
+    // stands under the segment inside the pane's box like a row would, and its height is its
+    // padding plus its line boxes: the note's rule pads it 40 / 32 / 24 (`phonePanels.css`) and
+    // the pane's own rule lifts the top to 48, the first line's distance from the segment, which
+    // carries no air under it. The preview host's probe and the driver's claim read the painted
+    // rectangle itself.
+    expect(note.parentElement).toBe(paneEl)
+    expect(paneEl.childElementCount).toBe(1)
+    expect(paneEl.className).toContain('overflow-y-auto')
+    expect(paneEl.className.split(/\s+/)).not.toContain('flex')
+    expect(note.className).toBe('zen-phone-empty')
+    expect(note.getAttribute('style')).toBeNull()
+    expect(note.querySelector('p')!.attributes).toHaveLength(0)
+    const panels = readFileSync(resolve(__dirname, '../phonePanels.css'), 'utf8')
+    const noteRule = panels.slice(panels.indexOf('.zen-phone-empty {'))
+    const noteBody = noteRule.slice(0, noteRule.indexOf('}'))
+    expect(noteBody).toContain('display: flex')
+    expect(noteBody).toContain('flex-direction: column')
+    expect(noteBody).toContain('align-items: center')
+    expect(noteBody).toContain('padding: 40px 32px 24px')
+    expect(noteBody).toContain('text-align: center')
+    expect(noteBody).toContain('font-size: var(--v2-font-body)')
+    expect(noteBody).toContain('color: var(--v2-text-deemphasized)')
+    expect(noteBody).not.toContain('position')
+    expect(rule('.zen-overview-groups > .zen-phone-empty')).toContain('padding-top: 48px')
+    // Nothing of the old page form is left in the stylesheet to position it.
+    expect(css).not.toContain('.zen-overview-groups-empty')
   })
 })
 

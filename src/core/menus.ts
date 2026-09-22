@@ -1998,17 +1998,14 @@ export class Menus {
               }
             ]) as Template),
         { type: 'separator' },
-        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list).
-        // Where groups are saved (Android, TAB-16) a close keeps the group with its pages.
+        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list)
+        // with the folder. A touch host's group is saved instead, by `groupMenu` above.
         { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
         {
           label: count
             ? `Close Folder (${count} ${count === 1 ? 'Tab' : 'Tabs'})`
             : 'Delete Folder',
-          click: () =>
-            count && win.formFactor !== 'desktop'
-              ? this.browser.closeFolder(folderId, win)
-              : this.browser.deleteFolder(folderId, false)
+          click: () => this.browser.deleteFolder(folderId, false)
         }
       ],
       win,

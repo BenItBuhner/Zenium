@@ -468,6 +468,13 @@ describe('the card and group menus', () => {
       'Close Group (2 Tabs)',
       'Delete Group'
     ])
+    // Close Group keeps the group, saved with its pages (`folder.close`): the plain ink, as on
+    // every group menu; Delete Group alone takes the danger ink (v2 §6).
+    const items = [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')]
+    const ink = (label: string): string =>
+      items.find((el) => el.textContent?.startsWith(label))!.style.color
+    expect(ink('Close Group')).toBe('')
+    expect(ink('Delete Group')).toBe('var(--zen-danger)')
     // The colour swatches are a radio group, named for assistive technology; not menu rows.
     expect(document.querySelector('[role="radiogroup"][aria-label="Colour"]')).not.toBeNull()
   })
@@ -1377,7 +1384,13 @@ describe('the private pane', () => {
       'Tabs',
       'Groups'
     ])
+    // The list's name names the segments present, no more.
+    const tablist = (): string | null =>
+      host!.querySelector('[role="tablist"]')!.getAttribute('aria-label')
+    expect(tablist()).toBe('Tabs and groups')
     expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
+    render(mixed())
+    expect(tablist()).toBe('Tabs, groups and private tabs')
   })
 
   it('the regular pane shows the space without its private tabs; the private pane every private tab and no regular one', () => {
