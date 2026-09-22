@@ -2302,6 +2302,140 @@ async function scenarioWalkthrough() {
       return { address, reads, tooltip, owner, after, rows: rowsBefore }
     })
 
+    await s.step('settings-stacked-dialogs', async () => {
+      await s.reset()
+      // Two stacked desktop dialogs – a Settings item dialog and the Remove prompt over it – each
+      // paint in a stacking context of their own, ranked by slot index (design language v2 §9.24;
+      // the chassis rule `.zen-frame-dialogs-slot > * { isolation: isolate; z-index:
+      // sibling-index() }`). `sibling-index()` is Chromium 138+'s, so the unit test can only pin
+      // the rule's text; here the computed values are read – z-index 1 and 2, never `auto` – and
+      // a hit test in the overlap has to land in the upper dialog, never in the lower one's
+      // positioned children (the live bug the rule closes).
+      const page = s.chrome.locator('[data-testid="settings-page"]')
+      const rowsBefore = await s.sidebarTabCount()
+      if (IS_MAC) {
+        await s.press('Meta+,')
+      } else {
+        const button = s.chrome.locator('[data-zen-app-menu-button]').first()
+        await button.click({ timeout: 5000 })
+        const menu = s.chrome.locator('.zen-v2-menu[role="menu"]').first()
+        await menu.waitFor({ state: 'visible', timeout: 5000 })
+        await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click({ timeout: 5000 })
+        await menu.waitFor({ state: 'hidden', timeout: 5000 })
+      }
+      await page.first().waitFor({ state: 'visible', timeout: 10000 })
+      await s.settle()
+      await s.chrome.locator('.zen-settings-nav-item', { hasText: 'Search' }).first().click()
+      // An engine to open a dialog on: the "Add search engine" form dialog adds one.
+      await s.chrome.locator('[data-row="add-search-engine"] button').first().click()
+      const form = s.chrome.locator('[data-dialog="form:add-search-engine"]')
+      await form.waitFor({ state: 'visible', timeout: 5000 })
+      const name = 'Smoke Search'
+      await form.locator('#search-engine-name').fill(name)
+      await form.locator('#search-engine-url').fill('https://example.com/search?q=%s')
+      await form.getByRole('button', { name: 'Add', exact: true }).click()
+      await form.waitFor({ state: 'hidden', timeout: 5000 })
+      // The form's root leaves the slot with its fade; the ranks below count live roots only.
+      await waitFor(
+        () =>
+          s.chrome.evaluate(
+            () => !document.querySelector('.zen-frame-dialogs-slot > [data-leaving]')
+          ),
+        5000,
+        'the form dialog’s root gone from the slot'
+      )
+      const item = s.chrome.locator('[data-row^="search-engine:"]', { hasText: name }).first()
+      await item.waitFor({ state: 'visible', timeout: 5000 })
+      const itemId = await item.getAttribute('data-row')
+      await item.click()
+      const dialog = s.chrome.locator(`[data-dialog="item:${itemId}"]`)
+      await dialog.waitFor({ state: 'visible', timeout: 5000 })
+      await s.settle()
+      await dialog.locator(`[data-row="${itemId}:remove"]`).first().click()
+      const prompt = s.chrome.locator(`[data-dialog="confirm:${itemId}:remove"]`)
+      await prompt.waitFor({ state: 'visible', timeout: 5000 })
+      // Past the prompt's pop (its transform would be a stacking context of its own making).
+      await delay(400)
+      await s.settle()
+      const stack = await s.chrome.evaluate((id) => {
+        const slot = document.querySelector('.zen-frame-dialogs[data-open] .zen-frame-dialogs-slot')
+        if (!slot) return { error: 'no open dialog slot' }
+        const roots = [...slot.children].map((root) => {
+          const style = getComputedStyle(root)
+          return {
+            dialog: root.getAttribute('data-dialog'),
+            zIndex: style.zIndex,
+            isolation: style.isolation,
+            leaving: root.hasAttribute('data-leaving'),
+            inert: root.hasAttribute('inert')
+          }
+        })
+        const upper = slot.lastElementChild
+        const box = upper.getBoundingClientRect()
+        // The overlap: the prompt is centred over the item dialog, so its centre and its title
+        // corner both lie over the lower dialog's body.
+        const probe = (x, y) => {
+          const hit = document.elementFromPoint(x, y)
+          return {
+            x: Math.round(x),
+            y: Math.round(y),
+            inUpper: upper.contains(hit),
+            inLower: [...slot.children].some((root) => root !== upper && root.contains(hit)),
+            hit: hit
+              ? `${hit.tagName.toLowerCase()}.${[...hit.classList].slice(0, 2).join('.')}`
+              : null
+          }
+        }
+        return {
+          roots,
+          probes: [
+            probe(box.left + box.width / 2, box.top + box.height / 2),
+            probe(box.left + 24, box.top + 24)
+          ],
+          expected: [`item:${id}`, `confirm:${id}:remove`]
+        }
+      }, itemId)
+      if (stack.error) throw new Error(stack.error)
+      const live = stack.roots.filter((root) => !root.leaving)
+      const detail = { itemId, ...stack }
+      const fail = (why) => {
+        const err = new Error(`${why}: ${JSON.stringify(stack)}`)
+        err.detail = detail
+        throw err
+      }
+      if (live.map((root) => root.dialog).join(',') !== stack.expected.join(',')) {
+        fail('the slot does not hold the item dialog and its prompt, in that order')
+      }
+      if (live[0].zIndex !== '1' || live[1].zIndex !== '2') {
+        fail(
+          'the stacked dialog roots’ computed z-index is not 1 and 2 (sibling-index() unresolved?)'
+        )
+      }
+      if (!live.every((root) => root.isolation === 'isolate')) {
+        fail('a stacked dialog root is not a stacking context of its own (isolation)')
+      }
+      if (!live[0].inert || live[1].inert) {
+        fail('the lower dialog is not inert under the prompt (or the prompt is)')
+      }
+      if (!stack.probes.every((p) => p.inUpper && !p.inLower)) {
+        fail('a hit test in the overlap did not land in the upper dialog')
+      }
+      await s.shot('08b-settings-stacked-dialogs')
+      // The prompt's Remove takes the engine with it; both dialogs leave.
+      await prompt.getByRole('button', { name: 'Remove', exact: true }).click({ timeout: 5000 })
+      await prompt.waitFor({ state: 'hidden', timeout: 5000 })
+      await dialog.waitFor({ state: 'hidden', timeout: 5000 })
+      await item.waitFor({ state: 'hidden', timeout: 5000 })
+      await s.press(`${ACCEL}+w`)
+      await page.first().waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore,
+        8000,
+        `the Settings row gone (${rowsBefore} rows before)`
+      )
+      return detail
+    })
+
     await s.step('context-menu', async () => {
       await s.reset()
       const tab = (await s.tabs()).find((t) => t.url.startsWith(EXAMPLE_URL))

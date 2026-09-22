@@ -189,12 +189,17 @@ describe('FrameDialogHost', () => {
     expect(onScrim).toHaveBeenCalledTimes(1)
   })
 
-  it('closes every hosted dialog root in a stacking context of its own, ranked by slot index: two stacked never interleave (§9.24)', () => {
+  it('pins the rule text and the slot order that close every hosted dialog root in a stacking context of its own, ranked by slot index (§9.24) – the computed z-index and the paint order are the Linux desktop smoke’s "settings-stacked-dialogs" step’s', () => {
     // The live bug: a Settings form dialog and its prompt are siblings in the slot's one grid
     // cell, and a root was a stacking context only while its pop's transform ran – after it the
     // lower dialog's positioned children painted over the prompt. The prompt here sits before
     // the form in the tree and opens after it: the slot's order is the order of opening, since
-    // a portal appends to the slot as it mounts, and the rank is the slot's.
+    // a portal appends to the slot as it mounts, and the rank is the slot's. happy-dom computes
+    // no `sibling-index()` (Chromium 138+) and hit-tests nothing, so this test reaches only the
+    // rule's text and the roots' order; the packaged build's `getComputedStyle(root).zIndex`
+    // (1 and 2, not `auto`), `isolation: isolate` on both roots and an `elementFromPoint` probe
+    // in the overlap landing in the upper dialog are asserted by the CI smoke
+    // (.github/smoke/smoke.mjs, the walkthrough's "settings-stacked-dialogs" step).
     const Page = ({ prompt }: { prompt: boolean }): JSX.Element => (
       <>
         <FrameDialogHost frame />
