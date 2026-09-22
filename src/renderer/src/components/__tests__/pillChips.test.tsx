@@ -680,6 +680,78 @@ describe('desktop pill (NavRow)', () => {
  * the widths the pill measures before its first paint (the address at its natural width in the
  * probe, the width the field is given) are set here.
  */
+/*
+ * The tablet keeps private browsing in tabs (`capabilities.privateTabs`), so the desktop pill
+ * meets a private tab in a regular window: the mask takes the leading slot, as it does in the
+ * desktop's private window; and under #250's lock the pill says nothing of the page (INC-05, the
+ * phone pill's rule) – the leak W4-11 closes: the sidebar's rows under the veil, the pill above
+ * them still reading the private page's address.
+ */
+describe('desktop pill on a tablet’s private tab', () => {
+  const privatePage = tab('https://example.com/some/path', {
+    containerId: PRIVATE_CONTAINER_ID,
+    readerable: true
+  })
+  const tablet = (t: Tab): UIState => {
+    const s = state(t)
+    return { ...s, capabilities: { ...s.capabilities, privateTabs: true } } as UIState
+  }
+
+  it('puts the mask in the leading slot in place of the site icon', () => {
+    const el = render(<NavRow state={tablet(privatePage)} tab={privatePage} compact={false} />)
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    expect(pill.querySelector('svg.lucide-venetian-mask.order-first')).not.toBeNull()
+    expect(pill.querySelector('[aria-label="Site information"]')).toBeNull()
+    expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
+  })
+
+  it('locked, reads "Private tab" behind the mask with no address, no chip and no menu; its click asks the unlock', async () => {
+    const { applyPrivateLock, privateLockStore, resetPrivateLock, setPrivateLockHost } =
+      await import('@renderer/lib/privateLock')
+    // The host's prompt, which the user then cancels: the lock stands.
+    const unlock = vi.fn(async (_reason: string) => ({ locked: true }))
+    setPrivateLockHost({ unlock, verify: async () => false })
+    try {
+      act(() => applyPrivateLock({ locked: true, screenLock: true }))
+      const el = render(<NavRow state={tablet(privatePage)} tab={privatePage} compact={false} />)
+      const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+      expect(pill.textContent).toBe('Private tab')
+      expect(pill.getAttribute('title')).toBe('Private tab')
+      expect(pill.hasAttribute('data-zen-menu')).toBe(false)
+      expect(pill.querySelectorAll('svg.lucide-venetian-mask')).toHaveLength(1)
+      expect(pill.querySelector('[data-pill-chip]')).toBeNull()
+      expect(labels(focusable(pill))).toEqual(['Private tab locked, unlock'])
+      expect(pill.querySelector('[data-private-locked]')).not.toBeNull()
+
+      await act(async () => {
+        focusable(pill)[0].click()
+        await vi.waitFor(() => expect(unlock).toHaveBeenCalledTimes(1))
+      })
+      // The unlock was asked of the host, not the URL bar – which would show the address.
+      expect(uiStore.get().urlbar.open).toBe(false)
+      expect(privateLockStore.get().locked).toBe(true)
+    } finally {
+      setPrivateLockHost(null)
+      act(() => resetPrivateLock())
+    }
+  })
+
+  it('reads the address again once the lock lifts', async () => {
+    const { applyPrivateLock, resetPrivateLock } = await import('@renderer/lib/privateLock')
+    try {
+      act(() => applyPrivateLock({ locked: true, screenLock: true }))
+      const el = render(<NavRow state={tablet(privatePage)} tab={privatePage} compact={false} />)
+      const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+      expect(pill.textContent).toBe('Private tab')
+      act(() => resetPrivateLock())
+      expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
+      expect(pill.querySelector('[data-private-locked]')).toBeNull()
+    } finally {
+      act(() => resetPrivateLock())
+    }
+  })
+})
+
 describe('desktop pill on an internal page', () => {
   const settings = tab('zen://settings/privacy', { title: 'Settings' })
   const widths = { probe: 0, field: 0 }
