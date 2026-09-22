@@ -213,6 +213,12 @@ describe('the split group row', () => {
     expect(a!.querySelector('.zen-tab-sleeping')).toBeNull()
     expect(a!.dataset.discarded).toBe('true')
     expect(loose!.querySelector('.zen-tab-sleeping')).not.toBeNull()
+    // The hooks the segment's container queries style: the title it drops under 56 px of room
+    // and the favicon it centres in its place (the stylesheet tests below).
+    expect(a!.querySelector('[data-testid="tab-title"]')?.classList.contains('zen-tab-title')).toBe(
+      true
+    )
+    expect(a!.querySelector('.zen-tab-favicon')).not.toBeNull()
   })
 
   it('shows a split with one pane in the list as a plain row', () => {
@@ -282,6 +288,34 @@ describe('the split group row stylesheet (§9.35)', () => {
     expect(rule(".zen-split-row[data-active='true'] .zen-split-hairline")).toContain(
       'visibility: hidden'
     )
+  })
+
+  it('drops a segment’s title for the favicon alone, centred, under 56 px of title room (§9.35)', () => {
+    // The query reads the segment's content box: the title's 56 after the 16 favicon and the
+    // segment rule's own 8 gap is 80; the padding (8 before the favicon, 4 after the close) is
+    // outside the box, and the favicon-only form undoes its difference to sit on the segment's
+    // axis. A container's queries cannot style the container, so the form is its children's.
+    const seg = rule('.zen-split-row > .zen-tab')
+    expect(seg).toContain('gap: 8px')
+    expect(seg).toContain('--zen-split-seg-pad-start: 8px')
+    expect(seg).toContain('--zen-split-seg-pad-end: 4px')
+    expect(seg).toContain(
+      'padding: 0 var(--zen-split-seg-pad-end) 0 var(--zen-split-seg-pad-start)'
+    )
+    const threshold = 56 + 16 + 8
+    const at = block.indexOf(`@container (width < ${threshold}px)`)
+    expect(at, `the ${threshold} px query`).toBeGreaterThanOrEqual(0)
+    const form = block.slice(at, block.indexOf('@container (width < 70px)'))
+    expect(form).toMatch(/\.zen-split-row > \.zen-tab \.zen-tab-title \{\s+display: none;/)
+    expect(form).toMatch(
+      /\.zen-split-row:not\(\.zen-split-row-column\) > \.zen-tab \.zen-tab-favicon \{\s+margin-inline: auto;\s+translate: calc\(\(var\(--zen-split-seg-pad-end\) - var\(--zen-split-seg-pad-start\)\) \/ 2\) 0;/
+    )
+    // The form never styles the segment itself (it would not apply), and no rule outside the
+    // query hides a segment's title.
+    expect(form).not.toMatch(/\.zen-split-row > \.zen-tab \{/)
+    expect(block.slice(0, at)).not.toMatch(/\.zen-tab-title \{[^}]*display: none/)
+    // Below the title's room and above the close's: the two thresholds are independent.
+    expect(threshold).toBeGreaterThan(70)
   })
 
   it('hides the close under 70 px a segment and stacks the rail form with a 2 px inset outline', () => {

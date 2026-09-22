@@ -1257,13 +1257,19 @@
   .zen-split-row[data-active='true'] {
     background: var(--v2-window-fill);
   }
-  /* A segment: `flex: 1` at its own width, no fill of its own – the row's hover is the group's. */
+  /*
+   * A segment: `flex: 1` at its own width, no fill of its own – the row's hover is the group's.
+   * Its padding is 8 before the favicon and 4 after the close, named once for the favicon-only
+   * form below, which has to undo the difference to centre.
+   */
   .zen-split-row > .zen-tab {
+    --zen-split-seg-pad-start: 8px;
+    --zen-split-seg-pad-end: 4px;
     flex: 1 1 0;
     min-width: 0;
     height: auto;
     gap: 8px;
-    padding: 0 4px 0 8px;
+    padding: 0 var(--zen-split-seg-pad-end) 0 var(--zen-split-seg-pad-start);
     border-radius: 8px;
     container-type: inline-size;
   }
@@ -1287,6 +1293,26 @@
   }
   .zen-split-row[data-active='true'] .zen-split-hairline {
     visibility: hidden;
+  }
+  /*
+   * A segment's title truncates from the end while it has 56 px of room after the favicon
+   * (about eight characters at 14) and drops for the favicon alone, centred, below that – Zen's
+   * rail form for the segment, since a title cut to three letters names nothing (§9.35). The
+   * query reads the segment's content box (the container's): the 56 after the 16 favicon and the
+   * 8 gap is 80, the segment's own padding outside it. A container's queries cannot style the
+   * container, so the form is its children's: the title gone, the favicon centred by its auto
+   * margins and moved half the padding's difference (2 px) back onto the segment's own axis,
+   * which the 8 / 4 padding puts 2 px off the content box's. The rail column keeps its own
+   * centring (`justify-center`, no title drawn) and takes no nudge.
+   */
+  @container (width < 80px) {
+    .zen-split-row > .zen-tab .zen-tab-title {
+      display: none;
+    }
+    .zen-split-row:not(.zen-split-row-column) > .zen-tab .zen-tab-favicon {
+      margin-inline: auto;
+      translate: calc((var(--zen-split-seg-pad-end) - var(--zen-split-seg-pad-start)) / 2) 0;
+    }
   }
   /* The close shows on hover only where the segment has 70 px for it. */
   @container (width < 70px) {

@@ -22,8 +22,11 @@ interface Props {
  * A split group's row in the sidebar (design language v2 §9.35; Zen's `zen-split-view.css`):
  * the split is one row, not stacked rows – its tabs side by side in one container at the tab
  * row's height, each a `flex: 1` segment (`TabItem` in its segment form) with its favicon and
- * title truncating at its own width and the close on hover only where the segment has 70 px, a
- * 1 × 16 `--zen-border` hairline centred on each shared edge. The container takes the hover fill
+ * title – the title truncating from the end while it has 56 px of room after the favicon and
+ * dropped for the favicon alone, centred, below that (Zen's rail form for the segment; the
+ * stylesheet's container query on the segment's 80 px content box) – and the close on hover
+ * only where the segment has 70 px, a 1 × 16 `--zen-border` hairline centred on each shared
+ * edge. The container takes the hover fill
  * as one shape and, when the group holds the active tab, the selected fill as one shape with the
  * segments at 60 % over it and no hairlines: the rim reads as the group and the segments as its
  * tabs. No frame in the expanded sidebar, no layout glyph, no chip in the pill – the layout is on
