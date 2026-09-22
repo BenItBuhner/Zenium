@@ -166,6 +166,7 @@ export function androidCapabilities({
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,
     secureDns: false,
+    quitsThroughCore: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
     pageTabs: true,
@@ -1480,9 +1481,14 @@ export class AndroidPlatform implements Platform {
         return
       }
       case 'pause':
+        // The process may not come back from the background: a clear on exit is owed from here
+        // (`SiteDataService.noteExiting` writes the marker the next launch runs; `resume` below
+        // takes it back when the app does come back).
+        browser.siteData.noteExiting()
         browser.flushSync()
         return
       case 'resume':
+        browser.siteData.noteResumed()
         // Re-apply the last layout, so every page view is placed and shown for the window the
         // chrome returns to; Kotlin asks its WebViews for a fresh frame alongside.
         this.zenWindow?.relayout()

@@ -1,0 +1,119 @@
+name: Android reduced motion demo
+
+# Records reduced motion as NO transition (design language v2 §11.3 as ruled: a shortened
+# transition still draws its start value until the compositor starts it – a frame of stale
+# geometry, or the new tab page hidden 1.0–1.3 s after the dismissal's commit in #243's runs) on
+# a hardware-accelerated Android emulator and uploads the videos, the stills, the findings and
+# the per-frame rows. FakeboxMorphReducedDemo runs in a fresh process under
+# animator_duration_scale 0 (android-ntp-morph-demo.sh's `reduced` act: the profile seeded light,
+# then dark) and records the new tab page field's morph at both docks and the menu sheet's open
+# and close, sampling the chrome once per animation frame; FakeboxMorphJudge rules on the frames:
+# the fade in place (nothing travels, the value jumps, the omnibox fades over more than one frame),
+# the page visible on the commit's first frame and after, no frame of stale geometry (every drawn
+# box held frame to frame, the content frame at scale 1), the sheet where the spring jumped it and
+# its 120 ms fade, and what the stylesheet resolves to on the frame's elements (no shortened
+# duration left; every fade that runs opacity-only at 120 ms). A verdict that fails fails the run.
+#
+# Two acts, in parallel, each on its own emulator:
+#  - after:  this branch's stylesheet – the run that must pass.
+#  - before: main's main.css swapped in over this branch's build (the chrome rebuilt in the setup
+#            step: `git show origin/main:src/renderer/src/assets/main.css`, `vite build`, the debug
+#            APK assembled again), the same driver – the before stills, and the old rule caught by
+#            the judge (its `0.01ms` durations under 'the declarations', the stale frames where the
+#            emulator drew them). EXPECTED TO FAIL: the failure is the evidence, not a regression.
+#
+# Dispatch-only, like the other demos: about a quarter of an hour per act, and it says nothing
+# about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml. One more boot per act when the emulator itself went away under the
+# driver, never when the driver failed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-reduced-motion-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  after:
+    name: this branch's stylesheet (light, then dark)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ntp-morph-demo.sh
+      script-env: |
+        MORPH_ACT=reduced
+        MORPH_OUT=artifacts/android-reduced-motion-demo/after
+        MORPH_STYLESHEET=after
+      artifact-name: android-reduced-motion-demo-after
+      artifact-path: artifacts/android-reduced-motion-demo/
+      timeout-minutes: 60
+
+  after-again:
+    name: this branch's stylesheet, second boot
+    needs: after
+    if: ${{ failure() && needs.after.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ntp-morph-demo.sh
+      script-env: |
+        MORPH_ACT=reduced
+        MORPH_OUT=artifacts/android-reduced-motion-demo/after
+        MORPH_STYLESHEET=after
+      artifact-name: android-reduced-motion-demo-after-second-boot
+      artifact-path: artifacts/android-reduced-motion-demo/
+      timeout-minutes: 60
+
+  before:
+    name: main's stylesheet (light, then dark; expected to fail its verdicts)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ntp-morph-demo.sh
+      script-env: |
+        MORPH_ACT=reduced
+        MORPH_OUT=artifacts/android-reduced-motion-demo/before
+        MORPH_STYLESHEET=before
+      # main's stylesheet over this branch's chrome (the branch changes no chrome code but comments
+      # and the stylesheet): the chrome bundle built again and the debug APK assembled again with
+      # it. The shared desktop page's CSS (src/shared/newTabPage.ts) is not in the Android bundle.
+      setup-script: |
+        set -euo pipefail
+        git fetch --depth=1 origin main
+        echo "main's stylesheet at $(git rev-parse origin/main)"
+        git show origin/main:src/renderer/src/assets/main.css > src/renderer/src/assets/main.css
+        git diff --stat
+        npx vite build -c vite.android.config.ts
+        (cd android && ./gradlew assembleDebug -PskipWeb --no-daemon)
+        git checkout -- src/renderer/src/assets/main.css
+        mkdir -p artifacts/android-reduced-motion-demo
+        git rev-parse origin/main > artifacts/android-reduced-motion-demo/before-stylesheet-sha.txt
+      artifact-name: android-reduced-motion-demo-before
+      artifact-path: artifacts/android-reduced-motion-demo/
+      timeout-minutes: 60
+
+  before-again:
+    name: main's stylesheet, second boot
+    needs: before
+    if: ${{ failure() && needs.before.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ntp-morph-demo.sh
+      script-env: |
+        MORPH_ACT=reduced
+        MORPH_OUT=artifacts/android-reduced-motion-demo/before
+        MORPH_STYLESHEET=before
+      setup-script: |
+        set -euo pipefail
+        git fetch --depth=1 origin main
+        echo "main's stylesheet at $(git rev-parse origin/main)"
+        git show origin/main:src/renderer/src/assets/main.css > src/renderer/src/assets/main.css
+        git diff --stat
+        npx vite build -c vite.android.config.ts
+        (cd android && ./gradlew assembleDebug -PskipWeb --no-daemon)
+        git checkout -- src/renderer/src/assets/main.css
+        mkdir -p artifacts/android-reduced-motion-demo
+        git rev-parse origin/main > artifacts/android-reduced-motion-demo/before-stylesheet-sha.txt
+      artifact-name: android-reduced-motion-demo-before-second-boot
+      artifact-path: artifacts/android-reduced-motion-demo/
+      timeout-minutes: 60

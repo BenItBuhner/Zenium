@@ -4,7 +4,13 @@ import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
 import { Browser } from '../../../core/browser'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../../../core/platform'
 import { applyRemote } from '../apply'
-import { SETTINGS_RECORD_ID, collectLocal, defaultScope, type SyncRecord } from '../records'
+import {
+  SETTINGS_RECORD_ID,
+  SITE_DATA_RECORD_ID,
+  collectLocal,
+  defaultScope,
+  type SyncRecord
+} from '../records'
 
 function memoryIo(): StoreIO {
   const files: Record<string, string> = {}
@@ -161,5 +167,43 @@ describe('applyRemote: the settings record and the new tab page', () => {
     expect(data).not.toHaveProperty('newTabDevice')
     expect(JSON.stringify(data)).not.toContain('mine.example')
     expect(JSON.stringify(data)).not.toContain('gone.example')
+  })
+
+  it('takes a synced site-data record whole through the service, ignoring a stray id or a tombstone', () => {
+    const b = browser()
+    b.siteData.add('allow', 'mine.example')
+    const remote = {
+      blockAll: true,
+      allow: [],
+      clearOnExit: ['[*.]shop.example'],
+      block: ['never.example', 'bad/']
+    }
+    applyRemote(b, [
+      { id: SITE_DATA_RECORD_ID, type: 'site-data', data: remote, modified: 2000, deleted: false }
+    ])
+    expect(b.siteData.policy()).toEqual({
+      blockAll: true,
+      allow: [],
+      clearOnExit: ['[*.]shop.example'],
+      block: ['never.example']
+    })
+    applyRemote(b, [
+      { id: 'other', type: 'site-data', data: { blockAll: false }, modified: 3000, deleted: false },
+      { id: SITE_DATA_RECORD_ID, type: 'site-data', data: null, modified: 3000, deleted: true }
+    ])
+    expect(b.siteData.policy().blockAll).toBe(true)
+    // The local copy is what the next collection publishes.
+    const published = collectLocal(
+      {
+        model: b.state.model,
+        settings: b.state.settings,
+        shortcutOverrides: {},
+        bookmarks: [],
+        boosts: [],
+        siteData: b.siteData.policy()
+      },
+      defaultScope()
+    ).get(SITE_DATA_RECORD_ID)
+    expect(published?.data).toEqual(b.siteData.policy())
   })
 })

@@ -32,9 +32,14 @@ class FakeboxMorphDemo : FakeboxMorphDemoBase(scrub = false, reduced = false, sh
 
 /**
  * The same tap and dismissal at both docks in a fresh process under `animator_duration_scale 0`
- * (the wrapper script sets it between drivers): the spring's part is a 120 ms fade in place. The
- * driver refuses to record when the WebView does not report `prefers-reduced-motion`
- * ([FakeboxMorphDemoBase.REDUCED_MOTION_NOT_REPORTED]).
+ * (the wrapper script sets it between drivers), and the menu sheet opened and closed at the bottom
+ * dock: the spring's part is a 120 ms fade in place, and reduced motion is no transition (§11.3) –
+ * every scene judged for the page visible on the commit's first frame, no frame of stale geometry,
+ * nothing shortened in the stylesheet and the kept fades opacity-only at 120 ms. The driver
+ * refuses to record when the WebView does not report `prefers-reduced-motion`
+ * ([FakeboxMorphDemoBase.REDUCED_MOTION_NOT_REPORTED]). The `theme` argument seeds the profile
+ * light or dark (`android-reduced-motion-demo.yml` records both, on the branch's stylesheet and
+ * on main's).
  *
  * Handshake under `files/ntp-morph-reduced-demo/`; stills and findings `morph-reduced-*`.
  */
