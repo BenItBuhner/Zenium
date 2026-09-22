@@ -301,7 +301,7 @@ class FrameStatsTest {
         assertEquals("within", o.getString("verdict"))
         val lines = traced.table().lines()
         assertTrue(lines[0], lines[0].endsWith("(provisional): within (gated on trace)"))
-        assertEquals("  trace: 12 main-thread frames in 1200 ms; main-thread ms/frame mean 6.0 max 14.0 p95 12.0; per frame: layouts 0.50 (6), paints 0.25 (3), style recalcs 1.00 (12), layer updates 2.0 (24); long tasks 0 (longest 14 ms), busy 90 ms, script 3 ms", lines[1])
+        assertEquals("  trace: 12 main-thread frames in 1200 ms; main-thread ms/frame mean 6.0 max 14.0 p95 12.0; per frame: layouts 0.50 (6), paints 0.25 (3), style recalcs 1.00 (12), layer updates 2.0 (24); long tasks 0 (longest 14 ms), busy 90 ms: script 3, style 0, layout 0, paint 0 ms", lines[1])
         assertTrue(lines[2].startsWith("  sampled 7 frames"))
     }
 

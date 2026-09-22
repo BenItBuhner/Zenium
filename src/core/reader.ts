@@ -2,8 +2,9 @@ import type { Tab } from '../shared/types'
 import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-import { readerPage } from './readerPage'
+import { readerPage, type ReaderShown } from './readerPage'
 import { readerPreferencesPatch, type ReaderPreferences } from '../shared/reader'
+import { renderArticleHtml, splitArticleHtml, type ArticleSplit } from './translate/articleHtml'
 
 export const READER_URL_PREFIX = 'zen://reader'
 
@@ -22,6 +23,34 @@ export interface ReaderArticle {
   length: number
   lang: string | null
   dir: 'ltr' | 'rtl' | null
+  /** `content` in translatable units (CT-36), made the first time the document is rendered. */
+  split?: ArticleSplit | null
+  /** The article's translation while one stands (`TranslateService.translateReader`). */
+  translation?: ReaderArticleTranslation | null
+}
+
+/**
+ * The reader article translated in the core (CT-36): per unit of the split the translated run
+ * (null while the engine has not answered for it), the title, and whether the document shows the
+ * translation or – the Show original toggle – the article as written, the translation kept.
+ */
+export interface ReaderArticleTranslation {
+  /** Registry codes (`es`, `zh-Hans`). */
+  source: string
+  target: string
+  title: string | null
+  units: (string | null)[]
+  showOriginal: boolean
+}
+
+/** The article id a `zen://reader` URL names, null for any other URL. */
+export function readerArticleId(url: string): string | null {
+  if (!url.startsWith(READER_URL_PREFIX)) return null
+  try {
+    return new URL(url).searchParams.get('id')
+  } catch {
+    return null
+  }
 }
 
 /** What Readability's `parse()` returns, before the service cleans and stores it. */
@@ -64,7 +93,59 @@ export class ReaderService {
   /** HTML of the `zen://reader` page for an article id (null once the article is gone). */
   pageHtml(id: string): string | null {
     const article = this.articles.get(id)
-    return article ? readerPage(article, this.preferences()) : null
+    return article ? readerPage(article, this.preferences(), this.shown(article)) : null
+  }
+
+  /** The article's units (CT-36): split once, kept with it. */
+  split(article: ReaderArticle): ArticleSplit {
+    return (article.split ??= splitArticleHtml(article.content))
+  }
+
+  /** The unit's HTML as the document shows it: the translation where one stands and shows, else as written. */
+  shownUnit(article: ReaderArticle, id: number): string {
+    const translation = article.translation
+    const translated = translation && !translation.showOriginal ? translation.units[id] : null
+    return translated ?? this.split(article).units[id]?.html ?? ''
+  }
+
+  /**
+   * What the document shows of the article (CT-36): the content with every unit as it stands
+   * (translated where the translation shows), the title, the language – the translation's
+   * target while it shows, else the article's own. What the page renders from, and what read
+   * aloud speaks when the document does not answer (`ReadAloudService.readerText`).
+   */
+  shown(article: ReaderArticle): ReaderShown {
+    const translation = article.translation ?? null
+    const translated = translation !== null && !translation.showOriginal
+    return {
+      content: renderArticleHtml(this.split(article), (id) => this.shownUnit(article, id)),
+      title: (translated ? translation.title : null) ?? article.title,
+      lang: translated ? translation.target : article.lang
+    }
+  }
+
+  /** The article a tab's reader document shows, undefined for any other tab. */
+  articleOf(tabId: string): ReaderArticle | undefined {
+    const tab = this.browser.tabs.tab(tabId)
+    const id = tab ? readerArticleId(tab.url) : null
+    return id ? this.articles.get(id) : undefined
+  }
+
+  /**
+   * Show the article's translation (or, `null`, the article as written again) in the tab's open
+   * reader document (CT-36): the units named (every one when omitted), the title and the language
+   * as they stand now, swapped in place through `window.zenReaderShow`. A fresh load renders the
+   * same from `pageHtml`.
+   */
+  pushShown(tabId: string, article: ReaderArticle, unitIds?: readonly number[]): void {
+    const view = this.browser.tabs.view(tabId)
+    if (!view) return
+    const split = this.split(article)
+    const ids = unitIds ?? split.units.map((unit) => unit.id)
+    const units = ids.map((id) => [id, this.shownUnit(article, id)] as const)
+    const shown = this.shown(article)
+    const call = `window.zenReaderShow && window.zenReaderShow(${JSON.stringify(units)}, ${JSON.stringify(shown.title)}, ${JSON.stringify(shown.lang ?? '')})`
+    void view.executeJavaScript(call).catch(() => undefined)
   }
 
   /** The text preferences every reader page is rendered with (Settings, persisted). */
@@ -217,7 +298,9 @@ export class ReaderService {
       content: sanitizeArticleHtml(raw.content),
       length: raw.length ?? raw.content.length,
       lang: raw.lang ?? null,
-      dir: raw.dir === 'rtl' ? 'rtl' : raw.dir === 'ltr' ? 'ltr' : null
+      dir: raw.dir === 'rtl' ? 'rtl' : raw.dir === 'ltr' ? 'ltr' : null,
+      split: null,
+      translation: null
     }
     this.articles.set(id, article)
     // Keep memory bounded: articles are only needed while their tab shows them.
