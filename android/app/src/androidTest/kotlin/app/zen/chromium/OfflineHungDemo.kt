@@ -185,9 +185,14 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         claim(overview, "Show tabs opened the tab overview")
         SystemClock.sleep(1_500)
         shot("08-show-tabs-overview")
-        back()
-        claim(awaitSurface(false, 8_000), "back from the overview returns to the crash page")
-        SystemClock.sleep(800)
+        // The back that closes the overview would walk the tab's history instead were the overview
+        // not up (the crash page back to the page it stands for), and the Reload claim below would
+        // then read a page that came back on its own: the back is the overview's alone.
+        if (overview) {
+            back()
+            claim(awaitSurface(false, 8_000), "back from the overview returns to the crash page")
+            SystemClock.sleep(800)
+        }
         touchPageControl(RELOAD_LABEL)
         claim(awaitPage("/notes", 20_000), "Reload on the repeat variant brought the page back (${pageState()})")
 

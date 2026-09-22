@@ -283,6 +283,28 @@ describe('a renderer that goes away in front of the user', () => {
     expect(crashPageUrl('CRASHED', PAGE)).toBe(errorPageUrl(CRASH_ERROR_CODE, 'CRASHED', PAGE))
   })
 
+  it("opens the tab switcher for the repeat variant's Show tabs, from the sad tab alone", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+    const overviews = (): number => f.sent.filter((e) => e.name === 'overview.open').length
+
+    // A live page posting the crash page's action is ignored: the switcher is the sad tab's ask.
+    view.events.onPageMessage({ type: 'interstitial', action: 'show-tabs', url: PAGE })
+    expect(overviews()).toBe(0)
+
+    view.events.onCrashed('crashed', undefined, { repeat: true })
+    view.events.onNavigated(view.loads.at(-1)!, false)
+    expect(f.browser.tabs.isSadTab(f.browser.tabs.tab(tab.id)!)).toBe(true)
+    const loads = view.loads.length
+    view.events.onPageMessage({ type: 'interstitial', action: 'show-tabs', url: PAGE })
+    expect(overviews()).toBe(1)
+    // The action is the switcher's alone: no warning page's proceed or back is taken for it.
+    expect(view.loads.length).toBe(loads)
+  })
+
   it("writes the tab's own theme accent into the page's URL, and the private window's in a private tab (§9.11)", () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
