@@ -98,6 +98,7 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
 
   const { area, contentHidden } = useLayoutReporter(
     viewportRef,
+    frameRef,
     sidePanelRef,
     state,
     ui,

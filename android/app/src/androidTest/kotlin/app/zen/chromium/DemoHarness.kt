@@ -359,6 +359,41 @@ abstract class DemoHarness(
 
     private fun findNode(label: String): AccessibilityNodeInfo? = findNode { it == label }
 
+    /**
+     * A control of the phone bar's pill by its label – the site-information glyph, the lock, a
+     * chip – as the CLICKABLE node reading `label` whose bounds lie in the pill's row, polled for
+     * up to `timeoutMs`; null when none shows. [findByLabel] walks the whole window breadth first,
+     * the pages' WebViews included, and answers the shallowest match: a page that carries the
+     * same words answers before the pill once the pill's stops sit deeper in the chrome's tree
+     * than the page's text (#237 made the pill one TalkBack stop, #260 keeps its three stops in
+     * the pill's run). The recede demo's page has a table cell reading "Site information" a row
+     * under its fold; its bounds, clipped to the page's edge, put the finger on the pill's
+     * top-left corner – the address stop – and the URL field opened where the site-information
+     * sheet was expected (PERF-4's main-tip runs). A page's cell is neither clickable nor in the
+     * pill's row. The row is the pill's as it stands now (the `Address` stop, found afresh: the
+     * bar may have changed edges since [measure]), else the pill measured at the start.
+     */
+    protected fun pillControl(label: String, timeoutMs: Long = 4_000): AccessibilityNodeInfo? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        val reads = labelled { it == label }
+        while (true) {
+            val row = findByLabelPrefix(PILL_LABEL) ?: pill
+            val node = findNodeWhere { node ->
+                node.isClickable && reads(node) &&
+                    Rect().also { node.getBoundsInScreen(it) }.let { !it.isEmpty && it.top < row.bottom && it.bottom > row.top }
+            }
+            if (node != null) return node
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(200)
+        }
+    }
+
+    /** A node's class, label, bounds and clickability, for a driver's log of what a finger was aimed at. */
+    protected fun describeNode(node: AccessibilityNodeInfo?): String =
+        node?.let {
+            "${it.className} '${it.text ?: it.contentDescription}' ${Rect().also { r -> it.getBoundsInScreen(r) }} clickable=${it.isClickable}"
+        } ?: "nothing"
+
     /** The first node (breadth-first) whose label or text satisfies `matches`, with its state. */
     protected fun findNode(matches: (String) -> Boolean): AccessibilityNodeInfo? =
         findNodes(matches).firstOrNull()
