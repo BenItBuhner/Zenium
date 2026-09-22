@@ -91,7 +91,8 @@ except Exception:
 want = sys.argv[2]
 button = group = None
 for n in root.iter('node'):
-    d = n.get('content-desc') or ''
+    # The API 34 image's WebView reports a control's accessible name as text, not content-desc.
+    d = n.get('content-desc') or n.get('text') or ''
     if d.startswith('Address,') and button is None:
         button = n
     elif d == 'Address' and group is None:
@@ -103,7 +104,7 @@ if n is None:
     sys.exit(0)
 m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', n.get('bounds') or '')
 if m:
-    print(*m.groups(), n.get('content-desc'))
+    print(*m.groups(), n.get('content-desc') or n.get('text'))
 PY
 }
 
@@ -182,6 +183,13 @@ wait_pill() { # $1 = tree file
         # shellcheck disable=SC2086
         adb shell input tap ${btn% *}
         sleep 2
+        continue
+      fi
+      # The omnibox left open by the onboarding's last step (a focused field, no pill): back it out.
+      if [[ $(field_state "$f") == focusedEditText=yes* ]]; then
+        note "a field is focused and no pill shows; pressing BACK"
+        adb shell input keyevent KEYCODE_BACK
+        sleep 1.5
         continue
       fi
     fi
