@@ -30,6 +30,7 @@ import {
   type BarScrollPayload,
   type BarScrollPhase
 } from '@renderer/lib/barHide'
+import { setFullscreenHideHost } from '@renderer/lib/fullscreenHide'
 import {
   dispatchPullEvent,
   setPullHost,
@@ -344,6 +345,9 @@ function syncBarHide(bridge: Bridge, boot: BootInfo): void {
     note: (reason) => console.debug(`bar hide: ${reason}`)
   })
   setBarHideTouchExploration(boot.touchExploration === true)
+  // The bar leaving around a page's fullscreen (`lib/fullscreenHide.ts`, MOT-32): the host
+  // starts its reveal of the fullscreen layer on the same spring as the bar sets out.
+  setFullscreenHideHost({ hiding: () => bridge.post('chrome.fullscreenHiding', {}) })
 }
 
 /**

@@ -7,6 +7,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -250,6 +251,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * (MED-01, v2 §11.5). [MainActivity] carries its word on every `insets`.
      */
     val landing = FullscreenLanding()
+    /** The fullscreen layer's way in: clipped to the page's card, spreading as the chrome's bar leaves (MOT-32). */
+    val reveal = FullscreenReveal(fullscreenLayer, { Rect(0, 0, root.width, root.height) })
     override var immersive = false
         private set
     /**
@@ -725,6 +728,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // The bar that hides on scroll says where it is (per frame while it moves) or that it
             // may not hide: every page's edge on the bar's side follows (see `TabHost.place`).
             "chrome.setBarHide" -> { tabs.setBarHide(BarHideFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
+            // The bar is translating off for a page's fullscreen: the fullscreen layer's clip spreads with it (MOT-32).
+            "chrome.fullscreenHiding" -> { reveal.onChromeHiding(); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "window.setSecure" -> { setPrivateSurface(args.bool("secure")); reply(null) }
@@ -973,6 +978,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     override fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback) {
         if (fullscreenTab != null) exitFullscreen(fullscreenTab!!)
+        // The page's card as it stands, for the layer to spread from (MOT-32); a view filling the
+        // window (picture-in-picture) is the window already, and nothing spreads.
+        val card = tab.visibleFrame()
+        val cardRadius = tab.radiusPx
         fullscreenTab = tab
         fullscreenCallback = callback
         fullscreenLayer.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -982,6 +991,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         setSystemBarsHidden(true)
         // The fullscreen layer covers the picture-in-picture window as it is; the tab's view need not.
         if (tabs.filling == tab.tabId) tabs.fillWindow(null)
+        // The view under the layer keeps its frame through the fullscreen and its landing: the
+        // engine draws the layer from the layer's size, and the chrome under it keeps its layout
+        // too (the `held` insets), so the exit comes back to a page laid out once, where it was.
+        tabs.holdFullscreen(tab.tabId)
+        reveal.begin(card, cardRadius)
         // The page's size report came ahead of the engine's view: the screen turns now.
         if (fullscreenVideoTab === tab) fullscreenVideoSize?.let { (width, height) -> turnForVideo(width, height) }
         // The first-time exit hint's cue (GN-20): every fullscreen is left the same way, a
@@ -997,6 +1011,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // The orientation goes back to the system's as the layer goes, so the chrome that returns
         // is laid out for the screen the system settles on.
         releaseFullscreenOrientation()
+        reveal.snap()
         fullscreenLayer.removeAllViews()
         fullscreenLayer.visibility = View.GONE
         fullscreenCallback?.onCustomViewHidden()
@@ -1014,9 +1029,28 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // The bars are on their way back: said before the exit itself, so the chrome's return
         // fade waits for the page's landing rather than starting over its first inline layout.
         activity.onFullscreenExit()
+        // The held view is put back when the landing settles ([onLandingSettled]); with no
+        // landing to wait for it is put back now.
+        if (!landing.settling) tabs.releaseFullscreenHold()
         chrome.viewEvent(tab.tabId, "leaveFullscreen", null)
         back.refresh()
         media.onFullscreenChanged()
+    }
+
+    /**
+     * The bars have settled after a fullscreen's exit ([FullscreenLanding], carried by
+     * [MainActivity.sendInsets]): the page's view, held where it was through the fullscreen and
+     * its landing, takes the frame the chrome has for it by now – the same one, on the screen
+     * the fullscreen began on.
+     */
+    fun onLandingSettled() = tabs.releaseFullscreenHold()
+
+    /**
+     * The screen turned ([MainActivity.onConfigurationChanged]). A reveal under way spreads at
+     * once: the card it started from is a frame of the screen that is gone.
+     */
+    fun onScreenOrientationChanged(landscape: Boolean) {
+        reveal.snap()
     }
 
     /**

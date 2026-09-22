@@ -470,6 +470,16 @@ class TabWebView(
         (height - maxOf(cover.bottomPx.toFloat(), pullOffsetPx, barClipPx.toFloat())).roundToInt().coerceIn(visibleTop(), height)
 
     /**
+     * The page's visible card in its parent's coordinates (device px): the frame, inside the
+     * covered strips and behind the strip a hiding bar holds, where the view's translation puts
+     * it now. The fullscreen layer's reveal starts from it ([Host.enterFullscreen], MOT-32).
+     */
+    fun visibleFrame(): Rect {
+        val dy = translationY.roundToInt()
+        return Rect(left, top + visibleTop() + dy, right, top + visibleBottom() + dy)
+    }
+
+    /**
      * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
      * The card's whole gesture (down, moves, up) is handed to the view under the page (the chrome
      * WebView, [PageHost.underlay]) in its own coordinates; the page never sees it. A host with

@@ -69,18 +69,22 @@ export function hasLanded(state: LandingState, tabId: string): boolean {
 
 /**
  * The chrome is back from `tabId`'s fullscreen and has not laid the page out inline yet: the
- * placement kept from before the fullscreen is no word on where the view goes now. The host's
- * word on the size it has drawn stands (the view is at it, whatever the chrome asks next).
- * Returns the count of placement reports so far, for `landingLost` to tell the reports since
- * the landing began from none yet.
+ * placement kept from before the fullscreen is no word on where the view goes now – unless the
+ * chrome lay under the page's layer as it was, its report unchanged, and the host held the view
+ * there (`keepPlacement`; Android, MOT-32): then it is the word, and a layout the exit does not
+ * change lands on it without a report. The host's word on the size it has drawn stands either
+ * way (the view is at it, whatever the chrome asks next). Returns the count of placement
+ * reports so far, for `landingLost` to tell the reports since the landing began from none yet.
  */
-export function beginLanding(tabId: string): number {
-  landingStore.set((prev) => {
-    if (!prev.placed.has(tabId)) return {}
-    const placed = new Map(prev.placed)
-    placed.delete(tabId)
-    return { placed }
-  })
+export function beginLanding(tabId: string, keepPlacement = false): number {
+  if (!keepPlacement) {
+    landingStore.set((prev) => {
+      if (!prev.placed.has(tabId)) return {}
+      const placed = new Map(prev.placed)
+      placed.delete(tabId)
+      return { placed }
+    })
+  }
   return landingStore.get().reports
 }
 

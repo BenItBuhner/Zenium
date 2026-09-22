@@ -7087,10 +7087,47 @@
   will-change: transform;
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
-  transform: translate3d(0, calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0);
+  transform: translate3d(
+    0,
+    calc(
+      var(--zen-bar-hide) * var(--zen-bar-hide-travel) + var(--zen-fullscreen-hide) *
+        var(--zen-fullscreen-hide-travel)
+    ),
+    0
+  );
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='top'] {
-  transform: translate3d(0, calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0);
+  transform: translate3d(
+    0,
+    calc(
+      -1 *
+        (
+          var(--zen-bar-hide) * var(--zen-bar-hide-travel) + var(--zen-fullscreen-hide) *
+            var(--zen-fullscreen-hide-travel)
+        )
+    ),
+    0
+  );
+}
+/*
+ * The bar around a page's fullscreen (MOT-32, lib/fullscreenHide.ts): the chrome stays mounted
+ * under the fullscreen layer, its state kept, and the bar translates off its edge as the system
+ * bars slide away – `--zen-fullscreen-hide` 0 in place … 1 off, on the bar hide's spring and
+ * written the same way (on the bar element alone, a property of that one element), added to
+ * the hide's offset in the one transform above – and back on the same spring as the chrome
+ * returns, with its 120 ms return fade. The travel is the whole bar band and a gutter more: the
+ * bar's inset padding hangs past the clip line already, so at the full travel nothing of it is
+ * left in the frame (`fullscreenHideTravel`, one number with the script). The window carries
+ * `data-fullscreen` meanwhile and is inert (PhoneShell): nothing in it takes a touch or focus
+ * while the page's layer stands over it. Under reduced motion the spring snaps (§11.3).
+ */
+@property --zen-fullscreen-hide {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+:root {
+  --zen-fullscreen-hide-travel: calc(var(--zen-phone-band) + var(--zen-padding));
 }
 :root[data-bar-hidden] .zen-phone-bar,
 :root[data-form-factor='phone'] .zen-phone-bar[aria-hidden='true'] {

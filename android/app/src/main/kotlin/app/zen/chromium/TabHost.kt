@@ -129,6 +129,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     /** Tear a view down (already removed from [views]); the chrome is not told. */
     private fun drop(view: TabWebView) {
         if (filled?.tabId == view.tabId) filled = null
+        if (fullscreenHeld?.tabId == view.tabId) fullscreenHeld = null
         host.exitFullscreen(view)
         view.backTransition?.abort()
         view.cover.reset()
@@ -179,9 +180,65 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // gone (the chrome behind a rotation, BH-32): it would lay the page out cropped until the
         // chrome's next report, which lays it out right. Refused, the last good frame stands.
         if (!PageFrameFit.fits(w, h, container.width, container.height, d)) return
-        // Recorded for a view filling the window too ([fillWindow]): the frame it is put back to.
+        // Recorded for a view filling the window too ([fillWindow]), and for one held through a
+        // fullscreen ([holdFullscreen]): the frame it is put back to.
         reported[tabId] = Rect(x, y, x + w, y + h)
+        if (fullscreenHeld?.tabId == tabId) return
         place(view)
+    }
+
+    // --- a page's fullscreen -----------------------------------------------------------------------
+
+    /**
+     * The tab whose view is held where it was through a page's fullscreen ([holdFullscreen]),
+     * with the corners and covers the core asks for meanwhile, to apply at the release.
+     */
+    private class FullscreenHeld(val tabId: String, var radiusPx: Float?, var coverTop: Float?, var coverBottom: Float?)
+    private var fullscreenHeld: FullscreenHeld? = null
+
+    /** The tab whose view is held through a fullscreen right now, or null. */
+    val fullscreenHolding: String? get() = fullscreenHeld?.tabId
+
+    /**
+     * `tabId`'s page went fullscreen (MOT-32): the engine draws its fullscreen element in the
+     * host's own layer over everything, and the view underneath is no part of it (the engine
+     * routes the view's size and draws nowhere else while the layer stands), so the frames the
+     * core lays it out at meanwhile – the window, for an element in fullscreen
+     * (`Window.applyLayout`), the chrome's next inline frame at the exit, a frame the chrome
+     * measured behind a rotation – are recorded ([setBounds], [setRadius], [setCover]) and not
+     * applied: the view keeps the frame it had, and the page in it is laid out once at the
+     * exit, at the frame it comes back to. The hold lasts past the exit until its landing has
+     * settled ([releaseFullscreenHold], [Host.onLandingSettled]): a screen that turns back after
+     * the exit would lay the page out in the frame it is leaving otherwise (the resize beyond the
+     * portrait window of BH-32, and one more at the turn). A hold under way is released first.
+     */
+    fun holdFullscreen(tabId: String) {
+        releaseFullscreenHold()
+        if (views[tabId] == null) return
+        fullscreenHeld = FullscreenHeld(tabId, null, null, null)
+    }
+
+    /**
+     * The exit has landed: the held view takes the frame, corners and covers the core last asked
+     * for – the same it had, when the window came back to where it was, and nothing moves. A
+     * recorded frame that does not fit the container as it stands now was a screen's that is
+     * gone (the landscape a video turned to, measured before the turn back, BH-32): it is
+     * dropped, the view keeps the frame it held, and the chrome's next report lays it out.
+     */
+    fun releaseFullscreenHold() {
+        val held = fullscreenHeld ?: return
+        fullscreenHeld = null
+        val view = views[held.tabId] ?: return
+        val r = reported[held.tabId]
+        if (r != null && !PageFrameFit.fits(r.width(), r.height(), container.width, container.height, density)) {
+            reported.remove(held.tabId)
+        } else {
+            place(view)
+        }
+        held.radiusPx?.let { if (filled?.tabId != held.tabId) view.setRadius(it) }
+        if (held.coverTop != null && held.coverBottom != null && filled?.tabId != held.tabId) {
+            view.cover.set(held.coverTop!!, held.coverBottom!!, snap = true)
+        }
     }
 
     /** Where the bar that hides on scroll is, per the chrome's last `chrome.setBarHide`; null: it may not hide. */
@@ -194,7 +251,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     /** Per frame while the bar moves: only the views on screen are laid out for it; one coming on screen catches up in [setVisible]. */
     fun setBarHide(frame: BarHideFrame?) {
         barHide = frame
-        for (view in views.values) if (view.visibility == View.VISIBLE) place(view)
+        for (view in views.values) if (view.visibility == View.VISIBLE && fullscreenHeld?.tabId != view.tabId) place(view)
     }
 
     /**
@@ -223,6 +280,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     fun setRadius(tabId: String, radiusCss: Double) {
         val px = (radiusCss * density).toFloat()
+        fullscreenHeld?.takeIf { it.tabId == tabId }?.let { it.radiusPx = px; return }
         val held = filled?.takeIf { it.tabId == tabId }
         if (held != null) held.radiusPx = px else views[tabId]?.setRadius(px)
     }
@@ -230,6 +288,11 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     /** Chrome messages cover these strips (CSS px) of the view's edges; see `ContentCover`. */
     fun setCover(tabId: String, cover: JSONObject) {
         val view = views[tabId] ?: return
+        fullscreenHeld?.takeIf { it.tabId == tabId }?.let {
+            it.coverTop = cover.num("top").toFloat()
+            it.coverBottom = cover.num("bottom").toFloat()
+            return
+        }
         val held = filled?.takeIf { it.tabId == tabId }
         if (held != null) {
             held.coverTop = cover.num("top").toFloat()

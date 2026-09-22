@@ -5156,9 +5156,18 @@ export interface Events {
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –
    * from the Android host – whether the system bars are still on their way back from a page's
    * fullscreen (`settling`): the chrome's return fade waits while they are
-   * (`lib/fullscreenLanding.ts`). A host without the word leaves it out.
+   * (`lib/fullscreenLanding.ts`). A host without the word leaves it out. `held` marks the bars
+   * sliding away under a page's fullscreen layer: the chrome keeps the layout it has
+   * (`lib/insets.ts`, MOT-32).
    */
-  insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
+  insets: {
+    top: number
+    right: number
+    bottom: number
+    left: number
+    settling?: boolean
+    held?: boolean
+  }
   /**
    * The core placed the page views as a `layout.report` asked: `hid` and `shown` name the tabs
    * whose views it took down or brought back under that report (a tab without a view, or one

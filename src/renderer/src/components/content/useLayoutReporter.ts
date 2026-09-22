@@ -210,7 +210,13 @@ export function useLayoutReporter(
     const send = (hidden: boolean): void => {
       let report: LayoutReport
       const fullscreenTabId = state.window.htmlFullscreenTabId
-      if (fullscreenTabId && state.tabs[fullscreenTabId]) {
+      // Where the chrome lies under the pages (Android), the page's fullscreen element is drawn
+      // in the engine's own layer over everything and the tab's view keeps the frame the chrome
+      // has for it: the chrome is laid out as before under the layer (MOT-32), so the report
+      // below says what it said, and the core's placement of the fullscreen view at the window
+      // (`Window.applyLayout`) is held by the host until the exit has landed. Elsewhere the
+      // view itself is the fullscreen surface and takes the window.
+      if (fullscreenTabId && state.tabs[fullscreenTabId] && !followsCover) {
         report = {
           placements: [
             {

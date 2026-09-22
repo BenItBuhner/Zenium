@@ -386,8 +386,10 @@ export interface BootInfo {
 }
 
 /**
- * The window's safe-area insets in CSS px (`MainActivity.applyInsets`), and whether the system
- * bars are still on their way back from a page's fullscreen (`FullscreenLanding.kt`).
+ * The window's safe-area insets in CSS px (`MainActivity.applyInsets`), whether the system
+ * bars are still on their way back from a page's fullscreen (`FullscreenLanding.kt`), and
+ * whether the chrome is to hold its layout as they stand – the bars sliding away under a
+ * page's fullscreen layer (`held`, MOT-32).
  */
 export interface WindowInsets {
   top: number
@@ -395,6 +397,7 @@ export interface WindowInsets {
   bottom: number
   left: number
   settling?: boolean
+  held?: boolean
 }
 
 /**
@@ -416,6 +419,7 @@ export function windowInsetsOf(payload: unknown): WindowInsets {
     left: side(raw.left)
   }
   if (typeof raw.settling === 'boolean') insets.settling = raw.settling
+  if (raw.held === true) insets.held = true
   return insets
 }
 

@@ -199,12 +199,24 @@ class MainActivity : BrowserActivity() {
         sendInsets()
     }
 
-    /** The insets as last measured, with the landing's word as it stands now; judged again when the landing asks. */
+    /**
+     * The insets as last measured, with the landing's word as it stands now; judged again when
+     * the landing asks. While a page's fullscreen layer stands, and until its exit has landed,
+     * the report is marked `held`: the chrome under the layer keeps the layout it has as the
+     * system bars slide away and come back, so its bar translates off and on over a frame that
+     * does not move, and an exit on the fullscreen's own screen lays nothing out again (MOT-32,
+     * `lib/insets.ts`); the event itself goes out in its turn like every other, its `settling`
+     * heard (#277). Once the landing is over the tab's view takes the frame the chrome has for
+     * it by then ([Host.onLandingSettled]).
+     */
     private fun sendInsets() {
         val now = SystemClock.uptimeMillis()
+        val wasSettling = host.landing.settling
         val settling = host.landing.settle(landingWindow(), now)
         val payload = JSONObject(insets.toString()).put("settling", settling)
+        if (host.fullscreenTab != null || settling) payload.put("held", true)
         host.chrome.hostEvent("insets", payload)
+        if (wasSettling && !settling) host.onLandingSettled()
         root.removeCallbacks(landingCheck)
         val at = host.landing.nextCheckAt()
         if (at >= 0) root.postDelayed(landingCheck, (at - now).coerceAtLeast(0))
@@ -346,6 +358,9 @@ class MainActivity : BrowserActivity() {
         super.onConfigurationChanged(newConfig)
         // The chrome re-measures itself; nothing to do but let WebViews relayout.
         root.requestLayout()
+        // The screen turned: a playing inline video goes fullscreen, a fullscreen video whose
+        // orientation the screen has left leaves it (MED-02), and a reveal under way snaps.
+        host.onScreenOrientationChanged(newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE)
         // The system font size changed: the chrome's text takes the new zoom first, then hears the
         // factor (and the bold-text setting) with the environment below and grows its line boxes.
         host.chrome.applyTextScale()
