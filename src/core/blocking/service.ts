@@ -27,16 +27,12 @@ import {
   type FilterListDefinition,
   type FilterListStatus
 } from '../../shared/blocking'
+import { PREPARE_LIST_TASK } from '../background/tasks'
 import type { Browser } from '../browser'
 import type { BundledFilterList } from '../platform'
 import { connectivityProbesRuleSet } from './connectivityProbes'
 import { RuleEngine } from './engine'
-import {
-  parseListHeader,
-  prepareListText,
-  validateFilterText,
-  type FilterSyntaxError
-} from './lists'
+import { prepareListText, validateFilterText, type FilterSyntaxError } from './lists'
 import {
   BUILTIN_RULE_SETS,
   RULE_SET_PRIORITY,
@@ -48,8 +44,13 @@ import {
 } from './rules'
 import { RuleSetStore } from './store'
 
-/** The first refresh sweep waits for the browser to settle. */
-const STARTUP_SWEEP_DELAY_MS = 20_000
+/**
+ * The first refresh sweep waits for the browser to settle; the Safe Browsing service's follows
+ * at 35 s, and both go through `Browser.background` (one worker, one task at a time), so the
+ * two never parse in the same window. Held while the host's `holdBackgroundWork` says so (the
+ * demo harness).
+ */
+export const STARTUP_SWEEP_DELAY_MS = 20_000
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000
 /** Lists are a few megabytes; mobile networks need more than the hosts' default. */
 const FETCH_TIMEOUT_MS = 90_000
@@ -99,7 +100,8 @@ export class BlockingService {
   private userFilterErrors: FilterSyntaxError[] = []
   private builtinSignatures = new Map<string, string>()
   private sweepTimer: ReturnType<typeof setInterval> | null = null
-  private startupTimer: ReturnType<typeof setTimeout> | null = null
+  /** Cancels the armed startup sweep (`BackgroundWork.armStartup`). */
+  private cancelStartupSweep: (() => void) | null = null
   private counterTimer: ReturnType<typeof setTimeout> | null = null
   private queue: Promise<void> = Promise.resolve()
   private stopped = false
@@ -174,7 +176,10 @@ export class BlockingService {
       this.seedBundled().then(() => {
         if (this.stopped) return
         const sweep = (): void => void this.track(this.sweep())
-        this.startupTimer = setTimeout(sweep, STARTUP_SWEEP_DELAY_MS)
+        this.cancelStartupSweep = this.browser.background.armStartup(
+          STARTUP_SWEEP_DELAY_MS,
+          sweep
+        )
         this.sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS)
       })
     )
@@ -185,10 +190,10 @@ export class BlockingService {
     this.stopped = true
     this.unsubscribePermissions?.()
     this.unsubscribePermissions = null
-    if (this.startupTimer) clearTimeout(this.startupTimer)
+    this.cancelStartupSweep?.()
     if (this.sweepTimer) clearInterval(this.sweepTimer)
     if (this.counterTimer) clearTimeout(this.counterTimer)
-    this.startupTimer = this.sweepTimer = this.counterTimer = null
+    this.cancelStartupSweep = this.sweepTimer = this.counterTimer = null
   }
 
   flushSync(): void {
@@ -474,10 +479,15 @@ export class BlockingService {
         throw new Error(
           response.status ? `the server answered ${response.status}` : 'you appear to be offline'
         )
-      const prepared = prepareListText(response.text)
-      if (prepared.count === 0 || /^\s*</.test(response.text))
-        throw new Error('the download is not a filter list')
-      const header = parseListHeader(response.text)
+      if (/^\s*</.test(response.text)) throw new Error('the download is not a filter list')
+      // The list is reduced to its network filters in the host's worker where it has one
+      // (`Browser.background`); the main thread receives the prepared text and its count.
+      const prepared = await this.browser.background.run(PREPARE_LIST_TASK, {
+        text: response.text
+      })
+      if (prepared.count === 0) throw new Error('the download is not a filter list')
+      if (this.stopped) return false
+      const header = prepared.header
       const set = this.listSet(source, enabledListsFor(this.settings, this.enabled).has(id))
       set.filterText = prepared.text
       set.updatedAt = Date.now()
@@ -491,7 +501,7 @@ export class BlockingService {
         }
         this.renameCustomList(id, name)
       }
-      this.engine.setRuleSet(set)
+      this.engine.setRuleSet(set, { filterCount: prepared.count })
       rt.lastError = null
       return true
     } catch (error) {

@@ -7,6 +7,7 @@ import type {
   SafeBrowsingStatus,
   SafeBrowsingThreat
 } from '../../shared/privacy'
+import { SAFE_BROWSING_TABLE_TASK } from '../background/tasks'
 import { hostnameOf } from '../blocking/domain'
 import { apiKeyCheckOf, apiKeyProbeUrl } from '../protection/checks'
 import {
@@ -23,7 +24,6 @@ import {
   type FeedDocument
 } from './document'
 import {
-  parseFeed,
   SAFE_BROWSING_FEEDS,
   SAFE_BROWSING_TEST_FEED,
   SAFE_BROWSING_TEST_HOSTS,
@@ -72,7 +72,13 @@ interface FeedRuntime {
 }
 
 const SWEEP_INTERVAL_MS = 30 * 60 * 1000
-const STARTUP_SWEEP_DELAY_MS = 20_000
+/**
+ * The first sweep after `start()`: past the blocking service's (20 s), so the two services'
+ * downloads and their parsing never share a window – they share one background queue
+ * (`Browser.background`, one worker, one task at a time), and a feed queued behind a filter list
+ * would only wait there. Held while the host's `holdBackgroundWork` says so (the demo harness).
+ */
+export const STARTUP_SWEEP_DELAY_MS = 35_000
 /**
  * With the tables at the host, how long after `start()` the documents are read: past the
  * chrome's first frames (a refreshed feed's document is megabytes of JSON to parse, on the main
@@ -125,6 +131,8 @@ export class SafeBrowsingService {
   private stopped = false
   private sweepTimer: ReturnType<typeof setInterval> | null = null
   private startupTimer: ReturnType<typeof setTimeout> | null = null
+  /** Cancels the armed startup sweep (`BackgroundWork.armStartup`). */
+  private cancelStartupSweep: (() => void) | null = null
   private queue: Promise<void> = Promise.resolve()
   private readonly listeners = new Set<() => void>()
 
@@ -184,7 +192,10 @@ export class SafeBrowsingService {
     this.ready = true
     void this.seedBundled().then(() => {
       if (this.stopped) return
-      this.startupTimer = setTimeout(() => void this.sweep(), STARTUP_SWEEP_DELAY_MS)
+      this.cancelStartupSweep = this.browser.background.armStartup(
+        STARTUP_SWEEP_DELAY_MS,
+        () => void this.sweep()
+      )
       this.sweepTimer = setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS)
     })
     this.changed()
@@ -219,7 +230,8 @@ export class SafeBrowsingService {
     this.stopped = true
     if (this.startupTimer) clearTimeout(this.startupTimer)
     if (this.sweepTimer) clearInterval(this.sweepTimer)
-    this.startupTimer = this.sweepTimer = null
+    this.cancelStartupSweep?.()
+    this.startupTimer = this.sweepTimer = this.cancelStartupSweep = null
   }
 
   /** Called after the tables, the bypasses or the schedule state changed. */
@@ -592,20 +604,27 @@ export class SafeBrowsingService {
           response.status ? `the server answered ${response.status}` : 'you appear to be offline'
         )
       if (/^\s*</.test(response.text)) throw new Error('the download is not a host list')
-      const hosts = parseFeed(response.text, rt.feed.format)
-      if (hosts.length === 0) throw new Error('the download holds no hosts')
-      const table = await PrefixTable.fromHostsChunked(hosts)
+      // The parse, the hashing, the sort and the base64 happen in the host's worker where it has
+      // one (`Browser.background`); the main thread gets the finished table's buffer moved in.
+      const built = await this.browser.background.run(SAFE_BROWSING_TABLE_TASK, {
+        text: response.text,
+        format: rt.feed.format
+      })
+      if (built.hosts === 0) throw new Error('the download holds no hosts')
       if (this.stopped) return
+      const table = this.hostTables
+        ? PrefixTable.empty()
+        : PrefixTable.fromSortedValues(built.values)
       const doc: FeedDocument = {
         version: FEED_DOCUMENT_VERSION,
         id: rt.feed.id,
         threat: rt.feed.threat,
-        entries: table.size,
+        entries: built.entries,
         updatedAt: Date.now(),
         etag: response.headers?.etag ?? null,
         lastModified: response.headers?.['last-modified'] ?? null,
         bundled: false,
-        prefixes: table.toBase64()
+        prefixes: built.base64
       }
       this.keep(rt, doc, table)
       rt.lastError = null

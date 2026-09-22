@@ -82,6 +82,7 @@ import type { ShareFile } from '../shared/share'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
+import type { BackgroundWorkerHandle } from './background/work'
 import type { RuleSet } from './blocking/rules'
 
 export interface PlatformInfo {
@@ -1228,6 +1229,29 @@ export interface PrivacyHost {
   lookupSafeBrowsing?(url: string): Promise<SafeBrowsingHit | null>
 }
 
+/**
+ * What the host does for the core's background work (`core/background/work.ts`): the worker the
+ * heavy parsing and hashing of the Safe Browsing feeds and the filter lists runs in, and the
+ * hold a demo harness puts on the startup sweeps. Both optional: without a worker the work runs
+ * on the main thread in chunks; without a hold the sweeps run on their schedule.
+ */
+export interface PerformanceHost {
+  /**
+   * Spawn the background worker (a module Web Worker in the Android chrome, a `worker_threads`
+   * worker in Electron's main process) serving `CORE_BACKGROUND_TASKS` and the host's own tasks;
+   * null when this host cannot (the preview host, a test).
+   */
+  createBackgroundWorker?(): BackgroundWorkerHandle | null
+  /**
+   * Whether the startup sweeps should wait: true while the demo harness's scenes run (Android:
+   * the `holdBackgroundWork` boot flag from the launch intent's extra; Electron:
+   * `--hold-background-work`). Consulted every `HOLD_RECHECK_MS` by a sweep whose time has come;
+   * the `performance.releaseBackgroundWork` command ends the hold whatever this says. Never true
+   * in production: no host sets it on its own.
+   */
+  holdBackgroundWork?(): boolean
+}
+
 export interface NetHost {
   fetchText(
     url: string,
@@ -2322,6 +2346,8 @@ export interface Platform {
   readonly sync?: SyncPlatformHost
   /** Other browsers' profiles on this machine (desktop); hosts without it import from files only. */
   readonly importHost?: ImportHost
+  /** The background worker and the demo harness's hold on the startup sweeps; omit for neither. */
+  readonly performance?: PerformanceHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost
