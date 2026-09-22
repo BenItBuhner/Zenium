@@ -134,7 +134,7 @@ class Screenshots(private val host: Host, private val io: Executor) {
             held[id] = capture
             val bitmap = capture.bitmap
             io.execute {
-                val preview = runCatching { dataUrl(scaled(bitmap, PREVIEW_MAX_WIDTH), Bitmap.CompressFormat.JPEG, PREVIEW_QUALITY) }.getOrNull()
+                val preview = runCatching { dataUrl(bitmap, PREVIEW_MAX_WIDTH, Int.MAX_VALUE, PREVIEW_QUALITY) }.getOrNull()
                 main.post {
                     if (preview == null || held[id] !== capture) {
                         if (held.remove(id) === capture) bitmap.recycle()
@@ -299,7 +299,7 @@ class Screenshots(private val host: Host, private val io: Executor) {
             }
             resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: Uri.fromFile(file)
         }
-        val thumbnail = dataUrl(scaled(bitmap, THUMBNAIL_MAX_SIDE, THUMBNAIL_MAX_SIDE), Bitmap.CompressFormat.JPEG, THUMBNAIL_QUALITY)
+        val thumbnail = dataUrl(bitmap, THUMBNAIL_MAX_SIDE, THUMBNAIL_MAX_SIDE, THUMBNAIL_QUALITY)
         return json(
             "uri" to uri.toString(),
             "thumbnail" to thumbnail,
@@ -309,10 +309,16 @@ class Screenshots(private val host: Host, private val io: Executor) {
         )
     }
 
-    private fun dataUrl(bitmap: Bitmap, format: Bitmap.CompressFormat, quality: Int): String {
+    /**
+     * `bitmap` as a JPEG data URL at up to `maxWidth` × `maxHeight` (scaled down only). The
+     * original is left as it was – encoded as it is when it already fits, so a long capture no
+     * wider than the preview is not copied whole (a second 13 MB bitmap) just to be encoded.
+     */
+    private fun dataUrl(bitmap: Bitmap, maxWidth: Int, maxHeight: Int, quality: Int): String {
+        val small = scaled(bitmap, maxWidth, maxHeight)
         val out = ByteArrayOutputStream()
-        bitmap.compress(format, quality, out)
-        bitmap.recycle()
+        small.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        if (small !== bitmap) small.recycle()
         return "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
     }
 
@@ -345,10 +351,13 @@ class Screenshots(private val host: Host, private val io: Executor) {
             return from until to
         }
 
-        /** A copy of `bitmap` scaled (down only) to fit `maxWidth` × `maxHeight` – the caller's to recycle, apart from the original. */
+        /**
+         * `bitmap` scaled (down only) to fit `maxWidth` × `maxHeight`: a new bitmap, the caller's
+         * to recycle, or `bitmap` itself when it already fits (no copy is made of it).
+         */
         fun scaled(bitmap: Bitmap, maxWidth: Int, maxHeight: Int = Int.MAX_VALUE): Bitmap {
             val (w, h) = fitted(bitmap.width, bitmap.height, maxWidth, maxHeight)
-            if (w == bitmap.width && h == bitmap.height) return bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+            if (w == bitmap.width && h == bitmap.height) return bitmap
             return Bitmap.createScaledBitmap(bitmap, w, h, true)
         }
 
