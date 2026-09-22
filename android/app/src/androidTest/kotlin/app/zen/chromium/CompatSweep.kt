@@ -21,6 +21,7 @@ import androidx.webkit.WebViewCompat
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
+import app.zen.chromium.ext.Extensions
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -3584,7 +3585,40 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             extra.put("getURL", tabEval(bg, "(function(){try{return JSON.stringify({readerHtml:chrome.runtime.getURL('reader.html'),root:chrome.runtime.getURL(''),id:chrome.runtime.id})}catch(e){return JSON.stringify({error:String(e&&e.message||e)})}})()"))
             extra.put("workerConsole", JSONArray(consoleOf(bg).takeLast(8)))
         }
-        return Grade(grade.verdict, "${grade.note}; getURL ${extra.optString("getURL").take(160)}", extra)
+        // How the viewer's document reads to the extension: `document.contentType` in the page's
+        // realm (the `with` fallback's, which `pdfTool` read) and in the extension's world where
+        // the WebView has one. Chrome's PDF document answers `application/pdf`; Scholar acts on it.
+        val pdfTab = tabUrls().entries.lastOrNull { it.value.contains("sample.pdf") || it.value.startsWith("zen://pdf") }
+        val pdfView = pdfTab?.let { runCatching { waitForView(it.key) }.getOrNull() }
+        val pageType = extra.optJSONObject("page")?.optString("contentType") ?: ""
+        val worldType = if (worlds && pdfView != null) worldEval(pdfView, row.id, "JSON.stringify({contentType:document.contentType,url:location.href})")?.let { json(it).optString("contentType") } else null
+        extra.put("contentType", JSONObject().put("page", pageType).put("world", worldType ?: JSONObject.NULL))
+        val typeNote = "document.contentType page \"$pageType\"" + (worldType?.let { ", world \"$it\"" } ?: "")
+        return Grade(grade.verdict, "${grade.note}; $typeNote; getURL ${extra.optString("getURL").take(160)}", extra)
+    }
+
+    /**
+     * RoPro (round 7's open row): its markers on the roblox.com game page (round 7's fix 4), and
+     * beside them its locale fetch (`<extension origin>/locales/en.json`), which Roblox's
+     * `connect-src` refuses under the `with` fallback: the row's bridge trace says whether the
+     * host answered the file over the bridge (`extFetch` / `extFetchDone`, this round's fix) and
+     * the page's console keeps the policy's line either way (the page's fetch is tried first).
+     */
+    private fun ropro(row: Row, entry: JSONObject): Grade {
+        val evidence = StepEvidence(row)
+        val grade = liveMarker("RoPro", "https://www.roblox.com/games/920587237", injectedAny("ropro"))(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val lines = evidence.trace().filter { " extFetch" in it }
+        val asked = lines.count { Regex(" extFetch( |$)").containsMatchIn(it) }
+        val answered = lines.count { " extFetchDone ok" in it }
+        val refused = lines.count { " extFetchDone error" in it }
+        val policyLines = (0 until (extra.optJSONArray("console")?.length() ?: 0)).count { i ->
+            val line = extra.optJSONArray("console")?.optString(i) ?: ""
+            line.contains("Refused to connect") && line.contains(Extensions.ORIGIN_SUFFIX)
+        }
+        extra.put("extFetch", JSONObject().put("asked", asked).put("answered", answered).put("refused", refused).put("lines", JSONArray(lines.takeLast(12))).put("policyLines", policyLines))
+        val relay = if (worlds) "the world's own fetch (no relay on a WebView with worlds)" else "extension-origin fetch relay: $asked asked, $answered answered, $refused refused; $policyLines connect-src line(s) in the page's console"
+        return Grade(grade.verdict, "${grade.note}; $relay", extra)
     }
 
     // --- the table -------------------------------------------------------------------------------
@@ -3759,7 +3793,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("bkkbcggnhapdmkeljlodobbkopceiche", "Pop up blocker for Chrome - Poper Blocker", "poper-blocker", core = ::popupBlocker),
         Row("ohahllgiabjaoigichmmfljhkcfikeof", "AdBlocker Ultimate", "adblocker-ultimate", core = ::adBlocker),
         Row("akcocjjpkmlniicdeemdceeajlmoabhg", "Free VPN Proxy - 1VPN", "1vpn", core = vpn("1VPN", pac = true, connectSelector = "#proxyToggle")),
-        Row("adbacgifemdbhdkfppmeilbgppmhaobf", "RoPro - Enhance Your Roblox Experience", "ropro", core = liveMarker("RoPro", "https://www.roblox.com/games/920587237", injectedAny("ropro"))),
+        Row("adbacgifemdbhdkfppmeilbgppmhaobf", "RoPro - Enhance Your Roblox Experience", "ropro", core = ::ropro),
         Row("jpkfgepcmmchgfbjblnodjhldacghenp", "Pie Adblock - A Powerful Free Ad Blocker", "pie-adblock", core = ::adBlocker),
         Row("mihcahmgecmbnbcchbopgniflfhgnkff", "Google Mail Checker", "google-mail-checker", core = accountGate("Google Mail Checker", Regex("accounts\\.google|mail\\.google|gmail", RegexOption.IGNORE_CASE), gate = "a Google account (the unread count is Gmail's feed)")),
         // Stylish's slider is a fixed 360 px host div whose iframe (index.html) sits under a CLOSED

@@ -44,7 +44,9 @@ import {
 } from './extensionServiceWorker'
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
 import { installCorsProxy } from './extensionCorsProxy'
+import { createFetchRelay, type FetchRelay } from './extensionFetchRelay'
 import { installExtensionUrlRewrite } from './extensionFrameUrls'
+import { installPdfDocumentType } from './extensionPdfDocument'
 import { installSpeechSynthesis } from './extensionSpeechSynthesis'
 
 /**
@@ -183,6 +185,8 @@ declare const __zenExtBoot: Boot
   const serviceWorkerEndpoints = new Map<string, ServiceWorkerEndpoint>()
   /** Content mode: extension-origin `<script>` elements the page's CSP refused (see below). */
   let scriptRecovery: ScriptRecovery | null = null
+  /** Content mode, `with` fallback: extension-origin fetches the page's CSP refused (see below). */
+  let fetchRelay: FetchRelay | null = null
   transport.listen((event) => {
     bridgeTraffic.pageBound++
     let message: Record<string, unknown>
@@ -201,6 +205,10 @@ declare const __zenExtBoot: Boot
         String(message.id),
         message.ok === true ? null : String(message.error ?? 'the host refused')
       )
+      return
+    }
+    if (message.t === 'extFetchDone') {
+      fetchRelay?.done(String(message.id), message)
       return
     }
     const engine = engines.get(ep)
@@ -638,6 +646,26 @@ declare const __zenExtBoot: Boot
   })
   const recovery = scriptRecovery
   window.addEventListener('error', (event) => recovery.onError(event), true)
+  // The same for a content script's `fetch` of its extension's file under the `with` fallback:
+  // the page's `connect-src` refuses the request, the host reads the web-accessible file and
+  // answers over the bridge (`extensionFetchRelay.ts`). A frame with worlds never needs it: the
+  // world's own fetch is beyond the page's policy, as Chrome's is.
+  if (content.extension.isolation === 'with')
+    fetchRelay = createFetchRelay(window, {
+      attachedIds: () => attached.map((e) => e.id),
+      request: (id, extId, url) =>
+        post(
+          primordials.stringify({
+            t: 'extFetch',
+            token: content.token,
+            ep: endpointIdFor(extId),
+            ext: extId,
+            id,
+            url
+          })
+        ),
+      error: primordials.error
+    })
   const builtins = collectBuiltins(realWindow)
   // The window's operations at document start, for the `with` fallback's scope proxies; read
   // once per frame, on the first proxy (a frame with worlds never needs it).
@@ -690,6 +718,9 @@ declare const __zenExtBoot: Boot
   function shieldWorld(ext: ExtensionBoot, isolation: 'world' | 'with'): void {
     if (shielded) return
     shielded = true
+    // The phone's PDF viewer document reads as Chrome's to the extension: `application/pdf`
+    // (extensionPdfDocument.ts); any other document is left as it is.
+    installPdfDocumentType(window)
     let result: ShieldResult = { policy: false, patched: 0 }
     if (isolation === 'world')
       result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`)
@@ -778,6 +809,10 @@ declare const __zenExtBoot: Boot
       shieldWorld(ext, 'with')
       operations ??= collectOperations(realWindow)
       root = createScopeProxy(realWindow, builtins, operations)
+      // The scope's `fetch` (a bare `fetch(...)`, `window.fetch`, `self.fetch`) is the relay's:
+      // the page's fetch first, the host's answer for an extension-origin file the page's policy
+      // refused. It lands in the scope's own store, never on the page's window.
+      if (fetchRelay) root.fetch = fetchRelay.fetch
       // A module the content script imports evaluates on the real global, not in the proxy's
       // scope: the host brackets the served module text, and this accessor answers the
       // extension's `chrome` there while the module's body runs (extensionModuleChrome.ts).
