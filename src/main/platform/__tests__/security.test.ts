@@ -88,8 +88,45 @@ describe('answerAuthChallenge', () => {
       'tab-1'
     )
     const server = { ...authInfo, isProxy: false, host: 'page.example', port: 443 }
-    await answerAuthChallenge(browser, null, details, server, null)
-    expect(httpAuth).toHaveBeenLastCalledWith(expect.objectContaining({ secure: true }), null)
+    await answerAuthChallenge(browser, null, details, server, 'tab-2')
+    expect(httpAuth).toHaveBeenLastCalledWith(expect.objectContaining({ secure: true }), 'tab-2')
+  })
+
+  it("gives up a challenge on a request with no tab without a dialog, as Chrome's LoginHandler does", async () => {
+    // An extension worker's fetch of a signed-out feed (a 401 Basic), a service worker's fetch, a
+    // browser fetch: the response goes back as the server sent it and no sheet opens.
+    const { browser, httpAuth } = browserWith({ username: 'user', password: 'typed' })
+    const feed = {
+      ...authInfo,
+      isProxy: false,
+      host: 'mail.google.com',
+      port: 443,
+      realm: 'New mail feed'
+    }
+    await expect(
+      answerAuthChallenge(
+        browser,
+        null,
+        { url: 'https://mail.google.com/mail/feed/atom' },
+        feed,
+        null
+      )
+    ).resolves.toBeNull()
+    const silent: AuthChallengeProvider = { authRequired: vi.fn().mockResolvedValue(undefined) }
+    await expect(answerAuthChallenge(browser, silent, details, authInfo, null)).resolves.toBeNull()
+    expect(httpAuth).not.toHaveBeenCalled()
+  })
+
+  it("still lets an extension's onAuthRequired answer a request with no tab", async () => {
+    const { browser, httpAuth } = browserWith(null)
+    const extensions: AuthChallengeProvider = {
+      authRequired: vi.fn().mockResolvedValue({ credentials: { username: 'vpn', password: 'k' } })
+    }
+    await expect(
+      answerAuthChallenge(browser, extensions, details, authInfo, null)
+    ).resolves.toEqual({ username: 'vpn', password: 'k' })
+    expect(extensions.authRequired).toHaveBeenCalledWith(expect.objectContaining({ tabId: null }))
+    expect(httpAuth).not.toHaveBeenCalled()
   })
 })
 

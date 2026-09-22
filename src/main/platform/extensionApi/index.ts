@@ -561,9 +561,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   }
 
   /**
-   * What the calling extension context installs its shim with: `ShimOptions.toggles`, and the
-   * content-script storage prelude when its install directory carries one. Every toggle off and
-   * no prelude for a stranger.
+   * What the calling extension context installs its shim with: `ShimOptions.toggles`, the
+   * content-script storage prelude when its install directory carries one, the withheld
+   * permissions and the granted API permissions. Every toggle off, no prelude and no grants
+   * for a stranger.
    */
   private shimOptionsFor(sender: Sender | null): HostShimOptions {
     try {
@@ -571,10 +572,16 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       return {
         toggles: this.userScripts.togglesFor(extensionId),
         storagePrelude: this.preluded.has(extensionId) ? CONTENT_SCRIPT_PRELUDE_FILE : null,
-        withheld: hasWithheldPermissions(extension.withheld) ? extension.withheld : null
+        withheld: hasWithheldPermissions(extension.withheld) ? extension.withheld : null,
+        granted: [...this.permissions.grants(extensionId).permissions]
       }
     } catch {
-      return { toggles: { userScripts: false }, storagePrelude: null, withheld: null }
+      return {
+        toggles: { userScripts: false },
+        storagePrelude: null,
+        withheld: null,
+        granted: null
+      }
     }
   }
 
