@@ -2858,6 +2858,8 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Reload Tab',
       'Mute Tab',
       'Mute Site',
+      'Unload Tab',
+      'Freeze Tab',
       'Duplicate Tab',
       'Pin Tab',
       'Add to Essentials',
@@ -2866,8 +2868,6 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       '-',
       'Bookmark Tab',
       'Bookmark All Tabs…',
-      'Unload Tab',
-      'Freeze Tab',
       'Move Tab',
       'Split with Current Tab',
       'Open in New Container Tab',
@@ -2886,10 +2886,23 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
       expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(20)
       expect(separators(shown)).toBe(4)
-      // The state group in Firefox's order: Reload, Mute, Duplicate, Pin.
+      // The state group in Firefox's order – Reload, Mute, Unload, Freeze, Duplicate, Pin: the
+      // unload and the freeze are the tab's state, as its mute is, not its place.
       const top = topLabels(shown)
-      expect(top.indexOf('Duplicate Tab')).toBe(top.indexOf('Mute Site') + 1)
-      expect(top.indexOf('Pin Tab')).toBe(top.indexOf('Duplicate Tab') + 1)
+      expect(top.slice(top.indexOf('Reload Tab'), top.indexOf('Pin Tab') + 1)).toEqual([
+        'Reload Tab',
+        'Mute Tab',
+        'Mute Site',
+        'Unload Tab',
+        'Freeze Tab',
+        'Duplicate Tab',
+        'Pin Tab'
+      ])
+      expect(top.slice(top.indexOf('Bookmark Tab'), top.indexOf('Move Tab') + 1)).toEqual([
+        'Bookmark Tab',
+        'Bookmark All Tabs…',
+        'Move Tab'
+      ])
       expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([
         'Move to Space',
         'Add Tab to New Folder',
