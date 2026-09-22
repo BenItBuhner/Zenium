@@ -24,6 +24,10 @@ name: Android tab search and History groups demo
 # file only picks the driver.
 on:
   workflow_dispatch:
+  # TEMPORARY (W4-3's held verification run on the #318 merge; off before the PR is marked ready).
+  push:
+    branches:
+      - cursor/android-tab-search-recent-278f
 
 permissions:
   contents: read
