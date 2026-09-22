@@ -444,6 +444,12 @@ export class Actions {
    * beyond the viewport, which the host paints through its capture path (CDP's
    * `captureBeyondViewport` on Electron, the WebView drawn strip by strip on Android) and cuts
    * at its texture limit rather than fails. Either lands in Downloads as a PNG.
+   *
+   * On a host with a gallery (`platform.screenshots`, Android; SH-07) Take Screenshot is
+   * Chrome's flow instead: the page flashes, the picture goes to the gallery under
+   * Pictures/Zenium and the chrome shows the preview card (`screenshot.saved`) with Share,
+   * Delete and Capture more – the whole page, from the card, in the editor (SH-08). Capture Full
+   * Page keeps the Downloads path there too: it is the desktop's item.
    */
   private async screenshot(
     tabId: string,
@@ -453,6 +459,13 @@ export class Actions {
     const tab = this.browser.tabs.tab(tabId)
     const view = this.browser.tabs.view(tabId)
     if (!view) return
+    const gallery = this.browser.platform.screenshots
+    if (gallery && !options.fullPage) {
+      const saved = await gallery.capture(tabId)
+      if (saved) this.browser.emit('screenshot.saved', { ...saved, tabId }, win)
+      else this.browser.toast('Could not capture the page', 'error', win)
+      return
+    }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const path = await view.screenshot(`Screenshot ${stamp}.png`, options)
     if (path) {

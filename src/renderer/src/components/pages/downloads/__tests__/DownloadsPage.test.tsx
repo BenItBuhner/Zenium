@@ -308,6 +308,88 @@ describe('the Downloads page tab (§10.1)', () => {
     expect(calls('download.dragOut')).toEqual([{ id: 'done' }])
   })
 
+  it('a middle or Ctrl click on a row – its name included – opens the download’s page behind this tab (§10.1: one meaning on every page row), the file left alone', async () => {
+    const el = await mountPage()
+    const r = row(el, 'done')
+    const behind = {
+      input: 'https://www.example.com/reports',
+      newTab: true,
+      tabId: 'downloads',
+      background: true
+    }
+    // The row's empty space: Ctrl-click, ⌘-click and the middle button are the page behind.
+    await act(async () =>
+      r.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('urlbar.submit')).toEqual([behind])
+    await act(async () =>
+      r.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }))
+    )
+    expect(calls('urlbar.submit')).toHaveLength(2)
+    await act(async () => r.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 })))
+    expect(calls('urlbar.submit')).toHaveLength(3)
+    expect(calls('urlbar.submit').at(-1)).toEqual(behind)
+    expect(calls('download.open')).toEqual([])
+    // A plain click on the row's space is nothing; a plain double click is the file.
+    await act(async () => r.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(calls('download.open')).toEqual([])
+    await act(async () => r.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    expect(calls('download.open')).toEqual([{ id: 'done' }])
+    // A Ctrl-double-click's first click opened the page behind; its second and the dblclick add nothing.
+    await act(async () =>
+      r.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true, detail: 1 }))
+    )
+    await act(async () =>
+      r.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true, detail: 2 }))
+    )
+    await act(async () =>
+      r.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('urlbar.submit')).toHaveLength(4)
+    expect(calls('download.open')).toHaveLength(1)
+    // The name is the file's button, but a Ctrl-click on it is the page behind too, not the file.
+    const name = r.querySelector<HTMLButtonElement>('.zen-dl-name')!
+    await act(async () =>
+      name.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('urlbar.submit')).toHaveLength(5)
+    expect(calls('download.open')).toHaveLength(1)
+    await act(async () => name.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(calls('download.open')).toHaveLength(2)
+    expect(calls('urlbar.submit')).toHaveLength(5)
+    // The trailing controls keep their own meaning under Ctrl and the middle button.
+    await act(async () =>
+      action(r, 'open').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('download.open')).toHaveLength(3)
+    await act(async () =>
+      action(r, 'open').dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    )
+    expect(calls('urlbar.submit')).toHaveLength(5)
+    // A download with no referrer opens its own address; a row without a file on disk still has its page.
+    const running = row(el, 'running')
+    await act(async () =>
+      running.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('urlbar.submit').at(-1)).toEqual({
+      input: 'https://cdn.example.org/video.mp4',
+      newTab: true,
+      tabId: 'downloads',
+      background: true
+    })
+    const gone = row(el, 'deleted')
+    await act(async () =>
+      gone
+        .querySelector('.zen-dl-name')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('urlbar.submit').at(-1)).toMatchObject({
+      input: 'https://photos.example.com/photo.jpg',
+      background: true
+    })
+    expect(calls('download.open')).toHaveLength(3)
+  })
+
   it('hangs the core’s row menu from the ⋮, in keyboard mode from a key, and at the pointer from a right click', async () => {
     const el = await mountPage()
     const r = row(el, 'done')

@@ -1,7 +1,9 @@
 import type { OverlayKind, PhoneBarPosition } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
 import type { ThirdPartyCookieMode } from '@shared/privacy'
+import type { SiteDataList } from '@shared/siteData'
 import { isPreviewPdfVariant, type PreviewPdfVariant } from './previewPdf'
+import { isPreviewSiteDataOrigins, type PreviewSiteDataOrigins } from './previewSiteData'
 
 /**
  * The overlays a preview state may open by name. Settings (with the Shortcuts and Sync overlays,
@@ -62,6 +64,9 @@ const EXTENSION_ID = /^[a-p]{32}$/
  * and the confirmation toast after a pin (`pinned`).
  */
 export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] as const
+/** The screenshot flow's stills (SH-07, SH-08): the flash, the preview card, the long-screenshot editor. */
+export const PREVIEW_SCREENSHOT_SURFACES = ['flash', 'card', 'editor'] as const
+export type PreviewScreenshotSurface = (typeof PREVIEW_SCREENSHOT_SURFACES)[number]
 export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
 
 /**
@@ -111,6 +116,26 @@ export type PreviewNtpPose =
   | { kind: 'scroll'; px: number }
   | { kind: 'scrub'; t: number }
   | { kind: 'docked' }
+
+/**
+ * The device's connectivity as a preview state plays it (`network=<variant>`, ERR-06 / ERR-07):
+ * `offline` takes the host's word offline over the active page (the "No internet connection"
+ * banner, once the core's debounce has passed), `back-online` takes it offline and back (the
+ * "Back online" toast), `reloading` fails the active tab's load as offline first and then brings
+ * the device back (the error page in its own Reloading state, the toast beside it).
+ */
+export const PREVIEW_NETWORK_VARIANTS = ['offline', 'back-online', 'reloading'] as const
+export type PreviewNetworkVariant = (typeof PREVIEW_NETWORK_VARIANTS)[number]
+
+/**
+ * The ways the active tab's renderer may go in a preview state (`crash=<variant>`, ERR-15), the
+ * host's `crashed` report as `RendererExits.kt` classifies it: `crash` (the renderer crashed,
+ * `didCrash()`), `memory` (the OS took the memory back from the page in front), `hung` (the user
+ * chose Exit page on an unresponsive page), `repeat` (a second crash within the minute: the
+ * page's repeat variant, Show tabs beside Reload). `crash=` alone is `crash`.
+ */
+export const PREVIEW_CRASH_VARIANTS = ['crash', 'memory', 'hung', 'repeat'] as const
+export type PreviewCrashVariant = (typeof PREVIEW_CRASH_VARIANTS)[number]
 
 /** The menus a preview state may open: the app menu sheet, the Tabs button's quick menu. */
 export const PREVIEW_MENUS = ['app', 'tabs'] as const
@@ -364,6 +389,48 @@ export type PreviewState =
       url: string | null
     }
   | {
+      /**
+       * Take Screenshot's gallery flow (SH-07, SH-08): `flash` holds the page's flash part-way,
+       * `card` leaves the preview card up, `editor` opens the long-screenshot editor from the
+       * card's Capture more – with `drag`, one handle held mid-drag `by` CSS px from where it
+       * started.
+       */
+      kind: 'screenshot'
+      surface: PreviewScreenshotSurface
+      drag: { edge: 'top' | 'bottom'; by: number } | null
+    }
+  | {
+      /**
+       * The device's connectivity (ERR-06, ERR-07): `offline` puts the host's word at offline over
+       * the active page (the banner, once the debounce has passed), `back-online` takes it
+       * offline and back (the toast), `reloading` fails the active tab's load as offline and
+       * brings the device back (the error page in its own Reloading state, the toast beside it).
+       */
+      kind: 'network'
+      variant: PreviewNetworkVariant
+    }
+  | {
+      /**
+       * The active tab's renderer went (ERR-15): the crash page's variant for the way it went –
+       * a crash, the system freeing memory, a page ended for not responding – or the crash
+       * page's repeat variant (a second crash within the minute, with the way to the overview).
+       */
+      kind: 'crash'
+      variant: PreviewCrashVariant
+    }
+  | {
+      /**
+       * The unresponsive-page prompt (ERR-16) over the active page. The prompt is native on the
+       * device (the chrome shares the hung renderer, so it cannot draw it); the preview shows a
+       * stand-in of the same 9.23 composition on the phone sheet chassis. `url` names the page to
+       * hang first (a page this host can picture, `PREVIEW_SAMPLE_ORIGIN`, shows behind the
+       * sheet's scrim; a site's frame cannot be read and shows nothing); null for the active
+       * tab's own.
+       */
+      kind: 'unresponsive'
+      url: string | null
+    }
+  | {
       kind: 'messages'
       /** A toast with this text (and an action labelled `action`, an `error` when so marked). */
       toast: { message: string; action: string | null; error: boolean } | null
@@ -467,6 +534,44 @@ export interface PreviewSeed {
   screenLock: boolean | null
   /** Where the phone bar docks (`bar=top` / `bar=bottom`; the setting `phoneBarPosition`). */
   bar: PhoneBarPosition | null
+  /**
+   * Cookies and site data (`sitedata=<sample>[,<site>][,blockall][,exit]`): the three lists
+   * seeded with sample patterns and the stand-in profile answering with the `sample` of stored
+   * origins named (`none`, `some`, `many`; see `previewSiteData.ts`); `never`, `allow` or
+   * `clear` puts the active tab's site on that list, so the site-information sheet shows the
+   * state; `blockall` sets the default to "Block all cookies"; `exit` turns on a few
+   * clear-on-exit types. `null` leaves the policy as it is.
+   */
+  siteData: PreviewSiteDataSeed | null
+}
+
+export interface PreviewSiteDataSeed {
+  origins: PreviewSiteDataOrigins
+  /** The list the active tab's site goes on; null for none. */
+  site: SiteDataList | null
+  blockAll: boolean
+  exit: boolean
+}
+
+const PREVIEW_SITE_LISTS: Record<string, SiteDataList> = {
+  never: 'block',
+  block: 'block',
+  allow: 'allow',
+  clear: 'clearOnExit'
+}
+
+/** `sitedata=<sample>[,<site>][,blockall][,exit]`, in any order; null when absent. */
+export function parsePreviewSiteData(value: string | null): PreviewSiteDataSeed | null {
+  if (value === null) return null
+  const seed: PreviewSiteDataSeed = { origins: 'some', site: null, blockAll: false, exit: false }
+  for (const raw of value.split(',')) {
+    const part = raw.trim().toLowerCase()
+    if (isPreviewSiteDataOrigins(part)) seed.origins = part
+    else if (part in PREVIEW_SITE_LISTS) seed.site = PREVIEW_SITE_LISTS[part]
+    else if (part === 'blockall') seed.blockAll = true
+    else if (part === 'exit') seed.exit = true
+  }
+  return seed
 }
 
 /** Types for the stand-in downloader to report, by extension; anything else is a plain stream. */
@@ -533,9 +638,19 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * PREVIEW_READ_ALOUD_STATUSES (`readAloud=` is `playing`; `rate=<n>` sets the speed chip,
  * `voices` opens the voice picker sheet over it), `reader=article` for the active
  * tab in Reader View on a stand-in article (`reader=preferences` opens its text preferences
- * sheet over it), `error=<code>` for the active
+ * sheet over it), `network=<variant>` for the device's connectivity played over the active tab
+ * (one of PREVIEW_NETWORK_VARIANTS: `offline` for the banner, `back-online` for the toast,
+ * `reloading` for an offline error page reloading itself as the device comes back),
+ * `crash=<variant>` for the active tab's renderer gone one of PREVIEW_CRASH_VARIANTS' ways (the
+ * crash page in that variant; `crash=` is a plain crash), `unresponsive` for the
+ * unresponsive-page prompt's stand-in over the active tab (`url=<page>` hangs that page instead:
+ * `https://sample.example/` for a page this host can picture behind the scrim), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
- * failed, else the tab's own), which puts up the zen://error page, any of `toast=<text>` (with
+ * failed, else the tab's own), which puts up the zen://error page, `screenshot=<surface>` for
+ * Take Screenshot's gallery flow on the active tab as one of PREVIEW_SCREENSHOT_SURFACES (`flash`
+ * holds the page's flash part-way, `card` leaves the preview card up, `editor` opens the
+ * long-screenshot editor from the card's Capture more; `&drag=<top|bottom>:<px>` holds one
+ * handle mid-drag that far down), any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
  * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
  * Home screen"), `download=<file>` for a transfer the stand-in downloader plays back
@@ -561,7 +676,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * over `sheet`, `sheet` over the permission `prompt`, that over `ntp`, `ntp` over `private`,
  * `private` over `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along),
  * `find` over `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `readAloud`,
- * `readAloud` over `reader`, `reader` over `error`, `error` over the messages, the messages over
+ * `readAloud` over `reader`, `reader` over `network`, `network` over `crash`, `crash` over
+ * `unresponsive`, `unresponsive` over `error`, `error` over `screenshot`, `screenshot` over
+ * the messages, the messages over
  * `webapp`, `webapp` over `media`, `media` over `download`, `download` over `popups`, `popups`
  * over the security `prompt`, that over `voice`, `voice` over `overview`, and `overview` over
  * `urlbar`. A leading `#` (the URL hash as read) is ignored.
@@ -699,9 +816,40 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const reader = params.get('reader')
   if (reader !== null) return { kind: 'reader', preferences: reader === 'preferences' }
+  const network = params.get('network')
+  if (network !== null && (PREVIEW_NETWORK_VARIANTS as readonly string[]).includes(network)) {
+    return { kind: 'network', variant: network as PreviewNetworkVariant }
+  }
+  const crash = params.get('crash')
+  if (crash !== null) {
+    return {
+      kind: 'crash',
+      variant: (PREVIEW_CRASH_VARIANTS as readonly string[]).includes(crash)
+        ? (crash as PreviewCrashVariant)
+        : 'crash'
+    }
+  }
+  if (params.has('unresponsive')) return { kind: 'unresponsive', url: params.get('url') || null }
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {
     return { kind: 'error', code: Number(error), url: params.get('url') || null }
+  }
+  const screenshot = params.get('screenshot')
+  if (
+    screenshot !== null &&
+    (PREVIEW_SCREENSHOT_SURFACES as readonly string[]).includes(screenshot)
+  ) {
+    const drag = params.get('drag')
+    const [edge, by] = drag?.split(':') ?? []
+    const distance = Number(by)
+    return {
+      kind: 'screenshot',
+      surface: screenshot as PreviewScreenshotSurface,
+      drag:
+        (edge === 'top' || edge === 'bottom') && Number.isFinite(distance)
+          ? { edge, by: distance }
+          : null
+    }
   }
   const toast = params.get('toast')
   const banners = params.get('banners')
@@ -861,7 +1009,9 @@ function parseDownload(filename: string, params: URLSearchParams): PreviewDownlo
 /**
  * The seeding a spec asks for on top of its state: `rules=<n>` remembered site permissions,
  * `lock=on` the private tabs' lock, `screenlock=off` (or `on`) the device's screen lock,
- * `bar=top` / `bar=bottom` the phone bar's dock (the setting; left as it is without one).
+ * `bar=top` / `bar=bottom` the phone bar's dock (the setting; left as it is without one),
+ * `sitedata=<sample>[,<site>][,blockall][,exit]` the cookie and site-data policy with the
+ * stand-in profile's sample of stored origins (see `PreviewSiteDataSeed`).
  */
 export function parsePreviewSeed(spec: string): PreviewSeed {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -876,7 +1026,8 @@ export function parsePreviewSeed(spec: string): PreviewSeed {
         : null,
     lock: onOff(params.get('lock')) === true,
     screenLock: onOff(params.get('screenlock')),
-    bar: bar === 'top' || bar === 'bottom' ? bar : null
+    bar: bar === 'top' || bar === 'bottom' ? bar : null,
+    siteData: parsePreviewSiteData(params.get('sitedata'))
   }
 }
 

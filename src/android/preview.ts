@@ -16,7 +16,14 @@ import type { RawArticle } from '@core/reader'
 import { extensionPageOf } from '@shared/url'
 import { previewRangeAnswer } from './previewRange'
 import { createPreviewDownloads } from './previewDownloads'
+import { createPreviewScreenshots } from './previewScreenshots'
 import { previewPdfVariantOf } from './previewPdf'
+import {
+  PREVIEW_SITE_DATA_EVENT,
+  previewCookies,
+  previewOrigins,
+  type PreviewSiteDataOrigins
+} from './previewSiteData'
 import { emulateTextZoom } from './previewTextZoom'
 import { CHUNK_CHARS } from './storeIo'
 import { isProbablyUrl } from '@shared/url'
@@ -62,6 +69,22 @@ const PREVIEW_FETCH_ROUTE = '/__zen/fetch'
  * a copy first.
  */
 export const PREVIEW_CLIP_EVENT = 'zen-preview-clip'
+
+/**
+ * A `CustomEvent` on `window` whose detail is a tab id: that tab's next load is deliberately
+ * unhurried, as `view.reload` always is – the page it is leaving stays on screen for
+ * `RELOAD_DELAY_MS` before the new one arrives, like a load over a connection that has only just
+ * come back. The `network=reloading` preview state sends it so a still can catch the offline
+ * error page in its own Reloading state (ERR-06) instead of the page that replaces it at once.
+ */
+export const PREVIEW_SLOW_LOAD_EVENT = 'zen-preview-slow-load'
+
+/**
+ * A `CustomEvent` on `window`: every load this host is still holding back (PREVIEW_SLOW_LOAD_EVENT)
+ * lands now. The preview states send it as they reset, so the next state starts on the page and
+ * not on the one a held load was leaving.
+ */
+export const PREVIEW_SETTLE_LOADS_EVENT = 'zen-preview-settle-loads'
 
 /**
  * The web app the preview's pages can "declare": a cross-origin iframe cannot post its own
@@ -399,6 +422,14 @@ export function createPreviewBridge(): NativeBridge {
   window.addEventListener(PREVIEW_VOICE_EVENT, (e) => {
     voiceScript = (e as CustomEvent<string>).detail
   })
+  // `sitedata=` (previewStates.ts) names the sample the site-data stand-ins answer from; the
+  // origins a state's Clear took out stay out until the next sample is named.
+  let siteDataSample: PreviewSiteDataOrigins = 'none'
+  const clearedOrigins = new Set<string>()
+  window.addEventListener(PREVIEW_SITE_DATA_EVENT, (e) => {
+    siteDataSample = (e as CustomEvent<PreviewSiteDataOrigins>).detail
+    clearedOrigins.clear()
+  })
   let voiceRun = 0
   const voice = {
     start: (): VoiceStartOutcome => {
@@ -555,6 +586,16 @@ export function createPreviewBridge(): NativeBridge {
   window.addEventListener(PREVIEW_CLIP_EVENT, (e) => {
     previewClip = String((e as CustomEvent<unknown>).detail ?? '')
   })
+  /** Tabs whose next load takes `RELOAD_DELAY_MS` to arrive (PREVIEW_SLOW_LOAD_EVENT). */
+  const slowLoads = new Set<string>()
+  window.addEventListener(PREVIEW_SLOW_LOAD_EVENT, (e) => {
+    slowLoads.add(String((e as CustomEvent<unknown>).detail ?? ''))
+  })
+  /** The loads held back and still on their way, by tab id: how each lands (PREVIEW_SETTLE_LOADS_EVENT). */
+  const heldLoads = new Map<string, () => void>()
+  window.addEventListener(PREVIEW_SETTLE_LOADS_EVENT, () => {
+    for (const land of [...heldLoads.values()]) land()
+  })
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
@@ -676,6 +717,7 @@ export function createPreviewBridge(): NativeBridge {
       const pendingReload = reloads.get(String(tabId))
       if (pendingReload !== undefined) window.clearTimeout(pendingReload)
       reloads.delete(String(tabId))
+      heldLoads.delete(String(tabId))
       viewEvent(String(tabId), 'destroyed', null)
     },
     'view.load': ({ tabId, url }) => {
@@ -689,22 +731,41 @@ export function createPreviewBridge(): NativeBridge {
       cardTakenAt.delete(String(tabId))
       viewEvent(String(tabId), 'startLoading', null)
       const entry = commitEntry(String(tabId), String(url))
-      const extensionPage = extensionPageOf(String(url))
-      if (extensionPage) {
-        // What the runtime would serve; the frame reports the page loaded like any other.
-        const page = extensionPages.get(extensionPage.url) ?? {
-          url: extensionPage.url,
-          name: extensionPage.id,
-          title: ''
+      const show = (): void => {
+        const extensionPage = extensionPageOf(String(url))
+        if (extensionPage) {
+          // What the runtime would serve; the frame reports the page loaded like any other.
+          const page = extensionPages.get(extensionPage.url) ?? {
+            url: extensionPage.url,
+            name: extensionPage.id,
+            title: ''
+          }
+          void showDocument(frame, extensionPageDocument(page), entry)
+        } else if (String(url).startsWith(PREVIEW_SAMPLE_ORIGIN)) {
+          // A page this host can picture (same-origin): the frame reports it loaded like any other.
+          void showDocument(frame, samplePageDocument(), entry)
+        } else {
+          frame.src = String(url)
+          entry.src = String(url)
         }
-        void showDocument(frame, extensionPageDocument(page), entry)
-      } else if (String(url).startsWith(PREVIEW_SAMPLE_ORIGIN)) {
-        // A page this host can picture (same-origin): the frame reports it loaded like any other.
-        void showDocument(frame, samplePageDocument(), entry)
-      } else {
-        frame.src = String(url)
-        entry.src = String(url)
       }
+      const pendingReload = reloads.get(String(tabId))
+      if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      reloads.delete(String(tabId))
+      heldLoads.delete(String(tabId))
+      if (slowLoads.delete(String(tabId))) {
+        // Unhurried, as a reload is: the page on screen stays until the new one arrives – on
+        // its own after the delay, or at once when the states settle the loads held back.
+        const land = (): void => {
+          const timer = reloads.get(String(tabId))
+          if (timer !== undefined) window.clearTimeout(timer)
+          reloads.delete(String(tabId))
+          heldLoads.delete(String(tabId))
+          show()
+        }
+        heldLoads.set(String(tabId), land)
+        reloads.set(String(tabId), window.setTimeout(land, RELOAD_DELAY_MS))
+      } else show()
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
     // Back and Forward step the stand-in list (`view.back` / `view.forward` on the host) and
@@ -719,6 +780,7 @@ export function createPreviewBridge(): NativeBridge {
       const pendingReload = reloads.get(String(tabId))
       if (pendingReload !== undefined) window.clearTimeout(pendingReload)
       reloads.delete(String(tabId))
+      heldLoads.delete(String(tabId))
       viewEvent(String(tabId), 'stopLoading', navState(frame))
     },
     'view.postMessage': ({ tabId, message }) => {
@@ -738,6 +800,7 @@ export function createPreviewBridge(): NativeBridge {
       const src = currentEntry(String(tabId))?.src ?? frame.dataset.url
       const pendingReload = reloads.get(String(tabId))
       if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      heldLoads.delete(String(tabId))
       if (src)
         reloads.set(
           String(tabId),
@@ -752,6 +815,11 @@ export function createPreviewBridge(): NativeBridge {
       if (!frame) return
       frame.dataset.url = String(url)
       cardTakenAt.delete(String(tabId))
+      // A slow load or reload still on its way is superseded by this document.
+      const pendingReload = reloads.get(String(tabId))
+      if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      reloads.delete(String(tabId))
+      heldLoads.delete(String(tabId))
       // A PDF viewer page names the download's file (`views.ts` sends the document along for
       // Kotlin to serve); here that picks the sample document the dev server answers with.
       const pdf = document as { path?: unknown } | undefined
@@ -909,11 +977,39 @@ export function createPreviewBridge(): NativeBridge {
     'view.savePage': () => null,
     'view.screenshot': () => null,
     'view.certificate': () => null,
-    // The preview has no cookie jar of its own to look into; the sheet shows the connection only.
-    'site.cookies': () => [],
+    // The preview has no cookie jar of its own to look into: without a `sitedata=` state the
+    // sheet shows the connection only; with one, the sample it names (previewSiteData.ts) stands
+    // for the profile – the viewer's origins and the active site's cookies – and a clear takes
+    // the origin out of the sample, so a Clear in a still leaves the row gone.
+    // A site whose cookies a state's Clear (or the never list's sweep) took out answers none,
+    // as the engine's jar would.
+    'site.cookies': ({ url }) => {
+      let origin = ''
+      try {
+        origin = new URL(String(url)).origin
+      } catch {
+        // Not an origin: the sample answers as it stands.
+      }
+      return clearedOrigins.has(origin) ? [] : previewCookies(siteDataSample, String(url))
+    },
     'site.storage': () => ({ usageBytes: null, quotaBytes: null, origins: [] }),
-    'site.clearCookies': () => ({ removed: 0, remaining: 0 }),
-    'site.clearStorage': () => ({ ok: true, scope: 'origins' }),
+    'site.listOrigins': ({ containerId }) =>
+      previewOrigins(siteDataSample, String(containerId)).filter(
+        (row) => !clearedOrigins.has(row.origin)
+      ),
+    'site.clearCookies': ({ url }) => {
+      const removed = previewCookies(siteDataSample, String(url)).length
+      try {
+        clearedOrigins.add(new URL(String(url)).origin)
+      } catch {
+        // Not an origin: nothing to take out of the sample.
+      }
+      return { removed, remaining: 0 }
+    },
+    'site.clearStorage': ({ origins }) => {
+      for (const origin of Array.isArray(origins) ? origins : []) clearedOrigins.add(String(origin))
+      return { ok: true, scope: 'origins' }
+    },
     'dialog.confirm': ({ message, detail }) => window.confirm(`${message}\n\n${detail ?? ''}`),
     'dialog.openText': ({ extensions }) =>
       new Promise<Array<{ name: string; text: string }>>((resolve) => {
@@ -1060,6 +1156,8 @@ export function createPreviewBridge(): NativeBridge {
       }
     },
     ...createPreviewDownloads(host, DOWNLOADS_DIR),
+    // Take Screenshot's gallery flow (SH-07, SH-08): the flash, the card's picture, the long capture.
+    ...createPreviewScreenshots((tabId) => views.get(tabId), snapshotFrame),
     'profile.clear': () => undefined,
     'profile.clearBrowsingData': () => undefined,
     // No jar or cache to measure in the preview, as on a device (the WebView cannot list cookies).

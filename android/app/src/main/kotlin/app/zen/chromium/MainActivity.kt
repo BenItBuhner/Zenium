@@ -88,6 +88,14 @@ class MainActivity : BrowserActivity() {
         callback(uri)
     }
 
+    private var chooserCallback: (() -> Unit)? = null
+    /** A share sheet started for its return (`Share.Outcome`): the result code says nothing, the return itself does. */
+    private val chooserRequest = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { _ ->
+        val callback = chooserCallback ?: return@registerForActivityResult
+        chooserCallback = null
+        callback()
+    }
+
     private var defaultBrowserCallback: ((Any?) -> Unit)? = null
     private val defaultBrowserRequest = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { _ ->
         val callback = defaultBrowserCallback ?: return@registerForActivityResult
@@ -429,6 +437,23 @@ class MainActivity : BrowserActivity() {
      * default-apps settings before that. Answers with the role once the user is back, or null
      * when the device offers no way to ask.
      */
+    /**
+     * Start a share sheet and hear when it has finished (a target taken or the sheet dismissed;
+     * `Share.Outcome` tells the two apart). A sheet already awaited is told it returned. False
+     * when the sheet could not start.
+     */
+    fun launchChooserForResult(chooser: Intent, onReturned: () -> Unit): Boolean {
+        chooserCallback?.invoke()
+        chooserCallback = onReturned
+        return try {
+            chooserRequest.launch(chooser)
+            true
+        } catch (e: Exception) {
+            chooserCallback = null
+            false
+        }
+    }
+
     fun requestDefaultBrowser(reply: (Any?) -> Unit) {
         defaultBrowserCallback?.invoke(null)
         defaultBrowserCallback = null

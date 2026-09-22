@@ -5,6 +5,7 @@ import { ChevronDown } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
+import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { cn } from '@renderer/lib/utils'
 import { MenulistPopover, type MenulistOption } from '../menus/MenulistPopover'
@@ -102,17 +103,36 @@ export function V2Menulist<T extends string>({
   )
 }
 
+/**
+ * The menulist's sheet on its own (§9.13 under a finger): a value row that opens its picker as a
+ * sheet over the sheet it sits in (the site-information sheet's "Cookies for this site") renders
+ * it while open, and takes `onClose` once the sheet has gone – after `onPick` when a pick closed it.
+ */
+export function V2MenulistSheet<T extends string>(
+  props: Omit<PopupProps<T>, 'anchor'>
+): JSX.Element | null {
+  return <MenulistSheet {...props} />
+}
+
 function MenulistSheet<T extends string>({
   label,
   value,
   options,
   onPick,
   onClose
-}: PopupProps<T>): JSX.Element | null {
+}: Omit<PopupProps<T>, 'anchor'>): JSX.Element | null {
   const ready = useFloatingChrome()
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
   useEscape(() => sheet.current?.dismiss())
+  // The system back gesture is the sheet's while it is up (§9.24: the top surface answers), the
+  // predictive preview pulling it down as the finger goes – not the surface's under it.
+  useBackSurface({
+    name: 'menulist',
+    onProgress: (progress) => sheet.current?.backProgress(progress),
+    onCommit: () => sheet.current?.commitBack(),
+    onCancel: () => sheet.current?.cancelBack()
+  })
   if (!ready) return null
   return createPortal(
     <BottomSheet

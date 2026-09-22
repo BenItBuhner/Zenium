@@ -120,14 +120,17 @@ class DownloadsDemo : DownloadsDemoBase("downloads-demo-state.json", "downloads"
         hideKeyboard()
         shot("06-data-and-blob")
 
-        // 4. The server dies on the downloader's first dead.bin attempt and on each of its five
-        //    resumes, so the row fails with the reason the engine mapped the failure to and
-        //    Chrome's wording for it. The server takes Range and the failure kept the partial
-        //    file, so the row offers Resume (as Chrome's does; Retry is for the rest), and the
-        //    server serves that response whole.
+        // 4. The server dies on the downloader's first dead.bin attempt and on each of its three
+        //    automatic resumes (`DownloadLogic.MAX_AUTO_RESUMES`; the row counts down `Resuming
+        //    in N s…` to each, HB-43 – an interrupted row with `autoResumeAt`), so the fourth
+        //    failure leaves the row interrupted for good, with the reason the engine mapped the
+        //    failure to and Chrome's wording for it. The server takes Range and the failure kept
+        //    the partial file, so the row offers Resume (as Chrome's does; Retry is for the
+        //    rest), and the server serves that response whole. Some twenty seconds from the tap
+        //    (the 2 + 4 + 8 s of back-off and four short attempts).
         closePanel()
         click(LINK_DEAD)
-        val failed = awaitRow("dead.bin", 120_000) { it.optString("state") == "interrupted" }
+        val failed = awaitRow("dead.bin", 120_000) { restsInterrupted(it) }
         check(
             failed != null && failed.optString("error") == "network-failed" &&
                 failed.optString("errorMessage") == "Check internet connection",

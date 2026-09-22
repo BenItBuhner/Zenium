@@ -27,8 +27,9 @@ import java.util.concurrent.TimeUnit
  * read for the tab), and the channel visible beside the sites' group in the app's notification
  * settings.
  *
- * Built on [SyncDemo]: the same Settings › Sync entry, the folder granted through the system's
- * picker with a finger, the passphrase sheet, the Open tabs toggle, the shell as the other
+ * Built on [SyncDemoBase] (the sequence [SyncDemo] records as is): the same Settings › Sync
+ * entry, the folder granted through the system's picker with a finger, the passphrase sheet, the
+ * Open tabs toggle, the shell as the other
  * devices' sync client ([SyncPeer]: the folder's salt, the same passphrase, AES-GCM under the
  * shared key). Two other devices this time – the picker is for two or more (one device, and the
  * menu names it) – each with a device file and an `open-tabs` document (W4-3's `.zenpage`), so
@@ -57,7 +58,7 @@ import java.util.concurrent.TimeUnit
  * around it), read against the app menu's same two scenes, a sheet main had before this PR.
  */
 @RunWith(AndroidJUnit4::class)
-class SyncHistoryDemo : SyncDemo("sync-demo-state.json", "services-sync-history-ui-android", "sync-history-demo") {
+class SyncHistoryDemo : SyncDemoBase("sync-demo-state.json", "services-sync-history-ui-android", "sync-history-demo") {
     override val tag: String = "SyncHistoryDemo"
     /** The claims that failed (a finding, not a touch fault); the run fails on them at the end. */
     private val failures = ArrayList<String>()

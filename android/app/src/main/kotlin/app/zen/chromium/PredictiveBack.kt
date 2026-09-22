@@ -640,7 +640,10 @@ class Spring(
     private var v = 0f
     private var target = 0f
     private var lastNanos = 0L
-    private val choreographer = Choreographer.getInstance()
+    // The thread's Choreographer, taken at the first frame asked for (the main thread's, where
+    // a spring runs): a spring that never animates never touches it, so the geometry that owns
+    // springs (`ContentCover`) can be built and snapped in a plain unit test.
+    private val choreographer by lazy { Choreographer.getInstance() }
     private val frame = Choreographer.FrameCallback { nanos -> tick(nanos) }
 
     var running = false

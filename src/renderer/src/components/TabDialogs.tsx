@@ -30,6 +30,7 @@ import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
 import { InstallLayer } from './phone/InstallSheet'
+import { LongScreenshotLayer } from './phone/LongScreenshotSheet'
 import { PrintPreviewDialog } from './print/PrintPreviewDialog'
 import { MediaLayer } from './phone/MediaSheet'
 import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
@@ -69,7 +70,8 @@ const TAB_ICONS = [
  * save an address or a card, choose a passkey account), the address and card editors of
  * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from
  * the chrome, the print preview (Chrome's constrained window at the frame's size) and, on
- * phones, the media sheet the pill's Now playing chip opens (`MediaSheet`). The modal ones
+ * phones, the media sheet the pill's Now playing chip opens (`MediaSheet`) and the long-screenshot
+ * editor the screenshot card's Capture more opens (`LongScreenshotSheet`). The modal ones
  * render through the `FrameDialogHost` this mounts, so they centre
  * in the box it is placed in – the content frame on desktop, the shell on phones – over a scrim
  * that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop it portals
@@ -129,6 +131,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       )}
       <InstallLayer state={state} />
       {phone && <MediaLayer state={state} />}
+      <LongScreenshotLayer />
       <InstallDialogLayer state={state} />
       <ScreenPickerLayer state={state} />
       <ShareLayer state={state} />

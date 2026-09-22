@@ -50,7 +50,7 @@ function pageFor(id: string, state: UIState, tab: Tab): JSX.Element | null {
     case 'settings':
       return <SettingsPage state={state} tab={tab} />
     case 'history':
-      return <HistoryPage tab={tab} />
+      return <HistoryPage state={state} tab={tab} />
     case 'bookmarks':
       return <BookmarkManager state={state} tab={tab} />
     case 'downloads':

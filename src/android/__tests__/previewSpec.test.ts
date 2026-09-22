@@ -16,7 +16,8 @@ describe('parsePreviewSeed', () => {
       rules: null,
       lock: false,
       screenLock: null,
-      bar: null
+      bar: null,
+      siteData: null
     })
     // The lock on (INC-05): the cover over a private tab in front, or over the Private pane.
     expect(parsePreviewSeed('private=page&lock=on')).toMatchObject({ lock: true })
@@ -32,7 +33,34 @@ describe('parsePreviewSeed', () => {
       rules: 3,
       lock: true,
       screenLock: false,
-      bar: null
+      bar: null,
+      siteData: null
+    })
+  })
+
+  it('seeds the site-data policy and the viewer’s sample from `sitedata=`', () => {
+    // The sample alone: some origins listed, the active tab's site on no list.
+    expect(parsePreviewSeed('page=settings&section=privacy&sitedata=some')).toMatchObject({
+      siteData: { origins: 'some', site: null, blockAll: false, exit: false }
+    })
+    // The active tab's site on a list (Chrome's names and the lists' own), the browser-wide
+    // block-all, the clear-on-exit types on; the sample defaults to `some` when only they are named.
+    expect(parsePreviewSeed('siteinfo=cookies&sitedata=many,never')).toMatchObject({
+      siteData: { origins: 'many', site: 'block' }
+    })
+    expect(parsePreviewSeed('sitedata=block')).toMatchObject({
+      siteData: { origins: 'some', site: 'block' }
+    })
+    expect(parsePreviewSeed('sitedata=allow')).toMatchObject({ siteData: { site: 'allow' } })
+    expect(parsePreviewSeed('sitedata=clear,exit')).toMatchObject({
+      siteData: { site: 'clearOnExit', exit: true }
+    })
+    expect(parsePreviewSeed('sitedata=none,BlockAll')).toMatchObject({
+      siteData: { origins: 'none', blockAll: true, site: null }
+    })
+    // Unknown words are left alone.
+    expect(parsePreviewSeed('sitedata=whatever')).toMatchObject({
+      siteData: { origins: 'some', site: null, blockAll: false, exit: false }
     })
   })
 

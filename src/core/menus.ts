@@ -922,6 +922,19 @@ export class Menus {
         run: (surface) => open(buildSearchUrl(engine, selection), surface)
       })
     }
+    // Chrome's Copy Link to Highlight: the menu's item for the link alone (the toolbar's Share
+    // carries it, and the phone's sheet has Copy link in Zenium's own row). Web pages only: a
+    // highlight in a `zen://` page or a file means nothing to whoever gets the link.
+    if (/^https?:\/\//i.test(tab.url)) {
+      actions.push({
+        id: 'copyHighlight',
+        label: 'Copy Link to Highlight',
+        title: 'Copy Link',
+        menu: true,
+        toolbar: false,
+        run: () => void this.copyHighlightLink(tab, win)
+      })
+    }
     // The services core's selection translation: the menu offers it for the page's own selection
     // (a text field's comes without `at`) and puts the popover where the click landed; the
     // toolbar's touch anchors nothing, so the phone shows its sheet.
@@ -941,6 +954,9 @@ export class Menus {
           )
       })
     }
+    // The selection's share carries a link to the highlight (SH-11, Chrome's shared
+    // highlighting): the text, and the page's URL with the selection as its `#:~:text=`
+    // directive when the page can single it out – the text alone otherwise, as Chrome shares it.
     if (state.capabilities.share) {
       actions.push({
         id: 'share',
@@ -948,7 +964,7 @@ export class Menus {
         title: 'Share',
         menu: true,
         toolbar: true,
-        run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
+        run: () => void this.shareSelection(tab, selection, win)
       })
     }
     // Listen from a selection (EDGE-11 / GN-13): `readAloud.start { from: 'selection-on' }`,
@@ -973,6 +989,19 @@ export class Menus {
       })
     }
     return actions
+  }
+
+  /** The selection onto the share sheet with its link to the highlight when the page can make one. */
+  private async shareSelection(tab: Tab, selection: string, win: ZenWindow): Promise<void> {
+    const url = await this.browser.textFragments.highlightUrl(tab.id)
+    await this.browser.share({ text: selection, url: url ?? undefined, tabId: tab.id }, win)
+  }
+
+  /** The link to the highlight on the clipboard – or a word when the selection cannot be linked to. */
+  private async copyHighlightLink(tab: Tab, win: ZenWindow): Promise<void> {
+    const url = await this.browser.textFragments.highlightUrl(tab.id)
+    if (url) this.browser.copyText(url, 'Link copied', win, 'Link copied')
+    else this.browser.toast("Couldn't make a link to this text", 'info', win)
   }
 
   /**
@@ -2327,12 +2356,32 @@ export class Menus {
   /**
    * Context menu of one visit on the history page. "Select" picks the row on the page (the page's
    * selection is a mode entered from here, by Ctrl/Shift-click or Ctrl+A; the checkboxes show
-   * while it lasts) so several can be removed at once.
+   * while it lasts) so several can be removed at once. A row that names a page but no visit –
+   * a tab from another device in the page's "Tabs from other devices" group (ID-28) – asks with
+   * `visitId` null and gets the page's items alone: nothing of it is in this device's history to
+   * select or remove.
    */
-  showHistoryContextMenu(visitId: string, url: string, win: ZenWindow, anchor?: MenuAnchor): void {
+  showHistoryContextMenu(
+    visitId: string | null,
+    url: string,
+    win: ZenWindow,
+    anchor?: MenuAnchor
+  ): void {
     const { tabs, history, state } = this.browser
     const caps = state.capabilities
     const host = getDomain(url)
+    const visit: Template =
+      visitId === null
+        ? []
+        : [
+            { type: 'separator' },
+            { label: 'Select', click: () => this.browser.emit('history.select', { visitId }, win) },
+            { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
+            {
+              label: 'Forget About This Page',
+              click: () => history.deleteUrls([url])
+            }
+          ]
     this.popup(
       [
         {
@@ -2353,13 +2402,7 @@ export class Menus {
           : []),
         { type: 'separator' },
         { label: 'Copy Link', click: () => this.browser.platform.clipboard.writeText(url) },
-        { type: 'separator' },
-        { label: 'Select', click: () => this.browser.emit('history.select', { visitId }, win) },
-        { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
-        {
-          label: 'Forget About This Page',
-          click: () => history.deleteUrls([url])
-        },
+        ...visit,
         { type: 'separator' },
         {
           // Chrome's "More from this site": the History page searching the host

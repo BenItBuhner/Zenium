@@ -18,7 +18,14 @@ import type { CertificateDetails, Platform as PlatformOs } from './types'
 import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 import { isCertificateError } from './siteInfo'
-import { errorPageCertificate } from './url'
+import {
+  crashPageOptionsOf,
+  errorPageAccentOf,
+  errorPageCertificate,
+  type CrashPageOptions,
+  type ErrorPageAccent
+} from './url'
+import { hexToRgb, resolveTheme, rgbToHex } from './theme'
 import { newTabPageHtml } from './newTabPage'
 import { pdfMissingPageHtml, pdfViewerPageHtml, type PdfPageLookup } from './pdfPage'
 
@@ -270,7 +277,9 @@ export function crashCodeName(
   exitCode: number | null | undefined = null,
   os: PlatformOs = 'linux'
 ): string {
-  if (reason === 'oom' || reason === 'memory-eviction') return 'Out of Memory'
+  if (reason === 'oom' || reason === 'memory-eviction' || reason === 'oom-kill')
+    return 'Out of Memory'
+  if (reason === 'hung') return 'RESULT_CODE_HUNG'
   if (reason === 'launch-failed') return 'LAUNCH_FAILED'
   if (reason === 'integrity-failure') return 'INTEGRITY_FAILURE'
   const code = typeof exitCode === 'number' && Number.isFinite(exitCode) ? exitCode : null
@@ -312,6 +321,11 @@ export interface ErrorPageContent {
   code: string
   /** The failed URL the Reload control goes back to ('' when there is none). */
   target: string
+  /**
+   * The crash page's second action (ERR-15): a page that crashed twice within the minute offers
+   * the tab switcher beside Reload, so other tabs can be closed to free memory.
+   */
+  showTabs: boolean
   /**
    * The certificate interstitial's part, for an `ERR_CERT_*` failure of an https address: the
    * page then offers Back to safety and Advanced, which reveals this and the proceed control, as
@@ -407,22 +421,56 @@ function siteOf(url: string): string {
   }
 }
 
+/**
+ * The sad tab's words (tabs-44, ERR-15): Chrome's "Aw, Snap!" family in Zenium's voice, one
+ * title and reason per way the renderer went – a crash, the OS taking the memory back while the
+ * page was in front, the user ending a page that stopped responding – and, for a second time
+ * within the minute, Chrome's suggestion to close other tabs, with the way to them beside Reload.
+ */
+const CRASH_COPY: Record<
+  NonNullable<CrashPageOptions['variant']>,
+  { title: string; reason: string; again: string }
+> = {
+  crash: {
+    title: 'This page crashed',
+    reason: 'Something went wrong while displaying this page. Reload to try again.',
+    again:
+      'Something went wrong while displaying this page, again. Closing other tabs can free up memory.'
+  },
+  memory: {
+    title: 'This page was closed to free up memory',
+    reason: 'Android needed the memory this page was using. Reload to open it again.',
+    again:
+      'Android needed the memory this page was using, again. Closing other tabs can free some up.'
+  },
+  hung: {
+    title: 'This page crashed',
+    reason: 'The page stopped responding and was closed. Reload to try again.',
+    again:
+      'The page stopped responding and was closed, again. Closing other tabs can free up memory.'
+  }
+}
+
 export function errorPageContent(
   code: number,
   description: string,
   target: string,
-  certificate: CertificateDetails | null = null
+  certificate: CertificateDetails | null = null,
+  crash: CrashPageOptions = {}
 ): ErrorPageContent {
   const site = siteOf(target)
   if (code === CRASH_ERROR_CODE) {
     // The sad tab (tabs-44): Chrome's "Aw, Snap!" in Zenium's words, the way the renderer
     // ended on the code line the way Chrome's sad tab writes it ("Error code: …").
+    const copy = CRASH_COPY[crash.variant ?? 'crash']
+    const repeat = crash.repeat === true
     return {
-      title: 'This page crashed',
+      title: repeat && crash.variant !== 'memory' ? `${copy.title} again` : copy.title,
       site,
-      reason: 'Something went wrong while displaying this page. Reload to try again.',
+      reason: repeat ? copy.again : copy.reason,
       code: description ? `Error code: ${description}` : '',
       target,
+      showTabs: repeat,
       interstitial: null
     }
   }
@@ -439,6 +487,7 @@ export function errorPageContent(
     reason: copy?.reason(site) ?? (interstitial ? NET_ERRORS[-207].reason(site) : fallback),
     code: name,
     target,
+    showTabs: false,
     interstitial
   }
 }
@@ -537,6 +586,32 @@ export function errorPageStyle(css: string = chromeStylesheet): string {
 const ERROR_STYLE = errorPageStyle()
 
 /**
+ * The active theme's accent, set on the document's root beside the token block (design language
+ * v2 §9.11): `--zen-accent` and its triple as the chrome's `.zen-window` carries them
+ * (`themeCssVariables`), the light one on `:root` and the dark one under the block's own dark
+ * selector, so the block's `--v2-accent` – the accent mixed towards black or white – resolves
+ * here as it does in the window, and a `data-primary` control is the accent and not the
+ * unresolved variable's black or white. The core writes the accent into the page's URL when it
+ * builds one; a URL without it (a page restored from an older session) takes the default
+ * theme's, the same values the chrome falls back to.
+ */
+export function errorPageAccentStyle(accent: ErrorPageAccent | null): string {
+  const rule = (selector: string, hex: string | undefined, dark: boolean): string => {
+    const rgb = (hex && hexToRgb(hex)) || resolveTheme(null, dark).accent
+    return `${selector} {\n  --zen-accent: ${rgbToHex(rgb)};\n  --zen-accent-rgb: ${rgb.join(' ')};\n}`
+  }
+  return [
+    rule(':root', accent?.light, false),
+    rule(":root[data-theme='dark']", accent?.dark, true)
+  ].join('\n')
+}
+
+/** The error document's whole stylesheet: the chrome's cuts, then the theme's accent beside them. */
+function errorDocumentStyle(accent: ErrorPageAccent | null): string {
+  return `${ERROR_STYLE}\n${errorPageAccentStyle(accent)}`
+}
+
+/**
  * Puts the chrome's root attributes on the page's root from the media the tab sees, so the token
  * block's `:root[data-theme='dark']`, `[data-pointer='coarse']` and `[data-form-factor='phone']`
  * rules apply to the page as they do to the chrome. The classification is `classifyViewport`'s
@@ -614,27 +689,57 @@ export function errorPageHtml(url: URL): string {
   const code = Number(url.searchParams.get('code') ?? 0)
   const target = url.searchParams.get('url') ?? ''
   const kind = url.searchParams.get('kind')
+  const accent = errorPageAccentOf(url.searchParams)
   if (kind === 'safebrowsing')
-    return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')))
-  if (kind === 'https-only') return httpsOnlyPageHtml(target, code)
+    return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')), accent)
+  if (kind === 'https-only') return httpsOnlyPageHtml(target, code, accent)
   if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
   const content = errorPageContent(
     code,
     url.searchParams.get('description') ?? '',
     target,
-    errorPageCertificate(url.searchParams)
+    errorPageCertificate(url.searchParams),
+    crashPageOptionsOf(url.searchParams)
   )
   const controls = content.interstitial
     ? interstitialHtml(content.interstitial, content.target)
     : content.target
-      ? `\n  <button type="button" class="zen-v2-button" onclick="location.replace(${escapeHtml(JSON.stringify(content.target))})">Reload</button>`
+      ? reloadHtml(content)
       : ''
   const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
-  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${ERROR_STYLE}</style></head>
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${errorDocumentStyle(accent)}</style></head>
 <body class="zen-error-page"><main>
   <h1>${escapeHtml(content.title)}</h1>
   <p>${emphasiseSite(content.reason, content.site)}</p>${name}${controls}
-</main></body></html>`
+</main><script>${RELOADING_SCRIPT}</script></body></html>`
+}
+
+/**
+ * The page's "Reloading…" state (ERR-06; design language v2 §9.30): the Reload control turns
+ * busy – its label swapped for the spinner at the same width, `aria-busy`, "Reloading" as its
+ * name for a screen reader – and the other actions wait at .4 until the browser answers by
+ * leaving the page. The page calls it from its own Reload; the core calls it
+ * (`ERROR_PAGE_RELOADING_SCRIPT`) before it reloads an offline error page itself when the
+ * device comes back. Should the load never come, the page frees itself after a while so
+ * Reload can be pressed again.
+ */
+const RELOADING_SCRIPT =
+  'function zenReloading(){var b=document.getElementById("zen-error-reload");if(!b||b.getAttribute("aria-busy")==="true")return;' +
+  'b.setAttribute("aria-busy","true");b.setAttribute("aria-label","Reloading");' +
+  'var o=document.querySelectorAll(".zen-error-actions button");for(var i=0;i<o.length;i++)if(o[i]!==b)o[i].disabled=true;' +
+  'setTimeout(function(){b.removeAttribute("aria-busy");b.removeAttribute("aria-label");for(var i=0;i<o.length;i++)o[i].disabled=false},8000)}'
+
+/**
+ * The error page's controls when it stands in for a page that could not be had: Reload, which
+ * goes back to the page with the busy state above, and on the crash page's repeat variant the
+ * way to the tab switcher before it (a page's §9.11 action row, the primary trailing; the
+ * phone's overview is what the switcher is, so the control is the phone's: `.zen-error-show-tabs`).
+ */
+function reloadHtml(content: ErrorPageContent): string {
+  const reload = `<button type="button" id="zen-error-reload" class="zen-v2-button zen-interstitial-action"${content.showTabs ? ' data-primary' : ''} onclick="zenReloading();location.replace(${escapeHtml(JSON.stringify(content.target))})"><span class="zen-interstitial-label">Reload</span><span class="zen-interstitial-spinner">${glyph('loader-circle')}</span></button>`
+  if (!content.showTabs) return `\n  ${reload}`
+  const showTabs = `<button type="button" class="zen-v2-button zen-error-show-tabs" onclick="${escapeHtml(postAction('show-tabs', content.target))}">Show tabs</button>`
+  return `\n  <div class="zen-error-actions">${showTabs}${reload}</div>`
 }
 
 /**
@@ -758,7 +863,7 @@ function warningButton(button: WarningButton, autofocus: boolean): string {
  * stacks three, primary first). Under Details, 16 below the actions, the reason, the address at
  * 13 and the secondary that goes on regardless.
  */
-function warningPageHtml(page: WarningPage): string {
+function warningPageHtml(page: WarningPage, accent: ErrorPageAccent | null): string {
   const data = Object.entries({ interstitial: page.kind, ...page.data })
     .map(([k, v]) => ` data-${k}="${escapeHtml(v)}"`)
     .join('')
@@ -766,7 +871,7 @@ function warningPageHtml(page: WarningPage): string {
     `<button type="button" id="zen-details-toggle" class="zen-v2-button zen-interstitial-action" aria-expanded="false" aria-controls="zen-details">Details</button>`,
     ...page.actions.map((b) => warningButton(b, b.primary === true))
   ]
-  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${ERROR_STYLE}</style></head>
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${errorDocumentStyle(accent)}</style></head>
 <body class="zen-error-page"><main${data}>
   <div class="zen-interstitial-title" data-tone="${page.tone}">
     ${glyph(page.glyph)}
@@ -793,22 +898,29 @@ function warningPageHtml(page: WarningPage): string {
  * request engine refused the navigation because the site is on a malware or phishing feed.
  * "Proceed anyway", under Details, excepts the host until the browser closes.
  */
-export function safeBrowsingPageHtml(target: string, threat: SafeBrowsingThreat): string {
+export function safeBrowsingPageHtml(
+  target: string,
+  threat: SafeBrowsingThreat,
+  accent: ErrorPageAccent | null = null
+): string {
   const host = hostOf(target)
   const copy = SAFE_BROWSING_THREAT_LABELS[threat]
-  return warningPageHtml({
-    kind: 'safebrowsing',
-    name: 'Security warning',
-    tone: 'danger',
-    glyph: 'shield-alert',
-    title: copy.title,
-    description: `Zenium stopped this page. ${escapeHtml(copy.description)}`,
-    actions: [{ action: 'back', label: 'Back to safety', primary: true }],
-    details: `<p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and Security.</p>`,
-    detailActions: [{ action: 'proceed', label: 'Proceed anyway (unsafe)', danger: true }],
-    target,
-    data: { threat }
-  })
+  return warningPageHtml(
+    {
+      kind: 'safebrowsing',
+      name: 'Security warning',
+      tone: 'danger',
+      glyph: 'shield-alert',
+      title: copy.title,
+      description: `Zenium stopped this page. ${escapeHtml(copy.description)}`,
+      actions: [{ action: 'back', label: 'Back to safety', primary: true }],
+      details: `<p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and Security.</p>`,
+      detailActions: [{ action: 'proceed', label: 'Proceed anyway (unsafe)', danger: true }],
+      target,
+      data: { threat }
+    },
+    accent
+  )
 }
 
 /**
@@ -816,25 +928,32 @@ export function safeBrowsingPageHtml(target: string, threat: SafeBrowsingThreat)
  * had over plaintext. "Continue" allows the site until the browser closes; "Always allow",
  * under Details, remembers it (the `https-only` permission).
  */
-export function httpsOnlyPageHtml(httpUrl: string, code: number): string {
+export function httpsOnlyPageHtml(
+  httpUrl: string,
+  code: number,
+  accent: ErrorPageAccent | null = null
+): string {
   const host = hostOf(httpUrl)
   const reason = describeNetError(code, 'The secure connection could not be made.')
-  return warningPageHtml({
-    kind: 'https-only',
-    name: 'Secure connection not available',
-    tone: 'warn',
-    glyph: 'lock-open',
-    title: 'Secure connection not available',
-    description: `Zenium tried to reach <strong>${escapeHtml(host)}</strong> over https and could not. Loading it over http means what you send and receive can be read and changed on the way.`,
-    actions: [
-      { action: 'continue', label: 'Continue to HTTP site' },
-      { action: 'back', label: 'Back to safety', primary: true }
-    ],
-    details: `<p>${escapeHtml(reason)}${code ? ` (${code})` : ''}</p>
+  return warningPageHtml(
+    {
+      kind: 'https-only',
+      name: 'Secure connection not available',
+      tone: 'warn',
+      glyph: 'lock-open',
+      title: 'Secure connection not available',
+      description: `Zenium tried to reach <strong>${escapeHtml(host)}</strong> over https and could not. Loading it over http means what you send and receive can be read and changed on the way.`,
+      actions: [
+        { action: 'continue', label: 'Continue to HTTP site' },
+        { action: 'back', label: 'Back to safety', primary: true }
+      ],
+      details: `<p>${escapeHtml(reason)}${code ? ` (${code})` : ''}</p>
     <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and Security.</p>`,
-    detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
-    target: httpUrl
-  })
+      detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
+      target: httpUrl
+    },
+    accent
+  )
 }
 
 export function readerMissingPageHtml(original: string | null): string {
