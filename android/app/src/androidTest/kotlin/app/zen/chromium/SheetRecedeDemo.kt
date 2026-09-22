@@ -166,6 +166,9 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             finding("site information up: --zen-recede ${recedeValue()}, swatch p %.3f, band %.1f".format(progress(it), measureBand(it, band()).luminance))
             it.recycle()
         }
+        // The glyph is the sheet's one opener (§9.29): a finger on it that brings no sheet up –
+        // main's tip's runs had the URL field open instead – fails the run here, not at step 2.
+        if (recedeNumber() < 0.995) failures += "warm-up: the finger on the site-information glyph brought no sheet up (--zen-recede ${recedeValue()}); ${focusWhere()}"
         back()
         settleDown()
         SystemClock.sleep(1_500)
@@ -221,10 +224,13 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         settleDown()
         finding("bar (bottom edge) with no sheet: computed opacity ${barOpacity()}")
 
-        // 2. Site information, closed by a press on its scrim.
-        probe("siteinfo-open", Kind.TRANSITION) { f.tap(siteIcon()) }
+        // 2. Site information, closed by a press on its scrim. The glyph is found before the
+        //    block: a read of the tree is the app's main thread's work, and the finger lands on
+        //    the glyph (the sheet's one opener, §9.29), never on the address stop around it.
+        val glyph = siteIcon()
+        probe("siteinfo-open", Kind.TRANSITION) { f.tap(glyph) }
         settleUp()
-        focusReport("site information")
+        if (!focusReport("site information")) failures += "siteinfo-open: the finger on the site-information glyph did not open the sheet (the focus is outside any sheet)"
         probe("siteinfo-close", Kind.TRANSITION) { f.tap(scrimPoint()) }
         settleDown()
 
@@ -330,6 +336,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         //    back), then swiped through and let go (the sheet closes with the gesture).
         f.tap(siteIcon())
         settleUp()
+        focusReport("site information (before the back gesture)")
         if (awaitSurface(up = true, timeoutMs = 4_000)) {
             probe("back-peek", Kind.HELD, HOLD_MS) { edgeSwipe(0.30f * width) }
             finding("back gesture held: --zen-recede ${recedeValue()}")
@@ -429,6 +436,13 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
      * when it is inside.
      */
     private fun focusReport(label: String): Boolean {
+        val where = focusWhere()
+        finding("$label: focus on $where")
+        return where.endsWith("inside the sheet")
+    }
+
+    /** The active element, named, and whether it is inside a sheet. */
+    private fun focusWhere(): String {
         val raw = chromeJs(
             "(function(){var a=document.activeElement;if(!a||a===document.body)return 'nothing (body)';" +
                 "var d=a.closest('.zen-sheet,[role=dialog]');" +
@@ -436,9 +450,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
                 "return a.tagName.toLowerCase()+(a.getAttribute('role')?'[role='+a.getAttribute('role')+']':'')+" +
                 "(name?' \"'+name+'\"':'')+(d?' inside the sheet':' OUTSIDE any sheet');})()"
         )
-        val where = (JSONTokener(raw).nextValue() as? String) ?: raw
-        finding("$label: focus on $where")
-        return where.endsWith("inside the sheet")
+        return (JSONTokener(raw).nextValue() as? String) ?: raw
     }
 
     /** The bar's computed opacity: main.css's `1 − recede` at rest, whatever the shell writes over it. */
@@ -652,12 +664,25 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             PointF(width - 28 * density, pillY)
         }
 
-    /** The site icon at the start of the pill; looked up before the clock starts. */
-    private fun siteIcon(): PointF =
-        waitFor(SITE_ICON_LABEL, 4_000)?.let { PointF(it.exactCenterX(), it.exactCenterY()) } ?: run {
-            Log.w(tag, "site icon not in the accessibility tree; tapping the start of the pill")
+    /**
+     * The site-information glyph at the start of the pill – the sheet's one opener (v2 §9.29) –
+     * looked up before the clock starts: the pill's own clickable node of that label, in the
+     * pill's row ([pillControl]). The plain label walk answered this page's "Site information"
+     * table cell first on main's tip (the row under the page's fold; its clipped bounds put the
+     * finger on the pill's corner, where the address stop opened the URL field – PERF-4's two
+     * runs), so what both lookups answer goes into the findings: a run's record says which node
+     * the finger was aimed at.
+     */
+    private fun siteIcon(): PointF {
+        val node = pillControl(SITE_ICON_LABEL)
+        val plain = findNode { it == SITE_ICON_LABEL }
+        finding("site icon: ${describeNode(node)}; the plain label walk answers ${describeNode(plain)}")
+        val point = node?.let { steadyBounds(it) }?.let { touchPoint(it) }
+        return point ?: run {
+            Log.w(tag, "site icon not in the pill's row of the accessibility tree; tapping the start of the pill")
             PointF(pill.left + 22 * density, pillY)
         }
+    }
 
     /** A point on the scrim above any sheet: the middle of the measured band. */
     private fun scrimPoint(): PointF = band().let { PointF(it.exactCenterX(), it.exactCenterY()) }
