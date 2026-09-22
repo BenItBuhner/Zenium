@@ -34,6 +34,11 @@ name: Android tablet private mode demo
 # same driver on its `tablet-webview` shard (.github/nightly-drivers.json).
 on:
   workflow_dispatch:
+  # TEMPORARY: the design gate's run of the tablet private mode PR (#346) on its branch; off
+  # again before the review (the tablet-webview recipe is dispatch-only and the nightly's).
+  push:
+    branches:
+      - cursor/android-tablet-private-mode-7344
 
 permissions:
   contents: read
