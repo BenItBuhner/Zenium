@@ -1,6 +1,6 @@
 import type { JSX, MouseEvent, ReactNode, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { ListChecks, ListX, Search, Trash2, X } from 'lucide-react'
+import { Search, Trash2, X } from 'lucide-react'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { swipeOutcome, swipeRestTarget, swipeReveal } from '@renderer/lib/gestures/swipeDelete'
 import { cn } from '@renderer/lib/utils'
@@ -76,10 +76,11 @@ export function PhoneHeader({
 
 /**
  * The header while rows are being picked: how many, a way out, and what can be done to them.
- * With `total` (how many rows the list shows) the header also picks or unpicks them all: one
- * 44 icon button before the list's own actions, "Select all" until every shown row is picked,
- * "Deselect all" then (the label and the glyph flip with the state, as the count does). The
- * list decides what each means for it (`multiSelect.selectAll` / `deselectAll`).
+ * With `total` (how many rows the list shows) the header also picks or unpicks them all: the
+ * mode's one bulk action, a trailing §9.18 secondary `zen-v2-button` after the list's own
+ * actions (§9.6's contextual bar, the overview's select-tabs header the same), reading "Select
+ * all" until every shown row is picked and "Deselect all" then. The list decides what each
+ * means for it (`multiSelect.selectAll` / `deselectAll`).
  */
 export function PhoneSelectionHeader({
   count,
@@ -105,20 +106,17 @@ export function PhoneSelectionHeader({
       <h2 className="zen-phone-title min-w-0 flex-1 truncate pl-1 tabular-nums" aria-live="polite">
         {count} selected
       </h2>
+      {actions}
       {total !== undefined && onSelectAll && (
-        <PhoneIconButton
-          label={all ? 'Deselect all' : 'Select all'}
+        <button
+          type="button"
+          className="zen-v2-button ml-1 mr-0.5"
           disabled={total === 0}
           onClick={() => onSelectAll(!all)}
         >
-          {all ? (
-            <ListX className="h-5 w-5" strokeWidth={1.75} />
-          ) : (
-            <ListChecks className="h-5 w-5" strokeWidth={1.75} />
-          )}
-        </PhoneIconButton>
+          {all ? 'Deselect all' : 'Select all'}
+        </button>
       )}
-      {actions}
     </header>
   )
 }

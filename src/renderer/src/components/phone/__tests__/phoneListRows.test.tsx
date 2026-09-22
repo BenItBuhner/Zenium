@@ -257,10 +257,17 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
 })
 
 describe('the selection header (§9.6)', () => {
+  // A button's name: its label, or the words it shows (the §9.18 button carries its own).
   const buttons = (el: ParentNode): string[] =>
-    [...el.querySelectorAll<HTMLElement>('button')].map((b) => b.getAttribute('aria-label')!)
+    [...el.querySelectorAll<HTMLElement>('button')].map(
+      (b) => b.getAttribute('aria-label') ?? b.textContent!
+    )
+  const bulk = (el: ParentNode): HTMLButtonElement =>
+    [...el.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      /select all/i.test(b.textContent ?? '')
+    )!
 
-  it('offers Select all as a shared icon button before the list’s actions, with the count, until every shown row is picked', () => {
+  it('offers Select all as the one trailing secondary button after the list’s actions, with the count, until every shown row is picked', () => {
     const picks: boolean[] = []
     const el = render(
       <PhoneSelectionHeader
@@ -276,9 +283,13 @@ describe('the selection header (§9.6)', () => {
       />
     )
     expect(el.querySelector('h2')!.textContent).toBe('2 selected')
-    expect(buttons(el)).toEqual(['Stop selecting', 'Select all', 'Remove from history'])
-    const selectAllButton = el.querySelector<HTMLButtonElement>('[aria-label="Select all"]')!
-    expect(selectAllButton.classList.contains('zen-v2-icon-button')).toBe(true)
+    expect(buttons(el)).toEqual(['Stop selecting', 'Remove from history', 'Select all'])
+    const selectAllButton = bulk(el)
+    // §9.6: the bulk toggle is a §9.18 secondary `zen-v2-button` with the words, never an
+    // icon button or a text button; the same composition as the overview's select-tabs header.
+    expect(selectAllButton.classList.contains('zen-v2-button')).toBe(true)
+    expect(selectAllButton.hasAttribute('data-primary')).toBe(false)
+    expect(selectAllButton.classList.contains('zen-v2-icon-button')).toBe(false)
     act(() => selectAllButton.click())
     expect(picks).toEqual([true])
   })
@@ -295,7 +306,7 @@ describe('the selection header (§9.6)', () => {
       />
     )
     expect(buttons(el)).toEqual(['Stop selecting', 'Deselect all'])
-    act(() => el.querySelector<HTMLButtonElement>('[aria-label="Deselect all"]')!.click())
+    act(() => bulk(el).click())
     expect(picks).toEqual([false])
   })
 
@@ -305,7 +316,6 @@ describe('the selection header (§9.6)', () => {
     const empty = render(
       <PhoneSelectionHeader count={0} total={0} onSelectAll={noop} onExit={noop} actions={null} />
     )
-    const button = empty.querySelector<HTMLButtonElement>('[aria-label="Select all"]')!
-    expect(button.disabled).toBe(true)
+    expect(bulk(empty).disabled).toBe(true)
   })
 })
