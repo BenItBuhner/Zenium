@@ -17,8 +17,6 @@ name: Android downloads demo
 # android-emulator-demo.yml; this file picks the driver, starts the server and names the artifact.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/services-downloads-dead-budget-24d1]
 
 permissions:
   contents: read
