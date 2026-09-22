@@ -8,7 +8,7 @@ vi.mock('electron', () => ({
   session: { fromPartition: () => ({}) }
 }))
 
-const { CookiePolicyEnforcer, ElectronSiteData, cookieOrigin, cookieUrl, originReadings } =
+const { CookiePolicyEnforcer, ElectronSiteData, cookieCovers, cookieOrigin, cookieUrl, originReadings } =
   await import('../siteData')
 
 type ChangedListener = (event: unknown, cookie: Cookie, cause: string, removed: boolean) => void
@@ -28,13 +28,34 @@ class FakeSession {
     this.jar = jar
   }
 
+  /**
+   * Chromium's filters as Electron exposes them: `url` – the cookies a request for it carries
+   * (the host's own and the domain cookies above it, Secure ones over https only, the path a
+   * prefix of the URL's); `domain` – the cookies of that domain and its subdomains, every path.
+   */
   readonly cookies = {
-    get: async (filter: { url?: string }): Promise<Cookie[]> =>
-      filter.url
-        ? this.jar.filter((c) =>
-            new URL(filter.url!).hostname.endsWith((c.domain ?? '').replace(/^\./, ''))
-          )
-        : [...this.jar],
+    get: async (filter: { url?: string; domain?: string }): Promise<Cookie[]> => {
+      if (filter.url) {
+        const u = new URL(filter.url)
+        return this.jar.filter((c) => {
+          const domain = (c.domain ?? '').replace(/^\./, '')
+          if (!domain) return false
+          const hostOnly = !(c.domain ?? '').startsWith('.')
+          if (hostOnly ? u.hostname !== domain : !(u.hostname === domain || u.hostname.endsWith(`.${domain}`)))
+            return false
+          if (c.secure && u.protocol !== 'https:') return false
+          return u.pathname.startsWith(c.path ?? '/')
+        })
+      }
+      if (filter.domain) {
+        const wanted = filter.domain.replace(/^\./, '')
+        return this.jar.filter((c) => {
+          const domain = (c.domain ?? '').replace(/^\./, '')
+          return domain === wanted || domain.endsWith(`.${wanted}`)
+        })
+      }
+      return [...this.jar]
+    },
     remove: async (url: string, name: string): Promise<void> => {
       this.removed.push([url, name])
       this.jar = this.jar.filter((c) => c.name !== name || cookieUrl(c) !== url)
@@ -120,6 +141,42 @@ describe('ElectronSiteData', () => {
     )
   })
 
+  it('lists a host\'s cookies under the origin the user visited, since a cookie knows no port or scheme', async () => {
+    const ses = new FakeSession([
+      cookie('visit', '127.0.0.1', false),
+      cookie('a', '.example.com'),
+      cookie('b', 'www.example.com', false),
+      cookie('stray', 'never-visited.example', false)
+    ])
+    const host = new ElectronSiteData(sessions({ default: ses }))
+    // The probe is the core's known origins, most recent first: the port comes back with them,
+    // a Secure cookie goes with the https origin when the host was visited both ways, a
+    // non-Secure one with the most recent visit; a host on no origin keeps the jar's reading.
+    const rows = await host.listOrigins('default', [
+      'http://127.0.0.1:8080',
+      'http://www.example.com:8080',
+      'http://example.com',
+      'https://example.com',
+      'https://www.example.com'
+    ])
+    expect(rows).toEqual([
+      { origin: 'http://127.0.0.1:8080', cookies: 1, usageBytes: null },
+      { origin: 'https://example.com', cookies: 1, usageBytes: null },
+      { origin: 'http://www.example.com:8080', cookies: 1, usageBytes: null },
+      { origin: 'http://never-visited.example', cookies: 1, usageBytes: null }
+    ])
+    // Without a probe the reading is the jar's alone, as before.
+    expect((await host.listOrigins('default')).map((r) => r.origin)).toEqual([
+      'http://127.0.0.1',
+      'https://example.com',
+      'http://www.example.com',
+      'http://never-visited.example'
+    ])
+    expect(originReadings([cookie('x', 'a.example')], ['not a url', 'https://b.example'])).toEqual([
+      { origin: 'https://a.example', cookies: 1, usageBytes: null }
+    ])
+  })
+
   it("clears the origins' storage through clearData with third parties included, per origin without it", async () => {
     const ses = new FakeSession()
     const host = new ElectronSiteData(sessions({ default: ses }))
@@ -155,6 +212,32 @@ describe('ElectronSiteData', () => {
     expect(await host.clearCookies('default', 'https://www.example.com/')).toBe(1)
     expect(ses.removed).toEqual([['https://example.com/', 'a']])
     expect(ses.jar.map((c) => c.name)).toEqual(['b'])
+  })
+
+  it("takes a host's Secure and sub-path cookies through an http origin too, and leaves a subdomain's own", async () => {
+    // The viewer's row for `http://shop.example:8080` (the port the user visited): the host's
+    // Secure cookie (a cross-site embed's `SameSite=None; Secure`) and the one set for `/app`
+    // go, so does the domain cookie above it; `cdn.shop.example`'s own cookie is another host's.
+    const ses = new FakeSession([
+      cookie('embed', 'shop.example', true),
+      cookie('app', 'shop.example', false, { path: '/app' }),
+      cookie('shared', '.example', true),
+      cookie('cdn', 'cdn.shop.example', false),
+      cookie('other', 'other.example', false)
+    ])
+    const host = new ElectronSiteData(sessions({ default: ses }))
+    expect(await host.clearCookies('default', 'http://shop.example:8080/')).toBe(3)
+    expect(ses.jar.map((c) => c.name).sort()).toEqual(['cdn', 'other'])
+    expect(ses.removed.map(([, name]) => name).sort()).toEqual(['app', 'embed', 'shared'])
+    // A host-only cookie of the parent is not the subdomain's: `example`'s own stays when
+    // `www.example` is cleared; an origin without a host clears nothing.
+    const two = new FakeSession([cookie('own', 'example', false), cookie('dom', '.example', false)])
+    expect(await new ElectronSiteData(sessions({ default: two })).clearCookies('default', 'https://www.example/')).toBe(1)
+    expect(two.jar.map((c) => c.name)).toEqual(['own'])
+    expect(await host.clearCookies('default', 'not a url')).toBe(0)
+    expect(cookieCovers({ domain: 'a.example', hostOnly: true }, 'www.a.example')).toBe(false)
+    expect(cookieCovers({ domain: 'a.example', hostOnly: false }, 'www.a.example')).toBe(true)
+    expect(cookieCovers({ domain: '' }, 'a.example')).toBe(false)
   })
 })
 
