@@ -277,11 +277,15 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             SystemClock.sleep(OPEN_SETTLE_MS)
         }
         finding("overview-pull$suffix: ${overviewState()}; hero $hero; ${cardsInGrid()} cards in the grid")
-        awaitOverview(open = true)
+        val opened = awaitOverview(open = true)
         SystemClock.sleep(OPEN_REST_MS)
-        val card = activeCardRect()
+        // The card is found while the overview is up; with none (the overview never opened, or
+        // the hero has no card) the scene is a back over the overview – never over the page,
+        // where a back would leave the app (the fling's release under load once snapped the
+        // overview closed, and the back meant for it ended the run).
+        val card = if (opened) activeCardRect() else null
         scene("overview-close-pick$suffix", JankBudget.Kind.SPRING, profile = true) {
-            if (card != null) Finger().tap(card.exactCenterX(), card.exactCenterY()) else back()
+            if (card != null) Finger().tap(card.exactCenterX(), card.exactCenterY()) else backOverOverview()
             SystemClock.sleep(CLOSE_SETTLE_MS)
         }
         finding("overview-close-pick$suffix: ${if (card != null) "tapped the card at $card" else "NO CARD FOUND for $hero, closed with back"}; ${overviewState()}; active ${activeTabId()}")
@@ -315,7 +319,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             finding("overview-back-commit$suffix: ${overviewState()}; active ${activeTabId()}")
             if (!awaitOverview(open = false)) {
                 finding("overview-back-commit$suffix: the overview did not close on the gesture; closing with back")
-                back()
+                backOverOverview()
                 awaitOverview(open = false)
             }
         } else {
@@ -326,10 +330,26 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         SystemClock.sleep(CLOSE_REST_MS)
     }
 
-    /** A tap on the active tab's card in the open overview (a back when the card is not found). */
+    /**
+     * A tap on the active tab's card in the open overview (a back when the card is not found);
+     * nothing when the overview is not up – a back on the page would leave the app.
+     */
     private fun pickActiveCard() {
+        if (overviewState() == "closed") {
+            finding("pick: the overview is closed already; nothing to pick")
+            return
+        }
         val card = activeCardRect()
-        if (card != null) Finger().tap(card.exactCenterX(), card.exactCenterY()) else back()
+        if (card != null) Finger().tap(card.exactCenterX(), card.exactCenterY()) else backOverOverview()
+    }
+
+    /** A back while the overview is up; none when it is closed (a back on the page would leave the app). */
+    private fun backOverOverview() {
+        if (overviewState() == "closed") {
+            finding("back: the overview is closed already; the back is not sent")
+            return
+        }
+        back()
     }
 
     /** The on-screen box of the active tab's card in the overview's grid, null when there is none. */
