@@ -17,10 +17,6 @@ name: Android tab search and Recent pane demo
 # live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY (W4-3's verification run; off before the PR is marked ready).
-  push:
-    branches:
-      - cursor/android-tab-search-recent-278f
 
 permissions:
   contents: read
