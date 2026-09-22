@@ -28,8 +28,8 @@ import kotlin.math.roundToInt
  *  - `tab-swipe-begin`: the touch comes down on the pill and crosses the slop; the chrome
  *    snapshots the live page (`overlay.snapshot`), decodes it into the current tab's card and
  *    the track appears in the page's place. The one long task of a swipe lives here.
- *  - `tab-swipe-hold`: the finger rests on the pill with the track up. What the stage costs
- *    per frame when nothing moves (a control for the drag).
+ *  - (the finger then rests on the pill with the track up, off the record: the chrome is idle
+ *    under a held finger – 0 main-thread frames in 1.2 s over four runs of a hold scene)
  *  - `tab-swipe-drag`: the finger carries the track most of one card to the left between two
  *    loose tabs (no group ribbon on any card of the track). PERF-4's first hypothesis lives
  *    here: every move re-renders the stage's cards through React before their transforms are
@@ -164,7 +164,11 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             f.down(pill.right - 10f, pillY)
             f.settleIn(-NUDGE, 0f)
         }
-        scene("tab-swipe-hold", JankBudget.Kind.GESTURE) { f.hold(HOLD_MS) }
+        // The finger rests on the pill with the track up before the drag – off the record since the
+        // fourth run: four runs of a `tab-swipe-hold` scene saw 0 main-thread frames and 1 ms busy
+        // in 1.2 s (the chrome is idle under a held finger), and a scene without frames is a
+        // breach of the gate's by design, not a result.
+        f.hold(HOLD_MS)
         scene("tab-swipe-drag", JankBudget.Kind.GESTURE) {
             f.moveBy(-DRAG_FRACTION * advance(), 0f, DRAG_MS)
             f.hold(DRAG_TAIL_MS)
