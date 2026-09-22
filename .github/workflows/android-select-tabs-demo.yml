@@ -14,9 +14,6 @@ name: Android select-tabs demo
 # picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-select-tabs-mode-d62b
 
 permissions:
   contents: read
