@@ -9394,6 +9394,15 @@
   user-select: none;
   isolation: isolate;
 }
+/*
+ * A dialog whose body is a list of rows (`data-body="list"`: the site-data viewer) stands at
+ * most 80% of the frame's height and its list scrolls under the title block (§9.20, #314 (c)):
+ * a dialog 16 from the frame's top and bottom reads as a page. Only the list body takes the cap;
+ * a form or a prompt keeps standing as tall as its content, to the frame's 16.
+ */
+.zen-settings-dialog[data-body='list'] {
+  max-height: 80%;
+}
 .zen-settings-dialog-body {
   display: flex;
   min-height: 0;
@@ -9431,6 +9440,22 @@
 }
 .zen-settings-dialog-footer > * {
   flex: 0 0 auto;
+}
+/*
+ * §9.20's second footer form, for a dialog whose body is a row list and ends in buttons (the
+ * site-data viewer's Clear all under its list): a hairline in the gutter with the list's 4
+ * inset above it (§6's separator margin) and the buttons at 12 above and below, 16 at the sides
+ * – the site-information popover's form (`.zen-siteinfo-footer`). The list's own end inset is
+ * the 4 above the line, so the body's 16 goes; the prompt form's 16 stays for a form's footer.
+ */
+.zen-settings-dialog[data-body='list']
+  > .zen-settings-dialog-body:has(+ .zen-settings-dialog-footer) {
+  padding-bottom: 4px;
+}
+.zen-settings-dialog[data-body='list'] > .zen-settings-dialog-footer {
+  margin: 0 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--v2-border);
 }
 
 /*

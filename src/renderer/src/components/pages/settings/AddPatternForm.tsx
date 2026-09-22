@@ -7,10 +7,14 @@ import { Field, SheetActions, ValidationMessage } from './blocks'
 
 /**
  * Add a site (§9.12 in a sheet, Chrome's "Add a site" dialog): one field read in Chrome's
- * pattern grammar, its hint under it until what is typed is refused – then the validation text
- * stands there and Add waits at .4 (§9.30); a pattern on another list says it will move. Add
- * asks the engine (`siteData.add`), the §9.30 busy form while it answers: a refusal (not a
- * pattern, the list full) clears the field, gives it the focus and shows the reason.
+ * pattern grammar, its hint under it – the grammar's, or that a pattern on another list will
+ * move, which follows the typing – until what is typed is refused. The refusal waits for the
+ * user to leave the field, press Enter or press Add, as Firefox's `:user-invalid` fields do
+ * (§9.12; a field turning red on "https:" half-typed is the failure the #322 review named):
+ * then the validation text stands there and Add waits at .4 (§9.30), and both go the moment
+ * the value is a pattern again. Add asks the engine (`siteData.add`), the §9.30 busy form while
+ * it answers: a refusal (not a pattern, the list full) clears the field, gives it the focus and
+ * shows the reason.
  */
 export function AddPatternForm({
   list,
@@ -27,11 +31,18 @@ export function AddPatternForm({
   const [value, setValue] = useState('')
   const [refused, setRefused] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // The user has left the field, pressed Enter or pressed Add once: from then on what is typed
+  // is judged as it is typed, the way `:user-invalid` keeps matching after the first blur.
+  const [judged, setJudged] = useState(false)
   const feedback = siteDataAddFeedback(status, list, value, windows)
-  const problem = refused ?? feedback.problem
-  const ready = value.trim() !== '' && problem === null
+  const problem = refused ?? (judged ? feedback.problem : null)
+  const typed = value.trim() !== ''
   const add = (): void => {
-    if (!ready || busy) return
+    if (!typed || busy) return
+    if (feedback.problem !== null || refused !== null) {
+      setJudged(true)
+      return
+    }
     setBusy(true)
     cmd('siteData.add', { list, pattern: value.trim() }).then(
       (result) => {
@@ -73,6 +84,9 @@ export function AddPatternForm({
             setValue(e.target.value)
             setRefused(null)
           }}
+          onBlur={() => {
+            if (typed) setJudged(true)
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') add()
           }}
@@ -81,7 +95,7 @@ export function AddPatternForm({
       </Field>
       <SheetActions
         action={SITE_DATA_TEXT.lists.add}
-        disabled={!ready}
+        disabled={!typed || problem !== null}
         busy={busy}
         onCancel={close}
         onAction={add}

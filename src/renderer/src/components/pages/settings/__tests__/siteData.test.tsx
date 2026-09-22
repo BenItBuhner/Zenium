@@ -162,10 +162,15 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('the Cookies and site data groups', () => {
-  it('stand in order: the default, a group and an Add row per list, the on-exit types, the viewer', () => {
+  it('stand in order: the default with the related sites, a group and an Add row per list, the on-exit types, the viewer', () => {
     const { ctx } = context()
+    // The related sites third-party cookies stay allowed on (#156's `cookies-*` groups) follow
+    // the default they qualify since #322's ruling on Q3 folded the Third-party cookies group
+    // into this one.
     expect(siteDataGroups(ctx).map((g) => g.id)).toEqual([
       'site-data',
+      'cookies-related-sites',
+      'cookies-add-site',
       'site-data-allow',
       'site-data-allow-add',
       'site-data-clearOnExit',
@@ -197,6 +202,36 @@ describe('the Cookies and site data groups', () => {
     expect(invoke).toHaveBeenCalledWith('siteData.setDefault', { default: 'block-all' })
   })
 
+  it('carry the third-party setting as the switch under the default: on for the private contexts alone, a dependent row unless the middle radio is on (#322 Q3)', () => {
+    // Zenium's default, `block-private`: the switch on, speaking of private tabs on Android…
+    const { ctx, patches } = context()
+    const groups = siteDataGroups(ctx)
+    expect(groups[0]!.rows.map((r) => r.id)).toEqual([
+      'site-data-default',
+      'site-data-private-only'
+    ])
+    const row = findRow(groups, 'site-data-private-only')
+    if (row?.kind !== 'switch') throw new Error('not a switch')
+    expect(row.label).toBe('Only in private tabs')
+    expect(row.checked).toBe(true)
+    expect(row.disabled).toBe(false)
+    expect(row.description).toBe('Outside private tabs, embedded sites can use cookies.')
+    // …and off writes the block everywhere, on top of the privacy settings as they stand.
+    row.onChange(false)
+    expect(patches).toEqual([
+      { privacy: { ...DEFAULT_SETTINGS.privacy, thirdPartyCookies: 'block' } }
+    ])
+    // …of private windows on a desktop.
+    const desktop = findRow(siteDataGroups(context(status(), true).ctx), 'site-data-private-only')
+    expect(desktop?.label).toBe('Only in private windows')
+    // Under "Allow all" or "Block all" the switch and the related sites wait at .4 (§10.4).
+    for (const value of ['allow', 'block-all'] as const) {
+      const built = siteDataGroups(context(status({ default: value })).ctx)
+      expect(findRow(built, 'site-data-private-only')?.disabled).toBe(true)
+      expect(findRow(built, 'cookies-add-site')?.disabled).toBe(true)
+    }
+  })
+
   it('draw each list’s patterns as item rows with the list’s word under them, the empty line when there are none', () => {
     const { ctx } = context(
       status({
@@ -209,7 +244,8 @@ describe('the Cookies and site data groups', () => {
     const allow = groups.find((g) => g.id === 'site-data-allow')!
     expect(allow.heading).toBe('Sites that can always use cookies')
     expect(allow.rows.map((r) => r.label)).toEqual(['[*.]example.com'])
-    expect(allow.rows[0]!.description).toBe('Can always use cookies')
+    // The pattern alone in its row: the heading already says what the list does (#322 nit 1).
+    expect(allow.rows[0]!.description).toBeUndefined()
     expect(allow.empty).toBe('No sites added')
 
     const exit = groups.find((g) => g.id === 'site-data-clearOnExit')!
@@ -223,7 +259,12 @@ describe('the Cookies and site data groups', () => {
       'site-data-site:news.example',
       'site-data-site:https://tracker.example:8443'
     ])
-    for (const row of block.rows) expect(row.description).toBe('Can never use cookies')
+    for (const row of block.rows) expect(row.description).toBeUndefined()
+    // Only the clear-on-exit list's rows carry a line, the timing the heading does not say.
+    const timed = siteDataGroups(
+      context(status({ clearOnExit: ['a.example'], clearsAtNextLaunch: true })).ctx
+    ).find((g) => g.id === 'site-data-clearOnExit')!
+    expect(timed.rows[0]!.description).toBe('Cleared the next time Zenium starts')
   })
 
   it('head the on-exit list with the windows’ close on a desktop', () => {
@@ -336,27 +377,66 @@ describe('the Add a site form', () => {
     expect(el.textContent).toContain(SITE_DATA_TEXT.lists.fieldHint)
   })
 
-  it('refuses text that is not a pattern under the field, Add waiting, and a duplicate the same way', () => {
+  it('refuses text that is not a pattern once the field is judged – on Add, Enter or blur – with Add waiting, and a duplicate the same way (§9.12 :user-invalid)', () => {
     const { el, input } = form('block', status({ block: ['[*.]example.com'] }))
+    // Half-typed text is not judged as it is typed: the hint stays, the field plain, Add live.
     type(input, 'not a pattern!')
+    expect(input.getAttribute('aria-invalid')).toBeNull()
+    expect(el.textContent).not.toContain(SITE_DATA_TEXT.lists.invalid)
+    expect(el.textContent).toContain(SITE_DATA_TEXT.lists.fieldHint)
+    expect(button(el, 'Add a site').disabled).toBe(false)
+    // The Add press judges it: the refusal under the field, nothing sent, Add at .4.
+    act(() => button(el, 'Add a site').click())
+    expect(invoke).not.toHaveBeenCalled()
     expect(input.getAttribute('aria-invalid')).toBe('true')
     expect(el.textContent).toContain(SITE_DATA_TEXT.lists.invalid)
     expect(el.textContent).not.toContain(SITE_DATA_TEXT.lists.fieldHint)
     expect(button(el, 'Add a site').disabled).toBe(true)
-    act(() => button(el, 'Add a site').click())
-    expect(invoke).not.toHaveBeenCalled()
-
+    // Judged once, the field is judged as it is typed from then on: valid again the moment it is
+    // a pattern, the hint back with it; a duplicate refused the same way.
+    type(input, 'news.example')
+    expect(input.getAttribute('aria-invalid')).toBeNull()
+    expect(el.textContent).toContain(SITE_DATA_TEXT.lists.fieldHint)
+    expect(button(el, 'Add a site').disabled).toBe(false)
     type(input, '[*.]example.com')
     expect(el.textContent).toContain(SITE_DATA_TEXT.lists.duplicate)
     expect(button(el, 'Add a site').disabled).toBe(true)
   })
 
-  it('says a pattern on another list moves, and lets Add go', () => {
+  it('judges the field on Enter too', () => {
+    const { el, input } = form('block')
+    type(input, 'not a pattern!')
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(invoke).not.toHaveBeenCalled()
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(el.textContent).toContain(SITE_DATA_TEXT.lists.invalid)
+  })
+
+  it('judges the field when the user leaves it, but not an empty one', () => {
+    const { el, input } = form('block')
+    // Leaving the field empty judges nothing: the text typed after is not judged as typed.
+    act(() => {
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    type(input, 'not a pattern!')
+    expect(input.getAttribute('aria-invalid')).toBeNull()
+    // Leaving it with text in it does.
+    act(() => {
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(el.textContent).toContain(SITE_DATA_TEXT.lists.invalid)
+    expect(button(el, 'Add a site').disabled).toBe(true)
+  })
+
+  it('says a pattern on another list moves as it is typed, and lets Add go', () => {
     const { el, input } = form('allow', status({ block: ['[*.]example.com'] }))
     type(input, '[*.]example.com')
     expect(input.getAttribute('aria-invalid')).toBeNull()
     expect(el.textContent).toContain(
-      'Currently under “Sites that can never use cookies”; adding moves it here'
+      'Currently under “Sites that can never use cookies”; Add moves it here.'
     )
     expect(button(el, 'Add a site').disabled).toBe(false)
   })
@@ -480,9 +560,22 @@ describe('the site-data viewer', () => {
     expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe(
       '1,000 of 1,204 sites'
     )
+    // One line at the dialog's 400 (#322 nit 6): the aside carries the whole, the line says
+    // only which thousand.
     expect(el.querySelector('.zen-settings-group-description')?.textContent).toBe(
-      'Showing the 1,000 sites with the most data of 1,204.'
+      'Showing the 1,000 with the most data'
     )
+  })
+
+  it('gives the cap’s line and the sizes note a line each', async () => {
+    invoke.mockImplementationOnce(async () =>
+      listing({ total: 1500, truncated: true, sized: false })
+    )
+    const el = render(createElement(SiteDataViewer))
+    await settle()
+    expect(
+      [...el.querySelectorAll('.zen-settings-group-description')].map((p) => p.textContent)
+    ).toEqual(['Showing the 1,000 with the most data', 'Sizes are unavailable on this device.'])
   })
 
   it('says once that sizes are unavailable where no origin could be sized, never per row', async () => {
@@ -614,6 +707,7 @@ describe('the site-data viewer', () => {
             description="Sites that stored cookies or data on this device."
             under={false}
             onClose={onClose}
+            body="list"
           >
             <SiteDataViewer />
           </SettingsDialog>
@@ -646,7 +740,22 @@ describe('the site-data viewer', () => {
       expect(viewerDialog(el).querySelector('[data-testid="site-data-viewer"]')).not.toBeNull()
     })
 
-    it('prompts before clearing all: the prompt over the viewer’s dialog, which stands inert; Cancel takes the focus; Escape closes the prompt alone and the focus returns to Clear all', async () => {
+    it('is the list-bodied dialog: `data-body="list"` on the dialog for the 80% cap and the §9.20 list footer, at the form width', async () => {
+      invoke.mockImplementationOnce(async () => listing())
+      const { el } = open()
+      await settle()
+      const dialog = viewerDialog(el)
+      expect(dialog.getAttribute('data-body')).toBe('list')
+      expect(dialog.style.width).toBe('400px')
+      // The title labels the dialog, its description describes it.
+      const title = dialog.querySelector('.zen-v2-title-block-title')
+      const description = dialog.querySelector('.zen-v2-title-block-description')
+      expect(dialog.getAttribute('aria-labelledby')).toBe(title?.id)
+      expect(dialog.getAttribute('aria-describedby')).toBe(description?.id)
+      expect(description?.textContent).toBe('Sites that stored cookies or data on this device.')
+    })
+
+    it('prompts before clearing all: the prompt a 320 notice over the viewer’s dialog, which stands inert; the prompt itself takes the focus, named by its title and described by its line; Escape closes the prompt alone and the focus returns to Clear all', async () => {
       invoke.mockImplementationOnce(async () => listing())
       const { el, onClose } = open()
       await settle()
@@ -656,13 +765,22 @@ describe('the site-data viewer', () => {
       act(() => clearAll.click())
       expect(dialogs(el)).toHaveLength(2)
       const p = prompt(el)!
-      expect(p.querySelector('h2, h1, [id]')?.textContent ?? p.textContent).toContain(
-        'Clear all site data?'
-      )
-      expect(p.textContent).toContain('signs you out everywhere')
+      const title = p.querySelector('.zen-v2-title-block-title')
+      const line = p.querySelector('.zen-v2-title-block-description')
+      expect(title?.textContent).toBe('Clear all site data?')
+      expect(line?.textContent).toContain('signs you out everywhere')
+      // §9.20's notice: a title block and the two footer buttons, nothing else, at 320.
+      expect(p.style.width).toBe('320px')
+      expect(p.querySelectorAll('button')).toHaveLength(2)
+      expect(p.querySelector('.zen-settings-row, input')).toBeNull()
       expect(viewerDialog(el).hasAttribute('inert')).toBe(true)
       expect(p.hasAttribute('inert')).toBe(false)
-      expect(document.activeElement).toBe(button(p, 'Cancel'))
+      // §9.22: a title-and-notice surface focuses its container, never Cancel – the way out would
+      // be the first thing announced – so the dialog is named and described for the reading.
+      expect(document.activeElement).toBe(p)
+      expect(p.getAttribute('tabindex')).toBe('-1')
+      expect(p.getAttribute('aria-labelledby')).toBe(title?.id)
+      expect(p.getAttribute('aria-describedby')).toBe(line?.id)
       expect(invoke).toHaveBeenCalledTimes(1)
 
       escape()

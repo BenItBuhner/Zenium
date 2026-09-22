@@ -156,6 +156,9 @@ function Chassis({
   const sheet = sheetRef ?? own
   const body = useRef<HTMLDivElement>(null)
   const titleId = useId()
+  // The title block's paragraph describes the dialog (§9.22): read after the name when the sheet
+  // itself takes the focus – a confirmation's – and harmless when a row or button does.
+  const descriptionId = useId()
   const dismiss = (): void => sheet.current?.dismiss()
   useFrameDialog({ onScrimPress: dismiss, active: hosted, ownScrim: true })
   useBackSurface({
@@ -182,6 +185,7 @@ function Chassis({
       fitContent={fitContent}
       handleLabel={handleLabel}
       labelledBy={titleId}
+      describedBy={title.pose === 'block' ? descriptionId : undefined}
       className={className}
       footer={footer}
       header={
@@ -205,7 +209,9 @@ function Chassis({
                 {title.icon}
                 <span className="min-w-0 truncate">{title.text}</span>
               </h2>
-              <p data-tone={title.tone}>{title.description}</p>
+              <p id={descriptionId} data-tone={title.tone}>
+                {title.description}
+              </p>
             </div>
           </>
         )}

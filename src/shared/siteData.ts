@@ -297,24 +297,25 @@ export const SITE_DATA_DEFAULT_LABELS: Record<
   SiteDataDefault,
   { label: string; description: string }
 > = {
+  // Each line fits two lines at 360 dp (§9.13: never a third – about 80 characters at 13 px in
+  // the ≈ 296 the text has beside the radio), the rest of what it could say in the picker's
+  // title block (`siteDataUi`'s `sheetDescription`).
   allow: {
     label: 'Allow all cookies',
-    description:
-      'Sites can use cookies to keep you signed in and remember your preferences, embedded sites included.'
+    description: 'Sites can use cookies to keep you signed in and remember you, embedded ones too.'
   },
   'block-third-party': {
     label: 'Block third-party cookies',
-    description:
-      'Sites can use their own cookies. Sites embedded in other sites are governed by the third-party cookie setting.'
+    // Where the block applies – the private contexts alone or everywhere – is the switch row
+    // under the default (`siteDataUi`'s `privateOnly`), the third-party setting's own row.
+    description: 'Sites can use their own cookies; sites embedded in other sites cannot.'
   },
   'block-all': {
     label: 'Block all cookies',
     // Browser-wide by construction: the container's cookie jar stops accepting cookies (Chrome's
     // semantics too); the per-site lists are the exceptions. Said so the row is never read as a
-    // per-site block – and said in two lines, the most a §9.13 picker sheet's option may take at
-    // the phone's width (the consequence for sites is the picker's title block's, `siteDataUi`).
-    description:
-      'Browser-wide, not per site: the container’s cookie jar accepts no cookies except from the always-allow list.'
+    // per-site block; the always-allow list's exception is the picker's title block's.
+    description: 'Browser-wide, not per site: the container’s cookie jar stops accepting cookies.'
   }
 }
 

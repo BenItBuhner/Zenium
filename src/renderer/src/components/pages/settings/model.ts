@@ -121,8 +121,22 @@ export interface ActionRow extends RowBase {
   destructive?: boolean
   /** The confirmation sheet a destructive action shows first; `onPress` runs on its button. */
   confirm?: { title: string; description?: string; action: string }
+  /**
+   * `onPress` opens a confirmation the builder draws itself (the site-data page's prompts, whose
+   * container takes the focus, §9.22): the row says so as one with `confirm` does
+   * (`aria-haspopup="dialog"`).
+   */
+  prompts?: boolean
   /** A sheet holding a small form (add a route, create a container) instead of a plain press. */
   form?: FormSheet
+  /**
+   * The section's drill-in page the row opens on the phone layout (§10.2, `InternalPageSection.
+   * pages`: a list that runs long or whose rows have their own actions – the sites that stored
+   * data – is a page, `zen://settings/<section>/<page>`, reached through `RowContext.openPage`),
+   * where the two-pane layout opens the row's `form` as a dialog instead (§10.5). The row draws
+   * the leaving chevron on the phone; the desktop keeps its `button`.
+   */
+  page?: string
   /**
    * `onPress` opens a surface of its own over the page (an editor sheet): inside an item's sheet
    * the row dismisses that sheet first and presses once it has gone, so the editor is the one
@@ -136,6 +150,12 @@ export interface ActionRow extends RowBase {
 export interface FormSheet {
   title: string
   description?: string
+  /**
+   * The body is a list of rows rather than a form (the site-data viewer): the desktop dialog
+   * stands at most 80% of the frame and scrolls under its title block, and its footer takes the
+   * list form – a hairline in the gutter, the buttons at 12 (§9.20; `data-body="list"`).
+   */
+  body?: 'list'
   render(close: () => void): ReactNode
 }
 

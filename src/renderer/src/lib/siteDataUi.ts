@@ -13,6 +13,7 @@ import {
   type SiteDataState,
   type SiteDataStatus
 } from '@shared/siteData'
+import type { ThirdPartyCookieMode } from '@shared/privacy'
 import { normalizeSitePattern } from '@shared/sitePatterns'
 import { formatBytes } from '@shared/siteInfo'
 import { cmd } from './api'
@@ -20,11 +21,15 @@ import { TYPE_LABEL } from './browsingData'
 
 /**
  * The words of Cookies and site data (`pages/settings/siteDataRows.tsx`, `SiteDataViewer.tsx`,
- * the site-information sheet's and popover's cookies level): the default's choice, the three
- * lists, the on-exit types, the viewer's lines and the per-site row, kept apart from the
- * rendering so the two platforms say the same thing and the tests can read it on its own.
- * Chrome's wording where the matrix names it (`chrome://settings/cookies`); Edge's for the
- * on-exit heading, which Chrome has no page for.
+ * `SiteDataPage.tsx`, the site-information sheet's and popover's cookies level): the default's
+ * choice and its private-only switch, the three lists, the on-exit types, the viewer's lines,
+ * the page's rows and prompts and the per-site row, kept apart from the rendering so the two
+ * platforms say the same thing and the tests can read it on its own. Chrome's wording where the
+ * matrix names it (`chrome://settings/cookies`); Edge's for the on-exit heading, which Chrome
+ * has no page for.
+ *
+ * One convention for a row's second line (the #322 ruling on #314's): a sentence takes its full
+ * stop, a fragment – a value, a count, "No sites added" – takes none.
  */
 
 export const SITE_DATA_TEXT = {
@@ -33,10 +38,23 @@ export const SITE_DATA_TEXT = {
     'What sites may keep on this device. The default applies to every site on no list; the lists below are the exceptions.',
   default: {
     label: 'Default behaviour',
-    // The rest of the block-all option's line lives here (§9.13: an option's description takes two
-    // lines, the remainder moves to the sheet's title block).
+    // What the option lines could not carry in two lines at 360 dp (§9.13: an option's
+    // description takes two lines, the remainder moves to the sheet's title block): the
+    // consequence of blocking all cookies and the one list that stands outside it.
     sheetDescription:
-      'What a site on none of the lists below may do with cookies. Blocking all cookies breaks many sites.'
+      'What a site on none of the lists below may do with cookies. Blocking all cookies breaks many sites; the always-allow list is the one exception.'
+  },
+  /**
+   * The row under the default: where "Block third-party cookies" applies – the private contexts
+   * alone (Zenium's default, `thirdPartyCookies: 'block-private'`) or everywhere (`'block'`).
+   * A dependent row of the default's middle choice (§10.4); the words follow the host's private
+   * windows or private tabs.
+   */
+  privateOnly: {
+    label: (windows: boolean) => `Only in private ${windows ? 'windows' : 'tabs'}`,
+    on: (windows: boolean) =>
+      `Outside private ${windows ? 'windows' : 'tabs'}, embedded sites can use cookies.`,
+    off: 'Embedded sites cannot use cookies anywhere.'
   },
   lists: {
     empty: 'No sites added',
@@ -47,18 +65,21 @@ export const SITE_DATA_TEXT = {
     fieldHint:
       'example.com covers that host; [*.]example.com its subdomains too. https:// or :8443 narrows it.',
     placeholder: '[*.]example.com',
-    invalid: 'Enter a site such as example.com or [*.]example.com',
-    duplicate: 'That site is already on this list',
-    moves: (from: string) => `Currently under “${from}”; adding moves it here`,
+    invalid: 'Enter a site such as example.com or [*.]example.com.',
+    duplicate: 'That site is already on this list.',
+    moves: (from: string) => `Currently under “${from}”; Add moves it here.`,
     remove: 'Remove from the list',
+    removeDescription: 'The site follows the default again.',
     removeButton: 'Remove'
   },
   clearOnExit: {
     heading: 'Delete browsing data on exit',
+    // The choice and the passwords line, nothing more (the #322 ruling on Q6); the host that
+    // clears at its next start says so once, in the choice's own sentence.
     description:
       'Choose what to clear every time you close Zenium. Saved passwords are never cleared this way.',
-    nextLaunch: 'On this device the clearing runs the next time Zenium starts.',
-    lists: 'The sites on the clear-on-exit and never lists are cleared whatever you choose here.',
+    descriptionNextLaunch:
+      'Choose what to clear when you close Zenium; it is cleared the next time Zenium starts. Saved passwords are never cleared this way.',
     pending: 'A clear owed from the last close is still running.'
   },
   viewer: {
@@ -71,11 +92,21 @@ export const SITE_DATA_TEXT = {
     reading: 'Reading…',
     empty: 'No site has stored anything yet',
     sizeUnavailable: 'Sizes are unavailable on this device.',
+    /** The cap's line under the heading: one line at 400 (the count aside carries the whole). */
+    capped: (cap: string) => `Showing the ${cap} with the most data`,
     clear: 'Clear',
     clearAll: 'Clear all',
+    /** The phone page's action row (§10.2: the list's bulk action in the danger ink). */
+    clearAllRow: 'Clear all site data',
     clearAllTitle: 'Clear all site data?',
     clearAllDescription:
       'Removes every site’s cookies and stored data, from every container, and signs you out everywhere. Permissions stay.',
+    /** The item sheet's danger row (§10.4) and its prompt (§9.23). */
+    clearSite: 'Clear site data',
+    clearSiteDescription: 'Signs you out of the site; its permissions stay.',
+    clearSiteTitle: (site: string) => `Clear data for ${site}?`,
+    clearSitePrompt:
+      'Removes the site’s cookies and stored data from every container and signs you out of it. Its permissions stay.',
     cleared: (site: string) => `Cleared ${site}`,
     clearedAll: 'Cleared every site’s cookies and data',
     failed: 'That did not work. Try again.'
@@ -85,7 +116,9 @@ export const SITE_DATA_TEXT = {
     picker: 'Cookies for this site',
     noSite: 'This page has no site to add',
     // Chrome's site-details words ("Clear on exit"), which also fit the desktop popover's
-    // menulist trailing the row; the description under each says when the clear runs.
+    // menulist trailing the row; the description under each says when the clear runs – on a
+    // host that clears at its next start, as a sentence about the effect (the #322 ruling (d)),
+    // never a second moment in the value line.
     options: {
       default: 'Use the default',
       allow: 'Always allow',
@@ -95,7 +128,7 @@ export const SITE_DATA_TEXT = {
     optionDescriptions: {
       allow: 'The site can always use cookies, embedded in other sites too.',
       clearOnExit: 'Its cookies and data go when Zenium closes.',
-      clearOnExitNextLaunch: 'Its cookies and data go the next time Zenium starts.',
+      clearOnExitNextLaunch: 'Site data from this session is cleared the next time Zenium starts.',
       block: 'No cookies; what it stored is cleared now.'
     }
   }
@@ -120,6 +153,26 @@ export function siteDataDefaultOptions(): Array<{
   return SITE_DATA_DEFAULTS.map((value) => ({ value, ...SITE_DATA_DEFAULT_LABELS[value] }))
 }
 
+/**
+ * The switch under the default (the #322 ruling on Q3, folding the Third-party cookies group
+ * into this one): "Block third-party cookies" applies in the private contexts alone – Zenium's
+ * default, `thirdPartyCookies: 'block-private'` – or everywhere (`'block'`). On while the mode
+ * is the private one; a dependent row (§10.4) unless the default is the middle choice.
+ */
+export function siteDataPrivateOnly(mode: ThirdPartyCookieMode): boolean {
+  return mode === 'block-private'
+}
+
+/** The mode the switch writes: the private contexts alone when on, everywhere when off. */
+export function siteDataPrivateOnlyMode(on: boolean): ThirdPartyCookieMode {
+  return on ? 'block-private' : 'block'
+}
+
+/** The switch row's second line: what the current setting does outside the private contexts. */
+export function siteDataPrivateOnlyDescription(on: boolean, windows: boolean): string {
+  return on ? SITE_DATA_TEXT.privateOnly.on(windows) : SITE_DATA_TEXT.privateOnly.off
+}
+
 // ---------------------------------------------------------------------------
 // The lists
 // ---------------------------------------------------------------------------
@@ -138,22 +191,30 @@ export function siteDataListDescription(list: SiteDataList, nextLaunch: boolean)
       return 'These sites can use cookies whatever the default says, embedded in other sites too.'
     case 'clearOnExit':
       return nextLaunch
-        ? 'These sites keep their cookies for the session; the cookies and stored data go the next time Zenium starts.'
+        ? 'These sites keep their cookies for the session; site data from the session is cleared the next time Zenium starts.'
         : 'These sites keep their cookies for the session; the cookies and stored data go when Zenium closes.'
     case 'block':
       return 'These sites can never use cookies. What a site stored is cleared when it is added.'
   }
 }
 
-/** The second line of a pattern's row: what its list does for it. */
-export function siteDataPatternDescription(list: SiteDataList, nextLaunch: boolean): string {
+/**
+ * The second line of a pattern's row, where it carries something the list's heading does not
+ * (§10.3: a description says what the label cannot): the clear-on-exit list's timing. The
+ * always and never lists' rows are the pattern alone in a 44 row, as Chrome's and Firefox's
+ * exception lists are – "Can always use cookies" under "Sites that can always use cookies"
+ * restated the heading (the #322 review's N1).
+ */
+export function siteDataPatternDescription(
+  list: SiteDataList,
+  nextLaunch: boolean
+): string | undefined {
   switch (list) {
-    case 'allow':
-      return 'Can always use cookies'
     case 'clearOnExit':
       return nextLaunch ? 'Cleared the next time Zenium starts' : 'Cleared when Zenium closes'
+    case 'allow':
     case 'block':
-      return 'Can never use cookies'
+      return undefined
   }
 }
 
@@ -167,8 +228,10 @@ export function siteDataListOf(status: SiteDataStatus, pattern: string): SiteDat
 
 /**
  * What the add form says under its field for the value typed so far: the hint while the field
- * is empty or the pattern is new, the refusal for text that is not a pattern, the duplicate
- * line for a pattern already on this list, and the note that a pattern on another list moves.
+ * is empty or the pattern is new, the note that a pattern on another list moves, and – as the
+ * `problem`, which the form shows only once the user has left the field or pressed Enter or Add
+ * (§9.12's `:user-invalid`) – the refusal for text that is not a pattern and the duplicate line
+ * for a pattern already on this list; the grammar's hint stands in for either until then.
  */
 export function siteDataAddFeedback(
   status: SiteDataStatus,
@@ -177,14 +240,15 @@ export function siteDataAddFeedback(
   windows: boolean
 ): { problem: string | null; hint: string } {
   const text = value.trim()
-  if (text === '') return { problem: null, hint: SITE_DATA_TEXT.lists.fieldHint }
+  const grammar = SITE_DATA_TEXT.lists.fieldHint
+  if (text === '') return { problem: null, hint: grammar }
   const canonical = normalizeSitePattern(text)
-  if (!canonical) return { problem: SITE_DATA_TEXT.lists.invalid, hint: '' }
+  if (!canonical) return { problem: SITE_DATA_TEXT.lists.invalid, hint: grammar }
   const holder = siteDataListOf(status, canonical)
-  if (holder === list) return { problem: SITE_DATA_TEXT.lists.duplicate, hint: '' }
+  if (holder === list) return { problem: SITE_DATA_TEXT.lists.duplicate, hint: grammar }
   if (holder)
     return { problem: null, hint: SITE_DATA_TEXT.lists.moves(siteDataListHeading(holder, windows)) }
-  return { problem: null, hint: SITE_DATA_TEXT.lists.fieldHint }
+  return { problem: null, hint: grammar }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,13 +260,15 @@ export function clearOnExitRows(): Array<{ type: ClearOnExitType; label: string 
   return CLEAR_ON_EXIT_TYPES.map((type) => ({ type, label: TYPE_LABEL[type as BrowsingDataType] }))
 }
 
-/** The on-exit group's paragraph: the choice, the host's timing, the lists' standing clear. */
+/**
+ * The on-exit group's paragraph: the choice – with the timing in its sentence on a host that
+ * clears at its next start – and the passwords line; the owed clear's line only while one is
+ * owed, since that is a status and not copy.
+ */
 export function clearOnExitDescription(status: SiteDataStatus): string {
-  const parts: string[] = [SITE_DATA_TEXT.clearOnExit.description]
-  if (status.clearsAtNextLaunch) parts.push(SITE_DATA_TEXT.clearOnExit.nextLaunch)
-  if (status.clearOnExit.length > 0 || status.block.length > 0)
-    parts.push(SITE_DATA_TEXT.clearOnExit.lists)
-  if (status.pendingClear) parts.push(SITE_DATA_TEXT.clearOnExit.pending)
+  const t = SITE_DATA_TEXT.clearOnExit
+  const parts: string[] = [status.clearsAtNextLaunch ? t.descriptionNextLaunch : t.description]
+  if (status.pendingClear) parts.push(t.pending)
   return parts.join(' ')
 }
 
@@ -271,18 +337,17 @@ export function siteDataCountAside(listing: SiteDataListing): string {
 }
 
 /**
- * The line under the list heading, when there is something to say: the cap's count line when
- * the listing stopped at it, and the one "sizes unavailable" note where no origin could be sized
- * (Electron) – said once here, never per row.
+ * The lines under the list heading, when there is something to say, each a line of its own: the
+ * cap's line when the listing stopped at it (one line at the dialog's 400 – the count aside
+ * says "1,000 of 1,204 sites", so the line says only which thousand), and the one "sizes
+ * unavailable" note where no origin could be sized (Electron) – said once here, never per row.
  */
-export function siteDataListingNote(listing: SiteDataListing): string | undefined {
-  const parts: string[] = []
+export function siteDataListingNotes(listing: SiteDataListing): string[] {
+  const lines: string[] = []
   if (listing.truncated)
-    parts.push(
-      `Showing the ${SITE_DATA_ORIGIN_CAP.toLocaleString()} sites with the most data of ${listing.total.toLocaleString()}.`
-    )
-  if (!listing.sized && listing.rows.length > 0) parts.push(SITE_DATA_TEXT.viewer.sizeUnavailable)
-  return parts.length > 0 ? parts.join(' ') : undefined
+    lines.push(SITE_DATA_TEXT.viewer.capped(SITE_DATA_ORIGIN_CAP.toLocaleString()))
+  if (!listing.sized && listing.rows.length > 0) lines.push(SITE_DATA_TEXT.viewer.sizeUnavailable)
+  return lines
 }
 
 /** The row's second line: the storage line, then the policy's word for the origin when a list holds it. */

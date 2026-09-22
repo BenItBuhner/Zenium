@@ -70,8 +70,31 @@ describe('the default', () => {
     const blockAll = options[2]!
     expect(blockAll.description.startsWith('Browser-wide, not per site')).toBe(true)
     expect(blockAll.description).toContain('cookie jar')
-    expect(blockAll.description).toContain('always-allow list')
-    for (const option of options) expect(option.description.length).toBeGreaterThan(0)
+    // The always-allow list's exception moved to the picker's title block (§9.13: two lines).
+    expect(ui.SITE_DATA_TEXT.default.sheetDescription).toContain('always-allow list')
+    // Every line fits two lines at 360 dp (#322 nit 2): about 80 characters at 13 px in the 296
+    // the text has beside the radio; and a sentence takes its full stop (nit 4).
+    for (const option of options) {
+      expect(option.description.length).toBeGreaterThan(0)
+      expect(option.description.length).toBeLessThanOrEqual(84)
+      expect(option.description.endsWith('.')).toBe(true)
+    }
+  })
+
+  it('carries the third-party setting as the switch under the default (#322 Q3)', () => {
+    expect(ui.siteDataPrivateOnly('block-private')).toBe(true)
+    expect(ui.siteDataPrivateOnly('block')).toBe(false)
+    expect(ui.siteDataPrivateOnly('allow')).toBe(false)
+    expect(ui.siteDataPrivateOnlyMode(true)).toBe('block-private')
+    expect(ui.siteDataPrivateOnlyMode(false)).toBe('block')
+    expect(ui.SITE_DATA_TEXT.privateOnly.label(true)).toBe('Only in private windows')
+    expect(ui.SITE_DATA_TEXT.privateOnly.label(false)).toBe('Only in private tabs')
+    expect(ui.siteDataPrivateOnlyDescription(true, false)).toBe(
+      'Outside private tabs, embedded sites can use cookies.'
+    )
+    expect(ui.siteDataPrivateOnlyDescription(false, true)).toBe(
+      'Embedded sites cannot use cookies anywhere.'
+    )
   })
 })
 
@@ -94,8 +117,10 @@ describe('the lists', () => {
     expect(ui.siteDataPatternDescription('clearOnExit', true)).toBe(
       'Cleared the next time Zenium starts'
     )
-    expect(ui.siteDataPatternDescription('allow', false)).toBe('Can always use cookies')
-    expect(ui.siteDataPatternDescription('block', true)).toBe('Can never use cookies')
+    // The always and never lists' rows are the pattern alone: "Can always use cookies" under
+    // "Sites that can always use cookies" restated the heading (#322 nit 1).
+    expect(ui.siteDataPatternDescription('allow', false)).toBeUndefined()
+    expect(ui.siteDataPatternDescription('block', true)).toBeUndefined()
     expect(ui.siteDataListDescription('block', false)).toContain('cleared when it is added')
   })
 
@@ -119,19 +144,25 @@ describe('the lists', () => {
       problem: null,
       hint: ui.SITE_DATA_TEXT.lists.fieldHint
     })
+    // A problem comes with the grammar's hint, which the form keeps showing until the field is
+    // judged – on blur, Enter or Add (§9.12's `:user-invalid`, #322 nit 3).
     expect(ui.siteDataAddFeedback(s, 'allow', 'not a pattern!', false)).toEqual({
       problem: ui.SITE_DATA_TEXT.lists.invalid,
-      hint: ''
+      hint: ui.SITE_DATA_TEXT.lists.fieldHint
     })
     expect(ui.siteDataAddFeedback(s, 'block', '[*.]example.com', false)).toEqual({
       problem: ui.SITE_DATA_TEXT.lists.duplicate,
-      hint: ''
+      hint: ui.SITE_DATA_TEXT.lists.fieldHint
     })
     const moves = ui.siteDataAddFeedback(s, 'allow', '[*.]example.com', false)
     expect(moves.problem).toBeNull()
     expect(moves.hint).toBe(
-      'Currently under “Sites that can never use cookies”; adding moves it here'
+      'Currently under “Sites that can never use cookies”; Add moves it here.'
     )
+    // Sentences take their full stop, the empty-field hint and the list's empty line none (nit 4).
+    expect(ui.SITE_DATA_TEXT.lists.invalid.endsWith('.')).toBe(true)
+    expect(ui.SITE_DATA_TEXT.lists.duplicate.endsWith('.')).toBe(true)
+    expect(ui.SITE_DATA_TEXT.lists.empty.endsWith('.')).toBe(false)
   })
 })
 
@@ -144,22 +175,19 @@ describe('clear on exit', () => {
     expect(rows.find((r) => r.type === 'recentlyClosed')?.label).toBe('Recently closed tabs')
   })
 
-  it('describes the group: the choice, the host’s timing, the lists’ standing clear, a pending one', () => {
+  it('describes the group: the choice and the passwords line, the host’s timing once, a pending clear', () => {
     const base = ui.clearOnExitDescription(status())
     expect(base).toBe(ui.SITE_DATA_TEXT.clearOnExit.description)
     expect(base).toContain('Saved passwords are never cleared this way')
-    expect(ui.clearOnExitDescription(status({ clearsAtNextLaunch: true }))).toContain(
-      'the next time Zenium starts'
-    )
-    expect(ui.clearOnExitDescription(status({ block: ['a.example'] }))).toContain(
-      'clear-on-exit and never lists'
-    )
-    expect(ui.clearOnExitDescription(status({ clearOnExit: ['a.example'] }))).toContain(
-      'clear-on-exit and never lists'
-    )
-    expect(ui.clearOnExitDescription(status({ allow: ['a.example'] }))).not.toContain(
-      'clear-on-exit and never lists'
-    )
+    // The host that clears at its next start says so in the choice's own sentence, once (#322
+    // Q6 and (d)); the lists' standing clear is theirs to say, not this group's.
+    const nextLaunch = ui.clearOnExitDescription(status({ clearsAtNextLaunch: true }))
+    expect(nextLaunch).toContain('the next time Zenium starts')
+    expect(nextLaunch.match(/next time Zenium starts/g)).toHaveLength(1)
+    expect(nextLaunch).toContain('Saved passwords are never cleared this way')
+    expect(nextLaunch.split('. ').length).toBeLessThanOrEqual(3)
+    expect(ui.clearOnExitDescription(status({ block: ['a.example'] }))).toBe(base)
+    expect(ui.clearOnExitDescription(status({ clearOnExit: ['a.example'] }))).toBe(base)
     expect(ui.clearOnExitDescription(status({ pendingClear: true }))).toContain('still running')
   })
 
@@ -232,19 +260,20 @@ describe('the viewer', () => {
     )
   })
 
-  it('writes the cap’s line and the one sizes-unavailable note under the heading', () => {
-    expect(ui.siteDataListingNote(listing())).toBeUndefined()
-    expect(ui.siteDataListingNote(listing({ total: 1204, truncated: true }))).toBe(
-      `Showing the ${SITE_DATA_ORIGIN_CAP.toLocaleString()} sites with the most data of 1,204.`
-    )
-    expect(ui.siteDataListingNote(listing({ sized: false }))).toBe(
+  it('writes the cap’s line and the one sizes-unavailable note under the heading, each its own line', () => {
+    expect(ui.siteDataListingNotes(listing())).toEqual([])
+    // The cap's line fits one line at the dialog's 400 (#322 nit 6): the count is the heading's
+    // aside, so the line does not repeat it.
+    const capped = `Showing the ${SITE_DATA_ORIGIN_CAP.toLocaleString()} with the most data`
+    expect(ui.siteDataListingNotes(listing({ total: 1204, truncated: true }))).toEqual([capped])
+    expect(ui.siteDataListingNotes(listing({ sized: false }))).toEqual([
       ui.SITE_DATA_TEXT.viewer.sizeUnavailable
-    )
-    expect(ui.siteDataListingNote(listing({ sized: false, total: 1500, truncated: true }))).toBe(
-      `Showing the ${SITE_DATA_ORIGIN_CAP.toLocaleString()} sites with the most data of 1,500. ${ui.SITE_DATA_TEXT.viewer.sizeUnavailable}`
-    )
+    ])
+    expect(
+      ui.siteDataListingNotes(listing({ sized: false, total: 1500, truncated: true }))
+    ).toEqual([capped, ui.SITE_DATA_TEXT.viewer.sizeUnavailable])
     // Nothing stored: nothing to size, so no note.
-    expect(ui.siteDataListingNote(listing({ rows: [], total: 0, sized: false }))).toBeUndefined()
+    expect(ui.siteDataListingNotes(listing({ rows: [], total: 0, sized: false }))).toEqual([])
   })
 })
 
@@ -285,8 +314,10 @@ describe('the site-information row', () => {
       description: 'Allow all cookies'
     })
     expect(options[2]!.description).toBe('Its cookies and data go when Zenium closes.')
+    // The host that clears at its next start says the mechanism as a sentence (the #322 ruling
+    // (d)); the row's value line never carries a second moment.
     expect(ui.siteDataChoiceOptions(site(), true)[2]!.description).toBe(
-      'Its cookies and data go the next time Zenium starts.'
+      'Site data from this session is cleared the next time Zenium starts.'
     )
     expect(options[3]!.description).toContain('cleared now')
   })

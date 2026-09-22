@@ -5,14 +5,12 @@ import {
   SECURE_DNS_CUSTOM,
   type HttpsOnlyMode,
   type PrivacySettings,
-  type SafeBrowsingFeedStatus,
-  type ThirdPartyCookieMode
+  type SafeBrowsingFeedStatus
 } from '@shared/privacy'
 import { run } from '@renderer/lib/api'
 import { commitApiKey, commitCustomResolver } from '@renderer/lib/protectionCommits'
 import {
   apiKeyRowText,
-  cookieModeOptions,
   feedDetail,
   PROTECTION_TEXT,
   resolverOptions,
@@ -28,7 +26,8 @@ import { AddSiteForm } from './protectionBlocks'
 /**
  * The protection groups of the phone's Settings > Privacy and Security (design language v2
  * §10.3–10.4), as the `privacySection` builder in `sections.tsx` spreads them between its own:
- * Safe Browsing (`safe-browsing-*`), third-party cookies with the related sites (`cookies-*`),
+ * Safe Browsing (`safe-browsing-*`), the related sites third-party cookies stay allowed on
+ * (`cookies-*`; the setting itself is Cookies and site data's, `siteDataRows.tsx`),
  * HTTPS-only mode with the sites allowed over plaintext (`https-only-*`), secure DNS – the
  * host's resolver, or the system's Private DNS screen where the host has none (`secure-dns-*`) –
  * and the privacy signals (`signals-*`). Every row reads `settings.privacy` and writes it back
@@ -170,37 +169,24 @@ function feedItem(feed: SafeBrowsingFeedStatus, disabled: boolean): SettingsRow 
 }
 
 // ---------------------------------------------------------------------------
-// Third-party cookies
+// Third-party cookies: the related sites
 // ---------------------------------------------------------------------------
 
 /**
- * The mode as one choice, then the related sites: each an item whose sheet removes it, and the
- * add form as the last row (§9.12 in a sheet). While third-party cookies are allowed everywhere
- * the list is a dependent group at .4 (§10.4).
+ * The related sites – the hosts third-party cookies stay allowed on whatever the block says:
+ * each an item whose sheet removes it, and the add form as the last row (§9.12 in a sheet).
+ * The mode itself is the Cookies and site data default's (`siteDataRows.tsx`: the middle radio
+ * with its private-only switch – the #322 ruling on Q3 folded the Third-party cookies group into
+ * that one), so these groups follow it there; while nothing blocks third-party cookies (the
+ * default allows all, or blocks all and the exceptions have nothing to relax) the list is a
+ * dependent group at .4 (§10.4).
  */
-export function cookiesGroups(state: UIState, set: Set): RowGroup[] {
+export function relatedSitesGroups(state: UIState, set: Set, blocking: boolean): RowGroup[] {
   const p = state.settings.privacy
   const setP = patcher(state, set)
-  const blocking = p.thirdPartyCookies !== 'allow'
   const exceptions = p.thirdPartyCookieExceptions
-  const text = PROTECTION_TEXT.cookies
   const related = PROTECTION_TEXT.relatedSites
   return [
-    {
-      id: 'cookies',
-      heading: text.heading,
-      description: text.description,
-      rows: [
-        choice<ThirdPartyCookieMode>({
-          id: 'cookies-mode',
-          label: text.heading,
-          keywords: ['cookies', 'tracking', 'block'],
-          value: p.thirdPartyCookies,
-          options: cookieModeOptions(state.capabilities.windows),
-          onChange: (thirdPartyCookies) => setP({ thirdPartyCookies })
-        })
-      ]
-    },
     {
       id: 'cookies-related-sites',
       heading: related.heading,

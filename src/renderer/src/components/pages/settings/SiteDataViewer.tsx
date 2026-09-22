@@ -1,118 +1,48 @@
 import type { JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
-import type { SiteDataListing, SiteDataOriginRow } from '@shared/siteData'
-import { cmd } from '@renderer/lib/api'
-import { useViewport } from '@renderer/lib/formFactor'
+import { useState } from 'react'
+import type { SiteDataOriginRow } from '@shared/siteData'
 import {
   SITE_DATA_TEXT,
   originDescription,
   originLabel,
   siteDataCountAside,
-  siteDataListingNote
+  siteDataListingNotes
 } from '@renderer/lib/siteDataUi'
 import { V2Button } from '../../extensions/v2'
-import { SheetActions, SheetFooter } from './blocks'
-import { SettingsDialog } from './dialogs'
+import { SheetFooter } from './blocks'
 import { attachLineCount } from './lineCount'
 import { RowText } from './rows'
-import { SettingsSheet } from './sheets'
-import { useSheetDismiss, useSheetRelayout } from './sheetContext'
+import { SiteDataPrompt } from './SiteDataPrompt'
+import { useSiteDataListing } from './useSiteDataListing'
 
 /**
- * See all site data (Chrome's `chrome://settings/content/all`, PS-25): the body of the sheet or
- * dialog the "See all site data and permissions" row opens (`siteDataRows.tsx`), on both
- * platforms the same rows (design language v2 §9.11, §9.17, §9.18, §9.21, §10.3–§10.4). It asks
- * the engine once (`siteData.list`: every origin with cookies, stored data or a permission, the
- * most data first, capped at 1 000) and draws the listing under one heading, "Sites", with the
- * count as the heading's aside – "1,000 of 1,204 sites" when the listing stopped at the cap,
- * with the cap's line under the heading – and, where no origin could be sized (Electron), the
- * honest "Sizes are unavailable on this device." once, never per row.
+ * See all site data on the two-pane layout (Chrome's `chrome://settings/content/all`, PS-25):
+ * the body of the dialog the "See all site data and permissions" row opens (`siteDataRows.tsx`,
+ * `FormSheet.body: 'list'` – the dialog stands at most 80% of the frame and its body scrolls
+ * under the title block, design language v2 §9.20 and #314 (c); the phone leaves for the
+ * drill-in page instead, `SiteDataPage.tsx`). It draws the engine's reading
+ * (`useSiteDataListing`) under one heading, "Sites", with the count as the heading's aside –
+ * "1,000 of 1,204 sites" when the listing stopped at the cap, with the cap's one line under the
+ * heading – and, where no origin could be sized (Electron), the honest "Sizes are unavailable on
+ * this device." once, never per row (§9.17, §9.18).
  *
- * Each origin is a two-line row (64 on the phone, §10.4; the description clamped to two lines):
- * the host on the first line, its cookies, its size where the host sized it and its permissions
- * on the second, then the policy's word for it when a list holds it; the trailing Clear is a
- * §9.11 in-row action in the danger ink (§9.21: the row grows around it, which a two-line row
- * already does), the §9.30 busy button while the engine clears, the row leaving the list when it
- * has (no motion on a layout property), staying with the failure line in the danger ink when it
- * has not. Clear all stands in the sheet's footer (`SheetFooter`, §9.11), in reach at the foot
- * of the longest list, and prompts first (§9.23 – the page's rule for a destructive page action,
- * even where Chrome clears at once): the prompt is a second sheet on the phone (§9.24, one deep
- * from here) and a second dialog on the desktop, which covers this one. Clearing signs the user
- * out of the site; its permissions stay, as the title block says.
+ * Each origin is a 52 row (§10.5; the description clamped to two lines): the host on the first
+ * line, its cookies, its size where the host sized it and its permissions on the second, then
+ * the policy's word for it when a list holds it; the trailing Clear is the desktop's 32 button in
+ * the row in the danger ink (§10.5, §9.21: the row grows around it, which a two-line row already
+ * does), the §9.30 busy button while the engine clears, the row leaving the list when it has (no
+ * motion on a layout property), staying with the failure line in the danger ink when it has
+ * not. Clear all stands in the dialog's footer (`SheetFooter`: §9.20's list-body footer – a
+ * hairline in the gutter, the buttons at 12), in reach at the foot of the longest list, and
+ * prompts first (§9.23 – the page's rule for a destructive page action, even where Chrome
+ * clears at once): the prompt is §9.20's 320 notice over this dialog, which it covers. Clearing
+ * signs the user out of the site; its permissions stay, as the title block says.
  */
 export function SiteDataViewer(): JSX.Element {
-  const [listing, setListing] = useState<SiteDataListing | null>(null)
-  const [failed, setFailed] = useState(false)
-  /** Origins whose Clear the engine is running. */
-  const [clearing, setClearing] = useState<ReadonlySet<string>>(new Set())
-  /** Origins whose Clear the engine refused, with the failure line in place of the storage line. */
-  const [refused, setRefused] = useState<ReadonlySet<string>>(new Set())
-  const [clearingAll, setClearingAll] = useState(false)
-  const [allFailed, setAllFailed] = useState(false)
+  const data = useSiteDataListing()
   const [prompt, setPrompt] = useState(false)
-  const alive = useRef(true)
-  useEffect(() => {
-    alive.current = true
-    cmd('siteData.list', undefined).then(
-      (result) => {
-        if (alive.current) setListing(result)
-      },
-      () => {
-        if (alive.current) setFailed(true)
-      }
-    )
-    return () => {
-      alive.current = false
-    }
-  }, [])
-  // The body's height changes as the listing arrives and as rows leave: the sheet measures its
-  // detents again (the desktop dialog's body scrolls on its own).
-  const relayout = useSheetRelayout()
-  const count = listing?.rows.length ?? 0
-  useEffect(() => {
-    relayout()
-  }, [relayout, count])
-
-  const clearSite = (origin: string): void => {
-    if (clearing.has(origin)) return
-    setClearing((set) => new Set(set).add(origin))
-    setRefused((set) => without(set, origin))
-    cmd('siteData.clearSite', { origin }).then(
-      () => {
-        if (!alive.current) return
-        setClearing((set) => without(set, origin))
-        setListing((current) => current && withoutRow(current, origin))
-      },
-      () => {
-        if (!alive.current) return
-        setClearing((set) => without(set, origin))
-        setRefused((set) => new Set(set).add(origin))
-      }
-    )
-  }
-  const clearAll = (): void => {
-    if (clearingAll) return
-    setClearingAll(true)
-    setAllFailed(false)
-    cmd('siteData.clearAll', undefined).then(
-      () => {
-        if (!alive.current) return
-        setClearingAll(false)
-        setRefused(new Set())
-        setListing((current) =>
-          current ? { rows: [], total: 0, truncated: false, sized: current.sized } : current
-        )
-      },
-      () => {
-        if (!alive.current) return
-        setClearingAll(false)
-        setAllFailed(true)
-      }
-    )
-  }
-
-  const rows = listing?.rows ?? []
-  const note = listing ? siteDataListingNote(listing) : undefined
+  const { listing, rows, failed } = data
+  const notes = listing ? siteDataListingNotes(listing) : []
   const status = failed
     ? SITE_DATA_TEXT.viewer.failed
     : listing === null
@@ -136,8 +66,12 @@ export function SiteDataViewer(): JSX.Element {
             </span>
           )}
         </h3>
-        {note && <p className="zen-settings-group-description">{note}</p>}
-        {allFailed && (
+        {notes.map((note) => (
+          <p key={note} className="zen-settings-group-description">
+            {note}
+          </p>
+        ))}
+        {data.allFailed && (
           <p className="zen-settings-group-description" data-tone="danger" role="alert">
             {SITE_DATA_TEXT.viewer.failed}
           </p>
@@ -152,9 +86,9 @@ export function SiteDataViewer(): JSX.Element {
               key={row.origin}
               row={row}
               sized={listing?.sized ?? false}
-              busy={clearing.has(row.origin)}
-              refused={refused.has(row.origin)}
-              onClear={() => clearSite(row.origin)}
+              busy={data.clearing.has(row.origin)}
+              refused={data.refused.has(row.origin)}
+              onClear={() => data.clearSite(row.origin)}
             />
           ))
         )}
@@ -162,8 +96,8 @@ export function SiteDataViewer(): JSX.Element {
       <SheetFooter>
         <V2Button
           variant="danger"
-          busy={clearingAll}
-          disabled={rows.length === 0 && !clearingAll}
+          busy={data.clearingAll}
+          disabled={rows.length === 0 && !data.clearingAll}
           aria-haspopup="dialog"
           data-testid="site-data-clear-all"
           onClick={() => setPrompt(true)}
@@ -171,7 +105,17 @@ export function SiteDataViewer(): JSX.Element {
           {SITE_DATA_TEXT.viewer.clearAll}
         </V2Button>
       </SheetFooter>
-      {prompt && <ClearAllPrompt close={() => setPrompt(false)} confirm={clearAll} />}
+      {prompt && (
+        <SiteDataPrompt
+          host="dialog"
+          name="site-data-clear-all"
+          title={SITE_DATA_TEXT.viewer.clearAllTitle}
+          description={SITE_DATA_TEXT.viewer.clearAllDescription}
+          action={SITE_DATA_TEXT.viewer.clearAll}
+          close={() => setPrompt(false)}
+          confirm={data.clearAll}
+        />
+      )}
     </div>
   )
 }
@@ -219,72 +163,4 @@ function OriginRow({
       </span>
     </div>
   )
-}
-
-/**
- * Clear all's prompt (§9.23): the question as the title block over its one paragraph, Cancel |
- * Clear all as §9.11 peers with the destructive one trailing; Cancel takes the focus as it opens.
- * A sheet over the viewer's sheet on the phone, a dialog over its dialog on the desktop.
- */
-function ClearAllPrompt({
-  close,
-  confirm
-}: {
-  close: () => void
-  confirm: () => void
-}): JSX.Element {
-  const phone = useViewport().formFactor === 'phone'
-  const t = SITE_DATA_TEXT.viewer
-  if (phone)
-    return (
-      <SettingsSheet
-        name="settings-confirm:site-data-clear-all"
-        title={t.clearAllTitle}
-        description={t.clearAllDescription}
-        under={false}
-        onClose={close}
-      >
-        <PromptActions confirm={confirm} />
-      </SettingsSheet>
-    )
-  return (
-    <SettingsDialog
-      name="confirm:site-data-clear-all"
-      title={t.clearAllTitle}
-      description={t.clearAllDescription}
-      under={false}
-      onClose={close}
-      className="zen-settings-dialog-prompt"
-    >
-      <PromptActions confirm={confirm} />
-    </SettingsDialog>
-  )
-}
-
-/** The prompt's pair, through the prompt's own dismiss: the sheet leaves with its motion first. */
-function PromptActions({ confirm }: { confirm: () => void }): JSX.Element {
-  const dismiss = useSheetDismiss()
-  return (
-    <SheetActions
-      action={SITE_DATA_TEXT.viewer.clearAll}
-      destructive
-      onCancel={() => dismiss()}
-      onAction={() => dismiss(confirm)}
-    />
-  )
-}
-
-function without(set: ReadonlySet<string>, item: string): ReadonlySet<string> {
-  if (!set.has(item)) return set
-  const next = new Set(set)
-  next.delete(item)
-  return next
-}
-
-/** The listing with one origin gone: the total follows, the cap's line with it once under it. */
-function withoutRow(listing: SiteDataListing, origin: string): SiteDataListing {
-  const rows = listing.rows.filter((row) => row.origin !== origin)
-  if (rows.length === listing.rows.length) return listing
-  const total = Math.max(rows.length, listing.total - 1)
-  return { ...listing, rows, total, truncated: listing.truncated && total > rows.length }
 }

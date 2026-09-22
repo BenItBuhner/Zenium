@@ -54,6 +54,12 @@ export type SheetRequest =
 
 export interface RowContext {
   open(request: SheetRequest): void
+  /**
+   * Open the drill-in page an action row names (`ActionRow.page`, §10.2) for the section the
+   * row belongs to; the phone layout's (`PhoneSettings`). Absent – the two-pane layout, a test
+   * without a page – the row falls back to its `form`.
+   */
+  openPage?(rowId: string, page: string): void
 }
 
 /**
@@ -143,7 +149,10 @@ export function RowView({
           onPress={() => row.onChange(!row.checked)}
         />
       )
-    case 'action':
+    case 'action': {
+      // A row that names a drill-in page leaves for it on the phone layout (§10.2), the chevron
+      // saying so; where the page has no way to open one it opens its form as the desktop does.
+      const opensPage = row.page !== undefined && ctx.openPage !== undefined
       return (
         <PressableRow
           row={row}
@@ -153,16 +162,18 @@ export function RowView({
           destructive={row.destructive}
           busy={row.busy}
           truncate={row.truncate}
-          haspopup={row.confirm || row.form ? 'dialog' : undefined}
-          trailing={actionGlyph(row)}
+          haspopup={!opensPage && (row.confirm || row.form || row.prompts) ? 'dialog' : undefined}
+          trailing={opensPage ? <ChevronRight aria-hidden="true" /> : actionGlyph(row)}
           onPress={() => {
-            if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
+            if (opensPage) ctx.openPage!(row.id, row.page!)
+            else if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
             else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
             else if (row.closesSheet) dismissSheet(() => row.onPress?.())
             else row.onPress?.()
           }}
         />
       )
+    }
     case 'field':
       return (
         <PressableRow
@@ -320,7 +331,7 @@ function DesktopRowView({
               variant={row.destructive ? 'danger' : 'secondary'}
               busy={row.busy}
               disabled={row.disabled}
-              aria-haspopup={row.confirm || row.form ? 'dialog' : undefined}
+              aria-haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
               onClick={() => pressAction(row, ctx, dismissSheet)}
             >
               {row.button}
@@ -337,7 +348,7 @@ function DesktopRowView({
           destructive={row.destructive}
           busy={row.busy}
           truncate={row.truncate}
-          haspopup={row.confirm || row.form ? 'dialog' : undefined}
+          haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
           trailing={actionGlyph(row)}
           onPress={() => pressAction(row, ctx, dismissSheet)}
         />

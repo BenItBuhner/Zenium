@@ -159,9 +159,22 @@ interface DialogProps {
   children: ReactNode
   /**
    * Where the focus goes as the dialog opens: the element this finds in the dialog, else the
-   * first tabbable control.
+   * first tabbable control. A title-and-notice dialog (a confirmation) returns the root it is
+   * given: §9.22 focuses the container, never Cancel.
    */
   initial?(root: HTMLElement): HTMLElement | null
+  /**
+   * §9.20's width: `form` (400) for rows with trailing controls, forms and descriptions that
+   * wrap; `notice` (320) for a confirmation – a title block and its two footer buttons and
+   * nothing else – so a prompt over a 400 dialog reads as a prompt and not a band across it.
+   */
+  width?: 'form' | 'notice'
+  /**
+   * `list` when the body is a list of rows: the dialog stands at most 80% of the frame and the
+   * list scrolls under the title block, and a footer the body claims takes §9.20's list-body
+   * form (the hairline in the gutter, the buttons at 12) – `.zen-settings-dialog[data-body]`.
+   */
+  body?: 'list'
   className?: string
 }
 
@@ -170,12 +183,15 @@ const TABBABLE =
 
 /**
  * One v2 dialog in the frame's dialog host: the shared `.zen-v2-dialog` (the neutral panel,
- * radius 12, a hairline, the sheet shadow) at the form width, a §9.23 title block with the
- * hairline once the body has scrolled, the body scrolling between the title and whatever footer
- * its content draws (§9.11: the buttons hug the end) – in the body for a form's own actions,
- * or in the dialog's footer slot under the body for actions a form puts there through
- * `SheetFooter`, drawn only while claimed. Escape (on top of the popup stack only) and the
- * scrim close it; the focus moves in as it opens and back out to its opener as it leaves.
+ * radius 12, a hairline, the sheet shadow) at §9.20's form width – or its notice width for a
+ * confirmation – a §9.23 title block with the hairline once the body has scrolled, the body
+ * scrolling between the title and whatever footer its content draws (§9.11: the buttons hug
+ * the end) – in the body for a form's own actions, or in the dialog's footer slot under the
+ * body for actions a form puts there through `SheetFooter`, drawn only while claimed (§9.20's
+ * list-body footer form when the body is a list). Escape (on top of the popup stack only) and
+ * the scrim close it; the focus moves in as it opens and back out to its opener as it leaves.
+ * The title labels the dialog and its description describes it (`aria-describedby`), so a
+ * confirmation that focuses its container is announced whole.
  */
 export function SettingsDialog(props: DialogProps): JSX.Element {
   return (
@@ -194,10 +210,13 @@ function HostedDialog({
   onClose,
   children,
   initial,
+  width = 'form',
+  body,
   className
 }: DialogProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const titleId = useId()
+  const descriptionId = useId()
   const [scrolled, setScrolled] = useState(false)
   useFrameDialog({ onScrimPress: onClose })
   // Escape is the top popup's (§9.24): the stack `useEscape` keeps, so a dialog under another,
@@ -261,17 +280,20 @@ function HostedDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
       data-dialog={name}
       data-surface="page"
+      data-body={body}
       inert={under || covered || undefined}
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-settings-dialog zen-animate-pop', className)}
-      style={{ width: POPOVER_WIDTH.form }}
+      style={{ width: width === 'notice' ? POPOVER_WIDTH.list : POPOVER_WIDTH.form }}
       onKeyDown={(e) => wrapTab(e, ref.current)}
     >
       <V2TitleBlock
         id={titleId}
         title={title}
+        descriptionId={descriptionId}
         description={
           description && descriptionTone ? (
             <span data-tone={descriptionTone}>{description}</span>
@@ -485,7 +507,12 @@ function ConfirmDialog({
   )
 }
 
-/** A small form (add a route, create a container): the form draws its own footer. */
+/**
+ * A small form (add a route, create a container): the form draws its own footer. A form whose
+ * body is a list (`FormSheet.body`: the site-data viewer) is the list-bodied dialog – capped at
+ * 80% of the frame, the list scrolling under the title block, its claimed footer in §9.20's
+ * list-body form.
+ */
 function FormDialog({
   row,
   under,
@@ -503,6 +530,7 @@ function FormDialog({
       description={form.description}
       under={under}
       onClose={close}
+      body={form.body}
       initial={(root) => root.querySelector<HTMLElement>('input, textarea')}
     >
       {form.render(close)}
