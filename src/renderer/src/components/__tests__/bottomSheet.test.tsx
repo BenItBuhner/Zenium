@@ -357,8 +357,9 @@ describe('BottomSheet on the recede chassis', () => {
   })
 
   it('the keyboard raises the detent: the sheet grows on its own value with the recede held at 1, and a dismissal from the raised pose runs p over the actual travel', async () => {
-    // The sheet pads for the bottom inset (the gesture bar, or the keyboard while it is up), so
-    // its content stands taller by the keyboard – the peek is measured above the keys (§11.1).
+    // The sheet pads for the bottom inset (the gesture bar, or the keyboard while it is up) over
+    // its own 8 (§9.25), so its content stands taller by the keyboard – the peek is measured
+    // above the keys (§11.1).
     Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
       configurable: true,
       get(this: HTMLElement) {
@@ -373,7 +374,7 @@ describe('BottomSheet on the recede chassis', () => {
     frames.run(120)
     expect(recedeVar()).toBe('1.0000')
     const rested = parseFloat(sheets()[0].style.height)
-    expect(rested).toBe(348)
+    expect(rested).toBe(356)
 
     // The keyboard comes up: the host reports it as the bottom inset.
     act(() => uiStore.set({ insets: { ...insets, bottom: 356 } }))
@@ -388,10 +389,10 @@ describe('BottomSheet on the recede chassis', () => {
     }
     expect(judged).toBeGreaterThan(5)
     const raised = parseFloat(sheets()[0].style.height)
-    expect(raised).toBe(656)
+    expect(raised).toBe(664)
     expect(sheets()[0].style.transform).toContain('translate3d(0, 0px, 0)')
 
-    // Dismissed from the raised pose: p runs 1 → 0 over the 656 px the sheet stands at.
+    // Dismissed from the raised pose: p runs 1 → 0 over the 664 px the sheet stands at.
     act(() => {
       press(scrims()[0])
     })
@@ -403,10 +404,10 @@ describe('BottomSheet on the recede chassis', () => {
       const translateY = parseFloat(
         /translate3d\(0, ([-\d.]+)px/.exec(sheets()[0].style.transform)![1]
       )
-      expect(p).toBeCloseTo(Math.max(0, 1 - translateY / 656), 3)
+      expect(p).toBeCloseTo(Math.max(0, 1 - translateY / 664), 3)
       expect(p).toBeLessThanOrEqual(last + 1e-9)
       expect(last - p).toBeLessThan(0.25)
-      if (translateY > 348 && p > 0) pastTheOldDetent++
+      if (translateY > 356 && p > 0) pastTheOldDetent++
       last = p
     }
     // Still on its way down past the height it had before the keyboard: the old detent is

@@ -203,16 +203,16 @@ class V2TokensPinTest {
     }
 
     /**
-     * §9.25's formula, not the CSS as it stands: the footer's buttons stand 16 above the host's
+     * §9.25's formula, and the CSS with it: the footer's buttons stand 16 above the host's
      * safe-area inset – the gutter plus the inset the host reports, with its three hosts: 16 where
      * it reports none (the preview host), 40 over a 24 dp gesture bar, 64 over a 48 dp three-button
      * bar. The one native constant is the gutter; the Material sheet pads the inset under it.
      *
-     * KNOWN DRIFT, the web chassis's: `.zen-sheet-footer` stands 8 over `BottomSheet.tsx`'s
-     * `Math.max(8, insets.bottom)` – `8 + max(8, inset)`, the inset in place of the 8 floor rather
-     * than added to the 16 – equal to the formula only where the host reports none (16) and 8
-     * short over a real inset (32 over a 24 bar). Android primitives pass 4 corrects that line; the
-     * drift assertions below fail when it lands, and this pin flips to equality with the CSS then.
+     * The web chassis draws the same: `.zen-sheet-footer`'s 8 under the buttons over
+     * `BottomSheet.tsx`'s own 8 (`SHEET_EDGE_PAD`) make the 16, and the sheet pads the inset in
+     * full on top of it (`SHEET_EDGE_PAD + insets.bottom`) – Android primitives pass 4's line, in
+     * place of the `8 + max(8, inset)` that put the inset where the 8 stood (32 over a 24 bar).
+     * Read from the CSS and BottomSheet.tsx, and held equal to the formula on every host.
      */
     @Test
     fun theFooterStandsSixteenAboveTheHostsInset() {
@@ -220,16 +220,26 @@ class V2TokensPinTest {
         for ((inset, edge) in listOf(0 to 16, 24 to 40, 48 to 64)) {
             assertEquals("inset $inset: §9.25's 16 + inset", edge, PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, inset))
         }
-        // The web chassis as it stands, read from the CSS and BottomSheet.tsx.
+        // The web chassis, read from the CSS and BottomSheet.tsx: the footer's bottom padding over the
+        // sheet's own pad, the inset added to both.
         val footer = css.rule(".zen-sheet-footer")
         val cssPadding = Regex("""^(\d+)px (\d+)px (\d+)px$""").find(declaration(footer, "padding"))!!.groupValues[3].toInt()
         val bottomSheet = File(root, "src/renderer/src/components/sheet/BottomSheet.tsx").readText()
-        val cssFloor = Regex("""paddingBottom: Math\.max\((\d+), insets\.bottom\)""").find(bottomSheet)?.groupValues?.get(1)?.toInt()
-            ?: error("BottomSheet.tsx no longer pads Math.max(floor, insets.bottom): primitives pass 4 has landed – flip this pin to equality with the CSS")
-        val web = { inset: Int -> cssPadding + maxOf(cssFloor, inset) }
-        assertEquals("known drift: the web chassis's 8 over an 8 floor", 8 to 8, cssPadding to cssFloor)
-        assertEquals("no inset: the web chassis meets the formula", PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, 0), web(0))
-        assertEquals("a 24 bar: the web chassis 8 short – primitives pass 4's line", PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, 24) - 8, web(24))
+        val edgePad = Regex("""export const SHEET_EDGE_PAD = (\d+)""").find(bottomSheet)?.groupValues?.get(1)?.toInt()
+            ?: error("BottomSheet.tsx no longer names SHEET_EDGE_PAD: read the sheet's own bottom padding from wherever it moved to")
+        assertTrue(
+            "BottomSheet.tsx pads the sheet SHEET_EDGE_PAD + insets.bottom, the inset added to the 16 (§9.25), not in place of a floor",
+            Regex("""paddingBottom: SHEET_EDGE_PAD \+ insets\.bottom""").containsMatchIn(bottomSheet)
+        )
+        assertEquals("the footer's 8 over the sheet's 8 is the gutter", PromptSheetSpec.FOOTER_BOTTOM_DP, cssPadding + edgePad)
+        for ((inset, edge) in listOf(0 to 16, 24 to 40, 48 to 64)) {
+            assertEquals("inset $inset: the web chassis meets §9.25's formula", PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, inset), cssPadding + edgePad + inset)
+            assertEquals("inset $inset: the two chassis agree", edge, cssPadding + edgePad + inset)
+        }
+        // The two Settings sheets whose actions draw inline in the body (a prompt's, a field sheet's)
+        // stand on the body's own padding over the chassis's pad: the same 16 + inset, not a second 8.
+        val settingsBody = px(css.rule(".zen-settings-sheet-body"), "padding-bottom")
+        assertEquals("a Settings sheet's inline actions meet the formula", PromptSheetSpec.FOOTER_BOTTOM_DP, settingsBody + edgePad)
     }
 
     // --- the stylesheet, read ------------------------------------------------------------------

@@ -39,6 +39,15 @@ import { cn } from '@renderer/lib/utils'
  */
 const SLOP = 6
 
+/**
+ * The sheet's own padding (px) under its footer, above the host's bottom inset, which the sheet
+ * adds in full (§9.25): with `.zen-sheet-footer`'s 8 under the buttons the footer stands 16 +
+ * inset from the sheet's bottom edge – 16 where the host reports none (the preview host), 40
+ * over a 24 gesture bar, 64 over a 48 three-button bar – the native chassis's `footerToEdge`
+ * (`NativePromptSheet.kt`), which `V2TokensPinTest` reads this constant against.
+ */
+export const SHEET_EDGE_PAD = 8
+
 export interface BottomSheetHandle {
   /** Slide the sheet off the screen; `then` runs once it is gone, right before `onDismissed`. */
   dismiss(then?: () => void): void
@@ -425,7 +434,8 @@ export function BottomSheet({
       chrome:
         (gripRef.current?.offsetHeight ?? 0) +
         (footerRef.current?.offsetHeight ?? 0) +
-        Math.max(8, insetBottom.current)
+        SHEET_EDGE_PAD +
+        insetBottom.current
     }
     sheet.style.height = height
     detents.current = computeDetents(
@@ -912,7 +922,7 @@ export function BottomSheet({
           'zen-sheet zen-sheet-detents absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',
           className
         )}
-        style={{ paddingBottom: Math.max(8, insets.bottom), opacity: 0, pointerEvents: 'none' }}
+        style={{ paddingBottom: SHEET_EDGE_PAD + insets.bottom, opacity: 0, pointerEvents: 'none' }}
         data-locked="true"
         data-surface="page"
       >
