@@ -188,6 +188,41 @@ class V2TokensPinTest {
     }
 
     /**
+     * The native sheets read their inks from the token block and nowhere else: the prompt sheet
+     * ([NativePromptSheet]) and the extension surfaces' sheet (`ext/ExtensionSheet.kt`, the WebView
+     * host of a popup, an options page, a side panel, the auth flow) build a [V2Ink] and take
+     * every colour from it – no `R.color.v2_*` read of their own, no `ContextCompat.getColor`, no
+     * literal – so a colour this pin holds to main.css is the colour those sheets draw. Both draw
+     * the one edge ([SheetEdge]) at [PromptSheetSpec.hairlinePx] round the sheet's radius in the
+     * border ink, and the extension sheet's §9.7 header line is that dp in that ink: no `1`
+     * physical-pixel stroke and no closed rectangle stroke (`setStroke`) round a sheet anywhere.
+     */
+    @Test
+    fun theNativeSheetsTakeEveryInkFromTheTokenBlockAndDrawTheOneEdge() {
+        val sheets = listOf(
+            "android/app/src/main/kotlin/app/zen/chromium/NativePromptSheet.kt",
+            "android/app/src/main/kotlin/app/zen/chromium/ext/ExtensionSheet.kt"
+        )
+        for (path in sheets) {
+            val source = File(root, path).readText().replace(Regex("""/\*[\s\S]*?\*/"""), "").lines().filterNot { it.trim().startsWith("//") }.joinToString("\n")
+            assertTrue("$path reads no v2 colour resource of its own", !source.contains("R.color.v2_"))
+            assertTrue("$path resolves no colour of its own", !source.contains("ContextCompat.getColor"))
+            assertTrue("$path mints no colour literal", !Regex("""Color\.(parseColor|rgb|argb)\(|0x[0-9A-Fa-f]{8}\b""").containsMatchIn(source))
+            assertTrue("$path strokes no closed rectangle round the sheet", !source.contains("setStroke(1,"))
+            assertTrue("$path draws the one edge at the pinned hairline in the border ink", source.contains("SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP), ink.border)"))
+            assertTrue("$path takes its hairline from the spec", source.contains("PromptSheetSpec.hairlinePx(density)"))
+        }
+        val extensionSheet = File(root, sheets[1]).readText()
+        assertTrue("the extension sheet builds the theme's token block", extensionSheet.contains("V2Ink(activity, dark)"))
+        assertTrue("the extension sheet's header line is the border ink", extensionSheet.contains("headerLine.setBackgroundColor(ink.border)"))
+        assertTrue("the extension sheet's header line is one dp", extensionSheet.contains("LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline)"))
+        for (ink in listOf("ink.text", "ink.panel", "ink.grabber", "ink.fillPressed"))
+            assertTrue("the extension sheet draws $ink", extensionSheet.contains(ink))
+        // The grip's numbers are the spec's, so the strip the extension sheet keeps is §9.9's.
+        assertEquals(PromptSheetSpec.GRIP_STRIP_DP, app.zen.chromium.ext.ExtensionSheet.GRIP_DP)
+    }
+
+    /**
      * The hairline is one dp on the device, in whole pixels: the chrome's `1px` border is a CSS px,
      * one dp; a physical pixel would be 0.57 dp at 1.75x. Rounded at the density, never under one.
      */
