@@ -189,6 +189,46 @@ describe('FrameDialogHost', () => {
     expect(onScrim).toHaveBeenCalledTimes(1)
   })
 
+  it('closes every hosted dialog root in a stacking context of its own, ranked by slot index: two stacked never interleave (§9.24)', () => {
+    // The live bug: a Settings form dialog and its prompt are siblings in the slot's one grid
+    // cell, and a root was a stacking context only while its pop's transform ran – after it the
+    // lower dialog's positioned children painted over the prompt. The prompt here sits before
+    // the form in the tree and opens after it: the slot's order is the order of opening, since
+    // a portal appends to the slot as it mounts, and the rank is the slot's.
+    const Page = ({ prompt }: { prompt: boolean }): JSX.Element => (
+      <>
+        <FrameDialogHost frame />
+        <div data-page>
+          {prompt && (
+            <FrameDialogPortal>
+              <Dialog name="prompt" />
+            </FrameDialogPortal>
+          )}
+          <FrameDialogPortal>
+            <Dialog name="form" />
+          </FrameDialogPortal>
+        </div>
+      </>
+    )
+    render(<Page prompt={false} />)
+    rerender(<Page prompt />)
+    const roots = [...slot().children]
+    expect(roots.map((r) => r.getAttribute('data-dialog'))).toEqual(['form', 'prompt'])
+    // Each root is the slot's direct child whichever way it came, so the one chassis rule reaches
+    // it: its own stacking context, its rank its slot index (1-based, later on top).
+    for (const dialog of roots) expect(dialog.parentElement).toBe(slot())
+    const rule = cssRule('.zen-frame-dialogs-slot > *')
+    expect(rule).toContain('isolation: isolate')
+    expect(rule).toContain('z-index: sibling-index()')
+    // The prompt leaving keeps its rank over the form through its way out.
+    rerender(<Page prompt={false} />)
+    expect([...slot().children].map((r) => r.getAttribute('data-dialog'))).toEqual([
+      'form',
+      'prompt'
+    ])
+    expect(leaving().map((r) => r.getAttribute('data-dialog'))).toEqual(['prompt'])
+  })
+
   it('consumes the scrim press on pointerdown, not on click (§9.20 amended)', () => {
     const close = vi.fn()
     render(

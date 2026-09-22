@@ -1659,8 +1659,20 @@
     place-items: center;
     pointer-events: none;
   }
+  /*
+   * Every hosted dialog root is a stacking context of its own, ranked by its place in the slot
+   * (§9.24: later on top). Two stacked dialogs – a form and its prompt – are siblings in the one
+   * grid cell, and a root was a stacking context only while its pop's transform ran: after it
+   * the lower dialog's positioned children (a footer, a field's ring) painted over the upper
+   * one, interleaved. `isolation` closes each root; `z-index: sibling-index()` (Chromium 138+)
+   * ranks the roots by slot index, so the order is the slot's to give and no dialog carries the
+   * rule itself. Where the function is not understood, the roots still paint in tree order as
+   * closed contexts.
+   */
   .zen-frame-dialogs-slot > * {
     grid-area: 1 / 1;
+    isolation: isolate;
+    z-index: sibling-index();
   }
   .zen-frame-dialogs[data-open] .zen-frame-dialogs-slot > * {
     pointer-events: auto;
