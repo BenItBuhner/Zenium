@@ -52,9 +52,9 @@ interface Props {
  * and its tabs in a grid below. The header toggles it; collapsed, the card is clipped to the
  * header and shows the members' icons instead. The height runs on a spring – on a fold, and
  * whenever what the card holds changes height (a card entering or leaving, a row coming or
- * going) – that a change mid-flight retargets; the cells below wait for it through the FLIP
- * tracker (`layoutAnimations`, v2 §11.4). The card is the grid's cell `group:<id>` for the glide
- * and the morph.
+ * going with the count or the columns) – that a change mid-flight retargets; the cells below
+ * wait for it through the FLIP tracker (`layoutAnimations`, v2 §11.4). The card is the grid's
+ * cell `group:<id>` for the glide and the morph.
  */
 export function GroupCard({
   folder,
@@ -99,7 +99,7 @@ export function GroupCard({
   // expanded it is whatever the body needs, dissolving it is nothing, and between any two heights
   // a spring runs from wherever the card is right now. `settled` is the height the grid was last
   // laid out at – what the tracker's positions assume – so a change in the body is caught on the
-  // commit it lands.
+  // commit it lands: the height effect below runs on that commit, and on no other.
   const mounted = useRef(false)
   const settled = useRef<number | null>(null)
   const wasCollapsed = useRef(collapsed)
@@ -147,6 +147,15 @@ export function GroupCard({
     }
   }, [key])
 
+  // The fold measurement. `body.offsetHeight` is a forced layout, so the effect runs only on a
+  // commit that can have moved the height – a fold or unfold, a card entering or leaving (the
+  // count: the body's rows are the cards over the columns), the grid's columns, the group
+  // forming or dissolving – and not on every render of the grid around it: the overview's phase
+  // renders (lift, pick, settle) re-render every card, and a layout per group card per commit
+  // was 34 ms of the baseline pick's script on six tabs, 52 on thirty (PERF-5, #315), 11 / 31
+  // with fewer renders. Which cards the group holds, the card renderer's identity and the menu
+  // callback change nothing the effect reads.
+  const members = tabs.length
   useLayoutEffect(() => {
     const shell = shellRef.current
     const body = bodyRef.current
@@ -200,7 +209,7 @@ export function GroupCard({
       return
     }
     run(from, 0)
-  })
+  }, [key, collapsed, dissolving, forming, members, columns])
 
   const press = useLongPress(() => onMenu(folder))
   const toggle = (): void => {
