@@ -2939,6 +2939,89 @@
   }
 
   /*
+   * The select-tabs mode (TAB-08, `TabOverview`'s `SelectionActions`; v2 §9.6, §9.29, §9.30,
+   * §11.4). A picked card takes the selected treatment of §9.6 in the card's own page family:
+   * the `--v2-selected` fill (the accent at 12 / 16 %) as a layer over the whole card – title
+   * row and picture, so an active card's tinted row stays legible under it – with the
+   * accent-filled check, and nothing else: no ring, which in the overview is the active card's
+   * mark (the design gate on #304). The check itself is the shared `.zen-v2-checkbox`, placed
+   * by its unlayered rule beside the primitive. The New Tab card and the essentials take no pick
+   * and sit disabled at .4 meanwhile (§9.30).
+   */
+  .zen-overview-card[data-selected]::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--v2-selected);
+    pointer-events: none;
+  }
+  .zen-overview-new:disabled,
+  .zen-overview .zen-essential:disabled {
+    opacity: 0.4;
+  }
+  /*
+   * The action row: one band in the window fill at the foot of the overview, above the bar –
+   * the group strip's tray at the card's radius, inset the grid's 12 with 8 to the band – whose
+   * slot clips it as it slides up from below on the spring that writes its transform per frame
+   * (so no transition on that; the opacity transition is reduced motion's fade, §11.3). The
+   * actions share the band's width as glyph-over-label buttons, 52 tall at the default size
+   * inside the band's 6 (§9.3's 44 target and then some) and taller with the text zoom, full
+   * window ink with the 13 label on its 20 line under the 20 glyph (§9.6: 13 is §4's floor,
+   * never smaller), pressed in the window's hover fill with the shared .98 squeeze; disabled at
+   * .4 through.
+   */
+  .zen-overview-actions {
+    /* An action's height grows from its label's line box (§4: nothing clamps a row to its
+       unscaled height): the 20 glyph, the 4 gap, the 13 label's 20 line at the text zoom and 4
+       above and below – 52 at the default size, 68 at Android's 1.8; the band adds its 6 padding
+       each side (64 at rest). */
+    --zen-overview-action: calc(20px + 4px + var(--v2-line-small-box) + 8px);
+    flex: 0 0 auto;
+    padding: 4px 12px 8px;
+    overflow: hidden;
+  }
+  .zen-overview-actions-band {
+    display: flex;
+    height: calc(var(--zen-overview-action) + 12px);
+    padding: 6px;
+    border-radius: var(--zen-card-radius);
+    background: var(--v2-window-fill);
+    color: var(--zen-fg);
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-overview-action {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: var(--zen-overview-action);
+    border-radius: 10px;
+    color: inherit;
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-button);
+    line-height: var(--v2-line-small);
+    transition:
+      background 120ms var(--zen-ease),
+      transform 120ms var(--zen-ease);
+  }
+  .zen-overview-action:active:not(:disabled) {
+    background: var(--v2-window-fill-hover);
+    transform: scale(0.98);
+  }
+  .zen-overview-action:disabled {
+    opacity: 0.4;
+  }
+  .zen-overview-action > span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /*
    * The lock cover of "Lock private tabs when you leave Zenium" (INC-05 / SET-17,
    * `PrivateLockCover`; Chrome's locked Incognito view): over a locked private tab in the
    * content frame, and over the overview's Private pane. An opaque cover in the panel tone
@@ -7667,6 +7750,28 @@
 .zen-v2-check-row .zen-v2-checkbox:disabled {
   opacity: 1;
 }
+/*
+ * The tab overview card's check in the select-tabs mode (TAB-08, §9.6; `OverviewCard`): the
+ * primitive's span form, a direct child of the card that is the checkbox (`[aria-checked]` on
+ * the card fills it), laid over the title row's trailing slot – the box the row keeps clear for
+ * the close, which the mode hides (Chrome's position) – centred in it on the card's own surface
+ * and never over the picture, where a hairline box reads as a stain on a dark one and vanishes
+ * on a light one (the design gate on #304); the row margin dropped, above the selected tint.
+ * The slot is the card close's box: 32, the phone's 44 (§9.3's rule on `.zen-toolbar-button`).
+ * Beside the primitive and unlayered like it: a layered rule would lose the margin and the box
+ * to it.
+ */
+.zen-overview-card > .zen-overview-card-check {
+  position: absolute;
+  z-index: 1;
+  inset-inline-end: calc((32px - var(--v2-checkbox)) / 2);
+  top: calc((var(--zen-overview-card-header) - var(--v2-checkbox)) / 2);
+  margin: 0;
+  pointer-events: none;
+}
+:root[data-form-factor='phone'] .zen-overview-card > .zen-overview-card-check {
+  inset-inline-end: calc((44px - var(--v2-checkbox)) / 2);
+}
 
 /*
  * The shared menu (§4, §5, §6, §9.6, §9.20, §9.22, §9.30, §9.34; shell pass 7(b)): the one
@@ -11105,6 +11210,13 @@
   }
   .zen-v2-segment > [role='tab'],
   .zen-v2-segment > [role='tab']::after {
+    transition-duration: 120ms !important;
+  }
+  /*
+   * The select-tabs mode's action row comes and goes on its 120 ms opacity fade in place of the
+   * slide (§11.3; `SelectionActions` writes the opacity, the transition is the band's own).
+   */
+  .zen-overview-actions-band {
     transition-duration: 120ms !important;
   }
   /*

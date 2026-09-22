@@ -347,19 +347,21 @@ describe('the header menu', () => {
     expect(byLabel('More').getAttribute('aria-expanded')).toBe('true')
     const rows = sheetRows()
     expect(rows.map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
+      ['Select Tabs', false],
       ['Recently Closed (1)', false],
       ['Close All Tabs (3)', false]
     ])
     // Close all is the destructive row (§10.4).
-    expect(rows[1].style.color).toContain('--zen-danger')
+    expect(rows[2].style.color).toContain('--zen-danger')
     // The sheet is a menu of the overview: nothing was closed by opening it.
     expect(commands()).toEqual([])
   })
 
-  it('with no closed tabs and only pinned tabs both rows are off, their counts kept at zero (§9.17)', async () => {
+  it('with no closed tabs and only pinned tabs both rows are off, their counts kept at zero (§9.17); a pinned card is still one to select', async () => {
     show(stateOf([tab('p', 'https://pinned.example/', { pinned: true })]))
     await openMenu()
     expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
+      ['Select Tabs', false],
       ['Recently Closed (0)', true],
       ['Close All Tabs (0)', true]
     ])
@@ -590,6 +592,7 @@ describe('on a host with private tabs', () => {
     await openMenu()
     expect(sheetTitle()).toBe('Work')
     expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
+      'Select Tabs',
       'Recently Closed (1)',
       'Close All Tabs (2)'
     ])
@@ -609,7 +612,7 @@ describe('on a host with private tabs', () => {
     expect(toasts()).toEqual([['2 tabs closed', 'Undo', false]])
   })
 
-  it("the private pane's menu is Close Private Tabs alone, its question names the private tabs and says there is no undo, and the close is the core's tab.closePrivate with no toast", async () => {
+  it("the private pane's menu is Select Tabs and Close Private Tabs, its question names the private tabs and says there is no undo, and the close is the core's tab.closePrivate with no toast", async () => {
     show(mixed())
     closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
     act(() => segment('private').click())
@@ -617,9 +620,10 @@ describe('on a host with private tabs', () => {
     expect(sheetTitle()).toBe('Private')
     const rows = sheetRows()
     expect(rows.map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
+      ['Select Tabs', false],
       ['Close Private Tabs (2)', false]
     ])
-    expect(rows[0].style.color).toContain('--zen-danger')
+    expect(rows[1].style.color).toContain('--zen-danger')
     // No recently closed row: none was read for it either.
     expect(of('session.recentlyClosed')).toEqual([])
     await pick('Close Private Tabs (2)')
@@ -638,11 +642,12 @@ describe('on a host with private tabs', () => {
     expect(of('session.recentlyClosed')).toEqual([])
   })
 
-  it('with no private tab open the row stays, greyed, its count at zero (§9.17)', async () => {
+  it('with no private tab open the rows stay, greyed, the count at zero (§9.17)', async () => {
     show(withPrivate(stateOf([tab('a', 'https://a.example/')])))
     act(() => segment('private').click())
     await openMenu()
     expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
+      ['Select Tabs', true],
       ['Close Private Tabs (0)', true]
     ])
   })

@@ -134,6 +134,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['  .zen-frame-strips[data-under-overlay] {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
+  // The tab overview's select-tabs mode (components/phone/TabOverview.tsx, OverviewCard.tsx,
+  // TAB-08): the picked card's selected fill (§9.6, no ring) and the action row's band in the
+  // window fill with its 13 labels (§9.29). Its block ends where the lock cover's begins.
+  ['.zen-overview-card[data-selected]::after {', '/*\n   * The lock cover of "Lock private tabs'],
   // The lock cover of "Lock private tabs when you leave Zenium" (components/phone/
   // PrivateLockCover.tsx, INC-05 / SET-17): the panel-toned base under a locked private tab's
   // blurred picture. Its block ends where the phone sheet chassis begins.
@@ -1662,6 +1666,27 @@ describe('the system font size above the default (§4 / §9.2, A11Y-05)', () => 
     expect(title).toMatch(/-webkit-line-clamp: 2;/)
     expect(rules).not.toMatch(/:root\[data-text-scale\][^\n]*zen-overview-card-title/)
     expect(block('.zen-overview-card-header')).toMatch(/height: var\(--zen-overview-card-header\);/)
+  })
+
+  it('grows the select-tabs action strip from its 13 label’s line box, never a fixed height (§4, TAB-08)', () => {
+    // The strip's rules sit inside `@layer components`, so each is read to its own `}`. The
+    // action is the 20 glyph, the 4 gap, the label's line box and 4 above and below (52 at
+    // rest, 68 at Android's 1.8 text zoom); the band is the action plus its 6 padding each side.
+    const rule = (selector: string): string => {
+      const start = css.indexOf(`\n  ${selector} {`)
+      expect(start, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
+      return css.slice(start, css.indexOf('}', start))
+    }
+    expect(rule('.zen-overview-actions')).toMatch(
+      /--zen-overview-action: calc\(20px \+ 4px \+ var\(--v2-line-small-box\) \+ 8px\);/
+    )
+    expect(rule('.zen-overview-actions-band')).toMatch(
+      /height: calc\(var\(--zen-overview-action\) \+ 12px\);/
+    )
+    expect(rule('.zen-overview-action')).toMatch(/height: var\(--zen-overview-action\);/)
+    for (const selector of ['.zen-overview-actions-band', '.zen-overview-action']) {
+      expect(rule(selector)).not.toMatch(/height: \d+px/)
+    }
   })
 
   it('lays the bar’s 44 boxes on the 36 pitch their 32 boxes had, the pill keeping its room (§9.3, the lead’s L1 ruling)', () => {
