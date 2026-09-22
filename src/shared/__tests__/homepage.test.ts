@@ -60,7 +60,10 @@ describe('sanitizeHomepage', () => {
   })
 
   it('drops an address that is not a web page’s – a peer cannot make Home open an internal page', () => {
-    expect(sanitizeHomepage({ mode: 'url', url: 'zen://settings' })).toEqual({ mode: 'url', url: '' })
+    expect(sanitizeHomepage({ mode: 'url', url: 'zen://settings' })).toEqual({
+      mode: 'url',
+      url: ''
+    })
     expect(sanitizeHomepage({ mode: 'url', url: 'javascript:alert(1)' })).toEqual({
       mode: 'url',
       url: ''
@@ -81,7 +84,9 @@ describe('what the row shows', () => {
     expect(homepageDisplay({ mode: 'url', url: 'https://news.ycombinator.com/' })).toBe(
       'news.ycombinator.com'
     )
-    expect(homepageDisplay({ mode: 'url', url: 'https://docs.example/a/b' })).toBe('docs.example/a/b')
+    expect(homepageDisplay({ mode: 'url', url: 'https://docs.example/a/b' })).toBe(
+      'docs.example/a/b'
+    )
     expect(homepageDisplay({ mode: 'url', url: '' })).toBe('')
     expect(homepageDisplay({ mode: 'newtab', url: 'https://example.com/' })).toBe('')
   })

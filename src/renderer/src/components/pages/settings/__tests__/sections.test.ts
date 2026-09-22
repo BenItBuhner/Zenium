@@ -4749,9 +4749,7 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     expect(address.onCommit('   ')).toBe('Enter a web address, like example.com')
     expect(c.patches).toEqual([])
     expect(address.onCommit('news.ycombinator.com')).toBeUndefined()
-    expect(c.patches).toEqual([
-      { homepage: { mode: 'url', url: 'https://news.ycombinator.com/' } }
-    ])
+    expect(c.patches).toEqual([{ homepage: { mode: 'url', url: 'https://news.ycombinator.com/' } }])
   })
 
   it('shows the page set: the row reads Specific page, the option and the field carry the address without its scheme', () => {
@@ -4782,7 +4780,10 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
 
     // Settings opened from nowhere (the menu of a blank tab): nothing to use.
     const orphan = tab('settings', 'zen://settings', { title: 'Settings' })
-    const nowhere = withHomepage({ mode: 'url', url: '' }, { tabs: { site: SITE, settings: orphan } })
+    const nowhere = withHomepage(
+      { mode: 'url', url: '' },
+      { tabs: { site: SITE, settings: orphan } }
+    )
     const idle = row(section('look', nowhere), 'homepage-use-current')
     if (idle.kind !== 'action') throw new Error('not an action row')
     expect(idle.disabled).toBe(true)
