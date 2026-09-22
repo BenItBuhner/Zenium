@@ -4,7 +4,7 @@
 // .github/workflows/android-downloads-demo.yml starts it from `setup-script` before the emulator
 // boots and runs DownloadsDemo against it. slow.bin is throttled so Pause and Resume have something
 // to hold; flaky.bin drops the downloader's first attempt at 1 MiB so only a Range resume can
-// finish it; dead.bin dies on the downloader's first attempt and its five automatic resumes, so
+// finish it; dead.bin dies on the downloader's first attempt and its three automatic resumes, so
 // the failure reaches the user as `network-failed`, and is served whole from then on (Resume or
 // Retry); the data: and blob: links are named from their anchors.
 //
@@ -23,8 +23,12 @@ const FLAKY = 2 * 1024 * 1024
 const CUT_AT = 1024 * 1024
 const DEAD = 1024 * 1024
 const DEAD_CUT_AT = 256 * 1024
-// The downloader's first attempt and MAX_AUTO_RESUMES (5) resumes.
-const DEAD_FAILURES = 6
+// The downloader's first attempt and its MAX_AUTO_RESUMES automatic resumes (3 since #291, the
+// core's AUTO_RESUME_DELAYS_MS steps of 2, 4 and 8 s; DownloadLogic.kt): the fourth failure in a
+// row leaves the row interrupted for good, and the user's Resume is the response served whole.
+// One more death here and that Resume dies too – the row goes back to counting down and the
+// driver's press of Resume sees no answer (the nightly of #332).
+const DEAD_FAILURES = 4
 let deadFailures = 0
 // 3 MiB at this rate runs about forty-eight seconds: the panel opens on the transfer, the
 // recorder catches it moving, and Pause has bytes to hold even though every engine call the
@@ -49,7 +53,7 @@ const page = `<!doctype html><meta name="viewport" content="width=device-width,i
   a { display: block; margin: 14px 0; padding: 20px; border-radius: 16px; background: #4f6bed; color: #fff; text-decoration: none; font-weight: 600 }
 </style>
 <h1>Zenium download test</h1>
-<p>Files served from the runner. slow.bin is throttled, flaky.bin loses its connection once, dead.bin six times.</p>
+<p>Files served from the runner. slow.bin is throttled, flaky.bin loses its connection once, dead.bin ${DEAD_FAILURES} times.</p>
 <a href="/slow.bin">Download slow.bin</a>
 <a href="/flaky.bin">Download flaky.bin</a>
 <a href="/dead.bin">Download dead.bin</a>
@@ -137,7 +141,7 @@ http
       return serve(req, res, 'flaky.bin', FLAKY, { cutAt })
     }
     if (path === '/dead.bin') {
-      // From the downloader's first attempt (the second full response) on, six responses die:
+      // From the downloader's first attempt (the second full response) on, four responses die:
       // full ones after 256 KiB, Range resumes before their first byte (a resume that moves
       // resets the downloader's retry budget). Everything after that is whole.
       const navigation = nthFull(req, 'dead.bin') === 1

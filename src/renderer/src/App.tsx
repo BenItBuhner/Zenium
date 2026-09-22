@@ -10,6 +10,7 @@ import { run } from '@renderer/lib/api'
 import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
 import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { openNewTabPage } from '@renderer/lib/newtab'
+import { onboardingCovers } from '@renderer/lib/onboarding'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   captureActiveTab,
@@ -94,8 +95,9 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // bar, and neither hides its row.
   const appWindow = state.window.chrome === 'app' ? state.window.app : null
   const popupChrome = state.window.chrome === 'popup' || state.window.chrome === 'app'
-  // Blank / private windows never show onboarding (it belongs to the main profile window).
-  const onboarding = !settings.onboardingDone && state.window.kind === 'synced' && !popupChrome
+  // Blank / private windows never show onboarding (it belongs to the main profile window); the
+  // chrome that waits for the tour to end (the URL bar) reads the same terms (`onboardingUp`).
+  const onboarding = onboardingCovers(state)
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
   // The window's fullscreen (F11): the page runs edge to edge and the chrome hides as it does in
   // compact mode with both switches on, coming out at its edge under the cursor.

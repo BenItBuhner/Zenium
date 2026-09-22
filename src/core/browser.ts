@@ -2862,8 +2862,8 @@ export class Browser {
 
       'page.open': ({ id, section, openerTabId, query }, win) =>
         this.pages.open(id, section, win, openerTabId, { query }),
-      'page.navigate': ({ tabId, section, replace, query }) =>
-        this.pages.navigate(tabId, section, replace ?? false, query),
+      'page.navigate': ({ tabId, section, subpage, replace, query }) =>
+        this.pages.navigate(tabId, section, replace ?? false, query, subpage),
 
       'history.contextMenu': ({ visitId, url, ...anchor }, win) =>
         this.menus.showHistoryContextMenu(visitId, url, win, anchor),

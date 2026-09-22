@@ -36,6 +36,8 @@ export function EmptyPane({ state, ui, tabId, groupId, rect, viewport }: Props):
   const attached = state.settings.urlbarBehavior === 'normal'
   const field = urlbarFieldBox({ x: 0, y: 0, width: rect.width, height: rect.height }, !attached)
   const barOpen = ui.urlbar.open && ui.urlbar.pane && ui.urlbar.tabId === tabId
+  // The picker up for this pane: the request names the pane it hangs from (`openTabPicker`).
+  const pickerOpen = ui.tabSearch?.pick?.paneTabId === tabId
   const engine = defaultSearchEngineOf(
     state.searchEngines,
     state.settings.searchEngineId,
@@ -71,6 +73,10 @@ export function EmptyPane({ state, ui, tabId, groupId, rect, viewport }: Props):
           type="button"
           className="zen-v2-button"
           data-pick-tab={tabId}
+          // The picker is a popover (`role="dialog"`): the button is its anchor (§9.20, §9.22 –
+          // the anchor says both what it opens and whether that is up).
+          aria-haspopup="dialog"
+          aria-expanded={pickerOpen}
           onClick={() =>
             openTabPicker({
               paneTabId: tabId,

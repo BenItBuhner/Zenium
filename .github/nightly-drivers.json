@@ -242,16 +242,14 @@
       "estimate": 4.5
     },
     {
-      "id": "page-dialogs",
-      "class": "PageDialogsDemo",
+      "id": "site-data-ui",
+      "classes": ["SiteDataUiDemo", "SiteDataRestoreDemo"],
       "shard": "phone-a",
-      "mirrors": "android-page-dialogs-demo.yml:light",
-      "dir": "page-dialogs-demo",
-      "env": {
-        "DEMO_THEME": "light"
-      },
-      "estimate": 5,
-      "note": "The workflow runs light and dark; the nightly runs light (the same API 34 pixel_6 image on every phone shard; phone-a had the room under its budget). Twelve scenes over two loopback servers inside the instrumentation (the site and an embedded frame's origin); the sheet is read from its own window in the accessibility tree."
+      "mirrors": "android-site-data-ui-demo.yml",
+      "script": ".github/scripts/android-site-data-ui-demo.sh",
+      "timeout": 1200,
+      "estimate": 9,
+      "note": "Two acts on the one boot (the Cookies and site data section, the site-information sheet's cookies level, the viewer page, the on-exit clear armed; then the cold start with the pending clear and the restored session after a process death), under act-1/ and act-2/; about 6.5 and 2 minutes on the dispatch workflow's boot. On phone-a for the room: phone-d filled to its budget with #318's, #319's and #321's drivers."
     },
     {
       "id": "ext-runtime",
@@ -430,6 +428,18 @@
       "timeout": 900,
       "estimate": 5,
       "note": "Two acts on the one boot (cards, then the restore after a process death), under act-1/ and act-2/."
+    },
+    {
+      "id": "page-dialogs",
+      "class": "PageDialogsDemo",
+      "shard": "phone-b",
+      "mirrors": "android-page-dialogs-demo.yml:light",
+      "dir": "page-dialogs-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 5,
+      "note": "The workflow runs light and dark; the nightly runs light (the same API 34 pixel_6 image on every phone shard). On phone-b for the room: phone-a filled past its budget once #322's site-data-ui joined it, phone-d with #318's, #319's and #321's drivers. Twelve scenes over two loopback servers inside the instrumentation (the site and an embedded frame's origin); the sheet is read from its own window in the accessibility tree; before a11y-chrome, which is last on the shard."
     },
     {
       "id": "a11y-chrome",

@@ -1,5 +1,30 @@
 import { describe, expect, it } from 'vitest'
-import { isTouchOnly, phoneSteps, tourFeatures, tourSteps } from '../onboarding'
+import type { UIState, WindowChrome, WindowKind } from '@shared/types'
+import { isTouchOnly, onboardingCovers, phoneSteps, tourFeatures, tourSteps } from '../onboarding'
+
+describe('onboardingCovers', () => {
+  const state = (
+    onboardingDone: boolean,
+    kind: WindowKind = 'synced',
+    chrome: WindowChrome = 'full'
+  ): Pick<UIState, 'settings' | 'window'> =>
+    ({ settings: { onboardingDone }, window: { kind, chrome } }) as Pick<
+      UIState,
+      'settings' | 'window'
+    >
+
+  it("is the tour over the profile's window before it is done – the terms the shells mount it on", () => {
+    expect(onboardingCovers(state(false))).toBe(true)
+    expect(onboardingCovers(state(true))).toBe(false)
+  })
+
+  it('never a blank or private window, a popup or a web app window', () => {
+    expect(onboardingCovers(state(false, 'unsynced'))).toBe(false)
+    expect(onboardingCovers(state(false, 'private'))).toBe(false)
+    expect(onboardingCovers(state(false, 'synced', 'popup'))).toBe(false)
+    expect(onboardingCovers(state(false, 'synced', 'app'))).toBe(false)
+  })
+})
 
 describe('isTouchOnly', () => {
   it('is a coarse pointer without hover', () => {

@@ -4409,13 +4409,21 @@ export interface Commands {
     result: string | null
   }
   /**
-   * Move a page tab to a section of its page (`null` is the landing page), with the page's
-   * `query` when it has one: a new history entry, or with `replace` the current one rewritten –
-   * the two-pane layout's nav switches categories without stacking them (v2 §10.5, Firefox's
-   * `about:preferences#category`). A document page loads the section's address in its view.
+   * Move a page tab to a section of its page (`null` is the landing page) – or to one of the
+   * section's own drill-in pages (`subpage`, v2 §10.2: `zen://settings/privacy/site-data`) –
+   * with the page's `query` when it has one: a new history entry, or with `replace` the current
+   * one rewritten – the two-pane layout's nav switches categories without stacking them (v2
+   * §10.5, Firefox's `about:preferences#category`). A document page loads the section's
+   * address in its view.
    */
   'page.navigate': {
-    args: { tabId: string; section: string | null; replace?: boolean; query?: InternalPageQuery }
+    args: {
+      tabId: string
+      section: string | null
+      subpage?: string | null
+      replace?: boolean
+      query?: InternalPageQuery
+    }
     result: void
   }
   /**
