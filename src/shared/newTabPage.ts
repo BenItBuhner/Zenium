@@ -293,8 +293,15 @@ export const NEW_TAB_PAGE_STYLE = `
 
   @keyframes zen-pop { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
   @keyframes zen-fade { from { opacity: 0; } to { opacity: 1; } }
+  /*
+   * Reduced motion (v2 §11.3 as amended, main.css's rule): every transition and animation is
+   * removed, never shortened – a shortened one still draws its start value for a frame – and the
+   * one fade that stays, the Undo toast's appearance, is re-declared here as a 120 ms opacity
+   * fade, !important past the remover. The background's 600 ms crossfade cuts.
+   */
   @media (prefers-reduced-motion: reduce) {
-    *, ::backdrop { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+    *, ::before, ::after, ::backdrop { transition-property: none !important; animation: none !important; }
+    .zen-toast { animation: zen-fade 120ms var(--zen-ease) !important; }
   }
 `
 

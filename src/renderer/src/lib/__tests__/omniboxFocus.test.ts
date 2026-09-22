@@ -264,11 +264,14 @@ describe('the rides (main.css): one value, transform and opacity only', () => {
   })
 
   it('under reduced motion the spring’s part is a 120 ms fade in place and the push is off', () => {
-    const reduced = css.slice(
-      css.indexOf(
-        '@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'
-      )
-    )
+    // The fades live beside the motion's rules, in their layer under the same media query (v2
+    // §11.3 as amended: the remover at the foot is unlayered, so a layered !important beats it;
+    // reducedMotion.test.ts holds them to opacity alone at 120 ms).
+    const motion = css.indexOf(":root[data-omnibox-focus='closing'] .zen-phone-bar {")
+    expect(motion, 'the motion’s rules').toBeGreaterThan(-1)
+    const media = css.indexOf('@media (prefers-reduced-motion: reduce) {', motion)
+    expect(media, 'a reduced-motion block after the motion’s rules').toBeGreaterThan(motion)
+    const reduced = css.slice(media, css.indexOf('@media (forced-colors: active)', media))
     const at = (selector: string): string => {
       const i = reduced.indexOf(`${selector} {`)
       expect(i, `a reduced-motion rule for ${selector}`).toBeGreaterThan(-1)

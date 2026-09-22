@@ -1,5 +1,5 @@
 import type { SiteCookie } from '@shared/siteInfo'
-import type { SiteDataHost, SiteStorageReading } from '@core/platform'
+import type { SiteDataHost, SiteDataOriginReading, SiteStorageReading } from '@core/platform'
 import type { Bridge } from './bridge'
 
 /** What Kotlin's `site.cookies` answers for one cookie (see `CookieJar.Classified`). */
@@ -10,13 +10,33 @@ export interface NativeCookie {
   size: number
 }
 
+/** What Kotlin's `site.listOrigins` answers for one origin (`SiteData.listOrigins`). */
+export interface NativeOriginReading {
+  origin: string
+  cookies: number
+  usageBytes: number | null
+}
+
 /**
  * Cookies and storage per site, read from the container's WebView profile. Kotlin can only infer
  * cookie attributes from the jar's answers for related URLs, so path and expiry stay unknown and
- * HttpOnly is left for the core to work out from the page's own `document.cookie`.
+ * HttpOnly is left for the core to work out from the page's own `document.cookie`. WebView's
+ * jar cannot be enumerated either: the site-data viewer's origins are the quota manager's
+ * (`WebStorage.getOrigins`, with their usage) and the ones the core probes for cookies.
  */
 export class AndroidSiteData implements SiteDataHost {
   constructor(private readonly bridge: Bridge) {}
+
+  async listOrigins(containerId: string, probe: string[]): Promise<SiteDataOriginReading[]> {
+    const raw = await this.bridge.call<NativeOriginReading[] | null>('site.listOrigins', {
+      containerId,
+      probe
+    })
+    return (Array.isArray(raw) ? raw : []).flatMap((entry) => {
+      const reading = originReadingFromNative(entry)
+      return reading ? [reading] : []
+    })
+  }
 
   async cookies(containerId: string, url: string): Promise<SiteCookie[]> {
     const raw = await this.bridge.call<NativeCookie[] | null>('site.cookies', { containerId, url })
@@ -47,6 +67,20 @@ export class AndroidSiteData implements SiteDataHost {
   async clearStorage(containerId: string, site: string, origins: string[]): Promise<void> {
     await this.bridge.call('site.clearStorage', { containerId, site, origins })
   }
+}
+
+/** One origin row as the core takes it; null for an entry without an origin. */
+export function originReadingFromNative(
+  raw: Partial<NativeOriginReading> | null
+): SiteDataOriginReading | null {
+  if (!raw || typeof raw.origin !== 'string' || !raw.origin) return null
+  const cookies =
+    typeof raw.cookies === 'number' && Number.isFinite(raw.cookies) ? Math.max(0, raw.cookies) : 0
+  const usage =
+    typeof raw.usageBytes === 'number' && Number.isFinite(raw.usageBytes)
+      ? Math.max(0, raw.usageBytes)
+      : null
+  return { origin: raw.origin, cookies, usageBytes: usage }
 }
 
 export function cookieFromNative(raw: NativeCookie): SiteCookie {

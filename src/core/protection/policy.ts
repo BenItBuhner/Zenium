@@ -2,11 +2,30 @@ import { hostnameOf, isThirdParty } from '../blocking/domain'
 import type { RequestContext } from '../blocking/rules'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import { hostInSites, thirdPartyCookiesBlockedIn, type PrivacyFlags } from '../../shared/privacy'
+import { cookieVerdict } from '../../shared/siteData'
 
 /**
  * The per-request questions the hosts put to a {@link PrivacyFlags} document. Pure, so the
  * desktop handler and the tests share them; the Kotlin engine mirrors them (`privacy/Privacy.kt`).
  */
+
+/**
+ * Whether the request goes without cookies – no `Cookie` sent, no `Set-Cookie` kept – under
+ * the whole policy: the per-site lists and the "block all" default first
+ * (`cookieVerdict`: a never-site's request always does, a listed site's never does, whatever
+ * the context), then the third-party rule for the rest ({@link blocksThirdPartyCookies}). The
+ * hosts' header stages ask this per request; the Kotlin twin is `PrivacyFlags.cookiesWithheld`.
+ */
+export function cookiesWithheld(flags: PrivacyFlags, ctx: RequestContext): boolean {
+  switch (cookieVerdict(flags.siteData, ctx.url)) {
+    case 'blocked':
+      return true
+    case 'allowed':
+      return false
+    case 'default':
+      return blocksThirdPartyCookies(flags, ctx)
+  }
+}
 
 /**
  * Whether the request's cookies are to be withheld: it is a third-party request (its site is

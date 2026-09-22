@@ -766,6 +766,58 @@ describe('SuggestionService: zero-suggest (omnibox-20)', () => {
     expect(rows[1]).toMatchObject({ url: 'https://recent.example/', deletable: true })
   })
 
+  it("drops the default engine's results pages that duplicate a Recent searches row from the recent pages, the next page taking the place (#289 ruling)", async () => {
+    const { suggestions, shortcuts, history, win } = setup()
+    // Eight plain pages, oldest first, then the results pages the searches left – Google's own
+    // additions to the address and `+` for the space included – and one for terms never searched.
+    const start = Date.now() - 60_000
+    const visits = [
+      ...Array.from({ length: 8 }, (_, i) => [`https://page${i}.example/`, `Page ${i}`]),
+      ['https://www.google.com/search?q=cats&sourceid=chrome', 'cats - Google Search'],
+      ['https://www.google.com/search?q=two+words', 'two words - Google Search'],
+      ['https://www.google.com/search?q=dogs', 'dogs - Google Search']
+    ]
+    visits.forEach(([url, title], i) => history.visit(url, title, null, { at: start + i * 1000 }))
+    shortcuts.learn('ca', {
+      url: 'https://www.google.com/search?q=cats',
+      title: 'cats',
+      kind: 'search',
+      engineId: 'google'
+    })
+    shortcuts.learn('two', {
+      url: 'https://www.google.com/search?q=two%20words',
+      title: 'two words',
+      kind: 'search'
+    })
+
+    const rows = await suggestions.suggest('', null, win)
+    const recent = rows.filter((r) => r.group === 'Recent searches').map((r) => r.title)
+    expect(recent.sort()).toEqual(['cats', 'two words'])
+    const pages = rows.filter((r) => r.kind === 'history').map((r) => r.url)
+    // The two searched-for results pages are gone; "dogs" was never a search here and stays;
+    // the eight-row section is filled from the older pages.
+    expect(pages).toHaveLength(8)
+    expect(pages[0]).toBe('https://www.google.com/search?q=dogs')
+    expect(pages).not.toContain('https://www.google.com/search?q=cats&sourceid=chrome')
+    expect(pages).not.toContain('https://www.google.com/search?q=two+words')
+    expect(pages.slice(1)).toEqual([7, 6, 5, 4, 3, 2, 1].map((i) => `https://page${i}.example/`))
+  })
+
+  it("keeps another engine's results page for the same terms: only the engine the search went to is deduped", async () => {
+    const { suggestions, shortcuts, history, win } = setup()
+    history.visit('https://duckduckgo.com/?q=cats', 'cats at DuckDuckGo', null)
+    shortcuts.learn('ca', {
+      url: 'https://www.google.com/search?q=cats',
+      title: 'cats',
+      kind: 'search',
+      engineId: 'google'
+    })
+    const rows = await suggestions.suggest('', null, win)
+    expect(rows.filter((r) => r.kind === 'history').map((r) => r.url)).toEqual([
+      'https://duckduckgo.com/?q=cats'
+    ])
+  })
+
   it('caps the recent searches at eight, most recent first', async () => {
     const { suggestions, shortcuts, win } = setup()
     for (let i = 0; i < 10; i += 1) {

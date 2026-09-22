@@ -283,8 +283,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         style={{
           // The bar's edge reserves the bar band (the URL bar's field takes it over while the bar
           // is hidden); the other edge keeps the content gutter above the inset. Laid out, never
-          // transitioned (main.css keeps it out of reduced motion's 0.01 ms rule): the content
-          // frame is measured the moment the edge changes (`useLayoutReporter`).
+          // transitioned (under reduced motion main.css removes every transition rather than
+          // shortening one): the content frame is measured the moment the edge changes
+          // (`useLayoutReporter`).
           paddingTop: edgePadding('top', edge, barAway),
           paddingBottom: edgePadding('bottom', edge, barAway),
           paddingLeft: 'var(--zen-padding)',

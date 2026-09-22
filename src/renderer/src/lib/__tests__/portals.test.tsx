@@ -21,6 +21,7 @@ import {
   chromeLayer,
   closeAllPopovers,
   holdChromeInert,
+  intrinsicSize,
   openPopoverCount,
   placePopover,
   popoverStyle,
@@ -516,12 +517,13 @@ describe('the way out: the host keeps a closed dialog’s panel through its exit
     expect(cssRule('.zen-frame-dialogs[data-open], .zen-frame-dialogs[data-leaving]')).toContain(
       'pointer-events: auto'
     )
-    // §11.3: the departure stays a fade, the pop's scale dropped.
+    // §11.3: the departure stays a fade, the pop's scale dropped – written out in full and
+    // `!important`, past the global reduced-motion rule that removes every other animation
+    // (reduced motion removes, never shortens: reducedMotion.test.ts).
     const reduced = cssRule(
       '.zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving], .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving]'
     )
-    expect(reduced).toContain('animation-name: zen-fade-out')
-    expect(reduced).toContain('animation-duration: 120ms !important')
+    expect(reduced).toContain('animation: zen-fade-out 120ms var(--zen-ease) forwards !important')
     // Every `[data-leaving]` rule on the slot's panels and the scrim is so gated – none reaches
     // a sheet host – and on a phone the chassis slides the slot: the panels' own animation is
     // off there.
@@ -1677,6 +1679,28 @@ const span = (box: { left: number; width: number }): [number, number] => [
 ]
 const overlaps = (box: { left: number; width: number }, anchor: Rect): boolean =>
   box.left < anchor.x + anchor.width && box.left + box.width > anchor.x
+
+describe('intrinsicSize (§5: a menu is as wide as its longest row)', () => {
+  it('reads the used size from the computed style and rounds it up, so a panel pinned to it never runs short of the row it was measured by', () => {
+    // The offsets round the longest row's fraction of a pixel away; a menu pinned to 269 for a
+    // row of 269.4 put an ellipsis on that row (the app menu's "New Private Window  Ctrl+Shift+N").
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    el.style.width = '269.4px'
+    el.style.height = '660.5px'
+    expect(intrinsicSize(el)).toEqual({ width: 270, height: 661 })
+    el.remove()
+  })
+
+  it('falls back to the offsets where the style carries no used size (no layout)', () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    Object.defineProperty(el, 'offsetWidth', { value: 260, configurable: true })
+    Object.defineProperty(el, 'offsetHeight', { value: 200, configurable: true })
+    expect(intrinsicSize(el)).toEqual({ width: 260, height: 200 })
+    el.remove()
+  })
+})
 
 describe('placePopover (design-language-v2-draft §9.20): widths', () => {
   it('hangs flush from the bottom edge of the bar the anchor sits in, at a fixed width', () => {

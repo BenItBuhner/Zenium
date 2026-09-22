@@ -12,6 +12,7 @@ import {
   type SitePermission,
   type ThirdPartyCookies
 } from '../shared/siteInfo'
+import type { SiteDataSiteState } from '../shared/siteData'
 import type { CertificateError } from '../shared/types'
 import type { Browser } from './browser'
 import type { SiteStorageReading, TabView } from './platform'
@@ -97,6 +98,16 @@ export interface ComposeInput {
   permissions: SitePermission[]
   /** The tab's certificate error (interstitial showing, or proceeded past), if any. */
   certificateError?: CertificateError | null
+  /** The per-site cookie policy's word for the page; the default where none was asked. */
+  siteData?: SiteDataSiteState
+}
+
+/** What a page without a site (or a test without a policy) shows for the cookie policy. */
+export const DEFAULT_SITE_DATA_STATE: SiteDataSiteState = {
+  state: 'default',
+  pattern: null,
+  addable: null,
+  default: 'block-third-party'
 }
 
 /** Pure assembly of the readings into what the chrome shows. */
@@ -140,7 +151,8 @@ export function composeSiteInfo(input: ComposeInput): SiteInfo {
       sessionStorageItems: input.probe.sessionStorageItems,
       serviceWorkers: input.probe.serviceWorkers
     },
-    permissions: input.permissions
+    permissions: input.permissions,
+    siteData: input.siteData ?? DEFAULT_SITE_DATA_STATE
   }
 }
 
@@ -164,6 +176,7 @@ export class SiteInfoService {
       ? this.browser.permissions.listForOrigin(site.origin)
       : ([] as SitePermission[])
     const certificateError = tab.certificateError ?? null
+    const siteData = this.browser.siteData.siteState(site.web ? url : '')
     if (!site.web) {
       return composeSiteInfo({
         tabId,
@@ -175,7 +188,8 @@ export class SiteInfoService {
         certificate: null,
         probe: EMPTY_PROBE,
         permissions,
-        certificateError
+        certificateError,
+        siteData
       })
     }
     const pageUrl = `${site.scheme}://${site.host}${site.path}`
@@ -202,7 +216,8 @@ export class SiteInfoService {
       certificate: certificate ?? null,
       probe,
       permissions,
-      certificateError
+      certificateError,
+      siteData
     })
   }
 

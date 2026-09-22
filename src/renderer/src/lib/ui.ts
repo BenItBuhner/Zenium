@@ -1367,9 +1367,16 @@ export function closeDrawer(): void {
   returnFocusToPage()
 }
 
+/**
+ * A menu the renderer draws (`menu.show`): the page behind it is captured first – it overlaps
+ * the live view, which composites above the chrome – then the chrome takes the keyboard, as for
+ * every popover of its own (a menu opened by Alt+F while the page had the keyboard must hear
+ * its arrows), and `MenuSheet` mounts over the picture. The picture stays undimmed under a
+ * menu: a popover on a mouse, a sheet with its own scrim on touch (`panelAloneOverContent`).
+ */
 export async function showMenu(menu: MenuDescriptor, activeTabId: string | null): Promise<void> {
-  // Page menus dim the page behind them like every other overlay; the snapshot must exist first.
   await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
   uiStore.set({ menu })
 }
 
@@ -1874,15 +1881,15 @@ export function closePrintPreview(): void {
 /**
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
- * blocked pop-ups popover, an autofill prompt in its popover form, or a sign-in or certificate
- * dialog. The page behind them is captured all the same (they overlap the live view), but panels
- * and popovers draw no scrim (v2 §9.5, §9.20), so the capture shows undimmed; dialogs dim it. A
- * chassis sheet's scrim is its own one dim (§11.5), so the same holds under the site-information
- * sheet and the prompt sheet on a phone, and the security prompt's dim is the frame dialog host's
- * scrim alone (v2 §9.5, §11.5: one dim layer), as is the leak warning's – a frame dialog on a
- * mouse, a chassis sheet on a phone. The chrome layer's popovers and menus (the
- * translate selection popover, a menulist's list) count in `floatingChrome` and are the
- * extensions' counterpart's case
+ * blocked pop-ups popover, an autofill prompt in its popover form, a menu the renderer draws,
+ * or a sign-in or certificate dialog. The page behind them is captured all the same (they
+ * overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
+ * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5),
+ * so the same holds under the site-information sheet and the prompt sheet on a phone, and the
+ * security prompt's dim is the frame dialog host's scrim alone (v2 §9.5, §11.5: one dim layer),
+ * as is the leak warning's – a frame dialog on a mouse, a chassis sheet on a phone. The chrome
+ * layer's popovers and menus (the translate selection popover, a menulist's list) count in
+ * `floatingChrome` and are the extensions' counterpart's case
  * (`extensionChromeAloneOverContent`); a menulist's list opened from inside one of these panels
  * (the reader popover's font or theme menu, site information's) is floating chrome over a panel,
  * still no dialog, so `floatingChrome` is left out of the reduced check too and the page under
@@ -1904,6 +1911,10 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.blockedPopupsPanel !== null ||
       ui.securityPromptOpen ||
       ui.credentialLeakOpen ||
+      // A menu the renderer draws – the desktop's app menu under ⋯ (§6 "Menus": the page under
+      // it undimmed), a host's context menu – is the `.zen-v2-menu` popover on a mouse and a
+      // bottom sheet with its own scrim on touch: no dim of the frame's either way.
+      ui.menu !== null ||
       popover) &&
     !overlayCoversContent({
       ...ui,
@@ -1918,6 +1929,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       blockedPopupsPanel: null,
       securityPromptOpen: false,
       credentialLeakOpen: false,
+      menu: null,
       floatingChrome: 0,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
@@ -1931,7 +1943,8 @@ export function panelAloneOverContent(ui: UiState): boolean {
  * nothing else covering the content. Where the menu is a popover – the tablet's (v2 §9.36,
  * `TabletMenu`) – the page's capture under it stays undimmed as under every other popover (v2
  * §9.5, §9.20: panels and popovers draw no scrim). The phone's menu sheet has its own scrim, and
- * the mouse's popover on a desktop layout without native menus keeps the dim it has had.
+ * the desktop's `.zen-v2-menu` popover under ⋯ is undimmed the same way (§6 "Menus"), by way of
+ * `panelAloneOverContent`, which counts a renderer-drawn menu among the anchored panels.
  */
 export function menuAloneOverContent(ui: UiState): boolean {
   return ui.menu !== null && !overlayCoversContent({ ...ui, menu: null, floatingChrome: 0 })

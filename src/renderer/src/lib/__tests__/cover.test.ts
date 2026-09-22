@@ -7,6 +7,7 @@ import {
   coverStatus,
   coverStore,
   decideHidden,
+  hideFollowsCover,
   trackCover,
   type CoverImageLike
 } from '../cover'
@@ -284,8 +285,8 @@ describe('the ordering a sheet opens in', () => {
     expect(coverPrimed('android', null, 'a')).toBe(false)
     expect(coverPrimed('android', 'a', null)).toBe(false)
     expect(coverPrimed('android', 'a', undefined)).toBe(false)
-    // The desktop hosts have the overlay painted before a view goes: they show the capture as
-    // they always have, once something covers the page.
+    // The desktop hosts mount the capture as they always have, once something covers the page;
+    // the hide then waits for its paint (`hideFollowsCover`).
     expect(coverPrimed('linux', 'a', 'a')).toBe(false)
     expect(coverPrimed('darwin', 'a', 'a')).toBe(false)
     expect(coverPrimed('win32', 'a', 'a')).toBe(false)
@@ -302,18 +303,34 @@ describe('the ordering a sheet opens in', () => {
     expect(reported).toBe(true)
   })
 
-  it('a desktop host reports the hide the moment it is wanted, whatever the cover is doing', () => {
-    // The reporter's gate: the table is consulted only where the chrome lies under the pages;
-    // elsewhere the report is the wish itself, as it was before covers existed.
-    trackCover('a', image())
-    const report = (platform: Platform, wantsHidden: boolean): boolean =>
-      chromeUnderPages(platform)
-        ? decideHidden(wantsHidden, false, status('a'), false)
-        : wantsHidden
+  it('every host reports the hide only once the cover is painted – the desktop hosts too (#299 F1)', () => {
+    // The reporter's gate is `hideFollowsCover`, not the chassis table: on Electron the view
+    // composites above the chrome as well, and a hide reported the moment it was wanted left the
+    // window's colour where the page was for a frame on 4 of 10 opens of the app menu. The
+    // chassis table still governs the rest of Android's protocol (the primed mount, the page
+    // kept until the host has drawn it back).
+    expect(hideFollowsCover()).toBe(true)
+    const img = image()
+    trackCover('a', img)
+    const report = (wantsHidden: boolean): boolean =>
+      hideFollowsCover() ? decideHidden(wantsHidden, false, status('a'), false) : wantsHidden
     expect(status('a')).toEqual({ loading: true, painted: false })
-    expect(report('android', true)).toBe(false)
-    expect(report('linux', true)).toBe(true)
-    expect(report('darwin', true)).toBe(true)
-    expect(report('win32', false)).toBe(false)
+    for (const platform of ['android', 'linux', 'darwin', 'win32'] as Platform[]) {
+      expect(chromeUnderPages(platform)).toBe(platform === 'android')
+      expect(report(true)).toBe(false)
+    }
+    expect(report(false)).toBe(false)
+  })
+
+  it('once painted, the hide goes through on the next report', async () => {
+    const img = image()
+    trackCover('a', img)
+    img.fire('load')
+    img.decodeResolve?.()
+    await flush()
+    frame()
+    frame()
+    expect(status('a')).toEqual({ loading: false, painted: true })
+    expect(decideHidden(true, false, status('a'), false)).toBe(true)
   })
 })

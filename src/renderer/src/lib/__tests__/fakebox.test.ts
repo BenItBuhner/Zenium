@@ -457,93 +457,120 @@ describe('the well (main.css): the words on the handover alone', () => {
   })
 })
 
+/** The style rules of main.css under a `prefers-reduced-motion: reduce` media query: selectors and body. */
+function reducedMotionRules(css: string): Array<{ selectors: string[]; body: string }> {
+  const rules: Array<{ selectors: string[]; body: string }> = []
+  const open: string[] = []
+  let buffer = ''
+  for (const ch of css.replace(/\/\*[\s\S]*?\*\//g, '')) {
+    if (ch === '{') {
+      open.push(buffer.trim().replace(/\s+/g, ' '))
+      buffer = ''
+    } else if (ch === '}') {
+      const prelude = open.pop()!
+      if (
+        !prelude.startsWith('@') &&
+        open.some((p) => p.includes('prefers-reduced-motion: reduce'))
+      )
+        rules.push({
+          selectors: prelude.split(',').map((s) => s.trim()),
+          body: buffer.trim().replace(/\s+/g, ' ')
+        })
+      buffer = ''
+    } else buffer += ch
+  }
+  return rules
+}
+
 /*
  * What the morph measures against is laid out, never transitioned (main.css, not loaded here).
- * Under reduced motion every property change becomes a 0.01 ms transition the compositor starts
- * a frame late – frames late on a slow one – and the controller measures the pill's slot and the
- * page's frame the frame the layout reporter says the frame has moved: a box still on its way
- * from the old dock's values is measured where it is not (run 2's reduced-top-scrub: the content
- * column's padding; run 3's: the bar clip's edge and the bar's inset paddings, the slot read
- * 48 px above its rest). The bar keeps opacity alone: the morph fades it over the value's jump.
+ * Under the old reduced-motion rule every property change became a 0.01 ms transition the
+ * compositor starts a frame late – frames late on a slow one – and the controller measured the
+ * pill's slot and the page's frame the frame the layout reporter said the frame had moved: a box
+ * still on its way from the old dock's values was measured where it was not (run 2's
+ * reduced-top-scrub: the content column's padding; run 3's: the bar clip's edge and the bar's
+ * inset paddings, the slot read 48 px above its rest). #243 cut the column, the clip, the bar and
+ * the page to `transition-property: none` one by one; v2 §11.3 as amended makes that the rule for
+ * everything (reducedMotion.test.ts): ONE global rule at the foot removes every transition and
+ * animation, and the morph's fades – the bar's and the page's opacity over the value's jump – are
+ * the only rules on those elements under reduced motion, opacity alone at 120 ms, `!important`.
  */
 describe('the layout the morph measures (main.css): no transition under reduced motion', () => {
-  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
-  const reduced = css.slice(
-    css.indexOf(
-      '@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'
-    )
-  )
-  const rule = (selector: string): string => {
-    const at = reduced.indexOf(`${selector} {`)
-    expect(at, `a reduced-motion rule for ${selector}`).toBeGreaterThan(-1)
-    return reduced.slice(at, reduced.indexOf('}', at))
-  }
+  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+  const reduced = reducedMotionRules(css)
+  // The class itself, whole: `.zen-phone-bar` is not `.zen-phone-bar-row`, whose items' opacity
+  // fade under the pill's focus motion (MOT-07, lib/omniboxFocus.ts) is their own and lays out
+  // nothing the morph measures.
+  const names = (selector: string, className: string): boolean =>
+    new RegExp(`${className.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}(?![\\w-])`).test(selector)
+  const on = (className: string): Array<{ selectors: string[]; body: string }> =>
+    reduced.filter((r) => r.selectors.some((s) => names(s, className)))
 
-  it('the content column, the bar clip and the bar cut to the new dock', () => {
-    expect(rule(":root[data-form-factor='phone'] .zen-content-column")).toContain(
-      'transition-property: none !important'
-    )
-    expect(rule(":root[data-form-factor='phone'] .zen-phone-bar-clip")).toContain(
-      'transition-property: none !important'
-    )
-    expect(rule(":root[data-form-factor='phone'] .zen-phone-bar")).toContain(
-      'transition-property: opacity !important'
+  it('one global rule removes every transition and animation, pseudo-elements included', () => {
+    const removers = reduced.filter((r) => r.selectors.includes('*'))
+    expect(removers).toHaveLength(1)
+    expect(removers[0].selectors).toEqual(['*', '::before', '::after'])
+    expect(removers[0].body).toBe(
+      'transition-property: none !important; animation: none !important;'
     )
   })
 
-  it('the bar’s opacity rule after the value’s jump still transitions, and is the one written before the bar’s own', () => {
-    // The morph's fade of the bar over the opening (`transition: opacity 120ms`) must come before
-    // the bar's rule at equal specificity, so `opacity` is what both leave as the property.
-    const fade = reduced.indexOf(
-      ":root[data-fakebox='opening'] .zen-phone-bar, :root[data-fakebox='opening'] .zen-ntp-fades"
-    )
-    const bar = reduced.indexOf(":root[data-form-factor='phone'] .zen-phone-bar {")
-    expect(fade).toBeGreaterThan(-1)
-    expect(bar).toBeGreaterThan(fade)
-    expect(reduced.slice(fade, reduced.indexOf('}', fade))).toContain('transition: opacity 120ms')
+  it('the content column, the bar clip and the bar cut to the new dock: nothing re-declares theirs', () => {
+    expect(on('.zen-content-column')).toEqual([])
+    expect(on('.zen-phone-bar-clip')).toEqual([])
+    // The bar has rules under reduced motion for the morph's two phases alone: its fade.
+    const bar = on('.zen-phone-bar')
+    expect(bar.flatMap((r) => r.selectors.filter((s) => names(s, '.zen-phone-bar')))).toEqual([
+      ":root[data-fakebox='closing'] .zen-phone-bar",
+      ":root[data-fakebox='opening'] .zen-phone-bar"
+    ])
+  })
+
+  it('the bar’s opacity fade over the value’s jump is written out, opacity alone at 120 ms and !important', () => {
+    const [fade] = on(":root[data-fakebox='opening'] .zen-phone-bar")
+    expect(fade.selectors).toEqual([
+      ":root[data-fakebox='opening'] .zen-phone-bar",
+      ":root[data-fakebox='opening'] .zen-ntp-fades",
+      ":root[data-fakebox='closing'] .zen-ntp-fades"
+    ])
+    expect(fade.body).toBe('transition: opacity 120ms var(--zen-ease) !important;')
   })
 })
 
 /*
  * The page under the omnibox is kept mounted and unpainted (`visibility: hidden` on
  * `.zen-ntp[data-hidden]`, ContentArea.tsx) and comes back the frame the closing begins.
- * `visibility` transitions, and under reduced motion's 0.01 ms rule that change was a transition
- * too: play-pending until the compositor starts its batch, and a pending transition draws its
- * start value, so the page stayed hidden past the commit that showed it (run 3's reduced-bottom on
- * the emulator: blank at rest for 0.7 to 1.1 s with nothing pending on anything the sampler
- * watched; a frame on a phone). It inherits, so each descendant would take its own when the page
- * cuts. Nothing in the page transitions but the page's own fades, on opacity alone.
+ * `visibility` transitions, and under the old reduced-motion rule's 0.01 ms that change was a
+ * transition too: play-pending until the compositor starts its batch, and a pending transition
+ * draws its start value, so the page stayed hidden past the commit that showed it (run 3's
+ * reduced-bottom on the emulator: blank at rest for 0.7 to 1.1 s with nothing pending on anything
+ * the sampler watched; a frame on a phone). It inherits, so each descendant would take its own
+ * when the page cuts. The global rule removes them all; nothing in the page transitions but the
+ * page's own fades, on opacity alone.
  */
 describe('the page under the omnibox (main.css): its visibility cuts under reduced motion', () => {
-  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
-  const reduced = css.slice(
-    css.indexOf(
-      '@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'
-    )
-  )
-  const rule = (from: string, selector: string): string => {
-    const at = from.indexOf(`${selector} {`)
-    expect(at, `a rule for ${selector}`).toBeGreaterThan(-1)
-    return from.slice(at, from.indexOf('}', at))
-  }
-  const page =
-    ":root[data-form-factor='phone'] .zen-ntp, :root[data-form-factor='phone'] .zen-ntp *"
-  const fades = ":root[data-form-factor='phone'] .zen-ntp-fades"
+  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+  const folded = css.replace(/\s+/g, ' ')
+  const reduced = reducedMotionRules(css)
 
-  it('the page and everything in it transition nothing', () => {
+  it('the page and everything in it transition nothing: no rule of theirs under reduced motion', () => {
     // The property that made the rule necessary: the page waits under the omnibox unpainted.
-    expect(rule(css, ":root[data-form-factor='phone'] .zen-ntp[data-hidden]")).toContain(
-      'visibility: hidden'
+    const hidden = folded.indexOf(":root[data-form-factor='phone'] .zen-ntp[data-hidden] {")
+    expect(hidden).toBeGreaterThan(-1)
+    expect(folded.slice(hidden, folded.indexOf('}', hidden))).toContain('visibility: hidden')
+    // Neither the page, nor its descendants as a class, nor its hidden state re-declare a
+    // transition: the one global rule cuts them (the tiles' own fade is paused while hidden).
+    const page = reduced.filter((r) =>
+      r.selectors.some((s) => /\.zen-ntp(\[data-hidden\])?( \*)?$/.test(s))
     )
-    expect(rule(reduced, page)).toContain('transition-property: none !important')
+    expect(page).toEqual([])
   })
 
-  it('the page’s fades keep opacity, their one property, written after the page’s rule at equal specificity', () => {
-    expect(rule(reduced, fades)).toContain('transition-property: opacity !important')
-    expect(reduced.indexOf(`${fades} {`)).toBeGreaterThan(reduced.indexOf(`${page} {`))
-    // The fade they keep: the page's opacity over the value's jump, at v2 §11.3's 120 ms.
-    const jump = reduced.indexOf(":root[data-fakebox='closing'] .zen-ntp-fades {")
-    expect(jump).toBeGreaterThan(-1)
-    expect(reduced.slice(jump, reduced.indexOf('}', jump))).toContain('transition: opacity 120ms')
+  it('the page’s fades keep opacity, their one property, at v2 §11.3’s 120 ms', () => {
+    const fades = reduced.filter((r) => r.selectors.some((s) => s.endsWith('.zen-ntp-fades')))
+    expect(fades).toHaveLength(1)
+    expect(fades[0].selectors).toContain(":root[data-fakebox='closing'] .zen-ntp-fades")
+    expect(fades[0].selectors).toContain(":root[data-fakebox='opening'] .zen-ntp-fades")
+    expect(fades[0].body).toBe('transition: opacity 120ms var(--zen-ease) !important;')
   })
 })

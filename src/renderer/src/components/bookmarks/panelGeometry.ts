@@ -9,6 +9,7 @@ import { MENU_PANEL_INSET } from '@renderer/lib/portals'
  */
 
 export {
+  CASCADE_OVERLAP,
   besideOrigin,
   layoutRect,
   placeBeside,
