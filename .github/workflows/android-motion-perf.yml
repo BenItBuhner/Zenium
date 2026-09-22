@@ -24,10 +24,6 @@ name: Android motion perf
 # profile, some ten more for the drivers. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
-  # TEMPORARY (the coordinator's one authorised run on this head: no token in the project can
-  # dispatch); removed in the next commit.
-  push:
-    branches: [cursor/android-perf-view-batch-cf22]
   workflow_dispatch:
     inputs:
       theme:
