@@ -505,6 +505,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "site.clearStorage" -> siteData.clearStorage(
                 args.str("containerId", Profiles.DEFAULT_CONTAINER), args.str("site"), args.arr("origins"), reply
             )
+            "site.listOrigins" -> siteData.listOrigins(args.str("containerId", Profiles.DEFAULT_CONTAINER), args.arr("probe"), reply)
 
             // --- chrome / window / app -----------------------------------------------------------
             "chrome.focus" -> { chrome.requestFocus(); reply(null) }

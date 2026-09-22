@@ -92,6 +92,8 @@ export class SiteDataService {
   private pending: PendingClear | null
   private running: Promise<void> | null = null
   private started = false
+  /** The desktop's quit path ran (or deferred) the on-exit clear: `noteExiting` says nothing more. */
+  private ranOnExit = false
 
   constructor(
     private readonly browser: Browser,
@@ -205,11 +207,17 @@ export class SiteDataService {
   }
 
   private update(next: SiteDataPolicy): void {
+    const previous = this.policyDoc
     this.policyDoc = next
     this.persist()
     // The header stages read the lists through the flags; the Settings page through the state.
     this.browser.protection.onSiteDataChanged()
     this.browser.state.commitVolatile()
+    // A site newly on the never list loses what it holds: the header stages keep its cookies
+    // off the wire from here and the desktop's jar drops what lands, but its stored data – and,
+    // on the phone, the cookies WebView's own network stack still carries – would stay otherwise.
+    const added = next.block.filter((pattern) => !previous.block.includes(pattern))
+    if (added.length > 0) void this.clearSites(added)
   }
 
   // ---------------------------------------------------------------------------
@@ -256,10 +264,14 @@ export class SiteDataService {
   // Clear browsing data on exit
   // ---------------------------------------------------------------------------
 
-  /** After the services are up: a clear the last close left owed runs now, off the boot path. */
+  /**
+   * From `Browser.start`, ahead of the session's windows: a clear the last close left owed
+   * starts now, so that its engine calls (the cookie jar, the storage) are queued before the
+   * first restored page asks for its cookies; the rest of the run completes off the boot path.
+   */
   start(): void {
     this.started = true
-    if (this.pending) setTimeout(() => void this.runPending(), 0)
+    if (this.pending) void this.runPending()
   }
 
   /** The launch-time half: whatever the last close left owed. */
@@ -270,11 +282,13 @@ export class SiteDataService {
   }
 
   /**
-   * The browser is closing (the desktop's `shutdown`; the phone's background): write down what
+   * The browser is closing (the desktop's quit path; the phone's background): write down what
    * is owed so a close the run does not survive is finished at the next launch. Synchronous,
-   * it runs from the quit path before the profile's final write.
+   * it runs from the quit path before the profile's final write. Nothing once the desktop's
+   * on-exit run has taken place in this process ({@link runOnExit} keeps or drops the marker).
    */
   noteExiting(): void {
+    if (this.ranOnExit) return
     if (!this.clearsOnExit()) {
       if (this.pending) this.setPending(null)
       return
@@ -296,13 +310,19 @@ export class SiteDataService {
   }
 
   /**
-   * The desktop's on-exit run, from the quit path after `shutdown`: what {@link noteExiting}
-   * wrote down, with `budgetMs` to spend – the marker is dropped when the run completes in
-   * time, else kept for the next launch. Resolves once either happened.
+   * The desktop's on-exit run, from the quit path once the quit is agreed and before
+   * `shutdown` freezes the profile (what the run clears from the core's own stores – the
+   * history, the downloads, the recently closed tabs – is written by the final write then):
+   * the marker first ({@link noteExiting}), so a run the process does not survive is finished
+   * at the next launch; then the run with `budgetMs` to spend – the marker is dropped when the
+   * run completes in time, else kept for the next launch. Resolves once either happened;
+   * `nothing` when nothing is cleared on exit.
    */
-  async runOnExit(budgetMs: number = ON_EXIT_BUDGET_MS): Promise<'done' | 'deferred'> {
+  async runOnExit(budgetMs: number = ON_EXIT_BUDGET_MS): Promise<'done' | 'deferred' | 'nothing'> {
+    this.noteExiting()
+    this.ranOnExit = true
     const pending = this.pending
-    if (!pending) return 'done'
+    if (!pending) return 'nothing'
     let timer: ReturnType<typeof setTimeout> | null = null
     const budget = new Promise<'deferred'>((resolve) => {
       timer = setTimeout(() => resolve('deferred'), budgetMs)
@@ -328,24 +348,33 @@ export class SiteDataService {
     return this.running
   }
 
-  /** The run itself: the types through the dialog's path, then the listed sites. */
+  /**
+   * The run itself: the types through the dialog's path, and the listed sites – unless the
+   * cookies are among the types, which takes every site's cookies and storage anyway. Both
+   * halves start at once, so that their first engine calls are queued before whatever follows.
+   */
   private async clear(pending: PendingClear): Promise<void> {
     const types = pending.types.filter((t): t is ClearOnExitType => CLEAR_ON_EXIT_TYPES.includes(t))
-    if (types.length > 0) {
-      const outcome = await this.browser.privacy.clearBrowsingData(
-        'all',
-        types as BrowsingDataType[]
-      )
+    const typesDone =
+      types.length > 0
+        ? this.browser.privacy.clearBrowsingData('all', types as BrowsingDataType[])
+        : null
+    const sitesDone =
+      pending.patterns.length > 0 && !types.includes('cookies')
+        ? this.clearSites(pending.patterns)
+        : null
+    if (typesDone) {
+      const outcome = await typesDone
       if (outcome.status !== 'ok') throw new Error(`clear refused: ${outcome.status}`)
     }
-    // The cookies went with the types: only the storage of the listed sites is left to do then.
-    if (pending.patterns.length > 0) await this.clearSites(pending.patterns)
+    if (sitesDone) await sitesDone
   }
 
   /**
    * Take the cookies and stored data of every origin the browser knows of under `patterns`:
-   * the origins the engine holds cookies or storage for, the visited ones, the ones with
-   * permissions, and the patterns' own hosts (a site that left no other trace).
+   * the visited ones, the ones with permissions and the patterns' own hosts (a site that left
+   * no other trace) first – their engine calls go out at once – then the origins the engine
+   * alone holds cookies for (a frame's site, visited from no history entry).
    */
   async clearSites(patterns: readonly string[]): Promise<void> {
     const host = this.browser.platform.siteData
@@ -357,22 +386,31 @@ export class SiteDataService {
       for (const scheme of pattern.scheme ? [pattern.scheme] : ['https', 'http'])
         known.add(`${scheme}://${pattern.host}${pattern.port ? `:${pattern.port}` : ''}`)
     }
-    for (const containerId of this.containerIds()) {
-      const engineOrigins = host.listOrigins
-        ? await quiet(host.listOrigins(containerId, []), [])
-        : []
-      const origins = new Set<string>(known)
-      for (const reading of engineOrigins) origins.add(reading.origin)
-      const covered = [...origins].filter((origin) => urlInSitePatterns(patterns, origin))
-      await this.clearOrigins(host, containerId, covered)
+    const covered = [...known].filter((origin) => urlInSitePatterns(patterns, origin))
+    // A site whose every host, scheme and port a pattern covers goes as a whole (the phone's
+    // one-shot site delete takes the cookies and the storage of every subdomain); a pattern
+    // that names one host of a site takes that host's origins alone.
+    const wholeSite = (site: string): boolean => patternsCoverSite(patterns, site)
+    const containers = this.containerIds()
+    await Promise.all(containers.map((id) => this.clearOrigins(host, id, covered, wholeSite)))
+    if (!host.listOrigins) return
+    for (const containerId of containers) {
+      const readings = await quiet(host.listOrigins(containerId, []), [])
+      const more = readings
+        .map((reading) => reading.origin)
+        .filter((origin) => !known.has(origin) && urlInSitePatterns(patterns, origin))
+      if (more.length > 0) await this.clearOrigins(host, containerId, more, wholeSite)
     }
   }
 
+  /** Every call for the origins goes out at once; resolves when the engine has answered them all. */
   private async clearOrigins(
     host: SiteDataHost,
     containerId: string,
-    origins: string[]
+    origins: string[],
+    wholeSite: (site: string) => boolean = () => false
   ): Promise<void> {
+    if (origins.length === 0) return
     const bySite = new Map<string, string[]>()
     for (const origin of origins) {
       const h = hostOf(origin)
@@ -380,13 +418,12 @@ export class SiteDataService {
       const site = registrableDomain(h)
       bySite.set(site, [...(bySite.get(site) ?? []), origin])
     }
+    const work: Promise<unknown>[] = []
     for (const [site, list] of bySite) {
-      for (const origin of list) await quiet(host.clearCookies(containerId, `${origin}/`), 0)
-      // The whole site when every origin of it is going (the phone's one-shot site delete);
-      // the origins alone when a pattern names one host of a site.
-      const wholeSite = list.some((origin) => hostOf(origin) === site)
-      await quiet(host.clearStorage(containerId, wholeSite ? site : '', list), undefined)
+      work.push(quiet(host.clearStorage(containerId, wholeSite(site) ? site : '', list), undefined))
+      for (const origin of list) work.push(quiet(host.clearCookies(containerId, `${origin}/`), 0))
     }
+    await Promise.all(work)
     this.browser.security.certificateExceptions.forgetContainer(containerId)
   }
 
@@ -500,6 +537,20 @@ export class SiteDataService {
   flushSync(): void {
     this.store.flushSync()
   }
+}
+
+/**
+ * Whether `patterns` cover every host of `site` (a registrable domain) on every scheme and
+ * port: a `[*.]` pattern of the site or of a domain above it, with no scheme or port.
+ */
+export function patternsCoverSite(patterns: readonly string[], site: string): boolean {
+  for (const text of patterns) {
+    const pattern = parseSitePattern(text)
+    if (!pattern || !pattern.subdomains || pattern.scheme || pattern.port) continue
+    if (pattern.host === site || (site.endsWith(`.${pattern.host}`) && site.length > pattern.host.length))
+      return true
+  }
+  return false
 }
 
 /** `policy` without `pattern` on any list. */

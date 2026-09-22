@@ -73,7 +73,7 @@ import { edgeStoreUserAgent, navigationClientHints, webstoreClientHints } from '
 import { ResourceGovernor } from './resources/governor'
 import { ElectronSyncHost } from '../sync/host'
 import { ElectronAgentTransport } from '../agent/server'
-import { ElectronSiteData } from './siteData'
+import { CookiePolicyEnforcer, ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
 import { ElectronPrintingHost } from './printing'
 import { ElectronUpdateHost } from './updates'
@@ -249,9 +249,14 @@ export class ElectronPlatform implements Platform {
     )
     if (process.platform === 'linux') this.mediaSession = new ElectronMpris(() => this.browser)
     // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
-    this.privacy = new ElectronPrivacy(this.views, {
-      lookup: (url) => (this.browser ? this.browser.protection.safeBrowsing.lookup(url) : null)
-    })
+    this.privacy = new ElectronPrivacy(
+      this.views,
+      { lookup: (url) => (this.browser ? this.browser.protection.safeBrowsing.lookup(url) : null) },
+      undefined,
+      undefined,
+      // The jar's half of the per-site cookie policy: never-sites' cookies go as they land.
+      new CookiePolicyEnforcer(this.sessions)
+    )
     this.siteData = new ElectronSiteData(this.sessions)
     this.menus = new ElectronMenus()
     this.dialogs = {

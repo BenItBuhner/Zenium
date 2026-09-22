@@ -802,21 +802,24 @@ export class Browser {
   async requestQuit(from?: ZenWindow): Promise<boolean> {
     if (this.quitting) return true
     if (!this.quitCheck) {
-      this.quitCheck = this.confirmQuit(from).finally(() => {
-        this.quitCheck = null
-      })
+      // Clear browsing data on exit once the quit is agreed, with a budget: what does not
+      // finish in time is owed to the next launch (`SiteDataService.runOnExit` writes the
+      // marker first). Part of the check, so a second request during the run waits for it
+      // rather than asking again; ahead of `shutdown`, so what the run clears from the core's
+      // own stores goes into the profile's final write.
+      this.quitCheck = this.confirmQuit(from)
+        .then(async (agreed) => {
+          if (agreed) await this.siteData.runOnExit()
+          return agreed
+        })
+        .finally(() => {
+          this.quitCheck = null
+        })
     }
     if (!(await this.quitCheck)) return false
     // Every request that waited on the same check quits once.
     if (this.quitting) return true
     this.shutdown()
-    // Clear browsing data on exit, with a budget: what does not finish in time is owed to the
-    // next launch (`SiteDataService.noteExiting` wrote it down in `shutdown`). The services it
-    // cleared through write again, so the profile is flushed once more before the process goes.
-    if (this.siteData.clearsOnExit()) {
-      await this.siteData.runOnExit()
-      this.flushSync()
-    }
     await this.settled()
     this.platform.app.quit()
     return true
@@ -1845,6 +1848,8 @@ export class Browser {
     this.passwords.shutdown()
     // The pages on screen have scrolled since their stacks were last read.
     this.tabs.rememberAllNavigation()
+    // A close that skipped the on-exit clear (the OS shutting down, a mobile host's background)
+    // leaves it to the next launch; after `requestQuit`'s run this says nothing more.
     this.siteData.noteExiting()
     this.state.markExiting()
     this.flushSync()
@@ -1867,6 +1872,7 @@ export class Browser {
     this.translate.flushSync()
     this.print.flushSync()
     this.webApps.flushSync()
+    this.permissions.flushSync()
     this.siteData.flushSync()
   }
 

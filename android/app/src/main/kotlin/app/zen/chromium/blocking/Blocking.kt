@@ -82,11 +82,17 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
 
     /**
      * The headers-received stage for documents ([HeaderStage]): a document request whose
-     * request-stage allow a header-conditioned rule could overturn is relayed through it. Null
-     * (no extension runtime attached) lets such a request through on the request stage's word.
+     * request-stage allow a header-conditioned rule could overturn, or whose cookies the cookie
+     * policy withholds ([RequestPolicy.cookiesWithheld]), is relayed through it. The extension
+     * runtime installs its own while it runs; without one the engine's default relays over the
+     * profiles' cookie jars ([defaultHeaderStage]), so the cookie policy holds in a custom tab
+     * and before the runtime is up.
      */
     @Volatile
     var headerStage: HeaderStage? = null
+
+    /** The header stage of a process without an extension runtime; its jar is the profile's `CookieManager`. */
+    private val defaultHeaderStage: HeaderStage by lazy { HeaderStage(ProfileCookieStore) }
 
     /** Wall-clock milliseconds of the last build, for the settings sheet and the demo. */
     @Volatile
@@ -206,7 +212,9 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 mapOf("Content-Length" to verdict.bytes.size.toString()), ByteArrayInputStream(verdict.bytes)
             )
             is Verdict.Redirect -> redirector?.redirect(tab, request, verdict.url, verdict.type)
-            is Verdict.HeaderStage -> headerStage?.relay(snapshot, tab, verdict.request, request.requestHeaders ?: emptyMap(), observer, verdict.decision)?.toResponse()
+            is Verdict.HeaderStage -> (headerStage ?: defaultHeaderStage)
+                .relay(snapshot, tab, verdict.request, request.requestHeaders ?: emptyMap(), observer, verdict.decision, verdict.withCookies)
+                ?.toResponse()
         }
     }
 
@@ -455,7 +463,12 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             // A navigation opens the tab's next document: its own decision and every subresource
             // decision after it carry the new generation (see BlockingTab.documentGeneration).
             val generation = tab.documentGeneration(isMainFrame)
-            if (snap === EngineSnapshot.EMPTY && observer == null) return Verdict.Pass
+            // The cookie policy's word on a document: withheld cookies send it through the relay
+            // whatever the rule sets say (an empty snapshot included).
+            val isDocument = isMainFrame || type == ResourceType.SUB_FRAME
+            val withheld = isDocument && policy != null &&
+                policy.cookiesWithheld(url, if (isMainFrame) null else tab.documentUrl, tab.containerId)
+            if (snap === EngineSnapshot.EMPTY && observer == null && !withheld) return Verdict.Pass
             val req = Request(
                 url, type, if (isMainFrame) null else tab.documentUrl, method,
                 tabId = tab.tabId, typeMask = known?.bit ?: ResourceType.AMBIGUOUS_MASK,
@@ -470,10 +483,11 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 observer.onDecision(tab, req, decision, elapsed, if (cpuAfter < 0) -1L else cpuAfter - cpuBefore)
             }
             return when (decision.action) {
-                // A document allowed for now that a header-conditioned rule may still overturn
-                // goes through the header stage's relay (HeaderStage); other requests keep the allow.
+                // A document allowed for now that a header-conditioned rule may still overturn,
+                // or whose cookies the cookie policy withholds, goes through the header stage's
+                // relay (HeaderStage); other requests keep the allow.
                 Decision.Action.ALLOW ->
-                    if (decision.needsHeaders && (isMainFrame || type == ResourceType.SUB_FRAME)) Verdict.HeaderStage(req, decision) else Verdict.Pass
+                    if (isDocument && (decision.needsHeaders || withheld)) Verdict.HeaderStage(req, decision, withCookies = !withheld) else Verdict.Pass
                 Decision.Action.BLOCK -> {
                     if (isMainFrame) {
                         tab.onDocumentBlocked(url)
@@ -632,12 +646,28 @@ sealed class Verdict {
 
     /**
      * A document the request stage allowed subject to its response headers
-     * ([Decision.needsHeaders]): relayed through the [HeaderStage], which decides it again with
-     * the real headers; WebView loads it itself when there is none. `decision` is the request
-     * stage's, so the header stage reports only a decision that names another match (the
-     * desktop's `sameMatch`, contract 5.5).
+     * ([Decision.needsHeaders]), or one the cookie policy sends without cookies (`withCookies`
+     * false: no `Cookie` goes, no `Set-Cookie` is kept): relayed through the [HeaderStage],
+     * which decides it again with the real headers. `decision` is the request stage's, so the
+     * header stage reports only a decision that names another match (the desktop's `sameMatch`,
+     * contract 5.5).
      */
-    class HeaderStage(val request: Request, val decision: Decision) : Verdict()
+    class HeaderStage(val request: Request, val decision: Decision, val withCookies: Boolean = true) : Verdict()
+}
+
+/**
+ * The cookie jar the engine's own header stage relays over: the profile's `CookieManager`
+ * (`Profiles.cookieManager`), read and written on the intercept thread – the manager is
+ * thread-safe. A profile that cannot be reached (the JVM's stubs in tests) has no cookies.
+ */
+object ProfileCookieStore : HeaderStage.CookieStore {
+    override fun cookieHeader(partition: String, url: String): String? =
+        runCatching { app.zen.chromium.Profiles.cookieManager(partition).getCookie(url) }.getOrNull()?.ifEmpty { null }
+
+    override fun store(partition: String, url: String, setCookie: List<String>) {
+        val manager = runCatching { app.zen.chromium.Profiles.cookieManager(partition) }.getOrNull() ?: return
+        for (cookie in setCookie) manager.setCookie(url, cookie)
+    }
 }
 
 /** Hears every decision the engine takes on a page's request; see [Blocking.observer]. */

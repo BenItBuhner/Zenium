@@ -28,6 +28,7 @@ import { BUILTIN_RULE_SETS, type Decision } from '../../core/blocking/rules'
 import type { PrivacyHost } from '../../core/platform'
 import { cookiesWithheld, signalHeaders } from '../../core/protection/policy'
 import type { PrivacyFlags, SafeBrowsingHit } from '../../shared/privacy'
+import type { SiteDataPolicy } from '../../shared/siteData'
 import { PRIVACY_SIGNALS_CHANNEL, type PrivacySignals } from '../../shared/privacySignals'
 import type { ElectronBlocking } from './blocking'
 import {
@@ -129,6 +130,11 @@ export function bundledSafeBrowsingDirectory(): string {
   return join(app.getAppPath(), 'resources', 'safebrowsing')
 }
 
+/** The cookie jar's enforcement of the per-site policy (`CookiePolicyEnforcer` in `siteData.ts`). */
+export interface CookieJarPolicy {
+  apply(policy: SiteDataPolicy): void
+}
+
 export class ElectronPrivacy implements PrivacyHost {
   private flags: PrivacyFlags | null = null
   private dnsApplied: string | null = null
@@ -138,7 +144,8 @@ export class ElectronPrivacy implements PrivacyHost {
     private readonly safeBrowsing: SafeBrowsingLookup,
     private readonly bundleDir: string = bundledSafeBrowsingDirectory(),
     private readonly configureResolver: HostResolverConfigurator = (options) =>
-      app.configureHostResolver(options)
+      app.configureHostResolver(options),
+    private readonly cookieJar: CookieJarPolicy | null = null
   ) {}
 
   /** The policy the core last pushed, null before the first `apply`. */
@@ -149,6 +156,7 @@ export class ElectronPrivacy implements PrivacyHost {
   apply(flags: PrivacyFlags): void {
     this.flags = flags
     this.configureDns(flags)
+    this.cookieJar?.apply(flags.siteData)
   }
 
   async bundledSafeBrowsingFeed(id: string): Promise<string | null> {

@@ -331,10 +331,19 @@ class TabWebView(
         }
     }
 
-    /** Third-party cookies for the document at `documentUrl` (the exception list names top sites). */
+    /**
+     * Third-party cookies for the document at `documentUrl` (the exception list names top
+     * sites), and "block all cookies" for the jar: WebView has no per-site cookie switch, so the
+     * profile's jar refuses every cookie under the policy's `blockAll` (the header stage's relay
+     * still carries a listed site's document cookies, read and written through the jar's Java
+     * API, which the switch does not govern) and the never list is emulated by the relay and the
+     * core's deletion of a never-site's data.
+     */
     private fun applyCookiePolicy(flags: PrivacyFlags, documentUrl: String?) {
         // The jar of this tab's container: a WebView on another profile is not the default jar's.
-        Profiles.cookieManager(containerId).setAcceptThirdPartyCookies(this, flags.acceptsThirdPartyCookies(containerId, documentUrl))
+        val jar = Profiles.cookieManager(containerId)
+        jar.setAcceptCookie(!flags.siteData.blockAll)
+        jar.setAcceptThirdPartyCookies(this, flags.acceptsThirdPartyCookies(containerId, documentUrl))
     }
 
     /**

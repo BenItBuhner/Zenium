@@ -28,7 +28,9 @@ class PrivacyFlags(
     val thirdPartyCookiesPrivate: String,
     val thirdPartyCookieExceptions: List<String>,
     val gpc: Boolean,
-    val dnt: Boolean
+    val dnt: Boolean,
+    /** The per-site cookie policy (Chrome's three lists and the "block all" default); empty before the core has one. */
+    val siteData: SiteDataPolicy = SiteDataPolicy.EMPTY
 ) {
     /**
      * Whether the WebView of `containerId` showing `documentUrl` accepts third-party cookies:
@@ -40,6 +42,33 @@ class PrivacyFlags(
         if (!blocksThirdPartyCookiesIn(containerId == PRIVATE_CONTAINER)) return true
         val host = documentUrl?.let(Domains::hostnameOf) ?: return false
         return hostInSites(host, thirdPartyCookieExceptions)
+    }
+
+    /**
+     * Whether a request for `url` goes without cookies – no `Cookie` sent, no `Set-Cookie` kept –
+     * under the whole policy, the twin of `cookiesWithheld` in `src/core/protection/policy.ts`:
+     * the per-site lists and the "block all" default first ([SiteDataPolicy.verdict]: a
+     * never-site's request always does, a listed site's never does), then the third-party rule
+     * for the rest – a request whose site is not `documentUrl`'s, in a container that blocks
+     * third-party cookies, with neither site on the exception list. A document's own request
+     * (`documentUrl` null) is never third party. The header stage asks this for the documents it
+     * relays; WebView attaches the cookies of everything else itself.
+     */
+    fun cookiesWithheld(url: String, documentUrl: String?, containerId: String): Boolean {
+        when (siteData.verdict(url)) {
+            SiteDataPolicy.Verdict.BLOCKED -> return true
+            SiteDataPolicy.Verdict.ALLOWED -> return false
+            SiteDataPolicy.Verdict.DEFAULT -> Unit
+        }
+        if (!blocksThirdPartyCookiesIn(containerId == PRIVATE_CONTAINER)) return false
+        if (documentUrl.isNullOrEmpty()) return false
+        if (!Domains.isThirdParty(url, documentUrl)) return false
+        if (thirdPartyCookieExceptions.isEmpty()) return true
+        val requestHost = Domains.hostnameOf(url)
+        if (requestHost != null && hostInSites(requestHost, thirdPartyCookieExceptions)) return false
+        val documentHost = Domains.hostnameOf(documentUrl)
+        if (documentHost != null && hostInSites(documentHost, thirdPartyCookieExceptions)) return false
+        return true
     }
 
     /**
@@ -105,7 +134,7 @@ class PrivacyFlags(
     /** The policy without its session-only part (the Safe Browsing bypasses), for the copy kept on disk. */
     fun withoutSession(): PrivacyFlags = if (safeBrowsingBypassed.isEmpty()) this else PrivacyFlags(
         safeBrowsing, emptySet(), httpsOnly, httpsOnlyAllowed, thirdPartyCookies, thirdPartyCookiesPrivate,
-        thirdPartyCookieExceptions, gpc, dnt
+        thirdPartyCookieExceptions, gpc, dnt, siteData
     )
 
     fun toJson(): JSONObject = JSONObject()
@@ -118,6 +147,7 @@ class PrivacyFlags(
         .put("thirdPartyCookieExceptions", JSONArray(thirdPartyCookieExceptions))
         .put("gpc", gpc)
         .put("dnt", dnt)
+        .put("siteData", siteData.toJson())
 
     companion object {
         /** The container id of private tabs (`Tab.containerId` in the core). */
@@ -155,7 +185,8 @@ class PrivacyFlags(
                     .takeIf { it in COOKIE_PRIVATE_MODES } ?: d.thirdPartyCookiesPrivate,
                 thirdPartyCookieExceptions = strings(o.optJSONArray("thirdPartyCookieExceptions")),
                 gpc = o.optBoolean("gpc", d.gpc),
-                dnt = o.optBoolean("dnt", d.dnt)
+                dnt = o.optBoolean("dnt", d.dnt),
+                siteData = SiteDataPolicy.parse(o.optJSONObject("siteData"))
             )
         }
 
