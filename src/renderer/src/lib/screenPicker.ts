@@ -34,20 +34,11 @@ export function initialPane(request: ScreenCaptureRequest): PickerPane {
   return panesOf(request)[0]?.id ?? 'tab'
 }
 
-/**
- * The picker this window shows now: the request of its active tab (a page's call is tab-modal,
- * like Chrome's), else an extension's request modal to this window – Chrome's
- * `chooseDesktopMedia` picker is modal to the target's browser window, so it shows over
- * whichever tab is active there and stays up while the tabs change.
- */
+/** The picker this window shows now: the request of its active tab (tab-modal, like Chrome's). */
 export function currentScreenCaptureRequest(state: UIState): ScreenCaptureRequest | null {
   const tabId = activeTab(state)?.id ?? null
   if (!tabId) return null
-  return (
-    state.screenCaptureRequests.find((r) => r.tabId === tabId) ??
-    state.screenCaptureRequests.find((r) => r.extension && r.windowId === state.window.id) ??
-    null
-  )
+  return state.screenCaptureRequests.find((r) => r.tabId === tabId) ?? null
 }
 
 /** Chrome's title line and the line under it. */

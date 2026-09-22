@@ -10,7 +10,7 @@ vi.mock('@renderer/lib/api', () => ({
   onEvent: vi.fn(() => () => undefined)
 }))
 
-import { cmd, run } from '@renderer/lib/api'
+import { run } from '@renderer/lib/api'
 import { FrameDialogHost, closeAllPopovers } from '@renderer/lib/portals'
 import { effectiveSelection, gridMove, paneColumns } from '@renderer/lib/screenPicker'
 import { rememberThumbnail } from '@renderer/lib/thumbnails'
@@ -27,8 +27,8 @@ import { ScreenPickerLayer } from '../ScreenPicker'
  * picked, "Also share system audio" on the screen pane where the OS allows and the page asked;
  * Cancel and Escape answer the core with no source (the page's refusal); the request of another
  * tab shows nothing until that tab is in front. An extension's request
- * (chrome.desktopCapture.chooseDesktopMedia) is the same dialog with the extension named, the
- * panes it asked for, and modal to its window rather than its tab.
+ * (chrome.desktopCapture.chooseDesktopMedia) is the same dialog with the extension named and the
+ * panes it asked for, modal to the tab it names as a page's is.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -66,7 +66,6 @@ const WINDOW: ScreenCaptureSource = {
 const REQUEST: ScreenCaptureRequest = {
   id: 'capture-1',
   tabId: 't1',
-  windowId: 'w1',
   origin: 'meet.example',
   extension: null,
   kinds: ['tab', 'window', 'screen'],
@@ -95,7 +94,6 @@ function stateWith(
   return {
     platform: 'linux',
     capabilities: { screenCapture, windows: true },
-    window: { id: 'w1' },
     tabs: {
       t1: { id: 't1', url: 'https://meet.example/' },
       t2: { id: 't2', url: 'https://docs.example/' }
@@ -171,8 +169,7 @@ function share(el: HTMLElement): HTMLButtonElement {
 }
 
 beforeEach(() => {
-  uiStore.set({ screenPickerOpen: false, snapshot: null, snapshotTabId: null })
-  vi.mocked(cmd).mockClear()
+  uiStore.set({ screenPickerOpen: false })
 })
 
 afterEach(async () => {
@@ -215,22 +212,11 @@ describe('ScreenPickerLayer as the screenCapture surface', () => {
     expect(el.querySelector('[data-screen-picker]')).not.toBeNull()
   })
 
-  it('an extension’s request is modal to its window: it shows over whichever tab is active there, and stays up as the tabs change', async () => {
+  it('an extension’s request is modal to the tab it names the same way (Chrome’s dialog is web-modal to the targetTab)', () => {
     const el = render(layer(stateWith([EXTENSION_REQUEST], { activeTabId: 't2' })))
-    await settle()
-    expect(el.querySelector('[data-screen-picker]')).not.toBeNull()
-    // The picture standing in for the page is the active tab's, not the target's.
-    expect(cmd).toHaveBeenCalledWith('overlay.snapshot', { tabId: 't2' })
-    expect(cmd).not.toHaveBeenCalledWith('overlay.snapshot', { tabId: 't1' })
-    rerender(layer(stateWith([EXTENSION_REQUEST], { activeTabId: 't1' })))
-    await settle()
-    expect(el.querySelector('[data-screen-picker]')).not.toBeNull()
-    expect(cmd).toHaveBeenCalledWith('overlay.snapshot', { tabId: 't1' })
-  })
-
-  it('an extension’s request for another window’s tab shows nothing here', () => {
-    const el = render(layer(stateWith([{ ...EXTENSION_REQUEST, tabId: 't3', windowId: 'w2' }])))
     expect(el.querySelector('[data-screen-picker]')).toBeNull()
+    rerender(layer(stateWith([EXTENSION_REQUEST])))
+    expect(el.querySelector('[data-screen-picker]')).not.toBeNull()
   })
 })
 
