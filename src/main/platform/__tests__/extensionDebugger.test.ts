@@ -4,6 +4,7 @@ import type { WebContents } from 'electron'
 import type { Tab } from '../../../shared/types'
 import { DebuggerApi, type PageDebugger } from '../extensionApi/debugger'
 import type { ApiContext, ApiHost } from '../extensionApi/types'
+import { hasForeignDebuggerOwner } from '../pageDebugger'
 
 const EXT = 'abcdefghijklmnopabcdefghijklmnop'
 const OTHER = 'ponmlkjihgfedcbaponmlkjihgfedcba'
@@ -176,6 +177,27 @@ describe('chrome.debugger', () => {
     expect(() => w.api.handlers.detach(w.ctx(EXT), { tabId: 7 })).toThrow(
       'Debugger is not attached to the tab with id: 7.'
     )
+  })
+
+  it('holds the page’s session against Zenium’s own holders for as long as it is attached', () => {
+    const w = world()
+    const page = w.page(7, 'https://a.example/')
+    const id = (page.wc as unknown as { id: number }).id
+    expect(hasForeignDebuggerOwner(id)).toBe(false)
+    w.api.handlers.attach(w.ctx(EXT), { tabId: 7 }, '1.3')
+    expect(hasForeignDebuggerOwner(id)).toBe(true)
+    w.api.handlers.detach(w.ctx(EXT), { tabId: 7 })
+    expect(hasForeignDebuggerOwner(id)).toBe(false)
+    // Ended from outside (the engine dropped the session): released as well.
+    w.api.handlers.attach(w.ctx(EXT), { tabId: 7 }, '1.3')
+    expect(hasForeignDebuggerOwner(id)).toBe(true)
+    page.dbg.kick()
+    expect(hasForeignDebuggerOwner(id)).toBe(false)
+    // Unloading the extension releases every page it held.
+    const other = w.page(8, 'https://b.example/')
+    w.api.handlers.attach(w.ctx(EXT), { tabId: 8 }, '1.3')
+    w.api.unload(EXT)
+    expect(hasForeignDebuggerOwner((other.wc as unknown as { id: number }).id)).toBe(false)
   })
 
   it("refuses what Chrome refuses: no permission, unknown tabs, the browser's pages, another extension's tab", async () => {
