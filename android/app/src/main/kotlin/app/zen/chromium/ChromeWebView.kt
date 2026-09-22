@@ -74,7 +74,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         addJavascriptInterface(JsBridge(host), "__zenNative")
         webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                handoffResponse(request.url) ?: loader.shouldInterceptRequest(request.url)
+                handoffResponse(request.url) ?: loader.shouldInterceptRequest(request.url)?.also { profilable(request, it) }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 // The chrome never navigates; anything that tries is an external link.
@@ -178,6 +178,18 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         headers["Content-Length"] = answer.length.toString()
         answer.etag?.let { headers["ETag"] = "\"$it\"" }
         return WebResourceResponse(answer.mimeType, "utf-8", 200, "OK", headers, answer.stream)
+    }
+
+    /**
+     * A debug build's chrome document may profile its own script: the JS Self-Profiling API's
+     * `Profiler` sits behind the `Document-Policy: js-profiling` response header, and the motion
+     * profile's probe (`MotionPerfDemo`) reads a scene's script by function through it – the one
+     * attribution the WebView's own trace cannot give, its events' arguments being stripped. The
+     * policy enables the constructor and nothing else; release documents carry none.
+     */
+    private fun profilable(request: WebResourceRequest, response: WebResourceResponse) {
+        if (!BuildConfig.DEBUG || !request.isForMainFrame) return
+        response.responseHeaders = (response.responseHeaders ?: emptyMap()) + ("Document-Policy" to "js-profiling")
     }
 
     /** Run once the chrome document has loaded (queued before that). */

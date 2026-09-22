@@ -77,9 +77,20 @@ object BlinkTrace {
      * frames), `v8` (script and GC), `renderer.scheduler`, `input`, the DevTools timeline (which
      * names `Layout` / `Paint` / `UpdateLayoutTree` / `FunctionCall` as the Performance panel
      * does; its disabled-by-default part carries `RunTask` and `UpdateLayer`), `blink.user_timing`,
-     * whose events are `performance.mark()` calls by name, and V8's compile events (PERF-5: the
+     * whose events are `performance.mark()` calls by name, V8's compile events (PERF-5: the
      * first touch of a swipe after the app sat idle was one 55 ms listener with nothing traced
-     * inside it; a compile shows in this category and nowhere else, at no cost when none happens).
+     * inside it; a compile shows in this category and nowhere else, at no cost when none happens),
+     * and `toplevel`, every thread's tasks (`ThreadControllerImpl::RunTask`): not read into the
+     * reading (the renderer main thread's outermost slices are the same tasks the timeline's
+     * `RunTask` names), kept in the trace for a reader that asks what the other threads were doing
+     * under a long task of the chrome (the Perfetto UI on the saved trace).
+     *
+     * NOT `disabled-by-default-v8.cpu_profiler`: the WebView's `TracingController` strips every
+     * event's arguments (`"__stripped__"`, its privacy filter), the sampler's frames with them,
+     * and starting the sampler costs the first script of the window a `CollectSourcePositions`
+     * pass over every compiled function (215 ms of the first touch, PERF-5's fourth run). The
+     * script's attribution by function comes from the page's own `Profiler` (the JS Self-Profiling
+     * API, `MotionPerfDemo`'s probe) instead.
      */
     val CATEGORIES: List<String> = listOf(
         "blink",
@@ -91,7 +102,8 @@ object BlinkTrace {
         "devtools.timeline",
         "disabled-by-default-devtools.timeline",
         "disabled-by-default-devtools.timeline.frame",
-        "disabled-by-default-v8.compile"
+        "disabled-by-default-v8.compile",
+        "toplevel"
     )
 
     /** A stretch of the trace's clock, µs (`CLOCK_MONOTONIC`, as `System.nanoTime() / 1000`). */

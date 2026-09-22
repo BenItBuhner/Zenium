@@ -54,6 +54,10 @@ import kotlin.math.roundToInt
  * keyed by the tab under the finger), the root's, and the nodes added and removed – the
  * attribution the trace's stripped arguments cannot give. Its counts go to `perf-motion.json`
  * and `findings.txt` in the findings, per scene, with the core's active tab before and after.
+ * The scenes that begin with a touch also run the page's own sampler over themselves (the JS
+ * Self-Profiling API, open to a debug build's document): the scene's script BY FUNCTION, the
+ * long task's included, which the WebView's trace cannot name (its arguments are stripped, its
+ * V8 sampler's with them) – see [scene].
  */
 @RunWith(AndroidJUnit4::class)
 class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion", "perf-motion") {
@@ -154,8 +158,9 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private fun measureTabSwipe() {
         val f = Finger()
         val before = activeTabId()
-        // The begin: the touch, the slop, the capture, the track.
-        scene("tab-swipe-begin", JankBudget.Kind.OPEN) {
+        // The begin: the touch, the slop, the capture, the track. Sampled: the one long task of a
+        // swipe is the first touch's listener, and the trace has no name for it.
+        scene("tab-swipe-begin", JankBudget.Kind.OPEN, profile = true) {
             f.down(pill.right - 10f, pillY)
             f.settleIn(-NUDGE, 0f)
         }
@@ -172,8 +177,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         val next = TRACK.getOrNull(TRACK.indexOf(before) + 1)
         finding("tab-swipe: $before -> $after (${if (after == next) "the next tab" else "NOT the next tab"})")
 
-        // The fling back, whole.
-        scene("tab-swipe-fling", JankBudget.Kind.SPRING) {
+        // The fling back, whole (sampled: a second first touch).
+        scene("tab-swipe-fling", JankBudget.Kind.SPRING, profile = true) {
             flingRight()
             SystemClock.sleep(RELEASE_MS)
         }
@@ -212,17 +217,23 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     /**
      * One traced scene: the probe's counters zeroed, the block under [traceFrames], the counters
      * read after it (never inside: a read of the chrome is work the app did not do for the user)
-     * and written down with the scene's trace line.
+     * and written down with the scene's trace line. With [profile], the page's sampler runs over
+     * the scene too (started before the touch, stopped after the window) and the scene's script by
+     * function joins the line and the JSON: for the scenes with a long task to name, since the
+     * sampler's signals are a cost of their own on the thread they sample.
      */
-    private fun scene(name: String, kind: JankBudget.Kind, baseline: String? = null, block: () -> Unit): FrameStats.Scene {
+    private fun scene(name: String, kind: JankBudget.Kind, baseline: String? = null, profile: Boolean = false, block: () -> Unit): FrameStats.Scene {
         resetProbe()
         val activeBefore = activeTabId()
+        val sampling = if (profile) startProfile() else null
         val result = traceFrames(name, kind, baseline, block)
+        val profiled = if (profile) stopProfile() else null
         val probe = readProbe()
         val json = JSONObject().put("scene", name).put("kind", kind.key).put("activeBefore", activeBefore).put("activeAfter", activeTabId())
             .put("probe", probe)
         result.trace?.let { json.put("trace", JSONObject(it.toJson())) }
         result.traceMissing?.let { json.put("traceMissing", it) }
+        profiled?.let { json.put("profile", it) }
         scenes.put(json)
         val frames = result.trace?.frames ?: 0
         val per = { key: String -> if (frames > 0) String.format(java.util.Locale.ROOT, "%.2f", probe.optInt(key) / frames.toDouble()) else "-" }
@@ -230,7 +241,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             "[$name] ${result.trace?.describe() ?: "trace: ${result.traceMissing}"}; probe: cards ${probe.optInt("card")} (${per("card")}/frame), " +
                 "dims ${probe.optInt("dim")}, ribbons ${probe.optInt("ribbon")}, pill ${probe.optInt("pill")} (remounts ${probe.optInt("pillRemounts")}), " +
                 "root ${probe.optInt("root")}, other ${probe.optInt("other")}, nodes +${probe.optInt("added")}/-${probe.optInt("removed")}, stage mounts ${probe.optInt("stageMounts")}; " +
-                "listeners: ${describeEvents(probe)}; commands: ${describeCommands(probe)}"
+                "listeners: ${describeEvents(probe)}; commands: ${describeCommands(probe)}" +
+                (if (sampling != null) "; script by function ($sampling): ${profiled?.let { describeProfile(it) } ?: "none"}" else "")
         )
         return result
     }
@@ -280,8 +292,55 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             "window.addEventListener(ty,function(){var now=performance.now();performance.mark('probe:'+ty+':w1');var d=now-(at[ty]||now);var r=p.ev[ty];r.ms+=d;if(d>r.max)r.max=d;" +
             "if(t.d0&&t.r0)seg(r,'reactCapture',t.r0-t.d0);if(t.r0&&t.i1)seg(r,'inner',t.i1-t.r0);if(t.i1&&t.d1)seg(r,'reactBubble',t.d1-t.i1);t={}},false)});" +
             "if(window.zen&&typeof window.zen.invoke==='function'){var o=window.zen.invoke;window.zen.invoke=function(n){p.cmd[n]=(p.cmd[n]||0)+1;return o.apply(this,arguments)}}" +
+            PROFILER_JS +
             "return 'installed'})()"
     )
+
+    /**
+     * The scene's script by function, if the chrome's document may profile itself (`Profiler`,
+     * the JS Self-Profiling API; a debug build's document carries the `Document-Policy` for it,
+     * `ChromeWebView.profilable`). Started before the scene's touch and stopped after its window;
+     * its samples folded in the page into the top frames by SELF time (the function on top of the
+     * stack), by INCLUSIVE time (anywhere on it) and the longest stretch of consecutive script
+     * samples with its own top frames – a long task's attribution, which the WebView's trace
+     * cannot give (its `FunctionCall`s carry no name). A sample's time is the gap to the next,
+     * capped at five intervals (a stretch the sampler missed is not one function's). The bundle
+     * is minified: a frame's `file:line:col` is what its source map resolves.
+     */
+    private fun startProfile(): String = chromeJs("window.__motion?window.__motion.prof.start($PROFILE_INTERVAL_MS):'no probe'").trim('"')
+
+    private fun stopProfile(): JSONObject? {
+        val stopped = chromeJs("window.__motion?window.__motion.prof.stop():'no probe'").trim('"')
+        if (stopped != "stopping") {
+            finding("profile: $stopped")
+            return null
+        }
+        val deadline = SystemClock.uptimeMillis() + PROFILE_WAIT_MS
+        while (SystemClock.uptimeMillis() < deadline) {
+            val raw = chromeJs("JSON.stringify(window.__motion.profile)")
+            val text = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull() ?: return null
+            if (text != "pending") return runCatching { JSONObject(text) }.getOrNull()
+            SystemClock.sleep(50)
+        }
+        finding("profile: the sampler's stop did not resolve in $PROFILE_WAIT_MS ms")
+        return null
+    }
+
+    /** `dispatchEvent (index-abc.js:1:23456) 30 ms, …; longest stretch 62 ms: …`. */
+    private fun describeProfile(p: JSONObject): String {
+        p.optString("error").takeIf { it.isNotEmpty() }?.let { return "error $it" }
+        val frames = { a: JSONArray? ->
+            if (a == null || a.length() == 0) "none" else (0 until a.length()).joinToString(", ") { i ->
+                val f = a.getJSONObject(i)
+                val at = f.optString("url").takeIf { it.isNotEmpty() }?.let { " ($it:${f.optInt("line")}:${f.optInt("col")})" } ?: ""
+                "${f.optString("fn").ifEmpty { "(anonymous)" }}$at ${f.optInt("ms")} ms"
+            }
+        }
+        val longest = p.optJSONObject("longest")
+        return "${p.optInt("samples")} samples every ${p.optInt("intervalMs")} ms, script ${p.optInt("scriptMs")} of ${p.optInt("totalMs")} ms; " +
+            "self: ${frames(p.optJSONArray("self"))}; inclusive: ${frames(p.optJSONArray("inclusive"))}" +
+            (longest?.let { "; longest stretch ${it.optInt("ms")} ms: ${frames(it.optJSONArray("self"))}" } ?: "")
+    }
 
     private fun resetProbe() {
         chromeJs("window.__motion&&Object.assign(window.__motion,{card:0,dim:0,ribbon:0,pill:0,root:0,other:0,added:0,removed:0,stageMounts:0,pillRemounts:0,ev:{},cmd:{}})")
@@ -312,7 +371,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private fun f1(v: Double): String = String.format(java.util.Locale.ROOT, "%.1f", v)
 
     private fun readProbe(): JSONObject {
-        val raw = chromeJs("JSON.stringify(window.__motion||{})")
+        val raw = chromeJs("JSON.stringify(window.__motion||{},function(k,v){return k==='prof'||k==='profiler'||k==='profile'?undefined:v})")
         val text = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull() ?: return JSONObject()
         return runCatching { JSONObject(text) }.getOrElse { JSONObject() }
     }
@@ -378,5 +437,33 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         private const val DRAG_FRACTION = 0.9f
         /** The spring, the core's activation and the live page's return after a lift. */
         private const val RELEASE_MS = 3_000L
+        /** The sampler's interval asked for; Chromium rounds it up to its base interval (10 ms) and the probe reports the one it got. */
+        private const val PROFILE_INTERVAL_MS = 10
+        private const val PROFILE_WAIT_MS = 4_000L
+
+        /**
+         * The probe's sampler (`window.__motion.prof`): `start(ms)` opens a `Profiler` over the
+         * document, `stop()` folds its trace into `window.__motion.profile` (`'pending'` until the
+         * promise lands): the samples, the interval, the time in script and off it, the top frames
+         * by self and by inclusive time, the longest stretch of consecutive script samples with its
+         * top self frames. Runs inside `installProbe`'s closure, where `p` is the probe's object.
+         */
+        private const val PROFILER_JS =
+            "p.prof={start:function(iv){if(typeof Profiler!=='function')return 'no Profiler (the document carries no js-profiling policy)';" +
+                "try{p.profiler=new Profiler({sampleInterval:iv,maxBufferSize:40000});p.profile=null;return 'sampling every '+p.profiler.sampleInterval+' ms'}" +
+                "catch(e){return 'refused: '+e}}," +
+                "stop:function(){var pr=p.profiler;if(!pr)return 'not started';p.profiler=null;p.profile='pending';var iv=pr.sampleInterval||10;" +
+                "pr.stop().then(function(t){p.profile=fold(t,iv)},function(e){p.profile={error:String(e)}});return 'stopping'}};" +
+                "function fold(t,iv){var fr=t.frames,st=t.stacks,ss=t.samples,rs=t.resources,self={},incl={},off=0,total=0,runs=[],run=null,n=ss.length;" +
+                "for(var i=0;i<n;i++){var s=ss[i],dt=i+1<n?ss[i+1].timestamp-s.timestamp:iv;if(dt>5*iv)dt=5*iv;total+=dt;" +
+                "if(s.stackId===undefined){off+=dt;if(run){runs.push(run);run=null}continue}" +
+                "if(!run)run={ms:0,self:{}};run.ms+=dt;var sid=s.stackId,leaf=true,seen={};" +
+                "while(sid!==undefined){var e=st[sid],fid=e.frameId;if(leaf){self[fid]=(self[fid]||0)+dt;run.self[fid]=(run.self[fid]||0)+dt;leaf=false}" +
+                "if(!seen[fid]){incl[fid]=(incl[fid]||0)+dt;seen[fid]=1}sid=e.parentId}}" +
+                "if(run)runs.push(run);runs.sort(function(a,b){return b.ms-a.ms});" +
+                "var label=function(fid){var f=fr[fid],u=f.resourceId!==undefined?rs[f.resourceId]:'';return {fn:f.name||'',url:u?u.slice(u.lastIndexOf('/')+1):'',line:f.line||0,col:f.column||0}};" +
+                "var top=function(m,k){return Object.keys(m).sort(function(a,b){return m[b]-m[a]}).slice(0,k).map(function(fid){var l=label(fid);l.ms=Math.round(m[fid]);return l})};" +
+                "return {samples:n,intervalMs:iv,totalMs:Math.round(total),scriptMs:Math.round(total-off),self:top(self,8),inclusive:top(incl,8)," +
+                "longest:runs.length?{ms:Math.round(runs[0].ms),self:top(runs[0].self,5)}:null}}"
     }
 }
