@@ -112,6 +112,18 @@ class CorsProxyTest {
     }
 
     @Test
+    fun `applies by the security origin of a permission, its path left out, as Chrome's CORS allowlist does`() {
+        // Checker Plus for Gmail: host_permissions ["https://mail.google.com/"], its worker fetching the feed.
+        val hosts = MatchPattern.compileAll(listOf("https://mail.google.com/", "http://127.0.0.1/api/*"))
+        assertTrue(proxy.applies(CorsProxy.Request("GET", "https://mail.google.com/mail/u/0/feed/atom?x=1", mapOf("Origin" to origin)), origin, hosts))
+        assertTrue(proxy.applies(request("GET", "/echo"), origin, hosts))
+        // The scheme, host and port still count.
+        assertFalse(proxy.applies(CorsProxy.Request("GET", "http://mail.google.com/mail/feed/atom", mapOf("Origin" to origin)), origin, hosts))
+        assertFalse(proxy.applies(CorsProxy.Request("GET", "https://accounts.google.com/x", mapOf("Origin" to origin)), origin, hosts))
+        assertFalse(proxy.applies(CorsProxy.Request("GET", "https://mail.google.com:8443/x", mapOf("Origin" to origin)), origin, MatchPattern.compileAll(listOf("https://mail.google.com:443/"))))
+    }
+
+    @Test
     fun `a preflight is answered on the spot with what the page asked for`() {
         val reply = proxy.handle(
             request(

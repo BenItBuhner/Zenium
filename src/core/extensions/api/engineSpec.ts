@@ -808,7 +808,21 @@ export function engineApiSpec(options: EngineSpecOptions): ApiSpec {
     if (!namespaceGranted(name, options.permissions, options.manifestVersion)) continue
     const merged = mergeNamespace(API_SPEC[name], ENGINE_SPEC[name])
     if (merged.manifestVersion && merged.manifestVersion !== options.manifestVersion) continue
-    out[name] = merged
+    // The namespace's gate travels with it: with the host's granted set (`ShimOptions.granted`)
+    // the shim defines a permission-gated namespace only while one of these is granted, so an
+    // optional permission's namespace waits for its `permissions.request`.
+    const gate = namespaceGate(name)
+    out[name] = gate ? { ...merged, permissions: gate } : merged
   }
   return out
+}
+
+/** The permissions any one of which makes the namespace exist (`NAMESPACE_PERMISSIONS` and its aliases); null for one that always does. */
+export function namespaceGate(namespace: string): string[] | null {
+  const needed = NAMESPACE_PERMISSIONS[namespace]
+  if (!needed) return null
+  return [
+    needed,
+    ...Object.keys(PERMISSION_ALIASES).filter((alias) => PERMISSION_ALIASES[alias] === needed)
+  ]
 }

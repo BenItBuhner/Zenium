@@ -67,6 +67,8 @@ export class FakeKotlin implements RuntimeBridge {
   notificationsAllowed = true
   /** The proxy override the fake WebView holds (`ext.proxy.set` / `clear`), null for the system's settings. */
   proxyOverride: Record<string, unknown> | null = null
+  /** The optional host patterns Kotlin's CORS proxy was last told per extension (`ext.hosts`). */
+  readonly hosts = new Map<string, string[]>()
   /** When set, the message the fake WebView refuses an override with. */
   failProxy: string | null = null
   /** The notifications Kotlin shows right now: `<extension id>/<notification id>` → what it was given. */
@@ -226,6 +228,9 @@ export class FakeKotlin implements RuntimeBridge {
         return null
       case 'ext.notifications.allowed':
         return this.notificationsAllowed
+      case 'ext.hosts':
+        this.hosts.set(String(args.id), (args.hosts as string[]) ?? [])
+        return undefined
       default:
         throw new Error(`no such bridge method ${method}`)
     }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createScopeProxy } from '../extensionIsolation'
 import { installSpeechSynthesis, type SpeechLink } from '../extensionSpeechSynthesis'
 
 interface FakeLink extends SpeechLink {
@@ -77,6 +78,21 @@ describe('extension pages: window.speechSynthesis over the host engine', () => {
     const win: Win = { speechSynthesis: own as never }
     expect(installSpeechSynthesis(win, link())).toBeNull()
     expect(win.speechSynthesis).toBe(own)
+  })
+
+  it('installed on a content scope (the `with` proxy over a page window without the API) answers the scripts there and leaves the page\u2019s window without it', async () => {
+    const page: Win = { document: {}, location: {} }
+    const scope = createScopeProxy(page, new Set(['document', 'location', 'speechSynthesis']))
+    const l = link()
+    const synthesis = installSpeechSynthesis(scope, l)
+    expect(synthesis).not.toBeNull()
+    expect(scope.speechSynthesis).toBe(synthesis)
+    expect(typeof scope.SpeechSynthesisUtterance).toBe('function')
+    expect('speechSynthesis' in page).toBe(false)
+    expect(page.SpeechSynthesisUtterance).toBeUndefined()
+    await tick()
+    expect((synthesis!.getVoices() as unknown[]).length).toBe(1)
+    expect(l.calls.map((c) => c.method)).toEqual(['getVoices'])
   })
 
   it('speaks through the host with the utterance\u2019s voice, rate, pitch and volume, and maps the engine\u2019s events to the spec\u2019s', async () => {

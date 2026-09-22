@@ -648,6 +648,9 @@ class Extensions(private val host: Host) {
             "msgReply" -> "handled=${message.opt("handled")} willRespond=${message.opt("willRespond")} listeners=${message.opt("listeners")}"
             "reply" -> if (message.optBoolean("ok", true)) "ok" else "error=${message.optString("error").take(80)}"
             "event" -> "${message.str("ns")}.${message.str("name")}"
+            // A page policy's refusal handed to the host: the extension file asked for, and the answer.
+            "mainScript", "extFetch" -> message.str("url").take(100)
+            "mainScriptDone", "extFetchDone" -> if (message.optBoolean("ok", true)) "ok" else "error=${message.optString("error").take(80)}"
             else -> ""
         }
         synchronized(bridgeTrace) {
@@ -983,6 +986,10 @@ class Extensions(private val host: Host) {
                 mainWorldScript(view, proxy, isMainFrame, ep, message)
                 return
             }
+            "extFetch" -> {
+                extensionFetch(proxy, ep, message)
+                return
+            }
         }
         val tabId = (view as? TabWebView)?.tabId
         chromeEvent(
@@ -1047,6 +1054,48 @@ class Extensions(private val host: Host) {
                         })
                     }.isSuccess
                     if (!delivered) done("the frame is gone")
+                }
+            }
+        }
+    }
+
+    /**
+     * A content script under the `with` fallback fetched a file of its extension
+     * (`https://<id>.ext.zenium.invalid/locales/en.json`) and the page's Content-Security-Policy
+     * refused the request (`connect-src`): in Chrome a content script's fetch of its extension's
+     * web-accessible resource is beyond the page's policy (the isolated world's own applies), and
+     * on a WebView with worlds the world's request goes through the same way. The bootstrap
+     * reports the refused fetch (`extensionFetchRelay.ts`); the file, when it is web-accessible,
+     * is read here and answered over the bridge, which no page policy governs, with its type;
+     * otherwise the reason, and the content script keeps the page's refusal.
+     */
+    private fun extensionFetch(proxy: JavaScriptReplyProxy, ep: String, message: JSONObject) {
+        val id = message.opt("id")
+        val url = message.str("url")
+        val extId = endpoints[ep]?.extensionId ?: message.str("ext")
+        fun reply(body: ByteArray?, mime: String?, error: String?) {
+            val text = json(
+                "t" to "extFetchDone", "ep" to ep, "id" to id, "ok" to (error == null), "error" to error, "mime" to mime,
+                "body" to body?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
+            ).toString()
+            main.post {
+                if (debug) recordReply(ep, text)
+                runCatching { proxy.postMessage(text) }
+            }
+        }
+        val uri = Uri.parse(url)
+        val ext = served[extId]
+        val path = (uri.path ?: "/").trimStart('/')
+        when {
+            ext == null -> reply(null, null, "the extension is not attached")
+            uri.scheme != "https" || uri.host != "$extId$ORIGIN_SUFFIX" -> reply(null, null, "$url is not on the extension's origin")
+            !ext.webAccessible.any { it.matches(path) } -> reply(null, null, "$path is not a web-accessible resource")
+            else -> io.execute {
+                val bytes = fileIn(ext.dir, path)?.takeIf { it.isFile }?.let { f -> runCatching { f.readBytes() }.getOrNull() }
+                when {
+                    bytes == null -> reply(null, null, "$path was not found")
+                    bytes.size > MAX_RELAYED_FILE_BYTES -> reply(null, null, "$path is ${bytes.size} bytes, more than the bridge carries ($MAX_RELAYED_FILE_BYTES)")
+                    else -> reply(bytes, ExtensionScripts.mimeType(path), null)
                 }
             }
         }
@@ -1353,6 +1402,13 @@ class Extensions(private val host: Host) {
     /** The hidden background WebView of an attached extension (instrumentation reads its console). */
     fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
 
+    /**
+     * Ask the runtime to run an extension's stopped background (an MV3 worker idles out half a
+     * minute after its last traffic), as Chrome's management page starts an inactive worker when
+     * its view is inspected. Instrumentation: the driver probes a worker's APIs through its view.
+     */
+    fun wakeBackground(id: String) = chromeEvent("ext.wake", json("id" to id))
+
     /** The document-start script units currently installed in every tab, across extensions. */
     fun scriptUnits(): List<ScriptUnit> = units.values.flatten()
 
@@ -1531,6 +1587,8 @@ class Extensions(private val host: Host) {
         )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
+        /** The largest extension file answered to a content script over the bridge (`extensionFetch`): base64 over `postMessage` has a price. */
+        const val MAX_RELAYED_FILE_BYTES = 16 * 1024 * 1024
         /**
          * The document a tab shows while its extension page is held (or is being failed): empty,
          * in the page's colour scheme, so it reads as a page still loading, not as a page.

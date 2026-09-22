@@ -59,7 +59,13 @@ import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
 import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
-import { mediaHubVisible, mediaPlaying, useMediaHubFolded } from '@renderer/lib/mediaHub'
+import { actionable } from '@renderer/lib/extensions/toolbar'
+import {
+  mediaHubButtonFits,
+  mediaHubFoldedAt,
+  mediaHubVisible,
+  mediaPlaying
+} from '@renderer/lib/mediaHub'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -118,15 +124,18 @@ export function NavRow({
   const [revealed, setRevealed] = useState(false)
   const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
   // An internal page's address that the pill cannot fit gives way to the page's title, as the
-  // phone pill names Zenium's own pages (v2 §10.1): `pillText`, from the field's width against
-  // the address at its natural width (the probe span, drawn invisibly without truncation). The
-  // same `pill` ref serves the chip tier below (`usePillInnerWidth`).
+  // phone pill names Zenium's own pages (v2 §10.1); a site's address never does – it truncates
+  // from the end at any width, as Zen's and Firefox's sidebar bars do (§9.29; no browser's
+  // address bar shows a site's title): `pillText`, from the field's width against the address at
+  // its natural width (the probe span, drawn invisibly without truncation). The same `pill` ref
+  // serves the chip tier below (`usePillInnerWidth`).
   const pill = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLSpanElement>(null)
   const probe = useRef<HTMLSpanElement>(null)
   const addressFits = useAddressFits(pill, field, probe, !compact)
   const text = tab ? pillText(tab.url, shown, addressFits) : ''
-  const address = addressParts(text)
+  // A title is one run of full ink; only an address dims what follows its site.
+  const address = text === shown ? addressParts(text) : { site: text, rest: '' }
   // What the site icon says (derived in the core's site-information module, drawn here).
   const indicator = securityIndicator(
     tab?.url ?? '',
@@ -177,8 +186,25 @@ export function NavRow({
   const starred = Boolean(tab && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
   const bookmarked = Boolean(tab && starred && tree.hasUrl(tab.url))
   const menuButton = useRef<HTMLButtonElement>(null)
+  // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
+  // `mediaHubButtonFits`): at the 240 sidebar it is unmounted – never hidden with an opacity or
+  // a `visibility` that would keep its box laid out – and the hub folds into the app menu's
+  // "Now Playing…" row; it returns where the pill, with the button's own slot back in the row,
+  // still holds the box the star returned at (126 / 110: the 302 sidebar with the always-there
+  // buttons), so the pill reads the same on either side of the return. The buttons it makes
+  // room against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece
+  // while there are extensions and the downloads button while it is up; the compact column has
+  // no pill to keep, so there the button stays whenever there is media.
+  const downloadsUp = downloadButtonVisible(state, downloadsUiState)
+  const puzzleUp = actionable(state.extensions).length > 0
+  const hubUp =
+    mediaHubVisible(state) &&
+    (compact ||
+      mediaHubButtonFits(rowWidth, FIXED_BUTTONS - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
-  const mediaFolded = useMediaHubFolded(state)
+  // Decided here, from the same width the button is mounted by, so the dot and the button move
+  // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
+  const mediaFolded = mediaHubFoldedAt(state, hubUp)
   useEffect(() => {
     // Alt+F / F10: the menu opens from this button with the keyboard on it, so Escape closes
     // the menu and leaves the focus here (design language v2 §9.22).
@@ -214,7 +240,7 @@ export function NavRow({
   // like the star), and the address gives way to them – below the floor the pill drops its text
   // altogether, which on the reader page costs nothing, since the document's own header carries
   // the title, byline and host.
-  const pillInner = usePillInnerWidth(pill)
+  const pillInner = usePillInnerWidth(pill, !compact)
   const shieldState =
     tab && isWebPage && state.capabilities.requestBlocking
       ? siteBlockingState(tab, state.blocking, state.settings.blocking)
@@ -256,9 +282,11 @@ export function NavRow({
   }
   const fits = fittingChips(pillInner, chipsPresent)
   return (
+    // The row's buttons sit 4 apart (Firefox's 32 pitch: the 28 box plus its 2 px outer
+    // padding each side, `TOOLBAR_GAP`); the pill takes the rest between them.
     <div
       ref={row}
-      className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}
+      className={cn('zen-no-drag flex items-center gap-1', compact && 'flex-col', className)}
       // The bar the extension popovers and the downloads bubble hang from (v2 §9.20): flush
       // under it, aligned by half. (Its token family is the window's, from the `data-surface`
       // on SidebarTop's root.)
@@ -316,9 +344,13 @@ export function NavRow({
           ref={pill}
           role="group"
           aria-label="Address"
+          // A window surface's fill (§9.29: `--v2-window-fill`, its hover through the control
+          // roles the row's `data-surface` resolves), 32 tall at Zen's medium radius, 8 of
+          // padding each side (`PILL_PADDING`: the content box the chip tier and the container
+          // queries read).
           className={cn(
-            'zen-squircle zen-pill group/pill relative mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
-            !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
+            'zen-squircle zen-pill group/pill relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--v2-control-fill)] px-2 text-left',
+            !readOnly && 'hover:bg-[var(--v2-control-fill-hover)]'
           )}
           // The tooltip carries the whole address – the user-facing `zenium://` form for an
           // internal page (§10.1: `zen://` never shows), the address behind a title, and for an
@@ -356,7 +388,7 @@ export function NavRow({
               ref={field}
               className={cn(
                 'min-w-0 flex-1 truncate text-[12.5px]',
-                !url && 'text-[var(--zen-muted)]'
+                !url && 'text-[var(--v2-control-text-deemphasized)]'
               )}
               data-reads={url ? (text === shown ? 'address' : 'title') : undefined}
             >
@@ -388,7 +420,7 @@ export function NavRow({
             <span
               className={cn(
                 'zen-pill-label order-[-1] shrink-0 text-[11.5px]',
-                indicator.state === 'certificate-error' ? 'text-[var(--zen-danger)]' : 'opacity-70'
+                indicator.state === 'certificate-error' ? 'text-[var(--v2-danger)]' : 'opacity-70'
               )}
               data-indicator={indicator.state}
             >
@@ -422,8 +454,8 @@ export function NavRow({
                 expanded={siteInfoOpen}
                 data-indicator={indicator.state}
                 className={cn(
-                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100',
-                  indicator.state === 'certificate-error' && 'text-[var(--zen-danger)] opacity-100',
+                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] hover:opacity-100',
+                  indicator.state === 'certificate-error' && 'text-[var(--v2-danger)] opacity-100',
                   extension && 'opacity-100'
                 )}
                 onActivate={(e) => {
@@ -463,10 +495,10 @@ export function NavRow({
                 )}
                 pressed={isReader}
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   // The lit exit on the reader tab is never hidden (§9.29; the tier comment
                   // above); unlit it is a tool and goes with the rest under a 130 px pill.
-                  isReader ? 'text-[var(--zen-accent)] opacity-100' : 'zen-pill-chip'
+                  isReader ? 'text-[var(--v2-control-accent)] opacity-100' : 'zen-pill-chip'
                 )}
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
               >
@@ -490,9 +522,9 @@ export function NavRow({
                 expanded={readerPrefsOpen}
                 data-reader-prefs-chip=""
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
-                  readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
+                  readerPrefsOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
                 )}
                 onActivate={(e) => {
                   // The chip that put the popover away keeps the keyboard, as the anchor does
@@ -550,10 +582,10 @@ export function NavRow({
                   label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
                   title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
                   className={cn(
-                    'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                    'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                     translation &&
                       isTranslating(translation) &&
-                      'text-[var(--zen-accent)] opacity-100',
+                      'text-[var(--v2-control-accent)] opacity-100',
                     translation
                       ? 'flex'
                       : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
@@ -573,9 +605,9 @@ export function NavRow({
                 popup="dialog"
                 expanded={boostsOpen}
                 className={cn(
-                  'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   boosted
-                    ? 'flex text-[var(--zen-accent)] opacity-100'
+                    ? 'flex text-[var(--v2-control-accent)] opacity-100'
                     : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex'
                 )}
                 onActivate={() => void openOverlay('boosts', tab.id)}
@@ -587,7 +619,7 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
-                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
+                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3 w-3" />
@@ -610,17 +642,14 @@ export function NavRow({
           </span>
         </div>
       )}
-      <MediaHubButton state={state} />
+      {hubUp && <MediaHubButton state={state} />}
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // The media and downloads buttons join the fixed set while they are in the row.
-        fixedButtons={
-          FIXED_BUTTONS +
-          (mediaHubVisible(state) ? 1 : 0) +
-          (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)
-        }
+        // The media and downloads buttons join the fixed set while they are in the row – the
+        // hub's only while the tier has it up, not while it has folded into the menu.
+        fixedButtons={FIXED_BUTTONS + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
         compact={compact}
       />
       {/*
@@ -653,13 +682,17 @@ export function NavRow({
 
 /**
  * Whether the address at its natural width (`probe`) fits the width the pill gives its field
- * (`field`): measured before the first paint and again whenever either changes size – the
- * sidebar resized, a chip come or gone, the tab moved to another section. Held still while the
- * pointer or the keyboard is on the pill: the hover-only chips narrow the field for the hover's
- * duration, and the text must not swap under the pointer – it truncates then, as every address
- * does. The observer's next delivery after the hover ends measures the rest layout again.
- * `mounted` says the pill is in the row (the compact sidebar has none): its change rebinds the
- * observer to the pill the row has now.
+ * (`field`) – what decides a page tab's title for its address (`pillText`, §10.1): measured
+ * before the first paint and again whenever either changes size – the sidebar resized, a chip
+ * come or gone, the tab moved to another section. Held still while the pointer or the keyboard
+ * is on the pill: the hover-only chips narrow the field for the hover's duration, and the text
+ * must not swap under the pointer – it truncates then, as every address does. The observer's
+ * next delivery after the hover ends measures the rest layout again. `mounted` says the pill is
+ * in the row (the compact sidebar has none): its change rebinds the observer to the pill the row
+ * has now. The field is `flex: 1`, so its width is the room the chips leave, whatever text it
+ * holds – the measurement never feeds on its own result. The address floor (`MIN_ADDRESS_WIDTH`,
+ * §9.29) is the chip tier's number, not this measurement's: under it a site's address still
+ * truncates, and only the chips give way.
  */
 function useAddressFits(
   pill: RefObject<HTMLElement | null>,
@@ -690,12 +723,16 @@ function useAddressFits(
  * The pill's content-box width – what its address and chips share – kept current by a
  * ResizeObserver; 0 until measured, which the tier reads as "hide nothing yet". (The row's
  * `useElementWidth` measures a border box; the pill has padding, so it measures its own.)
+ * `mounted` says the pill is in the row (the compact sidebar has none): the observer is bound
+ * to the pill the row has now, and let go with it – left on the pill the icon rail unmounted,
+ * it would report that node's 0 and never see the pill the expanded sidebar brings back, and
+ * the tier would show every chip over a field with no room (the harness's finding at 270).
  */
-function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>): number {
+function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>, mounted: boolean): number {
   const [width, setWidth] = useState(0)
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!mounted || !el) return
     const style = getComputedStyle(el)
     const pad = (v: string): number => parseFloat(v) || 0
     setWidth(Math.max(0, el.clientWidth - pad(style.paddingLeft) - pad(style.paddingRight)))
@@ -705,7 +742,7 @@ function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>): number {
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [ref])
+  }, [ref, mounted])
   return width
 }
 

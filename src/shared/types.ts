@@ -3795,6 +3795,11 @@ export interface Commands {
        * that engine's – no address, history, bookmark or tab rows.
        */
       engineId?: string
+      /**
+       * The phone card's sectioned order (OMN-18): the rows under their group headings in
+       * Chrome for Android's order, the default match alone at the field's end.
+       */
+      grouped?: boolean
     }
     result: Suggestion[]
   }
@@ -4881,6 +4886,12 @@ export interface Events {
    * actions (one row per enabled extension with an action; the desktop has the toolbar for it).
    */
   'extensions.open': void
+  /**
+   * "Send to Your Devices…" on a phone with several other devices (ID-27): the chrome opens the
+   * device picker sheet for the tab – one row per device, a tap sends its page (`sync.sendTab`).
+   * The desktop's and the tablet's menus carry the devices as a submenu and never ask for it.
+   */
+  'sendTab.open': { tabId: string }
   /**
    * Open Reader View's text preferences (size, font, theme, width) for a reader tab: the app
    * menu's "Text Preferences…" – a popover under the address pill on a mouse, a sheet on a phone.

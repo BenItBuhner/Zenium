@@ -1,4 +1,4 @@
-import type { Container, Space, Tab, UIState } from '@shared/types'
+import type { Container, Space, SplitGroup, Tab, UIState } from '@shared/types'
 import { isBlankTabUrl } from '@shared/url'
 
 export function activeSpace(state: UIState): Space {
@@ -41,6 +41,52 @@ export function tabOrderOf(state: UIState, space: Space): Tab[] {
   const inFolders = folders.flatMap((f) => regular.filter((t) => t.folderId === f.id))
   const loose = regular.filter((t) => !t.folderId || !state.folders[t.folderId])
   return [...essentialsFor(state, space), ...pinnedOf(state, space), ...inFolders, ...loose]
+}
+
+/**
+ * A row of one tab list of the sidebar (pinned, a folder's tabs, the loose tabs): a tab's own
+ * row, or the split group's one row (design language v2 §9.35) holding every pane of the split
+ * that this list has.
+ */
+export type StripRow =
+  | { kind: 'tab'; tab: Tab }
+  | {
+      kind: 'split'
+      group: SplitGroup
+      /** The list's first pane of the split, in list order: the row stands in its slot. */
+      anchor: Tab
+      /** The list's panes of the split, in the split's own order – the panes as they are on screen. */
+      tabs: Tab[]
+    }
+
+/**
+ * A list's rows with its split groups folded into one row each (§9.35: Zen draws a split as one
+ * row, the tabs side by side, not as stacked rows). The row stands where the list's first pane
+ * of the split is and gathers the list's other panes into it, wherever they sit in the list –
+ * the model keeps the panes where they were opened (a link from a pane, `newEmptySplit`'s blank
+ * tab after the active one), so they need not be neighbours. A split with a single pane in this
+ * list (its others pinned, in another folder, or Essentials) shows that pane as a plain row.
+ */
+export function stripRows(tabs: readonly Tab[], groups: Record<string, SplitGroup>): StripRow[] {
+  const rows: StripRow[] = []
+  const folded = new Set<string>()
+  for (const tab of tabs) {
+    const group = tab.splitGroupId ? groups[tab.splitGroupId] : undefined
+    if (!group) {
+      rows.push({ kind: 'tab', tab })
+      continue
+    }
+    if (folded.has(group.id)) continue
+    const here = new Map(tabs.filter((t) => t.splitGroupId === group.id).map((t) => [t.id, t]))
+    const panes = group.tabIds.map((id) => here.get(id)).filter((t): t is Tab => Boolean(t))
+    if (panes.length < 2) {
+      rows.push({ kind: 'tab', tab })
+      continue
+    }
+    folded.add(group.id)
+    rows.push({ kind: 'split', group, anchor: tab, tabs: panes })
+  }
+  return rows
 }
 
 /** Ids of the tabs that should be visible in the content area right now. */

@@ -390,6 +390,11 @@ export interface UiState {
   /** Phone layout: the app menu's Extensions sheet (one row per extension action) is up. */
   extensionsSheetOpen: boolean
   /**
+   * Phone layout: the Send to your devices picker (`sendTab.open`, ID-27) is up for this tab –
+   * one row per other device, a tap sends the tab's page to it.
+   */
+  sendTabSheet: { tabId: string } | null
+  /**
    * Phone layout: a `FrameDialogHost` sheet holds the page under its cover, from before it
    * rises until it has left the screen (`coverPageUnderSheet`); the dialogs it hosts set their
    * own flags later and drop them sooner than the sheet's motion runs.
@@ -546,6 +551,7 @@ export const uiStore = createStore<UiState>(
     qrScan: null,
     barEditorOpen: false,
     extensionsSheetOpen: false,
+    sendTabSheet: null,
     frameSheetOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
@@ -891,6 +897,7 @@ export function chromeNeedsKeyboard(): boolean {
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
     !ui.extensionsSheetOpen &&
+    !ui.sendTabSheet &&
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
@@ -950,6 +957,7 @@ export function invalidateSnapshot(): void {
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
     !ui.extensionsSheetOpen &&
+    !ui.sendTabSheet &&
     !ui.frameSheetOpen &&
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
@@ -1268,18 +1276,21 @@ export interface UrlbarCloseOptions {
   reason?: 'dismiss'
 }
 
-let closeInterceptor: ((opts: UrlbarCloseOptions) => boolean) | null = null
+const closeInterceptors: Array<(opts: UrlbarCloseOptions) => boolean> = []
 
 /**
  * A surface that owns the bar's departure – the new tab page's field morph (lib/fakeboxMorph.ts),
- * which runs the omnibox's field back into the page and closes the bar itself once it has landed
+ * which runs the omnibox's field back into the page and closes the bar itself once it has
+ * landed; the pill's focus motion (lib/omniboxFocus.ts), which runs the field back into the pill
  * – takes a close over: `fn` returns true to hold the close (and calls `closeUrlbar` again when
- * it is done), false to let it happen now. One interceptor at a time; returns the release.
+ * it is done), false to let it happen now. Each is asked in turn until one holds; which one owns
+ * the bar is theirs to know (the others answer false). Returns the release.
  */
 export function interceptUrlbarClose(fn: (opts: UrlbarCloseOptions) => boolean): () => void {
-  closeInterceptor = fn
+  closeInterceptors.push(fn)
   return () => {
-    if (closeInterceptor === fn) closeInterceptor = null
+    const at = closeInterceptors.indexOf(fn)
+    if (at >= 0) closeInterceptors.splice(at, 1)
   }
 }
 
@@ -1291,7 +1302,7 @@ export function interceptUrlbarClose(fn: (opts: UrlbarCloseOptions) => boolean):
 export function closeUrlbar(opts: UrlbarCloseOptions = {}): void {
   typeahead = null
   if (!uiStore.get().urlbar.open) return
-  if (closeInterceptor?.(opts)) return
+  if (closeInterceptors.some((held) => held(opts))) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
   if (!opts.keepKeyboard) returnFocusToPage()
@@ -1786,6 +1797,27 @@ export function openExtensionsSheet(): void {
 export function closeExtensionsSheet(): void {
   if (!uiStore.get().extensionsSheetOpen) return
   uiStore.set({ extensionsSheetOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// Phone Send to your devices sheet (ID-27)
+// ---------------------------------------------------------------------------
+
+/**
+ * Open the device picker for a tab's page (`sendTab.open` from the core: the menu's "Send to
+ * Your Devices…" on a phone with several other devices). A frame-dialog sheet on the chassis,
+ * like the Extensions sheet: it takes the page's cover itself as it rises.
+ */
+export function openSendTabSheet(tabId: string): void {
+  uiStore.set({ sendTabSheet: { tabId }, drawerOpen: false })
+}
+
+/** The picker has left the screen (a device picked, its own dismissal, the back gesture). */
+export function closeSendTabSheet(): void {
+  if (!uiStore.get().sendTabSheet) return
+  uiStore.set({ sendTabSheet: null })
   invalidateSnapshot()
   returnFocusToPage()
 }

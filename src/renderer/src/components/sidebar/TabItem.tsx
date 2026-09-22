@@ -33,6 +33,7 @@ import {
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { cn } from '@renderer/lib/utils'
 import { useTabTouch } from '../tablet/useTabTouch'
+import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon } from './Favicon'
 import { useListMotion } from './listMotion'
 
@@ -43,19 +44,29 @@ interface Props {
   indent?: boolean
   /** The strip header that folds this row away (`folder:<id>`, `header:<spaceId>`), if any. */
   parent?: string
+  /**
+   * A pane of a split group's row (`SplitGroupRow`, design language v2 §9.35): the row's segment
+   * `index` of `count`. The segment keeps the row's favicon, title, close and the state the user
+   * cannot otherwise see (audio, an alert) and drops the rest of the trailing slot; the group's
+   * row is the list's slot (its motion and its hover fill), not the segment.
+   */
+  segment?: { index: number; count: number }
 }
 
-export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.Element {
+export function TabItem({ tab, active, compact, indent, parent, segment }: Props): JSX.Element {
   const dragging = uiStore.use((s) => s.drag)
   const renaming = uiStore.use((s) => s.renamingTabId === tab.id)
   const tabIndex = useStripTabIndex(`tab:${tab.id}`, active)
   const motion = useListMotion()
+  const inSegment = Boolean(segment)
   const attach = useCallback(
     (el: HTMLDivElement | null) => {
-      motion?.attach(tab.id, el)
-      return () => motion?.attach(tab.id, null)
+      // The list's slot is the split row's, attached by `SplitGroupRow`; a segment is not one.
+      const slot = inSegment ? null : motion
+      slot?.attach(tab.id, el)
+      return () => slot?.attach(tab.id, null)
     },
-    [motion, tab.id]
+    [motion, tab.id, inSegment]
   )
   const foreign = browserStore.use((s) => s.state?.foreignTabIds.includes(tab.id) ?? false)
   const agent = browserStore.use(
@@ -182,13 +193,26 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
   // Keyboard reach (§9.22, a11y-07): the strip is one tab stop; arrows, Home/End, Enter/Space,
   // Delete and Escape are the strip's (lib/tabStrip.ts). The row's own buttons stay out of the
   // tab order: Delete closes, the row's context menu has the rest.
+  // In a split row a segment keeps what names the tab and what it must show – the favicon, the
+  // title, the close, a live audio or alert state – and not the trailing slot's other buttons,
+  // whose room a segment does not have (§9.35); their states stay in the row's fade, its tooltip
+  // and its context menu.
+  const trailing = !segment
   return (
     <div
       ref={attach}
-      className={cn('zen-tab group', compact && 'justify-center px-0', indent && 'ml-5')}
+      className={cn(
+        'zen-tab group',
+        segment && 'zen-split-seg',
+        compact && 'justify-center px-0',
+        indent && 'ml-5'
+      )}
       role="tab"
       aria-selected={active}
       aria-label={title}
+      aria-description={
+        segment ? `Split view, pane ${segment.index + 1} of ${segment.count}` : undefined
+      }
       data-active={active}
       data-selected={selected || undefined}
       data-discarded={tab.discarded}
@@ -265,14 +289,14 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               {title}
             </span>
           )}
-          {agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
-          {foreign && active && (
+          {trailing && agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
+          {trailing && foreign && active && (
             <MonitorSmartphone
-              className="h-3.5 w-3.5 shrink-0 opacity-60"
+              className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-control-text-deemphasized)]')}
               aria-label="Shown in another window"
             />
           )}
-          {tab.discarded && !renaming && (
+          {trailing && tab.discarded && !renaming && (
             <button
               type="button"
               tabIndex={-1}
@@ -284,35 +308,35 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
                 run('tab.activate', { tabId: tab.id })
               }}
             >
-              <Moon className="h-3.5 w-3.5" />
+              <Moon className={V2_TRAILING_GLYPH} />
             </button>
           )}
-          {tab.frozen && !renaming && (
+          {trailing && tab.frozen && !renaming && (
             <button
               type="button"
               tabIndex={-1}
-              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
+              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
               title="Frozen by the resource governor – click to wake"
               onClick={(e) => {
                 e.stopPropagation()
                 run('tab.wake', { tabId: tab.id })
               }}
             >
-              <Snowflake className="h-3.5 w-3.5" />
+              <Snowflake className={V2_TRAILING_GLYPH} />
             </button>
           )}
-          {!tab.frozen && tab.cpuThrottle > 1 && !renaming && (
+          {trailing && !tab.frozen && tab.cpuThrottle > 1 && !renaming && (
             <button
               type="button"
               tabIndex={-1}
-              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
+              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
               title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
               onClick={(e) => {
                 e.stopPropagation()
                 run('tab.wake', { tabId: tab.id })
               }}
             >
-              <Turtle className="h-3.5 w-3.5" />
+              <Turtle className={V2_TRAILING_GLYPH} />
             </button>
           )}
           {alert && !renaming && <AlertIndicator alert={alert} />}
@@ -330,13 +354,13 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               }}
             >
               {tab.muted ? (
-                <VolumeX className="h-3.5 w-3.5" />
+                <VolumeX className={V2_TRAILING_GLYPH} />
               ) : (
-                <Volume2 className="h-3.5 w-3.5" />
+                <Volume2 className={V2_TRAILING_GLYPH} />
               )}
             </button>
           )}
-          {pinnedChanged ? (
+          {trailing && pinnedChanged ? (
             <button
               type="button"
               tabIndex={-1}
@@ -347,7 +371,7 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
                 run('tab.resetPinned', { tabId: tab.id })
               }}
             >
-              <RotateCcw className="h-3.5 w-3.5" />
+              <RotateCcw className={V2_TRAILING_GLYPH} />
             </button>
           ) : (
             <button
@@ -360,7 +384,7 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
                 run('tab.close', { tabId: tab.id })
               }}
             >
-              <X className="h-3.5 w-3.5" />
+              <X className={V2_TRAILING_GLYPH} />
             </button>
           )}
         </>
@@ -382,7 +406,7 @@ function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
     <span
       className={cn(
         'zen-tab-alert flex h-6 w-6 shrink-0 items-center justify-center',
-        alert === 'pip' ? 'text-[var(--zen-muted)]' : 'text-[var(--zen-danger)]'
+        alert === 'pip' ? 'text-[var(--v2-control-text-deemphasized)]' : 'text-[var(--v2-danger)]'
       )}
       data-alert={alert}
       role="img"
@@ -390,12 +414,12 @@ function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
       aria-label={label}
     >
       {alert === 'recording' && (
-        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" aria-hidden focusable="false">
+        <svg className={V2_TRAILING_GLYPH} viewBox="0 0 24 24" aria-hidden focusable="false">
           <circle cx="12" cy="12" r="7" fill="currentColor" />
         </svg>
       )}
-      {alert === 'capturing' && <ScreenShare className="h-3.5 w-3.5" aria-hidden />}
-      {alert === 'pip' && <PictureInPicture2 className="h-3.5 w-3.5" aria-hidden />}
+      {alert === 'capturing' && <ScreenShare className={V2_TRAILING_GLYPH} aria-hidden />}
+      {alert === 'pip' && <PictureInPicture2 className={V2_TRAILING_GLYPH} aria-hidden />}
     </span>
   )
 }
@@ -444,7 +468,7 @@ function RenameInput({ tab }: { tab: Tab }): JSX.Element {
         e.stopPropagation()
       }}
       onPointerDown={(e) => e.stopPropagation()}
-      className="zen-no-drag zen-squircle min-w-0 flex-1 rounded-md bg-[var(--zen-element-bg)] px-1.5 py-0.5 text-[13px] outline-none ring-1 ring-[var(--zen-accent)]"
+      className="zen-no-drag zen-squircle min-w-0 flex-1 rounded-md bg-[var(--v2-control-fill)] px-1.5 py-0.5 outline-none ring-1 ring-[var(--v2-control-accent)]"
     />
   )
 }

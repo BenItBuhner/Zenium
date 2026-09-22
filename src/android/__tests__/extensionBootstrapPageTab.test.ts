@@ -60,6 +60,7 @@ const extension = (id: string, name: string, groups: BootGroup[]): ExtensionBoot
   version: '1.0',
   manifestVersion: 3,
   permissions: ['storage', 'tabs'],
+  optionalPermissions: [],
   hostPermissions: ['<all_urls>'],
   manifest: { manifest_version: 3, name, version: '1.0' },
   messages: null,
@@ -72,7 +73,11 @@ const contentUnit = (
   ext: ExtensionBoot,
   ran: string[],
   late = false
-): { config: ContentBootConfig; sources: Record<string, GroupFunction>; css: Record<string, string> } => ({
+): {
+  config: ContentBootConfig
+  sources: Record<string, GroupFunction>
+  css: Record<string, string>
+} => ({
   config: {
     kind: 'content',
     token: TOKEN,
@@ -179,7 +184,9 @@ describe('the page bootstrap in a tab, next to other copies of the script', () =
     expect(g.__zenExtRuntime).toBeDefined()
     const exec = g.__zenExtExec
     expect(exec).toBeTypeOf('function')
-    expect(() => exec?.(TOKEN, EXT_A, 'js', {}, () => 1)).toThrow(/Cannot access contents of the page/)
+    expect(() => exec?.(TOKEN, EXT_A, 'js', {}, () => 1)).toThrow(
+      /Cannot access contents of the page/
+    )
     expect(() => exec?.('wrong', EXT_A, 'js', {}, () => 1)).toThrow(/bad token/)
   })
 })

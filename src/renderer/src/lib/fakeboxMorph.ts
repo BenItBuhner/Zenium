@@ -44,6 +44,7 @@ import {
 } from './motion/fakebox'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from './motion/spring'
 import { viewportStore } from './formFactor'
+import { focusOmnibox } from './omniboxFocus'
 import { activeTab } from './selectors'
 import { createStore } from './store'
 import {
@@ -250,7 +251,9 @@ export function tapFakebox(): void {
   if (!reg) return
   const g = measure()
   if (machine.phase === 'rest' && (machine.scrub >= 1 || uiStore.get().urlbar.open)) {
-    if (!uiStore.get().urlbar.open) void openUrlbar('edit', reg.tabId, { attached: true })
+    // Docked, the field is the pill: the pill's own focus motion grows it into the omnibox
+    // (lib/omniboxFocus.ts), the bar's buttons pushed off; nothing here is left to morph.
+    if (!uiStore.get().urlbar.open) focusOmnibox(reg.tabId)
     return
   }
   if (machine.phase === 'opening' || machine.phase === 'open') return

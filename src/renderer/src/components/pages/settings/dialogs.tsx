@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { wrapTab } from '../../bookmarks/popover'
@@ -16,7 +16,7 @@ import type {
 } from './model'
 import { findRow, optionGroups } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
-import { SheetDismissContext } from './sheetContext'
+import { SheetDismissContext, type SheetDismiss } from './sheetContext'
 
 /**
  * The dialogs a desktop Settings row opens (v2 §9.5, §9.22–9.24, §10.5): the same six requests
@@ -178,6 +178,15 @@ function HostedDialog({
   const titleId = useId()
   const [scrolled, setScrolled] = useState(false)
   useFrameDialog({ onScrimPress: onClose })
+  // The dismissal a row of this dialog asks for (`ActionRow.closesSheet`, a form's Cancel): the
+  // dialog has no exit motion, so `after` – the row's own action – runs as soon as it has gone.
+  const dismiss = useCallback<SheetDismiss>(
+    (after) => {
+      onClose()
+      after?.()
+    },
+    [onClose]
+  )
   // Escape is the top dialog's: a dialog under another is inert and leaves the key to it.
   useEffect(() => {
     if (under) return
@@ -240,7 +249,7 @@ function HostedDialog({
         className="zen-settings-dialog-body"
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
       >
-        <SheetDismissContext.Provider value={onClose}>{children}</SheetDismissContext.Provider>
+        <SheetDismissContext.Provider value={dismiss}>{children}</SheetDismissContext.Provider>
       </div>
     </div>
   )

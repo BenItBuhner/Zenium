@@ -1,11 +1,13 @@
 package app.zen.chromium
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
  * The decision behind `clipboard.peek`: what the URL bar's clipboard row offers, from the clip's
- * description alone. The content is never part of it.
+ * description alone. The content is never part of it. And the same look for the omnibox field's
+ * floating toolbar (`pasteAction`): Paste and go, Paste and search, or nothing.
  */
 class ClipboardPeekTest {
     private val now = 1_000_000_000L
@@ -58,5 +60,36 @@ class ClipboardPeekTest {
         // A clip the system gave no time for cannot be told from the next one: offered, not marked.
         assertEquals("text", ClipboardPeek.classify(plain, 0L, false, null, now, used = 0L))
         assertEquals("text", ClipboardPeek.classify(plain, 0L, false, null, now, used = copied))
+    }
+
+    // --- the omnibox field's floating toolbar (OMN-23, FieldToolbar) -------------------------------
+
+    @Test
+    fun aLinkOnTheClipboardIsPasteAndGo() {
+        assertEquals(FieldToolbar.GO, ClipboardPeek.classifyPaste(plain, sensitive = false, urlConfidence = 0.97f))
+        assertEquals(FieldToolbar.GO, ClipboardPeek.classifyPaste(listOf("text/html", "text/plain"), false, 1f))
+    }
+
+    @Test
+    fun textTheSystemReadAsNoLinkIsPasteAndSearch() {
+        assertEquals(FieldToolbar.SEARCH, ClipboardPeek.classifyPaste(plain, false, 0f))
+        assertEquals(FieldToolbar.SEARCH, ClipboardPeek.classifyPaste(plain, false, 0.6f))
+    }
+
+    @Test
+    fun textNobodyClassifiedIsPasteAndGoSinceTheTypedRuleSortsIt() {
+        // Android 11 and below, or a clip the classifier has not reached: go takes an address to
+        // the page and searches anything else; search would send an address to the engine.
+        assertEquals(FieldToolbar.GO, ClipboardPeek.classifyPaste(plain, false, null))
+    }
+
+    @Test
+    fun nothingToPasteForAnEmptyImageNonTextOrSensitiveClip() {
+        assertNull(ClipboardPeek.classifyPaste(emptyList(), false, null))
+        assertNull(ClipboardPeek.classifyPaste(listOf("image/png"), false, null))
+        assertNull(ClipboardPeek.classifyPaste(listOf("text/plain", "image/jpeg"), false, 0.99f))
+        assertNull(ClipboardPeek.classifyPaste(listOf("text/uri-list"), false, null))
+        assertNull(ClipboardPeek.classifyPaste(listOf("text/vnd.android.intent"), false, null))
+        assertNull(ClipboardPeek.classifyPaste(plain, sensitive = true, urlConfidence = 0.99f))
     }
 }

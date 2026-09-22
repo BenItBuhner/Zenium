@@ -489,11 +489,11 @@ describe('desktop pill (NavRow)', () => {
 
   /*
    * The pill yields its chips to the address as it narrows, in tiers of a container query on
-   * `.zen-pill` (main.css; content-box widths, 20 px inside the pill): the hover-only chips under
-   * 170, the "Not secure" label under 220, and under 110 – a 130 px pill – every tool after the
-   * address (the star, zoom, Reader View, Translate, Boost, Copy), so a pill at the default sidebar width
-   * (100 px) is the address, or one of Zenium's pages' name, and the site icon (v2 §10.1's
-   * favicon slot). The blocked pop-ups chip is the one chip after the address that stays: a
+   * `.zen-pill` (main.css; content-box widths, 16 px inside the pill): the hover-only chips under
+   * 170, the "Not secure" label under 220, and under 110 – the 270 sidebar's 126 px pill – every
+   * tool after the address (the star, zoom, Reader View, Translate, Boost, Copy), so a pill at
+   * the default sidebar width (96 px, content 80) is the address, or one of Zenium's pages' name,
+   * and the site icon (v2 §10.1's favicon slot). The blocked pop-ups chip is the one chip after the address that stays: a
    * notice, not a tool, and the only word of a pop-up the page tried to open (#62). happy-dom
    * evaluates no container query, so the markers and the rule are pinned here; the widths are
    * measured on the packaged build.
@@ -525,7 +525,7 @@ describe('desktop pill (NavRow)', () => {
     // The address itself is never a chip.
     expect(focusable(pill)[0].classList.contains('zen-pill-chip')).toBe(false)
 
-    // The tier is one container rule below the hover-only chips' 170 (content-box widths: 20 px
+    // The tier is one container rule below the hover-only chips' 170 (content-box widths: 16 px
     // inside the pill) – unlayered, as its siblings are, to beat the `flex` and `group-hover`
     // utilities that draw the chips.
     const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(
@@ -548,6 +548,51 @@ describe('desktop pill (NavRow)', () => {
       expect(open, `the ${tier[2]} tier is nested`).toBe(0)
     }
     expect(css.match(/\.zen-pill-chip\b/g)).toHaveLength(1)
+  })
+
+  /*
+   * The tier measures the pill's content box through a ResizeObserver. The icon rail unmounts
+   * the pill (the compact row has none) and the expanded sidebar brings a new one: the observer
+   * must follow it – left on the rail's node it would report that node's 0 for good, which the
+   * tier reads as "hide nothing yet", and a 110 px pill would draw every chip over a field with
+   * no room (the shell pass (a) drive's finding at the 270 sidebar after the rail).
+   */
+  it('re-measures the pill the row has after the icon rail has come and gone', () => {
+    const observed: Element[] = []
+    const live = new Set<Element>()
+    const Native = window.ResizeObserver
+    class RecordingResizeObserver {
+      private readonly targets = new Set<Element>()
+      observe(target: Element): void {
+        this.targets.add(target)
+        observed.push(target)
+        live.add(target)
+      }
+      unobserve(target: Element): void {
+        this.targets.delete(target)
+        live.delete(target)
+      }
+      disconnect(): void {
+        for (const t of this.targets) live.delete(t)
+        this.targets.clear()
+      }
+    }
+    window.ResizeObserver = RecordingResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+      const first = el.querySelector<HTMLElement>('[data-address-pill]')!
+      expect(observed).toContain(first)
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact />))
+      expect(el.querySelector('[data-address-pill]')).toBeNull()
+      expect(live.has(first)).toBe(false)
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      const again = el.querySelector<HTMLElement>('[data-address-pill]')!
+      expect(again).not.toBe(first)
+      expect(live.has(again)).toBe(true)
+      expect(live.has(first)).toBe(false)
+    } finally {
+      window.ResizeObserver = Native
+    }
   })
 
   it('shows the key chip before the star only while a save prompt is pending for the page', () => {
@@ -688,15 +733,33 @@ describe('desktop pill on an internal page', () => {
     expect(pill.querySelector('[aria-label="Bookmark this tab"]')).not.toBeNull()
   })
 
-  it('leaves a site’s address to truncate as before: a site has no title to stand in', () => {
+  it('leaves a site’s address to truncate while the field keeps the 56 px floor (§9.29)', () => {
     widths.probe = 150
     widths.field = 60
-    const site = tab('https://example.com/some/path')
+    const site = tab('https://example.com/some/path', { title: 'An example page' })
     const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
     const { pill, field } = pillOf(el)
     expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
     expect(field.getAttribute('data-reads')).toBe('address')
+    // The site in full ink, the path after it dimmed (Chrome's), as ever.
+    expect(field.querySelector('.opacity-70')?.textContent).toBe('/some/path')
     expect(pill.getAttribute('title')).toBe('https://example.com/some/path')
+  })
+
+  it('keeps a site’s trimmed address under the floor too – never its title (§9.29); the tooltip the full address', () => {
+    widths.probe = 150
+    widths.field = 40
+    const site = tab('https://www.example.com/some/path', { title: 'An example page' })
+    const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    const { pill, field } = pillOf(el)
+    // Zen's trim: the scheme and `www.` off, the host first, then the path – truncated from the
+    // end by the field's `truncate`, whatever its width.
+    expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
+    expect(field.getAttribute('data-reads')).toBe('address')
+    expect(field.querySelector('.opacity-70')?.textContent).toBe('/some/path')
+    expect(pill.getAttribute('title')).toBe('https://www.example.com/some/path')
+    // The probe still holds the address the field is measured against.
+    expect(pill.querySelector('[data-pill-probe]')!.textContent).toBe('example.com/some/path')
   })
 
   it('offers the search prompt, not `zen://newtab`, as the empty tab’s tooltip', () => {

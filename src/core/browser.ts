@@ -2697,8 +2697,8 @@ export class Browser {
         state.commit()
       },
 
-      'urlbar.suggest': ({ query, tabId, engineId }, win) =>
-        this.suggestions.suggest(query, tabId, win, { engineId }),
+      'urlbar.suggest': ({ query, tabId, engineId, grouped }, win) =>
+        this.suggestions.suggest(query, tabId, win, { engineId, grouped }),
       'urlbar.submit': ({ input, newTab, tabId, background, newWindow, learn }, win) =>
         this.submitUrlbar(input, newTab, tabId, Boolean(background), win, {
           newWindow: Boolean(newWindow),

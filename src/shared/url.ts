@@ -329,9 +329,15 @@ export function displayHost(url: string): string {
  * `fullUrl` renders it – and whether that address fits the pill's field. An address that fits is
  * shown whole, section and all (`zenium://settings/privacy`); one that does not is the internal
  * page's title ("Settings") where the tab is one of Zenium's own pages, as the phone pill names
- * them (v2 §10.1) – "ze…" says nothing, and the title is what the tab row says too. A site's
- * address truncates as before: its host comes first and is what matters. The URL bar's field
- * keeps the whole address while editing, whatever the pill shows.
+ * them (v2 §10.1) – a `zenium://` address is not worth reading, "ze…" says nothing, and the
+ * title is what the tab row says too – switching back to the address the moment it fits. A
+ * site's pill never shows its title: no browser's address bar does, and at the 240 sidebar's 80
+ * px content box a title truncates as badly as an address ("Coffee – …" for "en.wikip…"). It
+ * keeps its address, trimmed as Zen trims it (`displayUrl`: the scheme and `www.` off, the host
+ * first, then the path) and truncated from the end at any width (§9.29: the address truncates
+ * first, to a floor of 56 px, and only then do chips hide; below the floor the address stays,
+ * as Zen's and Firefox's sidebar bars keep theirs). The URL bar's field keeps the whole address
+ * while editing, whatever the pill shows.
  */
 export function pillText(url: string, shown: string, fits: boolean): string {
   if (fits || !shown) return shown

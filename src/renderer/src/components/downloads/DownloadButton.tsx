@@ -58,10 +58,8 @@ export function DownloadButton({
     <button
       type="button"
       data-zen-downloads-button
-      className={cn(
-        'zen-toolbar-button zen-dl-button-toolbar relative',
-        open && 'bg-[var(--zen-element-bg)]'
-      )}
+      // The pressed fill while the bubble is up is the toolbar button's own, off `aria-expanded`.
+      className="zen-toolbar-button zen-dl-button-toolbar relative"
       // The tooltip carries the chord (a11y-26); the name stays the state line alone.
       title={hint(label, state, 'downloads.open')}
       aria-label={label}

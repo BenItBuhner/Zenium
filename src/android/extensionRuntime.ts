@@ -139,7 +139,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.proxy.set { rules, bypass, bypassSimpleHostnames, removeImplicitRules } / clear   chrome.proxy.settings over ProxyController
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
- * ext.authView { viewId, event, url? }, ext.notification.
+ * ext.authView { viewId, event, url? }, ext.notification, ext.wake { id }.
  */
 
 /** The bridge calls the runtime makes (`Bridge` satisfies it; tests pass a fake). */
@@ -256,6 +256,18 @@ interface RuntimeData {
   sidePanelOnActionClick: Record<string, boolean>
   /** id → the `chrome.proxy.settings` values it set, by scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
   proxy: Record<string, ScopedValues>
+  /**
+   * id → the optional permissions `permissions.request` granted (API permissions and host
+   * patterns), kept across sessions as Chrome's `ExtensionPrefs` keep the granted set; the
+   * required ones need no record.
+   */
+  grants: Record<string, PersistedGrants>
+}
+
+/** The optional permissions an extension holds beyond its manifest's required ones. */
+export interface PersistedGrants {
+  permissions: string[]
+  origins: string[]
 }
 
 type StorageDoc = { local: StorageItems; sync: StorageItems }
@@ -403,7 +415,8 @@ function emptyData(): RuntimeData {
     listeners: {},
     contextMenus: {},
     sidePanelOnActionClick: {},
-    proxy: {}
+    proxy: {},
+    grants: {}
   }
 }
 
@@ -422,6 +435,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.contextMenus = saved.contextMenus ?? {}
   data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
   data.proxy = saved.proxy ?? {}
+  data.grants = saved.grants ?? {}
   return data
 }
 
@@ -528,7 +542,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    */
   private readonly offscreenOpening = new Map<
     string,
-    { resolve: () => void; reject: (error: Error) => void; timer: unknown }
+    { url: string; resolve: () => void; reject: (error: Error) => void; timer: unknown }
   >()
   private observing = false
   private subscribed = false
@@ -867,6 +881,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.contextMenus[id]
     delete this.data.sidePanelOnActionClick[id]
     delete this.data.proxy[id]
+    delete this.data.grants[id]
     this.startupFired.delete(id)
     this.save()
     // Settle the debounced document first so no pending write brings it back after the remove.
@@ -886,7 +901,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const env = await this.ensureEnv()
     const id = ext.record.id
     const bootFor = (isolation: IsolationMode): ExtensionBoot =>
-      buildExtensionBoot(id, ext.manifest, ext.messages, this.data.registered[id] ?? [], isolation)
+      buildExtensionBoot(
+        id,
+        ext.manifest,
+        ext.messages,
+        this.data.registered[id] ?? [],
+        isolation,
+        this.data.grants[id]?.permissions ?? []
+      )
     const plan = (isolatedWorlds: boolean): ExtensionUnits =>
       planUnits(bootFor(isolatedWorlds ? 'world' : 'with'), ext.manifest, {
         token: env.token,
@@ -1373,6 +1395,41 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     this.bridge.send('ext.hosts', { id, hosts })
   }
 
+  grants(id: string): PersistedGrants | null {
+    return this.data.grants[id] ?? null
+  }
+
+  /**
+   * The optional grants moved (`permissions.request` / `remove`): kept for the next session,
+   * told to every live context of the extension at once (`__zen.grants`, the whole granted set,
+   * so the shim defines the namespaces a grant opens and deletes the ones a removal closes, as
+   * Chrome's bindings do), and written into the extension's boot so a context started later
+   * carries the set too.
+   */
+  setGrants(id: string, grants: PersistedGrants, granted: string[]): void {
+    if (grants.permissions.length > 0 || grants.origins.length > 0) this.data.grants[id] = grants
+    else delete this.data.grants[id]
+    this.save()
+    for (const endpoint of this.router.of(id)) {
+      this.sendTo(endpoint.id, {
+        t: 'event',
+        ns: '__zen',
+        name: 'grants',
+        args: [{ permissions: granted }]
+      })
+    }
+    // The boot for the next context; the caller's answer need not wait for Kotlin's recompile
+    // (the live contexts have the set already).
+    const ext = this.extensions.get(id)
+    if (ext)
+      void this.configure(ext).catch((error: unknown) => {
+        console.warn(
+          `[Zenium] extension ${id}: re-planning after a permission change failed`,
+          error
+        )
+      })
+  }
+
   showNotification(extensionId: string, notification: ShownNotification): void {
     this.bridge.send('ext.notifications.show', { id: extensionId, notification })
   }
@@ -1491,7 +1548,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         this.bridge.send('ext.offscreen.close', { id })
         reject(new Error(`The offscreen document ${url} did not load.`))
       }, OFFSCREEN_LOAD_MS)
-      this.offscreenOpening.set(id, { resolve, reject, timer })
+      this.offscreenOpening.set(id, { url, resolve, reject, timer })
       this.bridge.send('ext.offscreen.open', { id, url })
     })
   }
@@ -1503,6 +1560,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   hasOffscreen(id: string): boolean {
     return this.offscreenOpening.has(id) || this.router.of(id, 'offscreen').length > 0
+  }
+
+  offscreenLoading(id: string): string | null {
+    return this.offscreenOpening.get(id)?.url ?? null
   }
 
   /** The pending `createDocument` of an extension, if any, resolved (its page is up) or rejected. */
@@ -1840,6 +1901,18 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const context = this.sheetContext
     this.sheetContext = null
     if (context === 'sidePanel') this.api.sidePanel.sheetGone()
+  }
+
+  /**
+   * `ext.wake`: the host asks for an extension's background to run, as Chrome's management page
+   * starts an inactive worker when its "service worker" view is inspected. A stopped worker or
+   * event page starts (and idles out again on its own clock); a running one, a persistent page
+   * or an extension without a background is left as it is.
+   */
+  wakeBackground(id: string): void {
+    const ext = this.attached(id)
+    if (!ext || !ext.manifest.background || !this.isEnabled(id)) return
+    this.background.ensureStarted(id)
   }
 
   /** An auth sheet's navigation (the way back ends the flow), load, failure or dismissal. */

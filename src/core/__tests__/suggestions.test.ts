@@ -910,3 +910,159 @@ describe('SuggestionService: search mode (omnibox-26, -08)', () => {
     expect(await suggestions.suggest('?', null, win)).toEqual([])
   })
 })
+
+/*
+ * The phone card's sections (OMN-18): Chrome for Android's order – the default match alone at
+ * the field's end, then the pages, the searches, the open tabs – each under its heading; the
+ * desktop popup is untouched by the option.
+ */
+describe('SuggestionService: the phone card’s sections (OMN-18)', () => {
+  const payload = (query: string): unknown => [
+    query,
+    ['github desktop', 'github copilot'],
+    ['', ''],
+    [],
+    {
+      'google:suggesttype': ['QUERY', 'QUERY'],
+      'google:suggestrelevance': [700, 601],
+      'google:verbatimrelevance': 851
+    }
+  ]
+
+  function mixed(): ReturnType<typeof setup> {
+    const s = setup('synced', { online: true })
+    const { state, history, net } = s
+    net.routes.push({ match: 'client=chrome&q=github', body: payload('github') })
+    history.visit('https://github.com/zen/zenium', 'zen/zenium: GitHub', null)
+    history.visit('https://docs.github.com/', 'GitHub Docs', null)
+    const space = state.model.spaces[0]
+    const tab = createTabRecord({
+      id: 'tab_gh',
+      url: 'https://github.com/notifications',
+      title: 'GitHub notifications',
+      spaceId: space.id,
+      containerId: space.containerId
+    })
+    state.model.tabs[tab.id] = tab
+    space.tabIds.push(tab.id)
+    return s
+  }
+
+  it('sections a typed query: the default match, then Pages, Searches, Open tabs', async () => {
+    const { suggestions, win } = mixed()
+    const rows = await suggestions.suggest('github', null, win, { grouped: true })
+    // The default match – the inline completion Enter opens – keeps the first row, no heading.
+    expect(rows[0]).toMatchObject({ kind: 'url', title: 'github.com', inline: true })
+    expect(rows[0].group).toBeUndefined()
+    expect(rows.slice(1).map((r) => [r.kind, r.group])).toEqual([
+      ['history', 'Pages'],
+      ['history', 'Pages'],
+      ['search', 'Searches'],
+      ['search', 'Searches'],
+      ['search', 'Searches'],
+      ['tab', 'Open tabs']
+    ])
+    // Inside a section the relevance order stands: the verbatim search, then the engine's
+    // 700 over its 601.
+    expect(rows.filter((r) => r.group === 'Searches').map((r) => r.title)).toEqual([
+      'github',
+      'github desktop',
+      'github copilot'
+    ])
+  })
+
+  it('leaves the desktop’s flat relevance order alone without the option', async () => {
+    const { suggestions, win } = mixed()
+    const rows = await suggestions.suggest('github', null, win)
+    expect(rows.every((r) => r.group === undefined)).toBe(true)
+    // The tab row outranks the engine's suggestions there (relevance 1000 over 700).
+    expect(kinds(rows).indexOf('tab')).toBeLessThan(kinds(rows).lastIndexOf('search'))
+  })
+
+  it('draws no heading over a card of one kind: the searches alone, or `@tabs`', async () => {
+    const { suggestions, win, net, state } = setup('synced', { online: true })
+    net.routes.push({ match: 'client=chrome&q=github', body: payload('github') })
+    const alone = await suggestions.suggest('github', null, win, { grouped: true })
+    expect(kinds(alone)).toEqual(['search', 'search', 'search'])
+    expect(alone.every((r) => r.group === undefined)).toBe(true)
+
+    const space = state.model.spaces[0]
+    for (const [id, title] of [
+      ['tab_a', 'Alpha'],
+      ['tab_b', 'Beta']
+    ]) {
+      const tab = createTabRecord({
+        id,
+        url: `https://${id}.example/`,
+        title,
+        spaceId: space.id,
+        containerId: space.containerId
+      })
+      state.model.tabs[tab.id] = tab
+      space.tabIds.push(tab.id)
+    }
+    const tabs = await suggestions.suggest('@tabs a', null, win, { grouped: true })
+    expect(kinds(tabs)).toEqual(['tab', 'tab'])
+    expect(tabs.every((r) => r.group === undefined)).toBe(true)
+  })
+
+  it('names the section under a default match of another kind', async () => {
+    const { suggestions, history, win } = setup()
+    history.visit('https://notes.example/vcs', 'Learning git basics', null)
+    // "git" is no address and completes no host: the verbatim search leads, and the one
+    // history page found by its title is a section.
+    const rows = await suggestions.suggest('git', null, win, { grouped: true })
+    expect(rows.map((r) => [r.kind, r.group])).toEqual([
+      ['search', undefined],
+      ['history', 'Pages']
+    ])
+  })
+
+  it('keeps an answer with the default match, over the sections', async () => {
+    const { suggestions, history, win } = setup()
+    history.visit('https://2plus2.example/', '2+2 explained', null)
+    const rows = await suggestions.suggest('2+2', null, win, { grouped: true })
+    expect(rows.map((r) => [r.kind, r.group])).toEqual([
+      ['search', undefined],
+      ['answer', undefined],
+      ['history', 'Pages']
+    ])
+  })
+
+  it('labels zero-suggest’s pages "Recently visited" under the recent searches', async () => {
+    const { suggestions, shortcuts, history, win } = setup()
+    history.visit('https://recent.example/', 'Recent page', null)
+    shortcuts.learn('ca', {
+      url: 'https://www.google.com/search?q=cats',
+      title: 'cats',
+      kind: 'search',
+      engineId: 'google'
+    })
+    const rows = await suggestions.suggest('', null, win, { grouped: true })
+    expect(rows.map((r) => [r.kind, r.group])).toEqual([
+      ['search', 'Recent searches'],
+      ['history', 'Recently visited']
+    ])
+    // The desktop keeps its one heading.
+    const flat = await suggestions.suggest('', null, win)
+    expect(flat.map((r) => r.group)).toEqual(['Recent searches', undefined])
+  })
+
+  it('draws no heading over zero-suggest’s pages alone, one over them under a clipboard row', async () => {
+    const { suggestions, history, win } = setup()
+    history.visit('https://recent.example/', 'Recent page', null)
+    history.visit('https://older.example/', 'Older page', null)
+    const rows = await suggestions.suggest('', null, win, { grouped: true })
+    expect(rows.map((r) => r.group)).toEqual([undefined, undefined])
+
+    const withClip = setup()
+    withClip.history.visit('https://recent.example/', 'Recent page', null)
+    ;(withClip.suggestions as unknown as { browser: Browser }).browser.searchEngines.peekClipboard =
+      async () => 'url' as const
+    const clipped = await withClip.suggestions.suggest('', null, withClip.win, { grouped: true })
+    expect(clipped.map((r) => [r.kind, r.group])).toEqual([
+      ['clipboard', undefined],
+      ['history', 'Recently visited']
+    ])
+  })
+})
