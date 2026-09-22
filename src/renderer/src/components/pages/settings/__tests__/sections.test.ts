@@ -4412,6 +4412,8 @@ describe('ID-08’s Sync category on a phone', () => {
         expect(r.leading).toBeTruthy()
         expect(r.closesSheet).toBe(true)
         expect(r.leaves).toBeUndefined()
+        // The title is the page's, any length: two lines, then an ellipsis (§9.2).
+        expect(r.clamp).toBe(true)
       }
       const first = rows[0]
       if (first?.kind !== 'action') throw new Error('not an action')

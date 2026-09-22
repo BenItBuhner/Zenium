@@ -100,6 +100,11 @@ export interface ActionRow extends RowBase {
   /** A trailing 16 px glyph, only when the action leaves the page (§10.4). */
   leaves?: 'external' | 'chevron'
   /**
+   * The label is text the row does not own (a page's title from another device): two lines,
+   * then an ellipsis (§9.2), as an info row's prose label – never a run of the row's height.
+   */
+  clamp?: boolean
+  /**
    * The desktop's 32 px button (§10.5, Zen's about:preferences: "Check for updates", "Clear
    * Data…"): the row keeps its label and description and trails this button, which runs the
    * action – its confirmation dialog first for a destructive one. Without it a desktop action

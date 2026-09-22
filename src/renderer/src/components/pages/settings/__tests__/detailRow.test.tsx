@@ -109,6 +109,37 @@ describe('the detail row (§10.4)', () => {
     expect(line?.classList.contains('zen-settings-row-clamp')).toBe(true)
   })
 
+  it('a clamped action row carries the two-line class too (a page title from another device)', () => {
+    const open = vi.fn<(request: SheetRequest) => void>()
+    const groups: RowGroup[] = [
+      {
+        id: 'sync-remote-tabs:dev',
+        heading: 'Work laptop',
+        rows: [
+          {
+            kind: 'action',
+            id: 'sync-remote-tab:dev:t1',
+            label: 'Software Library : Free Software : Internet Archive',
+            description: 'archive.org · 50 min ago',
+            clamp: true,
+            closesSheet: true,
+            onPress: () => undefined
+          },
+          { kind: 'action', id: 'plain', label: 'Manage…', onPress: () => undefined }
+        ],
+        empty: ''
+      }
+    ]
+    const h = render(<GroupList groups={groups} ctx={{ open }} />)
+    const clamped = h.querySelector('[data-row="sync-remote-tab:dev:t1"]')
+    expect(clamped?.classList.contains('zen-settings-row-pressable')).toBe(true)
+    expect(clamped?.classList.contains('zen-settings-row-clamp')).toBe(true)
+    // Opt-in only: an action row without the flag keeps its free-wrapping label.
+    expect(h.querySelector('[data-row="plain"]')?.classList.contains('zen-settings-row-clamp')).toBe(
+      false
+    )
+  })
+
   it('draws no summary span when the row has none, keeping the chevron', () => {
     const bare: DetailRow = { ...permissions, summary: undefined }
     const h = render(
