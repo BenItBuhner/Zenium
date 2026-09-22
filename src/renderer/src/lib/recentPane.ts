@@ -93,14 +93,18 @@ export function remoteTabsSection(
   return { kind: 'devices', devices }
 }
 
-/** The groups' sentences (v2 §9.17, the group form: one plain row, sentence case, no full stop). */
+/**
+ * The groups' sentences (v2 §9.17, the group form: one plain row, sentence case, no full stop).
+ * The two sync sentences are Settings › Sync's (`SYNC_COPY.remoteTabsOff`, `remoteTabsNone`)
+ * without the row description's full stop, so the two surfaces say the same thing.
+ */
 export const RECENT_COPY = {
   closedHeading: 'Recently closed',
   devicesHeading: 'From your other devices',
   noClosed: 'Tabs you close appear here',
   syncOff: 'Turn on sync to see tabs from your other devices',
   syncOffAction: 'Turn on sync',
-  tabsOff: 'Open tabs are not part of what this device syncs',
+  tabsOff: 'Turn on Open tabs in What you sync to see them',
   tabsOffAction: 'Sync settings',
   noDevices: 'No open tabs on your other devices yet',
   hideDevice: 'Hide device',

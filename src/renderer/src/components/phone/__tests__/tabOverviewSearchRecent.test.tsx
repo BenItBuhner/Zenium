@@ -55,6 +55,7 @@ const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
 const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { announcerStore, resetAnnouncer } = await import('@renderer/lib/announce')
 const { showHiddenDevices, hiddenDevicesStore } = await import('@renderer/lib/recentPane')
+const { remoteTabsStore } = await import('@renderer/lib/remoteTabs')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -93,6 +94,13 @@ function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
   } as Tab
 }
 
+/**
+ * The status' `remoteTabsVersion` of the test at hand: Settings › Sync's `useRemoteTabs` asks
+ * the core once per version for the whole chrome, so every test starts at a version no test
+ * before it has asked at (the shared store is emptied beside it).
+ */
+let version = 0
+
 /** The engine's status: off, or on with Open tabs among what syncs unless `openTabs` says not. */
 function sync(enabled: boolean, openTabs = true): UIState['sync'] {
   return {
@@ -119,7 +127,7 @@ function sync(enabled: boolean, openTabs = true): UIState['sync'] {
     syncing: false,
     devices: [],
     pendingMerge: false,
-    remoteTabsVersion: 1
+    remoteTabsVersion: version
   } as UIState['sync']
 }
 
@@ -291,6 +299,8 @@ beforeEach(() => {
   frames.install()
   closed = []
   remote = []
+  version += 10
+  remoteTabsStore.set({ version: -1, devices: [] })
   invoke.mockClear()
   resetAnnouncer()
   announcerStore.set({ text: '', seq: 0 })
@@ -579,7 +589,8 @@ describe('the Recent pane (TAB-02)', () => {
       entry('c2', 'Damping - Wikipedia', 'https://en.wikipedia.org/wiki/Damping', NOW - 2 * 60_000),
       entry('c1', 'RFC 1149', 'https://www.rfc-editor.org/rfc/rfc1149.html', NOW - 3 * HOUR)
     ]
-    show(stateOf(pages(), { capabilities: { windowControls: false, privateTabs: true } }))
+    const state = stateOf(pages())
+    show({ ...state, capabilities: { ...state.capabilities, privateTabs: true } })
     expect(segments()).toEqual([
       ['Tabs', true],
       ['Recent', false],
@@ -647,6 +658,24 @@ describe('the Recent pane (TAB-02)', () => {
     ])
   })
 
+  it('a tab this device already holds under the same id comes to the front instead of opening twice', async () => {
+    // The Open tabs scope carries the tab records too (ID-10): the laptop's `hn` is this
+    // device's `hn`.
+    remote = [
+      {
+        deviceId: 'device-laptop',
+        deviceName: 'Work laptop',
+        updatedAt: NOW - 2 * HOUR,
+        tabs: [remoteTab('hn', 'https://news.ycombinator.com/', 'Hacker News', NOW - HOUR)]
+      }
+    ]
+    show(stateOf(pages(), { sync: sync(true) }))
+    await openRecent()
+    act(() => rowByTitle('Hacker News').click())
+    expect(of('tab.activate')).toEqual([{ tabId: 'hn' }])
+    expect(of('tab.create')).toEqual([])
+  })
+
   it("a device's heading held offers Hide device; hidden, it leaves the list with a row to show it again", async () => {
     remote = devices()
     show(stateOf(pages(), { sync: sync(true) }))
@@ -694,7 +723,7 @@ describe('the Recent pane (TAB-02)', () => {
     render(stateOf(pages(), { sync: sync(true, false) }))
     await settle()
     expect(byTestId('overview-recent-tabs-off')?.textContent).toBe(
-      'Open tabs are not part of what this device syncs'
+      'Turn on Open tabs in What you sync to see them'
     )
     expect(buttonByText('Sync settings')).toBeDefined()
     expect(of('sync.tabsFromDevices')).toEqual([])
@@ -715,12 +744,9 @@ describe('the Recent pane (TAB-02)', () => {
     await openRecent()
     expect(of('sync.tabsFromDevices')).toHaveLength(1)
     // Another device published: the status' version moves, the pane asks once more.
-    act(() =>
-      browserStore.set({
-        state: stateOf(pages(), { sync: { ...sync(true), remoteTabsVersion: 2 } })
-      })
-    )
-    render(stateOf(pages(), { sync: { ...sync(true), remoteTabsVersion: 2 } }))
+    const moved = { ...sync(true), remoteTabsVersion: version + 1 }
+    act(() => browserStore.set({ state: stateOf(pages(), { sync: moved }) }))
+    render(stateOf(pages(), { sync: moved }))
     await settle()
     expect(of('sync.tabsFromDevices')).toHaveLength(2)
     // A tab closed here: the core's event, the list read again.

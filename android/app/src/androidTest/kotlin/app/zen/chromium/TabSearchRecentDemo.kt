@@ -43,7 +43,7 @@ import kotlin.math.roundToInt
  *     device's name with "Last active …", each tab a row with favicon, title and host;
  * 13. a remote row opens its page in a new active tab and the overview leaves;
  * 14. a device heading held: the Hide device sheet; Hide device takes the device off the list
- *     and Show hidden devices (1) brings it back;
+ *     and Show 1 hidden device brings it back;
  * 15. a Recently closed row restores the tab and the overview leaves.
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
@@ -337,9 +337,9 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         still("hide-device-sheet")
         touchUntil("Hide device", { steadyRect { menuRow("Hide device") } }, { deviceNames() == listOf(DESKTOP) }, waitMs = SHEET_WAIT)
         expect("the laptop is off the list: ${deviceNames()}", deviceNames() == listOf(DESKTOP))
-        expect("the way back is a row: 'Show hidden devices (1)'", awaitUntil(4_000) { textOf(SHOW_HIDDEN) == "Show hidden devices (1)" })
+        expect("the way back is a row: 'Show 1 hidden device'", awaitUntil(4_000) { textOf(SHOW_HIDDEN) == "Show 1 hidden device" })
         still("device-hidden")
-        touchUntil("Show hidden devices", { domRect(SHOW_HIDDEN) }, { deviceNames().size == 2 })
+        touchUntil("Show 1 hidden device", { domRect(SHOW_HIDDEN) }, { deviceNames().size == 2 })
         expect("the laptop is back, in its place: ${deviceNames()}", deviceNames() == listOf(DESKTOP, LAPTOP))
         expect("the row is gone with nothing hidden", !inDom(SHOW_HIDDEN))
     }
@@ -734,26 +734,18 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
 
     /**
      * Another device's `open-tabs` document into the folder's `zenium-sync` directory, as its
-     * Zenium would write it (`SyncDocument` in `src/core/sync/documents.ts`: the kind and the
-     * writer's identity in the clear, `{ v: 1, tabs }` sealed under the folder's key).
+     * Zenium would write it ([SyncPeer.document]: the kind and the writer's identity in the
+     * clear, `{ v: 1, tabs }` sealed under the folder's key; the name the engine reads it by).
      */
     private fun writeOpenTabs(dir: File, key: ByteArray, salt: String, deviceId: String, deviceName: String, updatedAt: Long, tabs: List<JSONObject>) {
-        val payload = JSONObject().put("v", 1).put("tabs", JSONArray(tabs)).toString()
-        val document = JSONObject()
-            .put("kind", "open-tabs")
-            .put("deviceId", deviceId)
-            .put("deviceName", deviceName)
-            .put("updatedAt", updatedAt)
-            .put("envelope", SyncPeer.encrypt(key, salt, payload))
-            .toString()
-        val name = deviceId.replace(Regex("[^a-zA-Z0-9_-]"), "_") + ".tabs.zenpage"
-        File(dir, name).writeText(document)
+        val envelope = SyncPeer.encrypt(key, salt, SyncPeer.openTabsPayload(tabs))
+        val name = SyncPeer.openTabsName(deviceId)
+        File(dir, name).writeText(SyncPeer.document("open-tabs", deviceId, deviceName, updatedAt, envelope))
         finding("  '$deviceName' published ${tabs.size} open tabs as $name")
     }
 
     private fun remoteTab(id: String, url: String, title: String, lastActive: Long, favicon: String? = null): JSONObject =
-        JSONObject().put("tabId", id).put("url", url).put("title", title).put("lastActive", lastActive)
-            .put("favicon", favicon ?: JSONObject.NULL).put("windowId", JSONObject.NULL)
+        SyncPeer.remoteTab(id, url, title, lastActive, favicon)
 
     /** A favicon the emulator can draw offline: a 16 px disc in the site's colour. */
     private fun disc(fill: String): String =

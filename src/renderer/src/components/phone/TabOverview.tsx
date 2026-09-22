@@ -19,6 +19,7 @@ import type {
   PhoneBarPosition,
   Rect,
   Space,
+  SyncRemoteTab,
   Tab,
   UIState
 } from '@shared/types'
@@ -896,8 +897,17 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       return now !== before ? now : null
     }, OPEN_TIMEOUT_MS).then((tabId) => closeOverview(tabId ?? undefined))
   }
-  const openRemote = (url: string): void =>
-    leaveOn(() => run('tab.create', { url, spaceId: space.id, active: true }))
+  /**
+   * Another device's tab (TAB-02): its address in a new tab of this space – or, when this
+   * device already holds that very tab (the Open tabs scope carries the records too, ID-10),
+   * that tab to the front rather than a second one, as Settings › Sync's rows do (#314).
+   */
+  const openRemote = (tab: SyncRemoteTab): void =>
+    leaveOn(() =>
+      tab.tabId in state.tabs
+        ? run('tab.activate', { tabId: tab.tabId })
+        : run('tab.create', { url: tab.url, spaceId: space.id, active: true })
+    )
   const openSync = (): void => leaveOn(() => openSettings('sync'))
   /** A device's heading held (TAB-02): the one row, Hide device, for this run of the chrome. */
   const deviceActions = (device: RecentDevice): SheetAction[] => [
@@ -1254,7 +1264,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               <RecentPane
                 state={state}
                 onRestore={restoreClosed}
-                onOpenUrl={openRemote}
+                onOpenTab={openRemote}
                 onOpenSync={openSync}
                 onDeviceMenu={(device) => {
                   noteSheetOpener()

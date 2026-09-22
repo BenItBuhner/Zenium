@@ -1,9 +1,8 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { ChevronRight, Globe } from 'lucide-react'
-import type { SyncDeviceTabs, SyncRemoteTab, UIState } from '@shared/types'
+import type { SyncRemoteTab, UIState } from '@shared/types'
 import { displayUrl, getHost } from '@shared/url'
-import { cmd } from '@renderer/lib/api'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import {
   RECENT_COPY,
@@ -14,6 +13,7 @@ import {
   showHiddenDevices,
   type RecentDevice
 } from '@renderer/lib/recentPane'
+import { remoteTabsStore, useRemoteTabs } from '@renderer/lib/remoteTabs'
 import { PhoneGroupHeading, PhoneListRow, RowFavicon } from './PhoneList'
 import { ClosedTabRow } from './RecentlyClosedSheet'
 import { useRowGestures } from './useRowGestures'
@@ -25,38 +25,37 @@ import { useRowGestures } from './useRowGestures'
  * roles, `.zen-overview-recent` in main.css) – "Recently closed", this device's closed tabs
  * (`session.recentlyClosed`, read again whenever the core says it changed, so a row never names
  * a tab that is back already), and "From your other devices", services' `sync.tabsFromDevices`
- * under one 15/600 heading per device with its name and when it last published, read again as
- * the status' `remoteTabsVersion` moves. A tap on a closed tab restores it, on another device's
- * tab opens its address in a new tab, and the overview leaves on the tab either way
- * (`TabOverview`). A device's heading is held (or tapped) for its menu – Hide device – on the
- * overview's sheet. The groups' empty states are §9.17's group form: one plain 44 row in the
- * heading's gutter, sentence case, and the follow-up (Turn on sync, the sync settings) as the
- * group's next row, an action row that leaves the overview for Settings › Sync.
+ * under one 15/600 heading per device with its name and when it last published – the list is
+ * the one Settings › Sync reads (`remoteTabsStore`, asked of the core once per
+ * `remoteTabsVersion` by `useRemoteTabs`, only while sync is on with Open tabs in its scope).
+ * A tap on a closed tab restores it, on another device's tab opens its address in a new tab (or
+ * brings the tab to the front when this device already holds it under that id), and the
+ * overview leaves on the tab either way (`TabOverview`). A device's heading is held (or tapped)
+ * for its menu – Hide device – on the overview's sheet. The groups' empty states are §9.17's
+ * group form: one plain 44 row in the heading's gutter, sentence case, and the follow-up (Turn
+ * on sync, the sync settings) as the group's next row, an action row that leaves the overview
+ * for Settings › Sync.
  */
 export function RecentPane({
   state,
   onRestore,
-  onOpenUrl,
+  onOpenTab,
   onOpenSync,
   onDeviceMenu
 }: {
   state: UIState
   /** A recently closed tab picked: it comes back and the overview leaves on it. */
   onRestore: (entry: ClosedEntrySummary) => void
-  /** Another device's tab picked: its address opens in a new tab the overview leaves on. */
-  onOpenUrl: (url: string) => void
+  /** Another device's tab picked: it opens here (or comes to the front) and the overview leaves on it. */
+  onOpenTab: (tab: SyncRemoteTab) => void
   /** The row to Settings › Sync. */
   onOpenSync: () => void
   /** A device's heading held: its menu. */
   onDeviceMenu: (device: RecentDevice) => void
 }): JSX.Element {
   const closed = useRecentlyClosed()
-  // The lists are asked for only when they are wanted: sync on, and Open tabs among what it
-  // syncs (the section says why otherwise, without a read).
-  const lists = useRemoteTabs(
-    state.sync.enabled && state.sync.scope.openTabs,
-    state.sync.remoteTabsVersion
-  )
+  useRemoteTabs(state.sync)
+  const lists = remoteTabsStore.use((s) => s.devices)
   const hidden = hiddenDevicesStore.use((s) => s.hidden)
   const section = remoteTabsSection(state.sync, lists, hidden)
   const hiddenCount = hiddenDeviceCount(lists, hidden)
@@ -102,7 +101,7 @@ export function RecentPane({
               key={device.deviceId}
               device={device}
               now={now}
-              onOpen={onOpenUrl}
+              onOpen={onOpenTab}
               onMenu={onDeviceMenu}
             />
           ))}
@@ -142,29 +141,6 @@ function useRecentlyClosed(): ClosedEntrySummary[] {
 }
 
 /**
- * The other devices' open tabs as the engine has them, read while sync is on and again each
- * time the status says another device's list changed (the last list stands while the next is
- * read, so a refresh never blinks the group empty); nothing is read – and nothing shown – while
- * sync is off, so a list from before never shows under the prompt to turn it on.
- */
-function useRemoteTabs(enabled: boolean, version: number): SyncDeviceTabs[] {
-  const [lists, setLists] = useState<SyncDeviceTabs[]>([])
-  useEffect(() => {
-    if (!enabled) return
-    let live = true
-    void cmd('sync.tabsFromDevices', undefined)
-      .then((list) => {
-        if (live) setLists(list)
-      })
-      .catch(() => undefined)
-    return () => {
-      live = false
-    }
-  }, [enabled, version])
-  return enabled ? lists : []
-}
-
-/**
  * One device: its 15/600 heading with the name and, as the heading's aside, when it last
  * published (§10.3) – the heading is the device's one control, a button held or tapped for its
  * menu (`aria-haspopup`, named with both lines for a reader) – and its tabs as rows, favicon,
@@ -178,7 +154,7 @@ function DeviceGroup({
 }: {
   device: RecentDevice
   now: number
-  onOpen: (url: string) => void
+  onOpen: (tab: SyncRemoteTab) => void
   onMenu: (device: RecentDevice) => void
 }): JSX.Element {
   const aside = lastActiveLabel(device.updatedAt, now)
@@ -200,7 +176,7 @@ function DeviceGroup({
         </button>
       </h3>
       {device.tabs.map((tab) => (
-        <RemoteTabRow key={tab.tabId} tab={tab} onTap={() => onOpen(tab.url)} />
+        <RemoteTabRow key={tab.tabId} tab={tab} onTap={() => onOpen(tab)} />
       ))}
     </div>
   )

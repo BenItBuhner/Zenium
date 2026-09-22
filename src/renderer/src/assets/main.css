@@ -7705,7 +7705,10 @@
  * `data-surface="window"` resolves: the theme's ink, its 69% for a row's host and time and for
  * a group's empty sentence, the window fill for the press – where the panels' own draw in the
  * page's. A modifier by context on the primitives, unlayered beside them (§9.34), each rule
- * outranking the primitive's by specificity. The first heading stands under the segment, which
+ * outranking the primitive's by specificity; the press and hover fills are not restated (the
+ * row's own rule set is the one place that gates on `data-static`): the pane redefines the
+ * page fill token the row reads, `--v2-fill`, as the window fill, so the primitive's own press
+ * and hover draw the window family. The first heading stands under the segment, which
  * carries its own air, at 4 (§10.3's first heading, as the Groups pane's): the rule names the
  * pane's list class too, to outrank the panels' first-heading rule (phonePanels.css, the 0
  * under a pinned field) on specificity, since the two sheets' order is the bundle's.
@@ -7719,16 +7722,11 @@
  * otherwise grow the line by a fraction and the heading with it. Pressed, it shows the window
  * fill as a row does.
  */
+.zen-overview-recent {
+  --v2-fill: var(--v2-window-fill);
+}
 .zen-overview-recent .zen-v2-row {
   color: var(--v2-control-text);
-}
-.zen-overview-recent .zen-v2-row:active:not([aria-disabled='true'], [data-static]) {
-  background: var(--v2-control-fill);
-}
-@media (hover: hover) {
-  .zen-overview-recent .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {
-    background: var(--v2-control-fill);
-  }
 }
 .zen-overview-recent .zen-list-subtitle,
 .zen-overview-recent .zen-v2-row.zen-recent-empty {
