@@ -347,6 +347,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         }
         finding("overview-group-fold$suffix: ${groupState()}; ${foldLine()}")
         SystemClock.sleep(FOLD_REST_MS)
+        leaveGroup(collapsed = true, "overview-group-fold$suffix")
         // The header stays where it was (the group folds from its header down); read again in case.
         val again = groupHeaderRect() ?: header
         scene("overview-group-unfold$suffix", JankBudget.Kind.SPRING, profile = true) {
@@ -355,7 +356,28 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         }
         finding("overview-group-unfold$suffix: ${groupState()}; ${foldLine()}")
         SystemClock.sleep(FOLD_REST_MS)
+        leaveGroup(collapsed = false, "overview-group-unfold$suffix")
         closeOverview()
+    }
+
+    /**
+     * The group as the scene `name` should have left it, off the record: an injected tap the
+     * system drops (#339's retry saw the InputDispatcher drop OverviewDemo's step-7 tap, "no
+     * targets were found") folds nothing, and the next scene would then fold where it should
+     * unfold; so when the state is not `collapsed`, the header is tapped again and the fold given
+     * its time, and the finding says so (the scene's own numbers say "the tap folded nothing").
+     */
+    private fun leaveGroup(collapsed: Boolean, name: String) {
+        if (groupState().startsWith("collapsed") == collapsed) return
+        val header = groupHeaderRect()
+        if (header == null) {
+            finding("$name: the group is ${groupState()} and its header is off screen; left as it is")
+            return
+        }
+        finding("$name: the tap did not take (the group is ${groupState()}); tapped again off the record")
+        Finger().tap(header.exactCenterX(), header.exactCenterY())
+        SystemClock.sleep(FOLD_SETTLE_MS)
+        finding("$name: the group is ${groupState()} after the second tap")
     }
 
     /**
