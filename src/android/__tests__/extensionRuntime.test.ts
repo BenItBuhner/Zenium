@@ -2172,6 +2172,79 @@ describe('AndroidExtensionRuntime: chrome.system.display', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.system.cpu and chrome.system.memory', () => {
+  it("answers the phone's processors and memory in Chrome's shape for an extension declaring the permissions", async () => {
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['system.cpu', 'system.memory', 'storage'] }))
+    )
+    backgroundUp(h, 'bg1')
+    // Kotlin's reading: `Runtime.availableProcessors()`, Java's `os.arch`, the `Hardware` line of
+    // /proc/cpuinfo; the per-processor times unreadable in the app's sandbox (`usage: null`).
+    const cpu = (await call(h, 'bg1', 'system.cpu', 'getInfo', [])).result as Record<
+      string,
+      unknown
+    >
+    expect(cpu).toEqual({
+      numOfProcessors: 4,
+      archName: 'aarch64',
+      modelName: 'Qualcomm Technologies, Inc SM8550',
+      features: [],
+      processors: Array.from({ length: 4 }, () => ({
+        usage: { user: 0, kernel: 0, idle: 0, total: 0 }
+      })),
+      temperatures: []
+    })
+    // Where /proc/stat is readable the times come through, `nice` folded into `user`.
+    h.kt.cpuAnswer = () => ({
+      numOfProcessors: 2,
+      archName: 'x86_64',
+      modelName: 'Intel(R) Core(TM) i7',
+      features: ['sse4_2', 'avx', 'sse', 'mmx', 'sse4_1'],
+      usage: [
+        [120, 30, 900],
+        [80, 20, 950]
+      ]
+    })
+    const x86 = (await call(h, 'bg1', 'system.cpu', 'getInfo', [])).result as Record<
+      string,
+      unknown
+    >
+    expect(x86).toMatchObject({
+      numOfProcessors: 2,
+      archName: 'x86_64',
+      features: ['mmx', 'sse', 'sse4_1', 'sse4_2', 'avx'],
+      processors: [
+        { usage: { user: 120, kernel: 30, idle: 900, total: 1050 } },
+        { usage: { user: 80, kernel: 20, idle: 950, total: 1050 } }
+      ]
+    })
+    // `ActivityManager.MemoryInfo`: totalMem and availMem, in bytes.
+    expect((await call(h, 'bg1', 'system.memory', 'getInfo', [])).result).toEqual({
+      capacity: 8 * 1024 ** 3,
+      availableCapacity: 3 * 1024 ** 3
+    })
+  })
+
+  it('refuses an extension that did not declare them with Chrome\u2019s no-permission errors', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['system.cpu', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect((await call(h, 'bg1', 'system.cpu', 'getInfo', [])).ok).toBe(true)
+    expect(await call(h, 'bg1', 'system.memory', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.memory' permission."
+    })
+    const other = harness()
+    await other.runtime.attach(record(other, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(other, 'bg1')
+    expect(await call(other, 'bg1', 'system.cpu', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.cpu' permission."
+    })
+  })
+})
+
 describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
   it('routes the ChromeSetting calls to the proxy module: system by default, fixed servers applied, a PAC script refused', async () => {
     const h = harness()

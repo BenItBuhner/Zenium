@@ -35,6 +35,16 @@ import {
   SYSTEM_STORAGE_NO_PERMISSION_ERROR,
   SYSTEM_STORAGE_PERMISSION
 } from '@core/extensions/api/systemStorage'
+import {
+  cpuInfo,
+  memoryInfo,
+  SYSTEM_CPU_NO_PERMISSION_ERROR,
+  SYSTEM_CPU_PERMISSION,
+  SYSTEM_MEMORY_NO_PERMISSION_ERROR,
+  SYSTEM_MEMORY_PERMISSION,
+  type RawCpuReading,
+  type RawMemoryReading
+} from '@core/extensions/api/systemInfo'
 import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '@core/extensions/api/tabs'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
@@ -145,6 +155,10 @@ export interface ApiHost {
   detectTextLanguage(text: string): Promise<DetectedLanguage>
   /** `system.display.getInfo`: the phone's screen as the chrome page sees it (`extensionSystemDisplay.ts`). */
   screen(): PhoneScreen
+  /** `system.cpu.getInfo`: the phone's processors as Kotlin reads them (`Runtime`, `/proc` where readable). */
+  cpu(): Promise<RawCpuReading>
+  /** `system.memory.getInfo`: the phone's memory as `ActivityManager` reports it, in bytes. */
+  memory(): Promise<RawMemoryReading>
   /** Hear of the screen turning (its orientation changing); `system.display.onDisplayChanged` follows. */
   onScreenChange(listener: () => void): void
   exec(request: ExecRequest): Promise<unknown>
@@ -798,6 +812,18 @@ export class ExtensionApi {
         if (!this.holdsPermission(ext, SYSTEM_DISPLAY_PERMISSION))
           throw new Error(SYSTEM_DISPLAY_NO_PERMISSION_ERROR)
         return answerSystemDisplay(method, this.host.screen())
+      case 'system.cpu':
+        // The phone's processors in Chrome's shape (`systemInfo.ts`) over what Kotlin reads,
+        // for an extension that declared the permission (Speechify's background at start).
+        if (!this.holdsPermission(ext, SYSTEM_CPU_PERMISSION))
+          throw new Error(SYSTEM_CPU_NO_PERMISSION_ERROR)
+        if (method === 'getInfo') return cpuInfo(await this.host.cpu())
+        break
+      case 'system.memory':
+        if (!this.holdsPermission(ext, SYSTEM_MEMORY_PERMISSION))
+          throw new Error(SYSTEM_MEMORY_NO_PERMISSION_ERROR)
+        if (method === 'getInfo') return memoryInfo(await this.host.memory())
+        break
       case 'proxy':
         // `proxy.settings`, a ChromeSetting over the WebView's proxy override (`extensionProxy.ts`).
         return this.proxy.call(ext, method, args)

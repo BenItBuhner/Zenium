@@ -101,6 +101,7 @@ import { TabGroupsApi } from './tabGroups'
 import { SystemDisplayApi } from './systemDisplay'
 import { electronDisplayScreen } from './systemDisplayBridge'
 import { SystemStorageApi } from './systemStorage'
+import { SystemInfoApi } from './systemInfo'
 import { TabCaptureApi } from './tabCapture'
 import { electronStreamRegistrar } from './tabCaptureBridge'
 import { TabsApi } from './tabs'
@@ -215,6 +216,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly instanceId: InstanceIdApi
   readonly systemDisplay: SystemDisplayApi
   readonly systemStorage: SystemStorageApi
+  readonly systemInfo: SystemInfoApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
   readonly offscreen: OffscreenApi
@@ -315,6 +317,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.instanceId = new InstanceIdApi(this)
     this.systemDisplay = new SystemDisplayApi(this, electronDisplayScreen())
     this.systemStorage = new SystemStorageApi(this)
+    this.systemInfo = new SystemInfoApi(this)
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
@@ -350,6 +353,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       instanceID: this.instanceId.handlers,
       'system.display': this.systemDisplay.handlers,
       'system.storage': this.systemStorage.handlers,
+      'system.cpu': this.systemInfo.cpuHandlers,
+      'system.memory': this.systemInfo.memoryHandlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
       offscreen: this.offscreen.handlers,

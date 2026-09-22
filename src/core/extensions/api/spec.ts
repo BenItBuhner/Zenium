@@ -17,6 +17,7 @@ import { OFFSCREEN_PERMISSION, OFFSCREEN_REASON_CONSTANTS } from './offscreen'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
 import { SYSTEM_DISPLAY_PERMISSION } from './systemDisplay'
+import { SYSTEM_CPU_PERMISSION, SYSTEM_MEMORY_PERMISSION } from './systemInfo'
 import { SYSTEM_STORAGE_CONSTANTS, SYSTEM_STORAGE_PERMISSION } from './systemStorage'
 import {
   DESKTOP_CAPTURE_PERMISSION,
@@ -787,6 +788,20 @@ export const API_SPEC: ApiSpec = {
     events: { onAttached: {}, onDetached: {} },
     constants: SYSTEM_STORAGE_CONSTANTS,
     permissions: [SYSTEM_STORAGE_PERMISSION]
+  },
+  // The processors and the memory in Chrome's shape (`systemInfo.ts`), each host over its own
+  // numbers (the phone's `Runtime` / `ActivityManager` and the `/proc` files its sandbox lets it
+  // read, the desktop's `os`); for extensions declaring the permission only (Speechify's
+  // background reads `system.cpu.getInfo` at start).
+  'system.cpu': {
+    methods: { getInfo: { params: [] } },
+    events: {},
+    permissions: [SYSTEM_CPU_PERMISSION]
+  },
+  'system.memory': {
+    methods: { getInfo: { params: [] } },
+    events: {},
+    permissions: [SYSTEM_MEMORY_PERMISSION]
   },
   // The keyword comes from the manifest; the URL bar asks through `onInputChanged(text, suggest)`.
   omnibox: {

@@ -386,6 +386,14 @@ class Extensions(private val host: Host) {
                     main.post { reply(detected) }
                 }
             }
+            "ext.system.cpu" -> {
+                // `/proc` reads are file IO (and refused by the sandbox as often as not): off the main thread.
+                io.execute {
+                    val reading = SystemInfo.cpu()
+                    main.post { reply(reading) }
+                }
+            }
+            "ext.system.memory" -> reply(SystemInfo.memory(host.activity))
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
     }

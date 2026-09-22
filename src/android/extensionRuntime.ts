@@ -100,6 +100,7 @@ import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { webViewProxyOverride } from './extensionProxy'
+import type { RawCpuReading, RawMemoryReading } from '@core/extensions/api/systemInfo'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
 import type { ViewEventPayloads } from './views'
 
@@ -1254,6 +1255,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       return bytes === null ? null : new TextDecoder().decode(bytes)
     }
     return this.bridge.call<string | null>('ext.readFile', { id, path: relative })
+  }
+
+  cpu(): Promise<RawCpuReading> {
+    return this.bridge.call<RawCpuReading>('ext.system.cpu')
+  }
+
+  memory(): Promise<RawMemoryReading> {
+    return this.bridge.call<RawMemoryReading>('ext.system.memory')
   }
 
   async detectTextLanguage(text: string): Promise<DetectedLanguage> {

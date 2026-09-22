@@ -373,9 +373,6 @@ export function createEmulatedEngine(
     return undefined
   }
 
-  const notImplemented = (qualified: string): Promise<never> =>
-    Promise.reject(new Error(`chrome.${qualified} is not implemented on Zenium for Android`))
-
   // --- messaging ---------------------------------------------------------------------------------
 
   type MessageTarget = { extensionId?: string | null; tabId?: unknown; options?: unknown }
@@ -646,18 +643,8 @@ export function createEmulatedEngine(
         }
       }
     }
-    // `system.display` and `system.storage` are the table's, for the extensions that declared
-    // them (`engineSpec.ts`); the host answers from the phone's screen and its no devices.
-    chrome.system = {
-      cpu: {
-        getInfo: (...args: unknown[]) =>
-          settle(notImplemented('system.cpu.getInfo'), takeCallback(args))
-      },
-      memory: {
-        getInfo: (...args: unknown[]) =>
-          settle(notImplemented('system.memory.getInfo'), takeCallback(args))
-      }
-    }
+    // `system.display`, `system.storage`, `system.cpu` and `system.memory` are the table's, for
+    // the extensions that declared them (`engineSpec.ts`); the host answers each.
   }
 
   // --- the shim over the engine ------------------------------------------------------------------
