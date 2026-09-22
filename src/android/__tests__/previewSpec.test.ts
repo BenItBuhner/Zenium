@@ -346,6 +346,20 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('overview')).toEqual({ kind: 'overview' })
     expect(parsePreviewSpec('overview=1')).toEqual({ kind: 'overview' })
     expect(parsePreviewSpec('find=x&overview')).toEqual({ kind: 'find', text: 'x' })
+    // Steps once the grid is up: the header's menu into the select-tabs mode, a card picked, a
+    // card's hold sheet by a resting finger (`press`); an empty list leaves the key off.
+    expect(
+      parsePreviewSpec('overview&then=tap:More;tap:Select Tabs;tap:Coffee;press:Tea;bogus:x')
+    ).toEqual({
+      kind: 'overview',
+      then: [
+        { kind: 'tap', text: 'More' },
+        { kind: 'tap', text: 'Select Tabs' },
+        { kind: 'tap', text: 'Coffee' },
+        { kind: 'press', text: 'Tea' }
+      ]
+    })
+    expect(parsePreviewSpec('overview&then=')).toEqual({ kind: 'overview' })
   })
 
   it('treats idle, an unknown overlay and junk as idle', () => {

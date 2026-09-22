@@ -1248,11 +1248,18 @@ export class Browser {
     this.emit('bookmark.allTabs', { tabIds: pages.map((t) => t.id), defaultTitle }, win)
   }
 
+  /**
+   * One new folder with a bookmark per page among `tabIds`, in tab order, and a toast saying so
+   * – unless `quiet`, for a caller that toasts the result itself (the phone overview's Bookmark
+   * all adds Open to its); with no page to file the toast is the core's either way, since
+   * nothing came back for the caller to report.
+   */
   createBookmarksFromTabs(
     tabIds: readonly string[],
     title: string,
     parentId: string,
-    win: ZenWindow
+    win: ZenWindow,
+    quiet = false
   ): BookmarkNode | null {
     const list = tabIds.map((id) => this.tabs.tab(id)).filter((t): t is Tab => Boolean(t))
     const folder = this.bookmarks.bookmarkTabs(
@@ -1264,6 +1271,7 @@ export class Browser {
       this.toast('There are no pages to bookmark.', 'info', win)
       return null
     }
+    if (quiet) return folder
     const count = this.bookmarks.getChildren(folder.id).length
     this.toast(
       `Bookmarked ${count} ${count === 1 ? 'tab' : 'tabs'} in “${folder.title}”`,
@@ -2716,8 +2724,8 @@ export class Browser {
       'bookmark.openInWindow': ({ ids, private: isPrivate }, win) =>
         this.openBookmarksInWindow(ids, isPrivate, win),
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
-      'bookmark.createFromTabs': ({ tabIds, title, parentId }, win) =>
-        this.createBookmarksFromTabs(tabIds, title, parentId, win),
+      'bookmark.createFromTabs': ({ tabIds, title, parentId, quiet }, win) =>
+        this.createBookmarksFromTabs(tabIds, title, parentId, win, quiet ?? false),
       'bookmark.contextMenu': ({ ids, folderId, x, y, keyboard, surface }, win) =>
         this.menus.showBookmarkContextMenu(
           ids,
