@@ -8,8 +8,14 @@ vi.mock('electron', () => ({
   session: { fromPartition: () => ({}) }
 }))
 
-const { CookiePolicyEnforcer, ElectronSiteData, cookieCovers, cookieOrigin, cookieUrl, originReadings } =
-  await import('../siteData')
+const {
+  CookiePolicyEnforcer,
+  ElectronSiteData,
+  cookieCovers,
+  cookieOrigin,
+  cookieUrl,
+  originReadings
+} = await import('../siteData')
 
 type ChangedListener = (event: unknown, cookie: Cookie, cause: string, removed: boolean) => void
 
@@ -41,7 +47,11 @@ class FakeSession {
           const domain = (c.domain ?? '').replace(/^\./, '')
           if (!domain) return false
           const hostOnly = !(c.domain ?? '').startsWith('.')
-          if (hostOnly ? u.hostname !== domain : !(u.hostname === domain || u.hostname.endsWith(`.${domain}`)))
+          if (
+            hostOnly
+              ? u.hostname !== domain
+              : !(u.hostname === domain || u.hostname.endsWith(`.${domain}`))
+          )
             return false
           if (c.secure && u.protocol !== 'https:') return false
           return u.pathname.startsWith(c.path ?? '/')
@@ -141,7 +151,7 @@ describe('ElectronSiteData', () => {
     )
   })
 
-  it('lists a host\'s cookies under the origin the user visited, since a cookie knows no port or scheme', async () => {
+  it("lists a host's cookies under the origin the user visited, since a cookie knows no port or scheme", async () => {
     const ses = new FakeSession([
       cookie('visit', '127.0.0.1', false),
       cookie('a', '.example.com'),
@@ -232,7 +242,12 @@ describe('ElectronSiteData', () => {
     // A host-only cookie of the parent is not the subdomain's: `example`'s own stays when
     // `www.example` is cleared; an origin without a host clears nothing.
     const two = new FakeSession([cookie('own', 'example', false), cookie('dom', '.example', false)])
-    expect(await new ElectronSiteData(sessions({ default: two })).clearCookies('default', 'https://www.example/')).toBe(1)
+    expect(
+      await new ElectronSiteData(sessions({ default: two })).clearCookies(
+        'default',
+        'https://www.example/'
+      )
+    ).toBe(1)
     expect(two.jar.map((c) => c.name)).toEqual(['own'])
     expect(await host.clearCookies('default', 'not a url')).toBe(0)
     expect(cookieCovers({ domain: 'a.example', hostOnly: true }, 'www.a.example')).toBe(false)

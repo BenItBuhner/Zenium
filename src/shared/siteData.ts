@@ -129,7 +129,10 @@ const LIST_STATE: Record<SiteDataList, SiteDataState> = {
  * Chrome's content settings order theirs; on a tie between lists the block list wins, then the
  * clear-on-exit list. Nothing matching is the default.
  */
-export function resolveSiteData(policy: SiteDataPolicy, url: string | SiteAddress): SiteDataResolution {
+export function resolveSiteData(
+  policy: SiteDataPolicy,
+  url: string | SiteAddress
+): SiteDataResolution {
   let best: { list: SiteDataList; pattern: ReturnType<typeof matchSitePatterns> } | null = null
   for (const list of ['block', 'clearOnExit', 'allow'] as const) {
     const pattern = matchSitePatterns(policy[list], url)
@@ -290,23 +293,26 @@ export function compareSiteDataRows(a: SiteDataOriginRow, b: SiteDataOriginRow):
   return a.origin < b.origin ? -1 : a.origin > b.origin ? 1 : 0
 }
 
-export const SITE_DATA_DEFAULT_LABELS: Record<SiteDataDefault, { label: string; description: string }> =
-  {
-    allow: {
-      label: 'Allow all cookies',
-      description: 'Sites can use cookies to keep you signed in and remember your preferences, embedded sites included.'
-    },
-    'block-third-party': {
-      label: 'Block third-party cookies',
-      description:
-        'Sites can use their own cookies. Sites embedded in other sites are governed by the third-party cookie setting.'
-    },
-    'block-all': {
-      label: 'Block all cookies',
-      description:
-        'No site can use cookies unless it is on the allowed list. Many sites will not work as expected.'
-    }
+export const SITE_DATA_DEFAULT_LABELS: Record<
+  SiteDataDefault,
+  { label: string; description: string }
+> = {
+  allow: {
+    label: 'Allow all cookies',
+    description:
+      'Sites can use cookies to keep you signed in and remember your preferences, embedded sites included.'
+  },
+  'block-third-party': {
+    label: 'Block third-party cookies',
+    description:
+      'Sites can use their own cookies. Sites embedded in other sites are governed by the third-party cookie setting.'
+  },
+  'block-all': {
+    label: 'Block all cookies',
+    description:
+      'No site can use cookies unless it is on the allowed list. Many sites will not work as expected.'
   }
+}
 
 export const SITE_DATA_LIST_LABELS: Record<SiteDataList, string> = {
   allow: 'Sites that can always use cookies',

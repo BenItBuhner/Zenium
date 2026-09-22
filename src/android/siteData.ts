@@ -70,11 +70,16 @@ export class AndroidSiteData implements SiteDataHost {
 }
 
 /** One origin row as the core takes it; null for an entry without an origin. */
-export function originReadingFromNative(raw: Partial<NativeOriginReading> | null): SiteDataOriginReading | null {
+export function originReadingFromNative(
+  raw: Partial<NativeOriginReading> | null
+): SiteDataOriginReading | null {
   if (!raw || typeof raw.origin !== 'string' || !raw.origin) return null
-  const cookies = typeof raw.cookies === 'number' && Number.isFinite(raw.cookies) ? Math.max(0, raw.cookies) : 0
+  const cookies =
+    typeof raw.cookies === 'number' && Number.isFinite(raw.cookies) ? Math.max(0, raw.cookies) : 0
   const usage =
-    typeof raw.usageBytes === 'number' && Number.isFinite(raw.usageBytes) ? Math.max(0, raw.usageBytes) : null
+    typeof raw.usageBytes === 'number' && Number.isFinite(raw.usageBytes)
+      ? Math.max(0, raw.usageBytes)
+      : null
   return { origin: raw.origin, cookies, usageBytes: usage }
 }
 
