@@ -44,9 +44,10 @@ import kotlin.math.roundToInt
  *  7. the check row ticked with an `alert`: the page's next `confirm` and `alert` are answered at
  *     once with no sheet, until a reload starts a new visit, whose first dialog shows again
  *     without the row;
- *  8. an `alert` a background tab raises (a timer after a pill fling to the other tab) is
- *     answered as a dismissal at once – nothing shows on the other tab, the call returns – since
- *     the WebView's one renderer waits in the call for every page and for the chrome;
+ *  8. an `alert` a background tab raises (a 12 s timer the page armed on a touch, a pill swipe to
+ *     the other tab in between) is answered as a dismissal at once – nothing shows on the other
+ *     tab, the call returns – since the WebView's one renderer waits in the call for every page
+ *     and for the chrome;
  *  9. the sheet is modal and the chrome waits with the page: while the sheet is up the chrome's
  *     JavaScript does not answer (the §9.23 proof), a touch on the page under the scrim is the
  *     scrim's – the dialog cancelled, the page's button under it not pressed – and the chrome
@@ -327,19 +328,56 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         expect("alert() returned", awaitLog { it.getInt("alerts") == 1 })
     }
 
-    /** 8. A background tab's alert is answered as a dismissal at once: nothing shows on the other tab, the call returns. */
+    /**
+     * 8. A background tab's alert is answered as a dismissal at once: nothing shows on the other
+     * tab, the call returns. The page arms a [LATER_MS] timer on a touch; the swipe to the other
+     * tab comes first, and the scene reads nothing off the chrome while a sheet could be up (a
+     * sheet the demo tab raised while still on screen would hold the chrome's word).
+     */
     private fun backgroundTabScene() {
         finding("\n8. A dialog from a background tab is answered at once, unseen: the one renderer waits in the call for every page")
+        // The chrome has just taken a sheet down and re-laid the bar: a quiet moment before the pill is touched.
+        SystemClock.sleep(2_500)
         val before = pageLog()
+        val armed = SystemClock.uptimeMillis()
         tapPage("#later")
-        flingLeft()
-        expect("the pill fling made the other tab active", awaitUntil(6_000) { activeTabId() == OTHER })
-        val seen = sheetsSeenFor(5_000)
-        expect("the background page's alert() returned at once", awaitLog(6_000) { it.getInt("alerts") == before.getInt("alerts") + 1 })
-        expect("nothing showed for it on the other tab ($seen sheets seen), which stays active", seen == 0 && sheetRoot(SAYS) == null && activeTabId() == OTHER)
+        val switched = switchTo(OTHER, +1, "the pill swipe to the next tab")
+        if (sheetRoot(SAYS) != null) {
+            expect("the demo tab was still on screen when its alert fired, ${SystemClock.uptimeMillis() - armed} ms after the touch: nothing of the scene can be read", false)
+            sheet(SAYS)?.let { answer(it, "OK") }
+            return
+        }
+        expect("the other tab is active ${SystemClock.uptimeMillis() - armed} ms after the touch, well inside the page's ${LATER_MS / 1000} s timer", switched)
+        still("background-other-tab")
+        // The timer runs out; the call must return with no sheet on the way.
+        val deadline = armed + LATER_MS + LOOKUP_WAIT
+        var returned = false
+        var shown = false
+        var seen = 0
+        var up = appWindows() > 1
+        while (SystemClock.uptimeMillis() < deadline) {
+            val now = appWindows() > 1
+            if (now && !up) seen++
+            up = now
+            if (now && sheetRoot(SAYS) != null) {
+                shown = true
+                break
+            }
+            if (!now && pageLog().getInt("alerts") == before.getInt("alerts") + 1) {
+                returned = true
+                break
+            }
+            SystemClock.sleep(POLL_MS)
+        }
+        if (shown) {
+            expect("the background page's alert() raised a sheet over the other tab", false)
+            sheet(SAYS)?.let { answer(it, "OK") }
+        } else {
+            expect("the background page's alert() returned, ${SystemClock.uptimeMillis() - armed} ms after the touch, with nobody to answer it", returned)
+            expect("nothing showed for it on the other tab ($seen sheets seen), which stays active", seen == 0 && activeTabId() == OTHER)
+        }
         still("background-dismissed")
-        flingRight()
-        expect("the fling back made the demo tab active", awaitUntil(6_000) { activeTabId() == DEMO })
+        expect("the swipe back makes the demo tab active", switchTo(DEMO, -1, "the pill swipe back to the demo tab"))
         SystemClock.sleep(1_500)
         expect("nothing is pending for it: no sheet on the return", sheetRoot(SAYS) == null)
         still("background-returned")
@@ -709,6 +747,48 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
     }
 
     /**
+     * A real pill swipe to the next (`direction` +1) or the previous (-1) tab, and true once the
+     * core names `tabId` active. The swipe is settled the way the emulator needs ([settleIn]: the
+     * slop crossed along the track, then the finger still while the chrome takes the page's
+     * snapshot on the software GPU, then the swipe): a quick fling right after a sheet has gone
+     * down reaches the chrome as one batched move at the app's 3–5 frames a second and moves the
+     * track not at all. A swipe the emulator dropped all the same is noted, and the core's own
+     * `tab.activate` – what the swipe ends in – switches instead, so the scene can still be read.
+     */
+    private fun switchTo(tabId: String, direction: Int, what: String): Boolean {
+        finding("  $what")
+        swipeTabs(direction)
+        if (awaitSwitch(tabId)) return true
+        if (appWindows() > 1) return false
+        finding("  (the swipe did not take on the emulator: the core's tab.activate switches instead)")
+        fireCore("tab.activate", JSONObject().put("tabId", tabId).toString())
+        return awaitSwitch(tabId)
+    }
+
+    /** The swipe of [switchTo], from the pill's end the finger sets out from. */
+    private fun swipeTabs(direction: Int) {
+        val f = Finger()
+        f.down(if (direction > 0) pill.right - 10f else pill.left + 10f, pillY)
+        f.settleIn(-direction * NUDGE, 0f)
+        f.moveBy(-direction * (SWIPE_FRACTION * width - NUDGE), 0f, 300)
+        f.up()
+    }
+
+    /**
+     * Whether the core comes to name `tabId` active within [SWITCH_WAIT]. The chrome is asked
+     * only while no sheet is up: a page's dialog holds the renderer, and the chrome's word with it.
+     */
+    private fun awaitSwitch(tabId: String): Boolean {
+        val deadline = SystemClock.uptimeMillis() + SWITCH_WAIT
+        while (true) {
+            if (appWindows() > 1) return false
+            if (runCatching { activeTabId() }.getOrDefault("") == tabId) return true
+            if (SystemClock.uptimeMillis() >= deadline) return false
+            SystemClock.sleep(POLL_MS)
+        }
+    }
+
+    /**
      * Open the overview with a touch on the bar's Tabs button (the count trails its label); a
      * touch the emulator's lag turns into a hold is dismissed and tried again.
      */
@@ -937,6 +1017,12 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         private const val TOUCH_TOOK_WAIT = 2_500L
         /** And for a touch whose outcome is a sheet rising over a page going away: longer. */
         private const val SHEET_WAIT = 6_000L
+        /** The page's `#later` timer (its script): the room a settled swipe and its check have before the alert. */
+        private const val LATER_MS = 12_000L
+        /** How long a pill swipe has to end in the core naming the other tab active ([awaitSwitch]). */
+        private const val SWITCH_WAIT = 3_000L
+        /** The swipe's travel as a share of the screen's width: well past the track's commit distance (90 CSS px). */
+        private const val SWIPE_FRACTION = 0.40f
         /** The sheet's own tree is a few dozen nodes; the activity's is thousands (the WebViews): how far a walk goes. */
         private const val SHEET_NODES = 200
         private const val SHALLOW_NODES = 60
