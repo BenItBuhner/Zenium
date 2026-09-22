@@ -178,8 +178,11 @@ reset_device() {
 failure_reason() { # dir
   local file
   for file in $(find "$1" -name 'instrument*.txt' 2> /dev/null | sort); do
-    grep -m1 -E 'check\(s\) failed|touch\(es\) did not take|REDUCED_MOTION|did not take|Process crashed|INSTRUMENTATION_ABORTED|shortMsg=|Error|Exception|never reached' "$file" 2> /dev/null \
-      | sed -E 's/^INSTRUMENTATION_(STATUS|RESULT): (stack|stream|shortMsg)=//' | tr -d '\r' | head -c 300 && return 0
+    # The thrown exception's own line first (JUnit's "Error in record(…):" header above it says
+    # nothing), then whatever else the instrumentation printed about the failure.
+    { grep -m1 -E '^(java|kotlin|org|android)\.[A-Za-z0-9_.$]+(Error|Exception)\b' "$file" 2> /dev/null \
+      || grep -m1 -E 'check\(s\) failed|touch\(es\) did not take|REDUCED_MOTION|did not take|Process crashed|INSTRUMENTATION_ABORTED|shortMsg=|Error|Exception|never reached' "$file" 2> /dev/null; } \
+      | sed -E 's/^INSTRUMENTATION_(STATUS|RESULT): (stack|stream|shortMsg)=//' | tr -d '\r' | head -c 300 | grep . && return 0
   done
   return 1
 }
