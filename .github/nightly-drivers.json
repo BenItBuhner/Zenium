@@ -928,8 +928,8 @@
         "DEMO_RECORD": "0"
       },
       "timeout": 1200,
-      "estimate": 8,
-      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own)."
+      "estimate": 9,
+      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own). The estimate carries the group fold's four scenes (about a minute of the profile)."
     },
     {
       "id": "menu-perf",
