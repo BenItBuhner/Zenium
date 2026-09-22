@@ -1185,6 +1185,7 @@ export class ExtensionApi {
       typeof details.code === 'string'
         ? details.code
         : await this.host.readFile(id, String(details.file ?? ''))
+    const fromFile = typeof details.file === 'string'
     const cssId = typeof details.file === 'string' ? details.file : (code ?? '')
     await this.injectFrames(frames, (frameId) =>
       this.host.exec({
@@ -1192,7 +1193,7 @@ export class ExtensionApi {
         tabId: target.id,
         frameId,
         kind: 'css',
-        payload: { id: cssId, code: code ?? '' },
+        payload: { id: cssId, code: code ?? '', file: fromFile },
         code: null,
         files: null,
         funcSource: null,
@@ -1371,14 +1372,16 @@ export class ExtensionApi {
         const tab = resolveTab()
         const frames = this.targetFrames(ext, tab, target)
         const remove = method === 'removeCSS'
-        const sheets: Array<{ id: string; code: string }> = []
+        // A file's text is localized by the frame (`__MSG_@@extension_id__`, the extension's
+        // messages) as Chrome localizes it; an inline `css` string is injected as written.
+        const sheets: Array<{ id: string; code: string; file: boolean }> = []
         if (typeof injection.css === 'string') {
-          sheets.push({ id: injection.css, code: injection.css })
+          sheets.push({ id: injection.css, code: injection.css, file: false })
         } else {
           for (const file of asStringArray(injection.files)) {
             const text = remove ? '' : await this.host.readFile(id, file)
             if (!remove && text === null) throw new Error(`Could not load file: '${file}'.`)
-            sheets.push({ id: file, code: text ?? '' })
+            sheets.push({ id: file, code: text ?? '', file: true })
           }
         }
         await this.injectFrames(frames, async (frameId) => {
@@ -1388,7 +1391,7 @@ export class ExtensionApi {
               tabId: tab.id,
               frameId,
               kind: 'css',
-              payload: { id: sheet.id, code: sheet.code, remove },
+              payload: { id: sheet.id, code: sheet.code, remove, file: sheet.file },
               code: null,
               files: null,
               funcSource: null,

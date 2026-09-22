@@ -8,6 +8,7 @@ import type {
   IsolationMode,
   UnitWorld
 } from '@core/extensions/runtime/boot'
+import { localizeCss } from '@core/extensions/api/i18n'
 import type { FrameContext } from '@core/extensions/api/matchPattern'
 import { decideFrameBoot } from '@core/extensions/runtime/frameBoot'
 import {
@@ -408,6 +409,17 @@ declare const __zenExtBoot: Boot
     if (entry instanceof CSSStyleSheet)
       document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== entry)
     else entry.remove()
+  }
+
+  /**
+   * A CSS file of the extension's, as Chrome injects it: its `__MSG_name__` placeholders
+   * substituted, `__MSG_@@extension_id__` first (`i18n.ts`). Steam Inventory Helper's sheet
+   * names its images `url(chrome-extension://__MSG_@@extension_id__/...)`; unsubstituted, none
+   * loaded. Substituted once per key: `injectCss` keeps the sheet by it.
+   */
+  function injectCssFile(ext: ExtensionBoot, key: string, text: string): void {
+    if (adopted.has(key)) return
+    injectCss(key, localizeCss(text, ext.id, boot.config.uiLanguage, ext.messages))
   }
 
   // --- page mode (background page, popup, options, offscreen, extension tab) -------------------
@@ -829,7 +841,8 @@ declare const __zenExtBoot: Boot
       if (fetchRelay) root.fetch = fetchRelay.fetch
       // The scope's `URL` is the page's subclassed, an extension URL's origin patched
       // (extensionUrlOrigin.ts); in the store too, the page's own `URL` untouched.
-      if (typeof realWindow.URL === 'function') root.URL = scopedUrlClass(realWindow.URL)
+      if (typeof realWindow.URL === 'function')
+        root.URL = scopedUrlClass(realWindow.URL as typeof URL)
       // A module the content script imports evaluates on the real global, not in the proxy's
       // scope: the host brackets the served module text, and this accessor answers the
       // extension's `chrome` there while the module's body runs (extensionModuleChrome.ts).
@@ -877,7 +890,7 @@ declare const __zenExtBoot: Boot
     for (const path of group.css) {
       const key = `${scope.ext.id}/${path}`
       const text = cssTexts[key]
-      if (text !== undefined) injectCss(key, text)
+      if (text !== undefined) injectCssFile(scope.ext, key, text)
     }
     const fn = sources[`${scope.ext.id}/${group.index}`]
     if (fn) {
@@ -930,6 +943,7 @@ declare const __zenExtBoot: Boot
       id?: unknown
       code?: unknown
       remove?: unknown
+      file?: unknown
       world?: unknown
       messaging?: unknown
     }
@@ -943,6 +957,8 @@ declare const __zenExtBoot: Boot
     if (kind === 'css') {
       const key = `${ext.id}/#${String(options.id ?? options.code ?? '')}`
       if (options.remove) removeCss(key)
+      // A file's text is localized as a manifest sheet is; an inline `css` string is not (Chrome).
+      else if (options.file === true) injectCssFile(ext, key, String(options.code ?? ''))
       else injectCss(key, String(options.code ?? ''))
       return null
     }

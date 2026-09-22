@@ -27,7 +27,7 @@
  * { portId, accept, error? }, portMsg { portId, data }, portDisconnect { portId, error? }.
  */
 import { ENGINE_NOOPS, ENGINE_STUB_RESULTS, engineApiSpec, namespaceGranted } from './engineSpec'
-import { getMessage, normalizeSubstitutions, type LocaleMessages } from './i18n'
+import { getMessage, normalizeSubstitutions, predefinedMessages, type LocaleMessages } from './i18n'
 import { redirectUrl } from './identity'
 import {
   installExtensionApi,
@@ -555,8 +555,12 @@ export function createEmulatedEngine(
   const contentScript = config.context === 'content'
 
   if (!userScript) {
+    // The predefined messages answer as in Chrome: `@@extension_id` (the id, what a script
+    // builds its resource URLs from), `@@ui_locale`, the `@@bidi_*` four.
+    const predefined = predefinedMessages(config.uiLanguage, config.id)
     chrome.i18n = {
       getMessage: (name: unknown, substitutions?: unknown) =>
+        predefined[String(name).toLowerCase()] ??
         getMessage(config.messages, String(name), normalizeSubstitutions(substitutions)),
       getUILanguage: () => config.uiLanguage,
       getAcceptLanguages: (...args: unknown[]) =>
