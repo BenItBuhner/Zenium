@@ -4,6 +4,7 @@ import type { Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { stageStore } from '@renderer/lib/gestures/stage'
+import { onboardingCovers } from '@renderer/lib/onboarding'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { activeTab } from '@renderer/lib/selectors'
 import { type UiState } from '@renderer/lib/ui'
@@ -74,7 +75,9 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
       else void openTabletDrawer(activeTabId)
     } else run('sidebar.toggleExpanded', undefined)
   }
-  const onboarding = !state.settings.onboardingDone && state.window.kind === 'synced'
+  // The profile window's first run (the terms the URL bar waits on too, `onboardingUp`); a
+  // popup or app window never reaches this shell.
+  const onboarding = onboardingCovers(state)
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
   // The window surfaces are on the private theme (blending to it): a private tab is in view, or
   // the overview shows the private pane (§9.29; MOT-14).
