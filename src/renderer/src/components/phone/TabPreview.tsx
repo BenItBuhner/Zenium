@@ -9,6 +9,7 @@ import { cn } from '@renderer/lib/utils'
 import { CoverImage } from '../content/CoverImage'
 import { SettingsPreview } from '../pages/settings/SettingsPreview'
 import { Favicon } from '../sidebar/Favicon'
+import { placeholderPx } from './tabPlaceholder'
 
 interface Props {
   tab: Tab
@@ -90,6 +91,7 @@ export function TabPreview({
   }
   const host = getHost(tab.url).replace(/^www\./, '')
   const blank = isEmptyTabUrl(tab.url)
+  const [iconPx, titlePx, hostPx] = placeholderPx(scale)
   return (
     <div
       className={cn(
@@ -98,18 +100,15 @@ export function TabPreview({
       )}
       style={style}
     >
-      <Favicon tab={tab} size={Math.round(36 * scale)} />
+      <Favicon tab={tab} size={iconPx} />
       <div className="flex min-w-0 max-w-full flex-col items-center gap-1">
-        <span
-          className="max-w-full truncate font-semibold"
-          style={{ fontSize: Math.round(15 * scale) }}
-        >
+        <span className="max-w-full truncate font-semibold" style={{ fontSize: titlePx }}>
           {blank ? 'New Tab' : tabTitle(tab) || host}
         </span>
         {!blank && host && (
           <span
             className="max-w-full truncate text-[var(--zen-muted)]"
-            style={{ fontSize: Math.round(12 * scale) }}
+            style={{ fontSize: hostPx }}
           >
             {host}
           </span>

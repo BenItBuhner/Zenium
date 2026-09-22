@@ -357,7 +357,11 @@ describe('NewTabService: preloading', () => {
     view.events.onNavigated('https://adopted.example/', false)
     view.events.onCrashed('crashed', 11)
     expect(view.loads.at(-1)).toBe(
-      errorPageUrl(CRASH_ERROR_CODE, 'SIGSEGV', 'https://adopted.example/')
+      // The URL carries the default theme's accent, as every error page's does (§9.11).
+      errorPageUrl(CRASH_ERROR_CODE, 'SIGSEGV', 'https://adopted.example/', null, {
+        light: '#6264dc',
+        dark: '#8284f0'
+      })
     )
     expect(f.browser.tabs.tab(tab.id)?.errorCode).toBe(CRASH_ERROR_CODE)
   })

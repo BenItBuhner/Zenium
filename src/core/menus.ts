@@ -2327,12 +2327,32 @@ export class Menus {
   /**
    * Context menu of one visit on the history page. "Select" picks the row on the page (the page's
    * selection is a mode entered from here, by Ctrl/Shift-click or Ctrl+A; the checkboxes show
-   * while it lasts) so several can be removed at once.
+   * while it lasts) so several can be removed at once. A row that names a page but no visit –
+   * a tab from another device in the page's "Tabs from other devices" group (ID-28) – asks with
+   * `visitId` null and gets the page's items alone: nothing of it is in this device's history to
+   * select or remove.
    */
-  showHistoryContextMenu(visitId: string, url: string, win: ZenWindow, anchor?: MenuAnchor): void {
+  showHistoryContextMenu(
+    visitId: string | null,
+    url: string,
+    win: ZenWindow,
+    anchor?: MenuAnchor
+  ): void {
     const { tabs, history, state } = this.browser
     const caps = state.capabilities
     const host = getDomain(url)
+    const visit: Template =
+      visitId === null
+        ? []
+        : [
+            { type: 'separator' },
+            { label: 'Select', click: () => this.browser.emit('history.select', { visitId }, win) },
+            { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
+            {
+              label: 'Forget About This Page',
+              click: () => history.deleteUrls([url])
+            }
+          ]
     this.popup(
       [
         {
@@ -2353,13 +2373,7 @@ export class Menus {
           : []),
         { type: 'separator' },
         { label: 'Copy Link', click: () => this.browser.platform.clipboard.writeText(url) },
-        { type: 'separator' },
-        { label: 'Select', click: () => this.browser.emit('history.select', { visitId }, win) },
-        { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
-        {
-          label: 'Forget About This Page',
-          click: () => history.deleteUrls([url])
-        },
+        ...visit,
         { type: 'separator' },
         {
           // Chrome's "More from this site": the History page searching the host

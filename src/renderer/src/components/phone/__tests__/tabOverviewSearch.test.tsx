@@ -2,14 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type {
-  ClosedEntrySummary,
-  Folder,
-  Space,
-  SyncDeviceTabs,
-  Tab,
-  UIState
-} from '@shared/types'
+import type { ClosedEntrySummary, Folder, Space, SyncDeviceTabs, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { BLANK_URL } from '@shared/url'

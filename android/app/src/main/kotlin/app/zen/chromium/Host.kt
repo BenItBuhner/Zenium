@@ -36,6 +36,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebViewRenderProcess
+import androidx.webkit.WebViewRenderProcessClient
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionStore
@@ -65,6 +67,24 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val permissions = Permissions(this)
     override val security = Security(this)
     override val downloads = Downloads(activity, this)
+    /**
+     * How the shared renderer went, for the pages that were on screen, across the chrome's
+     * rebuild (ERR-15); and whether it is answering, for the unresponsive-page prompt (ERR-16).
+     * Both before the chrome: its WebView hooks into them as it is built.
+     */
+    val rendererExits = RendererExits { SystemClock.elapsedRealtime() }
+    val unresponsive = UnresponsivePolicy { SystemClock.elapsedRealtime() }
+    private var unresponsivePrompt: UnresponsivePrompt? = null
+    /**
+     * Every WebView of the app reports the one renderer (`WebViewRenderProcessClient`, API 29+
+     * WebView 78+): the callbacks arrive on the main thread, each view's for the same moment.
+     */
+    private val rendererClient = if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_CLIENT_BASIC_USAGE)) {
+        object : WebViewRenderProcessClient() {
+            override fun onRenderProcessUnresponsive(view: WebView, renderer: WebViewRenderProcess?) = onRendererUnresponsive(view)
+            override fun onRenderProcessResponsive(view: WebView, renderer: WebViewRenderProcess?) = onRendererResponsive()
+        }
+    } else null
     var chrome = ChromeWebView(activity, this)
         private set
     override val tabs = TabHost(root, this)
@@ -138,6 +158,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     init {
         // Spilled bodies the last chrome document never released (it, or the process, went away).
         io.execute(handoff::sweep)
+    }
+    /**
+     * The device's online / offline word for the chrome's banner, toast and self-reloading
+     * error pages (ERR-06 / ERR-07): the `connectivity` host event, and `online` in the boot payload.
+     */
+    val connectivity = Connectivity(activity, main) { online -> chrome.hostEvent("connectivity", json("online" to online)) }
+
+    init {
+        connectivity.start()
     }
     /** The share sheet, in both directions (after `io`: it fetches on it). */
     val share = Share(this, io)
@@ -286,6 +315,121 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun backChanged() = back.refresh()
     override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)
 
+    // --- the shared renderer: gone (ERR-15), or not answering (ERR-16) -------------------------------
+
+    /** The tabs whose pages are on screen right now: the ones a renderer exit is about. */
+    private fun visibleTabIds(): List<String> = tabs.all().filter { it.visibility == View.VISIBLE }.map { it.tabId }
+
+    /**
+     * The lifecycle gate on a renderer exit: the activity's window is on screen (at least
+     * STARTED). Stopped, the app is away and the exit is nobody's crash – the system reclaiming
+     * a background renderer, the commonest exit – so the pages come back quietly; neither the
+     * tabs' `View.VISIBLE` (which does not know the activity stopped) nor the renderer's priority
+     * at exit (IMPORTANT under the default policy, WebView showing or not) can tell that.
+     */
+    private fun windowUp(): Boolean = activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+
+    override fun rendererGone(tab: TabWebView, didCrash: Boolean, priorityAtExit: Int): JSONObject? {
+        val exit = rendererExits.gone(didCrash, priorityAtExit, windowUp(), visibleTabIds())
+        if (exit != null) Log.w(TAG, "renderer exit: $exit (first report from ${tab.tabId})")
+        // Whatever the prompt was about is over with the renderer.
+        endUnresponsivePrompt()
+        return rendererExits.peek(tab.tabId)?.let { json("reason" to it.reason, "repeat" to it.repeat) }
+    }
+
+    override fun watchRenderer(view: WebView) {
+        val client = rendererClient ?: return
+        runCatching { WebViewCompat.setWebViewRenderProcessClient(view, client) }
+            .onFailure { Log.w(TAG, "no renderer client on this WebView: ${it.javaClass.simpleName}") }
+    }
+
+    /**
+     * The renderer left an input or a navigation unanswered for the platform's delay: the prompt
+     * (ERR-16 / OS-36), once, for the page in front – the one the user was working, whichever
+     * WebView reported first – while the window is up to show it; the callbacks keep coming
+     * while the renderer stays hung, so one missed here is asked again.
+     */
+    private fun onRendererUnresponsive(view: WebView) {
+        if (!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        if (unresponsive.unresponsive() != UnresponsivePolicy.Action.SHOW) return
+        val front = tabs.all().firstOrNull { it.visibility == View.VISIBLE }
+        val site = UnresponsiveSite.of(front?.url)
+        Log.w(TAG, "renderer unresponsive (reported by ${tabs.tabIdOf(view) ?: "the chrome"}); asking about $site")
+        val prompt = UnresponsivePrompt(activity, themeDark, site, front?.favicon,
+            onWait = {
+                unresponsivePrompt = null
+                unresponsive.waited()
+            },
+            onExit = {
+                unresponsivePrompt = null
+                unresponsive.ended()
+                exitHungPage()
+            })
+        unresponsivePrompt = prompt
+        prompt.show()
+    }
+
+    private fun onRendererResponsive() {
+        if (unresponsive.responsive() == UnresponsivePolicy.Action.DISMISS) {
+            Log.i(TAG, "renderer responsive again; the prompt goes")
+            unresponsivePrompt?.dismiss()
+            unresponsivePrompt = null
+        }
+    }
+
+    /** The prompt, if up, without an answer: the renderer went, or the chrome is being rebuilt. */
+    private fun endUnresponsivePrompt() {
+        unresponsive.ended()
+        unresponsivePrompt?.dismiss()
+        unresponsivePrompt = null
+    }
+
+    /**
+     * Exit page: the renderer is ended, as Chrome ends a hung page's, with the pages on screen
+     * recorded as ended for not responding – the rebooted core shows each the crash page's
+     * `hung` variant with Reload – and the chrome is rebuilt around a fresh renderer.
+     */
+    private fun exitHungPage() {
+        Log.w(TAG, "exit page: ending the hung renderer")
+        endRenderer(RendererExits.Exit.HUNG)
+    }
+
+    /** End the renderer with the pages on screen recorded as gone the way `exit` says (Exit page: [RendererExits.Exit.HUNG]). */
+    private fun endRenderer(exit: RendererExits.Exit) {
+        rendererExits.ending(exit, visibleTabIds())
+        terminateRenderer(chrome)
+    }
+
+    /**
+     * The demo harness's hook ([DebugHooks]; the plan's `zen.debug.endRenderer`): end the shared
+     * renderer with the pages on screen recorded as gone the way `exit` says – as
+     * [RendererExits.Exit.CRASH] for the crash page, since a WebView has no `chrome://crash` and
+     * `WebViewRenderProcess.terminate()` alone reads as the system's kill (the memory page).
+     * Debuggable builds alone act (`BuildConfig.DEBUG`, decided as the boot payload's
+     * `holdBackgroundWork` is); the answer says whether it did. A Kotlin method for the
+     * instrumentation in the app's process: not a bridge method, not on any `window`.
+     */
+    fun debugEndRenderer(exit: RendererExits.Exit): Boolean {
+        if (!DebugHooks.enabled(BuildConfig.DEBUG)) {
+            Log.w(TAG, "debugEndRenderer: not a debuggable build; nothing done")
+            return false
+        }
+        Log.w(TAG, "debugEndRenderer: ending the renderer as $exit")
+        endRenderer(exit)
+        return true
+    }
+
+    /**
+     * The word recorded for `tabId`'s page as the rebooted core loads it again: its `crashed`
+     * event, after the load the core set up, so the crash page it answers with supersedes that
+     * load (over the restored list, whose entries the page keeps).
+     */
+    private fun deliverRendererExit(tabId: String) {
+        val report = rendererExits.take(tabId) ?: return
+        Log.w(TAG, "the page of $tabId comes back as the crash page (${report.reason}${if (report.repeat) ", again within the minute" else ""})")
+        viewEvent(tabId, "crashed", json("reason" to report.reason, "repeat" to report.repeat))
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Dispatch
     // ---------------------------------------------------------------------------------------------
@@ -325,6 +469,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "readAloud" to readAloud.available,
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
                 "touchExploration" to touchExploration,
+                // The device's connectivity at boot; changes follow as `connectivity` host events.
+                "online" to connectivity.online,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).
                 "deviceModel" to Build.MODEL,
                 // A screen lock (or biometric) the device can verify the user with: the "Lock
@@ -460,10 +606,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.bind" -> { tabs.bind(args.str("viewId"), args.str("tabId")); reply(null) }
-            "view.load" -> { tab?.loadUrl(args.str("url")); reply(null) }
+            // A load the rebooted core sets up for a page whose renderer went with it in front
+            // (`deliverRendererExit`): the crash page's word follows the reply and supersedes it.
+            "view.load" -> {
+                tab?.loadUrl(args.str("url"))
+                reply(null)
+                if (tab != null) deliverRendererExit(tab.tabId)
+            }
             "view.loadHtml" -> {
                 tab?.loadHtml(args.str("url"), args.str("html"), args.strOrNull("baseUrl"), args.optJSONObject("document")?.let(PdfViewer::documentOf))
                 reply(null)
+                if (tab != null) deliverRendererExit(tab.tabId)
             }
             "view.back" -> { if (tab?.canGoBack() == true) tab.goBack(); reply(null) }
             "view.forward" -> { if (tab?.canGoForward() == true) tab.goForward(); reply(null) }
@@ -473,7 +626,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.goToIndex" -> { tab?.goToIndex(args.optInt("index", -1)); reply(null) }
             // `{ restored: false }` leaves the load to the core (one path for every fallback, the
             // internal pages' document included): a `loadUrl` here would load the page twice.
-            "view.restoreNavigation" -> reply(json("restored" to (tab?.restoreNavigation(args.arr("entries"), args.optInt("index", -1), args.strOrNull("hostState")) ?: false)))
+            "view.restoreNavigation" -> {
+                val restored = tab?.restoreNavigation(args.arr("entries"), args.optInt("index", -1), args.strOrNull("hostState")) ?: false
+                reply(json("restored" to restored))
+                // A restored list is loading its current entry; a refused one has the core load
+                // it next. Either way the crash page's word, when there is one, comes after.
+                if (tab != null) deliverRendererExit(tab.tabId)
+            }
             "view.reload" -> {
                 if (args.bool("ignoreCache")) tab?.clearCache(false)
                 tab?.reload()
@@ -1555,6 +1714,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             HostLifecycle.Repair.TERMINATE -> {
                 Log.e(TAG, "wake probe: chrome renderer unresponsive; ending the renderer process")
+                // The host's own doing, not a crash: the pages come back as themselves.
+                rendererExits.ending(RendererExits.Exit.BACKGROUND, emptyList())
                 terminateRenderer(target)
             }
         }
@@ -1577,11 +1738,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             runCatching { process.terminate() }.getOrDefault(false)
         if (!ended) {
             Log.w(TAG, "the renderer process could not be ended; rebuilding the chrome in place")
+            // No onRenderProcessGone is coming for an exit that did not happen.
+            rendererExits.expectationOver()
             rebuildChrome(target)
             return
         }
         val fallback = Runnable {
             pendingRepair = null
+            rendererExits.expectationOver()
             if (chrome === target) {
                 Log.w(TAG, "no onRenderProcessGone after ending the renderer; rebuilding the chrome anyway")
                 rebuildChrome(target)
@@ -1627,9 +1791,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * without a word to a chrome that is gone, swap in a fresh chrome WebView in the same place
      * and let it boot the core again from the persisted profile: the same path as a cold start,
      * which recreates every tab from `state.json` and reloads the pages on screen. A chrome that
-     * dies again right away is retried with a growing delay rather than in a tight loop.
+     * dies again right away is retried with a growing delay rather than in a tight loop. How the
+     * renderer went is recorded first (a tab's report may have got in before this one): the
+     * pages that were on screen come back as the crash page's variant (ERR-15).
      */
-    fun onChromeGone(dead: ChromeWebView) = rebuildChrome(dead)
+    fun onChromeGone(dead: ChromeWebView, didCrash: Boolean, priorityAtExit: Int) {
+        if (dead === chrome) {
+            val exit = rendererExits.gone(didCrash, priorityAtExit, windowUp(), visibleTabIds())
+            if (exit != null) Log.w(TAG, "renderer exit: $exit (first report from the chrome)")
+        }
+        rebuildChrome(dead)
+    }
 
     /**
      * Replace the chrome WebView (and every tab, which shares its renderer) with a fresh one that
@@ -1640,7 +1812,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private fun rebuildChrome(dead: ChromeWebView) {
         if (dead !== chrome || activity.isFinishing || activity.isDestroyed) return
         cancelProbe()
+        endUnresponsivePrompt()
         tabs.dropAll()
+        // The exit recorded for the pages on screen is for the core that boots in the fresh chrome.
+        rendererExits.chromeRebuilt()
         navigation.clear()
         // Spilled bodies the dead chrome never released would otherwise stay for the process lifetime.
         io.execute(handoff::sweep)
@@ -1666,6 +1841,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     fun destroy() {
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
+        connectivity.stop()
         extensions.destroy()
         cancelProbe()
         media.destroy()
