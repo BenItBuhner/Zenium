@@ -378,7 +378,10 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
         void this.compile(parts)
           .then((output) => {
             this.compiledInBackground++
-            this.adopt(FiltersEngine.deserialize(output.engine), DocumentFilters.parse([output.documents]))
+            this.adopt(
+              FiltersEngine.deserialize(output.engine),
+              DocumentFilters.parse([output.documents])
+            )
             this.forgetUsed(used)
             this.writeCache(fingerprint, output.engine, output.documents)
           })
@@ -404,7 +407,8 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
   }
 
   private forgetUsed(used: Map<string, string>): void {
-    for (const [id, text] of used) if (this.pendingText.get(id) === text) this.pendingText.delete(id)
+    for (const [id, text] of used)
+      if (this.pendingText.get(id) === text) this.pendingText.delete(id)
   }
 
   private finishBuild(): void {
