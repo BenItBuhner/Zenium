@@ -902,6 +902,20 @@
       "note": "The wrapper sets the device PIN and lets its authentication age 75 s; the runner clears the PIN after."
     },
     {
+      "id": "fonts-languages-ui",
+      "class": "FontsLanguagesUiDemo",
+      "shard": "phone-d",
+      "mirrors": "android-fonts-languages-demo.yml",
+      "dir": "fonts-languages-demo",
+      "env": {
+        "DEMO_THEME": "light",
+        "DEMO_ARGS": "-e holdBackgroundWork true"
+      },
+      "timeout": 900,
+      "estimate": 7,
+      "note": "The workflow's arguments; fetches the en → de translation model over the network for Reader View's Translate."
+    },
+    {
       "id": "sheet-leave",
       "class": "SheetLeaveDemo",
       "shard": "api35",

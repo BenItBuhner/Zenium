@@ -220,7 +220,7 @@ describe('the Translate rows', () => {
           tabs: {
             t1: {
               tabId: 't1',
-              status: 'offer',
+              status: 'offered',
               source: 'fr',
               confidence: 0.9,
               target: 'en',
