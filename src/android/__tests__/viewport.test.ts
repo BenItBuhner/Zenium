@@ -122,7 +122,10 @@ describe('the viewport controller', () => {
     expect(controller.current().deviceWidth).toBe(640)
 
     controller.update(
-      config({ desktop: { default: true, sites: {} }, zoom: { default: 1.25, sites: {}, scale: 1 } }, 640)
+      config(
+        { desktop: { default: true, sites: {} }, zoom: { default: 1.25, sites: {}, scale: 1 } },
+        640
+      )
     )
     expect(meta.getAttribute('content')).toBe('width=512, initial-scale=1.25')
     expect(viewportMetas()).toHaveLength(1)

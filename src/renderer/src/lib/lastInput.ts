@@ -81,7 +81,11 @@ export function watchLastInput(target: Window = window): () => void {
 }
 
 const flags = globalThis as unknown as { __zenLastInputWatched?: boolean }
-if (!flags.__zenLastInputWatched && typeof window !== 'undefined' && typeof document !== 'undefined') {
+if (
+  !flags.__zenLastInputWatched &&
+  typeof window !== 'undefined' &&
+  typeof document !== 'undefined'
+) {
   flags.__zenLastInputWatched = true
   watchLastInput()
 }
