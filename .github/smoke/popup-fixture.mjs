@@ -5,18 +5,41 @@
 // the way "Sign in with Google" opens its pop-up from inside its accounts.google.com iframe. The
 // pop-up keeps the frame as its opener and pings it through postMessage; every document records
 // what it saw on its window (`window.__smoke`) for the harness to read.
+//
+// The same server carries the cookie pages of the clear-on-exit scenario (#310's on-exit run):
+// `/cookie-set.html` answers with a persistent first-party `Set-Cookie` and a redirect to
+// `/cookie.html`, which shows what `document.cookie` holds and sets nothing – so a tab restored
+// on it at the next launch sets nothing either. Every request is logged with the `Cookie` header
+// it carried: what the browser sent, read off the wire.
 import http from 'node:http'
 
 /** Where the frame sits in the top document (CSS pixels); its button fills the whole frame. */
 export const FRAME_RECT = { left: 40, top: 60, width: 640, height: 400 }
 
+/**
+ * The cookie `/cookie-set.html` sets: persistent (a day, so the jar writes it to disk and a
+ * plain quit keeps it), the whole site, sent on same-site requests.
+ */
+export const FIXTURE_COOKIE = { name: 'zenium_smoke', value: 'set-by-the-fixture', maxAge: 86400 }
+
+/** The path that sets {@link FIXTURE_COOKIE} and lands on the page that reads it. */
+export const COOKIE_SET_PATH = '/cookie-set.html'
+/** The page that reads the cookie back and sets nothing. */
+export const COOKIE_PATH = '/cookie.html'
+
+/** The `Set-Cookie` header for {@link FIXTURE_COOKIE}. */
+export function fixtureSetCookieHeader(cookie = FIXTURE_COOKIE) {
+  return `${cookie.name}=${cookie.value}; Max-Age=${cookie.maxAge}; Path=/; SameSite=Lax`
+}
+
 const html = (title, body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head>` +
   `<body style="margin:0;font:16px sans-serif">${body}</body></html>`
 
-/** The three documents for a server reachable as `topOrigin` and `frameOrigin`. */
+/** The documents for a server reachable as `topOrigin` and `frameOrigin`. */
 export function fixturePages({ topOrigin, frameOrigin }) {
   const { left, top, width, height } = FRAME_RECT
+  const cookieName = FIXTURE_COOKIE.name
   return {
     '/': html(
       'Pop-up fixture',
@@ -57,25 +80,53 @@ window.__roundTrip = new Promise((resolve) => {
 })
 if (window.opener) window.opener.postMessage({ type: 'smoke-ping', from: location.origin }, '*')
 </script>`
+    ),
+    // The cookie page reads its cookie once, as the document loads, and shows what it found in
+    // letters an OS-level screenshot can read; `window.__smoke` keeps the reading for the harness.
+    [COOKIE_PATH]: html(
+      'Cookie fixture',
+      `<h1 id="cookie" style="margin:48px 40px 16px;font-size:44px;font-weight:600">Reading the cookie…</h1>
+<p style="margin:0 40px;font-size:22px;color:#555">What document.cookie holds on ${topOrigin}: the fixture's <code>${cookieName}</code> cookie, or none.</p>
+<script>
+(() => {
+  const pairs = document.cookie ? document.cookie.split('; ') : []
+  const has = pairs.some((pair) => pair.split('=')[0] === '${cookieName}')
+  window.__smoke = { origin: location.origin, cookie: document.cookie, has }
+  const heading = document.getElementById('cookie')
+  heading.textContent = has ? 'Cookie: ' + document.cookie : 'Cookie: none'
+  heading.style.color = has ? '#1b6e3a' : '#8a1c1c'
+})()
+</script>`
     )
   }
 }
 
 /**
  * Starts the server on 127.0.0.1 and names the two origins: `topOrigin` (127.0.0.1) for the top
- * page and the pop-up, `frameOrigin` (localhost, the same port) for the frame. `requests` lists
- * what was fetched – path, Host header, Sec-Fetch-Dest – so a run can show the frame really came
- * in as an iframe through the other host name. `close()` stops the server.
+ * page, the pop-up and the cookie pages, `frameOrigin` (localhost, the same port) for the frame.
+ * `requests` lists what was fetched – path, Host header, Sec-Fetch-Dest, the Cookie header – so
+ * a run can show the frame really came in as an iframe through the other host name, and whether
+ * the browser still sent the fixture's cookie. `close()` stops the server.
  */
 export function startPopupFixture() {
   const requests = []
   let pages = null
   const server = http.createServer((req, res) => {
     const { pathname } = new URL(req.url, 'http://fixture')
-    requests.push({ path: pathname, host: req.headers.host, dest: req.headers['sec-fetch-dest'] })
+    requests.push({
+      path: pathname,
+      host: req.headers.host,
+      dest: req.headers['sec-fetch-dest'],
+      cookie: req.headers.cookie
+    })
     res.setHeader('cache-control', 'no-store')
     if (pathname === '/favicon.ico') {
       res.writeHead(204)
+      res.end()
+      return
+    }
+    if (pathname === COOKIE_SET_PATH) {
+      res.writeHead(302, { 'set-cookie': fixtureSetCookieHeader(), location: COOKIE_PATH })
       res.end()
       return
     }
@@ -102,6 +153,8 @@ export function startPopupFixture() {
         topUrl: `${topOrigin}/`,
         frameUrl: `${frameOrigin}/frame.html`,
         popupUrl: `${topOrigin}/popup.html`,
+        cookieSetUrl: `${topOrigin}${COOKIE_SET_PATH}`,
+        cookieUrl: `${topOrigin}${COOKIE_PATH}`,
         requests,
         close: () =>
           new Promise((done) => {

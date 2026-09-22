@@ -86,7 +86,8 @@ jobs:
         # is not setuid and ubuntu-latest denies unprivileged user namespaces. Every profile lives
         # under a temporary XDG_CONFIG_HOME; the scenarios, their screenshots and result.json land
         # in smoke-out/unpacked. boot and restore run on every platform; the crash pair (a killed
-        # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only –
+        # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only
+        # (clear-on-exit too, in the step after this one) –
         # the walkthrough ends with a pop-up opened by a real xdotool click on a button inside a
         # cross-origin iframe of a local fixture (the #142 regressions: the frame's gesture must
         # reach the pop-up blocker and the pop-up's page must run the page preload). Known bugs
@@ -95,9 +96,23 @@ jobs:
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
           --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough --extra-args=--no-sandbox
+      - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
+        # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches
+        # (two profiles: one seeded with privacy.clearOnExit = cookies + cache, one owed a clear
+        # written into sitedata.json by hand) get their own log, result.json and screenshots under
+        # smoke-out/clear-on-exit. The cookie comes from the same local fixture server the
+        # walkthrough's pop-up step uses; the engine's clears are read off the main-process event
+        # log, the outcome off sitedata.json (no owed marker after the quit), the cookie's absence
+        # off the wire, the page and the jar.
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label clear-on-exit
+          --out "$SMOKE_OUT" --scenarios clear-on-exit --extra-args=--no-sandbox
       - name: Verdict (log and step summary)
         if: always()
-        run: node .github/smoke/verdict.mjs --out "$SMOKE_OUT" --expect unpacked --title linux-x64
+        run: >
+          node .github/smoke/verdict.mjs --out "$SMOKE_OUT" --expect unpacked,clear-on-exit
+          --title linux-x64
       - name: Sign-in fidelity smoke test
         # After the boot smoke and its verdict, so a failure here never hides the boot results.
         # Boots the packaged build under Xvfb on its own (no automation flags, so the check on
