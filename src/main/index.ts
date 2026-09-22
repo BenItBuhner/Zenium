@@ -10,6 +10,7 @@ import { installShellTasks } from './platform/shellTasks'
 import { runStdioShim } from './agent/shim'
 import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
 import { parseLaunchArgs, pathToFileUrl, type LaunchArgs } from '../shared/launchArgs'
+import { holdBackgroundWorkRequested } from './platform/backgroundWork'
 import type { Browser } from '../core/browser'
 
 app.setName('Zenium')
@@ -139,7 +140,11 @@ function main(): void {
     if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID)
     app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
-    const platform = new ElectronPlatform(app.getPath('userData'))
+    const platform = new ElectronPlatform(app.getPath('userData'), {
+      // The desktop demo drivers' hold on the startup sweeps (`--hold-background-work`; a normal
+      // launch never carries it): the core's `performance.releaseBackgroundWork` ends it.
+      holdBackgroundWork: holdBackgroundWorkRequested(process.argv)
+    })
     // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's
     // window comes up by itself, as Chrome's does; the browser windows wait for the first thing
     // that needs one (a link out of the app, the Dock, a second `zenium <url>`).

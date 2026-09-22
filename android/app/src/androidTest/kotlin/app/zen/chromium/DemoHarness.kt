@@ -141,6 +141,8 @@ abstract class DemoHarness(
             } catch (e: RuntimeException) {
                 Log.e(tag, "the frames record could not be settled", e)
             }
+            // The scenes are measured: the sweeps this run held may go.
+            releaseBackgroundWork()
         }
         // Tell the recorder to stop while the app is still on screen: the instrumentation's exit
         // kills the process, and the launcher must not be the last frame.
@@ -186,6 +188,7 @@ abstract class DemoHarness(
     protected fun launch() {
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        if (holdBackgroundWork) intent.putExtra(BackgroundWorkHold.EXTRA_HOLD, true)
         appLaunchedAt = SystemClock.uptimeMillis()
         activity = instrumentation.startActivitySync(intent)
         // The chrome is a WebView booting the browser core: wait for the address pill to show up.
@@ -1109,6 +1112,23 @@ abstract class DemoHarness(
         JankBudget.Gate.parse(InstrumentationRegistry.getArguments().getString(JANK_GATE_ARGUMENT))
 
     /**
+     * Whether this run holds the core's startup sweeps – the filter lists' and the Safe Browsing
+     * feeds' refreshes, 20 s and 35 s after boot, whose downloads and file writes would land in
+     * the measured scenes – until the sequence is over: the `holdBackgroundWork` instrumentation
+     * argument (`DEMO_ARGS="-e holdBackgroundWork true"`), off when absent. [launch] puts the
+     * extra on the intent and [runDemo] releases the hold after the frames are settled.
+     */
+    protected val holdBackgroundWork: Boolean =
+        InstrumentationRegistry.getArguments().getString(HOLD_BACKGROUND_WORK_ARGUMENT) == "true"
+
+    /** End the hold on the core's startup sweeps ([Host.releaseBackgroundWork]); nothing without one. */
+    protected fun releaseBackgroundWork() {
+        if (!holdBackgroundWork) return
+        instrumentation.runOnMainSync { (activity as? MainActivity)?.host?.releaseBackgroundWork() }
+        Log.i(tag, "background work released")
+    }
+
+    /**
      * Every scene measured so far, in order, with the verdicts as they stand (settled at the end
      * of the run); for a driver that wants to write them down itself. (Named for the frames:
      * `scenes` alone is a driver's own word for which of ITS scenes run, ChromeA11yDemo's `scenes`
@@ -1577,6 +1597,12 @@ abstract class DemoHarness(
         const val MENU_HANDLE_LABEL = "Resize menu"
         /** The instrumentation argument the gate is read from (`-e jankGate hard`). */
         const val JANK_GATE_ARGUMENT = "jankGate"
+        /**
+         * The instrumentation argument that holds the core's startup sweeps for the run
+         * (`-e holdBackgroundWork true`): the launch intent carries [BackgroundWorkHold.EXTRA_HOLD],
+         * and [releaseBackgroundWork] ends the hold once the sequence is over.
+         */
+        const val HOLD_BACKGROUND_WORK_ARGUMENT = "holdBackgroundWork"
         /** The frames record in the run's findings: one JSON line per measured scene, and the tables. */
         const val FRAMES_RECORD = "frames.jsonl"
         const val FRAMES_TABLES = "frames.txt"

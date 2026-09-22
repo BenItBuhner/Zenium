@@ -163,6 +163,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * a release build never reads it. An instrumentation driver sets it on the activity's host.
      */
     @Volatile var netOriginOverride: String? = null
+
+    /**
+     * End the demo harness's hold on the core's startup sweeps ([BackgroundWorkHold]): the held
+     * filter-list and Safe Browsing refreshes run now. Main thread; idempotent, and nothing where
+     * nothing was held. An instrumentation driver calls it once its measured scenes are over.
+     */
+    fun releaseBackgroundWork() = chrome.hostEvent(BackgroundWorkHold.RELEASE_EVENT, null)
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
@@ -307,7 +314,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // A screen lock (or biometric) the device can verify the user with: the "Lock
                 // private tabs when you leave Zenium" switch is enabled (`PrivateLock`); the lock
                 // itself is never on at boot (it lives in memory).
-                "screenLock" to reauth.available()
+                "screenLock" to reauth.available(),
+                // The demo harness's hold on the startup sweeps (`BackgroundWorkHold`): the launch
+                // intent's extra, honoured by debuggable builds alone; false in every normal run.
+                "holdBackgroundWork" to BackgroundWorkHold.requested(
+                    activity.intent?.getBooleanExtra(BackgroundWorkHold.EXTRA_HOLD, false) == true,
+                    BuildConfig.DEBUG
+                )
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
