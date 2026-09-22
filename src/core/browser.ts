@@ -935,9 +935,13 @@ export class Browser {
     // the sheet where Downloads is a sheet – the phone layout; a tablet, whose Downloads is a
     // page tab as the desktop's, gets nothing over the page (Chrome opens no tab for a
     // download). Let any tab switch paint first so the sheet can dim a snapshot of the page
-    // behind it.
+    // behind it. A sheet already up stays up with the new row on top (`reveal`: the chrome
+    // toggles only a repeat request of the user's).
     if (!this.state.capabilities.windows && !this.pages.opensPageAsTab('downloads', win)) {
-      setTimeout(() => this.pages.open('downloads', undefined, win), 200)
+      setTimeout(
+        () => this.pages.open('downloads', undefined, win, undefined, { reveal: true }),
+        200
+      )
     }
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined

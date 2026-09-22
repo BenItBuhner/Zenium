@@ -394,9 +394,9 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Never unload these domains'
   ],
   downloads: [
-    'Save files to',
+    'Location',
     'Open the downloads folder',
-    'Always ask where to save files',
+    'Ask where to save each file',
     'Show the downloads when a download finishes',
     'Show the downloads when a download starts',
     'Always show the downloads button',

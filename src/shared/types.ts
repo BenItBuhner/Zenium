@@ -4700,8 +4700,19 @@ export interface Events {
    * chrome shows it over the page, prefilled with `title` and `url`.
    */
   'newtab.shortcutDialog': { tabId: string; id: string | null; title: string; url: string }
-  /** `tabId`: the tab the overlay is about (the print preview prints it), else the active one. */
-  'overlay.open': { kind: OverlayKind; folderId?: string; section?: string; tabId?: string }
+  /**
+   * `tabId`: the tab the overlay is about (the print preview prints it), else the active one.
+   * `reveal`: the overlay is being brought up for something that happened (a download began:
+   * the phone's Downloads sheet), not asked for again by the user – one already open stays open
+   * instead of toggling closed.
+   */
+  'overlay.open': {
+    kind: OverlayKind
+    folderId?: string
+    section?: string
+    tabId?: string
+    reveal?: boolean
+  }
   /**
    * Bookmarks > Import Bookmarks and Settings… (Chrome's `chrome://settings/importData`): the
    * chrome opens Settings on its Import category with the import dialog up over it.

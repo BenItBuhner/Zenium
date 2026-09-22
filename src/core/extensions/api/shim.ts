@@ -85,6 +85,15 @@ export interface ShimOptions {
    * withheld (an emulated engine loads the manifest as declared).
    */
   withheld?: { required: string[]; optional: string[] }
+  /**
+   * The API permissions granted to the extension as the host holds them
+   * (`permissions.getAll().permissions`: the manifest's required ones and the optional ones
+   * granted so far). With it, a permission-gated namespace exists only while one of its
+   * permissions is granted, as in Chrome, and follows the grants: `permissions.request` defines
+   * it, `permissions.remove` takes it away, in every context of the extension. Absent (an
+   * emulated engine, no host to ask): a declared permission counts as granted.
+   */
+  granted?: string[]
 }
 
 /**
@@ -220,6 +229,19 @@ export function installExtensionApi(
           .filter(availableHere)
       : []
   )
+  /**
+   * The granted API permissions (`ShimOptions.granted`), kept current from `permissions.onAdded`
+   * / `onRemoved` and the answers to `permissions.request` / `remove` made here; null when the
+   * host gave none, when declaring is what counts.
+   */
+  const granted: Set<string> | null = Array.isArray(options?.granted)
+    ? new Set(options.granted.filter((p): p is string => typeof p === 'string'))
+    : null
+  /** Whether a declared permission is active: granted, or (without a host view) declared. */
+  function permissionActive(permission: string): boolean {
+    if (!declaredPermissions.includes(permission)) return false
+    return granted ? granted.has(permission) : true
+  }
   const extensionUrl: string =
     safely(() => String(chrome.runtime.getURL(''))) ??
     (typeof real.location === 'object' && real.location
@@ -1348,17 +1370,29 @@ export function installExtensionApi(
   // Generic namespaces from the table
   // ---------------------------------------------------------------------------
 
-  /** Permission-gated namespaces exist for extensions declaring one (or when the engine made one). */
-  function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
-    if (!nsSpec.permissions) return true
-    if (nsSpec.permissions.some((p) => declaredPermissions.includes(p))) return true
-    return isObject(safely(() => memberAt(roots[0], namespace)))
+  /** Permission-gated namespaces the engine made itself, seen before the shim patched them. */
+  const engineMade = new Set<string>()
+  for (const [namespace, nsSpec] of Object.entries(spec)) {
+    if (nsSpec.permissions && isObject(safely(() => memberAt(roots[0], namespace)))) {
+      engineMade.add(namespace)
+    }
   }
 
-  /** Permission-gated events (`runtime.onUserScriptMessage`) exist for extensions declaring one. */
+  /**
+   * Permission-gated namespaces exist while one of their permissions is active (or when the
+   * engine made one): Chrome leaves an optional namespace undefined until `permissions.request`
+   * grants it, and defines it then.
+   */
+  function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
+    if (!nsSpec.permissions) return true
+    if (nsSpec.permissions.some(permissionActive)) return true
+    return engineMade.has(namespace)
+  }
+
+  /** Permission-gated events (`runtime.onUserScriptMessage`) exist while a permission is active. */
   function eventAllowed(eventSpec: EventSpec): boolean {
     if (!eventSpec.permissions) return true
-    return eventSpec.permissions.some((p) => declaredPermissions.includes(p))
+    return eventSpec.permissions.some(permissionActive)
   }
 
   /** The toggles the host gave; a toggled namespace is installed only while its toggle is on. */
@@ -1403,6 +1437,31 @@ export function installExtensionApi(
     }
   }
 
+  function installEvent(
+    namespace: string,
+    nsSpec: NamespaceSpec,
+    name: string,
+    eventSpec: EventSpec,
+    targets: Any[]
+  ): void {
+    if (nsSpec.eventStyle === 'webRequest') {
+      // The engine's event objects never fire (see the spec); replaced, native or not.
+      const object = webRequestEvent(namespace, name, eventSpec)
+      for (const target of targets) define(target, name, object)
+      return
+    }
+    const fullName = `${namespace}.${name}`
+    const primary = targets[0]
+    const native = safely(() => primary[name])
+    const keepNative = eventSpec.keepNative || Boolean(nsSpec.shape)
+    if (keepNative && native && typeof native.addListener === 'function') return
+    const object = createEvent(fullName, native, {
+      nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame',
+      filters: eventSpec.filters === true
+    })
+    for (const target of targets) define(target, name, object)
+  }
+
   function installNamespace(namespace: string, nsSpec: NamespaceSpec): void {
     installedNamespaces.add(namespace)
     const targets = roots.map((root) => namespaceOn(root, namespace))
@@ -1416,22 +1475,7 @@ export function installExtensionApi(
     }
     for (const [name, eventSpec] of Object.entries(nsSpec.events)) {
       if (!eventAllowed(eventSpec)) continue
-      if (nsSpec.eventStyle === 'webRequest') {
-        // The engine's event objects never fire (see the spec); replaced, native or not.
-        const object = webRequestEvent(namespace, name, eventSpec)
-        for (const target of targets) define(target, name, object)
-        continue
-      }
-      const fullName = `${namespace}.${name}`
-      const primary = targets[0]
-      const native = safely(() => primary[name])
-      const keepNative = eventSpec.keepNative || Boolean(nsSpec.shape)
-      if (keepNative && native && typeof native.addListener === 'function') continue
-      const object = createEvent(fullName, native, {
-        nativeDelivers: Boolean(eventSpec.nativeInFrames) && host.kind === 'frame',
-        filters: eventSpec.filters === true
-      })
-      for (const target of targets) define(target, name, object)
+      installEvent(namespace, nsSpec, name, eventSpec, targets)
     }
     for (const [object, settings] of Object.entries(nsSpec.settings ?? {})) {
       const holders = targets.map((target) => namespaceOn(target, object))
@@ -1463,6 +1507,99 @@ export function installExtensionApi(
       continue
     }
     installNamespace(namespace, nsSpec)
+  }
+
+  /**
+   * The granted set moved (the host's `__zen.grants` after a `permissions.request` / `remove` in
+   * any context, or one answered to this context): the namespaces and events it gates follow, as
+   * Chrome's bindings do when an extension's permissions change (defined on a grant, deleted on
+   * a removal). Nothing to do without the host's view of the grants.
+   */
+  function applyGrantChange(added: readonly string[], removed: readonly string[]): void {
+    if (!granted) return
+    let moved = false
+    for (const permission of added) {
+      if (!granted.has(permission)) moved = true
+      granted.add(permission)
+    }
+    for (const permission of removed) {
+      if (granted.delete(permission)) moved = true
+    }
+    if (!moved) return
+    for (const [namespace, nsSpec] of Object.entries(spec)) {
+      if (nsSpec.manifestVersion && nsSpec.manifestVersion !== manifestVersion) continue
+      const allowed = namespaceAllowed(namespace, nsSpec)
+      const present = installedNamespaces.has(namespace) || toggledOff.has(namespace)
+      if (allowed && !present) {
+        if (toggleOn(nsSpec)) installNamespace(namespace, nsSpec)
+        else defineToggledOff(namespace, nsSpec)
+        continue
+      }
+      if (!allowed && present) {
+        installedNamespaces.delete(namespace)
+        toggledOff.delete(namespace)
+        for (const root of roots) safely(() => Reflect.deleteProperty(root, namespace))
+        continue
+      }
+      if (!allowed || !installedNamespaces.has(namespace)) continue
+      // A namespace that stays: its permission-gated events come and go on their own.
+      const targets = roots.map((root) => namespaceOn(root, namespace))
+      for (const [name, eventSpec] of Object.entries(nsSpec.events)) {
+        if (!eventSpec.permissions) continue
+        const has = isObject(safely(() => targets[0][name]))
+        if (eventAllowed(eventSpec) && !has)
+          installEvent(namespace, nsSpec, name, eventSpec, targets)
+        else if (!eventAllowed(eventSpec) && has) {
+          for (const target of targets) safely(() => Reflect.deleteProperty(target, name))
+        }
+      }
+    }
+  }
+
+  /** The host's whole granted set (`__zen.grants`): what it adds and takes away, applied. */
+  function applyGrants(next: readonly string[]): void {
+    if (!granted) return
+    applyGrantChange(
+      next.filter((p) => !granted.has(p)),
+      [...granted].filter((p) => !next.includes(p))
+    )
+  }
+
+  /** The API permissions named by a `permissions.request` / `remove` argument (or a grant set). */
+  function permissionsNamed(details: unknown): string[] {
+    if (!isObject(details) || !Array.isArray(details.permissions)) return []
+    return details.permissions.filter((p): p is string => typeof p === 'string')
+  }
+
+  // `permissions.request` / `remove` answered true: the namespaces follow before the caller
+  // hears the answer, as in Chrome (the host tells every other context through `onAdded` /
+  // `onRemoved`; this context need not wait for that to arrive).
+  if (granted && spec.permissions) {
+    for (const root of roots) {
+      const permissionsApi = namespaceOn(root, 'permissions')
+      for (const [name, direction] of [
+        ['request', 'added'],
+        ['remove', 'removed']
+      ] as const) {
+        const routed: unknown = safely(() => permissionsApi[name])
+        if (!isFunction(routed)) continue
+        define(permissionsApi, name, function (this: unknown, ...raw: unknown[]): unknown {
+          const callback = takeCallback(raw)
+          const named = permissionsNamed(raw[0])
+          const answer: Any = routed.apply(this, raw)
+          if (!answer || typeof answer.then !== 'function') return answer
+          const qualified = `permissions.${name}(object permissions)`
+          const work = (answer as Promise<unknown>).then((value: unknown) => {
+            if (value === true) {
+              if (direction === 'added') applyGrantChange(named, [])
+              else applyGrantChange([], named)
+            }
+            return value
+          })
+          return settle(qualified, work, callback)
+        })
+      }
+    }
   }
 
   // The engine's `tabs.sendMessage` never reaches the user-script worlds: for an extension that
@@ -2725,6 +2862,7 @@ export function installExtensionApi(
     if (namespace === '__zen') {
       if (event === 'views' && Array.isArray(args[0])) views = args[0] as ExtensionView[]
       else if (event === 'toggles' && isObject(args[0])) applyToggles(args[0])
+      else if (event === 'grants') applyGrants(permissionsNamed(args[0]))
       else if (event === 'us-port') userScriptPortEvent(args[0])
       else if (event === 'sync-mirror' && mirror) void mirror.apply(args[0])
       return

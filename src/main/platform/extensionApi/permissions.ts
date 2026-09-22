@@ -133,8 +133,22 @@ export class PermissionsApi {
     }
     this.granted.set(ctx.extensionId, next)
     this.host.store.setGrants(ctx.extensionId, next)
+    this.pushGrants(ctx.extensionId, next)
     this.host.dispatch(ctx.extensionId, 'permissions', 'onAdded', [missing])
     return true
+  }
+
+  /**
+   * The granted set moved: every context of the extension learns the new set at once
+   * (`__zen.grants`), so the shim defines the namespaces a grant opens and deletes the ones a
+   * removal closes, as Chrome's bindings do, listeners on `permissions.onAdded` or not.
+   */
+  private pushGrants(extensionId: string, grants: PermissionSet): void {
+    const registry = this.host.registry
+    const payload = { permissions: [...grants.permissions] }
+    for (const context of [...registry.framesOf(extensionId), ...registry.workersOf(extensionId)]) {
+      registry.sendTo(context, '__zen', 'grants', [payload])
+    }
   }
 
   private remove(ctx: ApiContext, permissions: unknown): boolean {
@@ -157,6 +171,7 @@ export class PermissionsApi {
     if (removed.permissions.length === 0 && removed.origins.length === 0) return true
     this.granted.set(ctx.extensionId, next)
     this.host.store.setGrants(ctx.extensionId, next)
+    this.pushGrants(ctx.extensionId, next)
     this.host.dispatch(ctx.extensionId, 'permissions', 'onRemoved', [removed])
     return true
   }

@@ -18,6 +18,8 @@ import {
   SPLIT_GAP_TOUCH,
   viewCover
 } from '@renderer/lib/layout'
+import { layoutRectUnder } from '@renderer/lib/layoutRect'
+import { subscribePageRecede } from '@renderer/lib/motion/recede'
 import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { activeTab, isEmptySplitPane, visibleTabIds } from '@renderer/lib/selectors'
@@ -39,6 +41,16 @@ export interface LayoutInfo {
 /**
  * Measures the viewport element and tells the main process where every visible tab view goes.
  * Runs after paint so the report always matches what the chrome is showing.
+ *
+ * The measure is the viewport's LAYOUT box, not its painted one: under a phone sheet the content
+ * frame (`frameRef`) stands receded – scaled to .97 about its centre (main.css on `--zen-recede`,
+ * v2 §11.1) – and a `getBoundingClientRect()` taken through it read the page 20 to 24 CSS px
+ * short whenever something measured with a sheet up (a setting written from its picker, the
+ * keyboard rising under a sheet's field), with nothing measuring again once the sheet had gone:
+ * the page stood laid out short until the next hide or return (PERF-4's audit, the stale `page
+ * 783 vs 805` of every bar-hide run). The painted box is run back through the frame's computed
+ * transform (`lib/layoutRect.ts`), and the frame is measured once more the moment the recede
+ * returns to 0, so a measure that missed anything is put right at the rest.
  */
 function sameRect(prev: Rect | null, next: Rect | null): boolean {
   if (prev === null || next === null) return prev === next
@@ -52,6 +64,7 @@ function sameRect(prev: Rect | null, next: Rect | null): boolean {
 
 export function useLayoutReporter(
   viewportRef: RefObject<HTMLDivElement | null>,
+  frameRef: RefObject<HTMLElement | null>,
   sidePanelRef: RefObject<HTMLDivElement | null>,
   state: UIState,
   ui: UiState,
@@ -68,8 +81,8 @@ export function useLayoutReporter(
     const el = viewportRef.current
     if (!el) return
     const measure = (): void => {
-      const r = el.getBoundingClientRect()
-      const next = { x: r.left, y: r.top, width: r.width, height: r.height }
+      // The layout box: the painted one run back through the receded frame's transform.
+      const next = layoutRectUnder(el, frameRef.current)
       // Chrome that stands in for the page (the phone's gesture stage) lays out against it.
       if (!sameRect(contentAreaStore.get().area, next)) contentAreaStore.set({ area: next })
       setArea((prev) => (sameRect(prev, next) ? prev : next))
@@ -92,13 +105,21 @@ export function useLayoutReporter(
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     window.addEventListener('resize', measure)
+    // The frame at its rest once more: whatever was measured while it stood receded is measured
+    // again, now that nothing scales it (the sheet's landing, not its request – the value is 0
+    // only once the spring or the finger has brought the frame back).
+    const unsubscribeRecede = subscribePageRecede((page) => {
+      if (page === 0) measure()
+    })
     return () => {
       if (frame) cancelAnimationFrame(frame)
       ro.disconnect()
       window.removeEventListener('resize', measure)
+      unsubscribeRecede()
     }
   }, [
     viewportRef,
+    frameRef,
     formFactor,
     panelOpen,
     state.settings.sidebarSide,
