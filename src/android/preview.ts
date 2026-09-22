@@ -73,6 +73,13 @@ export const PREVIEW_CLIP_EVENT = 'zen-preview-clip'
 export const PREVIEW_SLOW_LOAD_EVENT = 'zen-preview-slow-load'
 
 /**
+ * A `CustomEvent` on `window`: every load this host is still holding back (PREVIEW_SLOW_LOAD_EVENT)
+ * lands now. The preview states send it as they reset, so the next state starts on the page and
+ * not on the one a held load was leaving.
+ */
+export const PREVIEW_SETTLE_LOADS_EVENT = 'zen-preview-settle-loads'
+
+/**
  * The web app the preview's pages can "declare": a cross-origin iframe cannot post its own
  * manifest, so the preview states post this one for the active tab the way a page script would
  * (`postPreviewManifest`). Written against `https://example.com/`, the tab the default profile
@@ -569,6 +576,11 @@ export function createPreviewBridge(): NativeBridge {
   window.addEventListener(PREVIEW_SLOW_LOAD_EVENT, (e) => {
     slowLoads.add(String((e as CustomEvent<unknown>).detail ?? ''))
   })
+  /** The loads held back and still on their way, by tab id: how each lands (PREVIEW_SETTLE_LOADS_EVENT). */
+  const heldLoads = new Map<string, () => void>()
+  window.addEventListener(PREVIEW_SETTLE_LOADS_EVENT, () => {
+    for (const land of [...heldLoads.values()]) land()
+  })
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
@@ -690,6 +702,7 @@ export function createPreviewBridge(): NativeBridge {
       const pendingReload = reloads.get(String(tabId))
       if (pendingReload !== undefined) window.clearTimeout(pendingReload)
       reloads.delete(String(tabId))
+      heldLoads.delete(String(tabId))
       viewEvent(String(tabId), 'destroyed', null)
     },
     'view.load': ({ tabId, url }) => {
@@ -724,15 +737,19 @@ export function createPreviewBridge(): NativeBridge {
       const pendingReload = reloads.get(String(tabId))
       if (pendingReload !== undefined) window.clearTimeout(pendingReload)
       reloads.delete(String(tabId))
+      heldLoads.delete(String(tabId))
       if (slowLoads.delete(String(tabId))) {
-        // Unhurried, as a reload is: the page on screen stays until the new one arrives.
-        reloads.set(
-          String(tabId),
-          window.setTimeout(() => {
-            reloads.delete(String(tabId))
-            show()
-          }, RELOAD_DELAY_MS)
-        )
+        // Unhurried, as a reload is: the page on screen stays until the new one arrives – on
+        // its own after the delay, or at once when the states settle the loads held back.
+        const land = (): void => {
+          const timer = reloads.get(String(tabId))
+          if (timer !== undefined) window.clearTimeout(timer)
+          reloads.delete(String(tabId))
+          heldLoads.delete(String(tabId))
+          show()
+        }
+        heldLoads.set(String(tabId), land)
+        reloads.set(String(tabId), window.setTimeout(land, RELOAD_DELAY_MS))
       } else show()
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
@@ -748,6 +765,7 @@ export function createPreviewBridge(): NativeBridge {
       const pendingReload = reloads.get(String(tabId))
       if (pendingReload !== undefined) window.clearTimeout(pendingReload)
       reloads.delete(String(tabId))
+      heldLoads.delete(String(tabId))
       viewEvent(String(tabId), 'stopLoading', navState(frame))
     },
     'view.postMessage': ({ tabId, message }) => {
@@ -767,6 +785,7 @@ export function createPreviewBridge(): NativeBridge {
       const src = currentEntry(String(tabId))?.src ?? frame.dataset.url
       const pendingReload = reloads.get(String(tabId))
       if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      heldLoads.delete(String(tabId))
       if (src)
         reloads.set(
           String(tabId),
@@ -785,6 +804,7 @@ export function createPreviewBridge(): NativeBridge {
       const pendingReload = reloads.get(String(tabId))
       if (pendingReload !== undefined) window.clearTimeout(pendingReload)
       reloads.delete(String(tabId))
+      heldLoads.delete(String(tabId))
       // A PDF viewer page names the download's file (`views.ts` sends the document along for
       // Kotlin to serve); here that picks the sample document the dev server answers with.
       const pdf = document as { path?: unknown } | undefined

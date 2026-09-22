@@ -83,6 +83,7 @@ import {
   PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
   PREVIEW_READ_ALOUD_EVENT,
+  PREVIEW_SETTLE_LOADS_EVENT,
   PREVIEW_SLOW_LOAD_EVENT,
   PREVIEW_VOICE_EVENT,
   PREVIEW_WEB_APP,
@@ -2202,19 +2203,48 @@ function restoreConnectivity(): Promise<void> {
  * up is a fresh document, which matters for the scheme: the page reads it once, at load (on a
  * device the host reloads pages on a theme switch; this host does not). Bounded by `untilState`.
  */
-function leaveErrorPage(): Promise<void> {
+async function leaveErrorPage(): Promise<void> {
   const state = browserStore.get().state
   const tab = state ? activeTab(state) : null
-  if (!tab) return Promise.resolve()
-  const onErrorPage = tab.url.startsWith(ERROR_URL_PREFIX)
-  if (!onErrorPage && !tab.loading) return Promise.resolve()
-  if (onErrorPage) run('tab.reload', { tabId: tab.id })
-  return new Promise<void>((resolve) =>
-    untilState((s) => {
-      const t = activeTab(s)
-      return t === null || t.id !== tab.id || (!t.url.startsWith(ERROR_URL_PREFIX) && !t.loading)
-    }, resolve)
-  )
+  if (!tab) return
+  if (tab.url.startsWith(ERROR_URL_PREFIX)) {
+    run('tab.reload', { tabId: tab.id })
+    await new Promise<void>((resolve) =>
+      untilState((s) => {
+        const t = activeTab(s)
+        return t === null || t.id !== tab.id || !t.url.startsWith(ERROR_URL_PREFIX)
+      }, resolve)
+    )
+  }
+  // The core's word on the load is not enough here: the reset above marked the tab as loaded
+  // for the messages, while the stand-in host may still be holding the page back. The held
+  // loads land, and the tab's frame is waited for until it shows what it was told to.
+  window.dispatchEvent(new CustomEvent(PREVIEW_SETTLE_LOADS_EVENT))
+  await untilPainted(tab.id)
+}
+
+/** How long a page load in the stand-in host is waited for before the next state goes ahead anyway. */
+const PAINT_TIMEOUT_MS = 6000
+
+/**
+ * Resolves once the stand-in host's frame for `tabId` shows the URL it was last told to load
+ * (`preview.ts` marks `data-painted` on the frame's load), or once waiting stops being worth it.
+ */
+function untilPainted(tabId: string): Promise<void> {
+  const deadline = performance.now() + PAINT_TIMEOUT_MS
+  return new Promise<void>((resolve) => {
+    const check = (): void => {
+      const frame = [
+        ...document.querySelectorAll<HTMLIFrameElement>('iframe.zen-preview-view')
+      ].find((f) => f.dataset.tabId === tabId)
+      if (!frame || frame.dataset.painted === frame.dataset.url || performance.now() > deadline) {
+        resolve()
+        return
+      }
+      window.setTimeout(check, 50)
+    }
+    check()
+  })
 }
 
 /**
