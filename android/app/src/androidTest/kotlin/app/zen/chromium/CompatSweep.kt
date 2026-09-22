@@ -574,6 +574,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                             detail
                         )
                     } else stage(entry, "popup", "PARTIAL", "the sheet came up but its document stayed empty after ${POPUP_TIMEOUT_MS / 1000} s: ${dom.toString().take(200)}; console: ${detail.optJSONArray("console")?.toString()?.take(200)}", detail)
+                } else if (answered.any { extensionPage(it, row.id) }) {
+                    // The popup opened, opened a page of the extension's own in a tab and closed
+                    // itself (Keplr's `register.html` for an empty wallet, as a fresh Chrome
+                    // profile shows it): the page is the popup's answer.
+                    val page = answered.first { extensionPage(it, row.id) }
+                    entry.put("popupOpened", JSONArray(answered))
+                    stage(entry, "popup", "P", "the popup opened ${page.take(160)} in a tab and closed itself (no sheet left within ${POPUP_TIMEOUT_MS / 1000} s)", detail)
                 } else {
                     stage(entry, "popup", "F", "no popup sheet within ${POPUP_TIMEOUT_MS / 1000} s (runtime popup=${runtimePopup ?: "null"}, declared=$declared, tabs opened=${opened.size})", detail)
                 }
@@ -4057,7 +4064,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val grade = accountGate("OneNote Web Clipper", Regex("onenote|live\\.com|microsoftonline|login\\.microsoft|renderer\\.html", RegexOption.IGNORE_CASE), injects = "iframe[src*='gojbdfnpnhogfdgjbigejoaolejmgdhk'], [id*='oneNoteWebClipper'], [class*='oneNoteWebClipper'], [id*='onenote'], [class*='onenote']", gate = "a Microsoft account (its clipper asks for one)")(row, entry)
         val extra = grade.extra ?: JSONObject()
         val factor = speedFactor(entry)
-        val bg = backgroundView(row.id)
+        val bg = awakeBackground(row.id, factor)
         val contexts = bg?.let { getContextsProbe(it, factor) } ?: JSONObject().put("error", "no background view")
         extra.put("getContexts", contexts)
         bg?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
@@ -4084,7 +4091,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val grade = domMarker("Keplr's provider injected into the page world", "wallet.html?keplr", "JSON.stringify({pass:!!(window.keplr&&typeof window.keplr.getOfflineSigner==='function'),keplr:typeof window.keplr,version:window.keplr?String(window.keplr.version||''):null,getOfflineSigner:typeof (window.keplr&&window.keplr.getOfflineSigner),getKeplr:typeof window.getOfflineSigner})", settleMs = 25_000)(row, entry)
         val extra = grade.extra ?: JSONObject()
         val factor = speedFactor(entry)
-        val bg = backgroundView(row.id)
+        val bg = awakeBackground(row.id, factor)
         val origins = bg?.let { probe(it, URL_ORIGIN_PROBE, "__zenUrlOrigin", scaled(8_000, factor)) } ?: JSONObject().put("error", "no background view")
         extra.put("urlOrigin", origins)
         val popup = openPopup(row, factor)
@@ -4138,7 +4145,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val grade = scholarPdfReader(row, entry)
         val extra = grade.extra ?: JSONObject()
         val factor = speedFactor(entry)
-        val bg = backgroundView(row.id)
+        val bg = awakeBackground(row.id, factor)
         val contexts = bg?.let { getContextsProbe(it, factor) } ?: JSONObject().put("error", "no background view")
         val sender = bg?.let { senderOriginProbe(it, row, "reader.html", factor) } ?: JSONObject().put("error", "no background view")
         extra.put("getContexts", contexts).put("senderOrigin", sender)
@@ -4483,7 +4490,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("dpacanjfikmhoddligfbehkpomnbgblf", "AHA Music - Song Finder for Browser", "aha-music", core = captureLimit("AHA Music", "/identif|listening|no sound|song|find|record/i")),
         Row("ailoabdmgclmfmhdagmlohpjlbpffblp", "Surfshark Chrome VPN extension", "surfshark", core = vpn("Surfshark", connectWords = "/^(connect|quick[- ]connect|it's time to connect!?)$/i")),
         Row("ojnbohmppadfgpejeebfnmnknjdlckgj", "AIPRM for ChatGPT", "aiprm", core = siteGate("AIPRM for ChatGPT", "https://chat.openai.com/", "[id*='AIPRM'], [class*='AIPRM'], [id*='aiprm'], [class*='aiprm']", Regex("^https://chat\\.openai\\.com/", RegexOption.IGNORE_CASE), gate = "ChatGPT's page served to a signed-in user (OpenAI served its robot check to the desktop's runner)")),
-        Row("hmdcmlfkchdmnmnmheododdhjedfccka", "Eye Dropper", "eye-dropper", core = popupFlow("Eye Dropper", "styled-light.html?eyedropper", listOf("/pick a color from active tab|pick color/i"), injectedAny("eye-dropper-overlay|color-toolbox|color-tooltip|edropper"))),
+        Row("hmdcmlfkchdmnmnmheododdhjedfccka", "Eye Dropper", "eye-dropper", core = popupFlow("Eye Dropper", "styled-light.html?eyedropper", listOf("/pick a color from (this web ?page|active tab)|pick color/i"), injectedAny("eye-dropper-overlay|color-toolbox|color-tooltip|edropper"))),
         Row("mcohilncbfahbmgdjkbpemcciiolgcge", "OKX Wallet", "okx-wallet", core = ::okxWallet),
         Row("fgddmllnllkalaagkghckoinaemmogpe", "ExpressVPN: VPN & proxy browser extension", "expressvpn", core = vpn("ExpressVPN", consent = true, tapConsent = true, connectWords = "/^(use proxy mode|connect|connect now)$/i")),
         Row("iogidnfllpdhagebkblkgbfijkbkjdmm", "Stream Recorder - HLS & m3u8 Video Downloader", "stream-recorder", core = ::streamRecorder),
@@ -5855,8 +5862,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * `@font-face` sources on the extension's own origin.
          */
         private const val CSS_MESSAGE_SCAN =
-            "(function(){var sheets=0,rules=0,bad=0,fonts=0;var ext=/ext\\.zenium\\.invalid|chrome-extension:\\/\\//;for(var i=0;i<document.styleSheets.length;i++){var s=document.styleSheets[i];var list=null;try{list=s.cssRules}catch(e){}if(!list)continue;sheets++;for(var j=0;j<list.length;j++){var t=list[j].cssText||'';rules++;if(t.indexOf('__MSG_')>=0)bad++;if(list[j].type===5&&ext.test(t))fonts++}}" +
-                "var styles=document.querySelectorAll('style');var inline=0;for(var k=0;k<styles.length;k++){if((styles[k].textContent||'').indexOf('__MSG_')>=0)inline++}return JSON.stringify({sheets:sheets,rules:rules,unsubstituted:bad,inlineUnsubstituted:inline,extensionFonts:fonts})})()"
+            "(function(){var sheets=0,rules=0,bad=0,fonts=0,adopted=0;var ext=/ext\\.zenium\\.invalid|chrome-extension:\\/\\//;var all=[];for(var i=0;i<document.styleSheets.length;i++)all.push(document.styleSheets[i]);var ad=document.adoptedStyleSheets||[];for(var a=0;a<ad.length;a++){all.push(ad[a]);adopted++}for(var i=0;i<all.length;i++){var s=all[i];var list=null;try{list=s.cssRules}catch(e){}if(!list)continue;sheets++;for(var j=0;j<list.length;j++){var t=list[j].cssText||'';rules++;if(t.indexOf('__MSG_')>=0)bad++;if(list[j].type===5&&ext.test(t))fonts++}}" +
+                "var styles=document.querySelectorAll('style');var inline=0;for(var k=0;k<styles.length;k++){if((styles[k].textContent||'').indexOf('__MSG_')>=0)inline++}return JSON.stringify({sheets:sheets,adopted:adopted,rules:rules,unsubstituted:bad,inlineUnsubstituted:inline,extensionFonts:fonts})})()"
         /**
          * `window.postMessage` from a content script's scope in four spellings (Language
          * Reactor's `runtime.onMessage` listener posts the message it got to its page script
