@@ -8,7 +8,9 @@ name: TEMPORARY - compat round 9 sweep and frame budget trigger
 #     `.github/scripts/ext-compat/next30-round7.json`, and the five rows round 8 left to the
 #     runtime: OneNote Web Clipper, Keplr, Google Scholar PDF Reader, Steam Inventory Helper,
 #     Language Reactor), so a before run (the first commit, no runtime change) and an after run
-#     (the final head) measure the same thing the dispatched sweep would;
+#     (the final head) measure the same thing the dispatched sweep would; Trust Wallet runs
+#     last (SWEEP_LAST): its row ran the host out of Java heap in both earlier runs, and a
+#     process crash in the last row loses no row after it;
 #   - `[budget]` in the commit message: the runtime demo's two jobs with the frame budget alone
 #     (ExtensionScrollBudget under SKIP_DEMO=1: the long fixture scrolled with 0, 3 and 6
 #     extensions, the jank report in the job summary).
@@ -34,6 +36,7 @@ jobs:
       artifact-name: android-ext-compat-sweep
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
+        SWEEP_LAST=egjidjbpglichdcondbcbdnbeeppgdph
         SWEEP_ONLY=ohlencieiipommannpdfcmfdpjjmeolj,ojplmecpdpgccookcobabopnaifgidhf,ckejmhbmlajgoklhgbapkiccekfoccmk,edlifbnjlicfpckhgjhflgkeeibhhcii,khncfooichmfjbepaaaebmommgaepoid,fggkaccpbmombhnjkjokndojfgagejfb,kbmfpngjjgdllneeigpgjifpgocmfgmb,dpacanjfikmhoddligfbehkpomnbgblf,ailoabdmgclmfmhdagmlohpjlbpffblp,ojnbohmppadfgpejeebfnmnknjdlckgj,hmdcmlfkchdmnmnmheododdhjedfccka,mcohilncbfahbmgdjkbpemcciiolgcge,fgddmllnllkalaagkghckoinaemmogpe,iogidnfllpdhagebkblkgbfijkbkjdmm,bfbameneiokkgbdmiekhjnmfkcnldhhm,oemmndcbldboiebfnladdacbdfmadadm,gohjpllcolmccldfdggmamodembldgpc,djflhoibgkdhkhhcedjiklpkjnoahfmg,akdgnmcogleenhbclghghlkkdndkjdjc,eedlgdlajadkbbjoobobefphmfkcchfk,kohfgcgbkjodfcfkcackpagifgbcmimk,nllcnknpjnininklegdoijpljgdjkijc,epcnnfbjfcgphgdmggkamkmgojdagdnn,alhgpfoeiimagjlnfekdhkjlkiomcapa,hodiladlefdpcbemnbbcpclbmknkiaem,aabcgdmkeabbnleenpncegpcngjpnjkc,phidhnmbkbkbkbknhldmpmnacgicphkf,egjidjbpglichdcondbcbdnbeeppgdph,njgehaondchbmjmajphnhlojfnbfokng,fllaojicojecljbmefodhfapmkghcbnh,gojbdfnpnhogfdgjbigejoaolejmgdhk,dmkamcknogkgcdfhhbddcghachkejeap,dahenjhkoodjbpjheillcadbppiidmhp,cmeakgjggjdlcpncigglobpjbkabhmjl,hoombieeljmmljlkjmnheibnpciblicm
       timeout-minutes: 210
 
@@ -50,6 +53,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
+        SWEEP_LAST=egjidjbpglichdcondbcbdnbeeppgdph
         SWEEP_ONLY=ohlencieiipommannpdfcmfdpjjmeolj,ojplmecpdpgccookcobabopnaifgidhf,ckejmhbmlajgoklhgbapkiccekfoccmk,edlifbnjlicfpckhgjhflgkeeibhhcii,khncfooichmfjbepaaaebmommgaepoid,fggkaccpbmombhnjkjokndojfgagejfb,kbmfpngjjgdllneeigpgjifpgocmfgmb,dpacanjfikmhoddligfbehkpomnbgblf,ailoabdmgclmfmhdagmlohpjlbpffblp,ojnbohmppadfgpejeebfnmnknjdlckgj,hmdcmlfkchdmnmnmheododdhjedfccka,mcohilncbfahbmgdjkbpemcciiolgcge,fgddmllnllkalaagkghckoinaemmogpe,iogidnfllpdhagebkblkgbfijkbkjdmm,bfbameneiokkgbdmiekhjnmfkcnldhhm,oemmndcbldboiebfnladdacbdfmadadm,gohjpllcolmccldfdggmamodembldgpc,djflhoibgkdhkhhcedjiklpkjnoahfmg,akdgnmcogleenhbclghghlkkdndkjdjc,eedlgdlajadkbbjoobobefphmfkcchfk,kohfgcgbkjodfcfkcackpagifgbcmimk,nllcnknpjnininklegdoijpljgdjkijc,epcnnfbjfcgphgdmggkamkmgojdagdnn,alhgpfoeiimagjlnfekdhkjlkiomcapa,hodiladlefdpcbemnbbcpclbmknkiaem,aabcgdmkeabbnleenpncegpcngjpnjkc,phidhnmbkbkbkbknhldmpmnacgicphkf,egjidjbpglichdcondbcbdnbeeppgdph,njgehaondchbmjmajphnhlojfnbfokng,fllaojicojecljbmefodhfapmkghcbnh,gojbdfnpnhogfdgjbigejoaolejmgdhk,dmkamcknogkgcdfhhbddcghachkejeap,dahenjhkoodjbpjheillcadbppiidmhp,cmeakgjggjdlcpncigglobpjbkabhmjl,hoombieeljmmljlkjmnheibnpciblicm
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
