@@ -441,7 +441,7 @@
     {
       "id": "fonts-languages-ui",
       "class": "FontsLanguagesUiDemo",
-      "shard": "phone-b",
+      "shard": "phone-c",
       "mirrors": "android-fonts-languages-demo.yml",
       "dir": "fonts-languages-demo",
       "env": {
@@ -450,7 +450,7 @@
       },
       "timeout": 900,
       "estimate": 7,
-      "note": "The workflow's arguments; fetches the en → de translation model over the network for Reader View's Translate. On phone B, which has the room (63.5 of its 68 with it): phone A took #322's two-act driver and phone D filled with #318's, #319's and #321's."
+      "note": "The workflow's arguments; fetches the en → de translation model over the network for Reader View's Translate. On phone C beside the two translate drivers, the shard with the room (65.5 of its 68 with it): phone A holds #322's two-act driver (65), phone B filled to 63.5 with #354's, phone D to 63.5 with #318's, #319's and #321's."
     },
     {
       "id": "site-controls",
