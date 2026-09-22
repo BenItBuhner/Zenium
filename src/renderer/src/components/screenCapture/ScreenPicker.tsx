@@ -182,6 +182,32 @@ function ScreenPicker({
     sources[0]?.id ??
     null
 
+  // The keyboard starts on a card (§9.22). A page's request opens on the tab pane, whose calling
+  // card is there at mount; an extension's may open on the Window or Entire screen pane while
+  // the OS's list is still on its way, with nothing to land on, so the popover's fallback (the
+  // segment, or Cancel with one pane) holds it – the pane's roving stop takes it when the list
+  // is in, once, and only from that fallback.
+  const placed = useRef(false)
+  useEffect(() => {
+    if (placed.current || loading) return
+    const dialog = ref.current
+    const active = document.activeElement
+    if (!dialog || !active || !dialog.contains(active)) return
+    if (active.getAttribute('role') === 'radio') {
+      placed.current = true
+      return
+    }
+    const fallback =
+      active === dialog ||
+      active.getAttribute('role') === 'tab' ||
+      (active.tagName === 'BUTTON' && !active.hasAttribute('role'))
+    if (!fallback || !stop) return
+    dialog
+      .querySelector<HTMLElement>(`[role="radio"][data-source-id="${cssEscape(stop)}"]`)
+      ?.focus()
+    placed.current = true
+  }, [loading, stop])
+
   return (
     <div
       ref={ref}

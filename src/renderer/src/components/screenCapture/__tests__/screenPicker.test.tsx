@@ -558,6 +558,36 @@ describe('ScreenPicker for an extension (chrome.desktopCapture)', () => {
     })
   })
 
+  it('a pane that opens while the OS’s list is on its way puts the keyboard on its first card once the list is in (§9.22), and not again', async () => {
+    const waiting = { ...EXTENSION_REQUEST, kinds: ['screen'] as const, loading: true, sources: [] }
+    const el = render(layer(stateWith([waiting])))
+    await settle()
+    // Nothing to land on yet: the popover's fallback, Cancel, holds the keyboard.
+    expect(document.activeElement!.textContent).toBe('Cancel')
+    rerender(layer(stateWith([{ ...waiting, loading: false, sources: [SCREEN, SCREEN_2] }])))
+    await settle()
+    expect(document.activeElement).toBe(tile(el, 'screen:1'))
+    // Later list changes leave the keyboard where the user has it.
+    const cancel = [...el.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!
+    cancel.focus()
+    rerender(
+      layer(stateWith([{ ...waiting, loading: false, sources: [SCREEN, SCREEN_2, WINDOW] }]))
+    )
+    await settle()
+    expect(document.activeElement).toBe(cancel)
+  })
+
+  it('the keyboard stays where the page’s request put it: the calling tab’s card, whatever comes in after', async () => {
+    const el = render(layer(stateWith([{ ...REQUEST, loading: true, sources: [TAB_SOURCE] }])))
+    await settle()
+    expect(document.activeElement).toBe(tile(el, 'tab:t1'))
+    keydown(paneTab(el, 'tab'), 'ArrowRight')
+    paneTab(el, 'window')!.focus()
+    rerender(layer(stateWith([{ ...REQUEST, loading: false, sources: [TAB_SOURCE, WINDOW] }])))
+    await settle()
+    expect(document.activeElement).toBe(paneTab(el, 'window'))
+  })
+
   it('with one pane the title block carries the scroll hairline the segment would', () => {
     const el = render(
       layer(stateWith([{ ...EXTENSION_REQUEST, kinds: ['window'], sources: [WINDOW] }]))
