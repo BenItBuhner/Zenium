@@ -7,7 +7,10 @@ name: Android motion perf
 # WebView's own Chromium trace read into the renderer main thread's time per frame, its style /
 # layout / paint split and its long tasks, gated) – the tab swipe in its pieces (the touch and
 # the capture, the drag, the release, a fling, the drag between two grouped tabs with their
-# ribbons). The shared workflow renders the record into the job summary and the
+# ribbons) and the overview's open and close (the pull in its pieces, the pick that closes it, a
+# fling open, the system's back gesture over it; on six tabs and on thirty), each group picked
+# by the `scenes` input (`DEMO_SCENES`; the push trigger's default is the group under audit on
+# the branch). The shared workflow renders the record into the job summary and the
 # `jank-report-*` artifact; the driver's `perf-motion.json` and `findings.txt` in the demo
 # artifact carry its in-chrome probe (what each scene wrote to the DOM) beside the traces
 # (`trace-<scene>.json.gz`, for chrome://tracing or the Perfetto UI). The measured scenes run
@@ -18,6 +21,10 @@ name: Android motion perf
 # about fifteen minutes. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
+  # TEMPORARY (the profile's before / after runs on the audit's branch: worker tokens cannot
+  # dispatch); removed before the merge.
+  push:
+    branches: [cursor/android-perf-overview-cf22]
   workflow_dispatch:
     inputs:
       theme:
@@ -27,6 +34,11 @@ on:
         options:
           - light
           - dark
+      scenes:
+        description: >-
+          The scene groups the driver measures: all, or a comma list of tab-swipe, overview
+        type: string
+        default: all
       jank-gate:
         description: >-
           The jank budget's gate for the scenes this driver measures: soft reports a scene over
@@ -54,10 +66,11 @@ jobs:
         DEMO_CLASS=app.zen.chromium.MotionPerfDemo
         DEMO_DIR=perf-motion
         DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_SCENES=${{ inputs.scenes || 'overview' }}
         DEMO_OUT=artifacts/android-motion-perf
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
-        DEMO_HANDSHAKE_S=480
+        DEMO_HANDSHAKE_S=600
       api-level: '35'
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
       artifact-name: android-motion-perf-${{ inputs.theme || 'light' }}
@@ -77,10 +90,11 @@ jobs:
         DEMO_CLASS=app.zen.chromium.MotionPerfDemo
         DEMO_DIR=perf-motion
         DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_SCENES=${{ inputs.scenes || 'overview' }}
         DEMO_OUT=artifacts/android-motion-perf
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
-        DEMO_HANDSHAKE_S=480
+        DEMO_HANDSHAKE_S=600
       api-level: '35'
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
       artifact-name: android-motion-perf-${{ inputs.theme || 'light' }}-second-boot
