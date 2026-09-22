@@ -1,8 +1,8 @@
 import type { JSX, ReactNode } from 'react'
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { wrapTab } from '@renderer/lib/popover'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
-import { wrapTab } from '../../bookmarks/popover'
 import { V2TitleBlock } from '../../extensions/v2'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
 import type {
@@ -31,9 +31,11 @@ import { SheetDismissContext, type SheetDismiss } from './sheetContext'
  * shows the row's current value and closes by itself when its row is gone.
  *
  * Keyboard (§9.22): focus moves into a dialog as it opens – the checked option of a picker, the
- * field of a form, else its first control (a prompt's Cancel) – Tab wraps inside it, Escape and
- * the scrim close it, and when it leaves the focus returns to the control that opened it. Titles
- * are the rows' own and sentence case (§9.1).
+ * field of a form, the first row of an item's rows, and for a prompt the container itself (a
+ * title-and-notice panel holds the focus; landing on Cancel, the way out, is the failure §9.22
+ * names) – Tab wraps inside it, from the container too, Escape and the scrim close it, and when
+ * it leaves the focus returns to the control that opened it. Titles are the rows' own and
+ * sentence case (§9.1).
  */
 
 /** Every open dialog, lowest first; each resolves its row in `groups`. */
@@ -139,7 +141,8 @@ interface DialogProps {
   children: ReactNode
   /**
    * Where the focus goes as the dialog opens: the element this finds in the dialog, else the
-   * first tabbable control.
+   * first tabbable control. A title-and-notice dialog (a confirmation) returns the root it is
+   * given: §9.22 focuses the container, never Cancel.
    */
   initial?(root: HTMLElement): HTMLElement | null
   className?: string
@@ -153,7 +156,9 @@ const TABBABLE =
  * radius 12, a hairline, the sheet shadow) at the form width, a §9.23 title block with the
  * hairline once the body has scrolled, the body scrolling between the title and whatever footer
  * its content draws (§9.11: the buttons hug the end). Escape (on top only) and the scrim close
- * it; the focus moves in as it opens and back out to its opener as it leaves.
+ * it; the focus moves in as it opens and back out to its opener as it leaves. The title labels
+ * the dialog and its description describes it (`aria-describedby`), so a confirmation that
+ * focuses its container is announced whole.
  */
 export function SettingsDialog(props: DialogProps): JSX.Element {
   return (
@@ -176,6 +181,7 @@ function HostedDialog({
 }: DialogProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const titleId = useId()
+  const descriptionId = useId()
   const [scrolled, setScrolled] = useState(false)
   useFrameDialog({ onScrimPress: onClose })
   // The dismissal a row of this dialog asks for (`ActionRow.closesSheet`, a form's Cancel): the
@@ -225,17 +231,25 @@ function HostedDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
       data-dialog={name}
       data-surface="page"
       inert={under || undefined}
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-settings-dialog zen-animate-pop', className)}
       style={{ width: POPOVER_WIDTH.form }}
-      onKeyDown={(e) => wrapTab(e, ref.current)}
+      // The shared wrap (§9.22): Tab at the last control goes to the first, Shift+Tab at the
+      // first to the last – and from the container itself, which holds the focus in a prompt
+      // (and in any dialog with nothing tabbable), Tab enters at the first control and Shift+Tab
+      // at the last, never leaving for whatever stands before the host in the document.
+      onKeyDown={(e) => {
+        if (ref.current) wrapTab(ref.current, e.nativeEvent)
+      }}
     >
       <V2TitleBlock
         id={titleId}
         title={title}
+        descriptionId={descriptionId}
         description={
           description && descriptionTone ? (
             <span data-tone={descriptionTone}>{description}</span>
@@ -401,8 +415,11 @@ function FieldDialog({
 }
 
 /**
- * A prompt (§9.23): the question as the title block, the destructive action trailing (§9.11);
- * Cancel, the first button, takes the focus as the dialog opens.
+ * A prompt (§9.23): the question as the title block, the destructive action trailing (§9.11).
+ * A title-and-notice panel, so the container itself holds the focus as the dialog opens (§9.22:
+ * the title is announced, then the description) and the verb – the primary or destructive
+ * action – is reached by Tab (Cancel, then it; Shift+Tab reaches it first); Cancel pre-focused,
+ * the way out announced first, is the failure §9.22 names.
  */
 function ConfirmDialog({
   row,
@@ -421,6 +438,7 @@ function ConfirmDialog({
       description={confirm.description ?? row.description}
       under={under}
       onClose={close}
+      initial={(root) => root}
       className="zen-settings-dialog-prompt"
     >
       <SheetActions

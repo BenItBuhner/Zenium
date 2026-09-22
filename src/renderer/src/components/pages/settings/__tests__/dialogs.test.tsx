@@ -2,11 +2,11 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, type ReactElement } from 'react'
+import { act, useState, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { DialogStack } from '../dialogs'
-import type { ItemRow, RowGroup } from '../model'
+import type { ActionRow, ItemRow, RowGroup } from '../model'
 import type { RowContext, SheetRequest } from '../rows'
 
 /*
@@ -190,5 +190,159 @@ describe('a desktop item dialog and its rows (§9.24)', () => {
     )
     // The primitive's 20 above stays for every heading after the first.
     expect(css).toContain('.zen-v2-heading { margin: 20px 0 4px;')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The keyboard (§9.22, §9.24)
+// ---------------------------------------------------------------------------
+
+/** The Remove action a container's item dialog carries, with its prompt. */
+function deleteRow(onPress: () => void): ActionRow {
+  return {
+    kind: 'action',
+    id: 'container-delete:personal',
+    label: 'Delete container',
+    destructive: true,
+    confirm: {
+      title: 'Delete Personal?',
+      description: 'Its tabs close and its cookies and site data go with it.',
+      action: 'Delete'
+    },
+    onPress
+  }
+}
+
+/** An item dialog's rows: a row that stays, then the Remove action that opens the prompt. */
+function containerRow(remove: ActionRow): ItemRow {
+  return {
+    kind: 'item',
+    id: 'container:personal',
+    label: 'Personal',
+    sheet: {
+      title: 'Personal',
+      groups: [
+        {
+          id: 'container:personal:rows',
+          heading: 'Container',
+          rows: [
+            { kind: 'action', id: 'container-rename:personal', label: 'Rename', onPress: () => {} },
+            remove
+          ]
+        }
+      ]
+    }
+  }
+}
+
+/**
+ * The page's stack as `useSheetStack` keeps it: a row's press pushes a request, `closeTop`
+ * drops the last, and a page row stands before the host in the document as the thing that
+ * opened the first dialog.
+ */
+function Stack({
+  groups,
+  initial,
+  onRequests
+}: {
+  groups: readonly RowGroup[]
+  initial: readonly SheetRequest[]
+  onRequests?: (requests: readonly SheetRequest[]) => void
+}): JSX.Element {
+  const [requests, setRequests] = useState<readonly SheetRequest[]>(initial)
+  const update = (next: readonly SheetRequest[]): void => {
+    setRequests(next)
+    onRequests?.(next)
+  }
+  return (
+    <>
+      <button type="button" data-page-row>
+        Personal
+      </button>
+      <FrameDialogHost>
+        <DialogStack
+          requests={requests}
+          groups={groups}
+          ctx={{ open: (request) => update([...requests, request]) }}
+          closeTop={() => update(requests.slice(0, -1))}
+        />
+      </FrameDialogHost>
+    </>
+  )
+}
+
+/** A Tab press on `from`; the event comes back, `defaultPrevented` when the dialog moved the focus itself. */
+function tab(from: Element, shift = false): KeyboardEvent {
+  const e = new KeyboardEvent('keydown', {
+    key: 'Tab',
+    shiftKey: shift,
+    bubbles: true,
+    cancelable: true
+  })
+  act(() => {
+    from.dispatchEvent(e)
+  })
+  return e
+}
+
+describe('a prompt holds the focus itself as it opens (§9.22, §9.23)', () => {
+  it('focuses the container, not Cancel, and is announced by its title and description', () => {
+    const remove = deleteRow(() => undefined)
+    const groups: RowGroup[] = [{ id: 'containers', heading: 'Containers', rows: [remove] }]
+    const h = render(<Stack groups={groups} initial={[{ kind: 'confirm', rowId: remove.id }]} />)
+    const dialog = h.querySelector<HTMLElement>(
+      '[data-dialog="confirm:container-delete:personal"]'
+    )!
+    expect(dialog).not.toBeNull()
+    expect(document.activeElement).toBe(dialog)
+    const [cancel, verb] = [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+    expect(cancel!.textContent).toBe('Cancel')
+    expect(verb!.textContent).toBe('Delete')
+    expect(document.activeElement).not.toBe(cancel)
+    // What a reader says as the container takes the focus: the question, then the notice.
+    const title = document.getElementById(dialog.getAttribute('aria-labelledby')!)
+    const description = document.getElementById(dialog.getAttribute('aria-describedby')!)
+    expect(title?.textContent).toBe('Delete Personal?')
+    expect(description?.textContent).toBe(
+      'Its tabs close and its cookies and site data go with it.'
+    )
+  })
+
+  it('Tab from the container reaches Cancel, then the verb, and wraps; Shift+Tab reaches the verb first', () => {
+    const remove = deleteRow(() => undefined)
+    const groups: RowGroup[] = [{ id: 'containers', heading: 'Containers', rows: [remove] }]
+    const h = render(<Stack groups={groups} initial={[{ kind: 'confirm', rowId: remove.id }]} />)
+    const dialog = h.querySelector<HTMLElement>('[data-dialog^="confirm:"]')!
+    const [cancel, verb] = [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+    expect(document.activeElement).toBe(dialog)
+    // From the container, Tab enters at the first control: the dialog's own move.
+    expect(tab(dialog).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(cancel)
+    // A step within the dialog is the browser's (Cancel to the verb): the key is left to it.
+    expect(tab(cancel!).defaultPrevented).toBe(false)
+    act(() => verb!.focus())
+    // At the last control Tab wraps to the first; Shift+Tab at the first wraps to the last.
+    expect(tab(verb!).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(cancel)
+    expect(tab(cancel!, true).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(verb)
+    // From the container again: Shift+Tab enters at the end – the verb – and never leaves for
+    // the page row that stands before the host in the document.
+    act(() => dialog.focus())
+    expect(document.activeElement).toBe(dialog)
+    expect(tab(dialog, true).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(verb)
+  })
+
+  it('an item dialog still opens on its first row, a form on its field (§9.22 leaves the container to a notice)', () => {
+    const remove = deleteRow(() => undefined)
+    const item = containerRow(remove)
+    const groups: RowGroup[] = [{ id: 'containers', heading: 'Containers', rows: [item] }]
+    const h = render(<Stack groups={groups} initial={[{ kind: 'item', rowId: item.id }]} />)
+    expect(document.activeElement).toBe(
+      h.querySelector(
+        '[data-dialog="item:container:personal"] [data-row="container-rename:personal"]'
+      )
+    )
   })
 })
