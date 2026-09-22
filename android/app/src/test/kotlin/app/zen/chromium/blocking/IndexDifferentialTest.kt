@@ -370,7 +370,7 @@ class IndexDifferentialTest {
         var decidedByRule = 0
         var redirected = 0
         var edited = 0  // request-stage `modifyHeaders` decisions
-        var stacked = 0  // ... with the edits of more than one rule
+        var stacked = 0  // ... carrying more than one edit (a decision names its first rule only, so rules are not counted)
         var editedTwice = 0  // header-stage `modifyHeaders` decisions whose response edits grew (a header-conditioned edit joined)
         // The header-stage pass: what the linear reference decided (the index agreed, or `mismatches` says where not).
         var decidedTwice = 0  // header-stage decisions after a request-stage allow with `needsHeaders` (the relay's second decision)
@@ -546,7 +546,7 @@ class IndexDifferentialTest {
         assertTrue("header stage differing from the request stage: $differing", differing >= 1)
         assertTrue("header stage the same as the request stage (the relay's sameMatch): $sameAsRequestStage", sameAsRequestStage >= 1)
         assertTrue("header rules applied: $edited", edited > 10)
-        assertTrue("the edits of more than one rule stacked: $stacked", stacked > 5)
+        assertTrue("modifyHeaders decisions carrying more than one edit: $stacked", stacked > 5)
         assertTrue("a header-conditioned edit joined at the header stage: $editedTwice", editedTwice >= 1)
         // The run's numbers, for the record (the JUnit report's system-out).
         println(
@@ -554,7 +554,7 @@ class IndexDifferentialTest {
                 "$decidedTwice decided twice (needsHeaders), $direct at the header stage directly, $headerStageNamed header-stage decisions naming a rule " +
                 "($headerStageByRule by a header-conditioned rule: $headerStageBlocks blocks, $headerStageRedirects redirects), " +
                 "$differing differing from / $sameAsRequestStage the same as the request stage, " +
-                "$edited modifyHeaders decisions ($stacked with more than one rule's edits, $editedTwice whose response edits grew at the header stage), " +
+                "$edited modifyHeaders decisions ($stacked carrying more than one edit, $editedTwice whose response edits grew at the header stage), " +
                 "${mismatches.size} mismatches, ${violations.size} invariant violations"
         )
         assertTrue("mismatches:\n" + mismatches.joinToString("\n"), mismatches.isEmpty())
