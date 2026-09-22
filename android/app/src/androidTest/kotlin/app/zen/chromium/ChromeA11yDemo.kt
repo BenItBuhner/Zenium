@@ -670,10 +670,16 @@ class ChromeA11yDemo : DemoHarness(
         expect("Settings opens as a tab", awaitChrome(10_000) { settingsTabActive() })
     }
 
-    /** Settings: the landing, a section, a picker sheet. */
+    /**
+     * Settings: the landing, a section, a picker sheet. The navigation is read off the document
+     * (the Settings toolkit: the section, the sheet) and the audits off the tree, which is the
+     * TalkBack claim: each audit waits the tree's window ([awaitSettingsRowInTree]) for the
+     * scene's first row, since on the emulator the tree trails a section change by seconds.
+     */
     private fun settingsScene() {
         if (!settingsTabActive() && !openSettingsTab()) return
-        awaitNode(10_000) { it == "Look and Feel" }
+        awaitSettingsSection(SETTINGS_LANDING, treeSign = LOOK_AND_FEEL_LABEL)
+        awaitSettingsRowInTree(LOOK_AND_FEEL_LABEL)
         SystemClock.sleep(1_200)
         audit(
             "settings",
