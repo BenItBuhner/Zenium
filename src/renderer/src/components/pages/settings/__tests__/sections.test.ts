@@ -1679,11 +1679,12 @@ describe('the section model', () => {
   it('CT-41: a listed tag the runtime cannot name is labelled with the catalogue’s English name, never the bare tag (#350 review R6)', () => {
     // Android's ICU has no name for Assamese: `of` hands the tag back.
     const of = Intl.DisplayNames.prototype.of
-    const spy = vi
-      .spyOn(Intl.DisplayNames.prototype, 'of')
-      .mockImplementation(function (this: Intl.DisplayNames, code: string) {
-        return code === 'as' ? code : of.call(this, code)
-      })
+    const spy = vi.spyOn(Intl.DisplayNames.prototype, 'of').mockImplementation(function (
+      this: Intl.DisplayNames,
+      code: string
+    ) {
+      return code === 'as' ? code : of.call(this, code)
+    })
     try {
       const c = context(state({}, { languages: ['as', 'en'] }))
       const def = PAGE.sections.find((x) => x.id === 'languages')!

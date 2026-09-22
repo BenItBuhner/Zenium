@@ -97,11 +97,12 @@ describe('the language catalogue', () => {
   it('a tag the runtime cannot name takes the catalogue’s English name – never the bare tag – and a tag outside the catalogue is null (#350 review R6)', () => {
     // Android's ICU has no name for Assamese: `of` hands the tag back, as `fallback: "code"` does.
     const of = Intl.DisplayNames.prototype.of
-    const spy = vi
-      .spyOn(Intl.DisplayNames.prototype, 'of')
-      .mockImplementation(function (this: Intl.DisplayNames, code: string) {
-        return code === 'as' ? code : of.call(this, code)
-      })
+    const spy = vi.spyOn(Intl.DisplayNames.prototype, 'of').mockImplementation(function (
+      this: Intl.DisplayNames,
+      code: string
+    ) {
+      return code === 'as' ? code : of.call(this, code)
+    })
     try {
       expect(catalogueLanguageName('as')).toBe('Assamese')
       expect(catalogueLanguageName('AS')).toBe('Assamese')
