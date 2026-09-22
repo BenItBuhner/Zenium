@@ -85,6 +85,40 @@ describe('the preview host’s view.setVisible', () => {
 })
 
 /*
+ * The stand-in host takes the view batch too (`batch`, #312's H3b), so the preview runs the
+ * chrome's production path: an `AndroidTabView` placed the way `applyLayout` places it makes ONE
+ * hop, and the frame shows what the commands said, in their order, off the caller's task the way
+ * the Kotlin host's main-thread task is.
+ */
+describe('the preview host’s batch', () => {
+  it('applies a layout’s view ops in order from one hop', async () => {
+    const native = createPreviewBridge()
+    const batch = vi.spyOn(native, 'batch')
+    const bridge = new Bridge(native)
+    const view = new AndroidTabView('t1', bridge)
+    call(native, 'view.create', { tabId: 't1' })
+    const frame = document.querySelector<HTMLIFrameElement>('iframe[data-tab-id="t1"]')!
+    view.setBounds({ x: 0, y: 56, width: 412, height: 800 })
+    view.setBorderRadius(12)
+    view.setVisible(true)
+    expect(view.isVisible()).toBe(true)
+    // Still the task's: nothing has left, nothing has landed.
+    expect(batch).not.toHaveBeenCalled()
+    expect(frame.style.visibility).toBe('hidden')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(batch).toHaveBeenCalledTimes(1)
+    expect(
+      (JSON.parse(batch.mock.calls[0]?.[0] ?? '[]') as Array<{ method: string }>).map(
+        (c) => c.method
+      )
+    ).toEqual(['view.setBounds', 'view.setRadius', 'view.setVisible'])
+    expect(frame.style.borderRadius).toBe('12px')
+    expect(frame.style.visibility).toBe('visible')
+    expect(frames).toHaveLength(1)
+  })
+})
+
+/*
  * The preview host has none of the back/forward list messages (`view.navigationEntries`,
  * `view.navigationHostState`, `historyChanged`, `view.restoreNavigation`, `view.goToIndex`): a
  * view on it keeps the URL-only snapshot and a restore loads the current entry, as before.
