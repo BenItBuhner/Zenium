@@ -399,6 +399,7 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         // one scene (`read-aloud-player-dock`: the sheet's slide out and the docked panel's in);
         // the row is found before the clock starts, the session, the sheet and the panel read after.
         val listen = fingerOn("Listen to this article")
+        val tapped = SystemClock.uptimeMillis()
         if (listen != null) {
             val docked = scene("read-aloud-player-dock", JankBudget.Kind.OPEN, timeoutMs = 10_000, took = { readAloud() != null && findNode { it == "Listen to this article" } == null && panelUp() }) {
                 Finger().tap(listen)
@@ -418,9 +419,12 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
             check("without an engine the player shows its error line", error)
             snap("player-reader-error")
         } else {
+            // This tap is the engine's first bind on a fresh image, and Google's engine installs
+            // the locale's voice pack seconds after it (#332's sweep): the session waits on the
+            // voices (loading) rather than failing, so the time to `playing` is on record.
             val playing = poll(30_000) { status() == "playing" }
             val s = readAloud()
-            finding("  status -> playing: $playing; session=$s")
+            finding("  status -> playing: $playing, ${SystemClock.uptimeMillis() - tapped} ms after the tap (a first bind installs the engine's voice pack meanwhile); session=$s")
             check("the engine speaks the reader document (playing; more than one sentence)", playing && (s?.optInt("sentenceCount") ?: 0) > 1)
             val painted = poll(8_000) { readerHighlight().optBoolean("sentence") }
             val hl = readerHighlight()
