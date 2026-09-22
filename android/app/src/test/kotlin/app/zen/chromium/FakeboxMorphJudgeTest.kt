@@ -641,10 +641,14 @@ class FakeboxMorphJudgeTest {
         val fadeIn = FakeboxMorph.sheetFade(sheetOpening(), opening = true)
         assertTrue(fadeIn.detail, fadeIn.ok)
         assertTrue(fadeIn.judged)
-        assertTrue(fadeIn.detail, fadeIn.detail.contains("faded in to 1.00 over 2 part-way frame(s)"))
+        assertTrue(fadeIn.detail, fadeIn.detail.contains("faded in to 1.00, over 2 part-way frames (40 ms)"))
         val fadeOut = FakeboxMorph.sheetFade(sheetClosing(), opening = false)
         assertTrue(fadeOut.detail, fadeOut.ok)
-        assertTrue(fadeOut.detail, fadeOut.detail.contains("faded out and left the DOM"))
+        assertTrue(fadeOut.detail, fadeOut.detail.contains("faded out and left the DOM, over 2 part-way frames (40 ms)"))
+        // One frame caught part way is a fade seen once, not one "over 1 frame (0 ms)".
+        val once = FakeboxMorph.sheetFade(sheetOpening(listOf(0.46f, 1f, 1f)), opening = true)
+        assertTrue(once.detail, once.ok)
+        assertTrue(once.detail, once.detail.contains("faded in to 1.00, one frame caught part way (at 0.46), the scrim at 0.40"))
         // A cut 0 -> 1 between two frames 40 ms apart: no fade.
         val cut = FakeboxMorph.sheetFade(sheetOpening(listOf(1f, 1f)), opening = true)
         assertFalse(cut.detail, cut.ok)

@@ -1257,12 +1257,15 @@ object FakeboxMorph {
             else -> problems += "the sheet's opacity never stepped (${opacities.size} frame(s): ${opacities.take(3).joinToString { it.second.p() }}…${opacities.last().second.p()})"
         }
         val judged = unjudged.isEmpty()
+        // How the fade was seen: one frame caught part way (its opacity), or several over their span.
+        val seen = if (ramp.size == 1) "one frame caught part way (at ${ramp.first().second.p()})"
+            else "over ${ramp.size} part-way frames (${ramp.last().first - ramp.first().first} ms)"
         return Verdict(
             check,
             problems.isEmpty(),
             when {
                 problems.isNotEmpty() -> (problems + unjudged).joinToString("; ")
-                judged -> "the sheet faded ${if (opening) "in to ${end.p()}" else "out and left the DOM"} over ${ramp.size} part-way frame(s) (${ramp.last().first - ramp.first().first} ms), the scrim ${if (opening) "at ${scrimEnd.p()}" else "gone"}"
+                judged -> "the sheet faded ${if (opening) "in to ${end.p()}" else "out and left the DOM"}, $seen, the scrim ${if (opening) "at ${scrimEnd.p()}" else "gone"}"
                 else -> "the fade the emulator never drew: " + unjudged.joinToString("; ")
             },
             judged = judged || problems.isNotEmpty()
