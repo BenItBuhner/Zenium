@@ -746,29 +746,20 @@ describe('desktop pill on an internal page', () => {
     expect(pill.getAttribute('title')).toBe('https://example.com/some/path')
   })
 
-  it('names a site by its page title once the field is under the floor; the tooltip keeps the address', () => {
+  it('keeps a site’s trimmed address under the floor too – never its title (§9.29); the tooltip the full address', () => {
     widths.probe = 150
     widths.field = 40
-    const site = tab('https://example.com/some/path', { title: 'An example page' })
+    const site = tab('https://www.example.com/some/path', { title: 'An example page' })
     const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
     const { pill, field } = pillOf(el)
-    expect(focusable(pill)[0].textContent).toBe('An example page')
-    expect(field.getAttribute('data-reads')).toBe('title')
-    // A title is one run of full ink: nothing of it is dimmed as an address's path is.
-    expect(field.querySelector('.opacity-70')).toBeNull()
-    expect(pill.getAttribute('title')).toBe('https://example.com/some/path')
-    // The probe still holds the address the field is measured against.
-    expect(pill.querySelector('[data-pill-probe]')!.textContent).toBe('example.com/some/path')
-  })
-
-  it('keeps a site’s address under the floor while the tab has no title of its own', () => {
-    widths.probe = 150
-    widths.field = 40
-    const site = tab('https://example.com/some/path', { title: 'https://example.com/some/path' })
-    const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
-    const { pill, field } = pillOf(el)
+    // Zen's trim: the scheme and `www.` off, the host first, then the path – truncated from the
+    // end by the field's `truncate`, whatever its width.
     expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
     expect(field.getAttribute('data-reads')).toBe('address')
+    expect(field.querySelector('.opacity-70')?.textContent).toBe('/some/path')
+    expect(pill.getAttribute('title')).toBe('https://www.example.com/some/path')
+    // The probe still holds the address the field is measured against.
+    expect(pill.querySelector('[data-pill-probe]')!.textContent).toBe('example.com/some/path')
   })
 
   it('offers the search prompt, not `zen://newtab`, as the empty tab’s tooltip', () => {

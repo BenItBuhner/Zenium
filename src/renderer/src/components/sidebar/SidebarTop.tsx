@@ -31,7 +31,7 @@ import { chromeDropStore } from '@renderer/lib/dnd'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { dropStore } from '@renderer/lib/drag'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
-import { isPrivateWindow, tabTitle } from '@renderer/lib/selectors'
+import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
@@ -51,12 +51,7 @@ import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
-import {
-  CHIP_WIDTH,
-  MIN_ADDRESS_WIDTH,
-  fittingChips,
-  type PillChipSpec
-} from '../urlbar/pillChipTiers'
+import { CHIP_WIDTH, fittingChips, type PillChipSpec } from '../urlbar/pillChipTiers'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
 import { isZoomed } from '../zoom/bubble'
@@ -129,16 +124,16 @@ export function NavRow({
   const [revealed, setRevealed] = useState(false)
   const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
   // An internal page's address that the pill cannot fit gives way to the page's title, as the
-  // phone pill names Zenium's own pages (v2 §10.1), and a site's does once the field is under the
-  // address floor (§9.29: the never-hidden chips have taken the room, and a few letters and an
-  // ellipsis say nothing): `pillText`, from the field's width against the address at its natural
-  // width (the probe span, drawn invisibly without truncation) and against `MIN_ADDRESS_WIDTH`.
-  // The same `pill` ref serves the chip tier below (`usePillInnerWidth`).
+  // phone pill names Zenium's own pages (v2 §10.1); a site's address never does – it truncates
+  // from the end at any width, as Zen's and Firefox's sidebar bars do (§9.29; no browser's
+  // address bar shows a site's title): `pillText`, from the field's width against the address at
+  // its natural width (the probe span, drawn invisibly without truncation). The same `pill` ref
+  // serves the chip tier below (`usePillInnerWidth`).
   const pill = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLSpanElement>(null)
   const probe = useRef<HTMLSpanElement>(null)
-  const { fits: addressFits, floor: belowFloor } = useAddressFits(pill, field, probe, !compact)
-  const text = tab ? pillText(tab.url, shown, addressFits, tabTitle(tab), belowFloor) : ''
+  const addressFits = useAddressFits(pill, field, probe, !compact)
+  const text = tab ? pillText(tab.url, shown, addressFits) : ''
   // A title is one run of full ink; only an address dims what follows its site.
   const address = text === shown ? addressParts(text) : { site: text, rest: '' }
   // What the site icon says (derived in the core's site-information module, drawn here).
@@ -687,24 +682,25 @@ export function NavRow({
 
 /**
  * Whether the address at its natural width (`probe`) fits the width the pill gives its field
- * (`field`), and whether that field is under the address floor (`MIN_ADDRESS_WIDTH`, §9.29 –
- * the never-hidden chips have taken the room a truncated address needs to say anything, and the
- * pill names the page instead): measured before the first paint and again whenever either
- * changes size – the sidebar resized, a chip come or gone, the tab moved to another section. Held
- * still while the pointer or the keyboard is on the pill: the hover-only chips narrow the field
- * for the hover's duration, and the text must not swap under the pointer – it truncates then, as
- * every address does. The observer's next delivery after the hover ends measures the rest layout
- * again. `mounted` says the pill is in the row (the compact sidebar has none): its change rebinds
- * the observer to the pill the row has now. The field is `flex: 1`, so its width is the room the
- * chips leave, whatever text it holds – the measurement never feeds on its own result.
+ * (`field`) – what decides a page tab's title for its address (`pillText`, §10.1): measured
+ * before the first paint and again whenever either changes size – the sidebar resized, a chip
+ * come or gone, the tab moved to another section. Held still while the pointer or the keyboard
+ * is on the pill: the hover-only chips narrow the field for the hover's duration, and the text
+ * must not swap under the pointer – it truncates then, as every address does. The observer's
+ * next delivery after the hover ends measures the rest layout again. `mounted` says the pill is
+ * in the row (the compact sidebar has none): its change rebinds the observer to the pill the row
+ * has now. The field is `flex: 1`, so its width is the room the chips leave, whatever text it
+ * holds – the measurement never feeds on its own result. The address floor (`MIN_ADDRESS_WIDTH`,
+ * §9.29) is the chip tier's number, not this measurement's: under it a site's address still
+ * truncates, and only the chips give way.
  */
 function useAddressFits(
   pill: RefObject<HTMLElement | null>,
   field: RefObject<HTMLElement | null>,
   probe: RefObject<HTMLElement | null>,
   mounted: boolean
-): { fits: boolean; floor: boolean } {
-  const [fit, setFit] = useState({ fits: true, floor: false })
+): boolean {
+  const [fits, setFits] = useState(true)
   useLayoutEffect(() => {
     const slot = field.current
     const text = probe.current
@@ -712,10 +708,7 @@ function useAddressFits(
     // Fractional widths: a text 0.3 px wider than its box already draws the ellipsis.
     const measure = (): void => {
       if (pill.current?.matches(':hover, :focus-within')) return
-      const room = slot.getBoundingClientRect().width
-      const fits = text.getBoundingClientRect().width <= room
-      const floor = room < MIN_ADDRESS_WIDTH
-      setFit((prev) => (prev.fits === fits && prev.floor === floor ? prev : { fits, floor }))
+      setFits(text.getBoundingClientRect().width <= slot.getBoundingClientRect().width)
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -723,7 +716,7 @@ function useAddressFits(
     observer.observe(text)
     return () => observer.disconnect()
   }, [pill, field, probe, mounted])
-  return fit
+  return fits
 }
 
 /**
