@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { isValidElement, type ReactNode } from 'react'
+import { createElement, isValidElement, type ReactNode } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ExtensionErrorEntry,
@@ -31,6 +32,12 @@ import {
   emptyPasswordsStatus,
   emptyResourceSnapshot
 } from '@shared/defaults'
+import {
+  ANDROID_FONT_FAMILIES,
+  FONT_SIZE_STEPS,
+  GENERIC_FONT_FAMILIES,
+  MINIMUM_FONT_SIZE_STEPS
+} from '@shared/fonts'
 import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
@@ -54,6 +61,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { buildSection, buildSections } = await import('../sections')
 const { allRows, currentOptionLabel, findRow, groupShows, optionGroups, rowText, searchRows } =
   await import('../model')
+const { FontPreview, familyOptions, previewFamilies } = await import('../fonts')
 const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 const { idleDictionaryWords } = await import('@renderer/lib/spellcheckWords')
@@ -1458,11 +1466,15 @@ describe('the section model', () => {
     const silent = state({ capabilities: { ...ANDROID, translate: false } })
     expect(phoneSections(silent).map((m) => m.section.id)).not.toContain('languages')
 
-    const languages = section('languages')
+    // The preferred languages (CT-41, `Settings.languages`; translate's `preferred` is derived
+    // from them) mirror the engine slice's two languages read.
+    const c = context(state({}, { languages: ['en', 'fr'] }))
+    const languages = buildSection(PAGE.sections.find((x) => x.id === 'languages')!, c.ctx)
     expect(languages.groups.map((g) => g.id)).toEqual([
+      // CT-41's Preferred languages open the category (Chrome's order), one group: the list's
+      // rows and Add language together, since the add row is the list's own last row.
+      'preferred',
       'translation',
-      'read',
-      'read-add',
       'always',
       'always-add',
       'never',
@@ -1475,9 +1487,8 @@ describe('the section model', () => {
     ])
     expect(languages.groups.every(groupShows)).toBe(true)
     expect(languages.groups.map((g) => g.heading)).toEqual([
+      'Preferred languages',
       'Translation',
-      'Languages you read',
-      null,
       'Always translate',
       null,
       'Never translate',
@@ -1495,26 +1506,19 @@ describe('the section model', () => {
     offer.onChange(false)
     expect(invoke).toHaveBeenCalledWith('translate.setPreferences', { autoOffer: false })
 
-    // The first language read is the target; the others can be put first or removed.
-    expect(row(languages, 'languages-read:en')).toMatchObject({
-      kind: 'item',
+    // The preferred languages are §10.4 rows in the list's order with a ⋯ menu each, writing
+    // the list whole onto the setting (its own test below walks the menu).
+    expect(row(languages, 'languages-preferred:en')).toMatchObject({
+      kind: 'info',
       label: 'English',
-      description: 'Pages are translated into this language'
+      menu: { label: 'Options for English' }
     })
-    expect(findRow(languages.groups, 'languages-read:en:first')).toBeNull()
-    const first = row(languages, 'languages-read:fr:first')
-    if (first.kind !== 'action') throw new Error('not an action')
-    first.onPress?.()
-    expect(invoke).toHaveBeenCalledWith('translate.setPreferences', { preferred: ['fr', 'en'] })
-    const drop = row(languages, 'languages-read:fr:remove')
-    if (drop.kind !== 'action') throw new Error('not an action')
-    drop.onPress?.()
-    expect(invoke).toHaveBeenCalledWith('translate.setPreferences', { preferred: ['en'] })
-
-    // What the desktop adds through a menulist is an action row opening a sheet (§9.13).
-    const add = row(languages, 'languages-read-add')
+    expect(row(languages, 'languages-preferred:fr')).toMatchObject({ kind: 'info', label: 'French' })
+    const add = row(languages, 'languages-add')
     if (add.kind !== 'action') throw new Error('not an action')
-    expect(add.form?.title).toBe('Add a language you read')
+    expect(add.form?.title).toBe('Add language')
+    expect(findRow(languages.groups, 'languages-read:en')).toBeNull()
+    expect(findRow(languages.groups, 'languages-read-add')).toBeNull()
 
     const ask = row(languages, 'languages-always:es:ask')
     if (ask.kind !== 'action') throw new Error('not an action')
@@ -1555,17 +1559,101 @@ describe('the section model', () => {
     if (download.kind !== 'action') throw new Error('not an action')
     expect(download.form?.title).toBe('Download a model')
 
-    // Nothing left to add: no add row for that list.
+    // Nothing left to add to a translate list: no add row for that list.
     const everything = section(
       'languages',
       state({
         translate: {
           ...TRANSLATE,
-          preferences: { ...TRANSLATE.preferences, preferred: ['de', 'en', 'es', 'fr'] }
+          preferences: { ...TRANSLATE.preferences, alwaysTranslate: ['de', 'en', 'es', 'fr'] }
         }
       })
     )
-    expect(everything.groups.map((g) => g.id)).not.toContain('read-add')
+    expect(everything.groups.map((g) => g.id)).not.toContain('always-add')
+  })
+
+  it('CT-41: the preferred languages are rows in the list’s order with a ⋯ menu – Move Up / Move Down / Remove – that writes the list whole onto the setting, the inapplicable item disabled; Add language opens the picker; the copy says what the order does', () => {
+    const c = context(state({}, { languages: ['en-GB', 'en', 'de'] }))
+    const def = PAGE.sections.find((x) => x.id === 'languages')!
+    const model = buildSection(def, c.ctx)
+    const group = model.groups.find((g) => g.id === 'preferred')!
+    expect(group.rows.map((r) => r.id)).toEqual([
+      'languages-preferred:en-GB',
+      'languages-preferred:en',
+      'languages-preferred:de',
+      'languages-add'
+    ])
+    expect(group.rows.map((r) => r.label)).toEqual([
+      'English (United Kingdom)',
+      'English',
+      'German',
+      'Add language'
+    ])
+    // The phone host's copy: pages receive the system's languages (`pageLanguages` false).
+    expect(group.description).toContain('pages receive the system’s languages')
+    expect(group.description).not.toContain('checks spelling')
+
+    const menuOf = (id: string): { label: string; disabled?: boolean; onSelect(): void }[] => {
+      const r = row(model, id)
+      if (r.kind !== 'info' || !r.menu) throw new Error(`${id} has no menu`)
+      return r.menu.items.map((i) => ({ label: i.label, disabled: i.disabled, onSelect: i.onSelect }))
+    }
+    // Title Case items (§9.1); the first row's Move Up and the last row's Move Down stay
+    // listed, disabled (§9.30's .4); Remove stays on while more than one language remains.
+    expect(menuOf('languages-preferred:en-GB').map((i) => [i.label, i.disabled ?? false])).toEqual([
+      ['Move Up', true],
+      ['Move Down', false],
+      ['Remove', false]
+    ])
+    expect(menuOf('languages-preferred:de').map((i) => [i.label, i.disabled ?? false])).toEqual([
+      ['Move Up', false],
+      ['Move Down', true],
+      ['Remove', false]
+    ])
+    // Each item writes the whole list, reordered or shortened, through `settings.update`.
+    menuOf('languages-preferred:en')[0].onSelect()
+    expect(c.patches.at(-1)).toEqual({ languages: ['en', 'en-GB', 'de'] })
+    menuOf('languages-preferred:en')[1].onSelect()
+    expect(c.patches.at(-1)).toEqual({ languages: ['en-GB', 'de', 'en'] })
+    menuOf('languages-preferred:en-GB')[2].onSelect()
+    expect(c.patches.at(-1)).toEqual({ languages: ['en', 'de'] })
+
+    // One language left: Chrome keeps it, so Remove is disabled on the only row.
+    const one = buildSection(def, context(state({}, { languages: ['en'] })).ctx)
+    const only = row(one, 'languages-preferred:en')
+    if (only.kind !== 'info' || !only.menu) throw new Error('no menu')
+    expect(only.menu.items.map((i) => i.disabled ?? false)).toEqual([true, true, true])
+
+    // Add language: an action row with the desktop's button (§10.5) opening the picker (§9.13),
+    // whose choices leave out the languages already listed.
+    const add = row(model, 'languages-add')
+    if (add.kind !== 'action') throw new Error('not an action')
+    expect(add.button).toBe('Add…')
+    expect(add.disabled).toBeFalsy()
+    expect(add.form?.title).toBe('Add language')
+
+    // A full list (Chrome's 32) disables the row and says why.
+    const full = Array.from({ length: 32 }, (_, i) => `x${String(i).padStart(2, '0')}`)
+    const capped = buildSection(def, context(state({}, { languages: full })).ctx)
+    const addCapped = row(capped, 'languages-add')
+    if (addCapped.kind !== 'action') throw new Error('not an action')
+    expect(addCapped.disabled).toBe(true)
+    expect(addCapped.description).toContain('32 languages at most')
+
+    // A desktop host hands the list to its pages: the copy says sites follow it and the
+    // dictionary does too.
+    const desktop = buildSection(
+      def,
+      context(
+        state(
+          { platform: 'linux', capabilities: { ...ANDROID, pageLanguages: true } },
+          { languages: ['en'] }
+        )
+      ).ctx
+    )
+    const desktopGroup = desktop.groups.find((g) => g.id === 'preferred')!
+    expect(desktopGroup.description).toContain('show the first one here they have')
+    expect(desktopGroup.description).not.toContain('system’s languages')
   })
 
   it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, then #115’s Tracking prevention, Clear browsing data, Site settings', () => {
@@ -1946,9 +2034,11 @@ describe('the section model', () => {
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {
     // Without a layout every row shows; the phone shell's list has no Bookmarks group (no bar).
+    // CT-25's Customise fonts follows Appearance: what pages look like, before the chrome's own.
     // Home (the phone's homepage, SET-36) follows the URL bar group: the chrome's controls.
     expect(section('look').groups.map((g) => g.id)).toEqual([
       'appearance',
+      'fonts',
       'app-icon',
       'bookmarks',
       'url-bar',
@@ -1961,6 +2051,7 @@ describe('the section model', () => {
     const phone = buildSection(PAGE.sections[0], { ...context().ctx, formFactor: 'phone' })
     expect(phone.groups.map((g) => g.id)).toEqual([
       'appearance',
+      'fonts',
       'app-icon',
       'url-bar',
       'home',
@@ -2324,6 +2415,181 @@ describe('what a row does', () => {
     expect(currentOptionLabel(scheme)).toBe('Follow system')
     scheme.onChange('dark')
     expect(c.patches[1]).toEqual({ colorScheme: 'dark' })
+  })
+
+  it('CT-23: the colour scheme row says pages follow it – the desktop’s description, the phone picker’s title block', () => {
+    const scheme = row(section('look'), 'color-scheme')
+    if (scheme.kind !== 'value') throw new Error('not a value row')
+    expect(scheme.sheetDescription).toBe('Websites follow this too.')
+    expect(scheme.options.map((o) => o.label)).toEqual(['Follow system', 'Light', 'Dark'])
+  })
+
+  describe('CT-25: Customise fonts', () => {
+    const desktopHost = (settings: Partial<Settings> = {}): UIState =>
+      state(
+        { platform: 'linux', capabilities: { ...ANDROID, genericFontFamilies: true } },
+        settings
+      )
+
+    it('the two sizes are slider rows over Chrome’s stops: the value is the stop’s index, the row reads the size, the ends are Chrome’s labels, and letting go writes the size alone into the fonts', () => {
+      const c = context()
+      const look = buildSection(PAGE.sections[0], c.ctx)
+      const size = row(look, 'fonts-size')
+      if (size.kind !== 'slider') throw new Error('not a slider')
+      expect([size.min, size.max, size.step]).toEqual([0, FONT_SIZE_STEPS.length - 1, 1])
+      expect(FONT_SIZE_STEPS[size.value]).toBe(16)
+      expect(size.format(size.value)).toBe('16 px')
+      expect(size.ends).toEqual(['Very small', 'Very large'])
+      size.onChange(FONT_SIZE_STEPS.indexOf(20))
+      expect(c.patches.at(-1)).toEqual({ fonts: { ...DEFAULT_SETTINGS.fonts, size: 20 } })
+      // The same stop again is not a write.
+      const before = c.patches.length
+      size.onChange(size.value)
+      expect(c.patches.length).toBe(before)
+
+      const minimum = row(look, 'fonts-minimum-size')
+      if (minimum.kind !== 'slider') throw new Error('not a slider')
+      expect(minimum.value).toBe(0)
+      expect(minimum.format(0)).toBe('None')
+      expect(minimum.format(MINIMUM_FONT_SIZE_STEPS.indexOf(12))).toBe('12 px')
+      expect(minimum.ends).toEqual(['Tiny', 'Huge'])
+      minimum.onChange(MINIMUM_FONT_SIZE_STEPS.indexOf(12))
+      expect(c.patches.at(-1)).toEqual({ fonts: { ...DEFAULT_SETTINGS.fonts, minimumSize: 12 } })
+
+      // A synced size between two stops sits on the nearest one, and the row reads that stop.
+      const odd = buildSection(
+        PAGE.sections[0],
+        context(state({}, { fonts: { ...DEFAULT_SETTINGS.fonts, size: 19 } })).ctx
+      )
+      const oddSize = row(odd, 'fonts-size')
+      if (oddSize.kind !== 'slider') throw new Error('not a slider')
+      expect(FONT_SIZE_STEPS[oddSize.value]).toBe(18)
+    })
+
+    it('a phone host whose engine ignores the generic slots lists the standard family alone, with WebView’s aliases, as a form row in the phone shell; the preview follows; no Reset at the defaults', () => {
+      const c = context()
+      const model = buildSection(PAGE.sections[0], { ...c.ctx, formFactor: 'phone' })
+      const group = model.groups.find((g) => g.id === 'fonts')!
+      expect(group.heading).toBe('Customise fonts')
+      expect(group.description).toContain('are the system’s on this device')
+      expect(group.rows.map((r) => r.id)).toEqual([
+        'fonts-size',
+        'fonts-minimum-size',
+        'fonts-standard-phone',
+        'fonts-preview'
+      ])
+      const standard = row(model, 'fonts-standard-phone')
+      if (standard.kind !== 'action') throw new Error('not an action')
+      expect(standard.label).toBe('Standard font')
+      expect(standard.description).toBe('System default')
+      expect(standard.form?.title).toBe('Standard font')
+      expect(findRow(model.groups, 'fonts-reset')).toBeNull()
+
+      // The picker's options: the platform's default first, then the aliases, each in its face.
+      const options = familyOptions(null, null, false)
+      expect(options.map((o) => o.value)).toEqual(['', ...ANDROID_FONT_FAMILIES])
+      expect(options[0].font).toBeUndefined()
+      expect(options.slice(1).every((o) => o.font === o.value)).toBe(true)
+    })
+
+    it('a desktop host lists the four slots as menulist rows whose options carry their face – the generic names, then the installed families under a heading – keeping a synced family the computer lacks; Reset comes once anything moved and writes the defaults whole', () => {
+      const c = context(desktopHost({ fonts: { ...DEFAULT_SETTINGS.fonts, serif: 'Georgia' } }))
+      const model = buildSection(PAGE.sections[0], {
+        ...c.ctx,
+        formFactor: 'desktop',
+        localFonts: ['Georgia', 'Inter', 'monospace']
+      })
+      const group = model.groups.find((g) => g.id === 'fonts')!
+      expect(group.description).not.toContain('on this device')
+      expect(group.rows.map((r) => r.id)).toEqual([
+        'fonts-size',
+        'fonts-minimum-size',
+        'fonts-standard',
+        'fonts-serif',
+        'fonts-sansSerif',
+        'fonts-fixed',
+        'fonts-preview',
+        'fonts-reset'
+      ])
+      const serif = row(model, 'fonts-serif')
+      if (serif.kind !== 'value') throw new Error('not a value row')
+      expect(serif.value).toBe('Georgia')
+      expect(currentOptionLabel(serif)).toBe('Georgia')
+      expect(serif.options.map((o) => o.value)).toEqual([
+        '',
+        ...GENERIC_FONT_FAMILIES,
+        'Georgia',
+        'Inter'
+      ])
+      expect(serif.options.find((o) => o.value === 'Inter')).toMatchObject({
+        font: 'Inter',
+        group: 'Installed'
+      })
+      expect(serif.options.find((o) => o.value === 'serif')).toMatchObject({
+        label: 'Serif',
+        font: 'serif'
+      })
+      // Choosing writes the slot alone; the platform's default writes null.
+      serif.onChange('Inter')
+      expect(c.patches.at(-1)).toEqual({
+        fonts: { ...DEFAULT_SETTINGS.fonts, serif: 'Inter' }
+      })
+      serif.onChange('')
+      expect(c.patches.at(-1)).toEqual({ fonts: { ...DEFAULT_SETTINGS.fonts, serif: null } })
+
+      // A family the computer no longer lists stays an option, so the row never shows a value
+      // its picker lacks.
+      const gone = buildSection(PAGE.sections[0], {
+        ...context(desktopHost({ fonts: { ...DEFAULT_SETTINGS.fonts, fixed: 'Fira Code' } })).ctx,
+        formFactor: 'desktop',
+        localFonts: ['Inter']
+      })
+      const fixed = row(gone, 'fonts-fixed')
+      if (fixed.kind !== 'value') throw new Error('not a value row')
+      expect(fixed.options.at(-1)).toMatchObject({ value: 'Fira Code', font: 'Fira Code' })
+
+      // Before the computer has answered, the rows keep to the generic names.
+      const waiting = buildSection(PAGE.sections[0], {
+        ...context(desktopHost()).ctx,
+        formFactor: 'desktop',
+        localFonts: null
+      })
+      const standard = row(waiting, 'fonts-standard')
+      if (standard.kind !== 'value') throw new Error('not a value row')
+      expect(standard.options.map((o) => o.value)).toEqual(['', ...GENERIC_FONT_FAMILIES])
+      expect(findRow(waiting.groups, 'fonts-reset')).toBeNull()
+
+      const reset = row(model, 'fonts-reset')
+      if (reset.kind !== 'action') throw new Error('not an action')
+      expect(reset.button).toBe('Reset')
+      reset.onPress?.()
+      expect(c.patches.at(-1)).toEqual({ fonts: DEFAULT_SETTINGS.fonts })
+    })
+
+    it('the preview is a static content row in the page fonts themselves: the standard family at the size, the fixed one at Chrome’s ratio, both floored by the minimum', () => {
+      const fonts = { ...DEFAULT_SETTINGS.fonts, standard: 'Inter', size: 24, minimumSize: 20 }
+      expect(previewFamilies(fonts, 'linux')).toEqual({ standard: 'Inter', fixed: 'Monospace' })
+      expect(previewFamilies(DEFAULT_SETTINGS.fonts, 'android')).toEqual({
+        standard: 'serif',
+        fixed: 'monospace'
+      })
+      const html = renderToStaticMarkup(createElement(FontPreview, { fonts, platform: 'linux' }))
+      expect(html).toContain('data-row="fonts-preview"')
+      expect(html).toContain('data-static')
+      expect(html).toContain('--zen-settings-preview-family:&quot;Inter&quot;')
+      expect(html).toContain('--zen-settings-preview-size:24px')
+      // Chrome's monospace size for 24 is 20 (the 13/16 ratio), floored by the minimum of 20.
+      expect(html).toContain('--zen-settings-preview-fixed-size:20px')
+      expect(html).toContain('--zen-settings-preview-fixed-family:&quot;Monospace&quot;')
+    })
+
+    it('is found by the landing’s search under Look and Feel', () => {
+      const models = phoneSections()
+      expect(searchRows(models, 'font size').map((h) => h.row.id)).toContain('fonts-size')
+      expect(searchRows(models, 'typeface').map((h) => h.caption)).toContain(
+        'Look and Feel › Customise fonts'
+      )
+    })
   })
 
   it('page-control rows patch inside pageControls, keeping the rest of it', () => {

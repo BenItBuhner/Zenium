@@ -83,11 +83,15 @@ export function LanguagePickList({
         />
       </div>
       {shown.length === 0 ? (
-        <p className="zen-settings-empty" role="status">
-          {choices.length === 0
-            ? 'Every language is on the list'
-            : `No language matches “${term}”`}
-        </p>
+        <div data-static="" role="status" className="zen-settings-row zen-v2-row">
+          <RowText
+            label={
+              choices.length === 0
+                ? 'Every language is on the list'
+                : `No language matches “${term}”`
+            }
+          />
+        </div>
       ) : (
         shown.map((choice) => (
           <button

@@ -144,6 +144,7 @@ export function FontPreview({
   return (
     <div
       className="zen-settings-fonts-preview"
+      data-row="fonts-preview"
       data-static=""
       style={
         {
