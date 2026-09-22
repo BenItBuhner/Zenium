@@ -1,0 +1,88 @@
+name: Android motion perf
+
+# The performance program's profile of the phone's whole-app motion (perf-program.md, PERF-5,
+# after PERF-4's audit): MotionPerfDemo drives the address pill with real touches over loopback
+# copies of pages on an Android 15 emulator and measures every motion as its own scene through
+# the harness's jank gate (`traceFrames`: HWUI's frame statistics, reported, and the chrome
+# WebView's own Chromium trace read into the renderer main thread's time per frame, its style /
+# layout / paint split and its long tasks, gated) – the tab swipe in its pieces (the touch and
+# the capture, the drag, the release, a fling, the drag between two grouped tabs with their
+# ribbons). The shared workflow renders the record into the job summary and the
+# `jank-report-*` artifact; the driver's `perf-motion.json` and `findings.txt` in the demo
+# artifact carry its in-chrome probe (what each scene wrote to the DOM) beside the traces
+# (`trace-<scene>.json.gz`, for chrome://tracing or the Perfetto UI). The measured scenes run
+# before the recorder rolls, since screenrecord composes a second copy of every frame on the
+# emulator's software GPU; the recorded part is the media. The app's startup sweeps (Safe
+# Browsing's, the blocker's) are HELD for the run (`holdBackgroundWork`, #313: the sweep is not
+# the motion under test; the release table's stand-ins keep measuring without it). Dispatch-only:
+# about fifteen minutes. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme of the chrome
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+      jank-gate:
+        description: >-
+          The jank budget's gate for the scenes this driver measures: soft reports a scene over
+          its budget, hard fails it
+        type: choice
+        default: soft
+        options:
+          - soft
+          - hard
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-motion-perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile:
+    name: Motion perf (${{ inputs.theme || 'light' }})
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MotionPerfDemo
+        DEMO_DIR=perf-motion
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-motion-perf
+        DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
+        DEMO_ARGS=-e holdBackgroundWork true
+        DEMO_HANDSHAKE_S=480
+      api-level: '35'
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
+      artifact-name: android-motion-perf-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-motion-perf/
+      timeout-minutes: 60
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed.
+  profile-again:
+    name: Motion perf (${{ inputs.theme || 'light' }}), second boot
+    needs: profile
+    if: ${{ failure() && needs.profile.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MotionPerfDemo
+        DEMO_DIR=perf-motion
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-motion-perf
+        DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
+        DEMO_ARGS=-e holdBackgroundWork true
+        DEMO_HANDSHAKE_S=480
+      api-level: '35'
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
+      artifact-name: android-motion-perf-${{ inputs.theme || 'light' }}-second-boot
+      artifact-path: artifacts/android-motion-perf/
+      timeout-minutes: 60
