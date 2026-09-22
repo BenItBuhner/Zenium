@@ -1236,14 +1236,23 @@ export type BesideEdge = 'after' | 'before'
 export const MENU_PANEL_INSET = 7
 
 /**
+ * The cascade seam (§9.20): a child panel overlaps its parent by this much, so the parent's
+ * 1 px hairline and the child's share one pixel and no 2 px seam is drawn where they meet – as
+ * Firefox's and Zen's menus cascade. Gap 0 counted border to border, in other words.
+ */
+export const CASCADE_OVERLAP = 1
+
+/**
  * `placePopover`'s cascade mode (§9.20): where a panel opened from a row of another panel goes –
  * a folder panel's sub-folder, a menu's submenu – in viewport coordinates for a `fixed` element
- * (`popoverStyle` turns it into the inline style). Flush against its parent panel's trailing
- * edge (gap 0), its first row on the row that opened it (`anchor`, `inset` above the row's
- * top). Against the window it follows the same order as a popover under a bar, with
- * `POPOVER_MARGIN`: a panel that would cross the trailing margin flips to the parent's leading
- * side; if neither side fits it slides the least distance inside the margins on the trailing
- * side, still overlapping its parent; wider than the window minus 16 it shrinks to that.
+ * (`popoverStyle` turns it into the inline style). On its parent panel's trailing edge,
+ * overlapping it by `CASCADE_OVERLAP` so the two hairlines share one pixel, its first row on
+ * the row that opened it (`anchor`, `inset` above the row's top). Against the window it
+ * follows the same order as a popover under a bar, with `POPOVER_MARGIN`: a panel that would
+ * cross the trailing margin flips to the parent's leading side (the same one pixel over the
+ * parent's leading hairline); if neither side fits it slides the least distance inside the
+ * margins on the trailing side, still overlapping its parent; wider than the window minus 16
+ * it shrinks to that.
  * Vertically it starts on the row and, when it would cross the bottom margin, flips above – its
  * last row on the row's bottom – when there is more room above than below (or the room below is
  * under `POPOVER_HEIGHT_FLOOR`); otherwise it stays and shrinks to the room left, never taller
@@ -1262,8 +1271,8 @@ export function placeBeside(
   const minLeft = POPOVER_MARGIN
   const maxLeft = viewport.width - POPOVER_MARGIN - width
   const fits = (left: number): boolean => left >= minLeft && left <= maxLeft
-  const after = parent.x + parent.width
-  const before = parent.x - width
+  const after = parent.x + parent.width - CASCADE_OVERLAP
+  const before = parent.x - width + CASCADE_OVERLAP
   let edge: BesideEdge = 'after'
   let left: number
   if (fits(after)) left = after
