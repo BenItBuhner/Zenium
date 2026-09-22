@@ -8,9 +8,6 @@ name: Android release APK probe
 # the accessibility tree before and after every tap, on a fresh profile and on a seeded one.
 # The artifact p0-pill-tap-probe carries stills/, trees/, the table and the app's logcat.
 on:
-  # TEMPORARY: fires the probe once on this branch (worker tokens cannot dispatch); removed after.
-  push:
-    branches: [cursor/android-p0-pill-tap-probe-1c97]
   workflow_dispatch:
     inputs:
       tags:

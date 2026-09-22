@@ -175,8 +175,8 @@ wait_pill() { # $1 = tree file
   line=""
   for i in $(seq 1 25); do
     if dump_tree "$f"; then
-      line=$(pill_node "$f" button)
-      case "$line" in *example.org*) echo "$line"; return 0 ;; esac
+      # The onboarding first: its sheet stands over a pill the tree still carries (run
+      # 35752299768's fresh scenes tapped the sheet's button where the pill was).
       btn=$(onboarding_button "$f")
       if [ -n "$btn" ]; then
         note "onboarding: tapping '${btn#* * }' at ${btn% *}"
@@ -185,6 +185,8 @@ wait_pill() { # $1 = tree file
         sleep 2
         continue
       fi
+      line=$(pill_node "$f" button)
+      case "$line" in *example.org*) echo "$line"; return 0 ;; esac
       # The omnibox left open by the onboarding's last step (a focused field, no pill): back it out.
       if [[ $(field_state "$f") == focusedEditText=yes* ]]; then
         note "a field is focused and no pill shows; pressing BACK"
