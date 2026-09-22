@@ -7,9 +7,6 @@ name: Android inset probe
 # still per configuration in the artifact. Dispatch-only.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-inset-probe-f020
 
 permissions:
   contents: read
