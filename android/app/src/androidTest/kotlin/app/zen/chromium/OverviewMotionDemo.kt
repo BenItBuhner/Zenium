@@ -479,7 +479,7 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
     private var calibrated = false
 
     private fun card(tabId: String) = "[data-tab-id=\"$tabId\"]"
-    private fun closeButton(tabId: String) = "${card(tabId)} [aria-label=\"Close tab\"]"
+    private fun closeButton(tabId: String) = closeButtonOf(card(tabId))
 
     /** A JS expression's string result ("" when it never answered or returned nothing). */
     private fun jsString(code: String): String = (JSONTokener(chromeJs(code)).nextValue() as? String).orEmpty()

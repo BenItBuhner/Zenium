@@ -426,7 +426,8 @@ abstract class DemoHarness(
      * card by its bare title, the names before #237, until #315's run 35711026068 and #327's
      * found none. [groupCard] and [tabCard] make one; it is the predicate for the accessibility
      * tree ([findByLabel], [reveal], [waitFor] and [waitForGone] take it where they take a
-     * label) and [selector] the same match for a driver that reads the grid's DOM.
+     * label) and [selector] the same match for a driver that reads the grid's DOM. The card's
+     * close button, "Close TITLE" since the same change, is [closeButtonOf] its cell.
      */
     class Card internal constructor(private val name: String, private val heads: List<String>) : (String) -> Boolean {
         /** Whether an accessible name – the tree's, or a DOM `aria-label` – is this card's. */
@@ -1958,6 +1959,17 @@ abstract class DemoHarness(
          */
         fun tabCard(vararg titles: String): Card =
             Card("${titles.joinToString(" / ")} card", titles.map { "$it, tab " })
+
+        /**
+         * The close button of the overview card in `cell` (a driver's `[data-tab-id="…"]`
+         * selector), for a driver that reads the grid's DOM: the card's own child – the button
+         * sits beside the card's button in its cell (OverviewCard.tsx) – named "Close TITLE"
+         * since #237 (`closeTabLabel`) and matched by its element and the leading word alone, the
+         * title being the cell's business already (`button`: the card itself is a `div` whose
+         * name a page titled "Close …" would start the same way). Four drivers read
+         * `[aria-label="Close tab"]`, the name before #237, and had no X to touch.
+         */
+        fun closeButtonOf(cell: String): String = "$cell button[aria-label^=\"Close \"]"
         /** The instrumentation argument the gate is read from (`-e jankGate hard`). */
         const val JANK_GATE_ARGUMENT = "jankGate"
         /**
