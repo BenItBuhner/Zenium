@@ -11,6 +11,8 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
@@ -28,9 +30,10 @@ import java.util.concurrent.TimeUnit
  * screenshots (one `PASS` or `FAIL` per check; the test fails at the end when any check did):
  *
  *  - Take Screenshot from the app menu (a real touch): the page FLASHES – a white view over the
- *    tab's frame that goes clear, sampled on the main thread: its alpha falls, nothing about it
- *    moves or scales (v2 §9.33, opacity alone) – the preview card takes the toast's slot, and
- *    `MediaStore.Images` has one more row under Pictures/Zenium, the viewport's size;
+ *    tab's frame that goes clear, read by the main thread frame by frame from its addition to
+ *    its removal: opaque as it comes, clear as it leaves, nothing about it moves or scales (v2
+ *    §9.33, opacity alone) – the preview card takes the toast's slot, and `MediaStore.Images`
+ *    has one more row under Pictures/Zenium, the viewport's size;
  *  - a real touch on the card's thumbnail opens the picture in the system's viewer; Share on the
  *    card brings the system sheet with the picture; Delete takes the row out of the gallery and
  *    the card goes;
@@ -64,13 +67,92 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
     /** A gallery row of Zenium's, as MediaStore lists it. */
     private data class Picture(val id: Long, val name: String, val width: Int, val height: Int, val bytes: Long)
 
-    /** What the main-thread sampling saw of the flash. */
-    private data class Flash(val samples: Int, val first: Float, val last: Float, val spanMs: Long, val moved: Boolean, val overTab: Boolean) {
+    /**
+     * What the main thread saw of the flash ([FlashWatch]): one alpha reading as the overlay
+     * came into the tree, one per frame drawn with it there, one as it left; `spanMs` from its
+     * addition to its removal (the animator's 120 ms stretched by however long the emulator's
+     * frames take), `gone` when it left the tree at all.
+     */
+    private data class Flash(
+        val samples: Int, val first: Float, val last: Float, val spanMs: Long,
+        val moved: Boolean, val overTab: Boolean, val gone: Boolean, val rose: Boolean
+    ) {
         val seen get() = samples > 0
-        val fell get() = samples >= 2 && last < first
-        override fun toString() = if (!seen) "no white overlay seen over the page" else
-            "$samples sample(s) over $spanMs ms, alpha ${"%.2f".format(first)} -> ${"%.2f".format(last)}, " +
-                "${if (moved) "MOVED OR SCALED" else "no translation, no scale"}, ${if (overTab) "over the tab's frame" else "NOT the tab's frame"}"
+        /** Opaque as it came, clear as it left, never brighter again in between. */
+        val fell get() = samples >= 2 && first >= 0.99f && last <= 0.01f && !rose
+        override fun toString() = if (!seen) "no white overlay came over the page" else
+            "$samples reading(s) over $spanMs ms from added to removed, alpha ${"%.2f".format(first)} -> ${"%.2f".format(last)}" +
+                "${if (rose) " (ROSE in between)" else ""}, ${if (moved) "MOVED OR SCALED" else "no translation, no scale"}, " +
+                "${if (overTab) "over the tab's frame" else "NOT the tab's frame"}, ${if (gone) "gone from the tree" else "STILL IN THE TREE"}"
+    }
+
+    /**
+     * The flash as the main thread draws it. Installed on the tab's parent before the menu's
+     * tap: the white view [Screenshots] lays over the tab's frame is noted the moment it is added
+     * and the moment it is removed (its alpha read both times: 1 as it comes, 0 as the animator's
+     * end action takes it out) and at every traversal in between (`OnPreDrawListener`: one
+     * reading per frame actually drawn), with its bounds against the tab's and whether anything
+     * about it moved or scaled. Sampling from the test thread through `runOnMainSync` starved
+     * behind the emulator's second-long frames in run 35721280791 – one reading, alpha 1, and the
+     * overlay was gone before the next; this reads what each frame drew and what the removal left.
+     */
+    private inner class FlashWatch(private val tab: TabWebView, private val parent: ViewGroup) :
+        ViewTreeObserver.OnPreDrawListener, ViewGroup.OnHierarchyChangeListener {
+        private val alphas = ArrayList<Float>()
+        private var overlay: View? = null
+        private var addedAt = 0L
+        private var moved = false
+        private var overTab = true
+        private var laidOut = false
+        @Volatile var removedAt = 0L
+
+        fun install() {
+            parent.setOnHierarchyChangeListener(this)
+            parent.viewTreeObserver.addOnPreDrawListener(this)
+        }
+
+        fun remove() {
+            parent.setOnHierarchyChangeListener(null)
+            parent.viewTreeObserver.removeOnPreDrawListener(this)
+        }
+
+        override fun onChildViewAdded(p: View, child: View) {
+            if (overlay != null || !isFlash(child)) return
+            overlay = child
+            addedAt = SystemClock.uptimeMillis()
+            alphas += child.alpha
+        }
+
+        override fun onChildViewRemoved(p: View, child: View) {
+            if (child !== overlay || removedAt != 0L) return
+            alphas += child.alpha
+            removedAt = SystemClock.uptimeMillis()
+        }
+
+        override fun onPreDraw(): Boolean {
+            val view = overlay ?: return true
+            if (removedAt != 0L || view.parent !== parent) return true
+            alphas += view.alpha
+            if (view.width > 0) {
+                laidOut = true
+                if (view.scaleX != 1f || view.scaleY != 1f || view.translationX != 0f || view.translationY != tab.translationY) moved = true
+                if (view.left != tab.left || view.top != tab.top || view.width != tab.width || view.height != tab.height) overTab = false
+            }
+            return true
+        }
+
+        private fun isFlash(view: View) = view.javaClass == View::class.java && (view.background as? ColorDrawable)?.color == Color.WHITE
+
+        /** Read on the main thread. */
+        fun result(): Flash = Flash(
+            alphas.size, alphas.firstOrNull() ?: 0f, alphas.lastOrNull() ?: 0f,
+            when {
+                removedAt != 0L -> removedAt - addedAt
+                addedAt != 0L -> SystemClock.uptimeMillis() - addedAt
+                else -> 0L
+            },
+            moved, overTab && laidOut, removedAt != 0L, alphas.zipWithNext().any { (a, b) -> b > a + 0.001f }
+        )
     }
 
     @Test
@@ -128,7 +210,10 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         val before = gallery()
         val flash = takeScreenshotFromMenu() ?: return
         finding("  flash: $flash")
-        check("the flash ran: a white view over the tab's frame whose alpha fell, opacity alone", flash.seen && flash.fell && !flash.moved && flash.overTab)
+        check(
+            "the flash ran: a white view over the tab's frame, opaque as it came and clear as it left (opacity alone), gone in its own time",
+            flash.seen && flash.fell && flash.gone && !flash.moved && flash.overTab && flash.spanMs >= Screenshots.FLASH_MS - 20
+        )
         val card = awaitCard()
         SystemClock.sleep(500)
         shot("01-card")
@@ -289,7 +374,7 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
     /** A real tap on the page's button: the system sheet; the back gesture rejects the promise. */
     private fun webShareUrl() {
         finding("\nSH-14 navigator.share({ title, text, url }) from a real tap")
-        ensureForeground()
+        ensurePage()
         val p = pagePoint("#share-url") ?: run {
             check("the page's share button is on screen", false)
             return
@@ -324,7 +409,7 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
     /** A real tap shares a FILE the page drew: the sheet with the picture (the design record's still). */
     private fun webShareFile() {
         finding("\nSH-14 navigator.share({ files }) from a real tap")
-        ensureForeground()
+        ensurePage()
         val p = pagePoint("#share-file") ?: run {
             check("the page's file share button is on screen", false)
             return
@@ -347,7 +432,7 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
     /** Share from the toolbar carries the `#:~:text=` link; the sheet's Copy link puts it on the clipboard. */
     private fun highlightLink() {
         finding("\nSH-11 Share from the selection toolbar: the link to the highlight")
-        ensureForeground()
+        ensurePage()
         val items = longPress("#word") { list -> list.any { it.label == "Share" } }
         val selected = jsonString(tabJs("String(getSelection())"))
         finding("  long press on 'quantum': selection '$selected'; toolbar ${items?.joinToString(" | ") { it.label } ?: "MISSING"}")
@@ -364,7 +449,7 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         if (copy != null && touchTapPoint(copy) != null) {
             finding("  a real touch on '$COPY_LINK' in the sheet's action row")
             val toast = awaitToastSeen("Link copied", 10_000)
-            ensureForeground()
+            toZenium()
             SystemClock.sleep(800)
             shot("12-link-copied")
             check("the sheet's Copy link copied it (the 'Link copied' toast)", toast)
@@ -407,73 +492,45 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
     // --- moves -----------------------------------------------------------------------------------
 
     /**
-     * Take Screenshot from the app menu with a real touch, sampling the flash on the main thread
-     * while the capture runs; null (a FAIL noted) when the menu had no such item.
+     * Take Screenshot from the app menu with a real touch, a [FlashWatch] on the tab's parent
+     * from before the tap until the overlay has left the tree (or [FLASH_WAIT_MS] passed: the
+     * capture runs once the menu has gone, which the emulator's frames put seconds after the
+     * tap); null (a FAIL noted) when the menu had no such item.
      */
     private fun takeScreenshotFromMenu(): Flash? {
-        ensureForeground()
+        toZenium()
+        val watch = onMain {
+            shownTabView()?.let { tab -> (tab.parent as? ViewGroup)?.let { parent -> FlashWatch(tab, parent).also(FlashWatch::install) } }
+        }
         if (!openMenuItem(TAKE_SCREENSHOT)) {
+            onMain { watch?.remove() }
             check("Take Screenshot is in the menu", false)
             back()
             return null
         }
-        return sampleFlash(5_000)
+        if (watch == null) {
+            finding("  no tab shown to watch the flash over")
+            return Flash(0, 0f, 0f, 0L, moved = false, overTab = false, gone = false, rose = false)
+        }
+        val deadline = SystemClock.uptimeMillis() + FLASH_WAIT_MS
+        while (watch.removedAt == 0L && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
+        return onMain { watch.result().also { watch.remove() } }
     }
 
     /**
-     * The flash, as the main thread sees it: the white view [Screenshots] lays over the tab's
-     * frame, its alpha read every few milliseconds until it has gone (or `ms` passed without
-     * one). Records whether it ever moved or scaled and whether it covered the tab's frame.
+     * The card in the slot once it is a new one: what it shows, or null when none came in time.
+     * New: the first card up after the slot was seen empty, or one with another picture – two
+     * captures of the same unchanged page carry the same thumbnail (run 35721280791 took every
+     * card after the first for the first, its thumbnail's tail being the same).
      */
-    private fun sampleFlash(ms: Long): Flash {
-        val deadline = SystemClock.uptimeMillis() + ms
-        var samples = 0
-        var first = 0f
-        var last = 0f
-        var startedAt = 0L
-        var endedAt = 0L
-        var moved = false
-        var overTab = true
-        while (SystemClock.uptimeMillis() < deadline) {
-            var alpha = -1f
-            instrumentation.runOnMainSync {
-                val tab = host.tabs.all().firstOrNull { it.isShown } ?: return@runOnMainSync
-                val parent = tab.parent as? android.view.ViewGroup ?: return@runOnMainSync
-                for (i in 0 until parent.childCount) {
-                    val child = parent.getChildAt(i)
-                    if (child.javaClass != View::class.java) continue
-                    val color = (child.background as? ColorDrawable)?.color ?: continue
-                    if (color != Color.WHITE) continue
-                    alpha = child.alpha
-                    if (child.scaleX != 1f || child.scaleY != 1f || child.translationX != 0f || child.translationY != tab.translationY) moved = true
-                    if (child.left != tab.left || child.top != tab.top || child.width != tab.width || child.height != tab.height) overTab = false
-                    break
-                }
-            }
-            val now = SystemClock.uptimeMillis()
-            if (alpha >= 0f) {
-                if (samples == 0) {
-                    first = alpha
-                    startedAt = now
-                }
-                last = alpha
-                endedAt = now
-                samples++
-            } else if (samples > 0) {
-                break
-            }
-            SystemClock.sleep(4)
-        }
-        return Flash(samples, first, last, endedAt - startedAt, moved, overTab)
-    }
-
-    /** The card in the slot once it is a new one: what it shows, or null when none came in time. */
     private fun awaitCard(timeoutMs: Long = 12_000): JSONObject? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val card = chromeJson(CARD_JS)
             val thumb = card.optString("thumb")
-            if (card.optBoolean("up") && thumb.isNotEmpty() && thumb != lastThumb) {
+            if (!card.optBoolean("up")) {
+                lastThumb = ""
+            } else if (thumb.isNotEmpty() && thumb != lastThumb) {
                 lastThumb = thumb
                 return card
             }
@@ -489,20 +546,76 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         if (chromeJs("document.querySelector('.zen-screenshot-card')!=null") == "true") {
             touchControl("Dismiss", "document.querySelector('.zen-screenshot-card .zen-message-close')", treeMs = 800)
         }
-        awaitNoCard(8_000)
+        if (awaitNoCard(8_000)) lastThumb = ""
         SystemClock.sleep(600)
     }
 
-    /** Back out of whatever other app's window is in front until Zenium is. */
+    /** Zenium's window holds the focus: the main thread's word, not the accessibility tree's. */
+    private fun zeniumFocused(): Boolean = onMain { activity.hasWindowFocus() }
+
+    private fun awaitZeniumFocus(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (zeniumFocused()) return true
+            SystemClock.sleep(150)
+        }
+        return zeniumFocused()
+    }
+
+    /**
+     * Back out of whatever other app's window is in front until Zenium's holds the focus again.
+     * A back goes only while another window truly has the focus: run 35721280791's loop went by
+     * the accessibility tree, which still named the Bluetooth device picker two seconds after it
+     * had closed, and the second back landed on Zenium's own root – the tab went to the New Tab
+     * Page and the rest of the demo had no page under it. When backs do not do it, the browser's
+     * task is started again through the shell (singleTask: the running task comes to the front).
+     */
     private fun backToZenium() {
         var tries = 0
-        while (topPackage() != app.packageName && tries < 4) {
+        while (!zeniumFocused() && tries < 4) {
             back()
-            SystemClock.sleep(1_500)
+            awaitZeniumFocus(3_000)
             tries++
         }
-        ensureForeground()
-        SystemClock.sleep(800)
+        if (!zeniumFocused()) {
+            Log.w(tag, "no focus after $tries back(s); bringing the browser's task back")
+            shellCommand("am start -a android.intent.action.MAIN -n ${app.packageName}/${MainActivity::class.java.name}")
+            awaitZeniumFocus(5_000)
+        }
+        awaitTreeOnZenium()
+    }
+
+    /**
+     * Zenium in front by the main thread's word on the focus (a back out of another window when
+     * not), then the accessibility tree given the time to say so too.
+     */
+    private fun toZenium() {
+        if (zeniumFocused()) awaitTreeOnZenium() else backToZenium()
+    }
+
+    /**
+     * The accessibility tree naming Zenium's window (up to 6 s): the harness's own moves consult
+     * the tree first, and one trailing a transition would have them send a back into the browser.
+     */
+    private fun awaitTreeOnZenium() {
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val top = topPackage()
+            if (top == null || top == app.packageName) break
+            SystemClock.sleep(200)
+        }
+        SystemClock.sleep(400)
+    }
+
+    /** The demo page in the shown tab (`#share-url` in its DOM); opened again when something took it away. */
+    private fun ensurePage() {
+        toZenium()
+        if (tabJs("!!document.getElementById('share-url')") == "true") return
+        finding("  (the demo page was not in the tab: opening it again)")
+        openLink("$ORIGIN/")
+        awaitLoaded("$ORIGIN/")
+        SystemClock.sleep(1_500)
+        toZenium()
     }
 
     private fun topPackage(): String? = ui.rootInActiveWindow?.packageName?.toString()
@@ -688,7 +801,7 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
 
     /** A tap on the line below clears the selection and finishes the mode. */
     private fun clearSelection() {
-        ensureForeground()
+        toZenium()
         pagePoint("#tail")?.let { Finger().tap(it.x, it.y) }
         val deadline = SystemClock.uptimeMillis() + 6_000
         while (toolbarItems() != null && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(250)
@@ -712,6 +825,12 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         private const val TAKE_SCREENSHOT = "Take Screenshot"
         private const val MENU_HANDLE = "Resize menu"
+        /**
+         * How long the flash's overlay is waited for after the tap on Take Screenshot: the capture
+         * runs once the menu has gone, and run 35721280791's menu took five seconds to go on the
+         * recipe's software GPU.
+         */
+        private const val FLASH_WAIT_MS = 20_000L
         /** Android 14's action row on the sheet: the browser's own Copy link (`Share.browserActions`). */
         private const val COPY_LINK = "Copy link"
         /** A share target every Google APIs image lists and that opens nothing but a picker. */
