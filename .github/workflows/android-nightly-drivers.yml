@@ -27,6 +27,10 @@ name: Android nightly drivers
 # keeps the latest attempt of each). The run fails when any driver failed or left no result: red is
 # the signal. Nothing here touches the per-PR demo workflows.
 on:
+  # TEMPORARY (H-1's proof of the harness repairs, off before the merge): the sweep on this branch's pushes.
+  push:
+    branches:
+      - cursor/android-harness-nightly-repairs-06f1
   schedule:
     # 03:00 UTC, once.
     - cron: '0 3 * * *'
