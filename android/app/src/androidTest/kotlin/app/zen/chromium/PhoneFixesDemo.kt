@@ -1,6 +1,7 @@
 package app.zen.chromium
 
-import android.graphics.PointF
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
@@ -8,9 +9,10 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
-import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -18,7 +20,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.Calendar
-import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -38,11 +39,21 @@ import java.util.concurrent.TimeUnit
  *     in the accessibility tree for fix 6: the four value rows named once, "label, value" (#237's
  *     audit).
  *  3. The flip with the page ON screen, through the core (`settings.update`, the row's own
- *     action): Dark -> Light -> Dark -> Light, the page's change event within a frame's reach of
- *     the chrome's polarity flip each time (the claim: 100 ms on the emulator's software GPU, or
- *     two of the page's measured frames). The chrome hands the scheme to the host as its paint
- *     crosses (the blend's midpoint, `pageScheme.ts`), so the page follows the chrome by the
- *     bridge's hop and its own next frame, not the other way round.
+ *     action): Dark -> Light -> Dark -> Light, the page's change event after the chrome's
+ *     polarity flip each time – the order is the product's claim (the chrome hands the scheme to
+ *     the host as its paint crosses, the blend's midpoint, `pageScheme.ts`, so the page follows
+ *     the chrome by the bridge's hop and its own next frame, not the other way round) – and
+ *     within a frame's reach of it (100 ms, or two of the page's measured frames), a bound
+ *     enforced only when the run's renderer is hardware (the harness's `renderer`: SurfaceFlinger's
+ *     GLES line, or `-e renderer hardware`). On the emulator's software GPU the bound is a soft
+ *     claim, SOFT PASS or SOFT MISS in the findings (N2 of #305's review: two hops of 0.5–1.3 s
+ *     on a UI thread whose page frame interval at rest was 113 ms, no product miss); so is
+ *     scene 2's second for the page behind Settings.
+ *  3b. #78's exception across the flip (N3 of #305's review, UNRUN there): "Apply dark theme to
+ *     sites" on and "Dark theme for this site" off for the demo's site, the light-only second
+ *     tab keeps its light look through the flip to dark (the page's luminance off the screen,
+ *     the host's per-view darkening flag), its `prefers-color-scheme` following the app; the
+ *     exception cleared, the same document darkens with no reload.
  *  4. `desktopSite: auto` at the 600 dp crossing (seed 28, #273's run): the loaded page scrolled
  *     by a finger, then the window widened past 600 dp through `wm size` (the split-screen
  *     analogue: the density stays), keeps its document, its viewport and its scroll; a fresh load
@@ -61,10 +72,10 @@ import java.util.concurrent.TimeUnit
  * seconds after a transition (#237's run had it 23 s behind a dock switch; the first run of this
  * driver had it blank on the Look and Feel section 8 s after the drill-in and on the History panel
  * 10 s after it rose, while the DOM had both). So every read here drops UiAutomation's cache and
- * asks the chrome document for a frame each round (Blink serialises its tree from the lifecycle,
- * which runs with a frame), and a finger that waits on the tree only waits so long: after that
- * it lands on the box the DOM gives for the same control (the chrome fills the window from its
- * top-left corner, CSS px times the density – SettingsTouchDemo's reading). The touch is the same
+ * asks the chrome document for a frame each round, and a finger that waits on the tree only
+ * waits so long: after that it lands on the box the DOM gives for the same control – the
+ * harness's `awaitFresh`, `freshNodes`, `domBox` and `touchControl` (moved there from this
+ * driver, N1 of #305's review: driver fixes live in the shared harness). The touch is the same
  * injected finger either way and every claim is read off what follows it; which aim was used is
  * a finding. Fix 6's claims are the tree's by nature and wait on it the longest.
  *
@@ -79,8 +90,6 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
     private lateinit var findings: File
     private val failures = ArrayList<String>()
     private var shotIndex = 0
-    /** Every accessibility event the app's windows sent since the run began: (uptime ms, type). */
-    private val a11yEvents: MutableList<Pair<Long, Int>> = Collections.synchronizedList(ArrayList())
 
     @Test
     fun record() {
@@ -135,11 +144,13 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         findings.writeText(
             "Zenium Android phone fixes check, wave 4 (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n" +
                 "1 Privacy from the sheet; 2 the theme flip under a finger + the four value rows' names; 3 the flip on screen, timestamps; " +
-                "4 desktopSite auto at the 600 dp crossing; 5 History Select all; 6 the pill's keyboard ring\n\n"
+                "3b a darkening-off site across the flip (#78); 4 desktopSite auto at the 600 dp crossing; 5 History Select all; 6 the pill's keyboard ring\n" +
+                "renderer: $renderer -> the flip's timing bounds (3: a frame's reach; 2: a second, behind Settings) are " +
+                "${if (renderer.hardware) "enforced" else "SOFT claims here (the order is the proof; a GPU's run enforces them)"}\n\n"
         )
         // The events the WebView sends are the tree's only word that it changed (UiAutomation's
         // cache lives on them): on record for the findings that say how far the tree trailed.
-        ui.setOnAccessibilityEventListener { event -> a11yEvents += SystemClock.uptimeMillis() to event.eventType }
+        recordA11yEvents()
         finding("demo server: ${server.selfCheck()}")
         awaitActiveUrl(NOTES_URL)
         // The Settings page is a chunk of its own that loads on its first open: pay for it off camera.
@@ -171,6 +182,7 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         privacyFromTheSheet()
         themeFlipUnderAFinger()
         themeFlipOnScreen()
+        darkeningOffSiteAcrossTheFlip()
         largeScreenCrossing()
         historySelectAll()
         keyboardRing()
@@ -270,7 +282,11 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
                     "the page's matches read dark ${pageDarkAt ?: "not within 4 s"} (+${pageDarkAt?.let { it - touchedAt } ?: "?"} ms after the finger" +
                     "${chromeFlip?.let { c -> pageDarkAt?.let { p -> ", ${p - c.optLong("at")} ms after the chrome" } } ?: ""}); the page was ${pageValue("document.visibilityState")} behind Settings"
             )
-            expect("the page behind Settings sees prefers-color-scheme: dark within a second of the chrome's flip", chromeFlip != null && pageDarkAt != null && pageDarkAt - chromeFlip.optLong("at") <= 1_000, "flip-page-behind")
+            // The order is the product's claim (run 1 had the page flip 400–450 ms BEFORE the chrome);
+            // the second is a bound the emulator's software UI thread need not meet (N2).
+            val behind = chromeFlip?.optLong("at")?.let { c -> pageDarkAt?.let { p -> p - c } }
+            expect("the page behind Settings sees prefers-color-scheme: dark after the chrome's flip${behind?.let { " ($it ms after)" } ?: ""}", behind != null && behind >= -50, "flip-page-behind-order")
+            bounded("the page behind Settings flips within a second of the chrome${behind?.let { " ($it ms)" } ?: ""}", behind != null && behind in -50..1_000, "flip-page-behind")
             val renamed = awaitFresh(12_000, "the row as 'Colour scheme, Dark'") { it == "$COLOR_SCHEME_ROW, Dark" }
             val rowNodes = freshNodes { it.startsWith(COLOR_SCHEME_ROW) }.map { nodeName(it) }
             finding("  the row in the tree after the flip: ${rowNodes.map { "'$it'" }}")
@@ -310,13 +326,20 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             // `data-theme` flips (`pageScheme.ts`, on `zen-theme-painted`), the host dispatches
             // the configuration change at once, and the page reports the media change at its
             // own next frame – one frame at 60 Hz is 17 ms; the claim allows 100 ms, or two of
-            // the page's measured frames when the software GPU runs slower.
+            // the page's measured frames when the software GPU runs slower. On a software
+            // renderer the bound is a soft claim (N2 of #305's review: the emulator's two hops
+            // ran 0.5–1.3 s each on a UI thread whose page frame interval was 113 ms, no
+            // cross-WebView serialisation a device would feel); the order stays the proof there.
             val bound = Math.max(100L, Math.round(2 * frame))
             // Every flip changes the scheme (scene 2 leaves it dark; should it have failed, the
             // scheme is still light and the sequence starts with a flip to dark), and the last
             // one leaves it light for the scenes after.
             val flips = if (colorScheme() == "dark") listOf("light", "dark", "light") else listOf("dark", "light", "dark", "light")
-            finding("  the page's frame interval at rest: ${"%.1f".format(frame)} ms; the claim's bound: $bound ms after the chrome; the scheme is ${colorScheme()}, flips: $flips")
+            finding(
+                "  the page's frame interval at rest: ${"%.1f".format(frame)} ms; the claim's bound: $bound ms after the chrome, " +
+                    "${if (renderer.hardware) "enforced (a hardware renderer)" else "a soft claim on this ${renderer.kind.name.lowercase()} renderer"}; " +
+                    "the scheme is ${colorScheme()}, flips: $flips"
+            )
             var pictured = false
             for (scheme in flips) {
                 measuredFlip(scheme, bound)
@@ -349,8 +372,128 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
                 "the page sees ${pageValue(SCHEME_JS)}"
         )
         expect("the chrome flips to $scheme", took, "flip-$scheme-chrome")
-        expect("the page's prefers-color-scheme flips with it, within a frame's reach ($boundMs ms) of the chrome", delta != null && delta in -50..boundMs, "flip-$scheme-page")
+        expect("the page's prefers-color-scheme follows the chrome's flip to $scheme: its change event after the chrome's data-theme${delta?.let { " ($it ms after)" } ?: ""}", delta != null && delta >= -50, "flip-$scheme-order")
+        bounded("the page's flip is within a frame's reach ($boundMs ms) of the chrome${delta?.let { " ($it ms)" } ?: ""}", delta != null && delta in -50..boundMs, "flip-$scheme-page")
     }
+
+    /**
+     * A timing claim only a GPU can meet – the page's flip within a frame's reach of the chrome's:
+     * enforced when the run's renderer is hardware (the harness's [renderer]: SurfaceFlinger's
+     * GLES line, or the `renderer` instrumentation argument), a soft claim otherwise – on record
+     * as SOFT PASS or SOFT MISS, failing nothing – where the order claim beside it is the proof.
+     */
+    private fun bounded(claim: String, held: Boolean, id: String) {
+        if (renderer.hardware) expect(claim, held, id)
+        else finding("  $claim SOFT ${if (held) "PASS" else "MISS"} (a ${renderer.kind.name.lowercase()} renderer: the bound is not enforced, the order is the proof)")
+    }
+
+    // --- 3b. a darkening-off site across the flip (#78) -----------------------------------------------
+
+    /**
+     * #78's exception across the flip (N3 of #305's review): "Apply dark theme to sites" on, so a
+     * light-only page is darkened under the dark chrome by default, and "Dark theme for this
+     * site" OFF for the demo's site (`tab.setDarkenSite`, the menu row's own command): the page
+     * keeps its light look through the flip to dark – the WebView's algorithmic darkening is a
+     * per-view flag the configuration dispatch does not touch (`TabWebView.setDarkening`) – while
+     * its `prefers-color-scheme` follows the app, as Chrome's does. Then the exception cleared:
+     * the same document darkens with no reload, the control that says the reading sees darkening
+     * at all. The look is read off the screen (the mean luminance of the page's blank body, white
+     * 1.0, WebView's darkened body about 0.02) beside the host's own flag for the view. UNRUN in
+     * #305's two runs: the next run of this driver proves it.
+     */
+    private fun darkeningOffSiteAcrossTheFlip() {
+        step("3b. A site with Dark theme for this site off keeps its light look across the flip (#78)") {
+            coreInvoke("settings.update", JSONObject().put("pageControls", JSONObject().put("darkenSites", true)).toString())
+            coreInvoke("tab.activate", JSONObject().put("tabId", APP_TAB).toString())
+            awaitActiveUrl(APP_URL, 8_000)
+            coreInvoke("tab.setDarkenSite", JSONObject().put("tabId", APP_TAB).put("on", false).toString())
+            SystemClock.sleep(1_200)
+            val lightBefore = pageLuminance()
+            finding(
+                "  Apply dark theme to sites on, Dark theme for this site off for $SITE_KEY (exceptions ${pageControlsValue("darkenSiteExceptions")}); " +
+                    "the light-only page under the light chrome: darkening allowed ${darkeningAllowed()}, luminance ${"%.2f".format(lightBefore)}, sees ${pageValue(SCHEME_JS, APP_TAB)}"
+            )
+            expect("the light-only page is light under the light chrome (luminance > 0.6)", lightBefore > 0.6, "darken-off-light-before")
+            // The flip to dark through the core (the row's own action, as in 3).
+            coreInvoke("settings.update", JSONObject().put("colorScheme", "dark").toString())
+            val flipped = awaitChrome("document.documentElement.getAttribute('data-theme')==='dark'", 6_000)
+            SystemClock.sleep(2_500)
+            val seen = pageValue(SCHEME_JS, APP_TAB)
+            val allowedDark = darkeningAllowed()
+            val lumDark = pageLuminance()
+            finding("  under the dark chrome (data-theme dark $flipped): the page sees $seen; darkening allowed $allowedDark; luminance ${"%.2f".format(lumDark)}")
+            expect("the chrome is dark and the page's prefers-color-scheme follows the app", flipped && seen == "dark", "darken-off-scheme-follows")
+            expect("the darkening-off site keeps its light look under the dark chrome (darkening allowed $allowedDark, luminance ${"%.2f".format(lumDark)} > 0.6)", allowedDark == false && lumDark > 0.6, "darken-off-stays-light")
+            still("darkening-off-site-light-under-dark-chrome")
+            // The control: the exception cleared, the default darkens the same document, no reload.
+            val document = pageValue("performance.timeOrigin", APP_TAB)
+            coreInvoke("tab.setDarkenSite", JSONObject().put("tabId", APP_TAB).put("on", JSONObject.NULL).toString())
+            val darkened = awaitLuminance(below = 0.35, timeoutMs = 8_000)
+            val allowedDefault = darkeningAllowed()
+            val sameDocument = pageValue("performance.timeOrigin", APP_TAB) == document
+            finding("  the exception cleared (exceptions ${pageControlsValue("darkenSiteExceptions")}): darkening allowed $allowedDefault; luminance ${"%.2f".format(pageLuminance())}; same document $sameDocument")
+            expect("with the exception cleared the same page is darkened under the dark chrome (luminance < 0.35, no reload)", darkened && allowedDefault == true && sameDocument, "darken-default-darkens")
+            still("darkening-default-site-dark-under-dark-chrome")
+            // The run's footing back: the scheme light, dark sites off (the seeded profile's), the scheme page active.
+            coreInvoke("settings.update", JSONObject().put("colorScheme", "light").toString())
+            coreInvoke("settings.update", JSONObject().put("pageControls", JSONObject().put("darkenSites", false)).toString())
+            coreInvoke("tab.activate", JSONObject().put("tabId", NOTES_TAB).toString())
+            awaitActiveUrl(NOTES_URL, 8_000)
+            SystemClock.sleep(1_000)
+        }
+    }
+
+    /**
+     * The host's per-view flag for the light-only page: WebView's algorithmic darkening allowed
+     * (`TabWebView.setDarkening`); null when the WebView has no such feature or the tab no view.
+     */
+    private fun darkeningAllowed(tabId: String = APP_TAB): Boolean? {
+        var allowed: Boolean? = null
+        instrumentation.runOnMainSync {
+            val view = (activity as MainActivity).host.tabs.get(tabId) ?: return@runOnMainSync
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                allowed = runCatching { WebSettingsCompat.isAlgorithmicDarkeningAllowed(view.settings) }.getOrNull()
+            }
+        }
+        return allowed
+    }
+
+    /**
+     * The look of the page on screen, read off a screenshot: the mean relative luminance of a
+     * 5 x 5 grid over the middle of the window (x 20–80 %, y 35–65 %: the light-only page's blank
+     * body under its heading, clear of the status bar and of the bar's row at the bottom), white
+     * 1.0, WebView's darkened body about 0.02. -1 when no screenshot came.
+     */
+    private fun pageLuminance(): Double {
+        val shot = ui.takeScreenshot() ?: return -1.0
+        val bitmap = if (shot.config == Bitmap.Config.HARDWARE) shot.copy(Bitmap.Config.ARGB_8888, false).also { shot.recycle() } else shot
+        var sum = 0.0
+        var n = 0
+        for (i in 0 until 5) {
+            for (j in 0 until 5) {
+                val x = (bitmap.width * (0.2 + 0.15 * i)).toInt().coerceIn(0, bitmap.width - 1)
+                val y = (bitmap.height * (0.35 + 0.075 * j)).toInt().coerceIn(0, bitmap.height - 1)
+                sum += Color.luminance(bitmap.getPixel(x, y))
+                n++
+            }
+        }
+        bitmap.recycle()
+        return sum / n
+    }
+
+    /** Poll the page's look until its luminance falls under `below`; false when it never did in time. */
+    private fun awaitLuminance(below: Double, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (pageLuminance() < below) return true
+            SystemClock.sleep(400)
+        }
+        return pageLuminance() < below
+    }
+
+    /** A field of the core's page-controls settings as text (`darkenSiteExceptions`), "" when absent. */
+    private fun pageControlsValue(key: String): String =
+        coreState().getJSONObject("settings").optJSONObject("pageControls")?.opt(key)?.toString().orEmpty()
 
     // --- 4. desktopSite: auto at the 600 dp crossing -------------------------------------------------
 
@@ -658,99 +801,10 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
 
     private fun dataInput(): String = chromeValue("document.documentElement.getAttribute('data-input')||''")
 
-    // --- the finger: the tree's node, else the DOM's box ---------------------------------------------
+    // --- the tree, read afresh (the harness's `awaitFresh`, `freshNodes`, `touchControl`) --------------
 
-    /**
-     * A real touch on the control reading `label` (its prefix with `prefix`): at the tree's node
-     * once the tree lists it with bounds on screen (`treeMs`), else at the box the DOM gives for
-     * the element `domJs` evaluates to – the tree trails the screen by seconds on this image (the
-     * note at the top) and the finger does not wait on it past that. The aim is a finding; the
-     * touch is the same injected finger either way, and a claim is read off what follows it,
-     * never off this. False, nothing injected, when neither the tree nor the DOM has the control
-     * inside the touchable window.
-     */
-    private fun touchControl(label: String, domJs: String, prefix: Boolean = false, treeMs: Long = 5_000): Boolean {
-        val node = awaitFresh(treeMs, "'$label'") { it == label || (prefix && it.startsWith(label)) }
-        if (node != null) {
-            val point = touchTapPoint(node)
-            if (point != null) return true
-            finding("  (the tree's node for '$label' went away or lies outside the touchable window)")
-        }
-        val box = domBox(domJs) ?: run {
-            finding("  '$label' is in neither the tree nor the DOM")
-            return false
-        }
-        val point = touchPoint(box) ?: run {
-            finding("  the DOM's box for '$label' ($box) lies outside the touchable window $touchable")
-            return false
-        }
-        finding("  touch at ${point.x.toInt()},${point.y.toInt()} on '$label' at the DOM's box $box (the tree had not listed it)")
-        Finger().tap(point.x, point.y)
-        return true
-    }
-
-    /**
-     * [touchControl], then up to `timeoutMs` for `took` to hold – the claim of the step, named by
-     * `effect`. True when it held; a touch that went in and did not take is a [touchFault] (the
-     * run fails at its end) and false.
-     */
-    private fun touchControlExpecting(
-        label: String,
-        domJs: String,
-        effect: String,
-        timeoutMs: Long = 6_000,
-        prefix: Boolean = false,
-        took: () -> Boolean
-    ): Boolean {
-        if (!touchControl(label, domJs, prefix)) return false
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (took()) {
-                Log.i(tag, "the touch on '$label' took: $effect")
-                return true
-            }
-            SystemClock.sleep(150)
-        }
-        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
-        return false
-    }
-
-    /**
-     * An element's box as the chrome lays it out, in screen px: the chrome fills the window from
-     * its top-left corner, so its CSS px times the density are screen px (SettingsTouchDemo's
-     * reading). `js` is an expression for the element; null when it is none.
-     */
-    private fun domBox(js: String): Rect? {
-        val text = chromeValue(
-            "(function(){var e=($js);if(!e)return '';var r=e.getBoundingClientRect();" +
-                "return [r.left,r.top,r.right,r.bottom].map(function(v){return Math.round(v*$density)}).join(',')})()"
-        )
-        val px = text.split(',').map { it.toIntOrNull() ?: return null }
-        if (px.size != 4) return null
-        return Rect(px[0], px[1], px[2], px[3]).also { it.offset(domOffsetX, domOffsetY) }
-    }
-
-    /** What the tree's bounds add to the DOM's box (`calibrateDomBoxes`); 0 while the two agree. */
-    private var domOffsetX = 0
-    private var domOffsetY = 0
-
-    /**
-     * The DOM's box against the tree's for the same control – the bar's Menu button – once, at
-     * the warm-up: the chrome fills the window from its corner on this image (run 1: the tree's
-     * 353–502 for the DOM's 203–287 CSS px at 1.75), but should the chrome sit under an inset
-     * the tree's bounds carry, the difference is taken up so every DOM-aimed finger lands where
-     * the screen has the control (ChromeA11yDemo's `calibrate`). A difference under 4 px stays 0.
-     */
-    private fun calibrateDomBoxes() {
-        val node = awaitFresh(6_000, "the bar's Menu button") { it == MENU_LABEL } ?: return
-        val tree = Rect().also { node.getBoundsInScreen(it) }
-        val dom = domBox(barButtonJs(MENU_LABEL)) ?: return
-        val dx = Math.round(tree.exactCenterX() - dom.exactCenterX())
-        val dy = Math.round(tree.exactCenterY() - dom.exactCenterY())
-        if (Math.abs(dx) >= 4) domOffsetX = dx
-        if (Math.abs(dy) >= 4) domOffsetY = dy
-        finding("  the Menu button: tree $tree, DOM $dom -> DOM boxes offset by ${domOffsetX}x$domOffsetY")
-    }
+    /** A line of a shared helper's (how long the tree took, which aim a finger used) is a finding here. */
+    override fun noteLine(line: String) = finding(line)
 
     /** The bar button labelled `label` (`aria-label`), as an expression. */
     private fun barButtonJs(label: String): String = "document.querySelector('$BAR_BUTTON[aria-label=${JSONObject.quote(label)}]')"
@@ -759,73 +813,8 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
     private fun barButtonPrefixJs(prefix: String): String =
         "Array.prototype.find.call(document.querySelectorAll('$BAR_BUTTON'),function(b){return (b.getAttribute('aria-label')||'').indexOf(${JSONObject.quote(prefix)})===0})"
 
-    // --- the tree, read afresh -----------------------------------------------------------------------
-
-    /**
-     * Every node whose label or text `matches`, read past UiAutomation's cache: the cache dropped
-     * (API 34), the active window walked, and – when it has no root or nothing matches – every
-     * window of the app's.
-     */
-    private fun freshNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> {
-        dropTreeCache()
-        val found = findNodes(matches)
-        if (found.isNotEmpty()) return found
-        return findInWindows(app.packageName, matches)?.let { listOf(it) } ?: emptyList()
-    }
-
-    /**
-     * Poll for the first node whose label or text `matches`, with bounds on screen, for up to
-     * `timeoutMs`: the cache dropped and a frame asked of the chrome document each round. How
-     * long the tree took to list `what` is a finding when it took over a second or never did.
-     */
-    private fun awaitFresh(timeoutMs: Long, what: String, matches: (String) -> Boolean): AccessibilityNodeInfo? {
-        val start = SystemClock.uptimeMillis()
-        val deadline = start + timeoutMs
-        while (true) {
-            val node = freshNodes(matches).firstOrNull { boundsOnScreen(Rect().also { r -> it.getBoundsInScreen(r) }) }
-            if (node != null) {
-                val took = SystemClock.uptimeMillis() - start
-                if (took > 1_000) finding("  (the tree listed $what after $took ms)")
-                return node
-            }
-            if (SystemClock.uptimeMillis() >= deadline) {
-                finding("  (the tree did not list $what within $timeoutMs ms; WebView events meanwhile: ${eventsSince(start)})")
-                return null
-            }
-            nudgeFrame()
-            SystemClock.sleep(250)
-        }
-    }
-
-    /** UiAutomation's node cache dropped (API 34), so the next walk reads the WebView's tree afresh. */
-    private fun dropTreeCache() {
-        if (Build.VERSION.SDK_INT >= 34) ui.clearCache()
-    }
-
-    /**
-     * A frame asked of the chrome document (an animation frame), so Blink runs its lifecycle – and
-     * the accessibility step that serialises the tree's changes – while a read waits on the tree
-     * (ChromeA11yDemo's `nudgeFrame`).
-     */
-    private fun nudgeFrame() {
-        chromeJs("(function(){requestAnimationFrame(function(){});return 1})()")
-    }
-
     /** A node's name as the tree reads it: its text, else its content description (a link's). */
     private fun nodeName(node: AccessibilityNodeInfo): String = (node.text ?: node.contentDescription)?.toString().orEmpty()
-
-    /** The accessibility events since `markUptime`, counted by type ("WINDOW_CONTENT_CHANGED x3, …"); "none" for none. */
-    private fun eventsSince(markUptime: Long): String {
-        val counts = LinkedHashMap<String, Int>()
-        synchronized(a11yEvents) {
-            for ((at, type) in a11yEvents) {
-                if (at < markUptime) continue
-                val name = AccessibilityEvent.eventTypeToString(type).removePrefix("TYPE_")
-                counts[name] = (counts[name] ?: 0) + 1
-            }
-        }
-        return if (counts.isEmpty()) "none" else counts.entries.joinToString(", ") { "${it.key} x${it.value}" }
-    }
 
     private fun awaitTreeCount(timeoutMs: Long, count: Int, accept: (AccessibilityNodeInfo) -> Boolean): Int {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -919,12 +908,12 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         return view
     }
 
-    /** Evaluate in the scheme page; the raw JSON-encoded result ("" when it never answered). */
-    private fun pageJs(code: String): String {
+    /** Evaluate in the scheme page (`tabId`: another seeded tab's page); the raw JSON-encoded result ("" when it never answered). */
+    private fun pageJs(code: String, tabId: String = NOTES_TAB): String {
         var result = ""
         val latch = CountDownLatch(1)
         instrumentation.runOnMainSync {
-            val view = (activity as MainActivity).host.tabs.get(NOTES_TAB)
+            val view = (activity as MainActivity).host.tabs.get(tabId)
             if (view == null) {
                 latch.countDown()
             } else {
@@ -939,8 +928,8 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
     }
 
     /** A value read from the page as text ("" when it did not answer). */
-    private fun pageValue(code: String): String =
-        runCatching { JSONTokener(pageJs("String($code)")).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
+    private fun pageValue(code: String, tabId: String = NOTES_TAB): String =
+        runCatching { JSONTokener(pageJs("String($code)", tabId)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
 
     // --- the colour scheme -------------------------------------------------------------------------------
 
@@ -1059,7 +1048,11 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         private const val NOTES_URL = "$ORIGIN/notes.html"
         private const val NOTES_TAB = "tab_notes"
+        /** The second seeded tab: a light-only page (no `color-scheme`), the one darkening acts on. */
         private const val APP_TAB = "tab_app"
+        private const val APP_URL = "$ORIGIN/app/"
+        /** The site both pages are remembered under (`siteKey`: an IP host is its own registrable domain). */
+        private const val SITE_KEY = "127.0.0.1"
         private const val SETTINGS_URL = "zen://settings"
         private const val SETTINGS_SEARCH = ".zen-settings-search-field"
         private const val DRILL_IN = ".zen-settings-drill-in"
