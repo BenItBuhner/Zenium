@@ -175,6 +175,13 @@ function longTasksCell(record) {
   return t.longTasks ? `${t.longTasks} (longest ${fixed(t.longestTaskMs, 0)} ms${cpuNote(t)})` : '0'
 }
 
+/** One frame of the sampling profile: `name (file:line:col) N ms`; the bundle is minified, so the position is what resolves through its source map. */
+function frameLabel(f) {
+  const name = f.fn || '(anonymous)'
+  const at = f.url ? ` (${code(`${f.url.slice(f.url.lastIndexOf('/') + 1)}:${f.line}:${f.col}`)})` : ''
+  return `${code(name)}${at} ${fixed(f.ms, 1)} ms`
+}
+
 /** The longest task's time on the CPU beside its wall time, when the trace carried thread times: the gap is time off the CPU, not the chrome's work. */
 function cpuNote(t) {
   return typeof t.longestTaskCpuMs === 'number' ? `, ${fixed(t.longestTaskCpuMs, 0)} on the CPU` : ''
@@ -218,6 +225,14 @@ function folded(record) {
         `layer updates ${t.layerChurn} (${fixed(t.perFrame?.layerChurn, 1)}/frame); long tasks ${t.longTasks}, longest ${fixed(t.longestTaskMs, 0)} ms${t.longTasks ? cpuNote(t) : ''}.`,
       ''
     )
+    if (t.profile?.top?.length) {
+      lines.push(
+        `Script by function (V8's sampler, ${t.profile.samples} samples every ${fixed(t.profile.intervalMs, 1)} ms; self time): ` +
+          `${t.profile.top.slice(0, 6).map(frameLabel).join(', ')}` +
+          `${t.profile.longestTask?.length ? `; the longest task's: ${t.profile.longestTask.slice(0, 4).map(frameLabel).join(', ')}` : ''}.`,
+        ''
+      )
+    }
   } else if (t) {
     lines.push(
       `Trace: no renderer main thread among its ${t.threads} threads (${t.events} events).`,
