@@ -77,6 +77,62 @@ export function wrapTab(root: HTMLElement, e: KeyboardEvent): void {
   next.focus()
 }
 
+/** How long a refused return waits for the inert to lift before it is given up. */
+const RETURN_WAIT_MS = 1000
+
+/**
+ * Give `target` the focus back as a popover or dialog leaves (§9.22, §9.24): now, or once it
+ * can take it. A control inside an `inert` subtree refuses the focus, and it would fall to
+ * `body` with the panel: the frame dialog host keeps the window chrome inert through a dialog's
+ * way out (lib/portals.tsx: `holdChromeInert` stands until the kept panel's exit animation has
+ * ended), so a toolbar button or a button on one of the frame's strips refuses as the dialog
+ * unmounts; and a control of a dialog a prompt opened over refuses while that dialog is still
+ * covered – `inert` from a state its owner drops a render later than the prompt's cleanup runs.
+ * The refusal is watched for on the nearest inert root: as its `inert` goes – not one fixed
+ * frame later – the control takes the focus, unless something else took it meanwhile (a dialog
+ * opened over the way out), the control is gone, or the hold outlasts `RETURN_WAIT_MS` (a dialog
+ * stacked on the leaving one, whose own return governs). The hold is resolved again at every
+ * change: should the nearest go while an outer one stands (the chrome hold and a dialog's cover
+ * are siblings today, never nested, but the watch does not depend on it), the outer is watched
+ * in its turn, and a hold that comes up between the control and the one watched is too.
+ */
+export function returnFocusTo(target: HTMLElement): void {
+  target.focus({ preventScroll: true })
+  if (document.activeElement === target) return
+  let held = target.closest<HTMLElement>('[inert]')
+  if (!held || typeof MutationObserver === 'undefined') return
+  let watching = true
+  const stop = (): void => {
+    if (!watching) return
+    watching = false
+    observer.disconnect()
+    document.removeEventListener('focusin', stop, true)
+    clearTimeout(timer)
+  }
+  const watch = (root: HTMLElement): void => {
+    held = root
+    observer.observe(root, { attributes: true, attributeFilter: ['inert'] })
+  }
+  const observer = new MutationObserver(() => {
+    const still = target.closest<HTMLElement>('[inert]')
+    if (still) {
+      if (still !== held) {
+        observer.disconnect()
+        watch(still)
+      }
+      return
+    }
+    stop()
+    if (!target.isConnected) return
+    const active = document.activeElement
+    if (active && active !== document.body) return
+    target.focus({ preventScroll: true })
+  })
+  watch(held)
+  document.addEventListener('focusin', stop, true)
+  const timer = setTimeout(stop, RETURN_WAIT_MS)
+}
+
 /** An element the keyboard comes up for when it takes the focus: a text field of any kind. */
 export function isTextField(el: Element): el is HTMLElement {
   if (el instanceof HTMLTextAreaElement) return true

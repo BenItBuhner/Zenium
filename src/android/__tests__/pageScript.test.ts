@@ -207,3 +207,47 @@ describe('the Android page script and links to a highlight (SH-11)', () => {
     expect(answer.directive === null || typeof answer.directive === 'string').toBe(true)
   })
 })
+
+describe('the Android page script and the PDF viewer’s report (CT-02; the nightly’s never-ready viewer, #332)', () => {
+  const report = {
+    state: 'ready',
+    pageCount: 3,
+    page: 1,
+    zoom: 1,
+    fit: 'width',
+    title: null,
+    find: null,
+    outline: []
+  }
+
+  it('relays the viewer document’s report with the session token intact and the document’s token under its own name', () => {
+    // The viewer document (`pdfViewer.ts`) posts its state on its own window, the document's
+    // token beside it; the shared relay hands both to this transport.
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { zeniumPdf: report, zeniumPdfToken: 'doc-1' },
+        source: window
+      })
+    )
+    const relayed = sent().filter((m) => m.type === 'pdf')
+    // Kotlin's router gates on `token` (the session's) and strips it; the document's token must
+    // reach the core under another name – a report whose own token displaced the session's was
+    // dropped as a forgery and the viewer never reported ready.
+    expect(relayed).toEqual([
+      { type: 'pdf', pdf: report, pdfToken: 'doc-1', token: '__ZEN_TOKEN__' }
+    ])
+  })
+
+  it('writes the session token last on every message, so no field of a message can displace it', () => {
+    down({ type: 'readAloud', action: 'extract', requestId: 'ra3', from: 'top', keep: null })
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { zeniumPdf: report, zeniumPdfToken: 'doc-2' },
+        source: window
+      })
+    )
+    const messages = sent()
+    expect(messages.length).toBeGreaterThanOrEqual(2)
+    expect(messages.every((m) => m.token === '__ZEN_TOKEN__')).toBe(true)
+  })
+})

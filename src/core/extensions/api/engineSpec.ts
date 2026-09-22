@@ -679,12 +679,11 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   tts: 'tts',
   contentSettings: 'contentSettings',
   printerProvider: 'printerProvider',
-  // Under `chrome.system`, each with its own permission as in Chrome (the holder itself exists
-  // once one of them is held, `SYSTEM_PERMISSIONS`): the phone's one screen and its no storage
-  // devices, for extensions declaring the permission (LINE sizes its sign-in window from
-  // `system.display.getInfo` before it opens it), and the engine's rejecting `cpu` and
-  // `memory`. Coinbase Wallet's worker feature-detects `chrome.system?.cpu?.getInfo` before it
-  // reads the CPU load, so a `cpu` that was always there passed the test and then rejected.
+  // Under `chrome.system` (the shim makes the holder, once one of them is held: `SYSTEM_PERMISSIONS`,
+  // as Chrome defines it): the phone's one screen and its no storage devices, its processors and
+  // its memory, for extensions declaring the permission (LINE sizes its sign-in window from
+  // `system.display.getInfo` before it opens it; Speechify's background reads `system.cpu.getInfo`
+  // at start; Coinbase Wallet's feature-detects `chrome.system?.cpu?.getInfo` and must find none).
   'system.display': 'system.display',
   'system.storage': 'system.storage',
   'system.cpu': 'system.cpu',

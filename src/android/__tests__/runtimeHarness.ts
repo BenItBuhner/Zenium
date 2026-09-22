@@ -44,6 +44,8 @@ export class FakeKotlin implements RuntimeBridge {
   /** The fake WebView has the navigation listener (`navigation` view events carry webNavigation). */
   navigationListener = false
   readonly calls: Array<{ method: string; args: Record<string, unknown> }> = []
+  /** The methods that came one way (`post`), in order; `calls` has them too. */
+  readonly posted: string[] = []
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
   readonly manifests = new Map<string, Record<string, unknown>>()
@@ -60,6 +62,19 @@ export class FakeKotlin implements RuntimeBridge {
   execAnswer: ((args: Record<string, unknown>) => unknown) | null = null
   /** What the fake platform's classifier answers `ext.i18n.detectLanguage` (Kotlin's shape). */
   languageAnswer: (text: string) => unknown = () => ({ isReliable: false, languages: [] })
+  /** What the fake phone answers `ext.system.cpu` (Kotlin's reading: `Runtime`, `/proc` where readable). */
+  cpuAnswer: () => unknown = () => ({
+    numOfProcessors: 4,
+    archName: 'aarch64',
+    modelName: 'Qualcomm Technologies, Inc SM8550',
+    features: [],
+    usage: null
+  })
+  /** What the fake phone answers `ext.system.memory` (`ActivityManager.MemoryInfo`, bytes). */
+  memoryAnswer: () => unknown = () => ({
+    capacity: 8 * 1024 ** 3,
+    availableCapacity: 3 * 1024 ** 3
+  })
   /** The offscreen documents Kotlin holds right now (`ext.offscreen.*`): extension id → page URL. */
   readonly offscreens = new Map<string, string>()
   /** The cookie jars (`ext.cookies.*`), one per container, see `FakeJar`. */
@@ -105,6 +120,12 @@ export class FakeKotlin implements RuntimeBridge {
   }
 
   send(method: string, args?: unknown): void {
+    this.dispatch(method, (args ?? {}) as Record<string, unknown>)
+  }
+
+  /** One way, as the real bridge's: dispatched, nothing answered. */
+  post(method: string, args?: unknown): void {
+    this.posted.push(method)
     this.dispatch(method, (args ?? {}) as Record<string, unknown>)
   }
 
@@ -166,6 +187,10 @@ export class FakeKotlin implements RuntimeBridge {
         return this.files.get(`${args.id}/${args.path}`) ?? null
       case 'ext.i18n.detectLanguage':
         return this.languageAnswer(String(args.text))
+      case 'ext.system.cpu':
+        return this.cpuAnswer()
+      case 'ext.system.memory':
+        return this.memoryAnswer()
       case 'ext.observeRequests':
       case 'ext.popup.open':
       case 'ext.popup.close':

@@ -530,6 +530,11 @@ export class AndroidTabView implements TabView {
   }
 
   // --- placement ---------------------------------------------------------------
+  //
+  // The core places every view of a layout report in one go (`window.ts` `applyLayout`: the
+  // bounds, the radius, the cover, a flip of visibility, the glance to the front), and nothing
+  // reads the answers: these go `batched`, one hop for the report instead of one per op, the
+  // host applying them in order in one main-thread task (#312's H3b; `bridge.ts` has the why).
 
   attachTo(): void {
     // One window on Android: every view already lives in it.
@@ -540,16 +545,16 @@ export class AndroidTabView implements TabView {
   }
 
   setBounds(rect: Rect): void {
-    this.bridge.send('view.setBounds', { tabId: this.tabId, rect })
+    this.bridge.batched('view.setBounds', { tabId: this.tabId, rect })
   }
 
   setBorderRadius(radius: number): void {
-    this.bridge.send('view.setRadius', { tabId: this.tabId, radius })
+    this.bridge.batched('view.setRadius', { tabId: this.tabId, radius })
   }
 
   setVisible(visible: boolean): void {
     this.visible = visible
-    this.bridge.send('view.setVisible', { tabId: this.tabId, visible })
+    this.bridge.batched('view.setVisible', { tabId: this.tabId, visible })
   }
 
   isVisible(): boolean {
@@ -557,14 +562,14 @@ export class AndroidTabView implements TabView {
   }
 
   bringToFront(): void {
-    this.bridge.send('view.bringToFront', { tabId: this.tabId })
+    this.bridge.batched('view.bringToFront', { tabId: this.tabId })
   }
 
   setCover(cover: ContentCover): void {
     // Every layout report carries the cover; only a change is worth a spring on the host.
     if (this.cover.top === cover.top && this.cover.bottom === cover.bottom) return
     this.cover = cover
-    this.bridge.send('view.setCover', { tabId: this.tabId, cover })
+    this.bridge.batched('view.setCover', { tabId: this.tabId, cover })
   }
 
   // --- page operations -----------------------------------------------------------

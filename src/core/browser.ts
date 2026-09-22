@@ -2393,7 +2393,7 @@ export class Browser {
     }
     if (message.type === 'pdf') {
       if (message.pdf && typeof message.pdf === 'object')
-        this.pdf.onReport(tabId, message.pdf, message.token)
+        this.pdf.onReport(tabId, message.pdf, message.pdfToken)
       return
     }
     if (message.type === 'forms') {

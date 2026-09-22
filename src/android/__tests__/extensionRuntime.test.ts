@@ -44,6 +44,10 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const late = JSON.parse(String(served.late)) as Record<string, unknown>
     expect(late.late).toBe(true)
     expect((late.extension as Record<string, unknown>).groups).toEqual([])
+    // The stylesheet substitution map Kotlin localizes every served `text/css` file from, as
+    // Chrome's renderer does for a `chrome-extension://` stylesheet: the predefined names with
+    // the extension's id, the locale spelled as a `_locales` directory is.
+    expect(served.cssMessages).toMatchObject({ '@@extension_id': ID, '@@ui_locale': 'en_US' })
     expect(h.kt.calledWith('ext.background.start')).toEqual([{ id: ID }])
     expect(h.runtime.configureStats(ID)?.units[0].key).toBe('isolated:https://example.com')
   })
@@ -1421,7 +1425,16 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
       documentOrigin: `https://${ID}.ext.zenium.invalid`,
       tabId: -1
     })
-    hello(h, 'off1', 'offscreen', { url: `https://${ID}.ext.zenium.invalid/offscreen.html` })
+    // The filter OneNote Web Clipper builds, `documentUrls: [runtime.getURL('offscreen.html')]`
+    // (the served spelling, what getURL answers), finds the loading document too.
+    const servedUrl = `https://${ID}.ext.zenium.invalid/offscreen.html`
+    const loadingByServed = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [
+        { contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [servedUrl] }
+      ])
+    ).result as Array<Record<string, unknown>>
+    expect(loadingByServed.map((c) => c.contextType)).toEqual(['OFFSCREEN_DOCUMENT'])
+    hello(h, 'off1', 'offscreen', { url: servedUrl })
     await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
@@ -1431,6 +1444,31 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     ).result as Array<Record<string, unknown>>
     expect(up).toHaveLength(1)
     expect(up[0].contextId).toBe('off1')
+    // And found by its URL in either spelling, and by its origin in either spelling (the page's
+    // `location.origin` is the served one; `chrome-extension://<id>` is what Chrome would give):
+    // with the served filter answered empty, OneNote called createDocument again on every clip
+    // and got "Only a single offscreen document may be created."
+    const found = async (filter: Record<string, unknown>): Promise<string[]> =>
+      (
+        (await call(h, 'bg1', 'runtime', 'getContexts', [filter])).result as Array<
+          Record<string, unknown>
+        >
+      ).map((c) => String(c.contextId))
+    expect(
+      await found({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [servedUrl] })
+    ).toEqual(['off1'])
+    expect(await found({ documentUrls: [`chrome-extension://${ID}/offscreen.html`] })).toEqual([
+      'off1'
+    ])
+    expect(await found({ documentUrls: [`chrome-extension://${ID}/other.html`] })).toEqual([])
+    expect((await found({ documentOrigins: [`https://${ID}.ext.zenium.invalid`] })).sort()).toEqual(
+      ['bg1', 'off1']
+    )
+    expect((await found({ documentOrigins: [`chrome-extension://${ID}`] })).sort()).toEqual([
+      'bg1',
+      'off1'
+    ])
+    expect(await found({ documentOrigins: ['https://example.com'] })).toEqual([])
     // The page has the extension's chrome: its runtime.sendMessage reaches the background as a
     // popup's does, with no tab on the sender.
     message(h, 'off1', { t: 'msg', id: 3, target: {}, data: { blob: 'made' } })
@@ -2228,6 +2266,144 @@ describe('AndroidExtensionRuntime: chrome.system.display', () => {
       ok: false,
       error: "The extension does not have the 'system.display' permission."
     })
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.system.cpu and chrome.system.memory', () => {
+  it("answers the phone's processors and memory in Chrome's shape for an extension declaring the permissions", async () => {
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['system.cpu', 'system.memory', 'storage'] }))
+    )
+    backgroundUp(h, 'bg1')
+    // Kotlin's reading: `Runtime.availableProcessors()`, Java's `os.arch`, the `Hardware` line of
+    // /proc/cpuinfo; the per-processor times unreadable in the app's sandbox (`usage: null`).
+    const cpu = (await call(h, 'bg1', 'system.cpu', 'getInfo', [])).result as Record<
+      string,
+      unknown
+    >
+    expect(cpu).toEqual({
+      numOfProcessors: 4,
+      archName: 'aarch64',
+      modelName: 'Qualcomm Technologies, Inc SM8550',
+      features: [],
+      processors: Array.from({ length: 4 }, () => ({
+        usage: { user: 0, kernel: 0, idle: 0, total: 0 }
+      })),
+      temperatures: []
+    })
+    // Where /proc/stat is readable the times come through, `nice` folded into `user`.
+    h.kt.cpuAnswer = () => ({
+      numOfProcessors: 2,
+      archName: 'x86_64',
+      modelName: 'Intel(R) Core(TM) i7',
+      features: ['sse4_2', 'avx', 'sse', 'mmx', 'sse4_1'],
+      usage: [
+        [120, 30, 900],
+        [80, 20, 950]
+      ]
+    })
+    const x86 = (await call(h, 'bg1', 'system.cpu', 'getInfo', [])).result as Record<
+      string,
+      unknown
+    >
+    expect(x86).toMatchObject({
+      numOfProcessors: 2,
+      archName: 'x86_64',
+      features: ['mmx', 'sse', 'sse4_1', 'sse4_2', 'avx'],
+      processors: [
+        { usage: { user: 120, kernel: 30, idle: 900, total: 1050 } },
+        { usage: { user: 80, kernel: 20, idle: 950, total: 1050 } }
+      ]
+    })
+    // `ActivityManager.MemoryInfo`: totalMem and availMem, in bytes.
+    expect((await call(h, 'bg1', 'system.memory', 'getInfo', [])).result).toEqual({
+      capacity: 8 * 1024 ** 3,
+      availableCapacity: 3 * 1024 ** 3
+    })
+  })
+
+  it('refuses an extension that did not declare them with Chrome\u2019s no-permission errors', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['system.cpu', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect((await call(h, 'bg1', 'system.cpu', 'getInfo', [])).ok).toBe(true)
+    expect(await call(h, 'bg1', 'system.memory', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.memory' permission."
+    })
+    const other = harness()
+    await other.runtime.attach(record(other, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(other, 'bg1')
+    expect(await call(other, 'bg1', 'system.cpu', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.cpu' permission."
+    })
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.tabCapture on a WebView that captures nothing', () => {
+  it("answers getCapturedTabs with Chrome's empty list for an extension holding the permission", async () => {
+    // Mobile simulator's action click: `getCapturedTabs(tabs => tabs.some(...))` before it opens
+    // its simulator page; a rejection hands the callback `undefined` and its `.some` throws.
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['tabCapture', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'tabCapture', 'getCapturedTabs', [])).toMatchObject({
+      ok: true,
+      result: []
+    })
+    // The capture itself has no source on the WebView: still the runtime's own refusal.
+    expect(await call(h, 'bg1', 'tabCapture', 'getMediaStreamId', [{}])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('chrome.tabCapture.getMediaStreamId is not implemented')
+    })
+  })
+
+  it('keeps refusing an extension without the permission', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'tabCapture', 'getCapturedTabs', [])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('chrome.tabCapture.getCapturedTabs is not implemented')
+    })
+  })
+})
+
+describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
+  it('drops the bridge token Kotlin left in the frame text, and sends to endpoints one way', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    // Kotlin forwards the frame's text as written: the token rides along on every message.
+    const event = {
+      ep: 'bg1',
+      tabId: null,
+      top: true,
+      origin: `https://${ID}.ext.zenium.invalid`,
+      message: {
+        t: 'hello',
+        ext: ID,
+        ctx: 'background',
+        url: `https://${ID}.ext.zenium.invalid/bg.html`,
+        token: 'tok'
+      } as Record<string, unknown>
+    }
+    h.runtime.onMessage(event)
+    expect(event.message.token).toBeUndefined()
+
+    // A reply to a call reaches the endpoint through `post` (no `resolve` back to the chrome per
+    // message), not through a `call`; the endpoint the hello registered gets it.
+    const id = nextCallId()
+    h.runtime.onMessage({
+      ...event,
+      message: { t: 'call', id, ns: 'runtime', method: 'getPlatformInfo', args: [], token: 'tok' }
+    })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.posted).toContain('ext.send')
+    expect(h.kt.posted.filter((m) => m === 'ext.send')).toHaveLength(
+      h.kt.calledWith('ext.send').length
+    )
   })
 })
 

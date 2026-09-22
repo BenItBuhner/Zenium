@@ -64,8 +64,27 @@ import kotlin.math.roundToInt
  *    back animations before the launch for these (the shared recipe sets three-button
  *    navigation); the pill sits higher by the difference of the two navigation bars' insets.
  *
+ * THE GROUP FOLD in the open overview (v2 §11.4: a group folding or unfolding runs its height on
+ * the gentle spring – a layout per frame, BY DESIGN – while the cells below hold where they were,
+ * frame by frame, and glide to their slots once the height has settled), the `overview-group`
+ * group, on the six tabs and on thirty, the overview opened off the record by the fling, see
+ * [groupScenes]:
+ *
+ *  - `overview-group-fold`: a tap on the Docs group's header; the group shrinks to its header,
+ *    the cards below (four; twenty-eight on thirty) hold, then glide up.
+ *  - `overview-group-unfold`: the tap again; the group grows back, the cards below hold, then
+ *    glide down.
+ *
+ *  The hold the user sees – the cards below static from the tap to their glide; PERF-5 saw ~2.0 s
+ *  of it on the emulator at OverviewDemo's step 7 – is what these measure: the probe keeps a
+ *  timeline of every frame that wrote the group's height or a cell's transform, and the findings
+ *  read the hold's length off it, the height animation's frames and their intervals against the
+ *  spring's own time (the spring's 64 ms step clamp stretches it by the frame rate's shortfall),
+ *  the release's lag after the settle, and the glide – see [foldNumbers].
+ *
  * The groups are picked by the `scenes` argument (`DEMO_SCENES`: `all`, or a comma list of
- * `tab-swipe`, `overview`), so a branch profiling one motion pays for its scenes alone.
+ * `tab-swipe`, `overview`, `overview-group`), so a branch profiling one motion pays for its
+ * scenes alone.
  *
  * The scenes are measured BEFORE the recorder rolls (screenrecord composes a second copy of
  * every frame on the emulator's software GPU); the recorded part is the media: the slow swipe,
@@ -91,7 +110,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private val theme = InstrumentationRegistry.getArguments().getString("theme").let {
         if (it == "dark") "dark" else "light"
     }
-    /** The scene groups this run measures (`scenes`: `all` or a comma list of `tab-swipe`, `overview`). */
+    /** The scene groups this run measures (`scenes`: `all` or a comma list of `tab-swipe`, `overview`, `overview-group`). */
     private val groups: Set<String> = InstrumentationRegistry.getArguments().getString("scenes").let { arg ->
         if (arg.isNullOrBlank() || arg == "all") GROUPS else arg.split(',').map { it.trim() }.filter { it in GROUPS }.toSet()
     }
@@ -99,6 +118,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private val host get() = (activity as MainActivity).host
     private val findings = StringBuilder()
     private val scenes = JSONArray()
+    /** The last [scene]'s record in [scenes], for a driver step that adds to it (the fold's numbers). */
+    private var lastScene: JSONObject? = null
     private var launchedAt = 0L
     /** Gesture navigation is on (set before the launch for the overview's back scenes). */
     private var gestural = false
@@ -205,10 +226,13 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         }
         finding("active tab before the scenes: ${activeTabId()}; groups: ${groups.joinToString(", ")}")
         if ("tab-swipe" in groups) measureTabSwipe()
-        if ("overview" in groups) measureOverview()
+        if ("overview" in groups || "overview-group" in groups) measureOverview()
     }
 
-    /** The recorded media: the slow swipe, the fling back, the grouped swipe; the overview's pull and its return. */
+    /**
+     * The recorded media: the slow swipe, the fling back, the grouped swipe; the overview's pull
+     * and its return; the group folded and unfolded in the open overview.
+     */
     override fun demo() {
         activate(START_TAB)
         settle()
@@ -245,6 +269,29 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             SystemClock.sleep(CLOSE_REST_MS)
             shot("overview-returned")
         }
+        if ("overview-group" in groups) {
+            activate(START_TAB)
+            settle()
+            if (openOverview()) {
+                val header = groupHeaderRect()
+                if (header != null) {
+                    // Each tap's effect checked before its still, as the scenes' taps are: a tap
+                    // the system drops (`leaveGroup`) would leave a still named for a state it
+                    // does not show, and the group folded behind the pick.
+                    Finger().tap(header.exactCenterX(), header.exactCenterY())
+                    SystemClock.sleep(FOLD_SETTLE_MS)
+                    leaveGroup(collapsed = true, "group-folded")
+                    shot("group-folded")
+                    Finger().tap(header.exactCenterX(), header.exactCenterY())
+                    SystemClock.sleep(FOLD_SETTLE_MS)
+                    leaveGroup(collapsed = false, "group-unfolded")
+                    shot("group-unfolded")
+                }
+                pickActiveCard()
+                awaitOverview(open = false)
+                SystemClock.sleep(CLOSE_REST_MS)
+            }
+        }
     }
 
     // --- the overview ------------------------------------------------------------------------------
@@ -252,15 +299,19 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     /**
      * The overview's scenes on the seeded six tabs, then on thirty: the pull in its pieces, the
      * pick that closes it, a fling open, and (under gesture navigation) the system's back gesture
-     * over it. The thirty are the six plus [EXTRA_TABS] created unloaded (`load: false`: a card
-     * each in the grid, no page behind it, no picture in it), so the second set is the grid's
-     * size and nothing else; the back scenes run on the six alone.
+     * over it (`overview`); the group folded and unfolded in the open overview (`overview-group`).
+     * The thirty are the six plus [EXTRA_TABS] created unloaded (`load: false`: a card each in the
+     * grid, no page behind it, no picture in it), so the second set is the grid's size and nothing
+     * else; the back scenes run on the six alone.
      */
     private fun measureOverview() {
-        finding("overview: navigation ${if (gestural) "gestural (the back scenes run)" else "three-button (the back scenes are skipped)"}")
+        val pull = "overview" in groups
+        val fold = "overview-group" in groups
+        if (pull) finding("overview: navigation ${if (gestural) "gestural (the back scenes run)" else "three-button (the back scenes are skipped)"}")
         activate(START_TAB)
         settle()
-        overviewScenes("", back = gestural)
+        if (pull) overviewScenes("", back = gestural)
+        if (fold) groupScenes("")
         var made = 0
         for (i in 1..EXTRA_TABS) {
             val id = coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/article?extra=$i")},\"active\":false,\"load\":false}")
@@ -269,8 +320,228 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         finding("overview: $made tabs created unloaded; ${coreState().getJSONObject("tabs").length()} tabs in the core")
         activate(START_TAB)
         settle()
-        overviewScenes("-30", back = false)
+        if (pull) overviewScenes("-30", back = false)
+        if (fold) groupScenes("-30")
     }
+
+    // --- the group fold ----------------------------------------------------------------------------
+
+    /**
+     * The group fold's scenes in the open overview, named with `suffix`: a tap on the Docs group's
+     * header folds it (`overview-group-fold`), a second tap unfolds it (`overview-group-unfold`);
+     * each scene is the tap and [FOLD_SETTLE_MS] for the height animation, the hold and the glide
+     * to land, its script sampled by function. The overview is opened off the record by the fling
+     * and closed by the pick afterwards; the group is left as it was seeded (open). The Docs group
+     * heads the grid (`tabOrderOf`: the group's tabs first), so every loose card is below it.
+     */
+    private fun groupScenes(suffix: String) {
+        if (!openOverview()) {
+            finding("overview-group$suffix: the overview did not open; the group scenes are skipped")
+            return
+        }
+        val found = groupHeaderRect()
+        if (found == null) {
+            finding("overview-group$suffix: no $GROUP_NAME group header on screen (${groupState()}); the group scenes are skipped")
+            closeOverview()
+            return
+        }
+        // The fold scene folds an OPEN group, as seeded: a group left folded (a tap of the set
+        // before this one that the system dropped, say) is unfolded off the record first, so the
+        // scene's name says what its tap did.
+        leaveGroup(collapsed = false, "overview-group$suffix (before the scenes)")
+        val header = groupHeaderRect() ?: found
+        finding("overview-group$suffix: ${cardsInGrid()} cards in the grid; the $GROUP_NAME group ${groupState()}; header at $header")
+        scene("overview-group-fold$suffix", JankBudget.Kind.SPRING, profile = true) {
+            Finger().tap(header.exactCenterX(), header.exactCenterY())
+            SystemClock.sleep(FOLD_SETTLE_MS)
+        }
+        finding("overview-group-fold$suffix: ${groupState()}; ${foldLine()}")
+        SystemClock.sleep(FOLD_REST_MS)
+        leaveGroup(collapsed = true, "overview-group-fold$suffix")
+        // The header stays where it was (the group folds from its header down); read again in case.
+        val again = groupHeaderRect() ?: header
+        scene("overview-group-unfold$suffix", JankBudget.Kind.SPRING, profile = true) {
+            Finger().tap(again.exactCenterX(), again.exactCenterY())
+            SystemClock.sleep(FOLD_SETTLE_MS)
+        }
+        finding("overview-group-unfold$suffix: ${groupState()}; ${foldLine()}")
+        SystemClock.sleep(FOLD_REST_MS)
+        leaveGroup(collapsed = false, "overview-group-unfold$suffix")
+        closeOverview()
+    }
+
+    /**
+     * The group as the step `name` should have left it (or should find it), off the record: an
+     * injected tap the system drops (#339's retry saw the InputDispatcher drop OverviewDemo's
+     * step-7 tap, "no targets were found") folds nothing, and the next scene would then fold where
+     * it should unfold; so when the state is not `collapsed`, the header is tapped again and the
+     * fold given its time, and the finding says so (a scene's own numbers say "the tap folded
+     * nothing"). Every tap on the group – the scenes', the recorded pass's, and the scenes' own
+     * starting state – is checked through here.
+     */
+    private fun leaveGroup(collapsed: Boolean, name: String) {
+        if (groupState().startsWith("collapsed") == collapsed) return
+        val header = groupHeaderRect()
+        if (header == null) {
+            finding("$name: the group is ${groupState()} and its header is off screen; left as it is")
+            return
+        }
+        finding("$name: the group is ${groupState()}, not ${if (collapsed) "collapsed" else "open"} as it should be (a tap did not take); tapped off the record")
+        Finger().tap(header.exactCenterX(), header.exactCenterY())
+        SystemClock.sleep(FOLD_SETTLE_MS)
+        finding("$name: the group is ${groupState()} after the off-record tap")
+    }
+
+    /**
+     * The overview opened off the record by the fling (the way most opens are made), at rest;
+     * false when it did not open in time. Nothing when it is up already.
+     */
+    private fun openOverview(): Boolean {
+        if (overviewState() == "closed") {
+            val g = Finger()
+            g.down(pillCenterX, pillY)
+            g.moveBy(0f, -NUDGE, 60)
+            g.moveBy(0f, -FLING_FRACTION * overviewTravel, FLING_MS)
+            g.up()
+        }
+        val opened = awaitOverview(open = true)
+        SystemClock.sleep(OPEN_REST_MS)
+        return opened
+    }
+
+    /** The overview closed by the pick of the active tab's card (a back when the card is not found), and a rest. */
+    private fun closeOverview() {
+        pickActiveCard()
+        awaitOverview(open = false)
+        SystemClock.sleep(CLOSE_REST_MS)
+    }
+
+    /**
+     * The on-screen box of the Docs group's header in the open overview: the accessibility tree's
+     * (the card's name, "Docs, tab group, 2 tabs", by its leading name: [groupCard]), else the
+     * DOM's; null when there is none.
+     */
+    private fun groupHeaderRect(): android.graphics.Rect? =
+        findByLabel(groupCard(GROUP_NAME)) ?: domRect(".zen-overview .zen-group > .zen-group-header")
+
+    /** `open, 392 px tall`, `collapsed, clipped, 44 px tall (inline 44px)`, or `no group card`. */
+    private fun groupState(): String = jsString(
+        "(function(){var e=document.querySelector('.zen-overview .zen-group');if(!e)return 'no group card';" +
+            "return (e.hasAttribute('data-collapsed')?'collapsed':'open')+(e.hasAttribute('data-clip')?', clipped':'')+" +
+            "', '+Math.round(e.getBoundingClientRect().height)+' px tall'+(e.style.height?' (inline '+e.style.height+')':'')})()"
+    )
+
+    /** The last scene's fold numbers ([foldNumbers]) written into its record and described for the findings. */
+    private fun foldLine(): String {
+        val json = lastScene ?: return "no scene"
+        val fold = foldNumbers(json.optJSONObject("probe") ?: JSONObject())
+        if (fold != null) json.put("fold", fold)
+        return describeFold(fold)
+    }
+
+    /**
+     * The fold's numbers out of the probe's timeline (`tl`, see [installProbe]: one entry per
+     * frame that wrote a cell, `[t, h, n, y]` – the group shell's inline height that frame in px
+     * (-1 when it was not written; -2 when it was cleared, the spring at rest), the cells' style
+     * writes and the first one's translateY – and `[t, "down" | "click"]` for the tap's events).
+     * Times in ms from the tap's `pointerdown` (from the first height write without one). Null when
+     * no height was written: the tap folded nothing.
+     *
+     *  - the height animation: its first write's delay after the tap (the click's dispatch and
+     *    the React commit that starts the spring), its frames, their wall time, and the spring's
+     *    own time – each interval clamped at the spring's 64 ms step ([SPRING_STEP_CLAMP_MS],
+     *    `SpringAnimation.tick`) – whose ratio is how far the frame rate stretched it; the mean and
+     *    the longest interval; the height it ran from and to; its direction's reversals (the
+     *    gentle spring overshoots a hair by design: one is expected) and its rests (a second rest
+     *    is a spring run again);
+     *  - the cells below: their style writes per height frame (the tracker's compensation, one
+     *    write per cell per frame; the commit's clearing doubles the first frame's);
+     *  - the hold: from the tap to the glide's first frame – the cards below static meanwhile –
+     *    and the release's lag after the settle (one frame when the release runs at the rest;
+     *    more when it waited on a glide in flight); the glide's frames, length and travel.
+     */
+    private fun foldNumbers(probe: JSONObject): JSONObject? {
+        val tl = probe.optJSONArray("tl") ?: return null
+        var down = Double.NaN
+        var click = Double.NaN
+        val frames = ArrayList<DoubleArray>()
+        for (i in 0 until tl.length()) {
+            val e = tl.getJSONArray(i)
+            if (e.length() == 2) {
+                when (e.getString(1)) {
+                    "down" -> if (down.isNaN()) down = e.getDouble(0)
+                    "click" -> if (click.isNaN()) click = e.getDouble(0)
+                }
+            } else frames += doubleArrayOf(e.getDouble(0), e.getDouble(1), e.getDouble(2), e.getDouble(3))
+        }
+        val heights = frames.filter { it[1] >= 0 }
+        if (heights.isEmpty()) return null
+        val t0 = if (down.isNaN()) heights.first()[0] else down
+        var wall = 0.0
+        var spring = 0.0
+        var longest = 0.0
+        for (i in 1 until heights.size) {
+            val d = heights[i][0] - heights[i - 1][0]
+            wall += d
+            spring += Math.min(d, SPRING_STEP_CLAMP_MS)
+            longest = Math.max(longest, d)
+        }
+        var reversals = 0
+        var lastSign = 0
+        for (i in 1 until heights.size) {
+            val s = Math.signum(heights[i][1] - heights[i - 1][1]).toInt()
+            if (s == 0) continue
+            if (lastSign != 0 && s != lastSign) reversals++
+            lastSign = s
+        }
+        val rests = frames.count { it[1] == -2.0 }
+        val settledAt = frames.last { it[1] != -1.0 }[0]
+        val glide = frames.filter { it[0] > settledAt && it[2] > 0 }
+        val travel = frames.filter { it[0] >= settledAt }.maxOfOrNull { Math.abs(it[3]) } ?: 0.0
+        val o = JSONObject()
+            .put("clickMs", if (click.isNaN()) JSONObject.NULL else r1(click - t0))
+            .put("heightFirstMs", r1(heights.first()[0] - t0))
+            .put("heightLastMs", r1(heights.last()[0] - t0))
+            .put("heightFrames", heights.size)
+            .put("heightFrom", r1(heights.first()[1]))
+            .put("heightTo", r1(heights.last()[1]))
+            .put("heightWallMs", r1(wall))
+            .put("heightSpringMs", r1(spring))
+            .put("stretch", if (spring > 0) r1(wall / spring) else 1.0)
+            .put("frameMeanMs", if (heights.size > 1) r1(wall / (heights.size - 1)) else 0.0)
+            .put("frameMaxMs", r1(longest))
+            .put("reversals", reversals)
+            .put("rests", rests)
+            .put("cellWritesPerHeightFrame", r1(heights.sumOf { it[2] } / heights.size))
+            .put("settledMs", r1(settledAt - t0))
+        if (glide.isNotEmpty()) {
+            o.put("holdMs", r1(glide.first()[0] - t0))
+                .put("releaseLagMs", r1(glide.first()[0] - settledAt))
+                .put("glideFrames", glide.size)
+                .put("glideMs", r1(glide.last()[0] - glide.first()[0]))
+                .put("glidePx", r1(travel))
+                .put("glideFrameMeanMs", if (glide.size > 1) r1((glide.last()[0] - glide.first()[0]) / (glide.size - 1)) else 0.0)
+        }
+        return o
+    }
+
+    /** [foldNumbers] as a line of the findings. */
+    private fun describeFold(o: JSONObject?): String {
+        if (o == null) return "no height was written: the tap folded nothing"
+        val line = StringBuilder()
+        line.append("height first written ${o.optDouble("heightFirstMs")} ms after the tap (click at ${o.opt("clickMs")} ms), ")
+        line.append("${o.optInt("heightFrames")} frames over ${o.optDouble("heightWallMs")} ms (mean ${o.optDouble("frameMeanMs")}, max ${o.optDouble("frameMaxMs")} ms/frame; ")
+        line.append("${o.optDouble("heightSpringMs")} ms of spring time at the ${SPRING_STEP_CLAMP_MS.toInt()} ms clamp: ${o.optDouble("stretch")}x stretched), ")
+        line.append("${o.optDouble("heightFrom")} -> ${o.optDouble("heightTo")} px, ${o.optInt("reversals")} reversal(s), ${o.optInt("rests")} rest(s); ")
+        line.append("${o.optDouble("cellWritesPerHeightFrame")} cell writes per height frame; ")
+        if (o.has("holdMs")) {
+            line.append("HOLD ${o.optDouble("holdMs")} ms from the tap to the glide's first frame (${o.optDouble("releaseLagMs")} ms after the settle); ")
+            line.append("glide ${o.optInt("glideFrames")} frames over ${o.optDouble("glideMs")} ms (mean ${o.optDouble("glideFrameMeanMs")} ms/frame), ${o.optDouble("glidePx")} px")
+        } else line.append("NO GLIDE followed the settle in the scene's window")
+        return line.toString()
+    }
+
+    private fun r1(v: Double): Double = Math.round(v * 10) / 10.0
 
     /**
      * One set of the overview's scenes, named with `suffix`:
@@ -535,6 +806,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         result.traceMissing?.let { json.put("traceMissing", it) }
         profiled?.let { json.put("profile", it) }
         scenes.put(json)
+        lastScene = json
         val frames = result.trace?.frames ?: 0
         finding(
             "[$name] ${result.trace?.describe() ?: "trace: ${result.traceMissing}"}; probe: ${describeProbe(probe, frames)}; " +
@@ -559,29 +831,45 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * into React's capture listener, the path inside and React's bubble listener, and
      * `performance.mark`s at the cuts put them in the trace), and the commands the chrome sent
      * the core (`cmd`, by name: what a scene asks of the host). Installed once; reset per scene.
+     *
+     * For the group fold, the writes to the grid's cells (the elements carrying `data-cell`) are
+     * counted apart – the group card's shell (`group`: its height, one write per frame of its
+     * spring) and the cards (`cell`: the tracker's transforms, one per card per frame held or
+     * gliding) – and kept as a TIMELINE (`tl`, up to [TIMELINE_MAX] entries a scene): one entry per
+     * observer callback that wrote a cell, `[t, h, n, y]` – the time, the shell's inline height in
+     * px as the frame left it (-1: not written this frame; -2: cleared, the spring at rest), the
+     * cards' writes and the first written card's translateY – and `[t, "down"]` / `[t, "click"]`
+     * for the tap's events. The observer runs once per task, after the frame's script (a
+     * microtask), so an entry is a frame of the animation: [foldNumbers] reads the hold and the
+     * glide off it.
      */
     private fun installProbe(): String = chromeJs(
         "(function(){if(window.__motion)return 'kept';" +
             "var p=window.__motion={};" + RESET_JS +
             "var inPill=function(n){return !!(n&&n.closest&&n.closest('.zen-phone-pill'))};" +
             "var isStage=function(n){return n.nodeType===1&&(n.classList.contains('zen-stage-card')||(n.querySelector&&!!n.querySelector('.zen-stage-card')))};" +
-            "new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var r=rs[i],t=r.target;" +
+            "new MutationObserver(function(rs){var fh,fn=0,fy;for(var i=0;i<rs.length;i++){var r=rs[i],t=r.target;" +
             "if(r.type==='attributes'){var c=t.classList;" +
             // The hero wears `zen-stage-card` too: it is read first. Inside it, the title row's
             // height and opacity and the picture's scale are the hero's inner writes.
             "if(c&&c.contains('zen-overview-hero'))p.hero++;else if(c&&c.contains('zen-stage-card'))p.card++;else if(c&&c.contains('zen-stage-dim'))p.dim++;" +
             "else if(c&&c.contains('zen-group-ribbon'))p.ribbon++;else if(c&&c.contains('zen-overview'))p.overview++;else if(c&&c.contains('zen-overview-card'))p.ovCard++;" +
             "else if(t===document.documentElement)p.root++;else if(inPill(t))p.pill++;" +
+            // A cell of the grid: the group card's shell (its height) or a card (its transform).
+            "else if(t.hasAttribute&&t.hasAttribute('data-cell')){if(c.contains('zen-group')){p.group++;var hs=t.style.height;fh=hs===''?-2:parseFloat(hs)}" +
+            "else{p.cell++;fn++;if(fy===undefined){var tf=t.style.transform,k=tf.indexOf(',');fy=k<0?0:parseFloat(tf.slice(k+1))}}}" +
             "else if(t.closest&&t.closest('.zen-overview-hero'))p.heroInner++;else if(t.closest&&t.closest('.zen-overview'))p.ovInner++;else p.other++}" +
             "else{p.added+=r.addedNodes.length;p.removed+=r.removedNodes.length;" +
             "for(var j=0;j<r.addedNodes.length;j++){if(isStage(r.addedNodes[j]))p.stageMounts++}" +
-            "if(inPill(t)&&r.addedNodes.length)p.pillRemounts++}}})" +
+            "if(inPill(t)&&r.addedNodes.length)p.pillRemounts++}}" +
+            "if((fh!==undefined||fn>0)&&p.tl.length<$TIMELINE_MAX)p.tl.push([Math.round(performance.now()*10)/10,fh===undefined?-1:Math.round(fh*10)/10,fn,fy===undefined?0:Math.round(fy*10)/10])})" +
             ".observe(document.documentElement,{attributes:true,attributeFilter:['style'],childList:true,subtree:true});" +
             "var at={},root=document.getElementById('root'),inner=root&&root.firstElementChild;" +
             "var seg=function(r,k,d){if(d>(r[k]||0))r[k]=d};" +
             "['pointerover','pointerenter','pointerdown','touchstart','pointermove','touchmove','pointerup','touchend','pointercancel','gotpointercapture','lostpointercapture','click']" +
             ".forEach(function(ty){var t={};" +
-            "window.addEventListener(ty,function(){at[ty]=t.w0=performance.now();performance.mark('probe:'+ty+':w0');var r=p.ev[ty]||(p.ev[ty]={n:0,ms:0,max:0});r.n++},true);" +
+            "window.addEventListener(ty,function(){at[ty]=t.w0=performance.now();performance.mark('probe:'+ty+':w0');var r=p.ev[ty]||(p.ev[ty]={n:0,ms:0,max:0});r.n++;" +
+            "if((ty==='pointerdown'||ty==='click')&&p.tl.length<$TIMELINE_MAX)p.tl.push([Math.round(t.w0*10)/10,ty==='click'?'click':'down'])},true);" +
             // React's listeners sit on #root, capture and bubble, registered before these: a
             // capture listener on #root runs after React's capture one, a bubble listener on
             // #root's first child before React's bubble one. So the cuts are React's capture
@@ -760,7 +1048,24 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         private const val PROFILE_WAIT_MS = 4_000L
 
         /** The scene groups a run can measure (`scenes`). */
-        private val GROUPS = setOf("tab-swipe", "overview")
+        private val GROUPS = setOf("tab-swipe", "overview", "overview-group")
+        /** The seeded group the fold scenes fold and unfold (`folder_docs`: the two Docs tabs, at the head of the grid). */
+        private const val GROUP_NAME = "Docs"
+        /**
+         * The fold scene's window after the tap: the height spring, the hold and the glide (about a
+         * second at 60 Hz; the emulator's frame rate stretches both springs by its shortfall under
+         * the step clamp, so the window is generous and the timeline says where the motion ended).
+         */
+        private const val FOLD_SETTLE_MS = 5_000L
+        private const val FOLD_REST_MS = 1_500L
+        /**
+         * `SpringAnimation.tick`'s longest step: a frame longer than this advances the spring by
+         * this much only. The twin of `SPRING_STEP_CLAMP_MS` in `lib/motion/spring.ts`, which is
+         * the source; `spring.test.ts` pins the two equal, so a change there fails here by name.
+         */
+        private const val SPRING_STEP_CLAMP_MS = 64.0
+        /** The probe's timeline cap per scene (a frame's entry each; the thirty-tab glide is under a hundred). */
+        private const val TIMELINE_MAX = 800
         /** Tabs created unloaded for the overview's second set: the six seeded plus these make thirty. */
         private const val EXTRA_TABS = 24
         /** How far the pull carries the overview in before the lift; the spring does the rest. */
@@ -799,6 +1104,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             Triple("heroInner", "hero inner", true),
             Triple("overview", "overview root", true),
             Triple("ovCard", "overview cards", true),
+            Triple("group", "group height", true),
+            Triple("cell", "cells", true),
             Triple("ovInner", "overview inner", true),
             Triple("dim", "dims", false),
             Triple("ribbon", "ribbons", false),
@@ -809,8 +1116,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
 
         /** The probe's counters at zero (runs where `p` is the probe's object). */
         private const val RESET_JS =
-            "p.card=0;p.hero=0;p.heroInner=0;p.overview=0;p.ovCard=0;p.ovInner=0;p.dim=0;p.ribbon=0;p.pill=0;p.root=0;p.other=0;" +
-                "p.added=0;p.removed=0;p.stageMounts=0;p.pillRemounts=0;p.ev={};p.cmd={};"
+            "p.card=0;p.hero=0;p.heroInner=0;p.overview=0;p.ovCard=0;p.group=0;p.cell=0;p.ovInner=0;p.dim=0;p.ribbon=0;p.pill=0;p.root=0;p.other=0;" +
+                "p.added=0;p.removed=0;p.stageMounts=0;p.pillRemounts=0;p.ev={};p.cmd={};p.tl=[];"
 
         /**
          * The probe's sampler (`window.__motion.prof`): `start(ms)` opens a `Profiler` over the
