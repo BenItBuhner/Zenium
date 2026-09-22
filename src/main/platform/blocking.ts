@@ -34,6 +34,11 @@ import {
 import type { BlockingHost, BundledFilterList } from '../../core/platform'
 import type { Decision, RequestContext, RuleSet } from '../../core/blocking/rules'
 import { BLOCKING_DIR, type RuleSetStore } from '../../core/blocking/store'
+import {
+  GHOSTERY_COMPILE_TASK,
+  compileGhosteryEngine,
+  type GhosteryCompileOutput
+} from './blockingCompile'
 import type { RequestHeaderHandler } from './requestHeaders'
 import {
   HANDLER_ORDER,
@@ -211,9 +216,19 @@ export interface TextSource {
 }
 
 /**
+ * The compile handed off the main process (`ElectronBlocking` gives the core's background queue
+ * running `GHOSTERY_COMPILE_TASK`): the lists' text in, the serialised engine and the document
+ * filters' lines out. Absent, the matcher parses on the spot (the tests, a host without a queue).
+ */
+export type GhosteryCompile = (parts: string[]) => Promise<GhosteryCompileOutput>
+
+/**
  * Matches the enabled `filterText` sets with Ghostery's `FiltersEngine`. The engine is rebuilt
- * (off the current tick) whenever one of those sets changes, and its serialised form is cached
- * under `blocking/engine.bin` so later starts deserialise in milliseconds instead of parsing.
+ * (off the current tick) whenever one of those sets changes – compiled in the background worker
+ * when a {@link GhosteryCompile} is given, so the main process only deserialises the bytes, and
+ * changes that land while a build is out are folded into the one build after it – and its
+ * serialised form is cached under `blocking/engine.bin` so later starts deserialise in
+ * milliseconds instead of parsing.
  */
 export class GhosteryTextMatcher implements TextMatcher, CspSource {
   private engine: FiltersEngine | null = null
@@ -228,12 +243,15 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
   builds = 0
   /** Whether the current engine came out of the cache. */
   fromCache = false
+  /** Builds compiled off the main process so far (diagnostics and the tests). */
+  compiledInBackground = 0
 
   constructor(
     private readonly source: TextSource,
     private readonly cacheDir: string,
     private readonly cacheVersion: string = app.getVersion(),
-    private readonly rebuildDelayMs = 50
+    private readonly rebuildDelayMs = 50,
+    private readonly compile: GhosteryCompile | null = null
   ) {}
 
   /** Follow the core engine; returns the unsubscribe function. */
@@ -311,7 +329,11 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     }, this.rebuildDelayMs)
   }
 
-  /** Parse (or deserialise) the enabled text sets. Synchronous; ~100 ms for the default lists. */
+  /**
+   * Parse (or deserialise) the enabled text sets. Synchronous without a {@link GhosteryCompile}
+   * (~100 ms for the default lists on the spot); with one, the parse runs in the background and
+   * the old engine answers until the new one is adopted (`ready` is false meanwhile).
+   */
   rebuild(): void {
     if (this.building) {
       this.scheduleRebuild()
@@ -321,6 +343,7 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     this.dirty = false
     const sets = this.source.engine.enabledTextSets()
     const fingerprint = sets.map((s) => `${s.id}:${s.updatedAt ?? 0}:${s.filterCount}`).join('|')
+    let handedOff = false
     try {
       if (sets.length === 0) {
         // The master switch off disables every list. An empty engine is not worth caching, and
@@ -341,30 +364,53 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
         return
       }
       const parts: string[] = []
+      // The unpersisted text this build reads; only that is forgotten once it is in, so a set
+      // that changes again while a background build is out keeps its newer text for the next.
+      const used = new Map<string, string>()
       for (const summary of sets) {
-        const text =
-          this.pendingText.get(summary.id) ?? this.source.store.readFilterText(summary.id)
+        const pending = this.pendingText.get(summary.id)
+        if (pending !== undefined) used.set(summary.id, pending)
+        const text = pending ?? this.source.store.readFilterText(summary.id)
         if (text) parts.push(text)
       }
-      const engine = FiltersEngine.parse(parts.join('\n'), {
-        loadCosmeticFilters: false,
-        enableCompression: false,
-        enableOptimizations: true,
-        debug: false
-      })
-      const documents = DocumentFilters.parse(parts)
-      this.engine = engine
-      this.documents = documents
-      this.fromCache = false
-      this.pendingText.clear()
-      this.writeCache(fingerprint, engine, documents)
+      if (this.compile) {
+        handedOff = true
+        void this.compile(parts)
+          .then((output) => {
+            this.compiledInBackground++
+            this.adopt(FiltersEngine.deserialize(output.engine), DocumentFilters.parse([output.documents]))
+            this.forgetUsed(used)
+            this.writeCache(fingerprint, output.engine, output.documents)
+          })
+          .catch((error: unknown) => console.error('[zenium] filter engine build failed', error))
+          .finally(() => this.finishBuild())
+        return
+      }
+      const { engine, documents } = compileGhosteryEngine(parts)
+      this.adopt(engine, documents)
+      this.forgetUsed(used)
+      this.writeCache(fingerprint, engine.serialize(), documents.lines.join('\n'))
     } catch (error) {
       console.error('[zenium] filter engine build failed', error)
     } finally {
-      this.builds++
-      this.building = false
-      if (this.dirty) this.scheduleRebuild()
+      if (!handedOff) this.finishBuild()
     }
+  }
+
+  private adopt(engine: FiltersEngine, documents: DocumentFilters): void {
+    this.engine = engine
+    this.documents = documents
+    this.fromCache = false
+  }
+
+  private forgetUsed(used: Map<string, string>): void {
+    for (const [id, text] of used) if (this.pendingText.get(id) === text) this.pendingText.delete(id)
+  }
+
+  private finishBuild(): void {
+    this.builds++
+    this.building = false
+    if (this.dirty) this.scheduleRebuild()
   }
 
   private cachePaths(): { bin: string; meta: string; documents: string } {
@@ -395,14 +441,14 @@ export class GhosteryTextMatcher implements TextMatcher, CspSource {
     }
   }
 
-  private writeCache(fingerprint: string, engine: FiltersEngine, documents: DocumentFilters): void {
+  private writeCache(fingerprint: string, engine: Uint8Array, documents: string): void {
     const paths = this.cachePaths()
     try {
       mkdirSync(this.cacheDir, { recursive: true })
       const tmp = `${paths.bin}.${process.pid}.tmp`
-      writeFileSync(tmp, engine.serialize())
+      writeFileSync(tmp, engine)
       renameSync(tmp, paths.bin)
-      writeFileSync(paths.documents, documents.lines.join('\n'))
+      writeFileSync(paths.documents, documents)
       writeFileSync(paths.meta, JSON.stringify({ fingerprint, version: this.cacheVersion }))
     } catch (error) {
       console.warn('[zenium] filter engine cache not written', error)
@@ -505,7 +551,14 @@ export class ElectronBlocking {
     profileDir: string
   ) {
     this.multiplexer = new WebRequestMultiplexer(views)
-    this.matcher = new GhosteryTextMatcher(browser.blocking, join(profileDir, BLOCKING_DIR))
+    this.matcher = new GhosteryTextMatcher(
+      browser.blocking,
+      join(profileDir, BLOCKING_DIR),
+      undefined,
+      undefined,
+      // The compile in the core's background worker (inline on its fallback, as before).
+      (parts) => browser.background.run(GHOSTERY_COMPILE_TASK, { parts })
+    )
   }
 
   /** Register the blocking handler and start following the core engine. */
