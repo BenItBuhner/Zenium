@@ -257,9 +257,11 @@ describe('reduced motion removes, never shortens (v2 §11.3)', () => {
       '.zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot',
       // The load bar's appearance and departure.
       '.zen-load-progress',
-      // The overview fades in at scale 1; a pane switch cross-fades in place.
+      // The overview fades in at scale 1; a pane switch cross-fades in place; the select-tabs
+      // action band (#304) comes and goes on its fade in place of the slide.
       '.zen-overview',
       '.zen-overview-pane',
+      '.zen-overview-actions-band',
       // A group's header and tint at the end of the glide.
       '.zen-group-header',
       '.zen-group::before',
