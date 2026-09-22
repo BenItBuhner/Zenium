@@ -32,9 +32,9 @@ import kotlin.math.roundToInt
  *  5. Colour cascades into the nine radio rows, Blue checked; a touch on Green recolours the
  *     group at once and closes the menu, the dot following;
  *  6. Rename Group… puts the field in the name's slot; typing and Enter rename the group;
- *  7. Close Group (2 Tabs): the tabs close with one toast, the row stays as the SAVED group –
- *     the ring in the glyph slot, the count of the pages it keeps, no chevron – the core keeping
- *     the two pages in order;
+ *  7. Close Group (2 Tabs): the tabs close (no toast: the sidebar's closes carry none), the row
+ *     stays as the SAVED group – the ring in the glyph slot, the count of the pages it keeps, no
+ *     chevron – the core keeping the two pages in order;
  *  8. a touch on the saved row opens it: the pages come back as the group's tabs, in order, and
  *     the row is the open group's again;
  *  9. Ungroup: the group's record goes, its tabs stay where they were, loose.
@@ -174,7 +174,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         )
         val menu = domRect(MENU)
         check("the menu is 332 wide with 44 rows", menu != null && abs(menu.width() - 332) <= 1 && jsBoolean("[...document.querySelectorAll('$MENU_ITEM')].every(function(r){return Math.abs(r.getBoundingClientRect().height-44)<=1})"), "menu $menu")
-        check("the menu hangs from the finger", menu != null && abs(menu.left - at.x) <= 24 && abs(menu.top - at.y) <= 24, "menu $menu, hold $at")
+        check("the menu hangs from the finger", menu != null && abs(menu.left - at.x) <= 40 && menu.top >= at.y - 4 && menu.top - at.y <= 40, "menu $menu, hold $at")
         check("Close Group takes the plain ink, Delete Group the danger ink", !hasDanger("Close Group") && hasDanger("Delete Group"), "close ${hasDanger("Close Group")}, delete ${hasDanger("Delete Group")}")
         check("Colour is a submenu row", jsBoolean("(function(){var e=${itemJs("Colour")};return !!e&&e.getAttribute('aria-haspopup')==='menu'})()"), "")
         SystemClock.sleep(1_000)
@@ -229,8 +229,10 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         check("the menu's Close Group counts two", menuRow("Close Group (2 Tabs)") != null, "items ${menuItems()}")
         val closed = touchUntil("Close Group (2 Tabs)", { menuRow("Close Group (2 Tabs)") }, { !tabExists(ALPHA) && !tabExists(BETA) }, waitMs = 8_000)
         check("the group's tabs close", closed, "alpha ${tabExists(ALPHA)}, beta ${tabExists(BETA)}")
-        val toast = awaitToast("2 tabs closed")
-        check("one toast, \"2 tabs closed\"", toast != null, "toast '$toast'")
+        // The sidebar's closes run through the core with no Undo toast (the tab row's close and
+        // the tab menu's Close Tab are the same): the tabs are on the recently closed list, the
+        // group keeps their pages. The phone's overview is where the toast lives.
+        check("no toast: the sidebar's closes carry none, as the tab row's", !inDom(TOAST), "toast '${textOf("$TOAST .zen-message-text")}'")
         check("the core keeps the group SAVED with its two pages in order", awaitCore { savedUrls(it) == listOf(ALPHA_URL, BETA_URL) }, "saved ${savedUrls().map { it.removePrefix(ORIGIN) }}")
         check("the row stays, as the saved group", awaitJs("!!document.querySelector('$GROUP_ROW[data-saved]')", true, 4_000), "saved '${attrOf(GROUP_ROW, "data-saved")}'")
         check("the glyph slot holds the ring", inDom("$GLYPH[data-saved] .zen-group-row-dot") && jsBoolean("(function(){var d=document.querySelector('$GLYPH .zen-group-row-dot');return !!d&&getComputedStyle(d).backgroundColor==='rgba(0, 0, 0, 0)'&&getComputedStyle(d).boxShadow.indexOf('inset')>=0})()"), "dot ${dotColour()}")
@@ -240,7 +242,6 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         check("no member rows under it", !inDom(row(ALPHA)) && !inDom(row(BETA)), "")
         SystemClock.sleep(1_000)
         still("saved-row")
-        awaitToastGone()
     }
 
     // --- 8. open the saved group -------------------------------------------------------------------

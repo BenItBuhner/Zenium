@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER } from '../../shared/defaults'
 import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
 import { isSavedFolder } from '../model'
@@ -17,8 +18,9 @@ import type { ZenWindow } from '../window'
 /**
  * Saved tab groups (TAB-16, Chrome for Android's Tab groups pane): closing a group's tabs keeps
  * the group as a saved one with their pages (`Folder.savedTabs`), "Open" brings them back into
- * it in order, and the group's name and colour survive the round trip; and the link menu's
- * "Open Link in New Tab in Group" (TAB-15) for a tab in a group on a touch host.
+ * it in order, and the group's name and colour survive the round trip; the link menu's "Open
+ * Link in New Tab in Group" (TAB-15) for a tab in a group on a touch host; and the touch host's
+ * group menu (TABLET-04, the tablet sidebar row's hold; `groupMenu`) by the group's state.
  */
 
 function memoryIo(): StoreIO {
@@ -46,6 +48,8 @@ interface Harness {
   win: ZenWindow
   /** The last template handed to the host's menu popup. */
   shown: () => MenuItemTemplate[]
+  /** The events sent to the window's chrome, in order. */
+  sent: Array<{ name: string; payload: unknown }>
   /** A regular tab in the window's space, active unless said otherwise. */
   open: (url: string, opts?: { folderId?: string; active?: boolean }) => string
   /** A group of the window's space, with no editor opened for it. */
@@ -56,6 +60,7 @@ interface Harness {
 
 function harness(formFactor: FormFactor = 'phone', privateTabs = true): Harness {
   let last: MenuItemTemplate[] = []
+  const sent: Harness['sent'] = []
   const menus: MenuHost = {
     popup: (items) => {
       last = items
@@ -79,7 +84,7 @@ function harness(formFactor: FormFactor = 'phone', privateTabs = true): Harness 
           isMaximized: () => false,
           isFocused: () => true,
           isVisible: () => true,
-          send: () => undefined
+          send: (name, payload) => void sent.push({ name, payload })
         })
     },
     views: stub<TabViewHost>({
@@ -109,6 +114,7 @@ function harness(formFactor: FormFactor = 'phone', privateTabs = true): Harness 
     browser,
     win,
     shown: () => last,
+    sent,
     open: (url, opts = {}) =>
       browser.tabs.createTab({ url, active: opts.active ?? true, folderId: opts.folderId }, win).id,
     group: (name) =>
@@ -364,5 +370,134 @@ describe('the link menu’s group item (TAB-15)', () => {
     expect(labels(h.shown())).not.toContain('Open Link in New Tab in Group')
     click(h.shown(), 'Open Link in New Tab')
     expect(Object.values(m.tabs).find((t) => t.url === url)?.folderId).toBe(folder)
+  })
+})
+
+describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
+  const trip = (h: Harness): { folder: string; a: string; b: string } => {
+    const folder = h.group('Trip')
+    const a = h.open('https://a.test/', { folderId: folder })
+    const b = h.open('https://b.test/', { folderId: folder })
+    h.open('https://loose.test/')
+    return { folder, a, b }
+  }
+  const items = (h: Harness): MenuItemTemplate[] => h.shown().filter((i) => i.type !== 'separator')
+
+  it('lists Chrome’s group items in Title Case, Delete Group alone in the danger ink', () => {
+    const h = harness('tablet', false)
+    const { folder } = trip(h)
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    expect(labels(h.shown())).toEqual([
+      'Rename Group…',
+      'Colour',
+      'New Tab in Group',
+      'Collapse Group',
+      '-',
+      'Ungroup',
+      'Close Group (2 Tabs)',
+      'Delete Group'
+    ])
+    // Close Group destroys nothing the saved group does not keep (§6): the plain ink.
+    expect(
+      items(h)
+        .filter((i) => i.danger)
+        .map((i) => i.label)
+    ).toEqual(['Delete Group'])
+    // Colour: Chrome's nine as radio items in their order, the group's own checked.
+    const colour = h.shown().find((i) => i.label === 'Colour')!
+    expect(colour.submenu?.map((i) => i.label)).toEqual(
+      FOLDER_COLOR_ORDER.map((c) => FOLDER_COLOR_NAMES[c])
+    )
+    expect(colour.submenu?.every((i) => i.type === 'radio')).toBe(true)
+    expect(colour.submenu?.filter((i) => i.checked).map((i) => i.label)).toEqual(['Blue'])
+    click(colour.submenu!, 'Green')
+    expect(h.browser.state.model.folders[folder].color).toBe('green')
+  })
+
+  it('Rename Group… asks the chrome to edit the name in place; Collapse and Expand fold the group; New Tab in Group joins one', () => {
+    const h = harness('tablet', false)
+    const { folder, a, b } = trip(h)
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    click(h.shown(), 'Rename Group…')
+    expect(h.sent.filter((e) => e.name === 'folder.startRename').map((e) => e.payload)).toEqual([
+      { folderId: folder }
+    ])
+    click(h.shown(), 'Collapse Group')
+    expect(h.browser.state.model.folders[folder].collapsed).toBe(true)
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    expect(labels(h.shown())).toContain('Expand Group')
+    click(h.shown(), 'Expand Group')
+    expect(h.browser.state.model.folders[folder].collapsed).toBe(false)
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    click(h.shown(), 'New Tab in Group')
+    const members = h.win
+      .activeSpace()
+      .tabIds.filter((id) => h.browser.tabs.tab(id)?.folderId === folder)
+    expect(members).toHaveLength(3)
+    expect(members.slice(0, 2)).toEqual([a, b])
+  })
+
+  it('Close Group leaves the group SAVED, whose menu leads with Open Group and has nothing to fold, ungroup or close', () => {
+    const h = harness('tablet', false)
+    const m = h.browser.state.model
+    const { folder, a, b } = trip(h)
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    click(h.shown(), 'Close Group (2 Tabs)')
+    expect(m.tabs[a]).toBeUndefined()
+    expect(m.tabs[b]).toBeUndefined()
+    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
+    expect(m.folders[folder].savedTabs?.map((t) => t.url)).toEqual([
+      'https://a.test/',
+      'https://b.test/'
+    ])
+
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    expect(labels(h.shown())).toEqual([
+      'Open Group (2 Tabs)',
+      'Rename Group…',
+      'Colour',
+      'New Tab in Group',
+      '-',
+      'Delete Group'
+    ])
+    expect(
+      items(h)
+        .filter((i) => i.danger)
+        .map((i) => i.label)
+    ).toEqual(['Delete Group'])
+    click(h.shown(), 'Open Group (2 Tabs)')
+    expect(h.urls()).toEqual(['https://loose.test/', 'https://a.test/', 'https://b.test/'])
+    expect(m.folders[folder].savedTabs ?? []).toEqual([])
+    // Open again: the menu is the open group's, counting the pages that came back.
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    expect(labels(h.shown())).toContain('Close Group (2 Tabs)')
+  })
+
+  it('Ungroup keeps the tabs, loose; Delete Group closes them with the group; one member counts in the singular', () => {
+    const h = harness('tablet', false)
+    const m = h.browser.state.model
+    const { folder, a, b } = trip(h)
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    click(h.shown(), 'Ungroup')
+    expect(m.folders[folder]).toBeUndefined()
+    expect(m.tabs[a].folderId).toBeNull()
+    expect(m.tabs[b].folderId).toBeNull()
+    expect(h.urls()).toEqual(['https://a.test/', 'https://b.test/', 'https://loose.test/'])
+
+    const one = h.group('One')
+    const c = h.open('https://c.test/', { folderId: one })
+    h.browser.menus.showFolderContextMenu(one, h.win)
+    expect(labels(h.shown())).toContain('Close Group (1 Tab)')
+    click(h.shown(), 'Delete Group')
+    expect(m.folders[one]).toBeUndefined()
+    expect(m.tabs[c]).toBeUndefined()
+  })
+
+  it('is the desktop’s folder menu on a desktop window', () => {
+    const h = harness('desktop', false)
+    const { folder } = trip(h)
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    expect(labels(h.shown())).toContain('Edit Folder…')
+    expect(labels(h.shown())).not.toContain('Rename Group…')
   })
 })
