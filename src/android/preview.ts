@@ -1384,10 +1384,14 @@ export function createPreviewBridge(): NativeBridge {
       const commands = JSON.parse(json) as NativeCommand[]
       void Promise.resolve().then(() => {
         for (const command of commands) {
-          try {
-            run({ id: 0, ...command })
-          } catch (error) {
+          const warn = (error: unknown): void =>
             console.warn(`[zen preview] native ${command.method} failed`, error)
+          try {
+            // A handler answering with a promise (none of the view ops does) fails here too, not
+            // out of the batch: as forgiving as `JsBridge.dispatchOneWay`.
+            void Promise.resolve(run({ id: 0, ...command })).catch(warn)
+          } catch (error) {
+            warn(error)
           }
         }
       })

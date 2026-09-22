@@ -116,6 +116,99 @@ describe('the preview host’s batch', () => {
     expect(frame.style.visibility).toBe('visible')
     expect(frames).toHaveLength(1)
   })
+
+  /*
+   * The boot's first report through the batch (#277's lesson: the boot sequence is where a
+   * reordered or swallowed op costs the most): the shape `applyLayout` gives it – the page's
+   * bounds, radius, cover and flip, then the glance's front, bounds, radius, cover and flip –
+   * and the `view.focus` the core fires for the page after `layout.applied`, a `call`. The report
+   * leaves as ONE hop, before the call (the flush at `call`), and the stand-in applies it before
+   * it answers the call: the frames show what the commands said when the answer comes.
+   */
+  it('takes applyLayout’s first report – the page, the glance, the focus after – as one hop before the call, and shows it before the call is answered', async () => {
+    const native = createPreviewBridge()
+    const batch = vi.spyOn(native, 'batch')
+    const nativeCall = vi.spyOn(native, 'call')
+    const bridge = new Bridge(native)
+    // The glance's view created first, so the front is a move the frame's order shows.
+    const glance = new AndroidTabView('glance', bridge)
+    const page = new AndroidTabView('page', bridge)
+    call(native, 'view.create', { tabId: 'glance' })
+    call(native, 'view.create', { tabId: 'page' })
+    const glanceFrame = document.querySelector<HTMLIFrameElement>('iframe[data-tab-id="glance"]')!
+    const pageFrame = document.querySelector<HTMLIFrameElement>('iframe[data-tab-id="page"]')!
+    expect([...document.querySelectorAll('iframe')].map((f) => f.dataset.tabId)).toEqual([
+      'glance',
+      'page'
+    ])
+    // The stand-in's answer to the call: what the frames show at that moment is what the report
+    // had made of them – or the call overtook the report.
+    const atAnswer: Array<{ page: string; glance: string; order: Array<string | undefined> }> = []
+    host.resolve.mockImplementation(() => {
+      atAnswer.push({
+        page: pageFrame.style.visibility,
+        glance: glanceFrame.style.visibility,
+        order: [...document.querySelectorAll('iframe')].map((f) => f.dataset.tabId)
+      })
+    })
+
+    // `window.ts` `applyLayout`, a report with one placement and a glance, every view hidden.
+    page.setBounds({ x: 0, y: 56, width: 412, height: 800 })
+    page.setBorderRadius(12)
+    page.setCover({ top: 56, bottom: 0 })
+    page.setVisible(true)
+    glance.bringToFront()
+    glance.setBounds({ x: 24, y: 120, width: 364, height: 600 })
+    glance.setBorderRadius(24)
+    glance.setCover({ top: 0, bottom: 48 })
+    glance.setVisible(true)
+    // Then `layout.applied` (in-process) and, the focus pending, `focusContent` → the page's focus.
+    page.focus()
+
+    // The report left as one hop the moment the call went: the call's own hop came after it.
+    expect(batch).toHaveBeenCalledTimes(1)
+    expect(nativeCall).toHaveBeenCalledTimes(1)
+    expect(batch.mock.invocationCallOrder[0]).toBeLessThan(nativeCall.mock.invocationCallOrder[0]!)
+    expect(
+      (JSON.parse(batch.mock.calls[0]?.[0] ?? '[]') as Array<{ method: string }>).map(
+        (c) => c.method
+      )
+    ).toEqual([
+      'view.setBounds',
+      'view.setRadius',
+      'view.setCover',
+      'view.setVisible',
+      'view.bringToFront',
+      'view.setBounds',
+      'view.setRadius',
+      'view.setCover',
+      'view.setVisible'
+    ])
+    expect((JSON.parse(nativeCall.mock.calls[0]?.[0] ?? '{}') as { method: string }).method).toBe(
+      'view.focus'
+    )
+    // Still the task's: nothing has landed yet.
+    expect(pageFrame.style.visibility).toBe('hidden')
+    expect(glanceFrame.style.visibility).toBe('hidden')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The frames show the report, in its order: the glance in front of the page.
+    expect(pageFrame.style.visibility).toBe('visible')
+    expect(pageFrame.style.borderRadius).toBe('12px')
+    expect(pageFrame.style.clipPath).toBe('inset(56px 0 0px 0 round 12px)')
+    expect(glanceFrame.style.visibility).toBe('visible')
+    expect(glanceFrame.style.borderRadius).toBe('24px')
+    expect(glanceFrame.style.clipPath).toBe('inset(0px 0 48px 0 round 24px)')
+    expect([...document.querySelectorAll('iframe')].map((f) => f.dataset.tabId)).toEqual([
+      'page',
+      'glance'
+    ])
+    // Both flips reported drawn on their frame, as the Kotlin host reports them.
+    expect(frames).toHaveLength(2)
+    // The call was answered once, after the report had landed – never before it.
+    expect(atAnswer).toEqual([{ page: 'visible', glance: 'visible', order: ['page', 'glance'] }])
+    expect(host.reject).not.toHaveBeenCalled()
+  })
 })
 
 /*

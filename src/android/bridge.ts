@@ -110,8 +110,11 @@ export class Bridge {
     if (this.queue.length === 1) queueMicrotask(() => this.flush())
   }
 
-  /** Send the `batched` commands waiting, if any, as one hop. */
-  flush(): void {
+  /**
+   * Send the `batched` commands waiting, if any, as one hop. The bridge's own: a batch leaves at
+   * the task's microtask or ahead of the task's next hop, never by hand.
+   */
+  private flush(): void {
     if (this.queue.length === 0 || typeof this.native.batch !== 'function') return
     const commands = this.queue
     this.queue = []
