@@ -27,10 +27,6 @@ name: Android nightly drivers
 # keeps the latest attempt of each). The run fails when any driver failed or left no result: red is
 # the signal. Nothing here touches the per-PR demo workflows.
 on:
-  # TEMPORARY (the proof run of the branch; removed before the merge): a worker token cannot
-  # dispatch a workflow, so the branch's push stands in for the dispatch.
-  push:
-    branches: [cursor/ci-nightly-drivers-41ff]
   schedule:
     # 03:00 UTC, once.
     - cron: '0 3 * * *'
