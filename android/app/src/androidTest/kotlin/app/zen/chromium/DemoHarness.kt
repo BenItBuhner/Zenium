@@ -80,6 +80,8 @@ abstract class DemoHarness(
     protected lateinit var pill: Rect
     protected var pillY = 0f
     protected var pillCenterX = 0f
+    /** When [launch] last started the app (uptime ms): the clock the core's startup schedule runs on. */
+    protected var launchedAt = 0L
     /**
      * The part of the window a finger's touch reaches the app in: below the status bar and above
      * the navigation bar's window. The system bars are windows of their own and take every touch
@@ -184,6 +186,7 @@ abstract class DemoHarness(
     protected fun launch() {
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        launchedAt = SystemClock.uptimeMillis()
         activity = instrumentation.startActivitySync(intent)
         // The chrome is a WebView booting the browser core: wait for the address pill to show up.
         val deadline = SystemClock.uptimeMillis() + 30_000
@@ -1044,6 +1047,27 @@ abstract class DemoHarness(
     // recipe alone and are never quoted as device performance; the trace's main-thread time per
     // frame and layout / paint counts per frame are the numbers that carry over to a phone.
     //
+    // The STARTUP SWEEP caveat, for the trace's long tasks (#306's recede run: `menu-sheet-open`
+    // counted 10 long tasks in a soft row): the core's Safe Browsing and blocking services each
+    // schedule a sweep of their feeds STARTUP_SWEEP_DELAY_MS = 20 s after they are ready
+    // (`src/core/safebrowsing/service.ts`, `src/core/blocking/service.ts`), fetching every feed
+    // that is stale or still the bundled snapshot – on a seeded profile, all of them – and
+    // hashing the hosts (`PrefixTable.fromHostsChunked`: SHA-256 prefixes, in `setTimeout(0)`
+    // chunks) on the chrome's main thread, the thread the trace reads. The sweep's window opens
+    // about 20 s after the launch and runs as long as the fetches and the hashing take (tens of
+    // seconds on the recipe's network), which is where most demos' scenes are:
+    // a scene measured then carries long tasks that are the sweep's, not the motion's, and the
+    // trace half of the budget (`longTasks`) reads over for work the user did not ask for. This
+    // instrument does not distinguish them; it says so in the findings ([sweepNote]: a line
+    // under the scene's table naming the time since the launch when the scene began inside the
+    // window) so a reader of a soft row knows what else was on the thread. THE HARD GATE NEEDS
+    // THE SWEEP HELD during a demo: the proposal is an instrumentation argument the driver script
+    // passes through (`-e holdStartupSweep true`), read by the host into the seeded profile or a
+    // debug-build system property the core reads at start, that defers the two services' startup
+    // sweeps (the 30-minute interval sweeps too) for the session; the bundled snapshot still
+    // answers navigations, so the Safe Browsing scenes keep their evidence. Not built here: the
+    // flag is the services program's (relayed through the coordinator).
+    //
     // One line of `frames.jsonl` (schema `v` 2; keys in this order; ms are HWUI's whole ms for the
     // percentiles, decimals for the stages and the trace):
     //   {"v":2,"scene":"bar-hide-scroll-bottom","kind":"gesture","gate":"soft",
@@ -1167,12 +1191,32 @@ abstract class DemoHarness(
             baseline = baseline, trace = reading, traceMissing = if (trace) tracing else null, measured = measuredScenes
         )
         measuredScenes += result
+        val note = sweepNote(scene, t0 - launchedAt, durationMs, reading)
         File(out, FRAMES_RECORD).appendText(result.toJson() + "\n")
-        File(out, FRAMES_TABLES).appendText(result.table() + "\n\n")
+        File(out, FRAMES_TABLES).appendText(result.table() + (note?.let { "\n$it" } ?: "") + "\n\n")
         // The raw dump beside the reading, for a second opinion (the parser is fed such a dump on the JVM).
         File(out, "framestats-$scene.txt").writeText(text)
         for (line in result.table().lines()) Log.i(tag, "FRAMES $line")
+        note?.let { Log.w(tag, "FRAMES $it") }
         return result
+    }
+
+    /**
+     * The startup-sweep caveat for one scene's findings (see the instruments' note above), or
+     * null when it does not apply: the scene began `sinceLaunchMs` after [launch] and lasted
+     * `durationMs`; when that window overlaps the sweep's – from [STARTUP_SWEEP_DELAY_MS] after
+     * the launch for [STARTUP_SWEEP_ALLOWANCE_MS] – and the trace counted long tasks, the line
+     * says how long after the launch the scene began, so the long tasks are read with the sweep
+     * in mind. A scene without a trace has no long-task count to caveat.
+     */
+    private fun sweepNote(scene: String, sinceLaunchMs: Long, durationMs: Long, trace: BlinkTrace.Reading?): String? {
+        if (trace == null || trace.longTasks == 0) return null
+        val sweepFrom = STARTUP_SWEEP_DELAY_MS
+        val sweepTo = STARTUP_SWEEP_DELAY_MS + STARTUP_SWEEP_ALLOWANCE_MS
+        if (sinceLaunchMs + durationMs < sweepFrom || sinceLaunchMs > sweepTo) return null
+        return "note: scene $scene began %.1f s after the launch, inside the window of the core's Safe Browsing / blocking startup sweep (from %d s; feeds fetched and hashed in main-thread chunks); its %d long task(s) may be the sweep's, not the motion's – the hard gate needs the sweep held during demos".format(
+            sinceLaunchMs / 1000.0, sweepFrom / 1000, trace.longTasks
+        )
     }
 
     /**
@@ -1540,6 +1584,19 @@ abstract class DemoHarness(
         private const val TRACE_WARM_UP_MS = 600L
         /** How long the trace's asynchronous write may take before the scene goes on without it. */
         private const val TRACE_WRITE_TIMEOUT_S = 120L
+        /**
+         * The core's `STARTUP_SWEEP_DELAY_MS` (`src/core/safebrowsing/service.ts`, `src/core/blocking/service.ts`):
+         * how long after the services are ready their startup sweep of the feeds begins (see the
+         * instruments' startup-sweep note), counted here from [launch].
+         */
+        private const val STARTUP_SWEEP_DELAY_MS = 20_000L
+        /**
+         * How long after it begins the sweep is assumed to be able to run – the fetches and the
+         * main-thread hashing of every feed, one after another, on the recipe's network. A guess
+         * made wide on purpose: the caveat is a note, not a verdict, and a scene it does not
+         * apply to costs a line.
+         */
+        private const val STARTUP_SWEEP_ALLOWANCE_MS = 90_000L
         private const val STEP_MS = 8L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L
