@@ -41,6 +41,8 @@ import type { ExtensionRecord } from '@core/extensions/registry'
 import {
   chromeExtensionOrigin,
   presentExtensionUrl,
+  sameExtensionOrigin,
+  sameExtensionUrl,
   toServedUrl
 } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
@@ -2046,23 +2048,35 @@ export interface ExtensionContext {
  * only the contexts whose value is among the listed ones (`incognito` a single boolean); an
  * empty filter keeps them all. Tampermonkey asks for `OFFSCREEN_DOCUMENT` contexts to know
  * whether to create its offscreen document: with the filter ignored it never did.
+ *
+ * `documentUrls` and `documentOrigins` match in either spelling of an extension's own URL
+ * (`extensionUrls.ts`): the context carries Chrome's, the filter an extension builds carries
+ * what `runtime.getURL` or `location` gave it, the served one. OneNote Web Clipper asks
+ * `getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [runtime.getURL('offscreen.html')] })`
+ * for its offscreen document; told none while it was up, it created a second and was refused.
  */
 export function filterContexts(
   contexts: ExtensionContext[],
   filter: Record<string, unknown>
 ): ExtensionContext[] {
-  const listed = (name: string, value: unknown): boolean => {
+  const listed = (
+    name: string,
+    value: unknown,
+    same: (wanted: string, value: string) => boolean = (a, b) => a === b
+  ): boolean => {
     const wanted = filter[name]
     if (!Array.isArray(wanted)) return true
-    return wanted.some((entry) => entry === value)
+    return wanted.some((entry) =>
+      typeof entry === 'string' && typeof value === 'string' ? same(entry, value) : entry === value
+    )
   }
   return contexts.filter(
     (context) =>
       listed('contextIds', context.contextId) &&
       listed('contextTypes', context.contextType) &&
       listed('documentIds', context.documentId) &&
-      listed('documentOrigins', context.documentOrigin) &&
-      listed('documentUrls', context.documentUrl) &&
+      listed('documentOrigins', context.documentOrigin, sameExtensionOrigin) &&
+      listed('documentUrls', context.documentUrl, sameExtensionUrl) &&
       listed('frameIds', context.frameId) &&
       listed('tabIds', context.tabId) &&
       listed('windowIds', context.windowId) &&

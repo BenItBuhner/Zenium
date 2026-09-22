@@ -1411,7 +1411,16 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
       documentOrigin: `https://${ID}.ext.zenium.invalid`,
       tabId: -1
     })
-    hello(h, 'off1', 'offscreen', { url: `https://${ID}.ext.zenium.invalid/offscreen.html` })
+    // The filter OneNote Web Clipper builds, `documentUrls: [runtime.getURL('offscreen.html')]`
+    // (the served spelling, what getURL answers), finds the loading document too.
+    const servedUrl = `https://${ID}.ext.zenium.invalid/offscreen.html`
+    const loadingByServed = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [
+        { contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [servedUrl] }
+      ])
+    ).result as Array<Record<string, unknown>>
+    expect(loadingByServed.map((c) => c.contextType)).toEqual(['OFFSCREEN_DOCUMENT'])
+    hello(h, 'off1', 'offscreen', { url: servedUrl })
     await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
@@ -1421,6 +1430,31 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     ).result as Array<Record<string, unknown>>
     expect(up).toHaveLength(1)
     expect(up[0].contextId).toBe('off1')
+    // And found by its URL in either spelling, and by its origin in either spelling (the page's
+    // `location.origin` is the served one; `chrome-extension://<id>` is what Chrome would give):
+    // with the served filter answered empty, OneNote called createDocument again on every clip
+    // and got "Only a single offscreen document may be created."
+    const found = async (filter: Record<string, unknown>): Promise<string[]> =>
+      (
+        (await call(h, 'bg1', 'runtime', 'getContexts', [filter])).result as Array<
+          Record<string, unknown>
+        >
+      ).map((c) => String(c.contextId))
+    expect(
+      await found({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [servedUrl] })
+    ).toEqual(['off1'])
+    expect(await found({ documentUrls: [`chrome-extension://${ID}/offscreen.html`] })).toEqual([
+      'off1'
+    ])
+    expect(await found({ documentUrls: [`chrome-extension://${ID}/other.html`] })).toEqual([])
+    expect((await found({ documentOrigins: [`https://${ID}.ext.zenium.invalid`] })).sort()).toEqual(
+      ['bg1', 'off1']
+    )
+    expect((await found({ documentOrigins: [`chrome-extension://${ID}`] })).sort()).toEqual([
+      'bg1',
+      'off1'
+    ])
+    expect(await found({ documentOrigins: ['https://example.com'] })).toEqual([])
     // The page has the extension's chrome: its runtime.sendMessage reaches the background as a
     // popup's does, with no tab on the sender.
     message(h, 'off1', { t: 'msg', id: 3, target: {}, data: { blob: 'made' } })
