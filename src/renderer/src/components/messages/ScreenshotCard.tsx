@@ -103,6 +103,6 @@ export function ScreenshotCard({ card, onMeasure }: Props): JSX.Element {
 }
 
 /** "1080 × 2280 · 1.2 MB": the picture's pixels and its file's size. */
-export function screenshotDetail(shot: { width: number; height: number; bytes: number }): string {
+function screenshotDetail(shot: { width: number; height: number; bytes: number }): string {
   return `${shot.width} × ${shot.height} · ${formatBytes(shot.bytes)}`
 }

@@ -684,7 +684,8 @@ export function pushToast(
     }
     if (live) dismissToast(live.id)
     // The slot is one card's: a screenshot's preview gives way to the toast as a toast would.
-    for (const card of uiStore.get().screenshotCards) if (!card.leaving) dismissScreenshotCard(card.id)
+    for (const card of uiStore.get().screenshotCards)
+      if (!card.leaving) dismissScreenshotCard(card.id)
   }
   const id = ++messageSeq
   const toast: Toast = { id, message, kind, duration, action: opts.action, icon: opts.icon }
@@ -738,9 +739,12 @@ export function pickToastAction(id: number): void {
  * with an action keeps (§9.33's 5 s), paused under a finger. `long` for the editor's crop, whose
  * card offers no Capture more of its own.
  */
-export function showScreenshotCard(saved: ScreenshotSaved & { tabId: string; long?: boolean }): void {
+export function showScreenshotCard(
+  saved: ScreenshotSaved & { tabId: string; long?: boolean }
+): void {
   for (const toast of uiStore.get().toasts) if (!toast.leaving) dismissToast(toast.id)
-  for (const card of uiStore.get().screenshotCards) if (!card.leaving) dismissScreenshotCard(card.id)
+  for (const card of uiStore.get().screenshotCards)
+    if (!card.leaving) dismissScreenshotCard(card.id)
   const id = ++messageSeq
   const card: ScreenshotCard = { ...saved, id }
   uiStore.set((s) => ({ screenshotCards: [...s.screenshotCards, card] }))

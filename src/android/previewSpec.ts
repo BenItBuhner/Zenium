@@ -61,6 +61,9 @@ const EXTENSION_ID = /^[a-p]{32}$/
  * and the confirmation toast after a pin (`pinned`).
  */
 export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] as const
+/** The screenshot flow's stills (SH-07, SH-08): the flash, the preview card, the long-screenshot editor. */
+export const PREVIEW_SCREENSHOT_SURFACES = ['flash', 'card', 'editor'] as const
+export type PreviewScreenshotSurface = (typeof PREVIEW_SCREENSHOT_SURFACES)[number]
 export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
 
 /**
@@ -356,6 +359,18 @@ export type PreviewState =
       url: string | null
     }
   | {
+      /**
+       * Take Screenshot's gallery flow (SH-07, SH-08): `flash` holds the page's flash part-way,
+       * `card` leaves the preview card up, `editor` opens the long-screenshot editor from the
+       * card's Capture more – with `wait`, before the page's picture has arrived; with `drag`,
+       * one handle held mid-drag `by` CSS px from where it started.
+       */
+      kind: 'screenshot'
+      surface: PreviewScreenshotSurface
+      wait: boolean
+      drag: { edge: 'top' | 'bottom'; by: number } | null
+    }
+  | {
       kind: 'messages'
       /** A toast with this text (and an action labelled `action`, an `error` when so marked). */
       toast: { message: string; action: string | null; error: boolean } | null
@@ -526,7 +541,11 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * tab in Reader View on a stand-in article (`reader=preferences` opens its text preferences
  * sheet over it), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
- * failed, else the tab's own), which puts up the zen://error page, any of `toast=<text>` (with
+ * failed, else the tab's own), which puts up the zen://error page, `screenshot=<surface>` for
+ * Take Screenshot's gallery flow on the active tab as one of PREVIEW_SCREENSHOT_SURFACES (`flash`
+ * holds the page's flash part-way, `card` leaves the preview card up, `editor` opens the
+ * long-screenshot editor from the card's Capture more; `&wait` catches the editor before the
+ * page has arrived, `&drag=<top|bottom>:<px>` holds one handle mid-drag that far down), any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
  * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
  * Home screen"), `download=<file>` for a transfer the stand-in downloader plays back
@@ -552,7 +571,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * over `sheet`, `sheet` over the permission `prompt`, that over `ntp`, `ntp` over `private`,
  * `private` over `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along),
  * `find` over `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `readAloud`,
- * `readAloud` over `reader`, `reader` over `error`, `error` over the messages, the messages over
+ * `readAloud` over `reader`, `reader` over `error`, `error` over `screenshot`, `screenshot` over
+ * the messages, the messages over
  * `webapp`, `webapp` over `media`, `media` over `download`, `download` over `popups`, `popups`
  * over the security `prompt`, that over `voice`, `voice` over `overview`, and `overview` over
  * `urlbar`. A leading `#` (the URL hash as read) is ignored.
@@ -688,6 +708,24 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {
     return { kind: 'error', code: Number(error), url: params.get('url') || null }
+  }
+  const screenshot = params.get('screenshot')
+  if (
+    screenshot !== null &&
+    (PREVIEW_SCREENSHOT_SURFACES as readonly string[]).includes(screenshot)
+  ) {
+    const drag = params.get('drag')
+    const [edge, by] = drag?.split(':') ?? []
+    const distance = Number(by)
+    return {
+      kind: 'screenshot',
+      surface: screenshot as PreviewScreenshotSurface,
+      wait: params.has('wait'),
+      drag:
+        (edge === 'top' || edge === 'bottom') && Number.isFinite(distance)
+          ? { edge, by: distance }
+          : null
+    }
   }
   const toast = params.get('toast')
   const banners = params.get('banners')

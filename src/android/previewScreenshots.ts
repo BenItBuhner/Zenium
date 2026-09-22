@@ -15,13 +15,43 @@ export const LONG_CAPTURE_SCREENS = 10
 /** How long the flash takes to clear (the Kotlin overlay's fade; v2 §11.3: opacity only). */
 export const FLASH_MS = 120
 
+/** The flash the preview holds part-way for a `screenshot=flash` still: this opaque. */
+export const FLASH_HOLD_OPACITY = 0.65
+
+interface PreviewHolds {
+  __zenPreviewFlashHold?: number
+  __zenPreviewLongHold?: boolean
+}
+
 /**
  * A `screenshot=flash` preview state holds the flash sheet at this opacity instead of letting it
  * fade (`window.__zenPreviewFlashHold`), so a still can show the frame mid-flash.
  */
 export function previewFlashHold(): number | null {
-  const value = (window as unknown as { __zenPreviewFlashHold?: unknown }).__zenPreviewFlashHold
+  const value = (window as unknown as PreviewHolds).__zenPreviewFlashHold
   return typeof value === 'number' && value > 0 ? Math.min(1, value) : null
+}
+
+/**
+ * What a preview state asks of the stand-in: hold the flash part-way (`flash`), or never answer
+ * the long capture (`long`: the editor's wait). Both off between states (`resetPreviewScreenshots`).
+ */
+export function holdPreviewScreenshots(holds: { flash?: boolean; long?: boolean }): void {
+  const w = window as unknown as PreviewHolds
+  if (holds.flash) w.__zenPreviewFlashHold = FLASH_HOLD_OPACITY
+  else delete w.__zenPreviewFlashHold
+  if (holds.long) w.__zenPreviewLongHold = true
+  else delete w.__zenPreviewLongHold
+}
+
+/** Every flash sheet off the page and every hold released: the next state starts clean. */
+export function resetPreviewScreenshots(): void {
+  holdPreviewScreenshots({})
+  for (const sheet of document.querySelectorAll('.zen-preview-flash')) sheet.remove()
+}
+
+function longHeld(): boolean {
+  return (window as unknown as PreviewHolds).__zenPreviewLongHold === true
 }
 
 /**
@@ -122,6 +152,8 @@ export function createPreviewScreenshots(
     'screenshot.captureLong': async ({ tabId }): Promise<LongCapture | null> => {
       const frame = frameOf(String(tabId))
       if (!frame) return null
+      // A `screenshot=editor&wait` still: the page never arrives, the editor keeps waiting.
+      if (longHeld()) return new Promise<LongCapture | null>(() => undefined)
       const shot = await picture(frame, LONG_CAPTURE_SCREENS)
       const id = `long-${++seq}`
       held.set(id, shot)
@@ -145,7 +177,10 @@ export function createPreviewScreenshots(
       if (!shot) return null
       held.delete(String(id))
       const from = Math.max(0, Math.min(shot.height - 1, Math.round(Number(top) || 0)))
-      const to = Math.max(from + 1, Math.min(shot.height, Math.round(Number(bottom) || shot.height)))
+      const to = Math.max(
+        from + 1,
+        Math.min(shot.height, Math.round(Number(bottom) || shot.height))
+      )
       const image = await loadImage(shot.data)
       const canvas = document.createElement('canvas')
       canvas.width = shot.width
@@ -195,7 +230,12 @@ function loadImage(src: string): Promise<HTMLImageElement> {
  * header band, a heading, paragraphs and a picture block per screen, in neutral greys – enough
  * for the card's thumbnail and the editor's long picture to read as a page.
  */
-function drawStandInPage(ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number): void {
+function drawStandInPage(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  dpr: number
+): void {
   const u = dpr
   ctx.fillStyle = '#f3f4f6'
   ctx.fillRect(0, 0, width, 56 * u)

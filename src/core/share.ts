@@ -139,9 +139,7 @@ export class ShareService {
         // Gone already: the tab navigated or closed and the page heard `aborted` then.
         if (index < 0) return
         this.system.splice(index, 1)
-        this.browser.tabs
-          .view(tabId)
-          ?.postToPage?.({ type: 'share', id: call.id, result: outcome })
+        this.browser.tabs.view(tabId)?.postToPage?.({ type: 'share', id: call.id, result: outcome })
       })
     return true
   }

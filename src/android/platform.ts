@@ -1359,8 +1359,7 @@ export class AndroidPlatform implements Platform {
     // editor's Save crops it. Share and the viewer are the system's; Delete is the gallery row's.
     this.screenshots = {
       capture: (tabId) => bridge.call<ScreenshotSaved | null>('screenshot.capture', { tabId }),
-      captureLong: (tabId) =>
-        bridge.call<LongCapture | null>('screenshot.captureLong', { tabId }),
+      captureLong: (tabId) => bridge.call<LongCapture | null>('screenshot.captureLong', { tabId }),
       saveLong: (id, crop, share) =>
         bridge.call<ScreenshotSaved | null>('screenshot.saveLong', { id, ...crop, share }),
       discardLong: (id) => bridge.send('screenshot.discardLong', { id }),

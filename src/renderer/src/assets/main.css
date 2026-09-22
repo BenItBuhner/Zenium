@@ -2117,6 +2117,111 @@
     justify-content: center;
     padding: 0 8px;
   }
+  /*
+   * The long-screenshot editor (SH-08; `phone/LongScreenshotSheet.tsx`): the picture in a frame
+   * at the sheet's 16 gutter with room above and below for a handle's band to stand half past
+   * the frame's edge, the crop's edges as two handles – §9.9's 32 × 4 grabber on a small panel
+   * pill (the hairline, the panel shadow) across an accent line – and the scrim over what the
+   * crop leaves out. The frame's radius is the inner one (§9.20: a picture inside a panel),
+   * the hairline the page family's. The wait before the page arrives is a §9.17 sentence with
+   * the spinner, at a height the sheet can open to.
+   */
+  .zen-longshot-body {
+    padding: 22px 16px 4px;
+  }
+  .zen-longshot-frame {
+    position: relative;
+    margin: 0 auto;
+  }
+  .zen-longshot-picture {
+    position: relative;
+    overflow: hidden;
+    height: 100%;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-panel);
+  }
+  .zen-longshot-picture img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  .zen-longshot-dim {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: var(--v2-scrim);
+    pointer-events: none;
+  }
+  .zen-longshot-handle {
+    position: absolute;
+    left: -8px;
+    right: -8px;
+    height: 44px;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    cursor: ns-resize;
+    outline: none;
+  }
+  .zen-longshot-line {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    height: 2px;
+    background: var(--v2-accent);
+    border-radius: 1px;
+  }
+  .zen-longshot-grip {
+    position: relative;
+    display: flex;
+    width: 56px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--v2-border);
+    border-radius: 10px;
+    background: var(--v2-panel);
+    box-shadow: var(--v2-shadow-panel);
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-longshot-handle[data-dragging='true'] .zen-longshot-grip {
+    transform: scale(1.08);
+  }
+  .zen-longshot-handle[data-dragging='true'] .zen-sheet-handle {
+    background: rgb(var(--v2-text-rgb) / 0.4);
+  }
+  .zen-longshot-handle:focus-visible .zen-longshot-grip {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 2px;
+  }
+  .zen-longshot-caption {
+    padding-top: 18px;
+    text-align: center;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small-box);
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
+  }
+  .zen-longshot-wait {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    height: 240px;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body-box);
+  }
+  .zen-longshot-wait svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+  }
 
   /* The sidebar of Android's wide layouts: the toast's row, clipped so the card slides in from below it. */
   .zen-message-well {
@@ -6919,7 +7024,9 @@
  */
 :root[data-form-factor='tablet'] .zen-tablet-sidebar,
 :root[data-form-factor='tablet'] .zen-tablet-drawer-panel,
-:root[data-form-factor='tablet'] :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel) [data-tab-scroller] {
+:root[data-form-factor='tablet']
+  :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel)
+  [data-tab-scroller] {
   touch-action: pan-y;
 }
 
