@@ -1,0 +1,88 @@
+name: Android release APK probe
+
+# A standalone probe against the PUBLISHED release APKs, no Gradle build: downloads the APKs of
+# the tags below from the GitHub releases, boots the emulator exactly as android-emulator-demo.yml
+# does (API 34 google_apis x86_64 pixel_6, -gpu swangle, 720x1600 at 280 dpi, three-button
+# navigation, the bundled Google apps disabled) and runs .github/scripts/android-release-apk-probe.sh
+# against each APK in turn: a real touch (adb input tap) on the phone URL pill, with a still and
+# the accessibility tree before and after every tap, on a fresh profile and on a seeded one.
+# The artifact p0-pill-tap-probe carries stills/, trees/, the table and the app's logcat.
+on:
+  # TEMPORARY: fires the probe once on this branch (worker tokens cannot dispatch); removed after.
+  push:
+    branches: [cursor/android-p0-pill-tap-probe-1c97]
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: Release tags whose zenium-*.apk is probed, in order (space separated)
+        required: false
+        type: string
+        default: v0.4.0 v0.4.1 v0.4.3
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Tap the pill in the release APKs on an API 34 emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PROBE_TAGS: ${{ inputs.tags || 'v0.4.0 v0.4.1 v0.4.3' }}
+      PROBE_APKS: apks
+      PROBE_OUT: artifacts/p0-pill-tap-probe
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download the release APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for tag in $PROBE_TAGS; do
+            mkdir -p "$PROBE_APKS/$tag"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p 'zenium-*.apk' -D "$PROBE_APKS/$tag"
+          done
+          ls -laR "$PROBE_APKS"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: Boot the emulator and run the probe
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 4096M
+          heap-size: 512M
+          emulator-options: -gpu swangle -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: false
+          script: |
+            touch "$RUNNER_TEMP/probe-started"
+            bash .github/scripts/android-release-apk-probe.sh
+      - name: Summarise
+        if: always()
+        run: |
+          if [ ! -f "$RUNNER_TEMP/probe-started" ]; then
+            echo "::warning::the emulator never came up: the probe did not run"
+            echo "The emulator never came up: the probe did not run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$PROBE_OUT/table.md" ]; then
+            cat "$PROBE_OUT/table.md" >> "$GITHUB_STEP_SUMMARY"
+            cat "$PROBE_OUT/table.md"
+          fi
+          [ -f "$PROBE_OUT/notes.txt" ] && cat "$PROBE_OUT/notes.txt" || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: p0-pill-tap-probe
+          path: artifacts/p0-pill-tap-probe/
+          if-no-files-found: warn
+          retention-days: 14
