@@ -406,9 +406,13 @@ export type PreviewState =
       /**
        * The unresponsive-page prompt (ERR-16) over the active page. The prompt is native on the
        * device (the chrome shares the hung renderer, so it cannot draw it); the preview shows a
-       * stand-in of the same 9.23 composition, drawn from the sheet's classes.
+       * stand-in of the same 9.23 composition on the phone sheet chassis. `url` names the page to
+       * hang first (a page this host can picture, `PREVIEW_SAMPLE_ORIGIN`, shows behind the
+       * sheet's scrim; a site's frame cannot be read and shows nothing); null for the active
+       * tab's own.
        */
       kind: 'unresponsive'
+      url: string | null
     }
   | {
       kind: 'messages'
@@ -585,7 +589,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `reloading` for an offline error page reloading itself as the device comes back),
  * `crash=<variant>` for the active tab's renderer gone one of PREVIEW_CRASH_VARIANTS' ways (the
  * crash page in that variant; `crash=` is a plain crash), `unresponsive` for the
- * unresponsive-page prompt's stand-in over the active tab, `error=<code>` for the active
+ * unresponsive-page prompt's stand-in over the active tab (`url=<page>` hangs that page instead:
+ * `https://sample.example/` for a page this host can picture behind the scrim), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
  * failed, else the tab's own), which puts up the zen://error page, any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
@@ -765,7 +770,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
         : 'crash'
     }
   }
-  if (params.has('unresponsive')) return { kind: 'unresponsive' }
+  if (params.has('unresponsive')) return { kind: 'unresponsive', url: params.get('url') || null }
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {
     return { kind: 'error', code: Number(error), url: params.get('url') || null }

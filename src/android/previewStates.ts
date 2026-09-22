@@ -306,6 +306,7 @@ function apply(browser: Browser, spec: string): void {
       .then(() => (parsePreviewSpec(spec).kind === 'pdf' ? undefined : leavePdf()))
       .then(closeNewTabPage)
       .then(restoreConnectivity)
+      .then(leaveHungPage)
       .then(leaveErrorPage)
       .then(() =>
         dockBar(seed.bar, () =>
@@ -493,6 +494,24 @@ async function leavePdf(): Promise<void> {
   if (!isPdfViewerTab(state, made.tabId)) return
   await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
   await new Promise<void>((resolve) => untilState((s) => !isPdfViewerTab(s, made.tabId), resolve))
+}
+
+/**
+ * The tab a previous `unresponsive&url=` state took to the page it hung, and the page it was on
+ * before, put back before the next state (as the PDF viewer's tab is).
+ */
+let previewHungReturn: { tabId: string; url: string } | null = null
+
+/** The tab back on the page it was on before the unresponsive state took it elsewhere. */
+async function leaveHungPage(): Promise<void> {
+  const made = previewHungReturn
+  previewHungReturn = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state || !state.tabs[made.tabId] || state.tabs[made.tabId]?.url === made.url) return
+  await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
+  await new Promise<void>((resolve) =>
+    untilState((s) => s.tabs[made.tabId]?.url === made.url, resolve)
+  )
 }
 
 /**
@@ -1022,10 +1041,24 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'crash' && tab) {
     crashTab(tab, target.variant, finish)
   } else if (target.kind === 'unresponsive' && tab) {
-    // The prompt is about the page in front (the reset has it back on its page, loaded); the
-    // sheet rises with its motion, and the state is reached once it has settled.
-    showUnresponsivePrompt(safeHost(tab.url) || tab.url, tab.favicon)
-    window.setTimeout(finish, STEP_SETTLE_MS)
+    // The prompt is about the page in front: the one the spec names is loaded first (a page this
+    // host can picture stands behind the scrim; the reset has left the tab on its own page,
+    // loaded, otherwise). Then the sheet rises with its motion, and the state is reached once it
+    // has settled.
+    const url = target.url
+    const staged = (): void => {
+      const now = activeTab(browserStore.get().state!) ?? tab
+      showUnresponsivePrompt(safeHost(now.url) || now.url, now.favicon)
+      window.setTimeout(finish, STEP_SETTLE_MS)
+    }
+    if (url && tab.url !== url) {
+      previewHungReturn = { tabId: tab.id, url: tab.url }
+      run('tab.navigate', { tabId: tab.id, input: url })
+      whenActiveTabIs(
+        (t) => t.id === tab.id && t.url === url && !t.loading,
+        () => void untilPainted(tab.id).then(staged)
+      )
+    } else staged()
   } else if (target.kind === 'messages') {
     showMessages(target, tab?.id ?? null)
     finish()
