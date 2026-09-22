@@ -1,0 +1,52 @@
+name: Android site data UI demo
+
+# Records the Cookies and site data UI on a hardware-accelerated Android emulator, in two acts
+# around a process death (see .github/scripts/android-site-data-ui-demo.sh): a loopback page
+# setting cookies with every visit, the site-information sheet's cookies level and its per-site
+# picker, Settings › Privacy and Security › Cookies and site data (the default's picker, the
+# never and allow lists' Add sheets and a row's Remove, the viewer with a row's Clear and Clear
+# all's prompt, the on-exit types), the page asking with no cookies as a never-site; then
+# `am force-stop`, and the cold start with the pending clear and the restored session – the
+# first page seeing its cookies gone (PS-23, PS-24, PS-25; the UI half of #310). Frame statistics
+# around every sheet. Dispatch-only, like the other demos: it takes about fifteen minutes and
+# says nothing about a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/services-site-data-ui-24d1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-site-data-ui-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Site data UI demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-site-data-ui-demo.sh
+      script-env: |
+        DEMO_OUT=artifacts/android-site-data-ui-demo
+      artifact-name: android-site-data-ui-demo
+      artifact-path: artifacts/android-site-data-ui-demo/
+      timeout-minutes: 55
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Site data UI demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-site-data-ui-demo.sh
+      script-env: |
+        DEMO_OUT=artifacts/android-site-data-ui-demo
+      artifact-name: android-site-data-ui-demo-second-boot
+      artifact-path: artifacts/android-site-data-ui-demo/
+      timeout-minutes: 55
