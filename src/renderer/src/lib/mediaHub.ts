@@ -1,4 +1,3 @@
-import { useSyncExternalStore } from 'react'
 import type { MediaState, Tab, UIState } from '@shared/types'
 import { orderMediaEntries } from '@shared/mediaHub'
 import { displayHost } from '@shared/url'
@@ -92,37 +91,32 @@ export const MEDIA_HUB_BUTTON = '[data-zen-media-hub-button]'
 export const APP_MENU_BUTTON = '[data-zen-app-menu-button]'
 
 /**
- * Whether the hub's toolbar button has folded: it is not in the row, or the row's stylesheet has
- * taken its box (`checkVisibility`). The fold is the toolbar's width tier's to make – at the 240
- * sidebar the hub "folds into the app menu as a Now playing row with an accent dot on ⋯", and
- * "returns as a button at 270" (§9.29) – which the row does by unmounting the button
- * (`mediaHubButtonFits`; never an opacity or `visibility` that keeps the box laid out); this
- * only reads the result, as `mediaHubAnchor()` does, so the dot, the row and the anchor never
- * disagree, and no width draws the dot twice.
+ * Whether the hub has folded into the app menu, for the row that decides it (the ⋯ button's dot
+ * and name): there is media to control and the row has not put the button up. The fold is the
+ * toolbar's width tier's to make – at the 240 sidebar the hub "folds into the app menu as a Now
+ * playing row with an accent dot on ⋯", and "returns as a button at 270" (§9.29) – and the row
+ * makes it from its own measured width (`useElementWidth` on the row: the ResizeObserver that
+ * follows a sidebar drag) with `mediaHubButtonFits`, in the render that mounts or unmounts the
+ * button. Read from the same render, the dot moves button ↔ ⋯ in the commit that moves the
+ * button: no frame shows both or neither, at no width, by construction – where a read of the
+ * DOM after the commit (`mediaHubFolded`) is a commit behind, and a `ResizeObserver` on the
+ * button fires for a node the row's own observer pass has already detached (Chromium's
+ * "ResizeObserver loop completed with undelivered notifications", the shell pass (a) drive's
+ * finding). Pure, for the unit tests.
  */
-export function mediaHubFolded(): boolean {
-  return !document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON)?.checkVisibility()
+export function mediaHubFoldedAt(state: UIState, hubButtonUp: boolean): boolean {
+  return mediaHubVisible(state) && !hubButtonUp
 }
 
 /**
- * `mediaHubFolded()` as a value the toolbar row renders from (the ⋯ button's dot and name).
- * The DOM is the store: the snapshot is re-read after every commit of the row (the snapshot
- * function is new each render, so React checks it once the row's own changes – the button
- * mounting or unmounting with the media, or with the width under the tier – are in the
- * document) and whenever the window resizes, which is when a stylesheet could fold the button
- * without a render. Not a `ResizeObserver` on the button: the row's own width observer
- * (`useElementWidth`) unmounts the button inside the same delivery pass when the sidebar
- * crosses 270 → 240, and an observer on a node detached by that pass fires at depth 0 – shallower
- * than the pass in flight – which Chromium reports as "ResizeObserver loop completed with
- * undelivered notifications" on every crossing with media (the shell pass (a) drive's finding).
+ * Whether the hub's toolbar button has folded, read from the document: it is not in the row, or
+ * nothing lays its box out (`checkVisibility`). For the moments between renders – the menu
+ * request the core builds the "Now Playing…" row for, the anchor the popover hangs from – where
+ * the row has committed what it decided (`mediaHubFoldedAt`); the row itself renders from its
+ * width, never from this, so the dot, the row and the anchor cannot disagree.
  */
-export function useMediaHubFolded(): boolean {
-  return useSyncExternalStore(subscribeToWindowResize, () => mediaHubFolded())
-}
-
-function subscribeToWindowResize(onChange: () => void): () => void {
-  window.addEventListener('resize', onChange)
-  return () => window.removeEventListener('resize', onChange)
+export function mediaHubFolded(): boolean {
+  return !document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON)?.checkVisibility()
 }
 
 /**

@@ -67,9 +67,9 @@ import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
 import { actionable } from '@renderer/lib/extensions/toolbar'
 import {
   mediaHubButtonFits,
+  mediaHubFoldedAt,
   mediaHubVisible,
-  mediaPlaying,
-  useMediaHubFolded
+  mediaPlaying
 } from '@renderer/lib/mediaHub'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
@@ -205,7 +205,9 @@ export function NavRow({
     (compact ||
       mediaHubButtonFits(rowWidth, FIXED_BUTTONS - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
-  const mediaFolded = useMediaHubFolded()
+  // Decided here, from the same width the button is mounted by, so the dot and the button move
+  // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
+  const mediaFolded = mediaHubFoldedAt(state, hubUp)
   useEffect(() => {
     // Alt+F / F10: the menu opens from this button with the keyboard on it, so Escape closes
     // the menu and leaves the focus here (design language v2 §9.22).

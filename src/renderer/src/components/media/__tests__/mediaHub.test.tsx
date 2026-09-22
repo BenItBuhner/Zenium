@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defaultShortcuts } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
-import { mediaHubFolded, mediaHubUi, openMediaHub } from '@renderer/lib/mediaHub'
+import { mediaHubFolded, mediaHubFoldedAt, mediaHubUi, openMediaHub } from '@renderer/lib/mediaHub'
 import { closeAllPopovers } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { MediaHubButton, MediaLiveDot } from '../MediaHubButton'
@@ -463,34 +463,107 @@ describe('the hub from the app menu (§9.29)', () => {
     } as unknown as UIState
   }
 
-  /** The row re-reads the fold as the window does on a resize (the tier's box change). */
-  function resized(): void {
+  /**
+   * A ResizeObserver whose notifications the test delivers (happy-dom lays nothing out): what
+   * the row's own width observer (`useElementWidth`) receives as the sidebar is dragged.
+   */
+  class DeliverableResizeObserver {
+    static readonly instances: DeliverableResizeObserver[] = []
+    readonly targets = new Set<Element>()
+    constructor(readonly callback: ResizeObserverCallback) {
+      DeliverableResizeObserver.instances.push(this)
+    }
+    observe(target: Element): void {
+      this.targets.add(target)
+    }
+    unobserve(target: Element): void {
+      this.targets.delete(target)
+    }
+    disconnect(): void {
+      this.targets.clear()
+    }
+  }
+
+  /** The row's box changes to the sidebar's width less its 8 px gutters: one observer pass. */
+  function sidebarDraggedTo(sidebar: number): void {
+    const row = q('[data-zen-nav-row]')!
+    const width = sidebar - 16
     act(() => {
-      window.dispatchEvent(new Event('resize'))
+      for (const observer of DeliverableResizeObserver.instances) {
+        if (!observer.targets.has(row)) continue
+        observer.callback(
+          [{ target: row, contentRect: { width } } as unknown as ResizeObserverEntry],
+          observer as unknown as ResizeObserver
+        )
+      }
     })
   }
 
-  it('the ⋯ button wears the dot and says so only while the hub button has folded: one dot at any width (§9.29)', () => {
+  /** Run `fn` with the row's width observer deliverable by hand. */
+  function withRowObserver(fn: () => void): void {
+    const Native = window.ResizeObserver
+    window.ResizeObserver = DeliverableResizeObserver as unknown as typeof ResizeObserver
+    try {
+      fn()
+    } finally {
+      window.ResizeObserver = Native
+      DeliverableResizeObserver.instances.length = 0
+    }
+  }
+
+  /** Every `.zen-mhub-dot` in the document and where it is: the hub button's or the ⋯ button's. */
+  function dots(): string[] {
+    return [...document.querySelectorAll('.zen-mhub-dot')].map((dot) =>
+      dot.closest('[data-zen-media-hub-button]')
+        ? 'hub'
+        : dot.closest('[data-zen-app-menu-button]')
+          ? 'menu'
+          : '?'
+    )
+  }
+
+  it('the fold is the row’s width’s to decide, from the same render as the button (§9.29)', () => {
     const state = rowState([track()])
-    render(<NavRow state={state} tab={music} compact={false} />)
-    const hubButton = q('[data-zen-media-hub-button]')!
-    const menu = q('[data-zen-app-menu-button]')!
-    // The button up (every width until the tier folds it): the button's disc, ⋯ bare, its name
-    // the title's.
-    expect(hubButton.querySelector('.zen-mhub-dot')).not.toBeNull()
-    expect(menu.querySelector('.zen-mhub-dot')).toBeNull()
-    expect(menu.getAttribute('aria-label')).toBeNull()
-    expect(menu.getAttribute('title')).toMatch(/^Menu \(.+\)$/)
-    // The tier folds the button by stylesheet: the disc moves to ⋯, whose name keeps the chord.
-    hubButton.style.display = 'none'
-    resized()
-    expect(menu.querySelector('.zen-mhub-dot')).not.toBeNull()
-    expect(menu.getAttribute('aria-label')).toBe(`${menu.getAttribute('title')}, media playing`)
-    // And back at 270.
-    hubButton.style.display = ''
-    resized()
-    expect(menu.querySelector('.zen-mhub-dot')).toBeNull()
-    expect(menu.getAttribute('aria-label')).toBeNull()
+    // The button up: the hub is not folded, whatever the document says.
+    expect(mediaHubFoldedAt(state, true)).toBe(false)
+    // The button off the row with media to control: folded.
+    expect(mediaHubFoldedAt(state, false)).toBe(true)
+    // No media at all: nothing has folded – ⋯ has nothing to wear or say.
+    expect(mediaHubFoldedAt(rowState([]), false)).toBe(false)
+    // Media of a tab that is gone is no media.
+    expect(mediaHubFoldedAt(rowState([track({ tabId: 'closed' })]), false)).toBe(false)
+  })
+
+  it('the ⋯ button wears the dot and says so only while the hub button has folded: one dot at any width, moving with the row’s width observer (§9.29)', () => {
+    withRowObserver(() => {
+      const state = rowState([track()])
+      render(<NavRow state={state} tab={music} compact={false} />)
+      const menu = q('[data-zen-app-menu-button]')!
+      // The row observed, the button not (its observer was the loop – see below).
+      expect(
+        DeliverableResizeObserver.instances.some((o) => o.targets.has(q('[data-zen-nav-row]')!))
+      ).toBe(true)
+      // The button up (every width until the tier folds it): the button's disc, ⋯ bare, its
+      // name the title's.
+      expect(dots()).toEqual(['hub'])
+      expect(menu.getAttribute('aria-label')).toBeNull()
+      expect(menu.getAttribute('title')).toMatch(/^Menu \(.+\)$/)
+      sidebarDraggedTo(270)
+      expect(dots()).toEqual(['hub'])
+      // The sidebar dragged under 270: the tier folds the button in the row's observer pass,
+      // and in that same commit ⋯ takes the disc and its name keeps the chord.
+      sidebarDraggedTo(269)
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(dots()).toEqual(['menu'])
+      expect(menu.getAttribute('aria-label')).toBe(`${menu.getAttribute('title')}, media playing`)
+      sidebarDraggedTo(240)
+      expect(dots()).toEqual(['menu'])
+      // And back at 270: the button returns with its disc, ⋯ says nothing twice.
+      sidebarDraggedTo(270)
+      expect(q('[data-zen-media-hub-button]')).not.toBeNull()
+      expect(dots()).toEqual(['hub'])
+      expect(menu.getAttribute('aria-label')).toBeNull()
+    })
     // The dot is the accent of the window the buttons sit on, not the page family's.
     expect(css).toMatch(/\.zen-mhub-dot \{[^}]*background: var\(--zen-accent\);/)
     expect(css).not.toMatch(/\.zen-mhub-dot \{[^}]*--v2-accent/)
@@ -510,13 +583,17 @@ describe('the hub from the app menu (§9.29)', () => {
     expect(q('.zen-mhub-dot')).toBeNull()
   })
 
-  it('folded and paused, neither button is lit; folded by an unmount, ⋯ takes the dot too', () => {
-    render(<NavRow state={rowState([track({ playing: false })])} tab={music} compact={false} />)
-    q('[data-zen-media-hub-button]')!.style.display = 'none'
-    resized()
-    expect(q('.zen-mhub-dot')).toBeNull()
-    // The tier may take the button out of the row altogether: a row without it is folded.
-    expect(mediaHubFolded()).toBe(true)
+  it('folded and paused, neither button is lit; the document read says folded once the button is off the row', () => {
+    withRowObserver(() => {
+      render(<NavRow state={rowState([track({ playing: false })])} tab={music} compact={false} />)
+      expect(q('[data-zen-media-hub-button]')).not.toBeNull()
+      expect(mediaHubFolded()).toBe(false)
+      sidebarDraggedTo(240)
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(dots()).toEqual([])
+      // What the menu request and the anchor read between renders agrees with the row.
+      expect(mediaHubFolded()).toBe(true)
+    })
     act(() => root!.unmount())
     root = null
     mount?.remove()
@@ -578,9 +655,9 @@ describe('the hub from the app menu (§9.29)', () => {
    * pass when the sidebar crosses 270 → 240; an observer on the button would then fire for the
    * detached node at depth 0, shallower than the pass, and Chromium would report "ResizeObserver
    * loop completed with undelivered notifications" on every crossing with media. The fold is
-   * re-read from the DOM after each commit and on the window's resize instead.
+   * decided from the row's width in the render that moves the button (`mediaHubFoldedAt`).
    */
-  it('keeps no ResizeObserver on the hub button: the row measures itself, the pill its content box, and the fold is read from the DOM', () => {
+  it('keeps no ResizeObserver on the hub button: the row measures itself, the pill its content box, and the fold follows the row’s width', () => {
     const observed: Element[] = []
     const Native = window.ResizeObserver
     class RecordingResizeObserver {
