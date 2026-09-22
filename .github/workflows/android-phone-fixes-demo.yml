@@ -1,0 +1,38 @@
+name: Android phone fixes demo
+
+# Runs the wave-4 phone fixes on a device, each under the finger or the key that found it (W4-10):
+# Privacy from the site-information sheet with the site's own group on screen (N3, #260), the
+# theme flip under a finger in Settings › Look and Feel with the chrome's and the page's timestamps
+# beside the host's dispatch (PC-13's note, #266) and the four value rows named once "label,
+# value" (#237's audit), the flip with the page on screen measured Dark -> Light -> Dark -> Light,
+# `desktopSite: auto` at the 600 dp crossing through `wm size` with the loaded page keeping its
+# document, viewport and scroll (seed 28, #273), History's Select all / Deselect all under a
+# finger (§9.6), and a hardware keyboard's Shift+Tab (KEYCODE_TAB injected) ringing a bar button
+# and the pill after a touch-driven focus return rings nothing (A11Y-09, #272). The driver
+# (PhoneFixesDemo) writes its findings next to the recording; a claim that does not hold fails
+# the run. Dispatch-only, like the other demos: it takes about ten minutes. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-phone-fixes-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Phone fixes demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PhoneFixesDemo
+        DEMO_DIR=phone-fixes-demo
+        DEMO_OUT=artifacts/android-phone-fixes-demo
+        DEMO_VIDEO=android-fixes-w4-demo.mp4
+      artifact-name: android-phone-fixes-demo
+      artifact-path: artifacts/android-phone-fixes-demo/
