@@ -1,9 +1,14 @@
 package app.zen.chromium.ext
 
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
+import java.io.SequenceInputStream
 import java.security.SecureRandom
+import java.util.Vector
 
 /**
  * The on-disk layout of installed extensions, the same one the desktop keeps
@@ -208,6 +213,33 @@ class ExtensionFiles(val root: File) {
             if (file == null || !file.isFile) return null
             if (file.length() >= BRIDGE_TEXT_LIMIT) return null
             return runCatching { file.readText() }.getOrNull()
+        }
+
+        /** A served file's body: a stream the WebView drains, and the `Content-Length` it is told. */
+        class ServedBody(val stream: InputStream, val length: Long)
+
+        /**
+         * The body of a file the runtime serves on the extension's origin, streamed from disk
+         * with the optional `open`/`close` brackets around it (the module bracket,
+         * `ExtensionScripts.moduleChromeOpen`/`Close`, ASCII on either side of the file's UTF-8).
+         * The file is never in the heap whole: a page loads its scripts in parallel and the
+         * WebView holds each intercepted body until the renderer drains it, so a wallet whose
+         * popup pulls three hundred module chunks, one of 36 MB, put the whole set (and the
+         * wrap's two `String` copies of the largest) on the Java heap at once and ran the
+         * process out of it. Null when the file cannot be opened.
+         */
+        fun servedBody(file: File, open: String? = null, close: String? = null): ServedBody? {
+            val stream = runCatching { FileInputStream(file) }.getOrNull() ?: return null
+            val length = file.length()
+            if (open.isNullOrEmpty() && close.isNullOrEmpty()) return ServedBody(stream, length)
+            val head = open.orEmpty().toByteArray(Charsets.UTF_8)
+            val tail = close.orEmpty().toByteArray(Charsets.UTF_8)
+            val parts = Vector<InputStream>(3).apply {
+                add(ByteArrayInputStream(head))
+                add(stream)
+                add(ByteArrayInputStream(tail))
+            }
+            return ServedBody(SequenceInputStream(parts.elements()), head.size + length + tail.size)
         }
 
         private fun stagingToken(): String {

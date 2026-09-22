@@ -40,6 +40,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.InputStream
 import java.security.SecureRandom
 import java.util.Locale
 import java.util.WeakHashMap
@@ -1347,17 +1348,24 @@ class Extensions(private val host: Host) {
         }
         val file = fileIn(ext.dir, path) ?: return notFound()
         if (!file.isFile) return notFound()
-        var bytes = runCatching { file.readBytes() }.getOrNull() ?: return notFound()
-        if (moduleChromeFor != null) bytes = ExtensionScripts.moduleChromeWrap(String(bytes, Charsets.UTF_8), moduleChromeFor).toByteArray()
-        return response(ExtensionScripts.mimeType(path), 200, "OK", bytes)
+        // Streamed from disk, the module bracket on either side (ExtensionFiles.servedBody).
+        val body = ExtensionFiles.servedBody(
+            file,
+            moduleChromeFor?.let(ExtensionScripts::moduleChromeOpen),
+            moduleChromeFor?.let(ExtensionScripts::moduleChromeClose)
+        ) ?: return notFound()
+        return response(ExtensionScripts.mimeType(path), 200, "OK", body.stream, body.length)
     }
 
-    private fun response(mime: String, status: Int, reason: String, body: ByteArray, extra: Map<String, String> = emptyMap()): WebResourceResponse {
+    private fun response(mime: String, status: Int, reason: String, body: ByteArray, extra: Map<String, String> = emptyMap()): WebResourceResponse =
+        response(mime, status, reason, ByteArrayInputStream(body), body.size.toLong(), extra)
+
+    private fun response(mime: String, status: Int, reason: String, body: InputStream, length: Long, extra: Map<String, String> = emptyMap()): WebResourceResponse {
         val headers = HashMap<String, String>(extra)
         headers["Access-Control-Allow-Origin"] = "*"
         headers["Cache-Control"] = "no-cache"
-        headers["Content-Length"] = body.size.toString()
-        return WebResourceResponse(mime, if (mime.startsWith("text/") || mime.contains("javascript") || mime.contains("json")) "utf-8" else null, status, reason, headers, ByteArrayInputStream(body))
+        headers["Content-Length"] = length.toString()
+        return WebResourceResponse(mime, if (mime.startsWith("text/") || mime.contains("javascript") || mime.contains("json")) "utf-8" else null, status, reason, headers, body)
     }
 
     private fun notFound() = response("text/plain", 404, "Not Found", ByteArray(0))
