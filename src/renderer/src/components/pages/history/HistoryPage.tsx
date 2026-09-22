@@ -96,7 +96,6 @@ const REMOTE_COPY = {
    * lines under "…in What you sync…" cast the group's name two ways) – Firefox's label.
    */
   chooseScope: 'Choose what to sync',
-  none: 'No tabs from other devices',
   /** The aside of a device's heading: "Last active 5 min ago", "Last active just now". */
   lastActive: (updatedAt: number): string => {
     const when = relativeTime(updatedAt)
@@ -121,8 +120,9 @@ interface Picked {
  * while nothing is searched, and the other devices' open tabs (ID-28, Chrome's
  * `chrome://history/syncedTabs`) follow it as §10.1 rules: each synced device its own group
  * headed by its name with "Last active …" as its aside, newest first, folding on its heading's
- * chevron for the session; with nothing to list, the one group "Tabs from other devices" with
- * its §9.17 line and, while a setting is the way out, the row to Settings › Sync. A remote tab's
+ * chevron for the session; while a setting is the way out (sync off, the scope off), the one
+ * group "Tabs from other devices" with its §9.17 line and the row to Settings › Sync, and with
+ * sync on and nothing published no group at all, as Recently closed when empty. A remote tab's
  * row opens the page in a new tab (a middle or Ctrl click behind this one), or brings the tab to
  * the front when this device already holds it; its menu is the history menu less the visit's
  * items (`RemoteTabs`).
@@ -814,12 +814,16 @@ function RecentlyClosed({
  * Firefox's Synced Tabs list devices as headings directly; a second 15/600 level under an
  * umbrella heading would read as a sibling – newest activity first, as the core lists them
  * (`sortDeviceTabs`: a device with no tabs or none published for 30 days is not listed).
- * Only with nothing to list does one group headed "Tabs from other devices" stand there: its
- * §9.17 line where its rows would be, and – while a setting is the way out – the row to
- * Settings › Sync as §10.4's action row (the chevron, since it leaves the page): sync off, the
- * "Turn on sync" row; sync on with Open tabs off in What you sync, "Choose what to sync"; sync
- * on with nothing published, the line alone. While anything is searched the empty group steps
- * aside with Recently closed – a search shows matches, not the state of a setting.
+ * Only while a setting stands between the user and the list does one group headed "Tabs from
+ * other devices" stand there: its §9.17 line where its rows would be and the way out as
+ * §10.4's action row to Settings › Sync (the chevron, since it leaves the page) – sync off,
+ * "Turn on sync"; sync on with Open tabs off in What you sync, "Choose what to sync". With
+ * sync on, the scope on and nothing published the group steps aside as Recently closed does
+ * when it is empty (§10.1 as the lead amended it): a sentence with no way out would be a
+ * permanent two lines of nothing for every single-device user, and §9.17's "reads 0" is for a
+ * count on a group that is otherwise there, not for a group whose only content is its absence.
+ * While anything is searched the empty group steps aside too – a search shows matches, not the
+ * state of a setting.
  */
 function RemoteTabs({
   sync,
@@ -853,39 +857,34 @@ function RemoteTabs({
     )
   }
   if (searching) return null
-  const wanted = remoteTabsWanted(sync)
-  const line = !sync.enabled
-    ? REMOTE_COPY.syncOff
-    : !wanted
-      ? REMOTE_COPY.scopeOff
-      : REMOTE_COPY.none
-  const action = !sync.enabled ? SYNC_COPY.turnOn : !wanted ? REMOTE_COPY.chooseScope : null
+  // Sync on, Open tabs in the scope, nothing published: the group steps aside.
+  if (sync.enabled && remoteTabsWanted(sync)) return null
+  const line = sync.enabled ? REMOTE_COPY.scopeOff : REMOTE_COPY.syncOff
+  const action = sync.enabled ? REMOTE_COPY.chooseScope : SYNC_COPY.turnOn
   return (
     <PageGroup
       heading={REMOTE_COPY.heading}
       headingId="zen-history-remote-tabs"
       data-testid="history-remote-tabs"
-      data-state={!sync.enabled ? 'sync-off' : !wanted ? 'scope-off' : 'none'}
+      data-state={sync.enabled ? 'scope-off' : 'sync-off'}
     >
       <p className="zen-page-group-empty" role="status" data-testid="history-remote-tabs-empty">
         {line}
       </p>
-      {action && (
-        <ul className="zen-page-rows">
-          <li className="zen-v2-row zen-page-row">
-            <button
-              type="button"
-              className="zen-page-row-text"
-              data-row-focus=""
-              data-testid="history-remote-tabs-settings"
-              onClick={() => openSettings('sync')}
-            >
-              <span className="zen-page-row-label">{action}</span>
-            </button>
-            <ChevronRight className="zen-page-row-chevron" aria-hidden />
-          </li>
-        </ul>
-      )}
+      <ul className="zen-page-rows">
+        <li className="zen-v2-row zen-page-row">
+          <button
+            type="button"
+            className="zen-page-row-text"
+            data-row-focus=""
+            data-testid="history-remote-tabs-settings"
+            onClick={() => openSettings('sync')}
+          >
+            <span className="zen-page-row-label">{action}</span>
+          </button>
+          <ChevronRight className="zen-page-row-chevron" aria-hidden />
+        </li>
+      </ul>
     </PageGroup>
   )
 }

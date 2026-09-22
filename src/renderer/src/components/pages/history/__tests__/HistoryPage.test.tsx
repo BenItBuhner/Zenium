@@ -702,17 +702,24 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     expect(calls('sync.tabsFromDevices')).toEqual([])
   })
 
-  it('with sync on and nothing published, the line alone: "No tabs from other devices"', async () => {
+  it('with sync on and nothing published the group steps aside, as Recently closed does when empty (§10.1 as amended)', async () => {
     devices = []
     const el = await mountPage(tab(), state(sync(true)))
+    // The core was asked and answered with nothing: no heading, no sentence, no row.
     expect(calls('sync.tabsFromDevices')).toHaveLength(1)
-    const group = el.querySelector('[data-testid="history-remote-tabs"]')!
-    expect(group.getAttribute('data-state')).toBe('none')
-    expect(text(group.querySelector('[data-testid="history-remote-tabs-empty"]'))).toBe(
-      'No tabs from other devices'
-    )
-    expect(group.querySelector('[data-testid="history-remote-tabs-settings"]')).toBeNull()
-    expect(group.querySelector('li')).toBeNull()
+    expect(el.querySelector('[data-testid="history-remote-tabs"]')).toBeNull()
+    expect(el.querySelector('[data-testid="history-remote-tabs-empty"]')).toBeNull()
+    expect(el.querySelector('[data-testid="history-remote-device"]')).toBeNull()
+    expect(el.textContent).not.toContain('No tabs from other devices')
+    expect(el.textContent).not.toContain('Tabs from other devices')
+    expect(headings(el).slice(0, 2)).toEqual(['Recently closed', 'Today'])
+    // The way out stands only while a setting is the way: the scope turned off brings the group.
+    await rerender(tab(), state(sync(true, false)))
+    expect(
+      el.querySelector('[data-testid="history-remote-tabs"]')!.getAttribute('data-state')
+    ).toBe('scope-off')
+    await rerender(tab(), state(sync(true)))
+    expect(el.querySelector('[data-testid="history-remote-tabs"]')).toBeNull()
   })
 
   it('each device is its own group after Recently closed, newest first, its name the heading and "Last active …" the aside, its tabs §9.21 rows', async () => {
