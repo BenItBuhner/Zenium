@@ -229,7 +229,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         finding(
             "[$name] ${result.trace?.describe() ?: "trace: ${result.traceMissing}"}; probe: cards ${probe.optInt("card")} (${per("card")}/frame), " +
                 "dims ${probe.optInt("dim")}, ribbons ${probe.optInt("ribbon")}, pill ${probe.optInt("pill")} (remounts ${probe.optInt("pillRemounts")}), " +
-                "root ${probe.optInt("root")}, other ${probe.optInt("other")}, nodes +${probe.optInt("added")}/-${probe.optInt("removed")}, stage mounts ${probe.optInt("stageMounts")}"
+                "root ${probe.optInt("root")}, other ${probe.optInt("other")}, nodes +${probe.optInt("added")}/-${probe.optInt("removed")}, stage mounts ${probe.optInt("stageMounts")}; " +
+                "listeners: ${describeEvents(probe)}; commands: ${describeCommands(probe)}"
         )
         return result
     }
@@ -241,11 +242,16 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * – the stage's cards, its dim layers, the group ribbons, the pill, the root – and the nodes
      * added and removed (the stage's mount, the pill's remount when the tab under the finger
      * changes). Style writes alone (`attributeFilter`): a class change is not a per-frame thing
-     * here. Installed once; reset per scene.
+     * here. Beside it, the time the chrome's listeners take per touch event, by type (`ev`: a
+     * capture listener on the window is the first to run for an event and a bubble listener on
+     * the window the last, so their gap is every listener between, React's root ones and the
+     * microtasks each of them leaves behind – the trace has the dispatch's time but not its
+     * event's name), and the commands the chrome sent the core (`cmd`, by name: what a scene
+     * asks of the host). Installed once; reset per scene.
      */
     private fun installProbe(): String = chromeJs(
         "(function(){if(window.__motion)return 'kept';" +
-            "var p=window.__motion={card:0,dim:0,ribbon:0,pill:0,root:0,other:0,added:0,removed:0,stageMounts:0,pillRemounts:0};" +
+            "var p=window.__motion={card:0,dim:0,ribbon:0,pill:0,root:0,other:0,added:0,removed:0,stageMounts:0,pillRemounts:0,ev:{},cmd:{}};" +
             "var inPill=function(n){return !!(n&&n.closest&&n.closest('.zen-phone-pill'))};" +
             "var isStage=function(n){return n.nodeType===1&&(n.classList.contains('zen-stage-card')||(n.querySelector&&!!n.querySelector('.zen-stage-card')))};" +
             "new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var r=rs[i],t=r.target;" +
@@ -256,12 +262,35 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             "for(var j=0;j<r.addedNodes.length;j++){if(isStage(r.addedNodes[j]))p.stageMounts++}" +
             "if(inPill(t)&&r.addedNodes.length)p.pillRemounts++}}})" +
             ".observe(document.documentElement,{attributes:true,attributeFilter:['style'],childList:true,subtree:true});" +
+            "var at={};['pointerover','pointerenter','pointerdown','touchstart','pointermove','touchmove','pointerup','touchend','pointercancel','gotpointercapture','lostpointercapture','click']" +
+            ".forEach(function(ty){window.addEventListener(ty,function(){at[ty]=performance.now();var r=p.ev[ty]||(p.ev[ty]={n:0,ms:0,max:0});r.n++},true);" +
+            "window.addEventListener(ty,function(){var d=performance.now()-(at[ty]||performance.now());var r=p.ev[ty];r.ms+=d;if(d>r.max)r.max=d},false)});" +
+            "if(window.zen&&typeof window.zen.invoke==='function'){var o=window.zen.invoke;window.zen.invoke=function(n){p.cmd[n]=(p.cmd[n]||0)+1;return o.apply(this,arguments)}}" +
             "return 'installed'})()"
     )
 
     private fun resetProbe() {
-        chromeJs("window.__motion&&Object.assign(window.__motion,{card:0,dim:0,ribbon:0,pill:0,root:0,other:0,added:0,removed:0,stageMounts:0,pillRemounts:0})")
+        chromeJs("window.__motion&&Object.assign(window.__motion,{card:0,dim:0,ribbon:0,pill:0,root:0,other:0,added:0,removed:0,stageMounts:0,pillRemounts:0,ev:{},cmd:{}})")
     }
+
+    /** The probe's listener times as a line: `pointerdown 1x 0.2 ms (max 0.2)`, the types with time in them, the longest first. */
+    private fun describeEvents(probe: JSONObject): String {
+        val ev = probe.optJSONObject("ev") ?: return "-"
+        val parts = ev.keys().asSequence().map { it to ev.getJSONObject(it) }
+            .sortedByDescending { it.second.optDouble("max", 0.0) }
+            .filter { it.second.optDouble("ms", 0.0) >= 0.5 }
+            .map { (ty, r) -> "$ty ${r.optInt("n")}x ${f1(r.optDouble("ms"))} ms (max ${f1(r.optDouble("max"))})" }
+            .toList()
+        return if (parts.isEmpty()) "none over 0.5 ms" else parts.joinToString(", ")
+    }
+
+    private fun describeCommands(probe: JSONObject): String {
+        val cmd = probe.optJSONObject("cmd") ?: return "-"
+        val parts = cmd.keys().asSequence().map { it to cmd.optInt(it) }.sortedByDescending { it.second }.map { "${it.first} ${it.second}" }.toList()
+        return if (parts.isEmpty()) "none" else parts.joinToString(", ")
+    }
+
+    private fun f1(v: Double): String = String.format(java.util.Locale.ROOT, "%.1f", v)
 
     private fun readProbe(): JSONObject {
         val raw = chromeJs("JSON.stringify(window.__motion||{})")
