@@ -155,13 +155,13 @@ import {
 } from './model'
 import { syncGroups } from './sync'
 import {
-  cookiesGroups,
   httpsOnlyGroups,
   safeBrowsingGroups,
   secureDnsGroups,
   signalsGroups
 } from './protectionRows'
 import { ShortcutRow } from './ShortcutRow'
+import { siteDataGroups } from './siteDataRows'
 import { trackingGroups } from './tracking'
 
 /**
@@ -2199,13 +2199,14 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
 
 /**
  * Groups in Chrome's Privacy and security order – Safety check, Safe Browsing, Tracking
- * prevention, Clear browsing data, Cookies, Site settings, HTTPS-only, Secure DNS, Privacy
- * signals – each program's groups self-contained: the site-controls program's
+ * prevention, Clear browsing data, Cookies and site data, Site settings, HTTPS-only, Secure
+ * DNS, Privacy signals – each program's groups self-contained: the site-controls program's
  * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
  * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the
- * protection program's (`protectionRows.tsx`) at the safe-browsing, cookies, https-only,
- * secure-dns and privacy-signals positions; the remembered per-site answers are Security's
- * (`securitySection`).
+ * site-data program's (`siteDataRows.tsx`, which carries the third-party cookie setting and its
+ * related sites from `protectionRows.tsx`) at the cookies position, the protection program's
+ * at the safe-browsing, https-only, secure-dns and privacy-signals positions; the remembered
+ * per-site answers are Security's (`securitySection`).
  */
 function privacySection(ctx: SectionContext): RowGroup[] {
   const { state, set } = ctx
@@ -2214,7 +2215,7 @@ function privacySection(ctx: SectionContext): RowGroup[] {
     ...safeBrowsingGroups(state, set),
     ...trackingGroups(ctx),
     ...clearDataGroups(ctx),
-    ...cookiesGroups(state, set),
+    ...siteDataGroups(ctx),
     ...siteSettingsGroups(ctx),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),

@@ -297,20 +297,25 @@ export const SITE_DATA_DEFAULT_LABELS: Record<
   SiteDataDefault,
   { label: string; description: string }
 > = {
+  // Each line fits two lines at 360 dp (§9.13: never a third – about 80 characters at 13 px in
+  // the ≈ 296 the text has beside the radio), the rest of what it could say in the picker's
+  // title block (`siteDataUi`'s `sheetDescription`).
   allow: {
     label: 'Allow all cookies',
-    description:
-      'Sites can use cookies to keep you signed in and remember your preferences, embedded sites included.'
+    description: 'Sites can use cookies to keep you signed in and remember you, embedded ones too.'
   },
   'block-third-party': {
     label: 'Block third-party cookies',
-    description:
-      'Sites can use their own cookies. Sites embedded in other sites are governed by the third-party cookie setting.'
+    // Where the block applies – the private contexts alone or everywhere – is the switch row
+    // under the default (`siteDataUi`'s `privateOnly`), the third-party setting's own row.
+    description: 'Sites can use their own cookies; sites embedded in other sites cannot.'
   },
   'block-all': {
     label: 'Block all cookies',
-    description:
-      'No site can use cookies unless it is on the allowed list. Many sites will not work as expected.'
+    // Browser-wide by construction: the container's cookie jar stops accepting cookies (Chrome's
+    // semantics too); the per-site lists are the exceptions. Said so the row is never read as a
+    // per-site block; the always-allow list's exception is the picker's title block's.
+    description: 'Browser-wide, not per site: the container’s cookie jar stops accepting cookies.'
   }
 }
 
@@ -318,4 +323,10 @@ export const SITE_DATA_LIST_LABELS: Record<SiteDataList, string> = {
   allow: 'Sites that can always use cookies',
   clearOnExit: 'Always clear cookies when windows are closed',
   block: 'Sites that can never use cookies'
+}
+
+/** A list's heading on a host without windows (a phone): Chrome's words, with the close it has. */
+export function siteDataListLabel(list: SiteDataList, windows: boolean): string {
+  if (list === 'clearOnExit' && !windows) return 'Always clear cookies when Zenium closes'
+  return SITE_DATA_LIST_LABELS[list]
 }

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sent: {{SENT}}</title>
+<style>
+  html { color-scheme: light dark; }
+  body { margin: 0; padding: 28px 22px; font: 17px/1.5 system-ui, sans-serif; background: #f3f0ea; color: #1d1b17; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p { margin: 0 0 14px; color: #4a4640; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; margin: 22px 0; padding: 16px; border-radius: 14px; background: #fff; }
+  dt { font-weight: 600; }
+  dd { margin: 0; font-family: ui-monospace, monospace; word-break: break-all; }
+  dd[data-none] { color: #9a2a2a; }
+  .count { font-size: 40px; font-weight: 700; margin: 12px 0 0; }
+</style>
+</head>
+<body>
+<h1>{{HOST}}</h1>
+<p>Zenium site data demo. The server sets two cookies with every visit; this page says what the browser sent along with the request and what the document holds now.</p>
+<p class="count" id="count">{{SENT_COUNT}}</p>
+<dl>
+  <dt>Visit</dt><dd>#{{VISIT}}</dd>
+  <dt>Sent with this request</dt><dd id="sent"{{SENT_ATTR}}>{{SENT}}</dd>
+  <dt>Held by the document now</dt><dd id="held">…</dd>
+</dl>
+<script>
+  var names = document.cookie.split(';').map(function (s) { return s.trim().split('=')[0] }).filter(Boolean)
+  var held = document.getElementById('held')
+  held.textContent = names.length ? names.join(', ') : 'none'
+  if (!names.length) held.setAttribute('data-none', '')
+</script>
+</body>
+</html>
