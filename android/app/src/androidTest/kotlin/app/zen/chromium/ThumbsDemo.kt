@@ -124,11 +124,16 @@ abstract class ThumbsDemoBase(
 
     protected fun pageOf(color: Int): String = PAGES.firstOrNull { near(it.color, color) }?.name ?: "none of the pages"
 
-    /** The card of the tab titled `label`: the clickable node carrying the title, not the title text inside it. */
+    /**
+     * The card of the tab titled `label`: the clickable node whose name is the card's ("Green
+     * page, tab 2 of 3, …" since #237: the title, its place and its state – matched by the shared
+     * [tabCard] on the title alone), not the title text inside it.
+     */
     protected fun card(label: String): Rect? {
+        val reads = tabCard(label)
         val node = findNodeWhere {
-            it.isClickable && (it.contentDescription?.toString() == label || it.text?.toString() == label)
-        } ?: return findByLabel(label)
+            it.isClickable && (it.contentDescription?.toString()?.let(reads) == true || it.text?.toString()?.let(reads) == true)
+        } ?: return findByLabel(reads)
         return Rect().also { node.getBoundsInScreen(it) }
     }
 

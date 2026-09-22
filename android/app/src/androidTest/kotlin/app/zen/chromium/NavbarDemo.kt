@@ -112,7 +112,10 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         SystemClock.sleep(1_000)
 
         // 9. The tab count: the Tabs button's hold opens its quick menu instead of the editor, Close
-        //    Tab rolls the count down; the bar's New tab (through the URL bar) takes it back up.
+        //    Tab rolls the count down; the bar's New tab takes it back up. Since #51 New tab opens
+        //    the new tab page – its field in the page, the pill reading 'Search or enter address',
+        //    no URL bar – so the address goes in the way a user's does: a tap on the pill opens the
+        //    field, then the keys. (The nightly's run typed into nothing here and lost the pill.)
         val before = tabCount() ?: error("no tab count on the Tabs button")
         holdBarButton("Tabs ($before)")
         expect("a hold on Tabs opens its quick menu", waitFor("Close Tab", 4_000) != null)
@@ -123,6 +126,9 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         expect("the count rolled down", waitFor("Tabs (${before - 1})", 4_000) != null)
         SystemClock.sleep(1_500)
         tap("New tab")
+        expect("New tab opens the new tab page, the pill empty", awaitPillLabel(8_000) { it == NTP_PILL_LABEL })
+        remeasurePill()
+        Finger().tap(pillCenterX, pillY)
         typeAddress(NEW_TAB_HOST)
         expect("the bar is back after the new tab", waitForBar())
         SystemClock.sleep(2_000)
@@ -213,14 +219,14 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
     }
 
     /**
-     * Type into the URL bar once it is up and the keyboard has settled (the first keyboard of a
-     * run comes up slowly, and keys sent before it is ready are lost), then Go.
+     * Type into the URL field once it is open – by the field ([awaitOmniboxOpen]: the store's
+     * word and the focused input, never the tree, which trails the screen here) – and the
+     * keyboard has settled (the first keyboard of a run comes up slowly, and keys sent before it
+     * is ready are lost), then Go.
      */
     private fun typeAddress(text: String) {
-        val deadline = SystemClock.uptimeMillis() + 6_000
-        while (findNode { it.startsWith("Search engine:") } == null && SystemClock.uptimeMillis() < deadline) {
-            SystemClock.sleep(200)
-        }
+        val open = awaitOmniboxOpen(8_000)
+        if (!open.ok) Log.w(tag, "typing into a field not proven open: ${open.describe()}")
         SystemClock.sleep(2_000)
         instrumentation.sendStringSync(text)
         SystemClock.sleep(600)
@@ -243,9 +249,9 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         SystemClock.sleep(2_500)
     }
 
-    /** The pill moved (with the bar, or back from under the URL bar): find it again. */
+    /** The pill moved (with the bar, or back from under the URL bar): find it again, by either name ([pillRect]). */
     private fun remeasurePill() {
-        val found = findByLabelPrefix(PILL_LABEL)?.takeIf { it.width() > 100 * density }
+        val found = pillRect()?.takeIf { it.width() > 100 * density }
         if (found == null) {
             Log.w(tag, "pill not in the accessibility tree; keeping $pill")
             return
@@ -268,12 +274,12 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
     /** Whether the control labelled `label` is enabled (`aria-disabled` dims a bar button). */
     private fun enabled(label: String): Boolean? = findNode { it == label }?.isEnabled
 
-    /** The address the pill shows (`Address, example.com`), or null while the URL bar hides the bar. */
-    private fun address(): String? {
-        val node = findNode { it.startsWith("$PILL_LABEL,") } ?: return null
-        val label = node.contentDescription?.toString() ?: node.text?.toString() ?: return null
-        return label.removePrefix("$PILL_LABEL,").trim()
-    }
+    /** The pill's whole label ([pillNode]: `Address, example.com, …` on a page, the empty field's words on the new tab page), or null while the URL bar hides the bar. */
+    private fun pillLabel(): String? = pillNode()?.let { it.contentDescription?.toString() ?: it.text?.toString() }
+
+    /** The address the pill shows (`example.com, Connection is secure`), or null on the new tab page and while the URL bar hides the bar. */
+    private fun address(): String? =
+        pillLabel()?.takeIf { it.startsWith("$PILL_LABEL,") }?.removePrefix("$PILL_LABEL,")?.trim()
 
     /** Poll until the pill's address satisfies `matches`. */
     private fun waitForAddress(timeoutMs: Long, matches: (String) -> Boolean): Boolean {
@@ -283,7 +289,18 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
             if (now != null && matches(now)) return true
             SystemClock.sleep(200)
         }
-        Log.w(tag, "address still ${address()}")
+        Log.w(tag, "address still ${address()} (pill '${pillLabel()}')")
+        return false
+    }
+
+    /** Poll until the pill's whole label satisfies `matches` (the new tab page's empty pill). */
+    private fun awaitPillLabel(timeoutMs: Long, matches: (String) -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            pillLabel()?.let { if (matches(it)) return true }
+            SystemClock.sleep(200)
+        }
+        Log.w(tag, "pill still '${pillLabel()}'")
         return false
     }
 
@@ -320,11 +337,11 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         return runCatching { JSONTokener(answer ?: "null").nextValue() as? String }.getOrNull()
     }
 
-    /** Poll until the address pill is back on screen (the URL bar hides the bar while it is up). */
+    /** Poll until the address pill is back on screen, by either name (the URL bar hides the bar while it is up). */
     private fun waitForBar(timeoutMs: Long = 8_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (findByLabelPrefix(PILL_LABEL) != null) return true
+            if (pillNode() != null) return true
             SystemClock.sleep(200)
         }
         return false

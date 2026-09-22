@@ -272,14 +272,13 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         shot("10-search-result")
     }
 
-    /** The omnibox's mic (the field cleared): an address as the result is navigated to. */
+    /** The omnibox's mic (the field opens empty, #208): an address as the result is navigated to. */
     private fun addressFromOmnibox() {
         finding("\nan address from the omnibox's mic")
         Finger().tap(pillCenterX, pillY)
-        check("the omnibox opens from the pill", awaitNode(8_000) { it == CLEAR_LABEL } != null)
+        val opened = awaitOmniboxOpen()
+        check("the omnibox opens from the pill (${opened.describe()})", opened.ok)
         SystemClock.sleep(1_000)
-        check("Clear is touched", touchTapLabel(CLEAR_LABEL))
-        SystemClock.sleep(800)
         shot("11-omnibox-mic")
         check("the omnibox's mic is touched", touchTapLabel(OMNIBOX_MIC_LABEL))
         val up = awaitPhase(setOf("starting", "listening"), 10_000)
@@ -573,7 +572,6 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         private const val BAR_MIC_LABEL = "Voice search"
         private const val PAGE_MIC_LABEL = "Search by voice"
         private const val OMNIBOX_MIC_LABEL = "Search by voice"
-        private const val CLEAR_LABEL = "Clear"
         private const val CANCEL_LABEL = "Cancel"
         private const val TRY_AGAIN_LABEL = "Try again"
         private const val LISTENING_TITLE = "Listening"

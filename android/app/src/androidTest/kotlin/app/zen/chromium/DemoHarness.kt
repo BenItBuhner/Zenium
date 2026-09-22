@@ -25,6 +25,7 @@ import android.webkit.TracingController
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
+import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.File
@@ -197,9 +198,10 @@ abstract class DemoHarness(
         if (holdBackgroundWork) intent.putExtra(BackgroundWorkHold.EXTRA_HOLD, true)
         appLaunchedAt = SystemClock.uptimeMillis()
         activity = instrumentation.startActivitySync(intent)
-        // The chrome is a WebView booting the browser core: wait for the address pill to show up.
+        // The chrome is a WebView booting the browser core: wait for the address pill to show up
+        // (by either of its names: a state whose active tab is the new tab page has no address).
         val deadline = SystemClock.uptimeMillis() + 30_000
-        while (findByLabelPrefix(PILL_LABEL) == null && SystemClock.uptimeMillis() < deadline) {
+        while (pillNode() == null && SystemClock.uptimeMillis() < deadline) {
             SystemClock.sleep(500)
         }
         SystemClock.sleep(4_000)
@@ -242,7 +244,7 @@ abstract class DemoHarness(
      */
     protected fun pillPoint(): PointF {
         ensureForeground()
-        val found = findByLabelPrefix(PILL_LABEL)
+        val found = pillRect()
         val target = when {
             found == null -> pill
             touchable.contains(found.centerX(), found.centerY()) -> found
@@ -265,7 +267,7 @@ abstract class DemoHarness(
         val insets = windowInsets()
         width = insets.windowWidth
         height = insets.windowHeight
-        val found = findByLabelPrefix(PILL_LABEL)?.takeIf { it.top > height * 0.6 && it.width() > 100 * density }
+        val found = pillRect()?.takeIf { it.top > height * 0.6 && it.width() > 100 * density }
         pill = found ?: computedPill(insets.bottom)
         pillY = pill.exactCenterY()
         pillCenterX = pill.exactCenterX()
@@ -420,6 +422,48 @@ abstract class DemoHarness(
     private fun findNode(label: String): AccessibilityNodeInfo? = findNode { it == label }
 
     /**
+     * The phone bar's pill – the address, its one TalkBack stop since #237 – by EITHER of its
+     * names: on a page `Address, <host>[, <state>…]` (`phoneAddressLabel`, pillLabel.ts), on the
+     * new tab page the empty field's own words, `Search or enter address` (#51: the NTP's pill
+     * carries no address, pillLabel.ts:33), and `Private tab locked, unlock` under the private
+     * lock cover (PhoneShell.tsx). The NTP's body draws a field of its own with the same words
+     * (the fakebox, NewTabPage.tsx: a button inside the page's "Search" group) and the open URL
+     * field's input reads them too (Urlbar.tsx: editable), so the empty name alone is no pill:
+     * the pill is the clickable button outside that group, and with more than one left, the one
+     * in the BAR's row – the row of a bar button (Menu, the Tabs count: found afresh, the bar may
+     * sit at either edge), else of the measured [pill], else the lowest (the bar's default edge).
+     * Shared: `navbar`'s nightly run lost the pill for good at its first NTP, every `Address,`
+     * read null from there on (six checks, one cascade); a driver that reads the pill goes
+     * through here, [pillRect] for its bounds.
+     */
+    protected fun pillNode(): AccessibilityNodeInfo? {
+        findNode { it.startsWith("$PILL_LABEL,") || it == LOCKED_PILL_LABEL }?.let { return it }
+        val empty = labelled { it == NTP_PILL_LABEL }
+        val inSearchGroup = labelled { it == NTP_FIELD_GROUP_LABEL }
+        val candidates = findNodesWhere { node ->
+            node.isClickable && node.className?.toString()?.endsWith("EditText") != true && empty(node) &&
+                generateSequence(node.parent) { it.parent }.take(4).none(inSearchGroup)
+        }.map { node -> node to Rect().also { node.getBoundsInScreen(it) } }.filter { !it.second.isEmpty }
+        if (candidates.isEmpty()) return null
+        if (candidates.size == 1) return candidates.single().first
+        val row = barRow() ?: pillOrNull()
+        val inRow = row?.let { r -> candidates.firstOrNull { it.second.top < r.bottom && it.second.bottom > r.top } }
+        return (inRow ?: candidates.maxBy { it.second.centerY() }).first
+    }
+
+    /** [pillNode]'s bounds on screen; null while the tree lists no pill. */
+    protected fun pillRect(): Rect? = pillNode()?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    /** The measured [pill] once [measure] has run, null before (a launch's first look). */
+    private fun pillOrNull(): Rect? = if (this::pill.isInitialized && !pill.isEmpty) pill else null
+
+    /** The bar's row as one of its always-present buttons reports it, wherever the bar is docked. */
+    private fun barRow(): Rect? =
+        findNodeWhere { node ->
+            node.isClickable && labelled { it == MENU_LABEL || it.startsWith("Tabs (") }(node)
+        }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }?.takeIf { !it.isEmpty }
+
+    /**
      * A card of the overview's grid by the leading part of the accessible name the chrome gives
      * it since #237 (overviewLabels.ts) and never by the rest, which moves: a group's card is
      * "NAME, tab group, N tabs" (`groupCardLabel`; the count changes as tabs join and leave the
@@ -460,7 +504,7 @@ abstract class DemoHarness(
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         val reads = labelled { it == label }
         while (true) {
-            val row = findByLabelPrefix(PILL_LABEL) ?: pill
+            val row = pillRect() ?: pill
             val node = findNodeWhere { node ->
                 node.isClickable && reads(node) &&
                     Rect().also { node.getBoundsInScreen(it) }.let { !it.isEmpty && it.top < row.bottom && it.bottom > row.top }
@@ -1206,6 +1250,306 @@ abstract class DemoHarness(
     protected fun urlbarOpen(): Boolean =
         chromeJs("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true") == "true"
 
+    /**
+     * One reading of the open URL field, by the FIELD: the chrome's store says the field is open,
+     * the field's input (`[data-testid="urlbar-input"]`, Urlbar.tsx) is the document's active
+     * element, the header row over the rows (`urlbar-page-header`: the page's title and address)
+     * is in the DOM, the field's text, and whether the keyboard is up. [ok] is the store's word
+     * and the focus together: the field is open and takes keys. The header row is there on a
+     * page and not on the new tab page, and the keyboard is the emulator's own moment (a driver
+     * that needs it asks [awaitIme]); both are on record for the finding, neither is the proof.
+     */
+    protected class OmniboxOpen(val open: Boolean, val focused: Boolean, val header: Boolean, val value: String, val imeUp: Boolean) {
+        val ok: Boolean get() = open && focused
+
+        fun describe(): String =
+            "store open $open, field focused $focused, header row $header, field '${value.take(40)}', keyboard ${if (imeUp) "up" else "down"}"
+    }
+
+    private fun readOmniboxOpen(): OmniboxOpen {
+        val raw = chromeJs(
+            "(function(){var s=((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true;" +
+                "var a=document.activeElement;var f=!!(a&&a.matches&&a.matches('[data-testid=\"urlbar-input\"]'));" +
+                "var h=!!document.querySelector('[data-testid=\"urlbar-page-header\"]');" +
+                "var v=f?String(a.value||''):String((document.querySelector('[data-testid=\"urlbar-input\"]')||{}).value||'');" +
+                "return JSON.stringify({open:s,focused:f,header:h,value:v})})()"
+        )
+        val json = runCatching { JSONObject(JSONTokener(raw).nextValue().toString()) }.getOrNull()
+        return OmniboxOpen(
+            open = json?.optBoolean("open") ?: false,
+            focused = json?.optBoolean("focused") ?: false,
+            header = json?.optBoolean("header") ?: false,
+            value = json?.optString("value") ?: "",
+            imeUp = imeShown()
+        )
+    }
+
+    /**
+     * The URL field open after a tap on the pill, proven by the field ([OmniboxOpen]): polled for
+     * up to `timeoutMs`, the last reading returned either way, said in the log. Shared: the field
+     * opens EMPTY on a page since #208 (search-ready, the page in the header row), so its Clear
+     * button – there once something is typed, Urlbar.tsx – is no proof of the open, and the
+     * accessibility tree's word trails the screen on the emulator; the store and the DOM are the
+     * chrome's own state.
+     */
+    protected fun awaitOmniboxOpen(timeoutMs: Long = 8_000): OmniboxOpen {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var reading = readOmniboxOpen()
+        while (!reading.ok && SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(200)
+            reading = readOmniboxOpen()
+        }
+        if (reading.ok) Log.i(tag, "awaitOmniboxOpen: ${reading.describe()}") else Log.e(tag, "awaitOmniboxOpen: NOT OPEN in $timeoutMs ms: ${reading.describe()}")
+        return reading
+    }
+
+    // --- the Settings page by the chrome document ------------------------------------------------
+    //
+    // What the phone Settings page shows is read off the chrome's DOCUMENT first and the
+    // accessibility tree second. On the emulator's software GPU this WebView's tree trails the
+    // screen by seconds: the nightly's first sweep (runs 35728999647 and 35737412086) had thirteen
+    // Settings drivers touch a row at the bounds the tree gave, the section or the sheet up on
+    // the recording within a second, and the tree without it for the 5 to 15 s the touch was
+    // given (`phone-fixes`: "the tree did not list the Look and Feel section within 15000 ms;
+    // WebView events meanwhile: WINDOW_CONTENT_CHANGED x4"), while BarHideDemo passed the very
+    // same Look and Feel tap in the same chain reading the document. The document is the
+    // chrome's own state and carries the words the tree would: the section
+    // (`.zen-settings-phone[data-section]`, SettingsPage.tsx), a row (`.zen-settings-row` with
+    // its `.zen-settings-label` and `.zen-settings-description`, rows.tsx / blocks.tsx; the
+    // landing's categories, `.zen-settings-category[data-section]`; nothing under an `inert`
+    // landing, which stays mounted under a section), a sheet (`[data-sheet-layer] [role=dialog]`,
+    // BottomSheet.tsx, named by its title and held at opacity 0 until presented). Every Settings
+    // driver reads its section, rows and sheets here; the tree keeps what only it can say –
+    // TalkBack's names, roles and states, with a window of its own – and stays the map for a
+    // finger where the document has no such row ([touchTapLabel]).
+
+    /** Poll `holds` every 200 ms for up to `timeoutMs`; its last word. */
+    protected fun awaitTrue(timeoutMs: Long, holds: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (holds()) return true
+            SystemClock.sleep(200)
+        }
+        return holds()
+    }
+
+    /** A string the chrome answered ([chromeJs] hands JSON back), null for anything else. */
+    protected fun chromeJsString(code: String): String? =
+        runCatching { JSONTokener(chromeJs(code)).nextValue() }.getOrNull() as? String
+
+    /**
+     * `.zen-settings-phone[data-section]`: [SETTINGS_LANDING], a section's id ([LOOK_SECTION],
+     * "privacy", "languages", "passwords", "security", … – `internalPages.ts`), "" with no
+     * Settings page up; null when the chrome did not answer.
+     */
+    protected fun settingsSection(): String? =
+        chromeJsString("(function(){var p=document.querySelector('.zen-settings-phone');return p?String(p.dataset.section||''):''})()")
+
+    /**
+     * The Settings page is at `section` by the document; when the chrome does not answer, by the
+     * tree's `treeSign` (a label the section alone shows), given one.
+     */
+    protected fun settingsSectionIs(section: String, treeSign: String? = null): Boolean {
+        val shown = settingsSection()
+        return if (shown != null) shown == section else treeSign != null && findNode { it.startsWith(treeSign) } != null
+    }
+
+    /** Poll up to `timeoutMs` for the Settings page to be at `section` ([settingsSectionIs]). */
+    protected fun awaitSettingsSection(section: String, timeoutMs: Long = 8_000, treeSign: String? = null): Boolean =
+        awaitTrue(timeoutMs) { settingsSectionIs(section, treeSign) }
+
+    /**
+     * The document's script for the Settings control whose label reads `label`: a row's label
+     * (a picker's option is a row; a sheet's rows count) or a landing category's, exactly before
+     * one that starts with it; nothing under `[inert]`. `body` runs with `row` (the control's
+     * element) and `e` (its label) and its result is the answer.
+     */
+    private fun settingsControlJs(label: String, body: String): String =
+        "(function(l){var sel='.zen-settings-row .zen-settings-label,.zen-settings-category-label';" +
+            "var all=Array.prototype.filter.call(document.querySelectorAll(sel),function(e){return !e.closest('[inert]')});" +
+            "var text=function(e){return (e.textContent||'').trim()};" +
+            "var e=all.find(function(e){return text(e)===l})||all.find(function(e){return text(e).indexOf(l)===0});if(!e)return null;" +
+            "var row=e.closest('.zen-settings-row,.zen-settings-category')||e;$body})(${JSONObject.quote(label)})"
+
+    /** Whether the document lists a Settings control labelled `label` (a row, an option, a category), scrolled or not. */
+    protected fun settingsRowListed(label: String): Boolean =
+        chromeJs(settingsControlJs(label, "return true")) == "true"
+
+    /** Poll up to `timeoutMs` for the document to list the Settings control labelled `label`. */
+    protected fun awaitSettingsRow(label: String, timeoutMs: Long = 8_000): Boolean =
+        awaitTrue(timeoutMs) { settingsRowListed(label) }
+
+    /**
+     * Where the Settings control labelled `label` is on screen, by the document: scrolled into
+     * view first (to the middle: clear of the bar and the sheet's grip), read again once the
+     * scroll has landed, the document's CSS px scaled into the chrome view's place on screen.
+     * Null when the document has no such control.
+     */
+    protected fun settingsRowRect(label: String): Rect? {
+        val find = settingsControlJs(
+            label,
+            "row.scrollIntoView({block:'center',behavior:'instant'});var r=row.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom].join(',')"
+        )
+        fun read(): Rect? {
+            val edges = chromeJsString(find)?.split(',')?.mapNotNull { it.toDoubleOrNull() } ?: return null
+            if (edges.size != 4) return null
+            var origin = IntArray(2)
+            instrumentation.runOnMainSync { origin = IntArray(2).also((activity as MainActivity).host.chrome::getLocationOnScreen) }
+            return Rect(
+                (origin[0] + edges[0] * density).roundToInt(),
+                (origin[1] + edges[1] * density).roundToInt(),
+                (origin[0] + edges[2] * density).roundToInt(),
+                (origin[1] + edges[3] * density).roundToInt()
+            )
+        }
+        read() ?: return null
+        SystemClock.sleep(600)
+        return read()
+    }
+
+    /**
+     * What the Settings row labelled `label` reads under its label, by the document: a value
+     * row's description is its option's label ("Dark"), a plain row's its description; "" for a
+     * row without one, null when the document has no such row.
+     */
+    protected fun settingsRowValue(label: String): String? =
+        chromeJsString(settingsControlJs(label, "var d=row.querySelector('.zen-settings-description');return d?(d.textContent||'').trim():''"))
+
+    /** Whether the Settings row labelled `label` reads `value` in the document ([settingsRowValue]). */
+    protected fun settingsRowReads(label: String, value: String): Boolean = settingsRowValue(label) == value
+
+    /**
+     * Whether the Settings switch row labelled `label` is on, by the document (`role="switch"`
+     * with `aria-checked`, rows.tsx); null when the document has no such switch.
+     */
+    protected fun settingsSwitchOn(label: String): Boolean? =
+        chromeJsString(settingsControlJs(label, "var s=row.matches('[role=\"switch\"]')?row:row.querySelector('[role=\"switch\"]');return s?String(s.getAttribute('aria-checked')==='true'):null"))?.toBooleanStrictOrNull()
+
+    /**
+     * The names of the sheets presented over the Settings page (or any page: the chassis is
+     * shared), by the document: every `[data-sheet-layer] [role="dialog"]` the chassis has
+     * brought up (`opacity` set to 1 on `present`, BottomSheet.tsx), named by its title
+     * (`aria-labelledby`) or its `aria-label`, in stacking order.
+     */
+    protected fun sheetsPresented(): List<String> {
+        val raw = chromeJs(
+            "(function(){var ds=document.querySelectorAll('[data-sheet-layer] [role=\"dialog\"]');var out=[];" +
+                "for(var i=0;i<ds.length;i++){var d=ds[i];if(d.style.opacity!=='1'&&getComputedStyle(d).opacity==='0')continue;" +
+                "var n=d.getAttribute('aria-label');if(!n){var id=d.getAttribute('aria-labelledby');var t=id&&document.getElementById(id);n=t?(t.textContent||'').trim():''}" +
+                "out.push(n)}return JSON.stringify(out)})()"
+        )
+        val json = runCatching { JSONArray(JSONTokener(raw).nextValue().toString()) }.getOrNull() ?: return emptyList()
+        return (0 until json.length()).map { json.optString(it) }
+    }
+
+    /** Whether a sheet named `title` is presented ([sheetsPresented]); with `prefix`, one whose name starts with it. */
+    protected fun sheetPresented(title: String, prefix: Boolean = false): Boolean =
+        sheetsPresented().any { it == title || (prefix && it.startsWith(title)) }
+
+    /** Poll up to `timeoutMs` for a sheet named `title` to be presented. */
+    protected fun awaitSheet(title: String, timeoutMs: Long = 8_000, prefix: Boolean = false): Boolean =
+        awaitTrue(timeoutMs) { sheetPresented(title, prefix) }
+
+    /** Poll up to `timeoutMs` for no sheet named `title` to be presented. */
+    protected fun awaitSheetGone(title: String, timeoutMs: Long = 8_000, prefix: Boolean = false): Boolean =
+        awaitTrue(timeoutMs) { !sheetPresented(title, prefix) }
+
+    /**
+     * A real touch on the Settings control labelled `label`: where the document has it
+     * ([settingsRowRect]), else on the tree's node ([touchTapLabel], the label a prefix: a
+     * value row's text runs its label and value together there). True when a finger went in.
+     */
+    protected fun touchSettingsRow(label: String): Boolean {
+        val rect = settingsRowRect(label) ?: return touchTapLabel(label, prefix = true)
+        val point = touchPoint(rect) ?: run {
+            Log.w(tag, "no part of '$label' at $rect is inside the touchable window $touchable")
+            return false
+        }
+        Log.i(tag, "touch at ${point.x},${point.y} on '$label' (document rect $rect, touchable $touchable)")
+        Finger().tap(point.x, point.y)
+        return true
+    }
+
+    /**
+     * [touchSettingsRow], then up to `timeoutMs` for `took` to hold – the step's claim, named by
+     * `effect` ([touchTapLabelExpecting]'s shape; `took` reads the document, [settingsSectionIs],
+     * [settingsRowListed], [sheetPresented], [settingsRowReads]). False and no touch when
+     * nothing reads `label`; a [touchFault] and false when the touch went in and `took` never
+     * held.
+     */
+    protected fun touchSettingsRowExpecting(label: String, effect: String, timeoutMs: Long = 8_000, took: () -> Boolean): Boolean {
+        if (!touchSettingsRow(label)) return false
+        if (awaitTrue(timeoutMs, took)) {
+            Log.i(tag, "the touch on '$label' took: $effect")
+            return true
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /** Click the Settings row whose text starts with `label` through the tree (the nearest clickable ancestor): a way to a state, never the claim. */
+    protected fun clickSettingsRow(label: String): Boolean {
+        var node = findNode { it.startsWith(label) }
+        while (node != null && !node.isClickable) node = node.parent
+        return node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    }
+
+    /**
+     * The Settings tab from the menu sheet, on its landing (since #134 the phone's Settings opens
+     * on its categories): the menu's Settings row under a finger, the landing proven by the
+     * document. True once the landing is up; false, said in the log, when it never came.
+     */
+    protected fun openSettingsLanding(timeoutMs: Long = 8_000): Boolean {
+        ensureForeground()
+        if (settingsSectionIs(SETTINGS_LANDING)) return true
+        tapMenuButton()
+        SystemClock.sleep(2_500)
+        reveal("Settings")
+        val landing = { settingsSectionIs(SETTINGS_LANDING, treeSign = LOOK_AND_FEEL_LABEL) }
+        if (touchTapLabelExpecting("Settings", "the Settings tab is up on its landing", timeoutMs = timeoutMs, took = landing)) return true
+        if (landing()) return true
+        if (clickByLabel("Settings") && awaitTrue(timeoutMs, landing)) return true
+        Log.w(tag, "the Settings landing never came up (section '${settingsSection()}')")
+        return false
+    }
+
+    /**
+     * A Settings section from the landing: its category row ([SETTINGS_SECTIONS] gives the row's
+     * label for a section id) under a finger, the section proven by the document
+     * (`data-section`), the tree's click as the way there when the finger's touch never took
+     * (the fault is on record either way). [openSettingsLanding] first when the landing is not up.
+     * True once the section is up.
+     */
+    protected fun openSettingsSection(section: String, timeoutMs: Long = 8_000): Boolean {
+        val label = SETTINGS_SECTIONS[section] ?: error("no Settings section '$section' on record")
+        if (settingsSectionIs(section)) return true
+        if (!settingsSectionIs(SETTINGS_LANDING) && !openSettingsLanding(timeoutMs)) return false
+        SystemClock.sleep(1_000)
+        val up = { settingsSectionIs(section) }
+        if (touchSettingsRowExpecting(label, "the $label section is up", timeoutMs, up)) return true
+        if (up()) return true
+        if (clickSettingsRow(label) && awaitTrue(timeoutMs, up)) return true
+        Log.w(tag, "the $label section never came up (section '${settingsSection()}')")
+        return false
+    }
+
+    /**
+     * Leave the Settings tab: a back pops a section to the landing, a back at the landing closes
+     * the tab to its opener; each proven by the document.
+     */
+    protected fun leaveSettingsTab() {
+        val shown = settingsSection() ?: return
+        if (shown.isEmpty()) return
+        if (shown != SETTINGS_LANDING) {
+            back()
+            awaitTrue(4_000) { settingsSectionIs(SETTINGS_LANDING) }
+            SystemClock.sleep(1_000)
+        }
+        back()
+        awaitTrue(4_000) { settingsSection() == "" }
+        SystemClock.sleep(1_000)
+    }
+
     /** One reading of the field for [closeUrlField]: the store first, then the host's route for a back, then the keyboard. */
     private fun readUrlField(): UrlFieldClose.Field =
         UrlFieldClose.Field(open = urlbarOpen(), chromeHandlesBack = chromeSurfaceUp(), imeUp = imeShown())
@@ -1947,9 +2291,49 @@ abstract class DemoHarness(
     companion object {
         /** The pill's label carries the address after a comma (`Address, example.com`). */
         const val PILL_LABEL = "Address"
+        /** The pill on the new tab page: the empty field's words (pillLabel.ts, #51), no address. */
+        const val NTP_PILL_LABEL = "Search or enter address"
+        /** The new tab page's own field sits in a group of this name (NewTabPage.tsx); the pill does not. */
+        const val NTP_FIELD_GROUP_LABEL = "Search"
+        /** The pill under the private lock cover (PhoneShell.tsx, INC-05). */
+        const val LOCKED_PILL_LABEL = "Private tab locked, unlock"
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
+
+        /** The phone Settings page's `data-section` on its landing (SettingsPage.tsx). */
+        const val SETTINGS_LANDING = "landing"
+        /** The Look and Feel section's id (`internalPages.ts`), the landing's first row. */
+        const val LOOK_SECTION = "look"
+        const val LOOK_AND_FEEL_LABEL = "Look and Feel"
+        /** Settings section ids to the labels of their landing rows (`internalPages.ts`), for [openSettingsSection]. */
+        val SETTINGS_SECTIONS: Map<String, String> = mapOf(
+            LOOK_SECTION to LOOK_AND_FEEL_LABEL,
+            "compact" to "Compact Mode",
+            "newtab" to "New Tab",
+            "tabs" to "Tab Management",
+            "downloads" to "Downloads",
+            "resources" to "Resources",
+            "search" to "Search",
+            "autofill" to "Autofill",
+            "languages" to "Languages",
+            "privacy" to "Privacy and Security",
+            "spaces" to "Space Routing",
+            "containers" to "Containers",
+            "boosts" to "Boosts",
+            "mods" to "Mods",
+            "extensions" to "Extensions",
+            "agents" to "AI Agents",
+            "passwords" to "Passwords",
+            "security" to "Security",
+            "sync" to "Sync",
+            "import" to "Import",
+            "accessibility" to "Accessibility",
+            "shortcuts" to "Keyboard Shortcuts",
+            "default-browser" to "Default Browser",
+            "updates" to "Updates",
+            "about" to "About"
+        )
 
         /** The overview's card for the tab group named `name` ("Research, tab group, …"), matched without its count: [Card]. */
         fun groupCard(name: String): Card =

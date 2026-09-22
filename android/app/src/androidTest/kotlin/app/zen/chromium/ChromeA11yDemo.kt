@@ -504,6 +504,17 @@ class ChromeA11yDemo : DemoHarness(
     private fun overviewScene() {
         if (!openOverview()) return
         val count = coreState().getJSONObject("tabs").length()
+        // The overview opens scrolled to the current card (Example Domain, tab 4 of 6), the
+        // Research group's header – the grid's first row – above the fold, and the walk lists
+        // only what is visible: the nightly's run found "no control 'Research, tab group, 3
+        // tabs'" with the label intact (GroupCard.tsx). The grid is scrolled the least it has
+        // to for the header, through the DOM as [revealCardClose] does, and the tree given its
+        // moment to list it, before the walk; the current card's row stays on screen below it.
+        val header = groupCard("Research")
+        chromeJs("(function(){var h=document.querySelector(${JSONObject.quote(header.selector)});if(h)h.scrollIntoView({block:'nearest',behavior:'instant'});return !!h})()")
+        val headerUp = awaitChrome(6_000) { findNodeWhere { it.isVisibleToUser && header(label(it)) } != null }
+        finding("  [overview] the group's header scrolled into view: ${verdict(headerUp)}")
+        SystemClock.sleep(800)
         audit(
             "overview",
             listOf(

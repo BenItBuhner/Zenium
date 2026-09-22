@@ -31,8 +31,9 @@ import java.io.FileInputStream
  *     `omnibox-focus-open` (the tap, the flight, the landing) and `omnibox-focus-close` (a back,
  *     the flight home), the renderer main thread's layouts and paints per frame read out of the
  *     chrome WebView's trace – the rule is transform and opacity alone, nothing laid out per
- *     frame. Then sampled per animation frame with the keyboard up (the root's
- *     `--zen-omnibox-focus` and `data-omnibox-focus`), for the record of the value's run.
+ *     frame. Then sampled per animation frame with the keyboard up (`--zen-omnibox-focus` on the
+ *     surfaces that carry it – the omnibox's layer and the phone bar, #307 – and the root's
+ *     `data-omnibox-focus` phase), for the record of the value's run.
  *  2. OMN-18: a typed query's rows under §9.27 group headings (15/600), Chrome for Android's
  *     order from the field outward – Pages, Searches, Open tabs – each group's rows of its own
  *     kinds; one more letter keeps the headings that stay as the same elements (§11.4: the
@@ -474,9 +475,10 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
     }
 
     /**
-     * The motion sampled once per animation frame with the keyboard up, as a user sees it: the
-     * root's `--zen-omnibox-focus` (0 the pill's pose, 1 the omnibox's) and `data-omnibox-focus`
-     * (`opening`, `open`, `closing`, absent at rest) per frame, from the tap to the landing and
+     * The motion sampled once per animation frame with the keyboard up, as a user sees it:
+     * `--zen-omnibox-focus` (0 the pill's pose, 1 the omnibox's) on the surface that carries it
+     * (the omnibox's layer, else the phone bar: #307 took it off the root) and the root's
+     * `data-omnibox-focus` (`opening`, `open`, `closing`, absent at rest) per frame, from the tap to the landing and
      * from the back to home. The claims: the value sets out from the pill's pose and lands at 1
      * with the look `open`; the back runs it back to the pill and the root's mark goes; one run
      * each way, the value never turning round (a decrease inside a run is counted and said).
@@ -1257,18 +1259,27 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         """.trimIndent()
 
         /**
-         * The chrome-side sampler: one row per animation frame while it runs – ms since start, the
-         * root's `--zen-omnibox-focus` (its inline value: '' once the motion has cleared it) and
-         * `data-omnibox-focus` ('' at rest). Reads of the root's own style: no style recalc forced.
+         * The chrome-side sampler: one row per animation frame while it runs – ms since start,
+         * `--zen-omnibox-focus` as written on the surfaces that carry it (#307 `aef46ffd`,
+         * lib/omniboxFocus.ts: the omnibox's layer `.zen-omnibox-layer` and the phone bar
+         * `.zen-phone-bar`, the value on their inline style per frame; the root carries none, and
+         * '' once the motion has cleared it) and the root's `data-omnibox-focus` phase ('' at
+         * rest). Reads of inline styles and an attribute: no style recalc forced.
          */
         private val SAMPLER = """
             (function () {
               if (window.__focusSampler) return 'kept';
               var s = { rows: [], on: false, t0: 0 };
+              s.value = function () {
+                var layer = document.querySelector('.zen-omnibox-layer');
+                var bar = document.querySelector('.zen-phone-bar');
+                return (layer && layer.style.getPropertyValue('--zen-omnibox-focus').trim()) ||
+                  (bar && bar.style.getPropertyValue('--zen-omnibox-focus').trim()) || '';
+              };
               s.tick = function () {
                 if (!s.on) return;
                 var root = document.documentElement;
-                s.rows.push([Math.round(performance.now() - s.t0), root.style.getPropertyValue('--zen-omnibox-focus').trim(), root.getAttribute('data-omnibox-focus') || '']);
+                s.rows.push([Math.round(performance.now() - s.t0), s.value(), root.getAttribute('data-omnibox-focus') || '']);
                 requestAnimationFrame(s.tick);
               };
               s.start = function () { s.rows = []; s.on = true; s.t0 = performance.now(); requestAnimationFrame(s.tick); return 'started'; };

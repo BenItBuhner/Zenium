@@ -20,8 +20,8 @@ import java.util.concurrent.TimeUnit
  * back (the bar and pill stay, no desktop sidebar), the tab overview with eight tabs in landscape
  * scrolled to its end (four columns), the app menu at its last detent scrolled to the end with
  * its last row tapped by a real touch above the navigation bar, a long URL loaded and the pill
- * showing the site alone, and the pill tapped so editing starts at the origin with everything
- * selected.
+ * showing the site alone, and the pill tapped so the field opens empty (search-ready, #208) with
+ * the long address in its header row.
  *
  * Same handshake as the other demos, under `files/layout-demo/`; screenshots land there as
  * `layout-*.png`. The run fails when the chrome is not the phone chrome after a rotation or the
@@ -127,9 +127,12 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
             problems += "the menu did not open"
         }
 
-        // 6. Load a long URL: the pill opens the address selected from its start; type over it.
+        // 6. Load a long URL: the pill opens the field empty, search-ready (#208), the page in
+        // its header row; type the address into it. The open is proven by the field (the
+        // shared awaitOmniboxOpen), never by a Clear button: the empty field has none.
         tapPill()
-        if (waitFor(CLEAR_LABEL, 6_000) != null) {
+        val opened = awaitOmniboxOpen()
+        if (opened.ok) {
             SystemClock.sleep(1_500)
             shot("08-omnibox-opened")
             instrumentation.sendStringSync(LONG_URL)
@@ -140,12 +143,13 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
             Log.i(tag, "pill after the long URL: ${findPillLabel()}")
             shot("10-pill-long-url")
         } else {
-            problems += "the pill did not open the address bar"
+            problems += "the pill did not open the address bar (${opened.describe()})"
         }
 
-        // 7. Tap the pill again: the long address, all of it selected, read from the origin.
+        // 7. Tap the pill again: the long address in the header row over an empty field.
         tapPill()
-        if (waitFor(CLEAR_LABEL, 6_000) != null) {
+        val reopened = awaitOmniboxOpen()
+        if (reopened.ok) {
             SystemClock.sleep(2_000)
             shot("11-omnibox-long-start")
             // The shared close (by the chrome's state), not a back on the tree's word: the field
@@ -271,8 +275,6 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
         private const val ABOUT_LABEL = "About Zenium"
         /** A section chip of the Settings panel: proof it opened (the menu row is "Settings" too). */
         private const val SETTINGS_PROOF = "Look and Feel"
-        /** The address bar's clear button: proof that editing is open. */
-        private const val CLEAR_LABEL = "Clear"
         private const val LONG_URL =
             "https://www.rfc-editor.org/rfc/rfc2324.html?demo=android-layout&query=a-long-query-string-that-fills-the-pill&section=2.1.1#section-2.1.1"
         private const val CHROME_STATE_JS =

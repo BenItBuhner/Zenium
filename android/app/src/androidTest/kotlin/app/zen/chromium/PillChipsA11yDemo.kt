@@ -90,7 +90,7 @@ class PillChipsA11yDemo : DemoHarness(
         // 1. The pill at rest: the field, then each chip, every one a button with its label; the
         //    chips can open a popup and report it closed.
         val group = pillGroup() ?: run {
-            fail("no node labelled '$PILL_LABEL' (the address pill group) in the accessibility tree")
+            fail("no pill in the accessibility tree (no stop labelled '$PILL_LABEL, <host>', the address)")
             return
         }
         dump("01-collapsed", group)
@@ -230,8 +230,23 @@ class PillChipsA11yDemo : DemoHarness(
 
     // --- the tree ------------------------------------------------------------------------------
 
-    /** The pill: the group labelled exactly `Address` (the field inside it says `Address, host`). */
-    private fun pillGroup(): AccessibilityNodeInfo? = findNode { it == PILL_LABEL }
+    /**
+     * The pill's row of stops. Since #237 the pill's surface is no TalkBack stop of its own and
+     * carries no name (`ChromeA11yDemo` proves exactly that: nothing reads plain "Address"), so
+     * the pill is found by its address stop ([pillNode]: `Address, <host>, …`) and the group is
+     * the nearest ancestor that also holds a chip – the site icon or the lock – the field's own
+     * parent when none does. The nightly's run looked for a node labelled just 'Address', the
+     * group's name before #237, and found none.
+     */
+    private fun pillGroup(): AccessibilityNodeInfo? {
+        val field = pillNode() ?: return null
+        var node: AccessibilityNodeInfo = field
+        repeat(4) {
+            node = node.parent ?: return field.parent ?: field
+            if (speakable(node).any { label(it) == SITE_INFO_LABEL || label(it) == LOCK_LABEL }) return node
+        }
+        return field.parent ?: field
+    }
 
     /** A clickable node in the pill with this label, or the label with the address after it. */
     private fun findLabelled(label: String): AccessibilityNodeInfo? {
