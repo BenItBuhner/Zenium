@@ -27,9 +27,19 @@ import { browserStore, contentAreaStore, pageHidden, uiStore, type UiState } fro
  * chrome), the host command that moves the page's edge to follow (the page gets the bar's band
  * as the bar leaves it), and `uiStore.barHidden`, a boolean that flips only at the two rests,
  * so the content column re-lays itself out at the two ends of the motion and never in between.
- * The root carries two attributes for the stylesheet: `data-bar-away` while the bar is off its
- * shown rest at all (the message frame takes the page's tall box for the gesture, once, and its
+ * The root carries two attributes for the stylesheet: `data-bar-away` while the page holds its
+ * tall layout (below; the message frame takes the page's tall box for the gesture, once, and its
  * cards ride the bar by transform), and `data-bar-hidden` at the hidden rest.
+ *
+ * The page's two layouts (§11.5) and when they land: the page is laid out TALL – into the bar's
+ * band – at the hide's first frame, since the clip that uncovers it as the bar leaves needs
+ * content to uncover, and SHORT again at the shown REST, once the finger is off and nothing
+ * flings, not the frame the bar arrives home: the host hears `tall` with every frame and lays
+ * the page out for it (`BarHidePlacement.of`), so the return's one relayout – the biggest task a
+ * heavy page does in the gesture (#270 measured 105 ms on github.com) – lands after the gesture's
+ * frames, never inside them, and the page under a bar that has come home but whose finger is
+ * still down keeps its tall layout clipped to the bar's edge, which is the same picture. One
+ * layout per transition, never one per frame (the lead's ruling on #270, §11.5 as amended).
  *
  * The rule every write here keeps (the performance program's): a gesture and its spring touch
  * only `transform` and `opacity` on promoted layers and never lay out or paint the page in the
@@ -376,10 +386,16 @@ export interface BarHideState {
   travel: number
   /** Whether the bar may hide right now (the gate). */
   allowed: boolean
+  /**
+   * The page holds its tall layout, into the bar's band (`BarHideHostFrame.tall`): from the frame
+   * the bar leaves its shown rest to the frame it rests there again. `progress > 0` implies it;
+   * a bar home under a finger still down, or mid-fling, leaves it on.
+   */
+  tall: boolean
 }
 
 export const barHideStore = createStore<BarHideState>(
-  { progress: 0, phase: 'rest', edge: 'bottom', travel: 50, allowed: false },
+  { progress: 0, phase: 'rest', edge: 'bottom', travel: 50, allowed: false, tall: false },
   'bar-hide'
 )
 
@@ -395,6 +411,14 @@ export interface BarHideHostFrame {
    * pop-ups chip) is counted in.
    */
   shownEdge: number
+  /**
+   * The layout the page is to hold: tall – into the bar's band, clipped to what the bar has
+   * left (`BarHidePlacement.of`) – from the hide's first frame to the shown REST, or short. Read
+   * here, not off `offset` on the host: a bar that has come home under a finger still down, or
+   * under a fling not yet ended, is at `offset` 0 with the page still tall, so its one short
+   * relayout lands at the rest, after the gesture's frames (§11.5, the ruling on #270).
+   */
+  tall: boolean
 }
 
 /** The host that moves pages (Android's bridge); hosts without a phone bar set none. */
@@ -487,6 +511,24 @@ function shownEdge(): number {
     : window.innerHeight - insets.bottom - context.band
 }
 
+/** Whether the page holds its tall layout, as last read off the machine (`pageTall`). */
+let tall = false
+
+/**
+ * The page's layout, read off the machine after each of its changes (the offset in `paint`, the
+ * phase in `onChange`): tall from the frame the bar leaves its shown rest, and short again only at
+ * a REST with the bar home – not the frame it arrives there. Between, a finger still down may
+ * take the bar out again without a relayout, and the page under a bar that is home is clipped to
+ * the bar's edge, the same picture as short. The short relayout is the biggest task a heavy page
+ * does in the gesture (#270: 105 ms on github.com); at the rest it is after the gesture's frames,
+ * never inside them.
+ */
+function pageTall(): boolean {
+  if (machine.current > 0) tall = true
+  else if (machine.state === 'rest') tall = false
+  return tall
+}
+
 function publishHost(): void {
   if (!host) return
   const state = barHideStore.get()
@@ -496,7 +538,8 @@ function publishHost(): void {
           edge: context.edge,
           offset: Math.round(machine.current * 100) / 100,
           travel: state.travel,
-          shownEdge: shownEdge()
+          shownEdge: shownEdge(),
+          tall
         }
       : null
   const key = JSON.stringify(frame)
@@ -534,14 +577,15 @@ export function bindBarHide(el: HTMLElement): () => void {
   }
 }
 
-/** Whether the root last said the bar was off its shown rest (`data-bar-away`). */
+/** Whether the root last said the page held its tall layout (`data-bar-away`). */
 let away = false
 
 /**
- * The root's `data-bar-away`: on while the bar is anywhere off its shown rest, so the stylesheet
- * gives the message frame the page's tall box for the whole gesture (one layout of the frame at
- * the gesture's start, as the page itself is laid out tall once) and moves its cards on the bar's
- * edge by transform. Touched at the two transitions only, never per frame.
+ * The root's `data-bar-away`: on while the page holds its tall layout (`pageTall`: from the frame
+ * the bar leaves its shown rest to the rest it is home at), so the stylesheet gives the message
+ * frame the page's tall box for the whole gesture (one layout of the frame at the gesture's
+ * start and one at its rest, as the page itself) and moves its cards on the bar's edge by
+ * transform. Touched at the two transitions only, never per frame.
  */
 function publishAway(next: boolean): void {
   if (away === next) return
@@ -558,8 +602,11 @@ const machine = new BarHideMachine(
       const travel = machine.travel
       const progress = travel > 0 ? Math.min(1, Math.max(0, offset / travel)) : 0
       for (const el of bound) writeProgress(el, progress)
-      publishAway(progress > 0)
-      barHideStore.set({ progress })
+      // The page (and the message frame with it) goes tall the frame the bar leaves its rest;
+      // it comes short in `onChange`, at the rest (a reset from a rest lands here at rest too).
+      const tall = pageTall()
+      publishAway(tall)
+      barHideStore.set({ progress, tall })
       publishHost()
       // Leaving the hidden rest: the content column takes its shown layout at once, so the page
       // comes back under a frame that is already there for it (a reset from the hidden rest
@@ -567,7 +614,10 @@ const machine = new BarHideMachine(
       if (progress < 1 && uiStore.get().barHidden) publishHidden(false)
     },
     onChange: (phase) => {
-      barHideStore.set({ phase })
+      // The shown rest with the bar home: the page's one short relayout, after the gesture.
+      const tall = pageTall()
+      publishAway(tall)
+      barHideStore.set({ phase, tall })
       // The boolean flips to hidden at the hidden rest and nowhere else: a finger landing on the
       // hidden bar (rest → dragging at the full travel) or a fling passing under it has not moved
       // the bar, and the column that flipped on the phase alone re-laid the chrome out and the
