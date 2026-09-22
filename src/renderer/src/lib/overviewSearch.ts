@@ -71,5 +71,8 @@ export function searchResultAnnouncement(query: string, count: number): string |
   return `${count} ${count === 1 ? 'tab' : 'tabs'} found`
 }
 
-/** The field's placeholder: Chrome's "Search your tabs", as its tab switcher's box reads. */
-export const SEARCH_TABS_PLACEHOLDER = 'Search your tabs'
+/**
+ * The field's placeholder: example text, never the label (§9.12) – the desktop tab search's
+ * words (#213, the lead's ruling), so the two fields read the same.
+ */
+export const SEARCH_TABS_PLACEHOLDER = 'Title or address'

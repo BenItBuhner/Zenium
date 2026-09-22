@@ -1,0 +1,152 @@
+import { beforeEach, describe, expect, it } from 'vitest'
+import type { SyncDeviceTabs, SyncRemoteTab } from '@shared/types'
+import {
+  groupRemoteTabs,
+  hiddenDeviceCount,
+  hiddenDevicesStore,
+  hideDevice,
+  lastActiveLabel,
+  RECENT_COPY,
+  remoteTabsSection,
+  showHiddenDevices
+} from '../recentPane'
+
+/*
+ * The Recent pane's model (TAB-02): the other devices' tabs grouped by device, the devices by
+ * their last publish, the tabs by their last activity, the hidden device held back and counted,
+ * the heading's aside, and why the group is empty when it is.
+ */
+
+const NOW = Date.UTC(2026, 8, 22, 12, 0, 0)
+const MIN = 60_000
+
+function remote(tabId: string, url: string, title: string, lastActive: number): SyncRemoteTab {
+  return { tabId, url, title, favicon: null, lastActive, windowId: null }
+}
+
+// #302's fixture devices: the desk and the phone.
+const desk: SyncDeviceTabs = {
+  deviceId: 'desk',
+  deviceName: 'Desk (Linux)',
+  updatedAt: NOW - 5 * MIN,
+  tabs: [
+    remote('d1', 'https://a.example/one', 'One', NOW - 40 * MIN),
+    remote('d2', 'https://a.example/two', 'Two', NOW - 6 * MIN),
+    remote('d3', 'https://a.example/three', 'Three', NOW - 20 * MIN)
+  ]
+}
+const pixel: SyncDeviceTabs = {
+  deviceId: 'pixel',
+  deviceName: 'Pixel 9',
+  updatedAt: NOW - 3 * 60 * MIN,
+  tabs: [remote('p1', 'https://news.ycombinator.com/', 'Hacker News', NOW - 4 * 60 * MIN)]
+}
+const laptop: SyncDeviceTabs = {
+  deviceId: 'laptop',
+  deviceName: 'Laptop',
+  updatedAt: NOW - 1 * MIN,
+  tabs: [remote('l1', 'https://github.com/zen/pulls', 'Pull requests', NOW - 2 * MIN)]
+}
+const idle: SyncDeviceTabs = {
+  deviceId: 'idle',
+  deviceName: 'Old tablet',
+  updatedAt: NOW - 2 * 24 * 60 * MIN,
+  tabs: []
+}
+const none = new Set<string>()
+const syncOn = { enabled: true, scope: { openTabs: true } } as const
+
+describe('groupRemoteTabs', () => {
+  it('orders the devices by their last publish, newest first, whatever order the engine hands them in', () => {
+    expect(groupRemoteTabs([pixel, desk, laptop], none).map((d) => d.deviceName)).toEqual([
+      'Laptop',
+      'Desk (Linux)',
+      'Pixel 9'
+    ])
+  })
+
+  it("orders a device's tabs by their last activity, newest first", () => {
+    const [group] = groupRemoteTabs([desk], none)
+    expect(group.tabs.map((t) => t.tabId)).toEqual(['d2', 'd3', 'd1'])
+    // The engine's list is not reordered in place.
+    expect(desk.tabs.map((t) => t.tabId)).toEqual(['d1', 'd2', 'd3'])
+  })
+
+  it('drops a device with no tabs and names one without a name', () => {
+    expect(groupRemoteTabs([idle, desk], none).map((d) => d.deviceId)).toEqual(['desk'])
+    const [unnamed] = groupRemoteTabs([{ ...laptop, deviceName: '  ' }], none)
+    expect(unnamed.deviceName).toBe('Another device')
+  })
+
+  it('holds back a hidden device and counts it', () => {
+    const hidden = new Set(['desk'])
+    expect(groupRemoteTabs([pixel, desk, laptop], hidden).map((d) => d.deviceId)).toEqual([
+      'laptop',
+      'pixel'
+    ])
+    expect(hiddenDeviceCount([pixel, desk, laptop], hidden)).toBe(1)
+    // A hidden id no device carries, or one whose device has no tabs, is nothing to show.
+    expect(hiddenDeviceCount([pixel, laptop], hidden)).toBe(0)
+    expect(hiddenDeviceCount([idle], new Set(['idle']))).toBe(0)
+  })
+})
+
+describe('lastActiveLabel', () => {
+  it("reads the sync page's relative words after 'Last active'", () => {
+    expect(lastActiveLabel(NOW - 20_000, NOW)).toBe('Last active just now')
+    expect(lastActiveLabel(NOW - 5 * MIN, NOW)).toBe('Last active 5 min ago')
+    expect(lastActiveLabel(NOW - 3 * 60 * MIN, NOW)).toBe('Last active 3 h ago')
+    expect(lastActiveLabel(NOW - 2 * 24 * 60 * MIN, NOW)).toBe('Last active 2 d ago')
+  })
+})
+
+describe('remoteTabsSection', () => {
+  it('is the prompt to turn sync on while it is off, whatever the lists hold', () => {
+    expect(remoteTabsSection({ enabled: false, scope: { openTabs: true } }, [desk], none)).toEqual({
+      kind: 'sync-off'
+    })
+  })
+
+  it('names the open-tabs toggle when sync is on without it', () => {
+    expect(remoteTabsSection({ enabled: true, scope: { openTabs: false } }, [desk], none)).toEqual(
+      { kind: 'tabs-off' }
+    )
+  })
+
+  it('is empty with no device publishing tabs, or every one of them hidden', () => {
+    expect(remoteTabsSection(syncOn, [], none)).toEqual({ kind: 'empty' })
+    expect(remoteTabsSection(syncOn, [idle], none)).toEqual({ kind: 'empty' })
+    expect(remoteTabsSection(syncOn, [desk], new Set(['desk']))).toEqual({ kind: 'empty' })
+  })
+
+  it('lists the devices otherwise', () => {
+    const section = remoteTabsSection(syncOn, [pixel, desk], none)
+    expect(section.kind).toBe('devices')
+    if (section.kind === 'devices') {
+      expect(section.devices.map((d) => d.deviceId)).toEqual(['desk', 'pixel'])
+    }
+  })
+})
+
+describe('hiddenDevicesStore', () => {
+  beforeEach(() => {
+    showHiddenDevices()
+  })
+
+  it('hides a device once and shows them all again', () => {
+    hideDevice('desk')
+    hideDevice('desk')
+    hideDevice('pixel')
+    expect([...hiddenDevicesStore.get().hidden].sort()).toEqual(['desk', 'pixel'])
+    const before = hiddenDevicesStore.get().hidden
+    hideDevice('pixel')
+    expect(hiddenDevicesStore.get().hidden).toBe(before)
+    showHiddenDevices()
+    expect(hiddenDevicesStore.get().hidden.size).toBe(0)
+  })
+
+  it('the show-hidden row counts what it brings back', () => {
+    expect(RECENT_COPY.showHidden(1)).toBe('Show 1 hidden device')
+    expect(RECENT_COPY.showHidden(2)).toBe('Show 2 hidden devices')
+  })
+})
