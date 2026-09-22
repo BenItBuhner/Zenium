@@ -150,12 +150,29 @@ abstract class SiteDataUiDemoBase(
         return tabTitle(tabId)
     }
 
+    /**
+     * Reload the tab (the cache skipped) and return the title of the document that answered. The
+     * wait is on the page, in two steps: the server's visit first (the header stage relays a
+     * never-site's document itself, so the tab's `loading` can lag the request), then the new
+     * document in the view – its Visit line names the visit that just answered – and only then
+     * the title. Read on the server's visit alone, the title can still be the document before's
+     * (run 35731072597's one miss: "sent: zen_demo, zen_visit" over a request that carried none).
+     */
     protected fun reload(tabId: String): String {
-        val visits = server.visits(hostOf(tabId))
+        val host = hostOf(tabId)
+        val visits = server.visits(host)
         coreInvoke("tab.reload", """{"tabId":"$tabId","skipCache":true}""")
         val deadline = SystemClock.uptimeMillis() + 20_000
-        while (SystemClock.uptimeMillis() < deadline && server.visits(hostOf(tabId)) == visits) SystemClock.sleep(200)
+        while (SystemClock.uptimeMillis() < deadline && server.visits(host) == visits) SystemClock.sleep(200)
+        val answered = server.visits(host)
+        while (SystemClock.uptimeMillis() < deadline && pageVisit(tabId) != answered) SystemClock.sleep(250)
         return awaitTitle(tabId, "sent:")
+    }
+
+    /** The visit the page's document says it is (`Visit #N`: the server's count as it answered); -1 until a document answers. */
+    protected fun pageVisit(tabId: String): Int {
+        val raw = pageJs("(function(){var d=document.querySelector('dd');var m=d&&/#(\\d+)/.exec(d.textContent||'');return m?m[1]:'-1'})()", tabId)
+        return runCatching { org.json.JSONTokener(raw).nextValue() }.getOrNull()?.toString()?.toIntOrNull() ?: -1
     }
 
     protected fun hostOf(tabId: String): String = if (tabId == KEEP_TAB) KEEP_HOST else DEMO_HOST
@@ -475,6 +492,49 @@ abstract class SiteDataUiDemoBase(
 
     /** Where the PAGE row `rowId` (`data-row`) is on screen, scrolled into view; read before a measured scene. */
     protected fun pageRowPoint(rowId: String): PointF? = chromePoint("[data-row=${JSONObject.quote(rowId)}]")
+
+    /** Whether the chrome document has an element matching `selector` now. */
+    protected fun chromeHas(selector: String): Boolean =
+        chromeValue("String(!!document.querySelector(${JSONObject.quote(selector)}))") == "true"
+
+    /** The topmost sheet's text, its lines joined with " | " ("" with no sheet up); read by the chrome document, which never trails the screen. */
+    protected fun topSheetText(): String =
+        chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];return d?d.innerText.replace(/^\\s+/,'').replace(/\\s*\\n+\\s*/g,' | '):''})()")
+
+    /** Whether the topmost sheet's first line (its title) starts with `prefix`. */
+    protected fun topSheetTitled(prefix: String): Boolean = topSheetText().startsWith(prefix)
+
+    /**
+     * A finger on the topmost sheet's BUTTON reading `label` exactly, at the rectangle the chrome
+     * lays it out in (the emulator's accessibility tree trails a sheet that has just sprung up;
+     * the document does not), then up to `timeoutMs` for `took`, the step's claim named by
+     * `effect`. False and a warning when the sheet shows no such button within `findTimeoutMs`;
+     * a [touchFault] when the touch went in and `took` never held.
+     */
+    protected fun tapSheetButton(label: String, effect: String, timeoutMs: Long = 5_000, findTimeoutMs: Long = 8_000, took: () -> Boolean): Boolean {
+        val finder = "(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];if(!d)return null;" +
+            "var b=Array.from(d.querySelectorAll('button')).find(function(x){return (x.textContent||'').trim()===${JSONObject.quote(label)}});" +
+            "if(!b)return null;var r=b.getBoundingClientRect();return [r.left+r.width/2,r.top+r.height/2]})()"
+        val deadline = SystemClock.uptimeMillis() + findTimeoutMs
+        var point: JSONArray? = null
+        while (point == null && SystemClock.uptimeMillis() < deadline) {
+            point = runCatching { JSONArray(chromeJs(finder)) }.getOrNull()?.takeIf { it.length() == 2 }
+            if (point == null) SystemClock.sleep(200)
+        }
+        if (point == null) {
+            Log.w(tag, "no button reading '$label' in the sheet")
+            return false
+        }
+        var origin = IntArray(2)
+        instrumentation.runOnMainSync { origin = IntArray(2).also(host.chrome::getLocationOnScreen) }
+        Finger().tap(origin[0] + point.getDouble(0).toFloat() * density, origin[1] + point.getDouble(1).toFloat() * density)
+        if (awaitSettled(timeoutMs, took)) {
+            Log.i(tag, "the touch on the sheet's '$label' button took: $effect")
+            return true
+        }
+        touchFault("a touch on the sheet's '$label' button did not take: not $effect within $timeoutMs ms")
+        return false
+    }
 
     /**
      * The drill-in page the phone Settings has up, by the chrome document (`data-page`, e.g.
@@ -977,50 +1037,57 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         //     demo site's item sheet with "Clear site data" and its prompt (the cookies gone from
         //     the jar, the row gone from the page), Clear all's prompt cancelled, the back to the
         //     section. No row carries an inline button (§10.4).
+        //     Every state here is read by the chrome document (`data-page`, the page's rows, the
+        //     sheets), never the accessibility tree: on the emulator the tree trails a drill-in
+        //     and a sheet by seconds (run 35731072597 opened the page and the driver, asking the
+        //     tree for its rows, called it "not open"); the fingers land on the document's boxes.
         note("\n10. See all site data")
         if (openPrivacySettings(throughMenu = false)) {
             revealRow("See all site data and permissions")
             SystemClock.sleep(600)
             val originRow = "site-data-origin:$DEMO_ORIGIN"
-            val pageUp = { settingsPage() == "site-data" && freshNode { it.startsWith("Clear all site data") } != null }
+            val originRowSelector = "[data-testid=\"site-data-page\"] [data-row=${JSONObject.quote(originRow)}]"
+            val pageUp = { settingsPage() == "site-data" && chromeHas("[data-testid=\"site-data-page\"] [data-row=\"site-data-clear-all\"]") }
             val seeAll = pageRowPoint("site-data-see-all")
             SystemClock.sleep(300)
             traceFrames("viewer-page-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
                 if (seeAll != null) Finger().tap(seeAll.x, seeAll.y)
-                awaitNode(8_000) { it.startsWith("Clear all site data") }
+                awaitSettled(8_000, pageUp)
                 SystemClock.sleep(MOTION_MS)
             }
             if (!pageUp()) tapPageRow("site-data-see-all", pageUp)
             if (pageUp()) {
-                awaitSettled(8_000) { freshNode { it.startsWith(DEMO_ORIGIN) } != null }
+                awaitSettled(8_000) { chromeHas(originRowSelector) }
                 SystemClock.sleep(600)
                 note("  page: ${chromeValue("(function(){var p=document.querySelectorAll('.zen-settings-drill-in');var b=p.length?p[p.length-1].querySelector('.zen-settings-bar'):null;return (b?b.innerText.replace(/\\n+/g,' | '):'(no bar)')+' ; panes='+p.length+' inert='+Array.from(p).map(function(x){return x.getAttribute('aria-label')+'='+x.hasAttribute('inert')}).join(',')})()")}")
                 note("  page rows: ${chromeValue("JSON.stringify(Array.from(document.querySelectorAll('[data-testid=\"site-data-page\"] [data-row]')).map(function(e){return e.getAttribute('data-row')+' :: '+e.innerText.replace(/\\n+/g,' | ')}))")}")
                 note("  count aside: ${chromeValue("(function(){var e=document.querySelector('[data-testid=\"site-data-count\"]');return e?e.textContent:''})()")}")
-                claim("the page lists the demo site as an item row with its cookies", freshNode { it.startsWith(DEMO_ORIGIN) } != null)
+                note("  tree lists the demo site's row: ${freshNode { it.startsWith(DEMO_ORIGIN) } != null}")
+                claim("the page lists the demo site as an item row with its cookies", chromeValue("(function(){var e=document.querySelector(${JSONObject.quote(originRowSelector)});return e?e.innerText:''})()").contains("cookies"))
                 claim("no row on the page carries an inline button (§10.4)", chromeValue("String(document.querySelectorAll('[data-testid=\"site-data-page\"] button:not([data-row])').length)") == "0")
                 shot("19-viewer-page")
                 beat()
                 // The item sheet: the host as its title, the storage line, Clear site data as its one row.
-                if (tapPageRow(originRow) { sheetCount() == 1 && freshNode { it.startsWith("Clear site data") } != null }) {
+                val clearRow = "$originRow:clear"
+                if (tapPageRow(originRow) { sheetCount() == 1 && chromeHas("[data-row=${JSONObject.quote(clearRow)}]") }) {
                     awaitSheetsSettled()
                     SystemClock.sleep(400)
-                    note("  item sheet: ${chromeValue("(function(){var s=document.querySelector('.zen-sheet[role=\"dialog\"]');return s?s.innerText.replace(/\\n+/g,' | '):''})()")}")
+                    note("  item sheet: ${topSheetText()}")
                     shot("20-viewer-item-sheet")
                     beat()
                     // Its prompt: the title block and two buttons, the container focused (§9.20, §9.22).
-                    if (touchTapLabelExpecting("Clear site data", "the prompt is up", prefix = true) { sheetCount() == 2 && freshNode { it.startsWith("Clear data for") } != null }) {
+                    if (tapPageRow(clearRow) { sheetCount() == 2 && topSheetTitled("Clear data for") }) {
                         awaitSheetsSettled()
                         SystemClock.sleep(400)
-                        note("  prompt: ${chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];if(!d)return '';return d.innerText.replace(/\\n+/g,' | ')+' ; focus='+(document.activeElement===d?'container':(document.activeElement&&document.activeElement.tagName))+' labelledby='+Boolean(d.getAttribute('aria-labelledby'))+' describedby='+Boolean(d.getAttribute('aria-describedby'))})()")}")
+                        note("  prompt: ${topSheetText()} ; ${chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];if(!d)return '';return 'focus='+(document.activeElement===d?'container':(document.activeElement&&document.activeElement.tagName))+' labelledby='+Boolean(d.getAttribute('aria-labelledby'))+' describedby='+Boolean(d.getAttribute('aria-describedby'))})()")}")
                         claim("the prompt focuses its container, not a button", chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];return String(!!d&&document.activeElement===d)})()") == "true")
                         shot("21-viewer-item-prompt")
                         beat()
-                        if (touchButtonExpecting("Clear site data", "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
+                        if (tapSheetButton("Clear site data", "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
                             awaitNoSheet(8_000)
-                            awaitSettled(6_000) { freshNode { it.startsWith(DEMO_ORIGIN) } == null }
+                            awaitSettled(6_000) { !chromeHas(originRowSelector) }
                             SystemClock.sleep(800)
-                            claim("the cleared origin's row left the page, its sheet with it", sheetCount() == 0 && freshNode { it.startsWith(DEMO_ORIGIN) } == null, "sheets=${sheetCount()}")
+                            claim("the cleared origin's row left the page, its sheet with it", sheetCount() == 0 && !chromeHas(originRowSelector), "sheets=${sheetCount()}")
                             claim("the control site kept its cookies", jarCookie(KEEP_URL) != null, "jar=${jarCookie(KEEP_URL)}")
                             shot("22-viewer-page-cleared-row")
                             beat()
@@ -1028,6 +1095,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                             closeSheets()
                         }
                     } else {
+                        note("  the item sheet's Clear site data row did not open its prompt")
                         closeSheets()
                     }
                 } else {
@@ -1035,31 +1103,40 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                     closeSheets()
                 }
                 // Clear all: the page's action row in the danger ink, its prompt cancelled.
-                if (tapPageRow("site-data-clear-all") { freshNode { it.startsWith("Clear all site data?") } != null }) {
+                if (tapPageRow("site-data-clear-all") { sheetCount() == 1 && topSheetTitled("Clear all site data?") }) {
                     awaitSheetsSettled()
                     SystemClock.sleep(400)
+                    note("  clear-all prompt: ${topSheetText()}")
                     shot("23-clear-all-prompt")
                     beat()
-                    if (touchButtonExpecting("Cancel", "the prompt left, the page stays") { freshNode { it.startsWith("Clear all site data?") } == null && pageUp() }) {
+                    if (tapSheetButton("Cancel", "the prompt left, the page stays") { sheetCount() == 0 && pageUp() }) {
                         claim("Cancel kept the control site's cookies", jarCookie(KEEP_URL) != null, "jar=${jarCookie(KEEP_URL)}")
                     }
+                } else {
+                    note("  the Clear all site data row did not open its prompt")
                 }
                 awaitNoSheet()
                 SystemClock.sleep(400)
                 traceFrames("viewer-page-back", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
                     back()
-                    // The section's row is back in the tree once its pane is no longer inert.
-                    awaitNode(6_000) { it.startsWith("See all site data and permissions") }
+                    // The section is the page again once the drill-in has left (`data-page` gone).
+                    awaitSettled(6_000) { settingsPage().isEmpty() }
                     SystemClock.sleep(MOTION_MS)
                 }
                 claim("the back leaves the page for its section", settingsPage() != "site-data" && revealRow("See all site data and permissions") != null, "page=${settingsPage()}")
             } else {
-                note("  the page did not open")
+                note("  the page did not open (data-page=${settingsPage()})")
             }
         }
 
         // 11. Delete browsing data on exit: Browsing history on (it stays on for act two).
         note("\n11. Delete browsing data on exit")
+        if (settingsPage().isNotEmpty()) {
+            // A drill-in page still over the section would take the finger meant for its rows.
+            back()
+            awaitSettled(6_000) { settingsPage().isEmpty() }
+            SystemClock.sleep(MOTION_MS)
+        }
         if (revealRow("Delete browsing data on exit") != null) {
             SystemClock.sleep(600)
             shot("24-exit-types")
