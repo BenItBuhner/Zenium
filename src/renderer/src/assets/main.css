@@ -9853,6 +9853,18 @@
 .zen-page-heading > .zen-page-heading-twisty {
   margin-inline-start: 4px;
 }
+/*
+ * Its `aria-expanded` says which way the rows are, not that a popover is up: the shared icon
+ * button's lit fill for an open anchor (§9.20, `extensions.css`) does not reach the disclosure
+ * at rest – the chevron's turn is the state – while the hover and press fills stay its own.
+ */
+.zen-page-heading > .zen-page-heading-twisty[aria-expanded='true']:not(:hover, :active) {
+  background: none;
+}
+/* The heading's 8 is to its rows; folded, there are none, and the next group's 20 beat is from the heading's line. */
+.zen-page-group[data-collapsed] > .zen-page-heading {
+  margin-bottom: 0;
+}
 .zen-page-heading-twisty > svg {
   transition: transform 120ms var(--zen-ease);
 }
