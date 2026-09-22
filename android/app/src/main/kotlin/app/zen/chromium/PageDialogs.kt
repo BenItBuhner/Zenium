@@ -5,14 +5,16 @@ import java.net.URI
 /**
  * The pages' own dialogs on the phone (PUI-27, PUI-28), the part that is not a view: what a
  * dialog says and offers ([PageDialogSpec]) and what a page has done with dialogs during one
- * visit of its tab ([PageDialogVisit]). The sheet itself is [PageDialogSheet]; [TabWebView]
- * holds the WebView's `JsResult` while it is up.
+ * visit of its tab ([PageDialogVisit]). The sheet itself is [PageDialogSheet] on the §9.23
+ * chassis ([NativePromptSheet]); [TabWebView] holds the WebView's `JsResult` while it is up.
  *
  * Drawn natively because the WebView's renderer, which every tab and the chrome share, waits
  * inside `alert()` / `confirm()` / `prompt()` and inside a `beforeunload` objection until the
  * `JsResult` is answered: nothing the chrome's own JavaScript draws can come up meanwhile (its
  * dialog would wait on the very call it is to answer), so the core's tab-modal `PageDialog` –
- * the desktop's, where the chrome is its own process – is the phone's native sheet here.
+ * the desktop's, where the chrome is its own process – is the phone's native sheet here. v2
+ * §9.23 names the page's dialogs as the chassis's second consumer on that proof (this PR's run
+ * 1), beside the unresponsive-page prompt; the door closes behind the two.
  */
 
 /** What a page dialog is: Chrome's kinds, and the two questions a `beforeunload` objection asks. */

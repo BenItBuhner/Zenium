@@ -231,8 +231,6 @@ class TabWebView(
     private var dialog: PageDialogUp? = null
     /** What the page has done with dialogs this visit: Chrome's count and its silencing ([PageDialogVisit]). */
     private val dialogVisit = PageDialogVisit()
-    /** How far the page stands receded under a sheet, 0 to 1 ([setRecede]). */
-    private var recede = 0f
     /** The `beforeunload` check in flight, if any (see [confirmUnload]). */
     private var unloadCheck: UnloadCheck? = null
     /** When the core last asked for a reload: a `beforeunload` objection right after it is "Reload site?". */
@@ -282,7 +280,7 @@ class TabWebView(
                 // Chrome messages along the edges show through the strips they cover, and pulled
                 // down, the page is clipped at the frame's bottom edge, not its own: the chrome
                 // below the frame stays uncovered.
-                outline.setRoundRect(0, visibleTop(), view.width, visibleBottom(), radiusPx + recede * 6f * resources.displayMetrics.density)
+                outline.setRoundRect(0, visibleTop(), view.width, visibleBottom(), radiusPx)
             }
         }
         applyPullToRefreshMode()
@@ -402,24 +400,6 @@ class TabWebView(
 
     fun setRadius(px: Float) {
         radiusPx = px
-        invalidateOutline()
-    }
-
-    /**
-     * The page under a native sheet ([PageDialogSheet]) recedes as it does under the chrome's own
-     * (v2 §11, `lib/motion/recede.ts`): scale 1 − .03 p about its centre and 6 dp more corner
-     * radius at p = 1, drawn by this view since the chrome's JavaScript – waiting with the page's
-     * – cannot. The radius the chrome set stays underneath and comes back at p = 0.
-     */
-    fun setRecede(p: Float) {
-        val clamped = p.coerceIn(0f, 1f)
-        if (clamped == recede) return
-        recede = clamped
-        val scale = 1f - 0.03f * clamped
-        pivotX = width / 2f
-        pivotY = height / 2f
-        scaleX = scale
-        scaleY = scale
         invalidateOutline()
     }
 
@@ -1278,7 +1258,7 @@ class TabWebView(
             up.result.cancel()
         }
         lateinit var up: PageDialogUp
-        val sheet = PageDialogSheet(host, spec, this) { accepted, value, suppress ->
+        val sheet = PageDialogSheet(host, spec) { accepted, value, suppress ->
             if (dialog !== up) return@PageDialogSheet
             dialog = null
             when {

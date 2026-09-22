@@ -112,4 +112,56 @@ class PageDialogsTest {
         assertEquals("Reload site?", reload.title)
         assertEquals("Reload", reload.acceptLabel)
     }
+
+    // --- the slots on the §9.23 chassis (PageDialogSheet.content) ---
+
+    @Test
+    fun thePagesMessageIsBodyCopyAndTheCheckRowComesFromTheSecondDialog() {
+        val alert = PageDialogSheet.content(PageDialogSpec.page(PageDialogKind.ALERT, "https://example.com/", "https://example.com/", "Hello from the page.", "", suppressible = false))
+        assertEquals("example.com says", alert.title)
+        // R1: the page's words are body copy in the text ink, not our 69 % description.
+        assertEquals("Hello from the page.", alert.body)
+        assertNull(alert.description)
+        assertNull(alert.field)
+        assertNull(alert.check)
+        // An alert has OK alone.
+        assertNull(alert.secondary)
+        assertEquals("OK", alert.primary.label)
+        assertEquals(NativePromptSheet.Tone.ACCENT, alert.primary.tone)
+
+        val confirm = PageDialogSheet.content(PageDialogSpec.page(PageDialogKind.CONFIRM, "https://example.com/", "https://example.com/", "Delete the draft?", "", suppressible = true))
+        assertEquals("Delete the draft?", confirm.body)
+        assertEquals(PageDialogSpec.SUPPRESS_LABEL, confirm.check)
+        assertEquals("Cancel", confirm.secondary)
+        assertEquals("OK", confirm.primary.label)
+    }
+
+    @Test
+    fun aPromptsMessageIsTheFieldsLabelAndItsDefaultTheFieldsText() {
+        val prompt = PageDialogSheet.content(PageDialogSpec.page(PageDialogKind.PROMPT, "https://example.com/", "https://example.com/", "What is your name?", "Ada", suppressible = false))
+        // R2: the message labels the field; nothing of it in the body or the description.
+        assertNull(prompt.body)
+        assertNull(prompt.description)
+        assertEquals("What is your name?", prompt.field?.label)
+        assertEquals("Ada", prompt.field?.text)
+        assertEquals("Cancel", prompt.secondary)
+        // prompt() with no message: the field alone, unlabelled.
+        val bare = PageDialogSheet.content(PageDialogSpec.page(PageDialogKind.PROMPT, "https://example.com/", "https://example.com/", "", "", suppressible = false))
+        assertNull(bare.field?.label)
+        assertEquals("", bare.field?.text)
+    }
+
+    @Test
+    fun beforeUnloadKeepsOurSentenceAsTheDescription() {
+        val leave = PageDialogSheet.content(PageDialogSpec.beforeUnload(reload = false))
+        assertEquals("Leave site?", leave.title)
+        // Our sentence, not the page's: the description at 69 %.
+        assertEquals("Changes you made may not be saved.", leave.description)
+        assertNull(leave.body)
+        assertNull(leave.field)
+        assertNull(leave.check)
+        assertEquals("Cancel", leave.secondary)
+        assertEquals("Leave", leave.primary.label)
+        assertEquals("Reload", PageDialogSheet.content(PageDialogSpec.beforeUnload(reload = true)).primary.label)
+    }
 }
