@@ -2124,9 +2124,13 @@
    * pill (the hairline, the panel shadow) across an accent line – and the scrim over what the
    * crop leaves out. The frame's radius is the inner one (§9.20: a picture inside a panel),
    * the hairline the page family's. The wait before the page arrives is a §9.17 sentence with
-   * the spinner, at a height the sheet can open to.
+   * the spinner. The body – the wait and the editor alike – asks for the whole viewport, so the
+   * sheet's expanded detent is the chassis's ceiling (the body is the document: the sheet opens
+   * there and stays there when the picture arrives) rather than whatever the frame measures,
+   * which the frame in turn takes from the scroller's height.
    */
   .zen-longshot-body {
+    min-height: 100vh;
     padding: 22px 16px 4px;
   }
   .zen-longshot-frame {
@@ -2213,7 +2217,8 @@
     align-items: center;
     justify-content: center;
     gap: 12px;
-    height: 240px;
+    min-height: 100vh;
+    padding-bottom: 30vh;
     color: var(--v2-text-deemphasized);
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body-box);

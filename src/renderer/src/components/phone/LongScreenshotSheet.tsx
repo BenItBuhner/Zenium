@@ -183,7 +183,12 @@ function CropEditor({
     e.preventDefault()
     const handle = e.currentTarget
     const scroller = handle.closest<HTMLElement>('.zen-sheet-scroll')
-    handle.setPointerCapture(e.pointerId)
+    try {
+      handle.setPointerCapture(e.pointerId)
+    } catch {
+      // A pointer the browser is not tracking (a script's synthetic press) cannot be captured;
+      // its moves still reach the handle they are sent to.
+    }
     handle.dataset.dragging = 'true'
     const onMove = (ev: PointerEvent): void => {
       if (ev.pointerId !== e.pointerId) return

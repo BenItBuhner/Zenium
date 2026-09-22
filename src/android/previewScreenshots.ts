@@ -75,10 +75,14 @@ export function createPreviewScreenshots(
     if (!parent) return Promise.resolve()
     const sheet = document.createElement('div')
     sheet.className = 'zen-preview-flash'
+    // Over the frame exactly – its place, its transform, its clip – and one layer above it.
     sheet.style.cssText =
-      `position:absolute;left:${frame.style.left};top:${frame.style.top};width:${frame.style.width};` +
+      `position:fixed;left:${frame.style.left};top:${frame.style.top};width:${frame.style.width};` +
       `height:${frame.style.height};border-radius:${frame.style.borderRadius};background:#fff;` +
-      `pointer-events:none;z-index:5;opacity:1;transition:opacity ${FLASH_MS}ms linear`
+      `pointer-events:none;z-index:${Number(frame.style.zIndex) + 1 || 51};opacity:1;` +
+      `transition:opacity ${FLASH_MS}ms linear`
+    sheet.style.transform = frame.style.transform
+    sheet.style.clipPath = frame.style.clipPath
     parent.appendChild(sheet)
     const hold = previewFlashHold()
     if (hold !== null) {
@@ -147,6 +151,9 @@ export function createPreviewScreenshots(
       const frame = frameOf(String(tabId))
       if (!frame) return null
       const [shot] = await Promise.all([picture(frame, 1), flash(frame)])
+      // A `screenshot=flash` still: the frame mid-flash, before the save answers and the card
+      // comes up (on a device the write to the gallery follows the flash).
+      if (previewFlashHold() !== null) return new Promise<ScreenshotSaved | null>(() => undefined)
       return save(shot)
     },
     'screenshot.captureLong': async ({ tabId }): Promise<LongCapture | null> => {
