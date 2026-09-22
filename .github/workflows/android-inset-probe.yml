@@ -1,0 +1,34 @@
+name: Android inset probe
+
+# A measurement on the demo recipe's emulator: what the window reports as the bottom system bar
+# inset against the navigation bar's drawn frame, under the recipe's display (720x1600 at 280),
+# the AVD's native display, a second density and the three-button overlay enabled exclusively
+# (InsetProbeDemo.kt). One boot, no recording; the findings in inset-probe-notes.txt and one
+# still per configuration in the artifact. Dispatch-only.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-inset-probe-f020
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-inset-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Inset probe
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.InsetProbeDemo
+        DEMO_DIR=inset-probe
+        DEMO_OUT=artifacts/android-inset-probe
+        DEMO_RECORD=0
+        JANK_GATE=soft
+      artifact-name: android-inset-probe
+      artifact-path: artifacts/android-inset-probe/
