@@ -1012,6 +1012,11 @@ export interface MenuItemTemplate {
    * host has no such row and shows the disabled item `enabled: false` makes of it.
    */
   note?: boolean
+  /**
+   * A destructive item (Close Group, Delete Group): a renderer-drawn menu writes it in the
+   * danger ink (v2 §9.1, as the phone's sheets do), a native host draws it as any other.
+   */
+  danger?: boolean
 }
 
 export type MenuSource =

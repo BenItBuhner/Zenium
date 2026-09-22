@@ -492,6 +492,13 @@ export interface Tab {
 export type FolderColor =
   'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange'
 
+/** A page of a saved (closed) group: what "Open" brings back (Chrome's saved tab groups). */
+export interface SavedGroupTab {
+  url: string
+  title: string
+  favicon?: string | null
+}
+
 export interface Folder {
   id: string
   spaceId: string
@@ -500,6 +507,21 @@ export interface Folder {
   collapsed: boolean
   /** Group colour; folders made before groups had colours (or on desktop) carry none. */
   color?: FolderColor | null
+  /**
+   * Chrome's saved tab groups (Android's Tab groups pane, TAB-16): the group's pages as they
+   * were when its last live member closed – the whole group on "Close group" (`folder.close`),
+   * the last member alone when the members were closed one by one, as Chrome's saved group
+   * mirrors its live tabs – so the group stays listed as SAVED with its pages, and "Open"
+   * (`folder.open`) brings them back into it, in order. Meaningful only while the group has no
+   * live member: a group with members is open, and this is cleared as it opens or a tab joins
+   * it. Additive and local: a folder without it is as before, and the sync record ignores it.
+   */
+  savedTabs?: SavedGroupTab[] | null
+  /**
+   * When the group was last used – a member activated, a tab joining, the group closed or
+   * opened – as ms since the epoch; the Tab groups pane's "last used". Local, never synced.
+   */
+  lastUsedAt?: number | null
 }
 
 export interface Space {
@@ -2862,15 +2884,32 @@ export interface ScreenCaptureSource {
   icon: string | null
 }
 
+/** The picker's panes, in its order (Chrome's tab pane leads). */
+export type ScreenCaptureKind = ScreenCaptureSource['kind']
+
 /**
- * A page's `getDisplayMedia` call waiting on the picker (Chrome's "Choose what to share"): the
- * chrome shows the sources by kind and answers with `screenCapture.respond`. One per tab.
+ * A page's `getDisplayMedia` call, or an extension's `chrome.desktopCapture` call, waiting on
+ * the picker (Chrome's "Choose what to share"): the chrome shows the sources by kind and
+ * answers with `screenCapture.respond`. One per tab.
  */
 export interface ScreenCaptureRequest {
   id: string
   tabId: string
-  /** The site asking, as a display origin. */
+  /**
+   * The site asking, as a display origin. For an extension's call, the site of the tab it
+   * captures for (`targetTab`), or empty when the extension's own page consumes the stream.
+   */
   origin: string
+  /**
+   * An extension asking (`chrome.desktopCapture.chooseDesktopMedia`): named in the site's place
+   * with its icon, as Chrome's picker names it. Null for a page's own call.
+   */
+  extension: { name: string; icon: string | null } | null
+  /**
+   * The panes on offer, in the picker's order: an extension asks for some kinds (Chrome hides
+   * the others); a page's call has all three.
+   */
+  kinds: ScreenCaptureKind[]
   /** The page asked for audio as well. */
   audio: boolean
   /** The OS can hand a screen's sound along with its picture (the "Also share system audio" box). */
@@ -3746,6 +3785,19 @@ export interface Commands {
     result: void
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
+  /**
+   * Chrome's "Close group" on a host with saved groups (Android, TAB-16): the group's tabs close
+   * (to the recently closed list, so the close has an undo) and the group stays as a saved one
+   * holding their pages (`Folder.savedTabs`). Nothing happens to a group with no live member.
+   */
+  'folder.close': { args: { folderId: string }; result: void }
+  /**
+   * "Open" a saved group: its pages come back as tabs of the group, in their order, at the end
+   * of the space's tabs, the first one active; an open group is expanded and its first tab
+   * activated instead. Resolves with the tab made active, or null when there was nothing to
+   * open.
+   */
+  'folder.open': { args: { folderId: string }; result: string | null }
   'folder.contextMenu': { args: { folderId: string } & MenuAnchor; result: void }
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lucide "check" at stroke 3, the mark inside a ticked v2 checkbox (`.zen-v2-checkbox:checked::after`):
+     drawn at the box less 4 – 16 in the phone's 20 box – and tinted the on-accent ink at runtime. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp"
+    android:height="16dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M20,6 L9,17 L4,12" />
+</vector>

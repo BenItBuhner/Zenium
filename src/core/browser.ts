@@ -96,10 +96,10 @@ import {
   createSpace,
   cycleSpace,
   deleteFolder,
-  folderTabs,
   getSpace,
   nextFolderColor,
   orderedTabsForSpace,
+  regularFolderTabs,
   reorderContainer,
   reorderSpace,
   sectionIndexOf,
@@ -1543,7 +1543,9 @@ export class Browser {
   newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
     const folder = this.state.model.folders[folderId]
     if (!folder) throw new Error('Folder not found')
-    const members = folderTabs(this.state.model, folderId)
+    // The group's members are its regular ones: a private tab in it lends neither its place
+    // nor its container to a tab the group's menu makes.
+    const members = regularFolderTabs(this.state.model, folderId)
     const last = members[members.length - 1]
     const created = this.tabs.createTab(
       {
@@ -1579,8 +1581,78 @@ export class Browser {
   deleteFolder(folderId: string, unpack: boolean): void {
     this.liveFolders.onFolderDeleted(folderId)
     const closed = deleteFolder(this.state.model, folderId, unpack)
-    for (const id of closed) this.tabs.closeTab(id, true)
+    // A private tab in the group was none of its tabs on the surface that deletes it: it is
+    // loose now (the model ungrouped it) and stays open, as the group's regular tabs close.
+    for (const id of closed) {
+      const tab = this.tabs.tab(id)
+      if (tab && !this.tabs.isPrivate(tab)) this.tabs.closeTab(id, true)
+    }
     this.state.commit()
+  }
+
+  /**
+   * Chrome's "Close group" where groups are saved (TAB-16): the tabs close, the group stays as a
+   * saved one with their pages (`Folder.savedTabs`), listed in the Tab groups pane until it is
+   * opened again or deleted.
+   */
+  closeFolder(folderId: string, win: ZenWindow = this.focusedWindow()): void {
+    this.tabs.closeFolderTabs(folderId, win)
+  }
+
+  /**
+   * "Open" a saved group (TAB-16): its pages come back as tabs of the group, in the order they
+   * were kept, at the end of the space's regular tabs – unloaded but for the first, which is
+   * made active – and the group is expanded. An open group is expanded and its first member
+   * activated instead. Resolves with the tab made active, or null with nothing to open.
+   */
+  openFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string | null {
+    const m = this.state.model
+    const folder = m.folders[folderId]
+    if (!folder) return null
+    const now = Date.now()
+    // The group's live members are its regular ones: a private tab in it is not what a regular
+    // surface's row opens (`regularFolderTabs`).
+    const live = regularFolderTabs(m, folderId)
+    if (live.length > 0) {
+      folder.collapsed = false
+      folder.lastUsedAt = now
+      this.tabs.activateTab(live[0].id, win)
+      this.state.commit()
+      return live[0].id
+    }
+    const saved = folder.savedTabs ?? []
+    if (saved.length === 0) return null
+    const space = getSpace(m, folder.spaceId)
+    if (!space) return null
+    const restored: Tab[] = []
+    for (const page of saved) {
+      const last = restored[restored.length - 1]
+      const tab = this.tabs.createTab(
+        {
+          url: page.url,
+          spaceId: space.id,
+          active: false,
+          load: false,
+          // The first at the end of the space's tabs, as Chrome reopens a saved group; each
+          // next one behind the one before, so the group keeps its order.
+          index: last ? undefined : Number.MAX_SAFE_INTEGER,
+          afterTabId: last?.id,
+          containerId: space.containerId,
+          folderId
+        },
+        win
+      )
+      // The row and the card read as the page did until it loads again.
+      tab.title = page.title || tab.title
+      tab.favicon = page.favicon ?? null
+      restored.push(tab)
+    }
+    folder.savedTabs = null
+    folder.collapsed = false
+    folder.lastUsedAt = now
+    this.tabs.activateTab(restored[0].id, win)
+    this.state.commit()
+    return restored[0].id
   }
 
   /** Delete a space without asking (sync applied a deletion made elsewhere). */
@@ -2582,6 +2654,8 @@ export class Browser {
         this.createFolder(spaceId, name, icon, win, { color, rename }).id,
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
+      'folder.close': ({ folderId }, win) => this.closeFolder(folderId, win),
+      'folder.open': ({ folderId }, win) => this.openFolder(folderId, win),
       'folder.contextMenu': ({ folderId, ...anchor }, win) =>
         this.menus.showFolderContextMenu(folderId, win, anchor),
       'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),

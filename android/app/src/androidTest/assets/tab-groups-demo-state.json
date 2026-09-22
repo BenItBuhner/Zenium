@@ -1,0 +1,120 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_work",
+  "spaces": [
+    {
+      "id": "space_work",
+      "name": "Work",
+      "icon": "💼",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          { "c": [96, 110, 235], "x": 0.3, "y": 0.35, "isPrimary": true },
+          { "c": [214, 92, 160], "x": 0.7, "y": 0.65 }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": ["tab_home", "tab_alpha", "tab_beta", "tab_gamma", "tab_delta"],
+      "activeTabId": "tab_home",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [
+    {
+      "id": "folder_research",
+      "spaceId": "space_work",
+      "name": "Research",
+      "icon": "📁",
+      "collapsed": false,
+      "color": "blue"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "tab_home",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18168/",
+      "title": "Tab groups demo",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_alpha",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": "folder_research",
+      "url": "http://127.0.0.1:18168/alpha.html",
+      "title": "Alpha",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_beta",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": "folder_research",
+      "url": "http://127.0.0.1:18168/beta.html",
+      "title": "Beta",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_gamma",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18168/gamma.html",
+      "title": "Gamma",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_delta",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18168/delta.html",
+      "title": "Delta",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "sidebarExpanded": true,
+    "updates": { "autoCheck": false, "autoDownload": false, "channel": "stable" },
+    "pageControls": {
+      "desktopSite": "off",
+      "desktopSites": {},
+      "darkenSites": false,
+      "darkenSiteExceptions": {},
+      "zoom": 1,
+      "zoomIncludesOsFontSize": true,
+      "siteZooms": {},
+      "forceZoom": false
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_work",
+      "selection": { "space_work": "tab_home" },
+      "compact": false
+    }
+  ]
+}

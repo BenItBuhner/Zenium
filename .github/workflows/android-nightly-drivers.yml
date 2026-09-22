@@ -1,0 +1,171 @@
+name: Android nightly drivers
+
+# Every instrumentation driver under android/app/src/androidTest (the *Demo classes), once a night
+# on main's tip, so that a driver nothing dispatches cannot break silently (#237's accessible-name
+# rename broke six of them for a day; #327 repaired them). The manifest .github/nightly-drivers.json
+# names each driver, the shard it runs on and the environment its own workflow gives it (the theme,
+# DEMO_KEEP, DEMO_REVOKE, DEMO_SCENES, DEMO_ARGS, the display); android-nightly-drivers.mjs reads it
+# and android-nightly-drivers.sh runs a shard's drivers in sequence on one emulator boot, through
+# the shared driver script or the wrapper the driver's workflow names, a failed driver not stopping
+# the ones after it. The manifest's check (vitest, and the plan job here) fails when a *Demo class
+# is neither a driver nor skipped with a reason.
+#
+# The shards, each one job of the recipe in android-emulator-demo.yml and all in parallel: four
+# phone shards on the API 34 Google APIs image (phone-a to phone-d, the drivers by their weight so
+# each shard's drivers take about an hour), api35 for the workflows that ask for API 35 (the
+# predictive back, the sheet leave and recede, the wake and status bar, the two profiling
+# drivers), webview for the demos that need the Chromium snapshot WebView swapped into an AOSP
+# image (private tabs, media, fullscreen, the accessibility demo's private scene, the fakebox
+# morph's private act) and tablet for the pixel_tablet layout. A new driver is one line in the
+# manifest. The extension compatibility sweep (hours long, the extension program's) is skipped
+# there with its reason.
+#
+# The summary job puts the one table in the run's summary (driver, result, scenes / checks,
+# duration, the jank verdict, the artifact) and keeps every shard's findings and videos as the
+# one artifact nightly-drivers-<date> (14 days; the shards' own artifacts, nightly-drivers-shard-*,
+# carry the run attempt so a re-run of a failed shard never uploads a name twice, and the summary
+# keeps the latest attempt of each). The run fails when any driver failed or left no result: red is
+# the signal. Nothing here touches the per-PR demo workflows.
+on:
+  schedule:
+    # 03:00 UTC, once.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      shard:
+        description: The shard to run, or all of them
+        type: choice
+        default: all
+        options:
+          - all
+          - phone-a
+          - phone-b
+          - phone-c
+          - phone-d
+          - api35
+          - webview
+          - tablet
+      ref:
+        description: The commit, branch or tag to sweep (the workflow's own ref when empty)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  # One sweep at a time per ref; a second one waits rather than cutting the first short.
+  group: android-nightly-drivers-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  plan:
+    name: Plan the shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      shard: ${{ steps.plan.outputs.shard }}
+      date: ${{ steps.plan.outputs.date }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Check the manifest covers every driver
+        run: node .github/scripts/android-nightly-drivers.mjs check
+      - name: The shards to run
+        id: plan
+        env:
+          SHARD: ${{ inputs.shard || 'all' }}
+        run: |
+          {
+            echo "matrix=$(node .github/scripts/android-nightly-drivers.mjs matrix --shard "$SHARD")"
+            echo "shard=$SHARD"
+            echo "date=$(date -u +%F)"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### The plan ($SHARD) on $(git rev-parse --short HEAD)"
+            echo
+            node .github/scripts/android-nightly-drivers.mjs estimate
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  shards:
+    name: ${{ matrix.title }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      ref: ${{ inputs.ref }}
+      script: .github/scripts/android-nightly-drivers.sh
+      setup-script: bash .github/scripts/android-nightly-drivers.sh setup
+      script-env: |
+        NIGHTLY_SHARD=${{ matrix.shard }}
+        NIGHTLY_OUT=artifacts/nightly/${{ matrix.shard }}
+      artifact-name: nightly-drivers-shard-${{ matrix.shard }}-r${{ github.run_attempt }}
+      artifact-path: artifacts/nightly/${{ matrix.shard }}/
+      # The shard's own upload is the summary job's input; the record is the one artifact it
+      # gathers (14 days below), so these go early.
+      retention-days: 3
+      api-level: ${{ matrix.api-level }}
+      target: ${{ matrix.target }}
+      profile: ${{ matrix.profile }}
+      emulator-gpu: ${{ matrix.emulator-gpu }}
+      emulator-options: ${{ matrix.emulator-options }}
+      timeout-minutes: ${{ matrix.timeout-minutes }}
+      jank-gate: soft
+
+  summary:
+    name: The table
+    needs: [plan, shards]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Fetch the shards' findings
+        uses: actions/download-artifact@v7
+        # A shard that never uploaded (no boot, a lost runner) is missing here and the table says so.
+        continue-on-error: true
+        with:
+          pattern: nightly-drivers-shard-*
+          path: results
+      - name: Keep the findings and videos as the one artifact
+        id: artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-drivers-${{ needs.plan.outputs.date }}
+          path: results/
+          retention-days: 14
+          overwrite: true
+          if-no-files-found: warn
+      - name: The table
+        env:
+          SHARD: ${{ needs.plan.outputs.shard }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          ARTIFACT_NAME: nightly-drivers-${{ needs.plan.outputs.date }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+        run: |
+          status=0
+          node .github/scripts/android-nightly-drivers.mjs summary --results results --shard "$SHARD" \
+            --artifact-name "$ARTIFACT_NAME" --artifact-url "$ARTIFACT_URL" > table.md || status=$?
+          {
+            echo "## Nightly drivers on ${SHA:0:12}"
+            echo
+            cat table.md
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$status"
