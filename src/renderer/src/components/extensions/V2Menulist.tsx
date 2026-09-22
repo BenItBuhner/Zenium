@@ -43,7 +43,8 @@ export function V2Menulist<T extends string>({
   disabled = false,
   readOnly = false,
   autoFocus = false,
-  className
+  className,
+  popupClassName
 }: {
   /** What the list chooses (the accessible name of the control and the phone sheet's title). */
   label: string
@@ -57,6 +58,8 @@ export function V2Menulist<T extends string>({
   /** Takes the keyboard as it mounts: a form's first field (§9.22). */
   autoFocus?: boolean
   className?: string
+  /** A class on the mouse's popup panel (`MenulistPopover`'s `className`): a surface's own width floor for its list. */
+  popupClassName?: string
 }): JSX.Element {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
   const viewport = useViewport()
@@ -98,7 +101,11 @@ export function V2Menulist<T extends string>({
         <ChevronDown />
       </button>
       {popup &&
-        (viewport.coarse ? <MenulistSheet {...popup} /> : <MenulistPopover {...popup} overPage />)}
+        (viewport.coarse ? (
+          <MenulistSheet {...popup} />
+        ) : (
+          <MenulistPopover {...popup} overPage className={popupClassName} />
+        ))}
     </>
   )
 }

@@ -10,8 +10,9 @@ import { MenulistPopover, type MenulistOption } from '../MenulistPopover'
  * for real in happy-dom: a listbox in the chrome layer on the shared popup class, the current
  * option checked and focused as it opens, the action rows after a hairline, the trigger's width
  * riding in `--zen-anchor-width`; the arrows, Home, End and the letters (type-ahead) move the
- * cursor, Enter picks, Escape closes and gives the focus back to the trigger. Layout is given
- * sizes by hand (happy-dom lays nothing out).
+ * cursor, Enter picks, Escape closes and gives the focus back to the trigger; a font picker's
+ * rows keep their names in the chrome's type with an "Aa" specimen in the face trailing. Layout
+ * is given sizes by hand (happy-dom lays nothing out).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -32,10 +33,14 @@ const OPTIONS: MenulistOption<string>[] = [
 
 function Host({
   value = 'en',
-  withAction = false
+  withAction = false,
+  options = OPTIONS,
+  className
 }: {
   value?: string | null
   withAction?: boolean
+  options?: MenulistOption<string>[]
+  className?: string
 }): JSX.Element {
   const [anchor, setAnchor] = useState<Anchor | null>(null)
   return (
@@ -54,7 +59,8 @@ function Host({
           anchor={anchor}
           label="Language"
           value={value}
-          options={OPTIONS}
+          options={options}
+          className={className}
           actions={withAction ? [{ label: 'Choose another…', onPick: chose }] : undefined}
           onPick={(next) => {
             setAnchor(null)
@@ -70,7 +76,14 @@ function Host({
   )
 }
 
-function render(props: { value?: string | null; withAction?: boolean } = {}): void {
+function render(
+  props: {
+    value?: string | null
+    withAction?: boolean
+    options?: MenulistOption<string>[]
+    className?: string
+  } = {}
+): void {
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
@@ -245,5 +258,54 @@ describe('the menulist popup', () => {
     click(options[5])
     expect(chose).toHaveBeenCalledTimes(1)
     expect(picked).not.toHaveBeenCalled()
+  })
+
+  it('a font picker’s rows write their names in the chrome’s type with an "Aa" specimen in the face trailing, every row keeping the check’s slot (#350 review R5)', () => {
+    render({
+      value: 'Inter',
+      options: [
+        { value: '', label: 'Platform default' },
+        { value: 'D050000L', label: 'D050000L', font: '"D050000L"' },
+        { value: 'Inter', label: 'Inter', font: '"Inter"' }
+      ]
+    })
+    open()
+    const options = rows()
+    // The label itself carries no face: a symbol face drawn in itself would write its name as
+    // dingbats (§9.13: a row is its text).
+    for (const option of options) {
+      const label = option.querySelector<HTMLElement>('span')!
+      expect(label.style.fontFamily).toBe('')
+    }
+    const specimen = (i: number): HTMLElement | null =>
+      options[i].querySelector<HTMLElement>('.zen-v2-menulist-option-specimen')
+    expect(specimen(0)).toBeNull()
+    expect(specimen(1)?.textContent).toBe('Aa')
+    // (happy-dom serialises the quoted family without its quotes.)
+    expect(specimen(1)?.style.fontFamily.replace(/"/g, '')).toBe('D050000L')
+    expect(specimen(1)?.getAttribute('aria-hidden')).toBe('true')
+    expect(specimen(2)?.style.fontFamily.replace(/"/g, '')).toBe('Inter')
+    // The specimen trails the label, before the check's slot; a row that is not the pick holds
+    // the slot with a blank mark so every specimen ends on one line.
+    expect(options[2].querySelector('svg')).not.toBeNull()
+    expect(options[2].querySelector('.zen-v2-menulist-option-mark')).toBeNull()
+    expect(options[1].querySelector('svg')).toBeNull()
+    expect(options[1].querySelector('.zen-v2-menulist-option-mark')).not.toBeNull()
+    expect(options[0].querySelector('.zen-v2-menulist-option-mark')).not.toBeNull()
+    expect(options[1].lastElementChild?.classList.contains('zen-v2-menulist-option-mark')).toBe(
+      true
+    )
+    expect(specimen(1)?.nextElementSibling).toBe(options[1].lastElementChild)
+    // The accessible name is the label alone.
+    expect(options[1].textContent).toBe('D050000LAa')
+    expect(options[1].querySelector<HTMLElement>('span')?.textContent).toBe('D050000L')
+  })
+
+  it('a surface’s own class rides on the popup panel (a width floor for a list whose rows the trigger is narrower than)', () => {
+    render({ className: 'zen-reader-translate-popup' })
+    open()
+    const el = list()!
+    expect(el.classList.contains('zen-v2-menulist-popup')).toBe(true)
+    expect(el.classList.contains('zen-reader-translate-popup')).toBe(true)
   })
 })

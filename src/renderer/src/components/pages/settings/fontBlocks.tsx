@@ -11,9 +11,13 @@ import type { RowOption } from './model'
  */
 
 /**
- * The preview paragraph (§10.3's content row): the standard family at the chosen size, then
- * the fixed-width family at Chrome's ratio of it, both floored by the minimum size as a page's
- * text would be – so the row shows what a page gets, in the page's own type, not the chrome's.
+ * The preview (§10.3's static content row: a 13/69 % label over content the row is there to
+ * show, growing with it): the label, then two sample lines – the standard family at the chosen
+ * size, then the fixed-width family at Chrome's ratio of it, both floored by the minimum size
+ * as a page's text would be, so the row shows what a page gets, in the page's own type, not
+ * the chrome's – and the label's description under them. The samples are pictures of type,
+ * not copy to read (the zoom block's sample is the same), so they are `aria-hidden` and a
+ * reader hears the label and its description.
  */
 export function FontPreview({
   fonts,
@@ -39,13 +43,16 @@ export function FontPreview({
         } as CSSProperties
       }
     >
-      <p data-face="standard" lang="en">
+      <span className="zen-settings-description" data-part="label">
+        Preview
+      </span>
+      <p data-face="standard" lang="en" aria-hidden="true">
         The quick brown fox jumps over the lazy dog. 0123456789
       </p>
-      <p data-face="fixed" lang="en">
+      <p data-face="fixed" lang="en" aria-hidden="true">
         for (const page of tabs) page.render(fonts);
       </p>
-      <span className="zen-settings-description">
+      <span className="zen-settings-description" data-part="description">
         How a page’s text and its fixed-width text look with these settings.
       </span>
     </div>
@@ -56,7 +63,11 @@ export function FontPreview({
  * The phone's family picker (§9.13's sheet of radio rows, drawn here rather than by the
  * chassis's option sheet so that each row is in its own face – `RadioOption`'s `font`): the
  * current family checked and focused as the sheet opens (§9.22 – the chassis focuses the checked
- * radio), a pick sets the family and closes the sheet.
+ * radio), a pick sets the family and closes the sheet. The rows' labels are drawn in their
+ * faces because the phone's options are the platform's word aliases (Serif, Casual, Cursive…),
+ * every one a face that writes its own name; the desktop's list of installed families, where a
+ * symbol face cannot, keeps its names in the chrome's type with a specimen beside them instead
+ * (`MenulistOption.font`).
  */
 export function FontPickList({
   label,
@@ -78,7 +89,7 @@ export function FontPickList({
           key={option.value}
           label={option.label}
           description={option.description}
-          font={option.font ? cssFamily(option.font) : undefined}
+          font={option.font}
           checked={option.value === value}
           onSelect={() => {
             if (option.value !== value) onPick(option.value)

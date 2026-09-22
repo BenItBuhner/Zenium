@@ -2942,7 +2942,7 @@ function languagesSection({ state, dictionary, set: setSettings }: SectionContex
           {
             kind: 'action',
             id: `languages-${id}-add`,
-            label: 'Add a language',
+            label: 'Add language',
             keywords: [title],
             button: 'Add…',
             form: {
@@ -3229,15 +3229,18 @@ function spellcheckGroups(state: UIState, dictionary: DictionaryWords): RowGroup
         {
           kind: 'action',
           id: 'spellcheck-add',
-          label: 'Add a language',
+          label: 'Add language',
           keywords,
           disabled: off,
           button: 'Add…',
           form: {
-            title: 'Add a language to check in',
+            // One copy for the page's three Add rows (the #350 review's nit 3): the group says
+            // what the list is for, the sheet's description what the pick does.
+            title: 'Add language',
+            description: 'Text you type is checked in this language too.',
             render: (close) => (
               <PickList
-                label="Add a language to check in"
+                label="Add language"
                 options={options}
                 onPick={(code) => run('spellcheck.setLanguage', { code, on: true })}
                 close={close}

@@ -144,15 +144,19 @@ export function ReaderPreferencesPanel({
 
 /**
  * The rows, one composition on both platforms (§9.13's control panel): Listen to this article
- * first – an action row with the read-aloud glyph, on hosts with a speech engine – then
- * Translate (CT-36, `TranslateRows`) on hosts with the translation engine; then the text: the
- * size as a stepper row – A− and A+ as the shared icon buttons (§9.3) with the size in px
- * between them, the ends disabled at .4 (§9.30) – and a menulist row each for the font, the
- * colour theme, the column width and the spacing (§9.13, a sheet of radio rows under a
- * finger); then the extras: line focus as a switch row (§10.4) with the band size a dependent
- * menulist row – laid out at .4 while the focus is off – and syllables as a switch row.
+ * first – an action row with the read-aloud glyph, on hosts with a speech engine – then the
+ * text: the size as a stepper row – A− and A+ as the shared icon buttons (§9.3) with the size
+ * in px between them, the ends disabled at .4 (§9.30) – and a menulist row each for the font,
+ * the colour theme, the column width and the spacing (§9.13, a sheet of radio rows under a
+ * finger); then Translate (CT-36, `TranslateRows`) on hosts with the translation engine, a
+ * group of its own between two hairlines; then the extras: line focus as a switch row (§10.4)
+ * with the band size a dependent menulist row – laid out at .4 while the focus is off – and
+ * syllables as a switch row. Translate stands after the type rows, not under Listen, because
+ * the phone sheet was passed on #265's rule that its peek shows the live type rows whole above
+ * the fold and the set-once aids after the hairline: a 109 px group above the type would push
+ * Text spacing under the fold on a 412 × 915 phone. Exported for the order's test.
  */
-function Rows({
+export function Rows({
   prefs,
   onChange,
   onListen,
@@ -176,12 +180,6 @@ function Rows({
             onClick={onListen}
             data-reader-pref="listen"
           />
-          <Separator />
-        </>
-      )}
-      {translate && (
-        <>
-          <TranslateRows {...translate} />
           <Separator />
         </>
       )}
@@ -234,6 +232,12 @@ function Rows({
         options={READER_SPACINGS.map((value) => ({ value, label: READER_SPACING_LABELS[value] }))}
         onChange={(spacing) => onChange({ spacing })}
       />
+      {translate && (
+        <>
+          <Separator />
+          <TranslateRows {...translate} />
+        </>
+      )}
       <Separator />
       <SwitchRow
         label="Line focus"
@@ -278,8 +282,10 @@ interface TranslateRowsProps {
 }
 
 /**
- * Translate (CT-36; Chrome's translate bubble folded into the reader's one panel, v2 §10.1): two
- * rows in the group under Listen. "Translate into" is a menulist row (§9.13) over every language
+ * Translate (CT-36; Chrome's translate bubble folded into the reader's one panel – §9.13's
+ * control panel draws its controls, so the article's translation is two rows here rather than
+ * a bar of its own): a group between two hairlines after the type rows, before the aids (#265's
+ * fold rule, `Rows`). "Translate into" is a menulist row (§9.13) over every language
  * the models reach, the first preferred language chosen for it; a pick while the article is
  * translated or being translated redoes the translation into the new language at once (the
  * page translate's rule, `retarget`), a pick before that only sets what Translate will do. The
@@ -322,6 +328,10 @@ export function TranslateRows({ tabId, translate, translation }: TranslateRowsPr
         options={options}
         onChange={pick}
         disabled={target === null}
+        // The bar's list width as the popup's floor (`.zen-reader-translate-popup`): the chassis
+        // measures the popup before its height cap adds the 8 px bar, which then takes the
+        // longest row's tail ("Chinese (Simplifi…") – noted for the chassis; whole here.
+        popupClassName="zen-reader-translate-popup"
       />
       {translated ? (
         <SwitchRow

@@ -2,7 +2,6 @@ import type { JSX } from 'react'
 import { useState } from 'react'
 import { filterLanguageChoices, type LanguageChoice } from '@renderer/lib/languageCatalogue'
 import { PickList } from '../../translate/pickers'
-import { RowText } from './rows'
 
 /**
  * Settings › Languages › Add language's picker (CT-41; `languages.tsx` opens it from the action
@@ -10,7 +9,9 @@ import { RowText } from './rows'
  * to the top of the scrolling body (§10.3), then the matching languages as the translate
  * pickers' pressable §10.4 rows – every pick adds, so no radio; the chassis focuses the first row
  * as a sheet opens, the dialog its field – the language's own name as the description; a pick
- * adds it and closes. Nothing left to add or nothing matching is §9.17's one line.
+ * adds it and closes. Nothing left to add or nothing matching is §9.17's sheet form: one
+ * sentence, 15/400 at 69 %, centred inside a 32 gutter, its line 48 under the pinned field
+ * (`.zen-settings-pick-empty`), no glyph and no follow-up – the field above is the way on.
  */
 export function LanguagePickList({
   label,
@@ -53,15 +54,9 @@ export function LanguagePickList({
         />
       </div>
       {shown.length === 0 ? (
-        <div data-static="" role="status" className="zen-settings-row zen-v2-row">
-          <RowText
-            label={
-              choices.length === 0
-                ? 'Every language is on the list'
-                : `No language matches “${term}”`
-            }
-          />
-        </div>
+        <p role="status" className="zen-settings-empty zen-settings-pick-empty">
+          {choices.length === 0 ? 'Every language is on the list' : `No language matches “${term}”`}
+        </p>
       ) : (
         <PickList label={label} options={shown} onPick={onPick} close={close} />
       )}

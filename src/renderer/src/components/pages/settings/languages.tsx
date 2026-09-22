@@ -1,15 +1,20 @@
 import { LANGUAGES_MAX } from '@shared/languages'
-import { languageName } from '@shared/languageNames'
-import { languageChoices } from '@renderer/lib/languageCatalogue'
+import {
+  catalogueLanguageName,
+  languageChoices,
+  nativeLanguageName
+} from '@renderer/lib/languageCatalogue'
 import { LanguagePickList } from './LanguagePickList'
 import type { RowGroup, SettingsRow } from './model'
 import type { SectionContext } from './sections'
 
 /**
  * Settings › Languages › Preferred languages (CT-41; Chrome's chrome://settings/languages as
- * the shared builder's first group, §10.3): `Settings.languages` as §10.4 rows in the list's
- * order – the language's name, one line, a trailing ⋯ whose menu is Move Up / Move Down /
- * Remove, the item that does not apply listed at .4 (Move Up on the first row, Remove on the
+ * the shared builder's first group, §10.3): `Settings.languages` as one-line static rows in the
+ * list's order – the language's name (in the UI's language, the catalogue's English name where
+ * the runtime has none, so never a bare tag), a trailing ⋯ whose menu is Move Up / Move Down /
+ * Remove (`RowMenu`: a row form the spec has not written, standing on the coordinator's ruling
+ * for #350), the item that does not apply listed at .4 (Move Up on the first row, Remove on the
  * last language: Chrome keeps one) – then Add language, an action row opening the §9.13 picker
  * (`LanguagePickList`: a sheet on a phone, the builder's form dialog on a mouse) with a filter
  * field pinned under its header (§10.3) over the catalogue's names in the UI's language and
@@ -39,7 +44,11 @@ export function preferredLanguagesGroups({
   const pagesFollow = state.capabilities.pageLanguages
   const keywords = ['preferred languages', 'accept-language', 'language order', 'translate into']
   const rows: SettingsRow[] = languages.map((code, index) => {
-    const name = languageName(code)
+    // The runtime's name for the tag, the catalogue's English one where it has none (Android's
+    // ICU writes "as" for Assamese); a tag from outside the catalogue that no runtime names is
+    // left to its own name, and the tag itself is the residual last resort for a stored value
+    // the picker never offered.
+    const name = catalogueLanguageName(code) ?? nativeLanguageName(code) ?? code
     return {
       kind: 'info',
       id: `languages-preferred:${code}`,
@@ -102,9 +111,11 @@ export function preferredLanguagesGroups({
     {
       id: 'preferred',
       heading: 'Preferred languages',
+      // Two sentences (§10.3's density, the #322 Q6 precedent): what the order does for sites,
+      // and for translation; the spell check group says what it does with the list.
       description: pagesFollow
-        ? 'In your order of preference. Sites that come in several languages show the first one here they have; pages are translated into the first language, and its dictionary checks spelling unless you chose others.'
-        : 'In your order of preference. Pages are translated into the first language here. Sites that come in several languages show the one this device is set to – pages receive the system’s languages, not this list.',
+        ? 'In your order of preference: sites that come in several languages show the first one here they have. Pages are translated into the first language.'
+        : 'Pages are translated into the first language here. Sites that come in several languages follow this device’s languages, not this list.',
       rows
     }
   ]

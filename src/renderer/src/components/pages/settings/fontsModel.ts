@@ -63,9 +63,11 @@ export function formatFontSize(px: number): string {
 
 /**
  * The families a picker offers for a slot: the platform's default first, then the generic
- * names every host resolves, then – on a host that lists them – the installed families, each
- * option drawn in its own face. The current family is kept on the list even when the computer
- * no longer has it (a synced choice), so the row never shows a value its picker lacks.
+ * names every host resolves, then – on a host that lists them – the installed families in one
+ * run (the desktop popover draws no group headings, so none is named), each option carrying
+ * its face as a CSS family for the picker's specimen (`RowOption.font`). The current family is
+ * kept on the list even when the computer no longer has it (a synced choice), so the row never
+ * shows a value its picker lacks.
  */
 export function familyOptions(
   current: string | null,
@@ -75,18 +77,22 @@ export function familyOptions(
   const names = generic ? GENERIC_FONT_FAMILIES : ANDROID_FONT_FAMILIES
   const options: RowOption[] = [
     { value: DEFAULT_FAMILY, label: DEFAULT_FAMILY_LABEL },
-    ...names.map((name) => ({ value: name, label: GENERIC_LABELS[name] ?? name, font: name }))
+    ...names.map((name) => ({
+      value: name,
+      label: GENERIC_LABELS[name] ?? name,
+      font: cssFamily(name)
+    }))
   ]
   if (installed) {
     const seen = new Set(names)
     for (const family of installed) {
       if (seen.has(family)) continue
       seen.add(family)
-      options.push({ value: family, label: family, font: family, group: 'Installed' })
+      options.push({ value: family, label: family, font: cssFamily(family) })
     }
   }
   if (current && !options.some((o) => o.value === current)) {
-    options.push({ value: current, label: current, font: current })
+    options.push({ value: current, label: current, font: cssFamily(current) })
   }
   return options
 }
@@ -105,7 +111,7 @@ export function previewFamilies(
   return { standard: fonts.standard ?? defaults.standard, fixed: fonts.fixed ?? defaults.fixed }
 }
 
-/** A family as a CSS `font-family` value: quoted unless it is a generic name. */
+/** A family as a CSS `font-family` value: quoted unless it is a generic name (a quoted one stays as it is). */
 export function cssFamily(family: string): string {
   return /^[a-z-]+$/.test(family) ? family : `"${family.replace(/"/g, '')}"`
 }

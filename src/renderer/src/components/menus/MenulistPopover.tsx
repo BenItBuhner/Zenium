@@ -26,9 +26,11 @@ export interface MenulistOption<T extends string> {
    */
   description?: string
   /**
-   * The label drawn in this font family (a font picker, as Chrome's fonts page draws its
-   * options): the face is what is being chosen, so the row shows it; the trigger keeps the
-   * chrome's own type.
+   * A specimen of this font family (a font picker): "Aa" drawn in the face at the row's
+   * trailing end, the label kept in the chrome's type. The face is what is being chosen, so the
+   * row shows it – but not as its own name: a symbol face (D050000L, Wingdings) drawn in itself
+   * writes its name as dingbats, and a row is its text (§9.13). A list with specimens keeps the
+   * check's 16 slot on every row, so they line up; the trigger shows the name alone.
    */
   font?: string
 }
@@ -150,6 +152,7 @@ function List<T extends string>({
   }
 
   if (!ready) return null
+  const specimens = options.some((option) => option.font)
   return (
     <ChromePortal>
       <div
@@ -174,7 +177,6 @@ function List<T extends string>({
       >
         {options.map((option) => {
           const selected = option.value === value
-          const face = option.font ? { fontFamily: option.font } : undefined
           return (
             <button
               key={option.value}
@@ -186,17 +188,26 @@ function List<T extends string>({
             >
               {option.description ? (
                 <span className="zen-v2-menulist-option-text">
-                  <span className="truncate" style={face}>
-                    {option.label}
-                  </span>
+                  <span className="truncate">{option.label}</span>
                   <span className="zen-v2-menulist-option-description">{option.description}</span>
                 </span>
               ) : (
-                <span className="min-w-0 flex-1 truncate" style={face}>
-                  {option.label}
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              )}
+              {option.font && (
+                <span
+                  className="zen-v2-menulist-option-specimen"
+                  style={{ fontFamily: option.font }}
+                  aria-hidden
+                >
+                  Aa
                 </span>
               )}
-              {selected && <Check aria-hidden />}
+              {selected ? (
+                <Check aria-hidden />
+              ) : (
+                specimens && <span className="zen-v2-menulist-option-mark" aria-hidden />
+              )}
             </button>
           )
         })}

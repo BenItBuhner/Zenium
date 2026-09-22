@@ -4,6 +4,7 @@ import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import {
   LANGUAGE_CATALOGUE,
+  catalogueLanguageName,
   filterLanguageChoices,
   languageChoices,
   nativeLanguageName
@@ -17,10 +18,11 @@ import { moveLanguage } from '../languages'
  * accept-language list as tags, each choice named in the UI's language with the language's own
  * name beside it where that says something more, sorted by name and less what is already on the
  * list; the filter matches every typed term against the name, the own name or the tag with
- * accents ignored; the list reorders by one place and never past its ends. The picker itself is
- * the filter field pinned first, then one pressable §10.4 row per match – a pick adds and closes –
- * and one static row (§9.17, §9.34) when nothing matches or nothing is left. CT-25's local-fonts
- * helper reduces the Local Font Access API's faces to distinct, sorted family names.
+ * accents ignored; a tag the runtime cannot name takes the catalogue's English name and is never
+ * offered as itself; the list reorders by one place and never past its ends. The picker itself
+ * is the filter field pinned first, then one pressable §10.4 row per match – a pick adds and
+ * closes – and §9.17's one centred sentence when nothing matches or nothing is left. CT-25's
+ * local-fonts helper reduces the Local Font Access API's faces to distinct, sorted family names.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -92,6 +94,29 @@ describe('the language catalogue', () => {
     expect(nativeLanguageName('zz')).toBeNull()
   })
 
+  it('a tag the runtime cannot name takes the catalogue’s English name – never the bare tag – and a tag outside the catalogue is null (#350 review R6)', () => {
+    // Android's ICU has no name for Assamese: `of` hands the tag back, as `fallback: "code"` does.
+    const of = Intl.DisplayNames.prototype.of
+    const spy = vi
+      .spyOn(Intl.DisplayNames.prototype, 'of')
+      .mockImplementation(function (this: Intl.DisplayNames, code: string) {
+        return code === 'as' ? code : of.call(this, code)
+      })
+    try {
+      expect(catalogueLanguageName('as')).toBe('Assamese')
+      expect(catalogueLanguageName('AS')).toBe('Assamese')
+      expect(catalogueLanguageName('de')).toBe('German')
+      expect(catalogueLanguageName('zz')).toBeNull()
+      const assamese = languageChoices().find((c) => c.value === 'as')
+      expect(assamese?.label).toBe('Assamese')
+      // The own name is what the runtime writes for the tag in itself; a runtime naming nothing
+      // has no line under the label rather than the tag again.
+      expect(assamese?.description === undefined || assamese?.description !== 'as').toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('filters by every term against the name, the own name and the tag, accents and case aside', () => {
     const choices = languageChoices()
     const values = (query: string): string[] =>
@@ -149,7 +174,7 @@ describe('the Add language picker', () => {
     expect(close).toHaveBeenCalledTimes(1)
   })
 
-  it('the filter narrows the rows as it is typed; no match is one static row naming the term; Escape clears the field before it would close the sheet', () => {
+  it('the filter narrows the rows as it is typed; no match is §9.17’s one centred sentence naming the term; Escape clears the field before it would close the sheet', () => {
     const el = render(
       <LanguagePickList
         label="Add language"
@@ -171,8 +196,14 @@ describe('the Add language picker', () => {
     type(field, 'klingon')
     rows = [...el.querySelectorAll<HTMLButtonElement>('button.zen-settings-row')]
     expect(rows).toEqual([])
+    // §9.17's sheet form: one sentence, centred in the sheet's gutter, top-anchored under the
+    // filter – not a row of the list (no `zen-settings-row`, no `data-static`).
     const empty = el.querySelector<HTMLElement>('[role="status"]')!
-    expect(empty.hasAttribute('data-static')).toBe(true)
+    expect(empty.tagName).toBe('P')
+    expect(empty.classList.contains('zen-settings-empty')).toBe(true)
+    expect(empty.classList.contains('zen-settings-pick-empty')).toBe(true)
+    expect(empty.classList.contains('zen-settings-row')).toBe(false)
+    expect(empty.hasAttribute('data-static')).toBe(false)
     expect(empty.textContent).toBe('No language matches “klingon”')
 
     const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
@@ -190,7 +221,7 @@ describe('the Add language picker', () => {
     expect(again.defaultPrevented).toBe(false)
   })
 
-  it('nothing left to add is one static row', () => {
+  it('nothing left to add is the same one sentence', () => {
     const el = render(
       <LanguagePickList
         label="Add language"
@@ -199,7 +230,9 @@ describe('the Add language picker', () => {
         close={() => undefined}
       />
     )
-    expect(el.querySelector('[role="status"]')?.textContent).toBe('Every language is on the list')
+    const empty = el.querySelector<HTMLElement>('[role="status"]')!
+    expect(empty.textContent).toBe('Every language is on the list')
+    expect(empty.classList.contains('zen-settings-pick-empty')).toBe(true)
     expect(el.querySelectorAll('button.zen-settings-row').length).toBe(0)
   })
 })

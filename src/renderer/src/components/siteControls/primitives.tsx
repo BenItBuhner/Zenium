@@ -1075,6 +1075,8 @@ export function Menulist<V extends string>({
   readOnly?: boolean
   autoFocus?: boolean
   className?: string
+  /** A class on the popup's panel (`V2Menulist`'s `popupClassName`). */
+  popupClassName?: string
 }): JSX.Element {
   return <V2Menulist {...props} className={cn('w-auto min-w-[140px] shrink-0', className)} />
 }
@@ -1095,6 +1097,7 @@ export function ChoiceRow<V extends string>({
   readOnly = false,
   autoFocus = false,
   controlClassName,
+  popupClassName,
   leading
 }: {
   label: string
@@ -1109,6 +1112,8 @@ export function ChoiceRow<V extends string>({
   autoFocus?: boolean
   /** The menulist's own classes – a column that gives every control one width (§9.13). */
   controlClassName?: string
+  /** A class on the menulist's popup panel: a surface's own width floor for a long list. */
+  popupClassName?: string
   leading?: ReactNode
 }): JSX.Element {
   return (
@@ -1128,6 +1133,7 @@ export function ChoiceRow<V extends string>({
           readOnly={readOnly}
           autoFocus={autoFocus}
           className={controlClassName}
+          popupClassName={popupClassName}
         />
       }
     />

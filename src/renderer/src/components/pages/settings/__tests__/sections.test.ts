@@ -1596,8 +1596,11 @@ describe('the section model', () => {
       'German',
       'Add language'
     ])
-    // The phone host's copy: pages receive the system's languages (`pageLanguages` false).
-    expect(group.description).toContain('pages receive the system’s languages')
+    // The phone host's copy (`pageLanguages` false): two sentences (§10.3's density, the #322
+    // Q6 precedent) – translation follows the list, sites follow the device's languages.
+    expect(group.description).toBe(
+      'Pages are translated into the first language here. Sites that come in several languages follow this device’s languages, not this list.'
+    )
     expect(group.description).not.toContain('checks spelling')
 
     const menuOf = (id: string): { label: string; disabled?: boolean; onSelect(): void }[] => {
@@ -1667,8 +1670,32 @@ describe('the section model', () => {
       ).ctx
     )
     const desktopGroup = desktop.groups.find((g) => g.id === 'preferred')!
-    expect(desktopGroup.description).toContain('show the first one here they have')
-    expect(desktopGroup.description).not.toContain('system’s languages')
+    expect(desktopGroup.description).toBe(
+      'In your order of preference: sites that come in several languages show the first one here they have. Pages are translated into the first language.'
+    )
+    expect(desktopGroup.description).not.toContain('device’s languages')
+  })
+
+  it('CT-41: a listed tag the runtime cannot name is labelled with the catalogue’s English name, never the bare tag (#350 review R6)', () => {
+    // Android's ICU has no name for Assamese: `of` hands the tag back.
+    const of = Intl.DisplayNames.prototype.of
+    const spy = vi
+      .spyOn(Intl.DisplayNames.prototype, 'of')
+      .mockImplementation(function (this: Intl.DisplayNames, code: string) {
+        return code === 'as' ? code : of.call(this, code)
+      })
+    try {
+      const c = context(state({}, { languages: ['as', 'en'] }))
+      const def = PAGE.sections.find((x) => x.id === 'languages')!
+      const model = buildSection(def, c.ctx)
+      const assamese = row(model, 'languages-preferred:as')
+      if (assamese.kind !== 'info' || !assamese.menu) throw new Error('no menu')
+      expect(assamese.label).toBe('Assamese')
+      expect(assamese.menu.label).toBe('Options for Assamese')
+      expect(assamese.keywords).toContain('as')
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('carries #135’s site-controls rows in Chrome’s Privacy and security order: Safety check, then #115’s Tracking prevention, Clear browsing data, Site settings', () => {
@@ -2507,7 +2534,7 @@ describe('what a row does', () => {
       expect(options.slice(1).every((o) => o.font === o.value)).toBe(true)
     })
 
-    it('a desktop host lists the four slots as menulist rows whose options carry their face – the generic names, then the installed families under a heading – keeping a synced family the computer lacks; Reset comes once anything moved and writes the defaults whole', () => {
+    it('a desktop host lists the four slots as menulist rows whose options carry their face as a CSS family for the picker’s specimen – the generic names, then the installed families in one run, no heading – keeping a synced family the computer lacks; Reset comes once anything moved and writes the defaults whole', () => {
       const c = context(desktopHost({ fonts: { ...DEFAULT_SETTINGS.fonts, serif: 'Georgia' } }))
       const model = buildSection(PAGE.sections[0], {
         ...c.ctx,
@@ -2536,10 +2563,14 @@ describe('what a row does', () => {
         'Georgia',
         'Inter'
       ])
-      expect(serif.options.find((o) => o.value === 'Inter')).toMatchObject({
-        font: 'Inter',
-        group: 'Installed'
+      // The face rides as a CSS family value (quoted, so "Fira Code" is one family); the desktop
+      // popover draws no group headings, so no option is grouped (the #350 review's nit 2).
+      expect(serif.options.find((o) => o.value === 'Inter')).toEqual({
+        value: 'Inter',
+        label: 'Inter',
+        font: '"Inter"'
       })
+      expect(serif.options.every((o) => o.group === undefined)).toBe(true)
       expect(serif.options.find((o) => o.value === 'serif')).toMatchObject({
         label: 'Serif',
         font: 'serif'
@@ -2561,7 +2592,7 @@ describe('what a row does', () => {
       })
       const fixed = row(gone, 'fonts-fixed')
       if (fixed.kind !== 'value') throw new Error('not a value row')
-      expect(fixed.options.at(-1)).toMatchObject({ value: 'Fira Code', font: 'Fira Code' })
+      expect(fixed.options.at(-1)).toMatchObject({ value: 'Fira Code', font: '"Fira Code"' })
 
       // Before the computer has answered, the rows keep to the generic names.
       const waiting = buildSection(PAGE.sections[0], {
@@ -2581,7 +2612,7 @@ describe('what a row does', () => {
       expect(c.patches.at(-1)).toEqual({ fonts: DEFAULT_SETTINGS.fonts })
     })
 
-    it('the preview is a static content row in the page fonts themselves: the standard family at the size, the fixed one at Chrome’s ratio, both floored by the minimum', () => {
+    it('the preview is §10.3’s static content row – a 13/69 % label over the samples, which are decoration for the eye – in the page fonts themselves: the standard family at the size, the fixed one at Chrome’s ratio, both floored by the minimum', () => {
       const fonts = { ...DEFAULT_SETTINGS.fonts, standard: 'Inter', size: 24, minimumSize: 20 }
       expect(previewFamilies(fonts, 'linux')).toEqual({ standard: 'Inter', fixed: 'Monospace' })
       expect(previewFamilies(DEFAULT_SETTINGS.fonts, 'android')).toEqual({
@@ -2591,6 +2622,15 @@ describe('what a row does', () => {
       const html = renderToStaticMarkup(createElement(FontPreview, { fonts, platform: 'linux' }))
       expect(html).toContain('data-row="fonts-preview"')
       expect(html).toContain('data-static')
+      // The content row's label form (§10.3): the label first at 13/69 %, the two samples hidden
+      // from the accessibility tree (the caption says what they are), the caption last.
+      expect(html).toMatch(
+        /<span class="zen-settings-description" data-part="label">Preview<\/span><p [^>]*data-face="standard"[^>]*aria-hidden="true"/
+      )
+      expect(html).toMatch(/<p [^>]*data-face="fixed"[^>]*aria-hidden="true"/)
+      expect(html).toMatch(
+        /data-part="description">How a page’s text and its fixed-width text look with these settings\.<\/span>/
+      )
       expect(html).toContain('--zen-settings-preview-family:&quot;Inter&quot;')
       expect(html).toContain('--zen-settings-preview-size:24px')
       // Chrome's monospace size for 24 is 20 (the 13/16 ratio), floored by the minimum of 20.
@@ -4278,8 +4318,11 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
     // Add opens the §9.13 sheet with the languages not yet checked in.
     const add = row(languages, 'spellcheck-add')
     if (add.kind !== 'action') throw new Error('not an action')
-    expect(add.label).toBe('Add a language')
-    expect(add.form?.title).toBe('Add a language to check in')
+    // One copy for the page's three Add rows (the #350 review's nit 3); the sheet's description
+    // says what the pick does.
+    expect(add.label).toBe('Add language')
+    expect(add.form?.title).toBe('Add language')
+    expect(add.form?.description).toBe('Text you type is checked in this language too.')
     expect(add.disabled).toBeFalsy()
   })
 

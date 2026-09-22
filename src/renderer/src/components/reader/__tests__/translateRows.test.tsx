@@ -18,7 +18,8 @@ import {
   readerTranslateTarget,
   readerTranslateWorking
 } from '@renderer/lib/readerTranslate'
-import { TranslateRows } from '../ReaderPreferencesPanel'
+import { DEFAULT_READER_PREFERENCES } from '@shared/reader'
+import { Rows, TranslateRows } from '../ReaderPreferencesPanel'
 
 /*
  * Translate inside Reader View's text preferences (CT-36): a "Translate into" menulist row over
@@ -27,6 +28,8 @@ import { TranslateRows } from '../ReaderPreferencesPanel'
  * reason in the danger ink when it failed (the press the retry) – which gives way to the Show
  * original switch once the article is translated. A pick of another language while translated
  * or at work redoes the translation at once; before that it only sets what Translate will do.
+ * In the panel the two rows are a group of their own after the type rows and before the aids,
+ * so the phone sheet's peek keeps the live type rows whole above its fold (#265's rule).
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -335,5 +338,66 @@ describe('the Translate rows', () => {
     )
     expect(el.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')!.disabled).toBe(true)
     expect((row(el, 'translate') as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('the panel’s order', () => {
+  /** The rows container's children in order: a hairline as '—', a row as its label. */
+  const outline = (el: HTMLElement): string[] =>
+    [...el.querySelector('[data-reader-prefs-rows]')!.children].map((child) =>
+      child.getAttribute('aria-hidden') === 'true' && child.childElementCount === 0
+        ? '—'
+        : (child.querySelector('.truncate')?.textContent ?? '?')
+    )
+
+  it('Translate is a group between two hairlines after the type rows and before the aids, so the type rows stay whole above the phone sheet’s peek fold (#265, #350 review R4)', () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+    const el = render(
+      <Rows
+        prefs={DEFAULT_READER_PREFERENCES}
+        onChange={() => undefined}
+        onListen={() => undefined}
+        translate={{ tabId: 't1', translate: TRANSLATE, translation: null }}
+      />
+    )
+    expect(outline(el)).toEqual([
+      'Listen to this article',
+      '—',
+      'Text size',
+      'Font',
+      'Colour theme',
+      'Column width',
+      'Text spacing',
+      '—',
+      'Translate into',
+      'Translate',
+      '—',
+      'Line focus',
+      'Lines in focus',
+      'Syllables'
+    ])
+  })
+
+  it('without the engine the type rows run straight into the aids’ hairline', () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+    const el = render(
+      <Rows
+        prefs={DEFAULT_READER_PREFERENCES}
+        onChange={() => undefined}
+        onListen={null}
+        translate={null}
+      />
+    )
+    expect(outline(el)).toEqual([
+      'Text size',
+      'Font',
+      'Colour theme',
+      'Column width',
+      'Text spacing',
+      '—',
+      'Line focus',
+      'Lines in focus',
+      'Syllables'
+    ])
   })
 })

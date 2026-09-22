@@ -9341,6 +9341,22 @@
   line-height: var(--v2-line-small);
   text-overflow: ellipsis;
 }
+/*
+ * A font picker's specimen (`MenulistOption.font`, the Settings tab's family rows): "Aa" in
+ * the option's own face at the row's size and ink, trailing the label, which stays in the
+ * chrome's type – a symbol face drawn in itself would write its name as dingbats. Every row of
+ * such a list keeps the check's 16 slot (`-mark`), so the specimens line up on the current row
+ * as on the others.
+ */
+.zen-v2-menulist-option-specimen {
+  flex-shrink: 0;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-v2-menulist-option-mark {
+  width: var(--v2-icon);
+  flex-shrink: 0;
+}
 
 /* The page: the landing stays mounted beneath a drill-in, which slides over it (§10.2). */
 .zen-settings-page {
@@ -10506,32 +10522,28 @@
   width: 200px;
 }
 /*
- * A row's ⋯ (`InfoRow.menu`, `RowMenuButton` in rows.tsx): the shared icon button at its own
- * size in the trailing slot, its box ending at the row's gutter as a control row's button and
- * the reader stepper's buttons do; the row is `data-control` on one line (36 / 52, §9.21) and
+ * A row's ⋯ (`InfoRow.menu`, `RowMenuButton` in rows.tsx) is the shared icon button, at its
+ * own size and in the row's ink as `V2IconButton` draws it (§9.3: a row's icon buttons in the
+ * row's ink; §9.29 deemphasises supplementary text only, never a control's glyph), in the
+ * trailing slot with its box ending at the row's gutter as a control row's button and the
+ * reader stepper's buttons do; the row is `data-control` on one line (36 / 52, §9.21) and
  * holds the button inside its two lines otherwise. The static row keeps no fill; the button
- * carries its own.
+ * carries its own. No rule of its own here: the class is the tests' hook.
  */
-.zen-settings-row-menu {
-  color: var(--v2-text-deemphasized);
-}
-.zen-settings-row-menu:hover:not(:disabled),
-.zen-settings-row-menu[aria-expanded='true'] {
-  color: var(--v2-text);
-}
 /*
- * Customize fonts (`settings/fonts.tsx`, CT-25): the preview paragraph is a static content
- * row (§10.3: a row of content grows with its text) in the page's gutter, drawn in the page
- * fonts themselves – the standard family at the chosen size, then the fixed-width family at
- * Chrome's ratio – so the row shows what a page will get; the row's own `font-family` and
- * `font-size` ride in from the row through its variables. The face and size are what the row
- * is for, so they are not the chrome's type; the ink and the 69 % note are.
+ * Customize fonts (`settings/fonts.tsx`, CT-25): the preview is a static content row (§10.3:
+ * a 13/69 % label over content the row shows whole, growing with its text) in the page's
+ * gutter, on the row's own pad; the two sample lines are drawn in the page fonts themselves –
+ * the standard family at the chosen size, then the fixed-width family at Chrome's ratio – so
+ * the row shows what a page will get; their `font-family` and `font-size` ride in from the row
+ * through its variables. The face and size are what the row is for, so they are not the
+ * chrome's type; the ink, the label and the 69 % note are.
  */
 .zen-settings-fonts-preview {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 16px 12px;
+  padding: var(--v2-row-pad) 16px;
   color: var(--v2-text);
 }
 .zen-settings-fonts-preview > p {
@@ -10551,8 +10563,10 @@
 /*
  * The phone's font picker (`FontPickList`, fontBlocks.tsx, on `RadioOption`'s `font`): §9.13's
  * radio rows in a sheet, each label in its own face at the row's body size (the face is the
- * choice), the current one marked; the desktop's menulist popover draws the same through
- * `MenulistOption.font`.
+ * choice, and the phone's options are the platform's word aliases, every one a face that
+ * writes its own name), the current one marked; the desktop's menulist popover, listing the
+ * computer's families, keeps the names in the chrome's type and shows each face as an "Aa"
+ * specimen instead (`MenulistOption.font`, `.zen-v2-menulist-option-specimen`).
  */
 .zen-settings-font-option .zen-settings-label {
   font-family: var(--zen-settings-option-font, inherit);
@@ -10561,7 +10575,9 @@
  * A picker sheet or dialog with a filter (`LanguagePickList.tsx`; §10.3: a field
  * pinned under a header): the field in the 16 gutter, 8 under the header, stuck to the top of
  * the scrolling body on the panel's own surface so the rows scroll under it; the rows follow
- * edge to edge; no match is §9.17's one line.
+ * edge to edge. No match, or nothing left to add, is §9.17's sheet form on `.zen-settings-empty`'s
+ * type and ink: one sentence centred inside a 32 gutter, its line 48 under the pinned field,
+ * 24 above the body's end; top-anchored, never centred in the free height.
  */
 .zen-settings-pick-filter {
   position: sticky;
@@ -10572,6 +10588,21 @@
 }
 .zen-settings-pick-filter > .zen-v2-field {
   width: 100%;
+}
+.zen-settings-pick-empty {
+  padding: 48px 32px 24px;
+  text-align: center;
+}
+/*
+ * The reader's Translate into popup (`ReaderPreferencesPanel.tsx`, CT-36): the translate bar's
+ * list width, 230, as its floor. `MenulistPopover` measures its width before `placeUnder` caps
+ * its height at 60 % of the window; a list of 58 languages then scrolls and the desktop's 8 px
+ * bar takes that much from the longest row ("Chinese (Simplifi…", §9.13 wants the popup grown
+ * to its longest row) – a chassis item to measure with the bar; this floor keeps every option
+ * whole here meanwhile, the anchor's width still counting when it is wider.
+ */
+.zen-v2-menulist-popup.zen-reader-translate-popup {
+  min-width: max(230px, var(--zen-anchor-width, 0px));
 }
 /*
  * Resources › Live usage (`blocks.tsx`'s `ResourceMeter`): label and numbers on one line, the

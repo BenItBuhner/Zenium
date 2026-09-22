@@ -53,9 +53,11 @@ export interface RowOption {
    */
   group?: string
   /**
-   * The option's label drawn in this font family (a font picker's rows, as Chrome's fonts page
-   * draws them – the face is the choice, so the row shows it): the desktop's menulist popover
-   * reads it (`MenulistOption.font`); the phone's picker rows draw it themselves (`fonts.tsx`).
+   * The option's font family as a CSS value (a font picker's rows – the face is the choice, so
+   * the row shows it): the desktop's menulist popover draws an "Aa" specimen in it after the
+   * label (`MenulistOption.font`; the label stays in the chrome's type, since a symbol face
+   * drawn in itself writes its name as dingbats); the phone's picker rows, the platform's word
+   * aliases, draw their labels in it themselves (`fontBlocks.tsx`).
    */
   font?: string
 }
@@ -189,9 +191,12 @@ export interface FieldRow extends RowBase {
 }
 
 /**
- * A bounded number on §10.4's slider row: the value as text beside the label, the slider – the
- * zoom sheet's `zen-zoom-slider` – under the text on a phone and trailing it on the desktop.
- * The slider commits when the thumb is let go; the text follows the drag.
+ * A bounded number as a slider row: the value as text beside the label, the slider – the zoom
+ * sheet's `zen-zoom-slider` – under the text on a phone and trailing it on the desktop. The
+ * slider commits when the thumb is let go; the text follows the drag. This is not §10.4's
+ * written phone form (44 step buttons at the track's ends, the value in the row above, the
+ * zoom block under Accessibility): whether this form stands beside it is the #350 lead check's
+ * question, so the row is not attributed to the section here.
  */
 export interface SliderRow extends RowBase {
   kind: 'slider'
@@ -213,7 +218,7 @@ export interface SliderRow extends RowBase {
 export interface RowMenuItem {
   id: string
   label: string
-  /** Not applicable now (Move up on the first row): the item stays listed at §9.30's .4. */
+  /** Not applicable now (Move Up on the first row): the item stays listed at §9.30's .4. */
   disabled?: boolean
   /** A destructive item, in the danger ink. */
   danger?: boolean
@@ -221,9 +226,12 @@ export interface RowMenuItem {
 }
 
 /**
- * A row's trailing ⋯ (§10.4: a list row whose few actions are a menu, not an item sheet – the
- * preferred languages' Move up / Move down / Remove): the shared `LocalMenu`, a popover under
- * the button on a mouse and a sheet of 44 rows titled with the row's label on a finger.
+ * A row's trailing ⋯: a list row whose few actions are a menu rather than an item sheet (the
+ * preferred languages' Move Up / Move Down / Remove), the shared `LocalMenu` – a popover under
+ * the button on a mouse, a sheet of 44 rows titled with the row's label on a finger. Not a form
+ * §10.4 or §10.5 write (§10.2 gives a row with its own actions the item sheet on a finger,
+ * §10.5 one trailing secondary on a mouse): it stands on the coordinator's ruling for #350
+ * until the spec takes it or the rows go back to items.
  */
 export interface RowMenu {
   /** The button's accessible name ("Options for English"). */
@@ -247,8 +255,8 @@ export interface InfoRow extends RowBase {
    */
   danger?: boolean
   /**
-   * A trailing ⋯ button with the row's actions as a menu (§10.4): the row stays static, the
-   * button is the target – `trailing` and `menu` are not set together.
+   * A trailing ⋯ button with the row's actions as a menu (`RowMenu`): the row stays static,
+   * the button is the target – `trailing` and `menu` are not set together.
    */
   menu?: RowMenu
 }

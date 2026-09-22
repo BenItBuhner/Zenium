@@ -25,11 +25,13 @@ import type { SectionContext } from './sections'
  * of the shared builder, §10.3): the font size and the minimum size as §9.21 slider rows over
  * Chrome's stops, applied when the thumb is let go with the live value beside the label and
  * Chrome's end labels under the track – a drag never re-lays the pages out per frame; the
- * family rows as §9.13 menulist rows whose picker draws each option in its own face (the
- * desktop's popover through `RowOption.font`; the phone's own picker sheet, `FontPickList`,
- * since the chassis's radio rows take no face); a Reset row once anything stands off the
- * defaults; and the preview as a static content row (§10.3: it grows with its text) in the
- * page fonts themselves, following each committed change. On a host whose engine ignores the
+ * family rows as §9.13 menulist rows whose picker shows each face (`RowOption.font`: the
+ * desktop's popover draws an "Aa" specimen in the face after the name, which stays in the
+ * chrome's type so a symbol face cannot write its own name as dingbats; the phone's own picker
+ * sheet, `FontPickList`, draws the platform's word aliases each in its face, since the
+ * chassis's radio rows take none); a Reset row once anything stands off the defaults; and the
+ * preview as a static content row (§10.3: a 13/69 % label over content that grows with its
+ * text) in the page fonts themselves, following each committed change. On a host whose engine ignores the
  * generic-family slots (`capabilities.genericFontFamilies` false: Android, where Blink resolves
  * `serif` / `sans-serif` / `monospace` through `fonts.xml` and never reads the settings) only
  * the standard family and the two sizes are rows – the honest list, as the interface note
@@ -39,9 +41,10 @@ import type { SectionContext } from './sections'
 /**
  * The group: sizes, families, preview, Reset. The family rows come in two forms by chrome
  * layout, one per row id, so a test walks both: the desktop and tablet shells' §9.13 value row,
- * whose menulist popover draws each option in its face (`RowOption.font`); the phone shell's
- * action row opening `FontPickList` in a sheet, since the chassis's picker sheet draws no face
- * (`sheets.tsx`) – the row shows the current family as its description like a value row does.
+ * whose menulist popover shows each option's face as a specimen (`RowOption.font`); the phone
+ * shell's action row opening `FontPickList` in a sheet, since the chassis's picker sheet draws
+ * no face (`sheets.tsx`) – the row shows the current family as its description like a value
+ * row does.
  */
 export function fontsGroups({
   state,
@@ -161,9 +164,12 @@ export function fontsGroups({
     {
       id: 'fonts',
       heading: 'Customise fonts',
+      // Two sentences (§10.3's density, the #322 Q6 precedent): what the group sets, then the
+      // limit that matters on this host – the Standard font row's own hint already says which
+      // text a page leaves to the browser.
       description: generic
         ? 'The type pages are set in when they leave it to the browser. Pages that name their own fonts keep them.'
-        : 'The type pages are set in when they leave it to the browser. Pages that name their own fonts keep them. The serif, sans-serif and fixed-width faces are the system’s on this device.',
+        : 'The type pages are set in when they leave it to the browser. The serif, sans-serif and fixed-width faces are the system’s on this device.',
       rows
     }
   ]
