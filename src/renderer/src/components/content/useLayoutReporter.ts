@@ -298,6 +298,7 @@ export function useLayoutReporter(
     gap,
     band,
     waitsForCover,
+    followsCover,
     formFactor
   ])
 
