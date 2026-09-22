@@ -12,10 +12,6 @@ name: Android share and screenshot demo
 # the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY: the one authorised run on the long capture's fix (the last for #321; removed after).
-  push:
-    branches:
-      - cursor/android-share-screenshot-be8e
 
 permissions:
   contents: read
