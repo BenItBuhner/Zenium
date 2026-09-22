@@ -68,10 +68,16 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     /**
      * Make a page another host [release]d one of ours. Its context is re-pointed at this window
      * (dialogs and pickers the page opens from now on belong here), what a new view takes from
-     * its host at creation – the page script and its bridge, the pull-to-refresh mode – is applied
-     * for this host, it starts hidden and unplaced like every new view, and the core is told to
-     * adopt it as an active tab the way it adopts a popup; the core answers with `view.bind`,
-     * which reports the page's URL and title.
+     * its host at creation – the page script and its bridge, the pull-to-refresh mode, the page
+     * fonts – is applied for this host, it starts hidden and unplaced like every new view, and
+     * the core is told to adopt it as an active tab the way it adopts a popup; the core answers
+     * with `view.bind`, which reports the page's URL and title.
+     *
+     * The fonts: a custom tab lays its page out with the fonts the file held when its process
+     * started (`PageFonts.load`), which may trail a Settings change the core has since pushed
+     * here (`fonts.apply` reaches the tabs this host holds, and this page was not one of them);
+     * `applyFonts` brings the adopted page onto the core's current fonts, restyled in place like
+     * every other tab's document (#328's Android note).
      */
     fun adopt(view: TabWebView) {
         val viewId = "handoff_${++popupSeq}"
@@ -79,6 +85,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.host = host
         view.installPageScript()
         view.applyPullToRefreshMode()
+        view.applyFonts()
         // A page that lived in a custom tab had no extension layer; the browser window's takes it over.
         host.extensions?.attach(view)
         view.applyAutofillProvider()
