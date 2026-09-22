@@ -297,14 +297,15 @@ function apply(browser: Browser, spec: string): void {
     // the regular tabs, and an "empty" pane is empty. A tab a `pdf=` state turned to the viewer
     // goes back to its page, unless the next state is another document for the same viewer. The
     // new tab page an `ntp=` state opened goes the same way, the device is back online if a
-    // `network=` state took it off, and the bar is docked where the seed says before the state
-    // is reached.
+    // `network=` state took it off, the active tab is back on its page if a state left it on an
+    // error page, and the bar is docked where the seed says before the state is reached.
     void clearAutofill(browser)
       .then(dissolveGroup)
       .then(closeExtensionPage)
       .then(() => (parsePreviewSpec(spec).kind === 'pdf' ? undefined : leavePdf()))
       .then(closeNewTabPage)
       .then(restoreConnectivity)
+      .then(leaveErrorPage)
       .then(() =>
         dockBar(seed.bar, () =>
           closePrivateTabs(() => closeSheets(() => reach(browser, spec, securityAtRest)))
@@ -1020,7 +1021,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'crash' && tab) {
     crashTab(tab, target.variant, finish)
   } else if (target.kind === 'unresponsive' && tab) {
-    // The sheet rises with its motion; the state is reached once it has settled.
+    // The prompt is about the page in front (the reset has it back on its page, loaded); the
+    // sheet rises with its motion, and the state is reached once it has settled.
     showUnresponsivePrompt(safeHost(tab.url) || tab.url, tab.favicon)
     window.setTimeout(finish, STEP_SETTLE_MS)
   } else if (target.kind === 'messages') {
@@ -2189,6 +2191,29 @@ function restoreConnectivity(): Promise<void> {
           resolve()
         })
     )
+  )
+}
+
+/**
+ * The active tab back on its page, loaded, before the next state: a previous state may have left
+ * it on an error page (`error=`, `crash=`, `network=reloading`) or with a load on its way (the
+ * reloading state's unhurried one). The next state starts on the page – a `network=reloading`
+ * fails the page's own URL, the prompt is about the page – and an error page the next state puts
+ * up is a fresh document, which matters for the scheme: the page reads it once, at load (on a
+ * device the host reloads pages on a theme switch; this host does not). Bounded by `untilState`.
+ */
+function leaveErrorPage(): Promise<void> {
+  const state = browserStore.get().state
+  const tab = state ? activeTab(state) : null
+  if (!tab) return Promise.resolve()
+  const onErrorPage = tab.url.startsWith(ERROR_URL_PREFIX)
+  if (!onErrorPage && !tab.loading) return Promise.resolve()
+  if (onErrorPage) run('tab.reload', { tabId: tab.id })
+  return new Promise<void>((resolve) =>
+    untilState((s) => {
+      const t = activeTab(s)
+      return t === null || t.id !== tab.id || (!t.url.startsWith(ERROR_URL_PREFIX) && !t.loading)
+    }, resolve)
   )
 }
 
