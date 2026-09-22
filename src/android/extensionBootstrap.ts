@@ -48,6 +48,7 @@ import { createFetchRelay, type FetchRelay } from './extensionFetchRelay'
 import { installExtensionUrlRewrite } from './extensionFrameUrls'
 import { installPdfDocumentType } from './extensionPdfDocument'
 import { installSpeechSynthesis } from './extensionSpeechSynthesis'
+import { installUrlOrigin, scopedUrlClass } from './extensionUrlOrigin'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -464,6 +465,9 @@ declare const __zenExtBoot: Boot
     // What the page spells `chrome-extension://<id>/...` by hand (a frame's src, an image's, a
     // script's) loads from the served origin: the WebView has no such scheme (extensionFrameUrls.ts).
     installExtensionUrlRewrite(window)
+    // `new URL('chrome-extension://<id>/...').origin` is the extension's origin as this page
+    // knows it, the served one, not the WebView's opaque "null" (extensionUrlOrigin.ts).
+    installUrlOrigin(window)
     // The Web Speech API's synthesis, which Chrome's documents have and the WebView's do not,
     // over the host's speech engine (extensionSpeechSynthesis.ts; Read&Write's speech frame).
     // Not on the MV3 worker page: a service worker's global has none in Chrome.
@@ -812,6 +816,9 @@ declare const __zenExtBoot: Boot
       // the page's window never sees it, and the world's own fetch runs under the document's
       // `connect-src` on a WebView (RoPro's locale file refused on roblox.com with worlds too).
       if (fetchRelay) root.fetch = fetchRelay.fetch
+      // The world's `URL` answers an extension URL's origin as the extension's pages know it
+      // (extensionUrlOrigin.ts); the world's interface object is the content scripts' alone.
+      installUrlOrigin(root)
     } else {
       shieldWorld(ext, 'with')
       operations ??= collectOperations(realWindow)
@@ -820,6 +827,9 @@ declare const __zenExtBoot: Boot
       // the page's fetch first, the host's answer for an extension-origin file the page's policy
       // refused. It lands in the scope's own store, never on the page's window.
       if (fetchRelay) root.fetch = fetchRelay.fetch
+      // The scope's `URL` is the page's subclassed, an extension URL's origin patched
+      // (extensionUrlOrigin.ts); in the store too, the page's own `URL` untouched.
+      if (typeof realWindow.URL === 'function') root.URL = scopedUrlClass(realWindow.URL)
       // A module the content script imports evaluates on the real global, not in the proxy's
       // scope: the host brackets the served module text, and this accessor answers the
       // extension's `chrome` there while the module's body runs (extensionModuleChrome.ts).
