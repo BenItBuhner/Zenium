@@ -1322,6 +1322,15 @@ describe('AndroidExtensionRuntime: chrome.userScripts', () => {
     expect(h.runtime.userScriptMessaging(ID)).toBe(false)
     const off = JSON.parse(String(userUnit().config)) as Record<string, unknown>
     expect(off.userScriptMessaging).toBe(false)
+    // The shim's second delivery of `tabs.sendMessage` (to the user-script worlds) has nothing
+    // left to do here – the router addresses them with the content scripts – and is no refusal.
+    const hosted = await call(h, 'bg1', 'userScripts', 'sendMessage', [
+      h.runtime.api.tabs.chromeIdFor('t1'),
+      { hello: 1 },
+      null
+    ])
+    expect(hosted.ok).toBe(true)
+    expect(hosted.result).toEqual({ handled: false, responded: false })
   })
 
   it('execute runs the sources in order in the user-script world of the target frames and answers per frame', async () => {

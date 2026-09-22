@@ -1563,6 +1563,14 @@ export class ExtensionApi {
         return undefined
       case 'execute':
         return this.executeUserScript(ext, normalizeInjection(args[0]))
+      case 'sendMessage':
+        // The shared shim's `tabs.sendMessage` asks the host to deliver to the tab's user-script
+        // worlds besides the engine's content scripts (`wrapTabsSendMessage`). Here the router
+        // already addresses `tabs.sendMessage` to every document of the extension in the tab,
+        // the user-script worlds among them, so there is nothing more to deliver: nobody
+        // else listened, nobody else answered (OrangeMonkey's worker and popup logged the
+        // refusal on every message to a tab, run 35787391495).
+        return { handled: false, responded: false }
     }
     throw new Error(`chrome.userScripts.${method} ${NOT_IMPLEMENTED}`)
   }
