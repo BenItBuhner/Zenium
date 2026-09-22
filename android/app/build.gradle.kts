@@ -206,6 +206,16 @@ android {
             // The JDK's HttpURLConnection silently drops `Origin` (a "restricted" header) unless told
             // otherwise; Android's OkHttp-backed one sends it. The CORS proxy tests check the rewrite.
             it.systemProperty("sun.net.http.allowRestrictedHeaders", "true")
+            // V2TokensPinTest reads the chrome's stylesheet, the sheet chassis's motion module and
+            // this module's value and anim resources off the repository, not the classpath (the R
+            // class does not change with a colour's value), so they are the task's inputs: a
+            // re-tuned token re-runs the pin instead of a cached pass standing for it.
+            it.inputs.files(
+                webRoot.resolve("src/renderer/src/assets/main.css"),
+                webRoot.resolve("src/renderer/src/lib/motion/sheet.ts")
+            ).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/values")).withPathSensitivity(PathSensitivity.RELATIVE)
+            it.inputs.dir(projectDir.resolve("src/main/res/anim")).withPathSensitivity(PathSensitivity.RELATIVE)
         }
     }
 
