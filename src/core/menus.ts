@@ -1323,8 +1323,8 @@ export class Menus {
 
     // Firefox's tab menu in Firefox's groups (design language v2 §6 "Menus": a context menu that
     // runs long is regrouped to the app menu's counts – about eighteen rows, four separators at
-    // most): the new tab; the tab's own state – reload, mute, pin, duplicate, Zen's rename, icon
-    // and Essentials; the tab's place – bookmark, unload, "Move Tab ▸" with the space, folder,
+    // most): the new tab; the tab's own state – reload, mute, duplicate, pin (Firefox's order),
+    // Zen's Essentials, rename and icon; the tab's place – bookmark, unload, "Move Tab ▸" with the space, folder,
     // routing and window moves that were five rows, split, container, share; closing, with the
     // three scoped closes under Firefox's "Close Multiple Tabs ▸"; then Reopen Closed Tab. Nothing
     // the flat menu did is gone – the long tails are in the submenus.
@@ -1352,6 +1352,8 @@ export class Menus {
         enabled: Boolean(domain),
         click: () => tabs.toggleMuteSite(tabId)
       },
+      { label: 'Duplicate Tab', ...key('tab.duplicate'), click: () => tabs.duplicate(tabId, win) },
+      // Pin after Duplicate, as Firefox orders them; a pinned row's own rows stand with it.
       tab.essential
         ? { label: 'Unpin Tab', ...key('tab.togglePin'), click: () => tabs.togglePin(tabId, win) }
         : {
@@ -1372,7 +1374,6 @@ export class Menus {
           click: () => this.browser.emit('tab.editPinnedUrl', { tabId }, win)
         }
       ),
-      { label: 'Duplicate Tab', ...key('tab.duplicate'), click: () => tabs.duplicate(tabId, win) },
       ...when(
         !local,
         tab.essential

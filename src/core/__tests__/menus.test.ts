@@ -2825,8 +2825,8 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       'Reload Tab',
       'Mute Tab',
       'Mute Site',
-      'Pin Tab',
       'Duplicate Tab',
+      'Pin Tab',
       'Add to Essentials',
       'Rename Tab…',
       'Change Icon…',
@@ -2853,6 +2853,10 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
       expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(20)
       expect(separators(shown)).toBe(4)
+      // The state group in Firefox's order: Reload, Mute, Duplicate, Pin.
+      const top = topLabels(shown)
+      expect(top.indexOf('Duplicate Tab')).toBe(top.indexOf('Mute Site') + 1)
+      expect(top.indexOf('Pin Tab')).toBe(top.indexOf('Duplicate Tab') + 1)
       expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([
         'Move to Space',
         'Add Tab to New Folder',
@@ -2919,11 +2923,9 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
       h.browser.tabs.togglePin(h.tabId, h.win)
       h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
       const top = topLabels(h.shown())
-      expect(top.slice(top.indexOf('Mute Site') + 1, top.indexOf('Duplicate Tab'))).toEqual([
-        'Unpin Tab',
-        'Reset Pinned Tab',
-        'Edit Pinned Tab…'
-      ])
+      expect(top.slice(top.indexOf('Duplicate Tab') + 1, top.indexOf('Add to Essentials'))).toEqual(
+        ['Unpin Tab', 'Reset Pinned Tab', 'Edit Pinned Tab…']
+      )
       expect(top.slice(-5)).toEqual([
         'Close Multiple Tabs',
         'Close Tab (keep pinned)',
