@@ -378,6 +378,107 @@ describe('DesktopPopover focus', () => {
     }
   })
 
+  it('under reduced motion collapses on opacity alone over 120 ms and still leaves on transitionend (§11.3)', () => {
+    vi.useFakeTimers()
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: query.includes('prefers-reduced-motion: reduce'),
+          media: query,
+          onchange: null,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+          addListener: () => undefined,
+          removeListener: () => undefined,
+          dispatchEvent: () => false
+        }) as MediaQueryList
+    )
+    try {
+      const onClosed = vi.fn()
+      function Prompt({ closing }: { closing: boolean }): ReactElement {
+        return (
+          <DesktopPopover
+            anchor={anchor}
+            labelledBy="t"
+            focus="none"
+            closing={closing}
+            collapse
+            onDismiss={() => undefined}
+            onClosed={onClosed}
+          >
+            {() => <h2 id="t">Allow example.com to use your camera?</h2>}
+          </DesktopPopover>
+        )
+      }
+      render(<Prompt closing={false} />)
+      const panel = document.querySelector<HTMLElement>('[role="dialog"]')!
+      expect(panel.classList.contains('zen-desktop-popover')).toBe(true)
+      const shown = { transform: panel.style.transform, origin: panel.style.transformOrigin }
+      expect(shown.transform).not.toBe('')
+      act(() => root!.render(<Prompt closing />))
+      // Nothing travels: the transform stays where the spring left it (not dropped to `none`),
+      // the one 120 ms fade on opacity – the length the stylesheet re-declares on
+      // `.zen-desktop-popover[data-collapsing]` past the global rule.
+      expect(panel.getAttribute('data-collapsing')).toBe('true')
+      expect(panel.style.opacity).toBe('0')
+      expect(panel.style.transform).toBe(shown.transform)
+      expect(panel.style.transformOrigin).toBe(shown.origin)
+      expect(panel.style.transition).toBe('opacity 120ms var(--zen-ease)')
+      expect(onClosed).not.toHaveBeenCalled()
+      // A child's transition ending is not the popover's.
+      act(() => {
+        panel.firstElementChild!.dispatchEvent(new Event('transitionend', { bubbles: true }))
+      })
+      expect(onClosed).not.toHaveBeenCalled()
+      act(() => {
+        panel.dispatchEvent(new Event('transitionend'))
+      })
+      expect(onClosed).toHaveBeenCalledTimes(1)
+      // The fallback timer, kept, does not fire it a second time.
+      act(() => {
+        vi.advanceTimersByTime(400)
+      })
+      expect(onClosed).toHaveBeenCalledTimes(1)
+    } finally {
+      matchMedia.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('collapsing with no transitionend at all still leaves on the 240 ms fallback', () => {
+    vi.useFakeTimers()
+    try {
+      const onClosed = vi.fn()
+      function Prompt({ closing }: { closing: boolean }): ReactElement {
+        return (
+          <DesktopPopover
+            anchor={anchor}
+            labelledBy="t"
+            focus="none"
+            closing={closing}
+            collapse
+            onDismiss={() => undefined}
+            onClosed={onClosed}
+          >
+            {() => <h2 id="t">Allow example.com to use your camera?</h2>}
+          </DesktopPopover>
+        )
+      }
+      render(<Prompt closing={false} />)
+      act(() => root!.render(<Prompt closing />))
+      act(() => {
+        vi.advanceTimersByTime(239)
+      })
+      expect(onClosed).not.toHaveBeenCalled()
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(onClosed).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('with focus="container" holds the panel itself, and Escape hands focus back to the opener', () => {
     const opener = document.createElement('button')
     opener.textContent = 'site chip'

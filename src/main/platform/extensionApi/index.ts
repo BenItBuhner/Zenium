@@ -32,6 +32,7 @@ import type { InvokeResult } from '../../../core/extensions/api/shim'
 import {
   API_SPEC,
   CONTENT_SETTINGS_INTERNAL_METHODS,
+  DESKTOP_CAPTURE_INTERNAL_METHODS,
   PRIVACY_INTERNAL_METHODS,
   PROXY_INTERNAL_METHODS,
   STORAGE_INTERNAL_METHODS,
@@ -768,7 +769,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
                     : routed === 'tabCapture' &&
                         (TAB_CAPTURE_INTERNAL_METHODS as readonly string[]).includes(method)
                       ? true
-                      : isSpecMethod(API_SPEC, namespace, method)
+                      : routed === 'desktopCapture' &&
+                          (DESKTOP_CAPTURE_INTERNAL_METHODS as readonly string[]).includes(method)
+                        ? true
+                        : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)

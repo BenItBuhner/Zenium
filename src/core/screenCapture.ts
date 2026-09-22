@@ -1,4 +1,9 @@
-import type { ScreenCaptureRequest, ScreenCaptureSource, Tab } from '../shared/types'
+import type {
+  ScreenCaptureKind,
+  ScreenCaptureRequest,
+  ScreenCaptureSource,
+  Tab
+} from '../shared/types'
 import { newId } from '../shared/ids'
 import { displayHost } from '../shared/url'
 import type { Browser } from './browser'
@@ -12,12 +17,29 @@ export interface ScreenCaptureAnswer {
   audio: boolean
 }
 
+/** The picker's panes in its order: Chrome's tab pane leads, then windows, then screens. */
+export const SCREEN_CAPTURE_KINDS: readonly ScreenCaptureKind[] = ['tab', 'window', 'screen']
+
 export interface ScreenCaptureRequestInit {
   tabId: string
-  /** The requesting frame's URL (its origin names the site in the picker). */
+  /**
+   * The requesting frame's URL (its origin names the site in the picker). For an extension's
+   * call, the URL of the tab it captures for, or empty when its own page consumes the stream.
+   */
   url: string
   /** The page asked for audio (`getDisplayMedia({ audio: true })`). */
   audio: boolean
+  /**
+   * An extension asking (`chrome.desktopCapture`): the picker names it, with its icon, in the
+   * site's place. A page's own call has none.
+   */
+  extension?: { name: string; icon: string | null }
+  /** The kinds to offer; Chrome's picker shows the panes the extension asked for. All three when absent. */
+  kinds?: readonly ScreenCaptureKind[]
+  /** The extension asked to leave the system's audio out (`options.systemAudio: "exclude"`). */
+  excludeSystemAudio?: boolean
+  /** The extension asked to leave the capturing tab out of the tab pane (`selfBrowserSurface: "exclude"`). */
+  excludeSelf?: boolean
 }
 
 export interface ScreenCaptureServiceOptions {
@@ -56,6 +78,13 @@ export function tabIdOfSource(sourceId: string): string | null {
  * source. The picker is the permission: no separate prompt, a cancel is a refusal for this
  * call alone (Chrome does not remember screen-share decisions either).
  *
+ * An extension's `chrome.desktopCapture.chooseDesktopMedia` is the same picker with the
+ * extension's name and icon in the site's place and the panes it asked for (`kinds`); the
+ * browser layer of the extension API makes the request and hands the extension the id. It is
+ * modal to the tab it names (`targetTab`, or the calling page's own tab; for a document without
+ * one, the focused window's active tab) as Chrome's dialog is web-modal to that tab
+ * (`DesktopMediaPickerDialogView`): a tab at the back holds its picker until it is in front.
+ *
  * The OS's list arrives after the request is up (`loading` until then); on Wayland the desktop
  * portal's own dialog shows first and the list holds the one source it granted.
  */
@@ -81,36 +110,59 @@ export class ScreenCaptureService {
    * page hears Chrome's refusal – rather than holding the call for a picker that is not there.
    */
   request(init: ScreenCaptureRequestInit): Promise<ScreenCaptureAnswer> {
+    return this.open(init).answer
+  }
+
+  /**
+   * `request` with the request's id alongside its answer, for a caller that may have to take
+   * the picker down itself (an extension's `cancelChooseDesktopMedia`); null when nothing was
+   * put up and the answer is the refusal at once.
+   */
+  open(init: ScreenCaptureRequestInit): {
+    id: string | null
+    answer: Promise<ScreenCaptureAnswer>
+  } {
+    const refused = { id: null, answer: Promise.resolve({ sourceId: null, audio: false }) }
     const tab = this.browser.tabs.tab(init.tabId)
-    if (!tab) return Promise.resolve({ sourceId: null, audio: false })
+    if (!tab) return refused
     this.cancelForTab(init.tabId)
-    if (!surfaceMounted(this.browser.tabs.ownerOf(init.tabId), 'screenCapture'))
-      return Promise.resolve({ sourceId: null, audio: false })
+    if (!surfaceMounted(this.browser.tabs.ownerOf(init.tabId), 'screenCapture')) return refused
+    // The panes, in the picker's order; a call that asks for none has nothing to pick from.
+    const kinds = SCREEN_CAPTURE_KINDS.filter((k) => !init.kinds || init.kinds.includes(k))
+    if (kinds.length === 0) return refused
+    const osKinds = (['screen', 'window'] as const).filter((k) => kinds.includes(k))
     const host = this.browser.platform.screenCapture
     const request: ScreenCaptureRequest = {
       id: newId('capture'),
       tabId: init.tabId,
       origin: displayHost(init.url) || init.url,
+      extension: init.extension ?? null,
+      kinds,
       audio: init.audio,
-      systemAudio: init.audio && Boolean(host?.systemAudio()),
-      loading: Boolean(host),
-      sources: this.tabSources(tab),
+      systemAudio:
+        init.audio &&
+        !init.excludeSystemAudio &&
+        kinds.includes('screen') &&
+        Boolean(host?.systemAudio()),
+      loading: Boolean(host) && osKinds.length > 0,
+      sources: kinds.includes('tab') ? this.tabSources(tab, init.excludeSelf === true) : [],
       requestedAt: this.now()
     }
     const promise = new Promise<ScreenCaptureAnswer>((resolve) => {
       this.pending.push({ request, resolve })
     })
     this.browser.state.commitVolatile()
-    if (host) void this.loadSources(request.id, host)
-    return promise
+    if (host && osKinds.length > 0) void this.loadSources(request.id, host, osKinds)
+    return { id: request.id, answer: promise }
   }
 
   /**
    * The picker's "Zenium tab" section: the calling tab first (Chrome's "This tab"), then the
    * other tabs of its window whose page is alive – a discarded tab has nothing to capture.
+   * An extension may ask to leave the calling tab out (`excludeSelf`).
    */
-  private tabSources(tab: Tab): ScreenCaptureSource[] {
-    const out = [tabSource(tab)]
+  private tabSources(tab: Tab, excludeSelf: boolean): ScreenCaptureSource[] {
+    const out = excludeSelf ? [] : [tabSource(tab)]
     const win = this.browser.tabs.ownerOf(tab.id)
     if (!win) return out
     for (const [tabId, view] of this.browser.tabs.viewsOwnedBy(win)) {
@@ -123,11 +175,12 @@ export class ScreenCaptureService {
 
   private async loadSources(
     id: string,
-    host: NonNullable<Browser['platform']['screenCapture']>
+    host: NonNullable<Browser['platform']['screenCapture']>,
+    kinds: Array<'screen' | 'window'>
   ): Promise<void> {
     let sources: ScreenCaptureSource[] = []
     try {
-      sources = await host.sources(['screen', 'window'])
+      sources = await host.sources(kinds)
     } catch {
       /* the OS refused (no portal, no permission): the tab stays on offer */
     }

@@ -791,8 +791,13 @@ function useSheetChassis(
  * Layering: the scrim is a positioned child painted first, and the children render in a slot
  * after it with its own stacking context above the scrim (`.zen-frame-dialogs-slot`,
  * `z-index: 1`), so a dialog paints over the scrim and takes the pointer whether or not it is
- * positioned itself; between the dialogs the slot lets the pointer through to the scrim, whose
- * press – consumed on `pointerdown` (§9.20 amended) – goes to the dialog on top. While a dialog
+ * positioned itself. Every root in the slot – a child of the host's or one placed through
+ * `FrameDialogPortal`, the slot's direct child either way – is a stacking context of its own,
+ * ranked by its slot index (`.zen-frame-dialogs-slot > *`: `isolation: isolate`, `z-index:
+ * sibling-index()`), so two stacked dialogs never interleave (§9.24, later on top) and no
+ * dialog needs a stacking rule of its own; between the dialogs the slot lets the pointer
+ * through to the scrim, whose press – consumed on `pointerdown` (§9.20 amended) – goes to the
+ * dialog on top. While a dialog
  * is open the window chrome outside the frame is inert (`holdChromeInert`, §9.5) and every open
  * popover closes; Escape and the dialog's own controls stay live.
  *
