@@ -607,18 +607,17 @@ describe('the site-data viewer', () => {
     function open(): { el: HTMLElement; onClose: ReturnType<typeof vi.fn> } {
       const onClose = vi.fn()
       const el = render(
-        createElement(
-          FrameDialogHost,
-          null,
-          createElement(SettingsDialog, {
-            name: 'form:site-data-see-all',
-            title: 'Site data',
-            description: 'Sites that stored cookies or data on this device.',
-            under: false,
-            onClose,
-            children: createElement(SiteDataViewer)
-          })
-        )
+        <FrameDialogHost>
+          <SettingsDialog
+            name="form:site-data-see-all"
+            title="Site data"
+            description="Sites that stored cookies or data on this device."
+            under={false}
+            onClose={onClose}
+          >
+            <SiteDataViewer />
+          </SettingsDialog>
+        </FrameDialogHost>
       )
       return { el, onClose }
     }
