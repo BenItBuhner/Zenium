@@ -461,7 +461,13 @@ describe('the card and group menus', () => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })
     act(() => settleSprings())
-    expect(sheetLabels()).toEqual(['Rename', 'Collapse', 'Ungroup', 'Close Group (2 Tabs)'])
+    expect(sheetLabels()).toEqual([
+      'Rename',
+      'Collapse',
+      'Ungroup',
+      'Close Group (2 Tabs)',
+      'Delete Group'
+    ])
     // The colour swatches are a radio group, named for assistive technology; not menu rows.
     expect(document.querySelector('[role="radiogroup"][aria-label="Colour"]')).not.toBeNull()
   })
@@ -1364,9 +1370,13 @@ describe('the private pane', () => {
     act(() => resetOverviewPane())
   })
 
-  it('a host without private tabs has no segment, and a private card never reaches its grid', () => {
+  it('a host without private tabs has no Private segment, and a private card never reaches its grid', () => {
     render(stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], []))
-    expect(host!.querySelector('[role="tablist"]')).toBeNull()
+    // The segment stays for the Groups pane (TAB-16); the Private pane alone needs the host's say.
+    expect([...host!.querySelectorAll('[role="tab"]')].map((b) => b.textContent)).toEqual([
+      'Tabs',
+      'Groups'
+    ])
     expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
   })
 

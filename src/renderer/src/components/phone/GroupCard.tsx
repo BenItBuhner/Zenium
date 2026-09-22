@@ -296,7 +296,18 @@ export function GroupBadge({ folder }: { folder: Folder }): JSX.Element {
   )
 }
 
-function GroupRename({ folder }: { folder: Folder }): JSX.Element {
+/**
+ * The group's name being edited in place (`uiStore.renamingFolderId`): in the card's header, and
+ * in the Groups pane's row (TAB-16) at the row's own size through `className`. Enter and a blur
+ * save a changed, non-empty name; Escape keeps the old one.
+ */
+export function GroupRename({
+  folder,
+  className
+}: {
+  folder: Folder
+  className?: string
+}): JSX.Element {
   const [value, setValue] = useState(folder.name)
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -322,7 +333,10 @@ function GroupRename({ folder }: { folder: Folder }): JSX.Element {
         if (e.key === 'Escape') commit(false)
         e.stopPropagation()
       }}
-      className="min-w-0 flex-1 rounded-[8px] bg-[var(--zen-element-bg)] px-2 py-0.5 text-[13px] font-medium outline-none"
+      className={cn(
+        'min-w-0 flex-1 rounded-[8px] bg-[var(--zen-element-bg)] px-2 py-0.5 text-[13px] font-medium outline-none',
+        className
+      )}
     />
   )
 }

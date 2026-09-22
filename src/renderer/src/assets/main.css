@@ -7487,6 +7487,81 @@
   }
 }
 
+/*
+ * The overview's Groups pane (TAB-16, `components/phone/GroupsPane.tsx`): the phone panels'
+ * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
+ * `.zen-v2-heading` with the panels' modifiers) and the row's 44 icon button standing on the
+ * overview's window backdrop, so they draw in the window family (§9.29) through the control
+ * roles the overview root's `data-surface="window"` resolves: the theme's ink, its 69% for the
+ * count and the time, the window fill for the press – where the panels' own draw in the page's.
+ * A modifier by context on the primitives, unlayered beside them (§9.34), each rule outranking
+ * the primitive's by specificity; the disabled row (an empty group, `data-disabled` on the
+ * panels' modifier) keeps its no-fill. The heading carries its count as a §10.3 aside at the
+ * gutter's end; the first heading stands under the segment (or the space strip), which already
+ * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
+ * open group, the same as a 2 px ring for a saved one, whose tabs are closed (`--zen-group-color`
+ * on the glyph). The pane's empty state is `PrivateEmpty`'s composition (§9.17) in the window ink.
+ */
+.zen-overview-groups .zen-v2-row {
+  color: var(--v2-control-text);
+}
+.zen-overview-groups
+  .zen-v2-row:active:not([aria-disabled='true'], [data-static], [data-disabled]) {
+  background: var(--v2-control-fill);
+}
+@media (hover: hover) {
+  .zen-overview-groups
+    .zen-v2-row:hover:not([aria-disabled='true'], [data-static], [data-disabled]) {
+    background: var(--v2-control-fill);
+  }
+}
+.zen-overview-groups .zen-list-subtitle {
+  color: var(--v2-control-text-deemphasized);
+}
+.zen-overview-groups .zen-v2-icon-button {
+  color: var(--v2-control-text);
+}
+.zen-overview-groups .zen-v2-icon-button:active:not(:disabled) {
+  background: var(--v2-control-fill);
+}
+.zen-overview-groups .zen-v2-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--v2-control-text);
+}
+.zen-overview-groups > :first-child > .zen-v2-heading {
+  margin-top: 4px;
+}
+.zen-overview-groups-aside {
+  flex-shrink: 0;
+  color: var(--v2-control-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-overview-group-glyph {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--zen-group-color);
+}
+.zen-overview-group-glyph[data-saved] {
+  border: 2px solid var(--zen-group-color);
+  background: transparent;
+}
+/* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
+.zen-overview-groups .zen-overview-group-rename {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+}
+.zen-overview-groups-empty p {
+  color: var(--v2-control-text-deemphasized);
+}
+
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
 .zen-v2-card-radio {
   border-radius: var(--v2-radius-card);

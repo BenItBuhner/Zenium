@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type {
-  FormFactor,
-  HostCapabilities,
-  PageContextParams,
-  Platform as PlatformOs
-} from '../../shared/types'
+import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { Browser } from '../browser'
 import { isSavedFolder } from '../model'
 import type {
   MenuHost,
   MenuItemTemplate,
+  PageContextParams,
   Platform,
   StoreIO,
   TabView,
@@ -320,7 +316,7 @@ describe('the link menu’s group item (TAB-15)', () => {
     const m = h.browser.state.model
     const folder = h.group('Trip')
     const a = h.open('https://a.test/', { folderId: folder })
-    const b = h.open('https://b.test/', { folderId: folder })
+    h.open('https://b.test/', { folderId: folder })
     const loose = h.open('https://loose.test/')
     h.browser.tabs.activateTab(a, h.win)
 
