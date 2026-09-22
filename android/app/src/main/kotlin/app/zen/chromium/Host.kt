@@ -376,15 +376,29 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         endRenderer(RendererExits.Exit.HUNG)
     }
 
-    /**
-     * End the renderer with the pages on screen recorded as gone the way `exit` says. Exit page
-     * ends it as [RendererExits.Exit.HUNG]; the demo driver ends it as
-     * [RendererExits.Exit.CRASH], since a WebView has no `chrome://crash` and
-     * `WebViewRenderProcess.terminate()` alone reads as the system's kill (the memory page).
-     */
-    fun endRenderer(exit: RendererExits.Exit) {
+    /** End the renderer with the pages on screen recorded as gone the way `exit` says (Exit page: [RendererExits.Exit.HUNG]). */
+    private fun endRenderer(exit: RendererExits.Exit) {
         rendererExits.ending(exit, visibleTabIds())
         terminateRenderer(chrome)
+    }
+
+    /**
+     * The demo harness's hook ([DebugHooks]; the plan's `zen.debug.endRenderer`): end the shared
+     * renderer with the pages on screen recorded as gone the way `exit` says – as
+     * [RendererExits.Exit.CRASH] for the crash page, since a WebView has no `chrome://crash` and
+     * `WebViewRenderProcess.terminate()` alone reads as the system's kill (the memory page).
+     * Debuggable builds alone act (`BuildConfig.DEBUG`, decided as the boot payload's
+     * `holdBackgroundWork` is); the answer says whether it did. A Kotlin method for the
+     * instrumentation in the app's process: not a bridge method, not on any `window`.
+     */
+    fun debugEndRenderer(exit: RendererExits.Exit): Boolean {
+        if (!DebugHooks.enabled(BuildConfig.DEBUG)) {
+            Log.w(TAG, "debugEndRenderer: not a debuggable build; nothing done")
+            return false
+        }
+        Log.w(TAG, "debugEndRenderer: ending the renderer as $exit")
+        endRenderer(exit)
+        return true
     }
 
     /**
