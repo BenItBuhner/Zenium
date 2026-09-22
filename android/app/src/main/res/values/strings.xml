@@ -7,6 +7,11 @@
     <string name="leave">Leave</string>
     <string name="stay">Stay</string>
 
+    <!-- The omnibox field's floating toolbar (FieldToolbar.kt, OMN-23): Zenium's item beside the
+         system's own Paste and Select all takes their sentence case, not the app's Title Case. -->
+    <string name="paste_and_go">Paste and go</string>
+    <string name="paste_and_search">Paste and search</string>
+
     <!-- The launcher's long-press shortcut (res/xml/shortcuts.xml). -->
     <string name="shortcut_private_short">New private tab</string>
     <string name="shortcut_private_long">New private tab in Zenium</string>

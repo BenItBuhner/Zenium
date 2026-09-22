@@ -498,8 +498,13 @@ function reducedMotionRules(css: string): Array<{ selectors: string[]; body: str
 describe('the layout the morph measures (main.css): no transition under reduced motion', () => {
   const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
   const reduced = reducedMotionRules(css)
-  const on = (fragment: string): Array<{ selectors: string[]; body: string }> =>
-    reduced.filter((r) => r.selectors.some((s) => s.includes(fragment)))
+  // The class itself, whole: `.zen-phone-bar` is not `.zen-phone-bar-row`, whose items' opacity
+  // fade under the pill's focus motion (MOT-07, lib/omniboxFocus.ts) is their own and lays out
+  // nothing the morph measures.
+  const names = (selector: string, className: string): boolean =>
+    new RegExp(`${className.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}(?![\\w-])`).test(selector)
+  const on = (className: string): Array<{ selectors: string[]; body: string }> =>
+    reduced.filter((r) => r.selectors.some((s) => names(s, className)))
 
   it('one global rule removes every transition and animation, pseudo-elements included', () => {
     const removers = reduced.filter((r) => r.selectors.includes('*'))
@@ -515,7 +520,7 @@ describe('the layout the morph measures (main.css): no transition under reduced 
     expect(on('.zen-phone-bar-clip')).toEqual([])
     // The bar has rules under reduced motion for the morph's two phases alone: its fade.
     const bar = on('.zen-phone-bar')
-    expect(bar.flatMap((r) => r.selectors.filter((s) => s.includes('.zen-phone-bar')))).toEqual([
+    expect(bar.flatMap((r) => r.selectors.filter((s) => names(s, '.zen-phone-bar')))).toEqual([
       ":root[data-fakebox='closing'] .zen-phone-bar",
       ":root[data-fakebox='opening'] .zen-phone-bar"
     ])

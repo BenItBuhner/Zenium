@@ -1,11 +1,12 @@
 import type { CSSProperties, JSX } from 'react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { Globe, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import { securityIndicator } from '@shared/siteInfo'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
+import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
 import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
@@ -24,9 +25,11 @@ import {
   phoneBandHeight
 } from '@renderer/lib/gestures/dock'
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
+import type { TabSwitchState } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
+import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
@@ -43,7 +46,6 @@ import {
   openBarEditor,
   openMediaSheet,
   openTabsMenu,
-  openUrlbar,
   overlayCoversContent,
   showBanner,
   uiStore,
@@ -180,7 +182,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         // information instead – where the translate offer and the blocking shield are (OMN-02).
         const r = icon.getBoundingClientRect()
         void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
-      } else void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
+      } else {
+        // The pill grows into the omnibox's field as the bar's buttons are pushed off (MOT-07,
+        // lib/omniboxFocus.ts): the bar opens under the field on its way.
+        focusOmnibox(tab?.id ?? null)
+      }
     }
   })
 
@@ -188,9 +194,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // The new tab page's field on its way to or from the omnibox (NTP-02, lib/fakeboxMorph.ts):
   // the bar stays mounted under the arriving sheet, fading on the morph's value (main.css), so
   // the field is seen to leave it and to come back to it; the pill's slot is the field's well
-  // while the field is the page's.
+  // while the field is the page's. The pill growing into the field (MOT-07,
+  // lib/omniboxFocus.ts) holds it the same way, its buttons pushed off and back on the value.
   const morph = fakeboxMorphStore.use()
-  const barUp = !barHidden || fakeboxHoldsChrome(morph)
+  const focus = omniboxFocusStore.use()
+  const barUp = !barHidden || fakeboxHoldsChrome(morph) || focusHoldsChrome(focus)
   // The tab group strip (TAB-14): present while the active tab is grouped, and on its way out for
   // a moment after it leaves; its share of the bar band is published by the hook.
   const strip = useGroupStrip(state)
@@ -435,14 +443,18 @@ export function PhoneBar({
   // The bar that hides on scroll writes its progress on this element per frame (lib/barHide.ts);
   // the preview of the bar at the other edge, drawn during a carry, does not hide.
   const bindHide = useBarHideBinding(!inert)
-  // One ref for the two: the recede's registration reads the element off `barRef` in its layout
-  // effect, the hide's binding takes the element as it mounts and unmounts.
+  // The pill's focus motion writes its value here per frame too (lib/omniboxFocus.ts): the
+  // buttons and the pill under this element read it, so the frame recalculates the bar alone.
+  const bindFocus = useOmniboxFocusBinding()
+  // One ref for the three: the recede's registration reads the element off `barRef` in its
+  // layout effect, the two bindings take the element as it mounts and unmounts.
   const setBar = useCallback(
     (el: HTMLElement | null) => {
       barRef.current = el
       bindHide(el)
+      bindFocus(el)
     },
-    [bindHide]
+    [bindHide, bindFocus]
   )
 
   return (
@@ -527,6 +539,16 @@ export function PhoneBar({
 }
 
 /**
+ * The pill label's slide with the tab track: up to 16 px either way, towards the nearest card,
+ * in whole pixels. The empty string at rest, so the element carries no transform then.
+ */
+function pillLabelShift(tabs: TabSwitchState): string {
+  if (tabs.phase === 'idle') return ''
+  const shift = Math.round((Math.round(tabs.position) - tabs.position) * 16)
+  return shift ? `translateX(${shift}px)` : ''
+}
+
+/**
  * What the pill says. While a swipe moves the tab track the pill follows the tab under the
  * finger – its label slides a little with the cards and swaps as the nearest card changes.
  * `interactive` renders the address as a button and the site icon and the lock as chips of
@@ -550,10 +572,17 @@ export function PillContent({
     if (s.tabs.phase === 'idle') return null
     return s.tabs.order[Math.round(s.tabs.position)] ?? null
   })
-  const shift = stageStore.use((s) => {
-    if (s.tabs.phase === 'idle') return 0
-    return Math.round((Math.round(s.tabs.position) - s.tabs.position) * 16)
-  })
+  // The label's slide with the cards is written to the element as the track moves, not
+  // rendered: a swipe would otherwise render the whole pill at every pixel of the slide
+  // (PERF-5's profile); the render gives a freshly mounted label its first offset.
+  const label = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const apply = (): void => {
+      if (label.current) label.current.style.transform = pillLabelShift(stageStore.get().tabs)
+    }
+    apply()
+    return stageStore.subscribe(apply)
+  }, [])
   const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const shown = (underFinger && state.tabs[underFinger]) || tab
   // A page of an extension: the extension's name stands where the host would (as "Settings"
@@ -656,8 +685,9 @@ export function PillContent({
   return (
     <span
       key={shown?.id ?? 'empty'}
+      ref={label}
       className="zen-animate-fade flex h-full min-w-0 flex-1 items-center gap-2"
-      style={{ transform: shift ? `translateX(${shift}px)` : undefined }}
+      style={{ transform: pillLabelShift(stageStore.get().tabs) || undefined }}
     >
       <Control
         {...controlProps}
