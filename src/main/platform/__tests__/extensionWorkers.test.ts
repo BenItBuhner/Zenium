@@ -523,6 +523,58 @@ describe('ContextRegistry with a destroyed and recreated worker wrapper', () => 
     expect(eventsSentTo(worker)).toEqual([['runtime', 'onStartup']])
   })
 
+  it('sends a URL event it could not match with its URL, so the shim holds it to the filters the script registers', () => {
+    // PDF Viewer: `webNavigation.onBeforeNavigate` filtered to `file://*.pdf` in an MV3 worker the
+    // navigation itself wakes. Chrome matches the filter in the browser process; the registry has
+    // no filters yet for a worker whose script has not run, so the delivery carries the URL.
+    const { engine, session, wired } = setup()
+    const { registry } = registryFor(session, wired)
+    engine.live.set(11, SCOPE)
+    const worker = engine.getWorkerFromVersionID(11)!
+    wired.wire(asMain(worker), session)
+    registry.workerStatus(11, session, 'starting')
+    const context = registry.helloWorker(EXT, asMain(worker), session)
+    engine.running.add(11)
+    registry.workerStatus(11, session, 'running')
+    const deliveries = (): unknown[] =>
+      worker.sent.filter((s) => s.channel === 'zen-ext:event').map((s) => s.args[3])
+
+    // Woken for the event: nothing registered yet.
+    const pdf = { tabId: 1, frameId: 0, url: 'http://fixture.test/sample.pdf' }
+    expect(
+      registry.dispatch(EXT, 'webNavigation', 'onBeforeNavigate', [pdf], {
+        wake: true,
+        url: pdf.url
+      })
+    ).toBe(1)
+    expect(deliveries()).toEqual([{ unfiltered: true, matched: [], url: pdf.url }])
+
+    // The script registered its filtered listener; the worker is still in its start-up window
+    // (`fresh`), where an event nothing matches used to go out addressed to everyone.
+    registry.listen(
+      context,
+      {
+        event: 'webNavigation.onBeforeNavigate',
+        filterId: 1,
+        filters: [{ urlPrefix: 'file://', pathSuffix: '.pdf' }]
+      },
+      true
+    )
+    const viewer = { tabId: 1, frameId: 0, url: `${SCOPE}content/web/viewer.html?file=x` }
+    expect(
+      registry.dispatch(EXT, 'webNavigation', 'onBeforeNavigate', [viewer], { url: viewer.url })
+    ).toBe(1)
+    expect(deliveries()[1]).toEqual({ unfiltered: true, matched: [], url: viewer.url })
+    const local = { tabId: 1, frameId: 0, url: 'file:///home/me/doc.pdf' }
+    expect(
+      registry.dispatch(EXT, 'webNavigation', 'onBeforeNavigate', [local], { url: local.url })
+    ).toBe(1)
+    expect(deliveries()[2]).toEqual({ unfiltered: false, matched: [1] })
+    // Without a URL the fallback still addresses everyone.
+    expect(registry.dispatch(EXT, 'alarms', 'onAlarm', [{ name: 'tick' }], { wake: true })).toBe(1)
+    expect(deliveries()[3]).toBeUndefined()
+  })
+
   it('fans a storage sync change out through the recreated wrapper, in order', () => {
     const { engine, session, wired, install } = setup()
     const { registry } = registryFor(session, wired)

@@ -275,6 +275,119 @@ describe('installExtensionApi', () => {
     ])
   })
 
+  it('holds a delivery the host could not match to the filtered listener’s own UrlFilters', () => {
+    // PDF Viewer's shape: a worker woken by the navigation registers its `file://*.pdf`-filtered
+    // `onBeforeNavigate` listener only once its script runs, after the host queued the event with
+    // its URL. Delivered unfiltered, the listener turns every http(s) tab into its viewer.
+    installExtensionApi(host, API_SPEC)
+    const seen: string[] = []
+    const everyone: string[] = []
+    const unmatched = (url: string): EventDelivery => ({ unfiltered: true, matched: [], url })
+    // Queued before any listener exists: what the router sends a worker it woke.
+    host.pushDelivery(
+      'webNavigation',
+      'onBeforeNavigate',
+      [{ url: 'http://fixture.test/sample.pdf' }],
+      unmatched('http://fixture.test/sample.pdf')
+    )
+    host.pushDelivery(
+      'webNavigation',
+      'onBeforeNavigate',
+      [{ url: 'file:///home/me/doc.pdf#page=2' }],
+      unmatched('file:///home/me/doc.pdf#page=2')
+    )
+    g.chrome.webNavigation.onBeforeNavigate.addListener((d: Any) => seen.push(d.url), {
+      url: [
+        { urlPrefix: 'file://', pathSuffix: '.pdf' },
+        { urlPrefix: 'file://', pathSuffix: '.PDF' }
+      ]
+    })
+    expect(seen).toEqual(['file:///home/me/doc.pdf#page=2'])
+    // The first listener consumed the queue (as before); a later unfiltered one sees what follows.
+    g.chrome.webNavigation.onBeforeNavigate.addListener((d: Any) => everyone.push(d.url))
+    // Live listeners, a worker still in its start-up window: the same rule, the URL against
+    // this listener's filters when the host did not name it.
+    host.pushDelivery(
+      'webNavigation',
+      'onBeforeNavigate',
+      [{ url: 'chrome-extension://abc/content/web/viewer.html?file=x' }],
+      unmatched('chrome-extension://abc/content/web/viewer.html?file=x')
+    )
+    host.pushDelivery(
+      'webNavigation',
+      'onBeforeNavigate',
+      [{ url: 'file:///tmp/a.PDF' }],
+      unmatched('file:///tmp/a.PDF')
+    )
+    // Addressed by the host: its verdict stands even with the URL along.
+    host.pushDelivery('webNavigation', 'onBeforeNavigate', [{ url: 'file:///tmp/b.pdf' }], {
+      unfiltered: false,
+      matched: [1]
+    })
+    expect(seen).toEqual([
+      'file:///home/me/doc.pdf#page=2',
+      'file:///tmp/a.PDF',
+      'file:///tmp/b.pdf'
+    ])
+    expect(everyone).toEqual([
+      'chrome-extension://abc/content/web/viewer.html?file=x',
+      'file:///tmp/a.PDF'
+    ])
+  })
+
+  it('matches every events.UrlFilter condition the way the host does', () => {
+    installExtensionApi(host, API_SPEC)
+    const cases: Array<[Record<string, unknown>, string, boolean]> = [
+      [{ hostContains: '.foo' }, 'https://www.foobar.com/', true],
+      [{ hostContains: '.foo' }, 'https://barfoo.com/', false],
+      [{ hostEquals: 'example.com' }, 'https://example.com/a', true],
+      [{ hostEquals: 'example.com' }, 'https://www.example.com/a', false],
+      [{ hostPrefix: 'www' }, 'https://www.example.com/', true],
+      [{ hostSuffix: 'example.com' }, 'https://www.example.com/', true],
+      [{ hostSuffix: 'example.com' }, 'https://example.org/', false],
+      [{ pathContains: 'ad' }, 'https://a.test/loads/', true],
+      [{ pathEquals: '/x' }, 'https://a.test/x?q=1', true],
+      [{ pathPrefix: '/api' }, 'https://a.test/api/v1', true],
+      [{ pathSuffix: '.pdf' }, 'https://a.test/file.pdf#top', true],
+      [{ pathSuffix: '.pdf' }, 'https://a.test/file.pdf?dl=1', true],
+      [{ queryContains: 'dl=1' }, 'https://a.test/f?dl=1', true],
+      [{ queryEquals: '?dl=1' }, 'https://a.test/f?dl=1', true],
+      [{ queryPrefix: 'dl' }, 'https://a.test/f?dl=1', true],
+      [{ querySuffix: '=1' }, 'https://a.test/f?dl=1', true],
+      [{ urlContains: 'fixture' }, 'http://fixture.test/', true],
+      [{ urlEquals: 'http://fixture.test/a' }, 'http://fixture.test/a#frag', true],
+      [{ urlPrefix: 'file://' }, 'file:///tmp/a.pdf', true],
+      [{ urlPrefix: 'file://' }, 'http://a.test/a.pdf', false],
+      [{ urlSuffix: '.pdf' }, 'http://a.test/a.pdf', true],
+      [{ urlMatches: '^https://[^/]+/a$' }, 'https://a.test/a', true],
+      [{ urlMatches: '(' }, 'https://a.test/a', false],
+      [{ originAndPathMatches: '^https://a\\.test/a$' }, 'https://a.test/a?q=1', true],
+      [{ schemes: ['https'] }, 'https://a.test/', true],
+      [{ schemes: ['https'] }, 'http://a.test/', false],
+      [{ ports: [80, [8000, 8100]] }, 'http://a.test/', true],
+      [{ ports: [80, [8000, 8100]] }, 'http://a.test:8050/', true],
+      [{ ports: [80, [8000, 8100]] }, 'http://a.test:9000/', false],
+      [{ hostSuffix: 'a.test', pathPrefix: '/x' }, 'https://a.test/y', false],
+      [{}, 'https://anything.test/', true],
+      [{ hostEquals: 'a.test' }, 'not a url', false]
+    ]
+    let id = 0
+    for (const [filter, url, expected] of cases) {
+      const hits: string[] = []
+      const fn = (d: Any): void => void hits.push(d.url)
+      g.chrome.webNavigation.onCommitted.addListener(fn, { url: [filter] })
+      id += 1
+      host.pushDelivery('webNavigation', 'onCommitted', [{ url }], {
+        unfiltered: false,
+        matched: [],
+        url
+      })
+      expect(hits, `${JSON.stringify(filter)} against ${url}`).toEqual(expected ? [url] : [])
+      g.chrome.webNavigation.onCommitted.removeListener(fn)
+    }
+    expect(id).toBe(cases.length)
+  })
+
   it('ignores a second addListener argument on events without filter support, as Chromium does', () => {
     installExtensionApi(host, API_SPEC)
     const seen: unknown[] = []

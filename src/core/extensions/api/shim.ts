@@ -18,10 +18,17 @@ export type InvokeResult = { ok: true; value: unknown } | { ok: false; error: st
  * Which listeners of an event a host delivery is for, once the host matched the event's URL
  * against the listeners' `UrlFilter`s (`webNavigation`): the unfiltered ones, and the filtered
  * ones by the ids the shim gave them. Absent when every listener should receive it.
+ *
+ * `url` is the event's URL when the host could not match it against this context's filters (a
+ * worker it woke or that is still running its top-level script had registered nothing yet): a
+ * filtered listener then holds the URL to its own filters, as Chrome's browser process would have
+ * before dispatching, instead of receiving every navigation. PDF Viewer's `onBeforeNavigate` is
+ * filtered to `file://*.pdf`; delivered unfiltered it sends every tab into its viewer.
  */
 export interface EventDelivery {
   unfiltered: boolean
   matched: number[]
+  url?: string
 }
 
 export interface ShimHost {
@@ -611,6 +618,8 @@ export function installExtensionApi(
     object: EventObject
     /** Listener → the id of its URL filter set, null for an unfiltered listener. */
     listeners: Map<Listener, number | null>
+    /** Filter set id → its `UrlFilter`s, for deliveries the host could not match (`EventDelivery.url`). */
+    filters: Map<number, Record<string, unknown>[]>
     pending: Array<{ args: unknown[]; at: number; delivery?: EventDelivery; after?: After }>
     nativeDelivers: boolean
     /** With `nativeDelivers`: which host deliveries the engine already made (dropped here). */
@@ -619,6 +628,75 @@ export function installExtensionApi(
 
   const events = new Map<string, EventRecord>()
   let filterIds = 0
+
+  /**
+   * Chrome's `events.UrlFilter` over one URL, the context-side twin of `urlFilter.ts` (this
+   * function is serialised into the extension's world, so it cannot import it): every condition
+   * in a filter must hold, a list matches when one filter does, an empty list matches every URL.
+   * Host conditions see the host dotted on both sides (`hostContains: '.foo'`), the `url*` ones
+   * never see the fragment.
+   */
+  function matchesUrlFilters(url: string, filters: Record<string, unknown>[]): boolean {
+    if (filters.length === 0) return true
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return false
+    }
+    const scheme = parsed.protocol.replace(/:$/, '')
+    const host = parsed.hostname.replace(/^\[|\]$/g, '')
+    const dotted = `.${host}.`
+    const path = parsed.pathname
+    const query = parsed.search.replace(/^\?/, '')
+    const whole = parsed.href.split('#')[0] ?? ''
+    const originAndPath = parsed.origin === 'null' ? whole : parsed.origin + path
+    const defaults: Record<string, number> = { http: 80, https: 443, ws: 80, wss: 443, ftp: 21 }
+    const port = parsed.port === '' ? (defaults[scheme] ?? null) : Number(parsed.port)
+    const regex = (pattern: unknown, value: string): boolean => {
+      try {
+        return new RegExp(String(pattern)).test(value)
+      } catch {
+        return false
+      }
+    }
+    const str = (value: unknown): string => String(value)
+    const undotted = (value: unknown): string => str(value).replace(/^\./, '')
+    const unquestioned = (value: unknown): string => str(value).replace(/^\?/, '')
+    return filters.some((f) => {
+      if (f.hostContains !== undefined && !dotted.includes(str(f.hostContains))) return false
+      if (f.hostEquals !== undefined && host !== undotted(f.hostEquals)) return false
+      if (f.hostPrefix !== undefined && !host.startsWith(undotted(f.hostPrefix))) return false
+      if (f.hostSuffix !== undefined && !host.endsWith(str(f.hostSuffix))) return false
+      if (f.pathContains !== undefined && !path.includes(str(f.pathContains))) return false
+      if (f.pathEquals !== undefined && path !== str(f.pathEquals)) return false
+      if (f.pathPrefix !== undefined && !path.startsWith(str(f.pathPrefix))) return false
+      if (f.pathSuffix !== undefined && !path.endsWith(str(f.pathSuffix))) return false
+      if (f.queryContains !== undefined && !query.includes(str(f.queryContains))) return false
+      if (f.queryEquals !== undefined && query !== unquestioned(f.queryEquals)) return false
+      if (f.queryPrefix !== undefined && !query.startsWith(unquestioned(f.queryPrefix)))
+        return false
+      if (f.querySuffix !== undefined && !query.endsWith(str(f.querySuffix))) return false
+      if (f.urlContains !== undefined && !whole.includes(str(f.urlContains))) return false
+      if (f.urlEquals !== undefined && whole !== str(f.urlEquals)) return false
+      if (f.urlPrefix !== undefined && !whole.startsWith(str(f.urlPrefix))) return false
+      if (f.urlSuffix !== undefined && !whole.endsWith(str(f.urlSuffix))) return false
+      if (f.urlMatches !== undefined && !regex(f.urlMatches, whole)) return false
+      if (f.originAndPathMatches !== undefined && !regex(f.originAndPathMatches, originAndPath))
+        return false
+      if (Array.isArray(f.schemes) && !f.schemes.includes(scheme)) return false
+      if (Array.isArray(f.ports)) {
+        if (port === null) return false
+        const hit = f.ports.some((entry: unknown) =>
+          Array.isArray(entry)
+            ? entry.length === 2 && port >= Number(entry[0]) && port <= Number(entry[1])
+            : entry === port
+        )
+        if (!hit) return false
+      }
+      return true
+    })
+  }
 
   /**
    * `addListener(fn, filters)`: `filters.url` is a list of `events.UrlFilter`s the host matches
@@ -653,10 +731,22 @@ export function installExtensionApi(
     }
   }
 
-  /** Whether a delivery addressed by the host is for this listener. */
-  function wants(filterId: number | null, delivery: EventDelivery | undefined): boolean {
+  /**
+   * Whether a delivery addressed by the host is for this listener. A filtered listener the host
+   * could not match (its filters were not registered when the host dispatched: `delivery.url`)
+   * matches them here.
+   */
+  function wants(
+    record: EventRecord,
+    filterId: number | null,
+    delivery: EventDelivery | undefined
+  ): boolean {
     if (!delivery) return true
-    return filterId === null ? delivery.unfiltered : delivery.matched.includes(filterId)
+    if (filterId === null) return delivery.unfiltered
+    if (delivery.matched.includes(filterId)) return true
+    if (delivery.url === undefined) return false
+    const filters = record.filters.get(filterId)
+    return filters !== undefined && matchesUrlFilters(delivery.url, filters)
   }
 
   function createEvent(
@@ -680,6 +770,7 @@ export function installExtensionApi(
     const record: EventRecord = {
       object: null as unknown as EventObject,
       listeners,
+      filters: new Map(),
       pending: [],
       nativeDelivers: options.nativeDelivers && Boolean(native),
       nativeHandles: options.nativeHandles ?? (() => true)
@@ -707,6 +798,7 @@ export function installExtensionApi(
         if (filters) {
           filterIds += 1
           listeners.set(fn, filterIds)
+          record.filters.set(filterIds, filters.filter(isObject))
           host.notify('listen', { event: fullName, filterId: filterIds, filters })
         } else {
           const first = unfilteredCount() === 0
@@ -719,9 +811,9 @@ export function installExtensionApi(
           const filterId = listeners.get(fn) ?? null
           for (const item of queued) {
             if (now - item.at > PENDING_TTL) continue
-            // A filtered listener registered after the host matched cannot be matched now; it
-            // only receives deliveries the host addressed to everyone.
-            if (!wants(filterId, item.delivery)) continue
+            // A filtered listener registered after the host matched receives what the host
+            // addressed to everyone, and what it sent with the URL when it could not match.
+            if (!wants(record, filterId, item.delivery)) continue
             const results: unknown[] = []
             callListener(fn, item.args, results)
             item.after?.(results)
@@ -738,8 +830,10 @@ export function installExtensionApi(
         if (!listeners.has(fn)) return
         const filterId = listeners.get(fn) ?? null
         listeners.delete(fn)
-        if (filterId !== null) host.notify('unlisten', { event: fullName, filterId })
-        else if (unfilteredCount() === 0) host.notify('unlisten', { event: fullName })
+        if (filterId !== null) {
+          record.filters.delete(filterId)
+          host.notify('unlisten', { event: fullName, filterId })
+        } else if (unfilteredCount() === 0) host.notify('unlisten', { event: fullName })
       },
       hasListener(fn: unknown): boolean {
         return isFunction(fn) && listeners.has(fn)
@@ -785,7 +879,7 @@ export function installExtensionApi(
     if (record.listeners.size > 0) {
       const results: unknown[] = []
       for (const [fn, filterId] of [...record.listeners]) {
-        if (wants(filterId, delivery)) callListener(fn, args, results)
+        if (wants(record, filterId, delivery)) callListener(fn, args, results)
       }
       after?.(results)
       return

@@ -475,7 +475,7 @@ export class ContextRegistry {
       let delivery = this.deliveryFor(frame, name, options.url)
       if (delivery === null) {
         if (!(options.wake && frame.isBackgroundPage)) continue
-        delivery = undefined
+        delivery = unmatchedDelivery(options.url)
       }
       try {
         frame.frame.send('zen-ext:event', namespace, event, args, delivery)
@@ -493,7 +493,7 @@ export class ContextRegistry {
       let delivery = this.deliveryFor(worker, name, options.url)
       if (delivery === null) {
         if (!options.wake && !fresh) continue
-        delivery = undefined
+        delivery = unmatchedDelivery(options.url)
       }
       this.sendToWorker(worker, namespace, event, args, delivery)
       reached += 1
@@ -591,6 +591,18 @@ export class ContextRegistry {
       for (const extensionId of gone) this.pushViews(extensionId)
     })
   }
+}
+
+/**
+ * The delivery for a context whose listeners the registry could not match: everyone, when the
+ * event has no URL; with the URL otherwise, so a filtered listener the context registers (or
+ * registered, in a worker still running its top-level script) holds it to its own filters instead
+ * of receiving every navigation. Chrome matches `webNavigation` filters in the browser process
+ * before the event reaches a worker it woke; PDF Viewer's `onBeforeNavigate` is filtered to
+ * `file://*.pdf` and, delivered unfiltered, sends every navigation into its viewer.
+ */
+function unmatchedDelivery(url: string | undefined): EventDelivery | undefined {
+  return url === undefined ? undefined : { unfiltered: true, matched: [], url }
 }
 
 /** `browserAction.*` registrations are the MV2 spelling of `action.*`. */
