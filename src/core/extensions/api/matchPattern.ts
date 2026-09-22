@@ -105,6 +105,26 @@ export function matchesAnyPattern(url: string, patterns: string | readonly strin
   return false
 }
 
+/**
+ * A host permission reduced to its security origin, the path opened to `/*`: what Chrome's CORS
+ * allowlist keeps of it (`CreateCorsOriginAccessAllowList` takes the scheme, host and port of each
+ * pattern, never its path), so a `https://mail.google.com/` permission lets an extension page fetch
+ * the whole origin (Checker Plus for Gmail's feed). `<all_urls>`, `file:`, `data:` and `urn:`
+ * patterns come back as they are.
+ */
+export function originPatternOf(pattern: string): string {
+  const separator = pattern.indexOf('://')
+  if (separator <= 0 || pattern.startsWith('file:')) return pattern
+  const slash = pattern.indexOf('/', separator + 3)
+  if (slash < 0) return pattern
+  return pattern.slice(0, slash) + '/*'
+}
+
+/** Whether `url` is on the security origin of any of `patterns` (their paths left out). */
+export function matchesAnyPatternOrigin(url: string, patterns: readonly string[]): boolean {
+  return matchesAnyPattern(url, patterns.map(originPatternOf))
+}
+
 /** Whether every URL matched by `inner` is also matched by `outer` (best-effort containment). */
 export function patternContains(outer: string, inner: string): boolean {
   if (outer === inner) return true

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { looksLikeStatements } from '../../core/agent/util'
 import {
+  PDF_VIEWER_DOCUMENT_ATTRIBUTE,
   PDF_VIEWER_ORIGIN,
   pdfMissingPageHtml,
   pdfPageDownloadId,
@@ -119,6 +120,11 @@ describe('the viewer document', () => {
     // `about:blank` (Chrome's viewer page), first in the body; it draws nothing here.
     expect(html).toMatch(
       /<body><embed name="plugin" type="application\/pdf" src="about:blank" internalid="dl1" hidden>/
+    )
+    // The root carries the mark by which an extension's realm makes `document.contentType`
+    // answer `application/pdf` here (`android/extensionPdfDocument.ts`).
+    expect(html).toMatch(
+      new RegExp(`^<!doctype html><html lang="en" ${PDF_VIEWER_DOCUMENT_ATTRIBUTE}>`)
     )
   })
 
