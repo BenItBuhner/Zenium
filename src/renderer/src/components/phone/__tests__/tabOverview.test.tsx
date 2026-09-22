@@ -116,7 +116,8 @@ function stateOf(tabs: Tab[], folders: Folder[] = [folder]): UIState {
     window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
     boosts: [],
     extensions: [],
-    bookmarks: []
+    bookmarks: [],
+    closingTabIds: []
   } as unknown as UIState
 }
 

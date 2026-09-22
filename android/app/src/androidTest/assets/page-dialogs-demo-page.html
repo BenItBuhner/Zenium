@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Page dialogs</title>
+<style>
+  body { margin: 0; font-family: sans-serif; color: #15141a; background: #fff; }
+  h1 { font-size: 24px; margin: 0; padding: 20px 24px 4px; }
+  button { display: block; width: calc(100% - 48px); margin: 10px 24px; height: 60px; font-size: 21px; border: 0; border-radius: 12px; color: #fff; }
+  #alert { background: #1b4332; }
+  #confirm { background: #2d6a4f; }
+  #prompt { background: #40916c; }
+  #later { background: #52796f; }
+  #arm { background: #7b5ea7; }
+  #arm[data-armed] { background: #c9184a; }
+  #link { display: block; padding: 16px 24px; font-size: 21px; color: #1b4332; }
+  #log { margin: 0; padding: 8px 24px 24px; font: 15px/1.45 monospace; color: #444; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Page dialogs</h1>
+<button id="alert">alert()</button>
+<button id="confirm">confirm()</button>
+<button id="prompt">prompt()</button>
+<button id="later">alert() in 5 s</button>
+<button id="arm">Arm beforeunload</button>
+<a id="link" href="/second.html">A link to the second page</a>
+<pre id="log"></pre>
+<script>
+  // What the page's calls returned, for the driver to read once the dialog has gone (the page
+  // is blocked inside each call while its dialog is up).
+  var log = window.__log = { alerts: 0, confirms: 0, prompts: 0, confirm: null, prompt: null, armed: false };
+  function show() { document.getElementById('log').textContent = JSON.stringify(log, null, 1); }
+  document.getElementById('alert').onclick = function () { alert('Hello from the page.'); log.alerts++; show(); };
+  document.getElementById('confirm').onclick = function () { log.confirm = confirm('Delete the draft?'); log.confirms++; show(); };
+  document.getElementById('prompt').onclick = function () { log.prompt = prompt('What is your name?', 'Ada'); log.prompts++; show(); };
+  document.getElementById('later').onclick = function () {
+    setTimeout(function () { alert('Hello from a background tab.'); log.alerts++; show(); }, 2500);
+  };
+  document.getElementById('arm').onclick = function () {
+    if (log.armed) return;
+    log.armed = true;
+    this.setAttribute('data-armed', '');
+    this.textContent = 'beforeunload armed';
+    window.addEventListener('beforeunload', function (e) { e.preventDefault(); e.returnValue = 'unsaved'; return 'unsaved'; });
+    show();
+  };
+  show();
+</script>
+</body>
+</html>

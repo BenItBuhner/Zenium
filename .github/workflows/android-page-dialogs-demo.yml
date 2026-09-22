@@ -1,0 +1,57 @@
+name: Android page dialogs demo
+
+# Records a page's dialogs on the phone (matrix PUI-27, PUI-28): alert / confirm / prompt as the
+# core's tab-modal PageDialog in the phone's prompt sheet – the site as the title block, OK and
+# Cancel returning to the page, the prompt's field with the keyboard and its typed value, Chrome's
+# "Don't let this page create more dialogs" checkbox and its suppression until the next
+# navigation, a background tab's dialog waiting for its tab, a tab switch hiding a pending one –
+# and a page's beforeunload as the core's "Leave site?" on a link and on the overview card's X,
+# with Cancel and with Leave. Every press is a real touch and the driver reads each outcome off
+# the core's state and off what the page's call returned (findings text in the artifact; the run
+# fails on a FAIL). Dispatch-only, like the tab close demo: it says nothing about a change being
+# correct beyond what `page-dialogs-findings.txt` records. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-page-dialogs-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Page dialogs demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PageDialogsDemo
+        DEMO_DIR=page-dialogs-demo
+        DEMO_OUT=artifacts/android-page-dialogs-demo
+        DEMO_VIDEO=android-page-dialogs-demo.mp4
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-page-dialogs-demo
+      artifact-path: artifacts/android-page-dialogs-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Page dialogs demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PageDialogsDemo
+        DEMO_DIR=page-dialogs-demo
+        DEMO_OUT=artifacts/android-page-dialogs-demo
+        DEMO_VIDEO=android-page-dialogs-demo.mp4
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-page-dialogs-demo-second-boot
+      artifact-path: artifacts/android-page-dialogs-demo/

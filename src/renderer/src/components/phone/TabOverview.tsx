@@ -733,24 +733,31 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       })
     )
   /**
-   * Close `tabs` at once, with the one undo, and run `after` with them. The tabs that make up a
-   * whole group among them – every live member of it – close as the group does ("Close Group",
-   * the core's `folder.close`), so the group stays SAVED with all their pages (TAB-16) rather
-   * than with the last one closed, which is what closing them one by one would leave it; the
-   * rest close one by one. A card's own close, Close Other Tabs, Close All Tabs and the
-   * select-tabs mode's Close all read this one rule.
+   * Close `tabs` as the user asks for them, with the one undo. The tabs that make up a whole
+   * group among them – every live member of it – close as the group does ("Close Group", the
+   * core's `folder.close`), so the group stays SAVED with all their pages (TAB-16) rather than
+   * with the last one closed, which is what closing them one by one would leave it. The rest
+   * close one after the other through the core's close chain, so a page whose `beforeunload`
+   * handler objects asks "Leave site?" in its turn (PUI-28): one card is `tab.close`; several
+   * are `tab.closeMany` – the dialog is tab-modal and shows on its own tab, so two asked at
+   * once would leave one waiting unseen – and a "Cancel" keeps that tab alone, the others going
+   * on. `activate` is the tab to end on once the closes are through. A card's own close, Close
+   * Other Tabs, Close All Tabs and the select-tabs mode's Close all read this one rule.
    */
-  const closeSet = (tabs: Tab[], after?: () => void): void => {
+  const closeSet = (tabs: Tab[], activate?: Tab): void => {
     const ids = new Set(tabs.map((t) => t.id))
     const whole = groups.filter((f) => {
       const live = membersOf(f.id)
       return live.length > 0 && live.every((t) => ids.has(t.id))
     })
     const asGroup = new Set(whole.flatMap((f) => membersOf(f.id).map((t) => t.id)))
+    const rest = tabs.filter((t) => !asGroup.has(t.id))
     undoable(tabs, () => {
       for (const f of whole) run('folder.close', { folderId: f.id })
-      for (const t of tabs) if (!asGroup.has(t.id)) run('tab.close', { tabId: t.id })
-      after?.()
+      if (rest.length === 1 && !activate) run('tab.close', { tabId: rest[0].id })
+      else if (rest.length > 0)
+        run('tab.closeMany', { tabIds: rest.map((t) => t.id), activate: activate?.id })
+      else if (activate) run('tab.activate', { tabId: activate.id })
     })
   }
   const closeTabs = (tabs: Tab[]): void => {
@@ -764,16 +771,17 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const closeOthers = (tab: Tab): void => {
     const others = regular.filter((t) => t.id !== tab.id)
     departAll(others)
-    closeSet(others, () => run('tab.activate', { tabId: tab.id }))
+    closeSet(others, tab)
   }
   /**
    * "Close All Tabs": every unpinned card of the pane goes (Zen's Clear tabs); pinned ones stay.
-   * On a host with private tabs the space holds both modes and the core's `space.closeUnpinned`
-   * would take them all – from the regular pane it would end the private session, from the
-   * private one take the space's tabs with it – so there the regular pane closes its own cards
-   * one by one, as "Close other tabs" does, and the private pane's row is the app menu's Close
-   * Private Tabs (`tab.closePrivate`: the session ends and its profile is wiped, INC-04; a
-   * private tab is never filed, so no toast follows).
+   * The regular pane closes its own cards one by one, as "Close other tabs" does – each page's
+   * `beforeunload` heard in turn – rather than through the core's `space.closeUnpinned`, which
+   * asks no page and, on a host with private tabs, where the space holds both modes, would take
+   * them all: from the regular pane it would end the private session, from the private one
+   * take the space's tabs with it. The private pane's row is the app menu's Close Private Tabs
+   * (`tab.closePrivate`: the session ends and its profile is wiped, INC-04; a private tab is
+   * never filed, so no toast follows).
    */
   const closeAll = (): void => {
     departAll(regular)
@@ -781,8 +789,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       run('tab.closePrivate', undefined)
       return
     }
-    if (hasPrivate) closeSet(regular)
-    else undoable(regular, () => run('space.closeUnpinned', { spaceId: space.id }))
+    closeSet(regular)
   }
   const closeAllAsked = (): void => {
     if (regular.length === 0) return

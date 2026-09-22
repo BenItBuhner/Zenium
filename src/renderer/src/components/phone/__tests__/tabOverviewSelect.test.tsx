@@ -138,7 +138,8 @@ function stateOf(
     boosts: [],
     extensions: [],
     bookmarks: [],
-    recentlyClosed: []
+    recentlyClosed: [],
+    closingTabIds: []
   } as unknown as UIState
 }
 
@@ -637,19 +638,18 @@ describe('the action strip', () => {
     ])
   })
 
-  it('Close departs every picked card at once, closes them one by one, ends the mode, and one toast undoes the lot', async () => {
+  it('Close departs every picked card at once, closes them in turn, ends the mode, and one toast undoes the lot', async () => {
     show(five())
     await enter()
     tapCard('a')
     tapCard('c')
     act(() => action('close').click())
-    // Immediate: the mode is off, the two cards are on their way, the closes are out.
+    // Immediate: the mode is off, the two cards are on their way, the close is out – one ask
+    // for the two, the core closing them one after the other so a page that objects asks
+    // "Leave site?" on its own tab (`tab.closeMany`, PUI-28).
     expect(checkboxes()).toEqual([])
     expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'c'])
-    expect(commands()).toEqual([
-      ['tab.close', { tabId: 'a' }],
-      ['tab.close', { tabId: 'c' }]
-    ])
+    expect(commands()).toEqual([['tab.closeMany', { tabIds: ['a', 'c'] }]])
     expect(toasts()).toEqual([])
     // The core files them; ONE toast counts them and Undo restores newest first.
     const state = five()

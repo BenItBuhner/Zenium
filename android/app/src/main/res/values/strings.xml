@@ -12,6 +12,9 @@
     <string name="paste_and_go">Paste and go</string>
     <string name="paste_and_search">Paste and search</string>
 
+    <!-- The pages' own dialogs as Zenium's sheet (PUI-27, PUI-28; the words are PageDialogSpec's, Chrome's). -->
+    <string name="page_dialog_handle">Dismiss dialog</string>
+
     <!-- The launcher's long-press shortcut (res/xml/shortcuts.xml). -->
     <string name="shortcut_private_short">New private tab</string>
     <string name="shortcut_private_long">New private tab in Zenium</string>
