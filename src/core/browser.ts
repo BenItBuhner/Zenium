@@ -3370,7 +3370,10 @@ export class Browser {
         s.phoneBar = sanitizePhoneBar(value)
       } else if (key === 'homepage' && value && typeof value === 'object') {
         // A one-key patch (the picker's `mode`) keeps the address; the address is normalised.
-        s.homepage = sanitizeHomepage({ ...s.homepage, ...(value as Partial<Settings['homepage']>) })
+        s.homepage = sanitizeHomepage({
+          ...s.homepage,
+          ...(value as Partial<Settings['homepage']>)
+        })
       } else if (key === 'passwords' && value && typeof value === 'object') {
         s.passwords = sanitizePasswordSettings({
           ...s.passwords,

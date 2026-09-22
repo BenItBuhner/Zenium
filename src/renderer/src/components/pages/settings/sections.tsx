@@ -13,6 +13,7 @@ import type {
   GlanceTrigger,
   GovernorActionKind,
   GpuMode,
+  HomepageMode,
   ImportSource,
   NewTabBackgroundKind,
   NewTabPosition,
@@ -73,7 +74,8 @@ import {
   shortcutHint
 } from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
-import { inputToUrl } from '@shared/url'
+import { displayUrl, inputToUrl } from '@shared/url'
+import { homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
 import type { TranslatePreferences } from '@shared/translate'
@@ -352,7 +354,7 @@ function numberRow(
  * Groups in the order the design lead set for the tab: identity (Appearance, App icon), then the
  * chrome (URL bar, Pages), then page behaviour (Sites, Site exceptions), Glance last.
  */
-function lookSection({ state, set, pointer, openBarEditor }: SectionContext): RowGroup[] {
+function lookSection({ state, set, pointer, openBarEditor, tab }: SectionContext): RowGroup[] {
   const s = state.settings
   const caps = state.capabilities
   const pc = s.pageControls
@@ -565,6 +567,7 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
       }
     ]
   })
+  groups.push(homepageGroup(state, tab, set))
   if (caps.pullToRefresh) {
     groups.push({
       id: 'pages',
@@ -709,6 +712,85 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
     ]
   })
   return groups
+}
+
+/**
+ * Settings › Look and Feel › Home (SET-36 / NTP-30; Chrome's and Edge's Homepage): what the
+ * phone's Home controls open – the navigation bar's optional Home button (TB-15) and the app
+ * menu's Home row – or that there are none. The value row's §9.13 picker sets the mode; a
+ * "Specific page" shows its address as a §9.12 field row (the one-field sheet, a web address
+ * required) and Use current page, which takes the address of the page Settings was opened from
+ * (the tab's opener). The rows are the phone shell's: the desktop shells have no Home control
+ * that reads the setting yet (their Alt+Home keeps its own destination).
+ */
+function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): RowGroup {
+  const homepage = state.settings.homepage
+  const address = homepageDisplay(homepage)
+  const opener = tab.openerTabId ? state.tabs[tab.openerTabId] : undefined
+  const current =
+    opener && homepageAddress(opener.url) && state.window.kind !== 'private' ? opener : null
+  const rows: SettingsRow[] = [
+    choice<HomepageMode>({
+      id: 'homepage',
+      label: 'Homepage',
+      keywords: ['home', 'home button', 'start page', 'new tab page'],
+      layouts: ['phone'],
+      value: homepage.mode,
+      sheetDescription: 'Where the Home button and the menu’s Home go.',
+      options: [
+        { value: 'off', label: 'Off', description: 'No Home button or menu row.' },
+        { value: 'newtab', label: 'New tab page' },
+        {
+          value: 'url',
+          label: 'Specific page',
+          description: address || 'Enter an address below, or use the current page.'
+        }
+      ],
+      onChange: (mode) => set({ homepage: { ...homepage, mode } })
+    })
+  ]
+  if (homepage.mode === 'url') {
+    rows.push(
+      {
+        kind: 'field',
+        id: 'homepage-address',
+        label: 'Address',
+        keywords: ['homepage', 'url', 'web address'],
+        layouts: ['phone'],
+        value: address,
+        display: address || 'Not set',
+        input: 'url',
+        placeholder: 'example.com',
+        onCommit: (value) => {
+          const url = homepageAddress(value)
+          if (!url) return 'Enter a web address, like example.com'
+          set({ homepage: { mode: 'url', url } })
+          return undefined
+        }
+      },
+      {
+        kind: 'action',
+        id: 'homepage-use-current',
+        label: 'Use current page',
+        description: current
+          ? displayUrl(current.url).replace(/\/$/, '')
+          : 'Open a page, then come back to Settings from it.',
+        keywords: ['homepage'],
+        layouts: ['phone'],
+        disabled: current === null,
+        onPress: () => {
+          const url = current ? homepageAddress(current.url) : null
+          if (url) set({ homepage: { mode: 'url', url } })
+        }
+      }
+    )
+  }
+  return {
+    id: 'home',
+    heading: 'Home',
+    layouts: ['phone'],
+    rows
+  }
 }
 
 // ---------------------------------------------------------------------------

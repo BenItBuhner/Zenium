@@ -16,7 +16,6 @@ import {
 } from 'lucide-react'
 import type { PhoneBarItemId, PhoneBarLayout, Tab, UIState } from '@shared/types'
 import { phoneBarForHost, phoneBarItemEnabled, phoneBarOffered } from '@shared/phoneBar'
-import { BLANK_URL } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { toggleOverview } from '@renderer/lib/gestures/stage'
@@ -93,10 +92,12 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     id: 'home',
     label: 'Home',
     glyph: () => <House className={glyph} />,
-    // Zen has no home page: home is the new-tab state – a blank page with the address bar up.
+    // The homepage (Settings › Homepage, TB-15 / NTP-30): the user's page, or the new tab page
+    // at rest – its field is the way to the address bar. The item is drawn only while a
+    // homepage is set (`barLayout`); a hold on it opens the setting (PhoneShell).
     run: ({ tab }) => {
-      if (tab && tab.url !== BLANK_URL) run('tab.navigate', { tabId: tab.id, input: BLANK_URL })
-      void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { text: '', attached: true })
+      if (tab) run('tab.home', { tabId: tab.id })
+      else void openUrlbar('new-tab', null, { text: '', attached: true })
     }
   },
   share: {
@@ -229,9 +230,16 @@ export function barCatalogue(state: UIState): PhoneBarItemId[] {
   return phoneBarOffered(state.capabilities)
 }
 
-/** `settings.phoneBar` as this host draws it: without items whose command it lacks. */
+/**
+ * `settings.phoneBar` as this host draws it: without items whose command it lacks, and without
+ * Home while the homepage is off (TB-15: Chrome's Home button leaves the toolbar with the
+ * homepage; the editor keeps listing it, and the layout keeps it for when the homepage is back).
+ */
 export function barLayout(state: UIState): PhoneBarLayout {
-  return phoneBarForHost(state.settings.phoneBar, barCatalogue(state))
+  const shown = barCatalogue(state).filter(
+    (id) => id !== 'home' || state.settings.homepage.mode !== 'off'
+  )
+  return phoneBarForHost(state.settings.phoneBar, shown)
 }
 
 /** Whether the item does anything right now. */

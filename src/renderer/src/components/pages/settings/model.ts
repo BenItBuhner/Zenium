@@ -165,7 +165,8 @@ export interface FieldRow extends RowBase {
   value: string
   /** The row's description for the value (the value itself when absent). */
   display?: string
-  input: 'text' | 'number'
+  /** `url`: a text field that brings up the address keyboard (§9.12; `inputMode="url"`). */
+  input: 'text' | 'number' | 'url'
   placeholder?: string
   min?: number
   max?: number
