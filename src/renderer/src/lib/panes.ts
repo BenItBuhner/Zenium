@@ -24,6 +24,12 @@ export const PANE_ORDER: readonly PaneId[] = ['tabs', 'toolbar', 'bookmarks', 's
 export const URLBAR_LEAVE_EVENT = 'zen-urlbar-leave'
 
 /**
+ * Window event {@link pageTookKeyboard} sends the open URL bar when a page's view took the
+ * keyboard the bar holds: the bar asks the chrome's keyboard back and focuses its field.
+ */
+export const URLBAR_KEYBOARD_EVENT = 'zen-urlbar-keyboard'
+
+/**
  * The pane the keyboard moves to from `current` – forward (`next`, F6) or back (`prev`,
  * Shift+F6) – among the panes on screen (`shown`). The page is always shown, and is where the
  * keyboard counts as being when it is in no pane (`current` null, or a pane that is not shown):
@@ -138,15 +144,45 @@ export function currentPane(
 }
 
 /**
- * A page's view took the keyboard (`focus.page`): the chrome's focused control, if any, is stale
- * – it would keep its focus ring while the user types in the page, and count as the keyboard's
- * place for the next F6 – so it is blurred. Returns whether anything was let go.
+ * A page's view took the keyboard: the chrome's focused control, if any, is stale – it would
+ * keep its focus ring while the user types in the page, and count as the keyboard's place for
+ * the next F6 – so it is blurred. Returns whether anything was let go.
  */
 export function releaseChromeFocus(doc: Document = document): boolean {
   const active = doc.activeElement
   if (!(active instanceof HTMLElement) || active === doc.body) return false
   active.blur()
   return true
+}
+
+/**
+ * A page's view took the keyboard (`focus.page`, the view of tab `tabId`). The chrome's focused
+ * control is let go ({@link releaseChromeFocus}) – except the open URL bar's field. The rule: a
+ * chrome field the user is typing in is never blurred by a page taking the keyboard. The bar is
+ * the one such field, because it is a surface over the page: while it is up the page beneath
+ * lies hidden under its snapshot and cannot be pressed, so a page taking the keyboard is never
+ * the user leaving the field. It is the new tab's own view taking the keyboard as it is shown –
+ * a race with the bar's mount that a slow machine loses: the blur landing after the field's
+ * focus left the bar standing with no caret, and what was typed went nowhere (#342 met it in
+ * CI). So the field is not blurred, and the bar is told to take the keyboard back – the
+ * chrome's focus and its field's ({@link URLBAR_KEYBOARD_EVENT}) – so the caret is there
+ * whichever came first. The find bar and a Settings field are not the bar's case: the page
+ * beside them is live, a view taking the keyboard there is the user's press, and the blur is
+ * what keeps their focus ring honest. The empty split pane's bar (`urlbar.pane`) sits beside
+ * live panes the same way: a sibling page taking the keyboard is the user's press and the field
+ * is let go as any control; the pane's own blank page taking it is the race. Returns what was
+ * done: `kept` (the bar's), `released` (a control was blurred), `none`.
+ */
+export function pageTookKeyboard(
+  tabId: string,
+  doc: Document = document
+): 'kept' | 'released' | 'none' {
+  const { urlbar } = uiStore.get()
+  if (urlbar.open && (!urlbar.pane || urlbar.tabId === tabId)) {
+    doc.defaultView?.dispatchEvent(new CustomEvent(URLBAR_KEYBOARD_EVENT))
+    return 'kept'
+  }
+  return releaseChromeFocus(doc) ? 'released' : 'none'
 }
 
 /**
