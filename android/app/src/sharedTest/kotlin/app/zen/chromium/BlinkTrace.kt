@@ -33,8 +33,11 @@ import kotlin.math.max
  *    ([Reading.frameMs]). The `BeginMainThreadFrame` instants stand in for the count when a
  *    trace has the instants without the slices;
  *  - `Layout`, `Paint`, `UpdateLayoutTree` (a style recalculation): the DevTools timeline's events,
- *    counted over the scene and given per frame ([Reading.perFrame]); a scroll or a spring that
- *    moves a promoted layer by `transform` / `opacity` alone lays out and paints nothing per frame;
+ *    counted over the scene and given per frame ([Reading.perFrame]), and their TIME over the
+ *    scene ([Reading.layoutMs], [Reading.paintMs], [Reading.styleRecalcMs]: the slices' total,
+ *    which with [Reading.scriptMs] splits a frame's main-thread time into script, style, layout
+ *    and paint); a scroll or a spring that moves a promoted layer by `transform` / `opacity`
+ *    alone lays out and paints nothing per frame;
  *  - `UpdateLayer` ([Reading.layerChurn]): the composited content layers cc visits – and re-records
  *    where invalidated – in each commit; it rises with the layer count and with the frames that
  *    commit at all (a compositor-driven animation commits nothing). Reported, not budgeted;
@@ -113,6 +116,12 @@ object BlinkTrace {
         val busyMs: Double,
         /** `FunctionCall` and `EvaluateScript` slices' total, ms. */
         val scriptMs: Double,
+        /** `UpdateLayoutTree` slices' time (nested ones counted once), ms: the scene's style recalculation. */
+        val styleRecalcMs: Double = 0.0,
+        /** `Layout` slices' time (nested ones counted once), ms. */
+        val layoutMs: Double = 0.0,
+        /** `Paint` slices' time (nested ones counted once), ms. */
+        val paintMs: Double = 0.0,
         val layoutCount: Int,
         val paintCount: Int,
         val styleRecalcCount: Int,
@@ -154,6 +163,10 @@ object BlinkTrace {
             sb.append(",\"busyMs\":").append(FrameStats.number(busyMs, 2))
             sb.append(",\"busyPerFrameMs\":").append(FrameStats.number(busyPerFrameMs, 2))
             sb.append(",\"scriptMs\":").append(FrameStats.number(scriptMs, 2))
+            sb.append(",\"workMs\":{\"script\":").append(FrameStats.number(scriptMs, 2))
+                .append(",\"styleRecalc\":").append(FrameStats.number(styleRecalcMs, 2))
+                .append(",\"layout\":").append(FrameStats.number(layoutMs, 2))
+                .append(",\"paint\":").append(FrameStats.number(paintMs, 2)).append("}")
             sb.append(",\"layoutCount\":").append(layoutCount)
             sb.append(",\"paintCount\":").append(paintCount)
             sb.append(",\"styleRecalcCount\":").append(styleRecalcCount)
@@ -188,7 +201,9 @@ object BlinkTrace {
                 .append(", style recalcs ").append(f2(perFrame(styleRecalcCount))).append(" (").append(styleRecalcCount).append(")")
                 .append(", layer updates ").append(f1(perFrame(layerChurn))).append(" (").append(layerChurn).append(")")
             sb.append("; long tasks ").append(longTasks).append(" (longest ").append(f0(longestTaskMs)).append(" ms)")
-                .append(", busy ").append(f0(busyMs)).append(" ms, script ").append(f0(scriptMs)).append(" ms")
+                .append(", busy ").append(f0(busyMs)).append(" ms: script ").append(f0(scriptMs))
+                .append(", style ").append(f0(styleRecalcMs)).append(", layout ").append(f0(layoutMs))
+                .append(", paint ").append(f0(paintMs)).append(" ms")
             return sb.toString()
         }
     }
@@ -226,6 +241,11 @@ object BlinkTrace {
         var layerUpdates = 0
         var scriptUs = 0.0
         val slices = ArrayList<Slice>()
+        // Kept whole (not summed as they come) so a layout nested in a layout – a frame's inside
+        // its parent's – or a paint in a paint counts its time once, as busy time is counted.
+        val layoutSlices = ArrayList<Slice>()
+        val paintSlices = ArrayList<Slice>()
+        val styleRecalcSlices = ArrayList<Slice>()
         val open = ArrayList<Pair<String, Double>>()
         var minTs = Double.MAX_VALUE
         var maxTs = -Double.MAX_VALUE
@@ -234,9 +254,9 @@ object BlinkTrace {
             slices += Slice(ts, durUs)
             when (name) {
                 FRAME -> frameMs += durUs / 1e3
-                LAYOUT -> layout++
-                PAINT -> paint++
-                STYLE_RECALC -> styleRecalc++
+                LAYOUT -> { layout++; layoutSlices += Slice(ts, durUs) }
+                PAINT -> { paint++; paintSlices += Slice(ts, durUs) }
+                STYLE_RECALC -> { styleRecalc++; styleRecalcSlices += Slice(ts, durUs) }
                 LAYER_UPDATE -> layerUpdates++
                 in SCRIPT -> scriptUs += durUs
             }
@@ -250,6 +270,18 @@ object BlinkTrace {
 
     /** One pass' result: the reading, and how many events the thread read (or every thread, when none was found) had in the whole trace. */
     private class Pass(val reading: Reading, val everything: Int)
+
+    /** The slices' time with the ones nested in an earlier, longer slice left out, µs. */
+    private fun outermostUs(slices: List<Slice>): Double {
+        var end = -Double.MAX_VALUE
+        var total = 0.0
+        for (slice in slices.sortedWith(compareBy<Slice> { it.ts }.thenByDescending { it.dur })) {
+            if (slice.ts < end) continue
+            end = slice.ts + slice.dur
+            total += slice.dur
+        }
+        return total
+    }
 
     private fun read(reader: Reader, window: Window?): Pass {
         val threads = LinkedHashMap<Long, ThreadAcc>()
@@ -304,7 +336,14 @@ object BlinkTrace {
         val traceTo = spanned.maxOfOrNull { it.maxTs }
         val windowMs = window?.lengthMs ?: if (traceFrom != null && traceTo != null) (traceTo - traceFrom) / 1e3 else 0.0
         if (main == null) {
-            return Pass(Reading(false, null, 0, null, 0.0, 0.0, 0, 0, 0, 0, 0, 0.0, 0, threads.size, windowMs, window == null), everything)
+            return Pass(
+                Reading(
+                    found = false, thread = null, frames = 0, frameMs = null, busyMs = 0.0, scriptMs = 0.0,
+                    layoutCount = 0, paintCount = 0, styleRecalcCount = 0, layerChurn = 0, longTasks = 0, longestTaskMs = 0.0,
+                    events = 0, threads = threads.size, windowMs = windowMs, whole = window == null
+                ),
+                everything
+            )
         }
         val t = main.value
         val sorted = t.slices.sortedWith(compareBy<Slice> { it.ts }.thenByDescending { it.dur })
@@ -328,6 +367,9 @@ object BlinkTrace {
                 frameMs = Stat.of(t.frameMs),
                 busyMs = busyUs / 1e3,
                 scriptMs = t.scriptUs / 1e3,
+                styleRecalcMs = outermostUs(t.styleRecalcSlices) / 1e3,
+                layoutMs = outermostUs(t.layoutSlices) / 1e3,
+                paintMs = outermostUs(t.paintSlices) / 1e3,
                 layoutCount = t.layout,
                 paintCount = t.paint,
                 styleRecalcCount = t.styleRecalc,

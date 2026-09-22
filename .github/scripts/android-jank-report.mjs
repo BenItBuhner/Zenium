@@ -206,7 +206,8 @@ function folded(record) {
   if (t?.found) {
     lines.push(
       `Trace (renderer main thread ${code(t.thread)}, ${t.events} events, ${fixed(t.windowMs, 0)} ms${t.whole ? ', the whole trace' : ''}): ` +
-        `${t.frames} frames; busy ${fixed(t.busyMs, 0)} ms (${fixed(t.busyPerFrameMs, 1)} ms/frame), script ${fixed(t.scriptMs, 0)} ms; ` +
+        `${t.frames} frames; busy ${fixed(t.busyMs, 0)} ms (${fixed(t.busyPerFrameMs, 1)} ms/frame), script ${fixed(t.scriptMs, 0)} ms` +
+        `${t.workMs ? ` (style ${fixed(t.workMs.styleRecalc, 0)}, layout ${fixed(t.workMs.layout, 0)}, paint ${fixed(t.workMs.paint, 0)} ms)` : ''}; ` +
         `layouts ${t.layoutCount}, paints ${t.paintCount}, style recalcs ${t.styleRecalcCount} (${fixed(t.perFrame?.styleRecalc, 2)}/frame), ` +
         `layer updates ${t.layerChurn} (${fixed(t.perFrame?.layerChurn, 1)}/frame); long tasks ${t.longTasks}, longest ${fixed(t.longestTaskMs, 0)} ms.`,
       ''
