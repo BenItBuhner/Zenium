@@ -575,6 +575,66 @@ describe('moving between sections', () => {
     expect(tab()?.url).toBe('zen://settings/look')
   })
 
+  it('opens a section’s drill-in page as one more history entry, back landing on the section (v2 §10.2)', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    const id = openPage(f, 'privacy') ?? ''
+    const tab = (): Tab | undefined => f.browser.tabs.tab(id)
+    f.browser.handleCommand(f.win, 'page.navigate', {
+      tabId: id,
+      section: 'privacy',
+      subpage: 'site-data'
+    })
+    expect(tab()?.url).toBe('zen://settings/privacy/site-data')
+    expect(tab()?.title).toBe('Settings')
+    expect(tab()?.canGoBack).toBe(true)
+    back(f, id)
+    expect(tab()?.url).toBe('zen://settings/privacy')
+    expect(tab()?.canGoForward).toBe(true)
+    f.browser.tabs.goForward(id)
+    expect(tab()?.url).toBe('zen://settings/privacy/site-data')
+    // A move to a section drops the page: the address is the section's.
+    f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'privacy' })
+    expect(tab()?.url).toBe('zen://settings/privacy')
+    // The landing has no drill-in pages of its own.
+    f.browser.handleCommand(f.win, 'page.navigate', {
+      tabId: id,
+      section: null,
+      subpage: 'site-data'
+    })
+    expect(tab()?.url).toBe('zen://settings')
+  })
+
+  it('restores a drill-in page with its section and the landing beneath it', () => {
+    const space = createSpace('Work', '')
+    const settings = createTabRecord({
+      spaceId: space.id,
+      containerId: 'default',
+      url: 'zen://settings/privacy/site-data'
+    })
+    space.tabIds = [settings.id]
+    space.activeTabId = settings.id
+    const f = fixture({
+      profile: {
+        version: 2,
+        spaces: [space],
+        tabs: [settings],
+        essentialTabIds: [],
+        activeSpaceId: space.id,
+        settings: { onboardingDone: true }
+      }
+    })
+    const tab = (): Tab | undefined => f.browser.tabs.tab(settings.id)
+    expect(tab()?.url).toBe('zen://settings/privacy/site-data')
+    expect(tab()?.title).toBe('Settings')
+    expect(tab()?.canGoBack).toBe(true)
+    back(f, settings.id)
+    expect(tab()?.url).toBe('zen://settings/privacy')
+    back(f, settings.id)
+    expect(tab()?.url).toBe('zen://settings')
+    expect(tab()?.canGoBack).toBe(false)
+  })
+
   it('does not record a move to the section already shown', () => {
     const f = fixture()
     openSite(f, 'https://a.test/')
