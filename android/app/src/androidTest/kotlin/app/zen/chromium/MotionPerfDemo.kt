@@ -42,12 +42,37 @@ import kotlin.math.roundToInt
  *    the group's ribbon (`backdrop-filter` + an opacity that follows the finger: PERF-4's
  *    second hypothesis), read against `tab-swipe-drag`.
  *
+ * THE OVERVIEW's open and close (#26 / #147: the grid scales and fades in on `.zen-overview`
+ * while the hero card – the page's stand-in – morphs between the page's frame and its card by
+ * the rect-lerp of v2 §11.4, a layout per frame BY DESIGN, whose cost is measured here and
+ * reported before anything about it changes), on the seeded six tabs and again on thirty
+ * (twenty-four more created unloaded, `tab.create` with `load: false`: a card each, no page, no
+ * picture – the grid's size and nothing else; the `-30` scenes), see [overviewScenes]:
+ *
+ *  - `overview-pull-begin`: the touch on the pill, the slop upward, the page's capture, the
+ *    overview's mount (its grid rendered for the first time this open).
+ *  - `overview-pull-drag`: the finger carrying the grid in over three quarters of the travel
+ *    (`overview.progress` follows the finger; the hero's rect-lerp runs per frame).
+ *  - `overview-pull-settle`: the lift; the spring opens the rest of the way.
+ *  - `overview-close-pick`: a tap on the page's own card; the hero grows back into the page.
+ *  - `overview-fling-open`: a quick pull let go half way in (past the swipe's commit fraction,
+ *    so the release commits on position); the spring carries the open from there, the capture
+ *    and the mount in the scene.
+ *  - `overview-back-drag` / `overview-back-commit` (the six tabs only): the system's back gesture
+ *    from the left edge held a third of the way across, the overview receding on its progress;
+ *    then the release, which closes it. The run puts the system in gesture navigation with its
+ *    back animations before the launch for these (the shared recipe sets three-button
+ *    navigation); the pill sits higher by the difference of the two navigation bars' insets.
+ *
+ * The groups are picked by the `scenes` argument (`DEMO_SCENES`: `all`, or a comma list of
+ * `tab-swipe`, `overview`), so a branch profiling one motion pays for its scenes alone.
+ *
  * The scenes are measured BEFORE the recorder rolls (screenrecord composes a second copy of
  * every frame on the emulator's software GPU); the recorded part is the media: the slow swipe,
- * the fling back, the grouped swipe. The app's startup sweeps (Safe Browsing's, the blocker's)
- * are held for the run when the workflow asks (`holdBackgroundWork`, #313); without the hold the
- * scenes start after the sweeps' window, which would otherwise land in a scene as long tasks of
- * the app's, not the swipe's.
+ * the fling back, the grouped swipe; the overview pulled in, open, and picked closed. The
+ * app's startup sweeps (Safe Browsing's, the blocker's) are held for the run when the workflow
+ * asks (`holdBackgroundWork`, #313); without the hold the scenes start after the sweeps' window,
+ * which would otherwise land in a scene as long tasks of the app's, not the motion's.
  *
  * Beside the harness's numbers an in-chrome probe (a MutationObserver on the chrome's tree)
  * counts what each scene wrote to the DOM: the cards' style writes (one per card per frame
@@ -66,11 +91,21 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private val theme = InstrumentationRegistry.getArguments().getString("theme").let {
         if (it == "dark") "dark" else "light"
     }
+    /** The scene groups this run measures (`scenes`: `all` or a comma list of `tab-swipe`, `overview`). */
+    private val groups: Set<String> = InstrumentationRegistry.getArguments().getString("scenes").let { arg ->
+        if (arg.isNullOrBlank() || arg == "all") GROUPS else arg.split(',').map { it.trim() }.filter { it in GROUPS }.toSet()
+    }
     private lateinit var server: DemoServer
     private val host get() = (activity as MainActivity).host
     private val findings = StringBuilder()
     private val scenes = JSONArray()
     private var launchedAt = 0L
+    /** Gesture navigation is on (set before the launch for the overview's back scenes). */
+    private var gestural = false
+    /** [beforeLaunch] changed the navigation mode; [restoreNavigation] puts it back at the end. */
+    private var navigationChanged = false
+    /** `enable_back_animation` as the system had it before the launch (`null` / empty when unset). */
+    private var backAnimationBefore = ""
 
     @Test
     fun record() {
@@ -86,6 +121,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             runDemo()
         } finally {
             server.close()
+            restoreNavigation()
             File(out, "perf-motion.json").writeText(
                 JSONObject().put("package", app.packageName).put("theme", theme)
                     .put("window", JSONObject().put("width", width).put("height", height).put("density", density.toDouble()))
@@ -100,7 +136,41 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         json.replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$theme\"")
 
     override fun beforeLaunch() {
+        // The overview's predictive back scenes are the system's back gesture: gesture navigation
+        // and its animations, before the app starts (the shared recipe sets three-button
+        // navigation, whose bar has no gesture zone; the window's insets – the pill's place –
+        // change with the mode, so this comes before the harness measures the window).
+        if ("overview" in groups) {
+            backAnimationBefore = shellCommand("settings get global enable_back_animation").trim()
+            shellCommand("cmd overlay disable com.android.internal.systemui.navbar.threebutton")
+            shellCommand("cmd overlay enable com.android.internal.systemui.navbar.gestural")
+            shellCommand("settings put global enable_back_animation 1")
+            SystemClock.sleep(3_000)
+            gestural = shellCommand("cmd overlay list").lines().any { it.contains("[x] com.android.internal.systemui.navbar.gestural") }
+            navigationChanged = true
+            Log.i(tag, "navigation: ${if (gestural) "gestural" else "NOT gestural (the back scenes are skipped)"}")
+        }
         launchedAt = SystemClock.uptimeMillis()
+    }
+
+    /**
+     * The system's navigation back to the shared recipe's three-button mode (and the back
+     * animation setting to what it was) once the profile is done: the functional drivers chained
+     * after it on the same boot (android-motion-perf.sh) run under the mode their own workflows
+     * give them. Only at the end – the mode change moves the window's insets, and the pill's
+     * place was measured at the launch – and only when [beforeLaunch] changed it.
+     */
+    private fun restoreNavigation() {
+        if (!navigationChanged) return
+        shellCommand("cmd overlay disable com.android.internal.systemui.navbar.gestural")
+        shellCommand("cmd overlay enable com.android.internal.systemui.navbar.threebutton")
+        if (backAnimationBefore.isEmpty() || backAnimationBefore == "null") {
+            shellCommand("settings delete global enable_back_animation")
+        } else {
+            shellCommand("settings put global enable_back_animation $backAnimationBefore")
+        }
+        val threeButton = shellCommand("cmd overlay list").lines().any { it.contains("[x] com.android.internal.systemui.navbar.threebutton") }
+        Log.i(tag, "navigation restored: ${if (threeButton) "three-button" else "NOT three-button"}; enable_back_animation ${backAnimationBefore.ifEmpty { "unset" }}")
     }
 
     // --- warm-up: the pictures, then the measured scenes ------------------------------------------
@@ -133,27 +203,250 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             finding("waiting ${SWEEP_MS - sinceLaunch} ms for the startup sweeps to pass")
             SystemClock.sleep(SWEEP_MS - sinceLaunch)
         }
-        finding("active tab before the scenes: ${activeTabId()}")
-        measureTabSwipe()
+        finding("active tab before the scenes: ${activeTabId()}; groups: ${groups.joinToString(", ")}")
+        if ("tab-swipe" in groups) measureTabSwipe()
+        if ("overview" in groups) measureOverview()
     }
 
-    /** The recorded media: the slow swipe, the fling back, the grouped swipe. */
+    /** The recorded media: the slow swipe, the fling back, the grouped swipe; the overview's pull and its return. */
     override fun demo() {
         activate(START_TAB)
         settle()
-        shot("swipe-rest")
-        slowSwipe()
-        SystemClock.sleep(RELEASE_MS)
-        shot("swipe-landed")
-        flingRight()
+        if ("tab-swipe" in groups) {
+            shot("swipe-rest")
+            slowSwipe()
+            SystemClock.sleep(RELEASE_MS)
+            shot("swipe-landed")
+            flingRight()
+            settle()
+            activate(GROUP_TAB)
+            settle()
+            shot("grouped-rest")
+            slowSwipe()
+            SystemClock.sleep(RELEASE_MS)
+            shot("grouped-landed")
+            settle()
+        }
+        if ("overview" in groups) {
+            activate(START_TAB)
+            settle()
+            val f = Finger()
+            f.down(pillCenterX, pillY)
+            f.settleIn(0f, -NUDGE)
+            f.moveBy(0f, -PULL_FRACTION * overviewTravel, PULL_MS)
+            f.hold(DRAG_TAIL_MS)
+            shot("overview-pulled")
+            f.up()
+            awaitOverview(open = true)
+            SystemClock.sleep(OPEN_REST_MS)
+            shot("overview-open")
+            pickActiveCard()
+            awaitOverview(open = false)
+            SystemClock.sleep(CLOSE_REST_MS)
+            shot("overview-returned")
+        }
+    }
+
+    // --- the overview ------------------------------------------------------------------------------
+
+    /**
+     * The overview's scenes on the seeded six tabs, then on thirty: the pull in its pieces, the
+     * pick that closes it, a fling open, and (under gesture navigation) the system's back gesture
+     * over it. The thirty are the six plus [EXTRA_TABS] created unloaded (`load: false`: a card
+     * each in the grid, no page behind it, no picture in it), so the second set is the grid's
+     * size and nothing else; the back scenes run on the six alone.
+     */
+    private fun measureOverview() {
+        finding("overview: navigation ${if (gestural) "gestural (the back scenes run)" else "three-button (the back scenes are skipped)"}")
+        activate(START_TAB)
         settle()
-        activate(GROUP_TAB)
+        overviewScenes("", back = gestural)
+        var made = 0
+        for (i in 1..EXTRA_TABS) {
+            val id = coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/article?extra=$i")},\"active\":false,\"load\":false}")
+            if (id.isNotEmpty()) made++
+        }
+        finding("overview: $made tabs created unloaded; ${coreState().getJSONObject("tabs").length()} tabs in the core")
+        activate(START_TAB)
         settle()
-        shot("grouped-rest")
-        slowSwipe()
-        SystemClock.sleep(RELEASE_MS)
-        shot("grouped-landed")
-        settle()
+        overviewScenes("-30", back = false)
+    }
+
+    /**
+     * One set of the overview's scenes, named with `suffix`:
+     *
+     *  - `overview-pull-begin`: the touch on the pill, the slop upward, the capture of the page
+     *    and the overview's mount (its grid rendered for the first time this open: every card).
+     *  - `overview-pull-drag`: the finger carrying the grid in over [PULL_FRACTION] of the travel;
+     *    `overview.progress` follows it, the hero card morphs (the rect-lerp) each frame.
+     *  - `overview-pull-settle`: the lift; the spring opens the rest of the way.
+     *  - `overview-close-pick`: a tap on the page's own card; the hero grows back into the page,
+     *    the page returns (`layout.report`).
+     *  - `overview-fling-open`: a quick pull let go at [FLING_FRACTION] of the travel, the spring
+     *    carrying the open from there; the capture and the mount are in it (the way most opens are
+     *    made). Closed again off the record by the same pick.
+     *  - `overview-back-drag` / `overview-back-commit` (with `back`): the system's back gesture
+     *    from the left edge held a third of the way across, the overview receding on its progress;
+     *    then the release, which closes it.
+     */
+    private fun overviewScenes(suffix: String, back: Boolean) {
+        val hero = activeTabId()
+        val f = Finger()
+        scene("overview-pull-begin$suffix", JankBudget.Kind.OPEN, profile = true) {
+            f.down(pillCenterX, pillY)
+            f.settleIn(0f, -NUDGE)
+        }
+        scene("overview-pull-drag$suffix", JankBudget.Kind.GESTURE, profile = true) {
+            f.moveBy(0f, -PULL_FRACTION * overviewTravel, PULL_MS)
+            f.hold(DRAG_TAIL_MS)
+        }
+        scene("overview-pull-settle$suffix", JankBudget.Kind.SPRING) {
+            f.up()
+            SystemClock.sleep(OPEN_SETTLE_MS)
+        }
+        finding("overview-pull$suffix: ${overviewState()}; hero $hero; ${cardsInGrid()} cards in the grid")
+        val opened = awaitOverview(open = true)
+        SystemClock.sleep(OPEN_REST_MS)
+        // The card is found while the overview is up; with none (the overview never opened, or
+        // the hero has no card) the scene is a back over the overview – never over the page,
+        // where a back would leave the app (the fling's release under load once snapped the
+        // overview closed, and the back meant for it ended the run).
+        val card = if (opened) activeCardRect() else null
+        scene("overview-close-pick$suffix", JankBudget.Kind.SPRING, profile = true) {
+            if (card != null) Finger().tap(card.exactCenterX(), card.exactCenterY()) else backOverOverview()
+            SystemClock.sleep(CLOSE_SETTLE_MS)
+        }
+        finding("overview-close-pick$suffix: ${if (card != null) "tapped the card at $card" else "NO CARD FOUND for $hero, closed with back"}; ${overviewState()}; active ${activeTabId()}")
+        awaitOverview(open = false)
+        SystemClock.sleep(CLOSE_REST_MS)
+
+        scene("overview-fling-open$suffix", JankBudget.Kind.SPRING) {
+            val g = Finger()
+            g.down(pillCenterX, pillY)
+            g.moveBy(0f, -NUDGE, 60)
+            g.moveBy(0f, -FLING_FRACTION * overviewTravel, FLING_MS)
+            g.up()
+            SystemClock.sleep(OPEN_SETTLE_MS)
+        }
+        finding("overview-fling-open$suffix: ${overviewState()}")
+        awaitOverview(open = true)
+        SystemClock.sleep(OPEN_REST_MS)
+
+        if (back && awaitSurface(true, 4_000)) {
+            val b = Finger()
+            scene("overview-back-drag$suffix", JankBudget.Kind.GESTURE) {
+                b.down(EDGE_X, height * 0.6f)
+                b.moveBy(BACK_FRACTION * width, 0f, BACK_MS)
+                b.hold(DRAG_TAIL_MS)
+            }
+            finding("overview-back-drag$suffix: ${overviewState()}")
+            scene("overview-back-commit$suffix", JankBudget.Kind.SPRING) {
+                b.up()
+                SystemClock.sleep(CLOSE_SETTLE_MS)
+            }
+            finding("overview-back-commit$suffix: ${overviewState()}; active ${activeTabId()}")
+            if (!awaitOverview(open = false)) {
+                finding("overview-back-commit$suffix: the overview did not close on the gesture; closing with back")
+                backOverOverview()
+                awaitOverview(open = false)
+            }
+        } else {
+            if (back) finding("overview-back$suffix: the host reports no surface up for the back gesture; the back scenes are skipped")
+            pickActiveCard()
+            awaitOverview(open = false)
+        }
+        SystemClock.sleep(CLOSE_REST_MS)
+    }
+
+    /**
+     * A tap on the active tab's card in the open overview (a back when the card is not found);
+     * nothing when the overview is not up – a back on the page would leave the app.
+     */
+    private fun pickActiveCard() {
+        if (overviewState() == "closed") {
+            finding("pick: the overview is closed already; nothing to pick")
+            return
+        }
+        val card = activeCardRect()
+        if (card != null) Finger().tap(card.exactCenterX(), card.exactCenterY()) else backOverOverview()
+    }
+
+    /** A back while the overview is up; none when it is closed (a back on the page would leave the app). */
+    private fun backOverOverview() {
+        if (overviewState() == "closed") {
+            finding("back: the overview is closed already; the back is not sent")
+            return
+        }
+        back()
+    }
+
+    /** The on-screen box of the active tab's card in the overview's grid, null when there is none. */
+    private fun activeCardRect(): android.graphics.Rect? = domRect(".zen-overview [data-tab-id=${JSONObject.quote(activeTabId())}]")
+
+    /**
+     * The on-screen box of the first element `selector` matches (`getBoundingClientRect` in
+     * device px); the chrome fills the window, so the DOM's origin is the screen's – checked once
+     * against the accessibility tree's box of the overview's Spaces button, like OverviewMotionDemo.
+     */
+    private fun domRect(selector: String): android.graphics.Rect? {
+        val text = jsString(
+            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';var r=e.getBoundingClientRect();" +
+                "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio})})()"
+        )
+        if (text.isEmpty()) return null
+        val o = JSONObject(text)
+        val d = o.getDouble("d")
+        calibrate()
+        return android.graphics.Rect(
+            (o.getDouble("l") * d + originX).roundToInt(),
+            (o.getDouble("t") * d + originY).roundToInt(),
+            (o.getDouble("r") * d + originX).roundToInt(),
+            (o.getDouble("b") * d + originY).roundToInt()
+        )
+    }
+
+    private var originX = 0f
+    private var originY = 0f
+    private var calibrated = false
+
+    private fun calibrate() {
+        if (calibrated) return
+        val text = jsString(
+            "(function(){var e=document.querySelector('.zen-overview [aria-label=\"Spaces\"]');if(!e)return '';var r=e.getBoundingClientRect();" +
+                "return JSON.stringify({x:(r.left+r.right)/2*window.devicePixelRatio,y:(r.top+r.bottom)/2*window.devicePixelRatio})})()"
+        )
+        if (text.isEmpty()) return
+        val fromTree = findByLabel("Spaces") ?: return
+        val o = JSONObject(text)
+        val dx = fromTree.exactCenterX() - o.getDouble("x").toFloat()
+        val dy = fromTree.exactCenterY() - o.getDouble("y").toFloat()
+        calibrated = true
+        if (Math.abs(dx) <= MAX_ORIGIN_OFFSET && Math.abs(dy) <= MAX_ORIGIN_OFFSET) {
+            originX = dx
+            originY = dy
+        }
+        finding("coordinates: the DOM's origin is ${originX.roundToInt()}, ${originY.roundToInt()} px into the screen (Spaces button: tree $fromTree, DOM centre ${o.getDouble("x").roundToInt()}, ${o.getDouble("y").roundToInt()})")
+    }
+
+    /** A JS expression's string result ("" when the chrome never answered or returned nothing). */
+    private fun jsString(code: String): String = (JSONTokener(chromeJs(code)).nextValue() as? String).orEmpty()
+
+    /** `open` (at rest, scale 1), `at <transform>` (in motion), or `closed` (no `.zen-overview`). */
+    private fun overviewState(): String =
+        jsString("(function(){var e=document.querySelector('.zen-overview');if(!e)return 'closed';return e.style.transform==='scale(1)'?'open':'at '+e.style.transform+' opacity '+e.style.opacity})()")
+
+    private fun cardsInGrid(): Int = jsString("String(document.querySelectorAll('.zen-overview [data-tab-id]').length)").toIntOrNull() ?: -1
+
+    /** Poll the chrome until the overview is open at rest (or gone, with `open = false`); false when it is not in time. */
+    private fun awaitOverview(open: Boolean, timeoutMs: Long = 8_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val state = overviewState()
+            if ((open && state == "open") || (!open && state == "closed")) return true
+            SystemClock.sleep(200)
+        }
+        finding("the overview is ${overviewState()} after $timeoutMs ms, ${if (open) "not open" else "not closed"}")
+        return false
     }
 
     // --- the tab swipe -----------------------------------------------------------------------------
@@ -243,11 +536,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         profiled?.let { json.put("profile", it) }
         scenes.put(json)
         val frames = result.trace?.frames ?: 0
-        val per = { key: String -> if (frames > 0) String.format(java.util.Locale.ROOT, "%.2f", probe.optInt(key) / frames.toDouble()) else "-" }
         finding(
-            "[$name] ${result.trace?.describe() ?: "trace: ${result.traceMissing}"}; probe: cards ${probe.optInt("card")} (${per("card")}/frame), " +
-                "dims ${probe.optInt("dim")}, ribbons ${probe.optInt("ribbon")}, pill ${probe.optInt("pill")} (remounts ${probe.optInt("pillRemounts")}), " +
-                "root ${probe.optInt("root")}, other ${probe.optInt("other")}, nodes +${probe.optInt("added")}/-${probe.optInt("removed")}, stage mounts ${probe.optInt("stageMounts")}; " +
+            "[$name] ${result.trace?.describe() ?: "trace: ${result.traceMissing}"}; probe: ${describeProbe(probe, frames)}; " +
                 "listeners: ${describeEvents(probe)}; commands: ${describeCommands(probe)}" +
                 (if (sampling != null) "; script by function ($sampling): ${profiled?.let { describeProfile(it) } ?: "none"}" else "")
         )
@@ -272,13 +562,17 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      */
     private fun installProbe(): String = chromeJs(
         "(function(){if(window.__motion)return 'kept';" +
-            "var p=window.__motion={card:0,dim:0,ribbon:0,pill:0,root:0,other:0,added:0,removed:0,stageMounts:0,pillRemounts:0,ev:{},cmd:{}};" +
+            "var p=window.__motion={};" + RESET_JS +
             "var inPill=function(n){return !!(n&&n.closest&&n.closest('.zen-phone-pill'))};" +
             "var isStage=function(n){return n.nodeType===1&&(n.classList.contains('zen-stage-card')||(n.querySelector&&!!n.querySelector('.zen-stage-card')))};" +
             "new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var r=rs[i],t=r.target;" +
             "if(r.type==='attributes'){var c=t.classList;" +
-            "if(c&&c.contains('zen-stage-card'))p.card++;else if(c&&c.contains('zen-stage-dim'))p.dim++;else if(c&&c.contains('zen-group-ribbon'))p.ribbon++;" +
-            "else if(t===document.documentElement)p.root++;else if(inPill(t))p.pill++;else p.other++}" +
+            // The hero wears `zen-stage-card` too: it is read first. Inside it, the title row's
+            // height and opacity and the picture's scale are the hero's inner writes.
+            "if(c&&c.contains('zen-overview-hero'))p.hero++;else if(c&&c.contains('zen-stage-card'))p.card++;else if(c&&c.contains('zen-stage-dim'))p.dim++;" +
+            "else if(c&&c.contains('zen-group-ribbon'))p.ribbon++;else if(c&&c.contains('zen-overview'))p.overview++;else if(c&&c.contains('zen-overview-card'))p.ovCard++;" +
+            "else if(t===document.documentElement)p.root++;else if(inPill(t))p.pill++;" +
+            "else if(t.closest&&t.closest('.zen-overview-hero'))p.heroInner++;else if(t.closest&&t.closest('.zen-overview'))p.ovInner++;else p.other++}" +
             "else{p.added+=r.addedNodes.length;p.removed+=r.removedNodes.length;" +
             "for(var j=0;j<r.addedNodes.length;j++){if(isStage(r.addedNodes[j]))p.stageMounts++}" +
             "if(inPill(t)&&r.addedNodes.length)p.pillRemounts++}}})" +
@@ -350,7 +644,24 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     }
 
     private fun resetProbe() {
-        chromeJs("window.__motion&&Object.assign(window.__motion,{card:0,dim:0,ribbon:0,pill:0,root:0,other:0,added:0,removed:0,stageMounts:0,pillRemounts:0,ev:{},cmd:{}})")
+        chromeJs("(function(){var p=window.__motion;if(p){$RESET_JS}})()")
+    }
+
+    /**
+     * The probe's counters as a line, the zero ones left out: `cards 76 (3.62/frame), dims 38, …,
+     * nodes +1/-1`. The style writes of the things that move per frame carry their per-frame rate.
+     */
+    private fun describeProbe(probe: JSONObject, frames: Int): String {
+        val per = { key: String -> if (frames > 0) String.format(java.util.Locale.ROOT, " (%.2f/frame)", probe.optInt(key) / frames.toDouble()) else "" }
+        val parts = ArrayList<String>()
+        for ((key, label, rated) in PROBE_COUNTERS) {
+            val n = probe.optInt(key)
+            if (n > 0) parts += "$label $n" + (if (rated) per(key) else "")
+        }
+        parts += "nodes +${probe.optInt("added")}/-${probe.optInt("removed")}"
+        if (probe.optInt("stageMounts") > 0) parts += "stage mounts ${probe.optInt("stageMounts")}"
+        if (probe.optInt("pillRemounts") > 0) parts += "pill remounts ${probe.optInt("pillRemounts")}"
+        return parts.joinToString(", ")
     }
 
     /** The probe's listener times as a line: `pointerdown 1x 0.2 ms (max 0.2)`, the types with time in them, the longest first. */
@@ -447,6 +758,59 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         /** The sampler's interval asked for; Chromium rounds it up to its base interval (10 ms) and the probe reports the one it got. */
         private const val PROFILE_INTERVAL_MS = 10
         private const val PROFILE_WAIT_MS = 4_000L
+
+        /** The scene groups a run can measure (`scenes`). */
+        private val GROUPS = setOf("tab-swipe", "overview")
+        /** Tabs created unloaded for the overview's second set: the six seeded plus these make thirty. */
+        private const val EXTRA_TABS = 24
+        /** How far the pull carries the overview in before the lift; the spring does the rest. */
+        private const val PULL_FRACTION = 0.75f
+        private const val PULL_MS = 1_200L
+        /**
+         * The fling lets go this far in, quickly. Past the swipe's commit fraction (0.45 of the
+         * travel, `SWIPE_THRESHOLDS`) so the release commits on POSITION whatever the chrome's
+         * velocity tracker made of the injected moves: at a quarter of the travel over 150 ms the
+         * open hung on the velocity estimate alone and went either way run to run (open on six tabs
+         * and closed on thirty in one run, the reverse in the next), and a fling that closed took
+         * the back scenes after it off the record. Still a quick pull: 0.5 of the travel in 220 ms.
+         */
+        private const val FLING_FRACTION = 0.5f
+        private const val FLING_MS = 220L
+        /** The spring's open and the grid's rest after a lift; the morph back and the page's return after a pick. */
+        private const val OPEN_SETTLE_MS = 2_500L
+        private const val CLOSE_SETTLE_MS = 3_000L
+        /** A rest between scenes, so the next touch begins a gesture of its own. */
+        private const val OPEN_REST_MS = 1_500L
+        private const val CLOSE_REST_MS = 2_500L
+        /** The back gesture: from the screen's left edge, this far across, over this long (BackDemo's thumb). */
+        private const val EDGE_X = 2f
+        private const val BACK_FRACTION = 0.33f
+        private const val BACK_MS = 650L
+        /** How far the DOM's origin may sit from the screen's before the calibration is disbelieved. */
+        private const val MAX_ORIGIN_OFFSET = 64f
+
+        /**
+         * The probe's counters in the order the findings print them: key, label, whether the
+         * per-frame rate is worth printing (the things that move per frame).
+         */
+        private val PROBE_COUNTERS = listOf(
+            Triple("card", "cards", true),
+            Triple("hero", "hero", true),
+            Triple("heroInner", "hero inner", true),
+            Triple("overview", "overview root", true),
+            Triple("ovCard", "overview cards", true),
+            Triple("ovInner", "overview inner", true),
+            Triple("dim", "dims", false),
+            Triple("ribbon", "ribbons", false),
+            Triple("pill", "pill", false),
+            Triple("root", "root", false),
+            Triple("other", "other", false)
+        )
+
+        /** The probe's counters at zero (runs where `p` is the probe's object). */
+        private const val RESET_JS =
+            "p.card=0;p.hero=0;p.heroInner=0;p.overview=0;p.ovCard=0;p.ovInner=0;p.dim=0;p.ribbon=0;p.pill=0;p.root=0;p.other=0;" +
+                "p.added=0;p.removed=0;p.stageMounts=0;p.pillRemounts=0;p.ev={};p.cmd={};"
 
         /**
          * The probe's sampler (`window.__motion.prof`): `start(ms)` opens a `Profiler` over the

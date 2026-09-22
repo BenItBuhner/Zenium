@@ -410,7 +410,34 @@ abstract class DemoHarness(
             Rect().also { node.getBoundsInScreen(it) }
         }
 
+    /** [findByLabel] for the first node whose label or text satisfies `matches` (a [groupCard], a [tabCard]). */
+    protected fun findByLabel(matches: (String) -> Boolean): Rect? =
+        findNode(matches)?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
     private fun findNode(label: String): AccessibilityNodeInfo? = findNode { it == label }
+
+    /**
+     * A card of the overview's grid by the leading part of the accessible name the chrome gives
+     * it since #237 (overviewLabels.ts) and never by the rest, which moves: a group's card is
+     * "NAME, tab group, N tabs" (`groupCardLabel`; the count changes as tabs join and leave the
+     * group), a tab's "TITLE, tab N of M[, current][, sleeping]" (`tabCardLabel`; its place, the
+     * count and its state change with every card around it). A driver that read the whole name
+     * broke the first time it changed under it: three drivers read "Group Research" and every
+     * card by its bare title, the names before #237, until #315's run 35711026068 and #327's
+     * found none. [groupCard] and [tabCard] make one; it is the predicate for the accessibility
+     * tree ([findByLabel], [reveal], [waitFor] and [waitForGone] take it where they take a
+     * label) and [selector] the same match for a driver that reads the grid's DOM. The card's
+     * close button, "Close TITLE" since the same change, is [closeButtonOf] its cell.
+     */
+    class Card internal constructor(private val name: String, private val heads: List<String>) : (String) -> Boolean {
+        /** Whether an accessible name – the tree's, or a DOM `aria-label` – is this card's. */
+        override fun invoke(label: String): Boolean = heads.any(label::startsWith)
+
+        /** The card in the grid's DOM, for a driver that reads it with `document.querySelector`. */
+        val selector: String = heads.joinToString(", ") { "[aria-label^=\"$it\"]" }
+
+        override fun toString(): String = name
+    }
 
     /**
      * A control of the phone bar's pill by its label – the site-information glyph, the lock, a
@@ -529,6 +556,14 @@ abstract class DemoHarness(
         return findByLabel(label)
     }
 
+    /** [reveal] for the first node whose label or text satisfies `matches` (a [groupCard], a [tabCard]). */
+    protected fun reveal(matches: (String) -> Boolean): Rect? {
+        val node = findNode(matches) ?: return null
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+        return findByLabel(matches)
+    }
+
     /**
      * Click the nearest clickable ancestor of a labelled node through the accessibility tree – the
      * bounds it reports for content inside a scrolled list lag behind on the emulator, so a touch
@@ -561,6 +596,26 @@ abstract class DemoHarness(
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             if (findByLabel(label) == null) return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
+    /** [waitFor] for the first node whose label or text satisfies `matches` (a [groupCard], a [tabCard]). */
+    protected fun waitFor(matches: (String) -> Boolean, timeoutMs: Long = 5_000): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            findByLabel(matches)?.let { return it }
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    /** [waitForGone] for every node whose label or text satisfies `matches` (a [groupCard], a [tabCard]). */
+    protected fun waitForGone(matches: (String) -> Boolean, timeoutMs: Long = 5_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabel(matches) == null) return true
             SystemClock.sleep(200)
         }
         return false
@@ -1892,6 +1947,29 @@ abstract class DemoHarness(
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
+
+        /** The overview's card for the tab group named `name` ("Research, tab group, …"), matched without its count: [Card]. */
+        fun groupCard(name: String): Card =
+            Card("${name.trim()} group card", listOf(name.trim().let { if (it.isEmpty()) "Tab group," else "$it, tab group," }))
+
+        /**
+         * The overview's card for the tab titled one of `titles` ("Tea - Wikipedia, tab 4 of 7, …"),
+         * matched without its place, the count or its state: [Card]. Several titles for a tab whose
+         * title changes once its page loads (the seeded one, then the page's own).
+         */
+        fun tabCard(vararg titles: String): Card =
+            Card("${titles.joinToString(" / ")} card", titles.map { "$it, tab " })
+
+        /**
+         * The close button of the overview card in `cell` (a driver's `[data-tab-id="…"]`
+         * selector), for a driver that reads the grid's DOM: the card's own child – the button
+         * sits beside the card's button in its cell (OverviewCard.tsx) – named "Close TITLE"
+         * since #237 (`closeTabLabel`) and matched by its element and the leading word alone, the
+         * title being the cell's business already (`button`: the card itself is a `div` whose
+         * name a page titled "Close …" would start the same way). Four drivers read
+         * `[aria-label="Close tab"]`, the name before #237, and had no X to touch.
+         */
+        fun closeButtonOf(cell: String): String = "$cell button[aria-label^=\"Close \"]"
         /** The instrumentation argument the gate is read from (`-e jankGate hard`). */
         const val JANK_GATE_ARGUMENT = "jankGate"
         /**

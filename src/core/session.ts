@@ -15,7 +15,7 @@ import { displayUrl } from '../shared/url'
 import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-import { createTabRecord, getSpace, insertTabIntoSpace } from './model'
+import { createTabRecord, folderOpened, getSpace, insertTabIntoSpace } from './model'
 import { closedTabIds } from './navigationState'
 
 /** Entries remembered (a window with all its tabs counts as one). */
@@ -309,14 +309,23 @@ export class SessionService {
     if (newest) this.restoreClosed(newest.id, win)
   }
 
-  restoreClosed(id: string, win: ZenWindow = this.browser.focusedWindow()): void {
+  /**
+   * Bring back one entry: a tab to its place and to the front – or, `background` (a middle or
+   * Ctrl click on the History page's Recently closed row, §10.1), to its place alone, the tab
+   * that was active staying so; a window entry is a whole window and comes back as one.
+   */
+  restoreClosed(
+    id: string,
+    win: ZenWindow = this.browser.focusedWindow(),
+    background = false
+  ): void {
     const state = this.browser.state
     const entry = state.recentlyClosed.find((e) => e.id === id)
     if (!entry) return
     state.recentlyClosed = state.recentlyClosed.filter((e) => e.id !== id)
     if (entry.kind === 'tab') {
       const tab = this.restoreTab(entry, win)
-      this.browser.tabs.activateTab(tab.id, win)
+      if (!background) this.browser.tabs.activateTab(tab.id, win)
     } else {
       this.restoreWindow(entry, win)
     }
@@ -373,6 +382,8 @@ export class SessionService {
       if (tab.folderId && m.folders[tab.folderId]?.spaceId !== space.id) tab.folderId = null
       insertTabIntoSpace(m, space, tab, closed.index)
       tab.windowId = tabs.ownerWindowIdFor(tab, space, win)
+      // Back into its group: the group is open again (a saved one no longer, TAB-16).
+      folderOpened(m, tab.folderId, Date.now())
     }
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
     if (closed.navigation && closed.navigation.entries.length > 1)

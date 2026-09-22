@@ -47,4 +47,11 @@
     <string name="cct_not_now">Not now</string>
     <string name="cct_no_app">No app can open this link</string>
     <string name="cct_find_count">%1$d/%2$d</string>
+
+    <!-- The unresponsive-page prompt (ERR-16) on the native prompt sheet, since the chrome shares the hung renderer. -->
+    <string name="unresponsive_description">This page isn’t responding. You can wait for it to respond, or exit the page.</string>
+    <string name="unresponsive_wait">Wait</string>
+    <string name="unresponsive_exit">Exit page</string>
+    <!-- The native prompt sheet's grabber (NativePromptSheet, v2 §9.9): a tap on it is the dismissal. -->
+    <string name="prompt_sheet_dismiss">Dismiss</string>
 </resources>

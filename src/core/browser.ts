@@ -82,6 +82,7 @@ import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
 import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
+import { ConnectivityService } from './connectivity'
 import { DefaultBrowserService } from './defaultBrowser'
 import { ImportService } from './import/service'
 import { BackgroundWork } from './background/work'
@@ -95,10 +96,10 @@ import {
   createSpace,
   cycleSpace,
   deleteFolder,
-  folderTabs,
   getSpace,
   nextFolderColor,
   orderedTabsForSpace,
+  regularFolderTabs,
   reorderContainer,
   reorderSpace,
   sectionIndexOf,
@@ -193,6 +194,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'menu.show',
   'menu.app',
   'tabsearch.open',
+  'overview.open',
   'bookmark.star',
   'bookmark.edit',
   'webapp.install',
@@ -269,6 +271,8 @@ export class Browser {
   readonly autofill: AutofillService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
+  /** The device's connectivity: the offline banner's state and the error pages that reload themselves. */
+  readonly connectivity: ConnectivityService
   /** Chrome's "Import bookmarks and settings": other browsers' profiles and picked files (ID-23). */
   readonly imports: ImportService
   /**
@@ -435,6 +439,7 @@ export class Browser {
     this.passwords = new PasswordService(this, platform.passwords)
     this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
+    this.connectivity = new ConnectivityService(this)
     this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
@@ -467,6 +472,7 @@ export class Browser {
       updates: this.updates.status(),
       passwords: this.passwords.status(),
       defaultBrowser: this.defaultBrowser.status(),
+      network: this.connectivity.status(),
       blockedPopups: this.popups.all(),
       permissionRules: this.permissions.rules(),
       permissionDefaults: this.permissions.defaults(CONTENT_SETTINGS.map((s) => s.id)),
@@ -1053,6 +1059,7 @@ export class Browser {
     this.passwords.start()
     this.autofill.start()
     this.defaultBrowser.start()
+    this.connectivity.start()
     this.translate.start()
     this.spellcheck.start()
     this.syncShortcuts()
@@ -1398,12 +1405,18 @@ export class Browser {
   }
 
   /** Open a bookmark in the given tab (or a new one) and remember that it was used. */
-  openBookmark(id: string, newTab: boolean, tabId: string | null, win: ZenWindow): void {
+  openBookmark(
+    id: string,
+    newTab: boolean,
+    tabId: string | null,
+    win: ZenWindow,
+    background = false
+  ): void {
     const node = this.bookmarks.get(id)
     if (!node || node.type !== 'url' || !node.url) return
     this.bookmarks.touch(id)
-    // Same path as a typed URL so space routing applies.
-    this.submitUrlbar(node.url, newTab, tabId, false, win)
+    // Same path as a typed URL so space routing applies; `background` is the new tab behind.
+    this.submitUrlbar(node.url, newTab || background, tabId, background, win)
   }
 
   /** Open every bookmark below the given nodes in new tabs (the first one becomes active). */
@@ -1539,7 +1552,9 @@ export class Browser {
   newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
     const folder = this.state.model.folders[folderId]
     if (!folder) throw new Error('Folder not found')
-    const members = folderTabs(this.state.model, folderId)
+    // The group's members are its regular ones: a private tab in it lends neither its place
+    // nor its container to a tab the group's menu makes.
+    const members = regularFolderTabs(this.state.model, folderId)
     const last = members[members.length - 1]
     const created = this.tabs.createTab(
       {
@@ -1575,8 +1590,78 @@ export class Browser {
   deleteFolder(folderId: string, unpack: boolean): void {
     this.liveFolders.onFolderDeleted(folderId)
     const closed = deleteFolder(this.state.model, folderId, unpack)
-    for (const id of closed) this.tabs.closeTab(id, true)
+    // A private tab in the group was none of its tabs on the surface that deletes it: it is
+    // loose now (the model ungrouped it) and stays open, as the group's regular tabs close.
+    for (const id of closed) {
+      const tab = this.tabs.tab(id)
+      if (tab && !this.tabs.isPrivate(tab)) this.tabs.closeTab(id, true)
+    }
     this.state.commit()
+  }
+
+  /**
+   * Chrome's "Close group" where groups are saved (TAB-16): the tabs close, the group stays as a
+   * saved one with their pages (`Folder.savedTabs`), listed in the Tab groups pane until it is
+   * opened again or deleted.
+   */
+  closeFolder(folderId: string, win: ZenWindow = this.focusedWindow()): void {
+    this.tabs.closeFolderTabs(folderId, win)
+  }
+
+  /**
+   * "Open" a saved group (TAB-16): its pages come back as tabs of the group, in the order they
+   * were kept, at the end of the space's regular tabs – unloaded but for the first, which is
+   * made active – and the group is expanded. An open group is expanded and its first member
+   * activated instead. Resolves with the tab made active, or null with nothing to open.
+   */
+  openFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string | null {
+    const m = this.state.model
+    const folder = m.folders[folderId]
+    if (!folder) return null
+    const now = Date.now()
+    // The group's live members are its regular ones: a private tab in it is not what a regular
+    // surface's row opens (`regularFolderTabs`).
+    const live = regularFolderTabs(m, folderId)
+    if (live.length > 0) {
+      folder.collapsed = false
+      folder.lastUsedAt = now
+      this.tabs.activateTab(live[0].id, win)
+      this.state.commit()
+      return live[0].id
+    }
+    const saved = folder.savedTabs ?? []
+    if (saved.length === 0) return null
+    const space = getSpace(m, folder.spaceId)
+    if (!space) return null
+    const restored: Tab[] = []
+    for (const page of saved) {
+      const last = restored[restored.length - 1]
+      const tab = this.tabs.createTab(
+        {
+          url: page.url,
+          spaceId: space.id,
+          active: false,
+          load: false,
+          // The first at the end of the space's tabs, as Chrome reopens a saved group; each
+          // next one behind the one before, so the group keeps its order.
+          index: last ? undefined : Number.MAX_SAFE_INTEGER,
+          afterTabId: last?.id,
+          containerId: space.containerId,
+          folderId
+        },
+        win
+      )
+      // The row and the card read as the page did until it loads again.
+      tab.title = page.title || tab.title
+      tab.favicon = page.favicon ?? null
+      restored.push(tab)
+    }
+    folder.savedTabs = null
+    folder.collapsed = false
+    folder.lastUsedAt = now
+    this.tabs.activateTab(restored[0].id, win)
+    this.state.commit()
+    return restored[0].id
   }
 
   /** Delete a space without asking (sync applied a deletion made elsewhere). */
@@ -2314,6 +2399,12 @@ export class Browser {
     }
     if (message.type === 'interstitial') {
       if (typeof message.action === 'string' && typeof message.url === 'string') {
+        // The crash page's Show tabs (ERR-15): the tab switcher, from the sad tab alone.
+        if (message.action === 'show-tabs') {
+          if (this.tabs.isSadTab(tab))
+            this.emit('overview.open', undefined, this.tabs.windowFor(tabId))
+          return
+        }
         // The certificate interstitial's tab answers first; the other warning pages are the
         // protection service's.
         if (!this.tabs.handleCertificateInterstitial(tabId, message.action, message.url))
@@ -2574,6 +2665,8 @@ export class Browser {
         this.createFolder(spaceId, name, icon, win, { color, rename }).id,
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
+      'folder.close': ({ folderId }, win) => this.closeFolder(folderId, win),
+      'folder.open': ({ folderId }, win) => this.openFolder(folderId, win),
       'folder.contextMenu': ({ folderId, ...anchor }, win) =>
         this.menus.showFolderContextMenu(folderId, win, anchor),
       'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),
@@ -2749,9 +2842,12 @@ export class Browser {
         this.menus.showHistoryContextMenu(visitId, url, win, anchor),
       'history.dayMenu': ({ dayKey, count }, win) =>
         this.menus.showHistoryDayMenu(dayKey, count, win),
+      'history.foldedDevices': () => this.pages.foldedDeviceIds(),
+      'history.foldDevice': ({ deviceId, folded }) => this.pages.foldDevice(deviceId, folded),
 
       'session.recentlyClosed': () => this.session.summaries(),
-      'session.restoreClosed': ({ id }, win) => this.session.restoreClosed(id, win),
+      'session.restoreClosed': ({ id, background }, win) =>
+        this.session.restoreClosed(id, win, Boolean(background)),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
       'clipboard.writeText': ({ text, sensitive, confirmation }, win) => {
@@ -2784,7 +2880,8 @@ export class Browser {
       'bookmark.update': ({ id, title, url }) => void this.bookmarks.update(id, { title, url }),
       'bookmark.move': ({ ids, parentId, index }) => void this.bookmarks.move(ids, parentId, index),
       'bookmark.remove': ({ ids }) => void this.bookmarks.removeMany(ids),
-      'bookmark.open': ({ id, newTab, tabId }, win) => this.openBookmark(id, newTab, tabId, win),
+      'bookmark.open': ({ id, newTab, tabId, background }, win) =>
+        this.openBookmark(id, newTab, tabId, win, Boolean(background)),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),
       'bookmark.openInWindow': ({ ids, private: isPrivate }, win) =>
         this.openBookmarksInWindow(ids, isPrivate, win),

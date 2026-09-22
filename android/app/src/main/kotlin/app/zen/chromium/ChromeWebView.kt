@@ -116,10 +116,12 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                     "chrome renderer gone (${if (detail.didCrash()) "crashed" else "killed"}, priority at exit " +
                         "${detail.rendererPriorityAtExit()}); rebuilding the chrome"
                 )
-                host.onChromeGone(this@ChromeWebView)
+                host.onChromeGone(this@ChromeWebView, detail.didCrash(), detail.rendererPriorityAtExit())
                 return true
             }
         }
+        // The shared renderer stopping to answer (the unresponsive-page prompt, ERR-16).
+        host.watchRenderer(this)
         webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                 val level = when (message.messageLevel()) {

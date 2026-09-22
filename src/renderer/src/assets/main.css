@@ -619,6 +619,17 @@
 :root[data-form-factor='phone'] .zen-error-actions > * {
   flex: 1;
 }
+/*
+ * The crash page's repeat variant (ERR-15): Show tabs before Reload in the same row. The
+ * switcher it opens is the phone's overview, so the control is drawn on the phone alone; the
+ * desktop keeps the suggestion in the copy and Reload as its one control.
+ */
+.zen-error-show-tabs {
+  display: none;
+}
+:root[data-form-factor='phone'] .zen-error-show-tabs {
+  display: inline-flex;
+}
 .zen-error-advanced {
   padding: var(--v2-card-padding);
   border-radius: var(--v2-radius-card);
@@ -7240,6 +7251,69 @@
 }
 
 /*
+ * A tab group's row on the tablet sidebar (TABLET-04, v2 §9.36; `SpacePanel`'s `FolderRow`): a
+ * row like Zen's folder, not a chip – the 44 row at full width on the list's 46 pitch, the
+ * phone overview's own group header (`GroupCard`'s "Reading · 2 ▾") on the sidebar's grid. In
+ * the glyph slot – the favicon's 16 box, so the group's mark centres on the favicon column – a
+ * 10 dot of the group's colour (`--zen-group-rgb`) for an open group, a 2 px ring of it for a
+ * SAVED one, its tabs closed and its pages kept (the Groups pane's two states); a folder given
+ * its own icon on the desktop keeps it, as a glyph at 14 that holds while text scales (§4).
+ * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
+ * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
+ * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
+ * = the X's 2 + 22); a saved row, with nothing to fold, keeps the chevron's box empty so the
+ * counts share one edge. The name being edited takes the name's slot at the same 14. The rail
+ * shows the glyph alone, centred. The rows of an open group sit 24 in (§9.36), where the
+ * desktop's indent is 20 and the rail's none. The block of header and rows (`.zen-group-fold`)
+ * is clipped while its height runs on the fold's spring (`useGroupFold`) and left alone at
+ * rest, so a lifted row's ghost and a focus ring are never cut.
+ */
+.zen-group-row-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+.zen-group-row-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgb(var(--zen-group-rgb));
+}
+.zen-group-row-glyph[data-saved] .zen-group-row-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
+}
+.zen-group-row-icon {
+  font-size: calc(14px / var(--zen-text-zoom, 1));
+  line-height: 1;
+}
+.zen-group-row-count {
+  flex-shrink: 0;
+  color: var(--v2-control-text-deemphasized, var(--zen-muted));
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.zen-group-row-chevron {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-right: 14px;
+  opacity: 0.69;
+}
+:root[data-form-factor='tablet'] .zen-tab.zen-group-row input {
+  font-size: 14px;
+}
+:root[data-form-factor='tablet'] .zen-group-fold > .zen-tab:not(.zen-group-row, .justify-center) {
+  margin-left: 24px;
+}
+.zen-group-fold[data-folding] {
+  overflow: hidden;
+}
+
+/*
  * The drawer (`TabletDrawer`): the expanded sidebar over the page in a window too narrow to
  * dock it, on the phone Spaces drawer's panel (`.zen-drawer-panel`: the space-tinted panel
  * colour, blurred, flush with the window's edge and rounded towards the content). The sidebar's
@@ -7264,7 +7338,9 @@
  */
 :root[data-form-factor='tablet'] .zen-tablet-sidebar,
 :root[data-form-factor='tablet'] .zen-tablet-drawer-panel,
-:root[data-form-factor='tablet'] :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel) [data-tab-scroller] {
+:root[data-form-factor='tablet']
+  :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel)
+  [data-tab-scroller] {
   touch-action: pan-y;
 }
 
@@ -7905,6 +7981,66 @@
   .zen-v2-segment > [role='tab']::after {
     transition: opacity 120ms var(--zen-ease) !important;
   }
+}
+
+/*
+ * The overview's Groups pane (TAB-16, `components/phone/GroupsPane.tsx`): the phone panels'
+ * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
+ * `.zen-v2-heading` with the panels' modifiers) and the row's 44 icon button standing on the
+ * overview's window backdrop, so they draw in the window family (§9.29): the pane resolves the
+ * page ink and fills the primitives read to the control roles the overview root's
+ * `data-surface="window"` sets – the theme's ink, its 69% for the count and the time, the
+ * window fill for the press – and the primitives' own rules draw them, gates and all (§9.34's
+ * one row rule: the disabled row of an empty group keeps its no-fill, the static rename row its
+ * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
+ * gutter's end; the first heading stands under the segment (or the space strip), which already
+ * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
+ * open group, the same as a 2 px ring for a saved one, whose tabs are closed (`--zen-group-color`
+ * on the glyph). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
+ * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
+ * own 40 is for a list whose field carries 8 under it, and the segment carries none.
+ */
+.zen-overview-groups {
+  --v2-text: var(--v2-control-text);
+  --v2-text-deemphasized: var(--v2-control-text-deemphasized);
+  --v2-fill: var(--v2-control-fill);
+  --v2-fill-hover: var(--v2-control-fill-hover);
+}
+.zen-overview-groups .zen-v2-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-overview-groups > :first-child > .zen-v2-heading {
+  margin-top: 4px;
+}
+.zen-overview-groups-aside {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-overview-group-glyph {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--zen-group-color);
+}
+.zen-overview-group-glyph[data-saved] {
+  border: 2px solid var(--zen-group-color);
+  background: transparent;
+}
+/* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
+.zen-overview-groups .zen-overview-group-rename {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+}
+.zen-overview-groups > .zen-phone-empty {
+  padding-top: 48px;
 }
 
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
@@ -9713,6 +9849,12 @@
  * bottom edge once the column has scrolled under it. The body is the Settings content column's
  * geometry (§10.5, §5): the text column at most 664 inside 32 side margins (the page's 16 plus
  * the rows' 16 gutter), left-aligned as Zen's; groups are §9.27 sub-headings over §9.21 rows.
+ * The three boxes that carry the column – the title block, the search field's wrapper and the
+ * body – are therefore 728 wide at most, written as `.zen-settings-pane` writes its own: the 664
+ * plus 2 × (16 + 16), both margins. At 664 + 2 × 16 the rows' gutter came out of the text column
+ * instead – a 632 field on a 632 text column, the trailing controls 32 short of where §10.1 puts
+ * them – the count #324 corrected on the Settings pane; §10.1 names 632 as that correction, not
+ * a column of its own.
  * Nothing here states a row's or a control's size – those are the primitives' tokens – only
  * what the pages add: the header's beat, the column, the two-line row's slots and the reveal.
  * Unlayered like the Settings tab's rules, after them.
@@ -9762,10 +9904,11 @@
  * The title block (§9.26, §10.2): "History" 22/600 on its 28 line, padding 16 16 12, the title's
  * text at the column's 32 (the block's 16 plus a 16 inset that is the rows' gutter); its
  * actions – 32 px `zen-v2-button` secondaries – on the title's line at the column's trailing
- * edge, their 2 px over the line taken from their own margins so the line stays 28.
+ * edge (the 664's end, where the field ends and the rows' controls end), their 2 px over the
+ * line taken from their own margins so the line stays 28.
  */
 .zen-page-title-block {
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 16px 16px 12px;
 }
 .zen-page-title-row {
@@ -9811,13 +9954,14 @@
 }
 /*
  * The search field (§9.12, as Find in Settings draws it): the shared 32 px field at the text
- * column's width, its 16 px glyph 12 in from its start (the text after the glyph's 16 and a 8),
- * the clear icon button inside its trailing end; 12 under it to the header's edge, so the first
- * heading's 8 above makes §9.27's 20 from the field's box.
+ * column's width – 664 between the 32 margins, its edges the column's two edges – its 16 px
+ * glyph 12 in from its start (the text after the glyph's 16 and a 8), the clear icon button
+ * inside its trailing end; 12 under it to the header's edge, so the first heading's 8 above
+ * makes §9.27's 20 from the field's box.
  */
 .zen-page-search {
   position: relative;
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 0 32px 12px;
 }
 .zen-page-search-glyph {
@@ -9839,9 +9983,13 @@
   top: calc((var(--v2-control) - var(--v2-icon-button)) / 2);
   right: calc(32px + 2px);
 }
-/* The body: the text column, its rows edge to edge inside it (their text at 32). */
+/*
+ * The body: the 728 box less its own 16 padding is the rows' 696 – the 664 text column with the
+ * rows' 16 gutter on each side, so a row's text runs 32 to 696 and its hover fill 16 past both,
+ * its trailing control ending on the field's end.
+ */
 .zen-page-body {
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 0 16px 40px;
 }
 .zen-page-group {
@@ -9853,7 +10001,9 @@
  * its aside (a count, 13 at 69 % tabular) and a trailing §9.3 icon button whose 28 box takes
  * its 4 over the line from its own margins, so the heading's box stays the 20 line. On the
  * desktop the first row's box is 8 under the heading (§9.27: 14 to its text through the row's
- * 6), and the first heading under the pinned header is 8 under it (§10.3).
+ * 6), and the first heading under the pinned header is 8 under it (§10.3) – whether the group
+ * stands in the body itself (the bookmarks manager) or in the page's list (`.zen-page-list`,
+ * History's and Downloads' one div: the keyboard walk's and the mode's root).
  */
 .zen-v2-heading.zen-page-heading {
   display: flex;
@@ -9861,7 +10011,8 @@
   gap: 8px;
   margin-bottom: 8px;
 }
-.zen-page-body > .zen-page-group:first-child > .zen-page-heading {
+.zen-page-body > .zen-page-group:first-child > .zen-page-heading,
+.zen-page-body > .zen-page-list:first-child > .zen-page-group:first-child > .zen-page-heading {
   margin-top: 8px;
 }
 .zen-page-heading-text {
@@ -9899,6 +10050,51 @@
 .zen-page-heading:hover > .zen-page-heading-reveal,
 .zen-page-heading:focus-within > .zen-page-heading-reveal {
   opacity: 1;
+}
+/*
+ * A group that folds (History's other devices, §10.1): its heading's control is the disclosure,
+ * the same 28 box over the rows' ⋮ slot as the ⋮ above, but painted at rest – it shows a state
+ * (Chrome's synced-device card's expand button), and a folded group with no chevron would read
+ * as an empty one. The chevron points at the rows: right while they are folded away, turned
+ * down while they show, as the bookmarks tree's twisty turns.
+ */
+.zen-page-heading > .zen-page-heading-twisty {
+  margin-inline-start: 4px;
+}
+/*
+ * Its `aria-expanded` says which way the rows are, not that a popover is up: the shared icon
+ * button's lit fill for an open anchor (§9.20, `extensions.css`) does not reach the disclosure
+ * at rest – the chevron's turn is the state – while the hover and press fills stay its own.
+ */
+.zen-page-heading > .zen-page-heading-twisty[aria-expanded='true']:not(:hover, :active) {
+  background: none;
+}
+/* The heading's 8 is to its rows; folded, there are none, and the next group's 20 beat is from the heading's line. */
+.zen-page-group[data-collapsed] > .zen-page-heading {
+  margin-bottom: 0;
+}
+/*
+ * Under reduced motion the turn is removed – not shortened, and not by a rule here: the one
+ * global remover at the foot of this sheet (§11.3 as amended, `reducedMotion.test.ts`: only it
+ * may say `none`) takes every transition that is not one of the fades §11.3 keeps, and a turn is
+ * not a fade. The chevron then cuts from right to down, as the bookmarks tree's twisty does.
+ */
+.zen-page-heading-twisty > svg {
+  transition: transform 120ms var(--zen-ease);
+}
+.zen-page-heading-twisty > svg[data-open] {
+  transform: rotate(90deg);
+}
+/*
+ * A group with nothing to list (§9.17, the Settings groups' line): one plain line where its rows
+ * would be, at the heading's edge, 15 at 69 %, on the row's own pad.
+ */
+.zen-page-group-empty {
+  margin: 0;
+  padding: var(--v2-row-pad) 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
 }
 .zen-page-rows {
   display: flex;
@@ -9999,6 +10195,19 @@
 .zen-page-row[data-selected] .zen-page-row-reveal,
 [data-selecting] .zen-page-row .zen-page-row-reveal {
   opacity: 1;
+}
+/*
+ * A §10.4 action row on the page (History's "Turn on sync" under the other devices' empty line):
+ * one line at the row's base height, its label at the heading's edge – the row has no glyph
+ * column, its subject being the setting it leads to – and the 16 chevron that says it leaves
+ * the page at the trailing edge, in the deemphasised ink as the Settings rows' is.
+ */
+.zen-page-row-chevron {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
 }
 /* A search's matches in a row: the text's own ink on a light accent tint, no colour of its own. */
 .zen-page mark {

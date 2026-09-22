@@ -492,6 +492,13 @@ export interface Tab {
 export type FolderColor =
   'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange'
 
+/** A page of a saved (closed) group: what "Open" brings back (Chrome's saved tab groups). */
+export interface SavedGroupTab {
+  url: string
+  title: string
+  favicon?: string | null
+}
+
 export interface Folder {
   id: string
   spaceId: string
@@ -500,6 +507,21 @@ export interface Folder {
   collapsed: boolean
   /** Group colour; folders made before groups had colours (or on desktop) carry none. */
   color?: FolderColor | null
+  /**
+   * Chrome's saved tab groups (Android's Tab groups pane, TAB-16): the group's pages as they
+   * were when its last live member closed – the whole group on "Close group" (`folder.close`),
+   * the last member alone when the members were closed one by one, as Chrome's saved group
+   * mirrors its live tabs – so the group stays listed as SAVED with its pages, and "Open"
+   * (`folder.open`) brings them back into it, in order. Meaningful only while the group has no
+   * live member: a group with members is open, and this is cleared as it opens or a tab joins
+   * it. Additive and local: a folder without it is as before, and the sync record ignores it.
+   */
+  savedTabs?: SavedGroupTab[] | null
+  /**
+   * When the group was last used – a member activated, a tab joining, the group closed or
+   * opened – as ms since the epoch; the Tab groups pane's "last used". Local, never synced.
+   */
+  lastUsedAt?: number | null
 }
 
 export interface Space {
@@ -3125,6 +3147,19 @@ export interface CrashRestoreOffer {
 /** What Zenium does with the previous session's pages after an unclean exit. */
 export type CrashRestoreMode = 'ask' | 'always' | 'never'
 
+/**
+ * The device's connectivity as the chrome shows it (`core/connectivity.ts`): the host's raw
+ * word, debounced, so a network switch never flashes the offline banner.
+ */
+export interface NetworkStatus {
+  /**
+   * False while the device has had no validated route to the internet for the debounce window:
+   * the phone chrome shows "No internet connection" (v2 §9.33) and the error pages that mean
+   * offline reload themselves once it turns true again.
+   */
+  online: boolean
+}
+
 // ---------------------------------------------------------------------------
 // The full UI state snapshot broadcast to the renderer
 // ---------------------------------------------------------------------------
@@ -3209,6 +3244,8 @@ export interface UIState {
   passwords: PasswordsStatus
   /** Default-browser role: whether Zenium holds it and which prompt (if any) is due. */
   defaultBrowser: DefaultBrowserStatus
+  /** The device's connectivity, debounced; hosts without a monitor are online for good. */
+  network: NetworkStatus
   /** Pop-ups the blocker refused, per tab (the URL bar shows an indicator). */
   blockedPopups: Record<string, BlockedPopup[]>
   /** Every remembered per-site permission answer (Settings lists and revokes them). */
@@ -3710,6 +3747,19 @@ export interface Commands {
     result: void
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
+  /**
+   * Chrome's "Close group" on a host with saved groups (Android, TAB-16): the group's tabs close
+   * (to the recently closed list, so the close has an undo) and the group stays as a saved one
+   * holding their pages (`Folder.savedTabs`). Nothing happens to a group with no live member.
+   */
+  'folder.close': { args: { folderId: string }; result: void }
+  /**
+   * "Open" a saved group: its pages come back as tabs of the group, in their order, at the end
+   * of the space's tabs, the first one active; an open group is expanded and its first tab
+   * activated instead. Resolves with the tab made active, or null when there was nothing to
+   * open.
+   */
+  'folder.open': { args: { folderId: string }; result: string | null }
   'folder.contextMenu': { args: { folderId: string } & MenuAnchor; result: void }
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
@@ -3983,13 +4033,35 @@ export interface Commands {
   'history.deleteRange': { args: { fromMs: number; toMs: number }; result: number }
   /** Open the history page (`zen://history`). */
   'history.open': { args: void; result: void }
-  /** Context menu of a history row (open in new tab / window / private window, copy, remove…). */
-  'history.contextMenu': { args: { visitId: string; url: string } & MenuAnchor; result: void }
+  /**
+   * Context menu of a History page row (open in new tab / window / private window, copy,
+   * remove…). `visitId` null is a row that names a page but no visit – a tab from another
+   * device (ID-28) – whose menu keeps the page's items (open, copy, more from the site) and
+   * drops the visit's own (Select, Remove from History, Forget About This Page).
+   */
+  'history.contextMenu': {
+    args: { visitId: string | null; url: string } & MenuAnchor
+    result: void
+  }
   /** Menu of a day heading on the history page (delete the day). */
   'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
+  /**
+   * The other devices whose groups the History page keeps folded (ID-28, "Tabs from other
+   * devices"), by device id – the session's, held by the core so a History tab closed and opened
+   * again or a second window's chrome (a renderer of its own) finds them folded still; a restart
+   * unfolds them all (Chrome's synced-device cards start open too).
+   */
+  'history.foldedDevices': { args: void; result: string[] }
+  /** Fold or unfold one device's group; every window hears `history.foldedDevicesChanged`. */
+  'history.foldDevice': { args: { deviceId: string; folded: boolean }; result: void }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
-  'session.restoreClosed': { args: { id: string }; result: void }
+  /**
+   * Bring back a recently closed entry. `background` (a middle or Ctrl click on the History
+   * page's row, §10.1): a tab comes back where it was without coming to the front; a window
+   * entry is a whole window and comes back as one either way.
+   */
+  'session.restoreClosed': { args: { id: string; background?: boolean }; result: void }
   'session.clearRecentlyClosed': { args: void; result: void }
 
   /**
@@ -4068,8 +4140,14 @@ export interface Commands {
   'bookmark.move': { args: { ids: string[]; parentId: string; index?: number }; result: void }
   /** Remove bookmarks and folders (folders with all their contents). */
   'bookmark.remove': { args: { ids: string[] }; result: void }
-  /** Open a bookmark (records `dateLastUsed`). */
-  'bookmark.open': { args: { id: string; newTab: boolean; tabId: string | null }; result: void }
+  /**
+   * Open a bookmark (records `dateLastUsed`); `background` with `newTab` is a tab behind the
+   * current one (a middle or Ctrl click on a manager row, §10.1), as `urlbar.submit` has it.
+   */
+  'bookmark.open': {
+    args: { id: string; newTab: boolean; tabId: string | null; background?: boolean }
+    result: void
+  }
   /** Open every bookmark in the given folders / selection in new tabs. */
   'bookmark.openAll': { args: { ids: string[] }; result: void }
   /** Open the bookmarks below the given nodes in a new (or private) window. */
@@ -4865,6 +4943,11 @@ export interface Events {
    */
   'tabsearch.open': void
   /**
+   * The crash page's Show tabs asked for the tab switcher (ERR-15: a page that crashed twice
+   * within the minute suggests closing other tabs): the phone chrome opens its overview.
+   */
+  'overview.open': void
+  /**
    * The app menu's "Now Playing…" row asked for the media hub (design language v2 §9.29: the
    * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's
    * popover from the "⋯" menu button the row's menu hung from (the toolbar button, were it up).
@@ -4978,6 +5061,8 @@ export interface Events {
    * (v2 §10.1 – the checkbox column shows on every row while anything is picked).
    */
   'history.select': { visitId: string }
+  /** The History page's folded device groups changed (`history.foldDevice`): the ids now folded. */
+  'history.foldedDevicesChanged': string[]
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –

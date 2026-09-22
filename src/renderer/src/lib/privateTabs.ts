@@ -13,8 +13,11 @@ import type { LocalMenuItem } from './ui'
  * the window surfaces blend to the private theme while a private tab is the one in view.
  */
 
-/** The overview's two panes: the space's tabs, and the private ones (TAB-02). */
-export type OverviewPane = 'tabs' | 'private'
+/**
+ * The overview's panes: the space's tabs, its tab groups – open and saved, as rows (Chrome's
+ * "Tab groups" pane, TAB-16) – and the private tabs (TAB-02).
+ */
+export type OverviewPane = 'tabs' | 'groups' | 'private'
 
 interface PrivateTabsState {
   /**

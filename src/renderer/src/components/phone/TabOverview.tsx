@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Ellipsis,
@@ -22,7 +22,6 @@ import type {
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
-import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
@@ -33,8 +32,10 @@ import type { DropOutcome } from '@renderer/lib/gestures/dropTarget'
 import {
   closeOverview,
   overviewInteractive,
+  stageStore,
   type OverviewState
 } from '@renderer/lib/gestures/stage'
+import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { overviewColumns } from '@renderer/lib/layout'
@@ -87,6 +88,7 @@ import { CloseAllSheet } from './CloseAllSheet'
 import { Departures } from './Departures'
 import { clearDepartures, depart, rectOf } from './departureStore'
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
+import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
 import { CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
@@ -94,6 +96,7 @@ import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
 import { noteSheetOpener } from './phonePanel'
 import { PrivateLockCover } from './PrivateLockCover'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
+import { placeholderPx } from './tabPlaceholder'
 import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
 import { useFlip } from './useFlip'
@@ -108,6 +111,11 @@ const DROP_TIMEOUT_MS = 900
 /** How long a restored tab is waited for before the overview leaves on whatever tab is active. */
 const RESTORE_TIMEOUT_MS = 800
 /**
+ * How long the Tabs pane waits for a group's card to show – a saved group's pages coming back as
+ * tabs (`folder.open`) – before a "show the group" request from the Groups pane is dropped.
+ */
+const REVEAL_TIMEOUT_MS = 800
+/**
  * The middle of a card, as fractions of its width and height inset from each edge, is where a
  * dragged card merges into it; the bands outside put the dragged card before or after it.
  */
@@ -116,6 +124,11 @@ const MERGE_INSET_Y = 0.2
 
 interface Props {
   state: UIState
+  /**
+   * The overview's state. Its `progress` is read for the frames the store does not drive (a
+   * render outside the stage: the tests, a preview); with the stage's overview up, the store's
+   * progress is the morph's, written per frame off React (see the morph effect).
+   */
   overview: OverviewState
   /** Where the page normally is, in window coordinates. */
   area: Rect
@@ -126,7 +139,7 @@ interface Props {
 /**
  * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
  * closed list as the menu read it), the close-all question, the recently closed list, the
- * select-tabs mode's group picker.
+ * select-tabs mode's group picker, a Groups pane row's menu and the delete-group question.
  */
 type Sheet =
   | { kind: 'tab'; tabId: string }
@@ -135,6 +148,15 @@ type Sheet =
   | { kind: 'close-all' }
   | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
   | { kind: 'group-picker' }
+  | { kind: 'group-row'; folderId: string }
+  | { kind: 'delete-group'; folderId: string }
+
+/** A group the Groups pane asked the Tabs pane to show: scrolled to once its card is there. */
+interface Reveal {
+  folderId: string
+  /** When to give up waiting for the card (`performance.now()`). */
+  deadline: number
+}
 
 interface PendingDrop {
   /** True once the browser state shows the drop – then the card's new slot can be measured. */
@@ -170,8 +192,10 @@ interface ShownGroups {
  * that is picked when leaving), so a half-finished drag always shows exactly where things are
  * going. Cards can be held and dragged onto each other to make groups (see `useCardLift`).
  *
- * On a host with private tabs the overview has two panes under a segment (TAB-02, TAB-03): the
- * space's tabs, and the private ones – the private session is one across the spaces, so that
+ * The overview's panes stand under a segment (TAB-02, TAB-03, TAB-16): the space's tabs; its
+ * tab GROUPS as rows (`GroupsPane`, Chrome's "Tab groups" pane) – the open ones, and the SAVED
+ * ones whose tabs have closed but whose pages the group kept, to be opened again; and, on a host
+ * with private tabs, the private ones – the private session is one across the spaces, so that
  * pane lists every private tab, as loose cards on the private theme's backdrop (the window
  * surfaces blend to it while the pane is up, §9.29), with an explainer when there are none. A
  * private card never shows in the regular pane, nor a regular one in the private pane
@@ -183,8 +207,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const active = activeTab(state)
   const picked = privateTabsStore.use((s) => s.pane)
   const hasPrivate = state.capabilities.privateTabs
-  const pane: OverviewPane = hasPrivate ? overviewPane(state, picked) : 'tabs'
+  // A host without private tabs has no Private pane to follow a private tab onto.
+  const followed = overviewPane(state, picked)
+  const pane: OverviewPane = followed === 'private' && !hasPrivate ? 'tabs' : followed
   const privatePane = pane === 'private'
+  const groupsPane = pane === 'groups'
   // The private tabs are locked (INC-05): the Private pane is under the lock cover, its cards
   // blurred beneath it; the Tabs pane and the header are not.
   const locked = privateLockStore.use((s) => s.locked)
@@ -194,7 +221,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const essentials = privatePane ? [] : tabsOnPane(essentialsFor(state, space), 'tabs')
   const pinned = privatePane ? [] : tabsOnPane(pinnedOf(state, space), 'tabs')
   const regular = privatePane ? privateTabsOf(state) : tabsOnPane(regularOf(state, space), 'tabs')
-  const groups = privatePane ? [] : groupsOf(state, space.id)
+  // The space's groups, less the PRIVATE ones (`isPrivateGroup`: private tabs alone live in
+  // them, nothing saved) – the Private pane's, whose existence and name no regular surface
+  // shows: not the Tabs pane's group sheets, not the Groups pane, not its count. `liveOf` names
+  // a group's live members, private ones included, the way the space holds them.
+  const liveOf = (folderId: string): Tab[] =>
+    regularOf(state, space).filter((t) => t.folderId === folderId)
+  const groups = privatePane
+    ? []
+    : groupsOf(state, space.id).filter((f) => !isPrivateGroup(f, liveOf(f.id)))
   const count = essentials.length + pinned.length + regular.length
 
   // The last private tab closing ends the session, and the overview returns to the Tabs pane
@@ -241,7 +276,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // (§9.19): the real title never rises into view under the cover.
   const lifting = privateLockStore.use((s) => s.lifting)
   const heroMasked = hero !== null && (locked || lifting) && isPrivateTab(hero)
-  const p = Math.min(1, Math.max(0, progress))
+  // The progress as the tree reads it – whether the morph is short of open, which is what the
+  // hero's mount and its card's hiding turn on; the frames between are the morph effect's.
+  const p = clampProgress(progress)
   // Taps work as soon as the overview is heading open; layout tracking waits for it to rest.
   const interactive = overviewInteractive(overview)
   const settled = phase === 'open'
@@ -252,8 +289,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 
   const rootRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const heroRef = useRef<HTMLDivElement>(null)
+  const heroHeaderRef = useRef<HTMLDivElement>(null)
   const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
-  const [heroCell, setHeroCell] = useState<Rect | null>(null)
+  // Where the hero's own card sits (measured below): a ref, not state – the morph's writer reads
+  // it as it writes, and a measurement is not a render of the grid (each phase change, each
+  // scroll of the grid re-measures; as state each one rendered every card again, PERF-5).
+  const heroCell = useRef<Rect | null>(null)
   const [sheet, setSheet] = useState<Sheet | null>(null)
   /**
    * A sheet has left: forget it – unless the row it was dismissed for has put the next sheet up
@@ -301,7 +343,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const root = rootRef.current
     const cell = heroCellKey ? flip.element(heroCellKey) : null
     if (!root || !cell) {
-      setHeroCell(null)
+      heroCell.current = null
       return
     }
     const r = cell.getBoundingClientRect()
@@ -309,12 +351,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const scale = root.offsetWidth ? rr.width / root.offsetWidth : 1
     const cx = rr.left + rr.width / 2
     const cy = rr.top + rr.height / 2
-    setHeroCell({
+    heroCell.current = {
       x: cx + (r.left - cx) / scale,
       y: cy + (r.top - cy) / scale,
       width: r.width / scale,
       height: r.height / scale
-    })
+    }
   }
   useLayoutEffect(() => {
     const cell = heroCellKey ? flip.element(heroCellKey) : null
@@ -322,7 +364,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     // hero inside an open group brings its group along – the group's card first, so the header
     // is in view when the group fits (the strip's show-group chip opens the overview at the
     // group, TAB-14), then its own card, which wins when the group is taller than the grid.
-    const morphing = (phase === 'dragging' && progress < 0.05) || phase === 'settling'
+    // The progress read live: the prop's is the one at the shape's last change, and a card
+    // arriving or leaving mid-drag re-runs this with the finger well past the start.
+    const morphing = (phase === 'dragging' && liveProgress(overview) < 0.05) || phase === 'settling'
     if (cell && morphing) {
       if (heroGroup && !heroGroup.collapsed)
         flip.element(`group:${heroGroup.id}`)?.scrollIntoView({ block: 'nearest' })
@@ -451,7 +495,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     lingering: new Map()
   }))
   const held = new Map<string, HeldGroup>()
-  for (const folder of groups) {
+  // The Groups pane draws rows, not cards: nothing there is held, so nothing lingers.
+  for (const folder of groupsPane ? [] : groups) {
     const count = members.get(folder.id)?.length ?? 0
     if (count) held.set(folder.id, { folder, count })
   }
@@ -687,11 +732,30 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         return rect ? [{ key: tab.id, kind: 'tab' as const, tab, rect }] : []
       })
     )
+  /**
+   * Close `tabs` at once, with the one undo, and run `after` with them. The tabs that make up a
+   * whole group among them – every live member of it – close as the group does ("Close Group",
+   * the core's `folder.close`), so the group stays SAVED with all their pages (TAB-16) rather
+   * than with the last one closed, which is what closing them one by one would leave it; the
+   * rest close one by one. A card's own close, Close Other Tabs, Close All Tabs and the
+   * select-tabs mode's Close all read this one rule.
+   */
+  const closeSet = (tabs: Tab[], after?: () => void): void => {
+    const ids = new Set(tabs.map((t) => t.id))
+    const whole = groups.filter((f) => {
+      const live = membersOf(f.id)
+      return live.length > 0 && live.every((t) => ids.has(t.id))
+    })
+    const asGroup = new Set(whole.flatMap((f) => membersOf(f.id).map((t) => t.id)))
+    undoable(tabs, () => {
+      for (const f of whole) run('folder.close', { folderId: f.id })
+      for (const t of tabs) if (!asGroup.has(t.id)) run('tab.close', { tabId: t.id })
+      after?.()
+    })
+  }
   const closeTabs = (tabs: Tab[]): void => {
     departAll(tabs)
-    undoable(tabs, () => {
-      for (const tab of tabs) run('tab.close', { tabId: tab.id })
-    })
+    closeSet(tabs)
   }
   // "Close other tabs" closes the other cards of this pane – the core's `tab.closeOthers` takes
   // the whole space, private tabs included, and would end the private session from the regular
@@ -700,10 +764,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const closeOthers = (tab: Tab): void => {
     const others = regular.filter((t) => t.id !== tab.id)
     departAll(others)
-    undoable(others, () => {
-      for (const t of others) run('tab.close', { tabId: t.id })
-      run('tab.activate', { tabId: tab.id })
-    })
+    closeSet(others, () => run('tab.activate', { tabId: tab.id }))
   }
   /**
    * "Close All Tabs": every unpinned card of the pane goes (Zen's Clear tabs); pinned ones stay.
@@ -720,10 +781,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       run('tab.closePrivate', undefined)
       return
     }
-    undoable(regular, () => {
-      if (hasPrivate) for (const t of regular) run('tab.close', { tabId: t.id })
-      else run('space.closeUnpinned', { spaceId: space.id })
-    })
+    if (hasPrivate) closeSet(regular)
+    else undoable(regular, () => run('space.closeUnpinned', { spaceId: space.id }))
   }
   const closeAllAsked = (): void => {
     if (regular.length === 0) return
@@ -752,7 +811,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       RESTORE_TIMEOUT_MS
     ).then((tabId) => closeOverview(tabId ?? undefined))
   }
-  const closeGroup = (folder: Folder): void => {
+  /** A group's card leaves the grid visibly, with its cards, where it stands (the Groups pane has none). */
+  const departGroup = (folder: Folder): void => {
     const rect = rectOf(flip.element(`group:${folder.id}`))
     if (rect)
       depart([
@@ -765,8 +825,67 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           columns
         }
       ])
-    run('folder.delete', { folderId: folder.id, unpack: false })
   }
+  /**
+   * "Close Group" (TAB-16): the group's tabs close – with the one Undo, as any close here – and
+   * the group stays, SAVED with their pages, on the Groups pane; the core's `folder.close`.
+   */
+  const closeGroup = (folder: Folder): void => {
+    departGroup(folder)
+    undoable(membersOf(folder.id), () => run('folder.close', { folderId: folder.id }))
+  }
+  // The Groups pane's rows (TAB-16, `lib/groupRows.ts`): the space's groups by state, a group's
+  // private members counting for nothing (a group with pages saved and private tabs alone live
+  // is a saved group).
+  const rows = groupRows(groups, liveOf)
+  const rowOf = (folderId: string): GroupRow | null =>
+    [...rows.open, ...rows.saved].find((row) => row.folder.id === folderId) ?? null
+  const renamingId = uiStore.use((s) => s.renamingFolderId)
+  // The header's count on the Groups pane: every group listed, open, saved or empty.
+  const groupCount = rows.open.length + rows.saved.length
+  /**
+   * "Delete Group": the group's record goes, its live tabs closing with it (undoable, loose) or
+   * its saved pages forgotten. It asks first (§9.23, `DeleteGroupSheet`) when there is anything
+   * to lose; an empty group just goes.
+   */
+  const deleteGroupAsked = (row: GroupRow): void => {
+    if (row.count > 0) setSheet({ kind: 'delete-group', folderId: row.folder.id })
+    else run('folder.delete', { folderId: row.folder.id, unpack: false })
+  }
+  const deleteGroup = (row: GroupRow): void => {
+    const live = membersOf(row.folder.id)
+    const remove = (): void => run('folder.delete', { folderId: row.folder.id, unpack: false })
+    if (live.length === 0) {
+      remove()
+      return
+    }
+    departGroup(row.folder)
+    undoable(live, remove)
+  }
+  /**
+   * The Groups pane's tap (TAB-16): the group is shown in the Tabs pane, expanded and scrolled
+   * to – a saved one opened first, its pages coming back as tabs of the group (`folder.open`),
+   * the Tabs pane catching its card as the tabs arrive (`reveal`); an empty group has nothing to
+   * show and its row takes no tap.
+   */
+  const reveal = useRef<Reveal | null>(null)
+  const showGroup = (row: GroupRow): void => {
+    if (row.kind === 'empty') return
+    if (row.kind === 'saved') void cmd('folder.open', { folderId: row.folder.id }).catch(() => null)
+    else if (row.folder.collapsed)
+      run('folder.update', { folderId: row.folder.id, patch: { collapsed: false } })
+    reveal.current = { folderId: row.folder.id, deadline: performance.now() + REVEAL_TIMEOUT_MS }
+    pickOverviewPane('tabs')
+  }
+  useLayoutEffect(() => {
+    const asked = reveal.current
+    if (!asked) return
+    const card = pane === 'tabs' ? flip.element(`group:${asked.folderId}`) : null
+    // Not there yet: the next commit (the opened group's tabs arriving) has another look, up to
+    // the deadline; past it the request is dropped on whichever commit finds it stale.
+    if (card) card.scrollIntoView({ block: 'start' })
+    if (card || performance.now() > asked.deadline) reveal.current = null
+  })
   /** A card swiped off the grid is already out of sight: just close the tab. */
   const swipedAway = (tab: Tab): void => undoable([tab], () => run('tab.close', { tabId: tab.id }))
 
@@ -778,13 +897,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 
   // The select-tabs mode's cards: what is on show as a card can be picked – the pinned cards,
   // the members of the groups that are open, the loose cards; a folded group's members and the
-  // essentials' row are not cards and take no check. A pick whose card has left this set (its
-  // tab closed elsewhere, its group folded) goes in this same render.
-  const checkable = [
-    ...pinned,
-    ...groupCards.flatMap((g) => (g.folder.collapsed ? [] : g.tabs)),
-    ...loose
-  ]
+  // essentials' row are not cards and take no check, and the Groups pane shows no card at all.
+  // A pick whose card has left this set (its tab closed elsewhere, its group folded) goes in
+  // this same render.
+  const checkable = groupsPane
+    ? []
+    : [...pinned, ...groupCards.flatMap((g) => (g.folder.collapsed ? [] : g.tabs)), ...loose]
   const pruned = pruneSelection(selection, new Set(checkable.map((t) => t.id)))
   if (pruned !== selection) setSelection(pruned)
   const chosen = selectedTabs(pruned, checkable)
@@ -924,12 +1042,69 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     />
   )
 
-  const heroRect = hero ? lerpRect(area, heroCell ?? shrunk(area), p) : null
-  const contentRadius =
-    parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue('--zen-content-radius')
-    ) || 12
+  // A Groups pane row's sheet and the delete question read their row live: a group gone from
+  // under them (deleted elsewhere) leaves them nothing to show.
+  const rowSheet = sheet?.kind === 'group-row' ? rowOf(sheet.folderId) : null
+  const deleteSheet = sheet?.kind === 'delete-group' ? rowOf(sheet.folderId) : null
+
   const heroActive = Boolean(hero && hero.id === active?.id)
+
+  // The morph's frames are written off React. `overview.progress` moves on every move of the
+  // finger and every frame of the spring, and rendering the grid for each – every card
+  // reconciled, the FLIP set collected, for two elements' styles – was most of a morph frame's
+  // script on the phone (PERF-5's profile). What the progress moves is written straight to the
+  // DOM: the root's scale and fade (a promoted layer, `.zen-overview`), and the hero's rect-lerp
+  // (a layout per frame by design, v2 §11.4), its radius and shadow between the page's and the
+  // card's, its fade into a folded group's card, its title row's height and fade. The writer
+  // is remade on every render, so it reads the render's own cell, area and hero; the store's
+  // subscription calls the latest one per frame, and each commit writes the frame it stands at
+  // – from the store when the stage's overview is up, from the prop otherwise (the tests, a
+  // preview render), so a component outside the stage still draws the progress it is given.
+  const morph = useRef<(p: number) => void>(() => {})
+  useLayoutEffect(() => {
+    const contentRadius =
+      parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--zen-content-radius')
+      ) || 12
+    const reduced = reducedMotion()
+    const shadowTo = cardShadow(isDark)
+    const headerHeight = cardHeaderHeight()
+    morph.current = (p) => {
+      const root = rootRef.current
+      if (root) {
+        root.style.opacity = String(Math.min(1, p * 1.6))
+        // Under reduced motion the grid appears at scale 1 with a 120 ms fade (v2 §11.3).
+        root.style.transform = reduced ? '' : `scale(${0.94 + 0.06 * p})`
+      }
+      const el = heroRef.current
+      if (!el) return
+      const r = lerpRect(area, heroCell.current ?? shrunk(area), p)
+      el.style.left = `${r.x}px`
+      el.style.top = `${r.y}px`
+      el.style.width = `${r.width}px`
+      el.style.height = `${r.height}px`
+      el.style.borderRadius = `${contentRadius + (CARD_RADIUS - contentRadius) * p}px`
+      el.style.boxShadow = shadowCss(lerpShadow(FRAME_SHADOW, shadowTo, p))
+      el.style.opacity = String(heroFades ? 1 - Math.max(0, (p - 0.55) / 0.45) : 1)
+      const header = heroHeaderRef.current
+      if (header) {
+        header.style.height = `${headerHeight * p}px`
+        header.style.opacity = String(p)
+      }
+    }
+    morph.current(liveProgress(overview))
+  })
+  useLayoutEffect(() => {
+    let last = -1
+    return stageStore.subscribe(() => {
+      const live = stageStore.get().overview
+      if (live.phase === 'closed') return
+      const p = clampProgress(live.progress)
+      if (p === last) return
+      last = p
+      morph.current(p)
+    })
+  }, [])
 
   return (
     <>
@@ -952,14 +1127,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       >
         <div
           ref={rootRef}
+          // Its scale and fade follow the progress from the morph effect, written per frame.
           className="zen-overview absolute inset-0 flex flex-col"
           // The overview backdrop is window chrome (v2 §9.29): its controls draw in the window family.
           data-surface="window"
-          style={{
-            opacity: Math.min(1, p * 1.6),
-            // Under reduced motion the grid appears at scale 1 with a 120 ms fade (v2 §11.3).
-            transform: reducedMotion() ? undefined : `scale(${0.94 + 0.06 * p})`
-          }}
         >
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
             {selecting ? (
@@ -984,7 +1155,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                   className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
                   data-testid="overview-count"
                 >
-                  {count} tab{count === 1 ? '' : 's'}
+                  {groupsPane
+                    ? `${groupCount} group${groupCount === 1 ? '' : 's'}`
+                    : `${count} tab${count === 1 ? '' : 's'}`}
                 </span>
                 <span className="flex-1" />
                 <button
@@ -1012,11 +1185,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               </>
             )}
           </header>
-          {hasPrivate && <PaneSegment pane={pane} onPick={pickOverviewPane} />}
+          <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
           <PaneSlot
-            // Each pane is a slot's worth of its own – the space strip, the grid or the empty
-            // explainer – coming up fresh on a 120 ms fade in while the still of the pane before
-            // fades out over the same slot (v2 §11.4); the cells start fresh with it.
+            // Each pane is a slot's worth of its own – the space strip, the grid, the groups'
+            // rows or the empty explainer – coming up fresh on a 120 ms fade in while the still
+            // of the pane before fades out over the same slot (v2 §11.4); the cells start fresh
+            // with it.
             pane={pane}
             root={rootRef}
             onLeave={leavePane}
@@ -1025,7 +1199,17 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             {!privatePane && state.spaces.length > 1 && (
               <SpaceStrip spaces={state.spaces} activeId={space.id} />
             )}
-            {privatePane && count === 0 ? (
+            {groupsPane ? (
+              <GroupsPane
+                rows={rows}
+                renamingId={renamingId}
+                onOpen={showGroup}
+                onMenu={(row) => {
+                  noteSheetOpener()
+                  setSheet({ kind: 'group-row', folderId: row.folder.id })
+                }}
+              />
+            ) : privatePane && count === 0 ? (
               <PrivateEmpty />
             ) : (
               <div
@@ -1106,22 +1290,16 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         <Departures state={state} activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
       </div>
-      {hero && heroRect && p < 1 && (
+      {hero && p < 1 && (
+        // The hero's box, radius, shadow and fade, and its title row's height and fade, are the
+        // morph effect's per frame (its first frame written in the commit, before the paint).
         <div
+          ref={heroRef}
           className="zen-stage-card zen-overview-hero pointer-events-none absolute flex flex-col"
-          style={{
-            left: heroRect.x,
-            top: heroRect.y,
-            width: heroRect.width,
-            height: heroRect.height,
-            borderRadius: contentRadius + (CARD_RADIUS - contentRadius) * p,
-            boxShadow: shadowCss(lerpShadow(FRAME_SHADOW, cardShadow(isDark), p)),
-            opacity: heroFades ? 1 - Math.max(0, (p - 0.55) / 0.45) : 1
-          }}
         >
           <div
+            ref={heroHeaderRef}
             className="relative flex shrink-0 items-center gap-2 overflow-hidden pl-3 pr-1"
-            style={{ height: cardHeaderHeight() * p, opacity: p }}
           >
             {heroActive && (
               <div
@@ -1143,7 +1321,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             </span>
           </div>
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            <TabPreview tab={hero} scale={1 - 0.2 * p} cover />
+            <HeroPicture tab={hero} progress={p} />
           </div>
         </div>
       )}
@@ -1173,8 +1351,28 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         <GroupSheet
           folder={state.folders[sheet.folderId]}
           count={membersOf(sheet.folderId).length}
-          onClose={() => setSheet(null)}
+          onClose={() => leaveSheet('group')}
           onCloseGroup={closeGroup}
+          onDelete={(folder) => {
+            const row = rowOf(folder.id)
+            if (row) deleteGroupAsked(row)
+          }}
+        />
+      )}
+      {interactive && rowSheet && (
+        <GroupRowSheet
+          row={rowSheet}
+          onClose={() => leaveSheet('group-row')}
+          onOpen={showGroup}
+          onCloseGroup={closeGroup}
+          onDelete={deleteGroupAsked}
+        />
+      )}
+      {interactive && deleteSheet && (
+        <DeleteGroupSheet
+          row={deleteSheet}
+          onClose={() => leaveSheet('delete-group')}
+          onConfirm={deleteGroup}
         />
       )}
       {interactive && sheet?.kind === 'menu' && (
@@ -1592,19 +1790,26 @@ function TabSheet({
   return <OverviewSheet title={tabTitle(tab)} actions={actions} onClose={onClose} />
 }
 
+/**
+ * A group card's hold sheet (the header's menu): the colour swatches (`GroupColorPalette`, the
+ * Groups pane's row sheet shares them), Rename, Collapse / Expand, Ungroup, then Close Group –
+ * its tabs close and the group stays saved with their pages on the Groups pane (TAB-16) – and
+ * Delete Group, which asks first (§9.23) since the group holds tabs. Menu items, so Title Case
+ * (v2 §9.1): the count keeps its unit, capitalised with the rest.
+ */
 function GroupSheet({
   folder,
   count,
   onClose,
-  onCloseGroup
+  onCloseGroup,
+  onDelete
 }: {
   folder: Folder
   count: number
   onClose: () => void
   onCloseGroup: (folder: Folder) => void
+  onDelete: (folder: Folder) => void
 }): JSX.Element {
-  const palette = Object.keys(FOLDER_COLORS) as FolderColor[]
-  // Menu items, so Title Case (v2 §9.1): the count keeps its unit, capitalised with the rest.
   const actions: SheetAction[] = [
     {
       id: 'rename',
@@ -1622,47 +1827,24 @@ function GroupSheet({
       label: 'Ungroup',
       onPick: () => run('folder.delete', { folderId: folder.id, unpack: true })
     },
+    // Close Group destroys nothing the saved group does not keep (`folder.close`): the plain
+    // ink, as on the Groups pane's row sheet and the tablet's menu; Delete Group alone is danger.
     {
       id: 'close',
       label: `Close Group (${count} ${count === 1 ? 'Tab' : 'Tabs'})`,
-      destructive: true,
       onPick: () => onCloseGroup(folder)
+    },
+    {
+      id: 'delete',
+      label: 'Delete Group',
+      destructive: true,
+      onPick: () => onDelete(folder)
     }
   ]
   return (
     <OverviewSheet
       title={folder.name}
-      header={
-        <div
-          className="flex items-center gap-2 px-3 pb-2 pt-1"
-          role="radiogroup"
-          aria-label="Colour"
-        >
-          {palette.map((color) => {
-            const selected = (folder.color ?? null) === color
-            return (
-              <button
-                key={color}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                aria-label={color}
-                className={cn(
-                  'zen-group-swatch flex h-8 w-8 items-center justify-center rounded-full',
-                  selected && 'zen-group-swatch-selected'
-                )}
-                style={{ '--zen-swatch': FOLDER_COLORS[color] } as CSSProperties}
-                onClick={() => run('folder.update', { folderId: folder.id, patch: { color } })}
-              >
-                <span
-                  className="h-5 w-5 rounded-full"
-                  style={{ background: FOLDER_COLORS[color] }}
-                />
-              </button>
-            )
-          })}
-        </div>
-      }
+      header={<GroupColorPalette folder={folder} />}
       actions={actions}
       onClose={onClose}
     />
@@ -1711,26 +1893,34 @@ function newTabOn(pane: OverviewPane): void {
 }
 
 /**
- * The overview's two panes as a tab bar above the grid (TAB-02): "Tabs" and "Private" on the
- * shared `.zen-v2-segment` primitive (design language v2 §9.34, this PR's to land): text tabs in
- * the window family – the picked one in the window ink with the 2 px accent line under it, the
- * other at 69% – switching on a tap with a 120 ms state change (§11.4); not a segmented pill
- * (§9.14 has none). The class is the truth for its geometry and inks (a row tall at the 16
- * gutter, each label a 44 target); the markup carries the roles.
+ * The overview's panes as a tab bar above the grid (TAB-02, TAB-16): "Tabs", "Groups" and –
+ * where the host has private tabs – "Private" on the shared `.zen-v2-segment` primitive (design
+ * language v2 §9.34): text tabs in the window family – the picked one in the window ink with the
+ * 2 px accent line under it, the others at 69% – switching on a tap with a 120 ms state change
+ * (§11.4); not a segmented pill (§9.14 has none). The class is the truth for its geometry and
+ * inks (a row tall at the 16 gutter, each label a 44 target); the markup carries the roles.
  */
 function PaneSegment({
   pane,
+  hasPrivate,
   onPick
 }: {
   pane: OverviewPane
+  hasPrivate: boolean
   onPick: (pane: OverviewPane) => void
 }): JSX.Element {
   const panes: Array<{ id: OverviewPane; label: string }> = [
     { id: 'tabs', label: 'Tabs' },
-    { id: 'private', label: 'Private' }
+    { id: 'groups', label: 'Groups' }
   ]
+  if (hasPrivate) panes.push({ id: 'private', label: 'Private' })
   return (
-    <div role="tablist" aria-label="Tabs and private tabs" className="zen-v2-segment">
+    <div
+      role="tablist"
+      // The list's name says what it holds: Private only where the host has it.
+      aria-label={hasPrivate ? 'Tabs, groups and private tabs' : 'Tabs and groups'}
+      className="zen-v2-segment"
+    >
       {panes.map(({ id, label }) => (
         <button
           key={id}
@@ -1836,6 +2026,45 @@ function whenState<T>(pick: (state: UIState) => T | null, ms: number): Promise<T
     const timer = setTimeout(() => finish(null), ms)
     check()
   })
+}
+
+/**
+ * The hero's picture: the page's capture where the chrome has one, or the placeholder page,
+ * whose typography shrinks with the card (`TabPreview`'s `scale`: 1 at the page's size, .8 at
+ * the card's, in whole pixels). The one part of the hero React draws as the morph moves – a
+ * component of its own on the store's progress, so a frame renders it and nothing else – and
+ * only at the frames where a pixel size changes (`heroScale`: the scale the picture was last
+ * drawn at, kept while every size reads the same; seven or eight renders over the travel, not
+ * one per frame). `progress` is the frame for a render outside the stage (see `Props`).
+ */
+function HeroPicture({ tab, progress }: { tab: Tab; progress: number }): JSX.Element {
+  const scale = stageStore.use((s) =>
+    heroScale(s.overview.phase === 'closed' ? progress : clampProgress(s.overview.progress))
+  )
+  return <TabPreview tab={tab} scale={scale} cover />
+}
+
+let heroScaleDrawn = 1
+function heroScale(p: number): number {
+  const scale = 1 - 0.2 * p
+  const [icon, title, host] = placeholderPx(scale)
+  const [iconDrawn, titleDrawn, hostDrawn] = placeholderPx(heroScaleDrawn)
+  if (icon !== iconDrawn || title !== titleDrawn || host !== hostDrawn) heroScaleDrawn = scale
+  return heroScaleDrawn
+}
+
+/** The morph's progress as drawn: 0 (the page) to 1 (the card); the drag's rubber band past both ends is not. */
+function clampProgress(progress: number): number {
+  return Math.min(1, Math.max(0, progress))
+}
+
+/**
+ * The progress a commit draws: the store's while the stage's overview is up (the one its
+ * frames follow), the prop's for a component rendered outside the stage.
+ */
+function liveProgress(overview: OverviewState): number {
+  const live = stageStore.get().overview
+  return clampProgress(live.phase !== 'closed' ? live.progress : overview.progress)
 }
 
 function lerpRect(a: Rect, b: Rect, t: number): Rect {

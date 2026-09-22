@@ -111,7 +111,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
 
     /** A touch on a card's X that has to take: the card leaves the DOM as the tab goes. */
     private fun closeWithX(tabId: String, name: String) {
-        touchUntil("the X of $name", { show("${card(tabId)} [aria-label=\"Close tab\"]") }, { !inDom(card(tabId)) })
+        touchUntil("the X of $name", { show(closeButtonOf(card(tabId))) }, { !inDom(card(tabId)) })
     }
 
     /** 2. Damping, in the Research group, swiped off the grid, then Undo. */

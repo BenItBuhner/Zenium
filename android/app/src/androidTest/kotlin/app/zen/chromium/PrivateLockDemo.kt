@@ -345,7 +345,8 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             expect("the Private pane is under the cover", paneCover)
             expect("the covered grid is inert and hidden from accessibility", inert)
             expect("every private card reads Private tab, masked", masked)
-            expect("nothing of the page and no card control reaches the accessibility tree", labels.none { it.contains(SECRET_TITLE, ignoreCase = true) || it.contains(HOST) || it == "Close tab" })
+            // A masked card's close reads "Close Private tab" since #237 (closeTabLabel of the placeholder); "Close tab", the name before it, matched nothing and the check was empty.
+            expect("nothing of the page and no card control reaches the accessibility tree", labels.none { it.contains(SECRET_TITLE, ignoreCase = true) || it.contains(HOST) || it == "Close Private tab" })
             finding("  Private pane: cover $paneCover, grid inert $inert, cards ${cards()} masked $masked; a11y labels (${labels.size}): ${labels.take(30)}")
             shot("06-cover-over-private-pane")
             tapSegment("tabs")
