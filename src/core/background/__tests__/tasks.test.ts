@@ -55,7 +55,7 @@ function hostsFeed(hosts: string[]): string {
  */
 async function throughWorker<I, O>(task: BackgroundTask<I, O>, input: I): Promise<O> {
   return new Promise<O>((resolve, reject) => {
-    let deliver: ((message: unknown) => void) | null = null
+    const port: { deliver: ((message: unknown) => void) | null } = { deliver: null }
     serveBackgroundTasks(
       {
         postMessage: (message, transfer) => {
@@ -64,12 +64,12 @@ async function throughWorker<I, O>(task: BackgroundTask<I, O>, input: I): Promis
           else reject(new Error(reply.error))
         },
         onMessage: (listener) => {
-          deliver = listener
+          port.deliver = listener
         }
       },
       [task as BackgroundTask<unknown, unknown>]
     )
-    deliver?.(structuredClone({ id: 1, name: task.name, input }))
+    port.deliver?.(structuredClone({ id: 1, name: task.name, input }))
   })
 }
 
@@ -161,7 +161,10 @@ describe('PREPARE_LIST_TASK', () => {
 
   it('has no separate inline path: the same function runs on the main thread', () => {
     expect(PREPARE_LIST_TASK.runInline).toBeUndefined()
-    expect(PREPARE_LIST_TASK.run({ text: '! only a comment\n' })).toMatchObject({ count: 0, text: '' })
+    expect(PREPARE_LIST_TASK.run({ text: '! only a comment\n' })).toMatchObject({
+      count: 0,
+      text: ''
+    })
   })
 })
 

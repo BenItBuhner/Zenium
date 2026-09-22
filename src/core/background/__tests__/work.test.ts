@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BackgroundTask } from '../tasks'
 import { serveBackgroundTasks } from '../worker'
-import { BackgroundWork, HOLD_RECHECK_MS, WORKER_IDLE_MS, type BackgroundWorkerHandle } from '../work'
+import {
+  BackgroundWork,
+  HOLD_RECHECK_MS,
+  WORKER_IDLE_MS,
+  type BackgroundWorkerHandle
+} from '../work'
 
 /**
  * A worker in this process: the worker runtime (`serveBackgroundTasks`) on one side of a pair of
@@ -112,7 +117,9 @@ describe('BackgroundWork: where the tasks run', () => {
   })
 
   it('answers an unknown task with a failure instead of hanging', async () => {
-    const worker = fakeWorker([DOUBLE] as unknown as ReadonlyArray<BackgroundTask<unknown, unknown>>)
+    const worker = fakeWorker([DOUBLE] as unknown as ReadonlyArray<
+      BackgroundTask<unknown, unknown>
+    >)
     const work = new BackgroundWork({ worker: () => worker.handle })
     await expect(work.run(WHERE, 1)).rejects.toThrow('unknown task test.where')
   })
@@ -130,7 +137,11 @@ describe('BackgroundWork: where the tasks run', () => {
       }
     }
     const work = new BackgroundWork()
-    const results = await Promise.all([work.run(slow, 'a'), work.run(slow, 'b'), work.run(slow, 'c')])
+    const results = await Promise.all([
+      work.run(slow, 'a'),
+      work.run(slow, 'b'),
+      work.run(slow, 'c')
+    ])
     expect(results).toEqual(['a', 'b', 'c'])
     expect(order).toEqual(['start a', 'end a', 'start b', 'end b', 'start c', 'end c'])
   })

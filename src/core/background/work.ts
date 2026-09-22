@@ -124,8 +124,7 @@ export class BackgroundWork {
    */
   run<I, O>(task: BackgroundTask<I, O>, input: I, transfer: ArrayBuffer[] = []): Promise<O> {
     return new Promise<O>((resolve, reject) => {
-      const start = (): Promise<void> =>
-        this.execute(task, input, transfer).then(resolve, reject)
+      const start = (): Promise<void> => this.execute(task, input, transfer).then(resolve, reject)
       this.queue = this.queue.then(start, start)
     })
   }
@@ -137,7 +136,11 @@ export class BackgroundWork {
     this.dropWorker()
   }
 
-  private async execute<I, O>(task: BackgroundTask<I, O>, input: I, transfer: ArrayBuffer[]): Promise<O> {
+  private async execute<I, O>(
+    task: BackgroundTask<I, O>,
+    input: I,
+    transfer: ArrayBuffer[]
+  ): Promise<O> {
     if (this.stopped) throw new Error('background work stopped')
     const worker = this.ensureWorker()
     if (!worker) return this.inline(task, input)

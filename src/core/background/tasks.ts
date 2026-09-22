@@ -36,8 +36,7 @@ export interface BackgroundRequest {
 
 /** A worker's answer to one request. */
 export type BackgroundReply =
-  | { id: number; ok: true; output: unknown }
-  | { id: number; ok: false; error: string }
+  { id: number; ok: true; output: unknown } | { id: number; ok: false; error: string }
 
 // ---------------------------------------------------------------------------
 // Safe Browsing: feed text → prefix table

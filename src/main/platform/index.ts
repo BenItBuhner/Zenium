@@ -91,6 +91,7 @@ import {
   permissionRequestDetails
 } from './security'
 import { electronPerformanceHost } from './backgroundWork'
+import createBackgroundWorker from './backgroundWorker?nodeWorker'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
@@ -225,7 +226,8 @@ export class ElectronPlatform implements Platform {
   ) {
     this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
     this.performance = electronPerformanceHost({
-      holdBackgroundWork: options.holdBackgroundWork === true
+      holdBackgroundWork: options.holdBackgroundWork === true,
+      spawnWorker: () => createBackgroundWorker({})
     })
     this.profileDir = join(userDataDir, 'zen')
     this.io = new FileStoreIO(this.profileDir)

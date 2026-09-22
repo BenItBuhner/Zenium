@@ -176,10 +176,7 @@ export class BlockingService {
       this.seedBundled().then(() => {
         if (this.stopped) return
         const sweep = (): void => void this.track(this.sweep())
-        this.cancelStartupSweep = this.browser.background.armStartup(
-          STARTUP_SWEEP_DELAY_MS,
-          sweep
-        )
+        this.cancelStartupSweep = this.browser.background.armStartup(STARTUP_SWEEP_DELAY_MS, sweep)
         this.sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS)
       })
     )
