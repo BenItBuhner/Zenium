@@ -9320,7 +9320,10 @@
  * The content column (§10.5, §5): scrolls on its own; its text column is 664 at most inside 32
  * side margins – the pane's 16 plus the rows' own 16 gutter, so a row's hover fill runs 16
  * past its text on both sides, as Zen's do, and the section title, the sub-headings and the
- * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred.
+ * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred. The find field
+ * spans that same 664 from the same 32 (its 16 padding plus the search wrapper's 16 margin),
+ * so §10.3's one edge holds on both sides: text on the field's leading edge, every row's
+ * trailing control ending on its trailing edge.
  */
 .zen-settings-content {
   position: relative;
@@ -9361,8 +9364,14 @@
 .zen-settings-content[data-scrolled] > .zen-settings-find::after {
   opacity: 1;
 }
+/*
+ * The pane's box is the text column plus both margins: its own 16 padding and the rows' 16
+ * gutter on each side, 728 for the 664. At 664 + 2 × 16 the rows' gutter came out of the text
+ * column instead, and every trailing control stopped 32 short of the find field's end (1138
+ * against 1170 at 1600 wide) while the labels sat on its start.
+ */
 .zen-settings-pane {
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 8px 16px 40px;
 }
 /*
