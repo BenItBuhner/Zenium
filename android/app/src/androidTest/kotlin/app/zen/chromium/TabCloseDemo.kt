@@ -109,9 +109,18 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         awaitToastGone()
     }
 
-    /** A touch on a card's X that has to take: the card leaves the DOM as the tab goes. */
+    /**
+     * A touch on a card's X that has to take: the card leaves the DOM as the tab goes. The card
+     * is shown (scrolled into the grid) once, first, and has to be there; the touches read the X
+     * where it is and read nothing once the card has left – a touch that took later than
+     * [TOUCH_TOOK_WAIT] (the repairs' third proof run, Hacker News: the WebView's main thread
+     * was skipping frames of 700 ms around the touch, the card left just after the wait, and
+     * the touch again waited [LOOKUP_WAIT] for an X that was never coming back and threw).
+     */
     private fun closeWithX(tabId: String, name: String) {
-        touchUntil("the X of $name", { show(closeButtonOf(card(tabId))) }, { !inDom(card(tabId)) })
+        val x = closeButtonOf(card(tabId))
+        show(x)
+        touchUntil("the X of $name", { domRect(x) }, { !inDom(card(tabId)) })
     }
 
     /** 2. Damping, in the Research group, swiped off the grid, then Undo. */

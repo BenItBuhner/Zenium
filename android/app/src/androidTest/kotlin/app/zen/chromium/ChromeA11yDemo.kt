@@ -719,7 +719,23 @@ class ChromeA11yDemo : DemoHarness(
             fail("a touch on Look and Feel did not open the section (the page is at '${settingsSection()}')")
             return
         }
-        if (awaitSettingsRowInTree("Back to Settings") == null) finding("  [settings-look] the tree had no Back to Settings ${TREE_WINDOW_MS / 1000} s after the section came up")
+        if (awaitSettingsRowInTree("Back to Settings") == null) {
+            // The window passed on a section the tree never listed (the repairs' third proof
+            // run: the landing's rows gone under the drill-in, the drill-in's own not come in
+            // 15 s and two re-serialisations, the other thirteen Settings drivers' sections
+            // listed within the same window). The section left and opened again is the demo's
+            // own gesture once more and a whole scene change for the tree to serialise, where
+            // the nudge only marks the subtree; the tree gets the window once more on it.
+            finding("  [settings-look] the tree had no Back to Settings ${TREE_WINDOW_MS / 1000} s after the section came up: leaving it and opening it again")
+            back()
+            awaitSettingsSection(SETTINGS_LANDING, treeSign = LOOK_AND_FEEL_LABEL)
+            SystemClock.sleep(1_000)
+            if (!openSettingsSection(LOOK_SECTION)) {
+                fail("a touch on Look and Feel did not open the section again (the page is at '${settingsSection()}')")
+                return
+            }
+            if (awaitSettingsRowInTree("Back to Settings") == null) finding("  [settings-look] the tree had no Back to Settings ${TREE_WINDOW_MS / 1000} s after the section came up again")
+        }
         SystemClock.sleep(1_200)
         audit(
             "settings-look",
