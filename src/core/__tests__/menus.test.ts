@@ -350,6 +350,24 @@ function harness(
 /** Let a click that reads the host's clipboard finish. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
+/**
+ * The page's answer to the core's `textFragment` / `generate` request (`TextFragments`): the
+ * request the recording view saw is found and answered with `directive`; its id, or null when
+ * nothing was asked.
+ */
+function answerTextFragment(
+  h: { viewCalls: string[]; browser: Browser; tabId: string },
+  directive: string | null
+): string | null {
+  const call = h.viewCalls.find(
+    (c) => c.startsWith('postToPage(') && c.includes('"type":"textFragment"')
+  )
+  if (!call) return null
+  const message = JSON.parse(call.slice('postToPage('.length, -1)) as { id: string }
+  h.browser.handlePageMessage(h.tabId, { type: 'textFragment', id: message.id, directive })
+  return message.id
+}
+
 /** Labels in order, separators as `-`, submenus flattened one level as `Parent > Child`. */
 function labels(items: MenuItemTemplate[]): string[] {
   return items.flatMap((item) => {
@@ -1699,6 +1717,7 @@ describe('the page context menu', () => {
     expect(menu).toEqual([
       'Copy',
       'Search Google for “quantum foam”',
+      'Copy Link to Highlight',
       '-',
       'Boosts',
       'Inspect Element'
@@ -2019,9 +2038,10 @@ describe('the selection toolbar', () => {
       { id: 'share', title: 'Share' },
       { id: 'readAloud', title: 'Listen' }
     ])
-    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 4)).toEqual([
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 5)).toEqual([
       'Copy',
       'Search Google for “quantum foam”',
+      'Copy Link to Highlight',
       'Share…',
       'Listen'
     ])
@@ -2152,15 +2172,27 @@ describe('the selection toolbar', () => {
     expect(h.win.glance).toBeNull()
   })
 
-  it('Share hands the text to the host sheet, and an id the text does not warrant does nothing', () => {
+  it('Share hands the text and its link to the highlight to the host sheet, and an id the text does not warrant does nothing', async () => {
     const shared: SharePayload[] = []
     const h = pageHarness(ANDROID, PHONE)
     h.browser.platform.shell.share = (payload): Promise<void> => {
       shared.push(payload)
       return Promise.resolve()
     }
+    h.viewCalls.length = 0
     expect(h.browser.menus.runSelectionAction(h.tabId, 'share', 'quantum foam')).toBe(true)
-    expect(shared).toEqual([{ text: 'quantum foam', tabId: h.tabId }])
+    // The core asks the page for the selection's text directive first (SH-11) and shares once
+    // it has answered: the text, and the page's URL with the directive as its fragment directive.
+    const id = answerTextFragment(h, 'text=quantum%20foam')
+    expect(id).toBeTruthy()
+    await settle()
+    expect(shared).toEqual([
+      {
+        text: 'quantum foam',
+        url: 'https://example.com/article#:~:text=quantum%20foam',
+        tabId: h.tabId
+      }
+    ])
     // A menu-only action, a toolbar action the text no longer warrants, an unknown id.
     expect(h.browser.menus.runSelectionAction(h.tabId, 'go', 'example.org/docs')).toBe(false)
     expect(h.browser.menus.runSelectionAction(h.tabId, 'glance', 'quantum foam')).toBe(false)
@@ -2169,6 +2201,55 @@ describe('the selection toolbar', () => {
     expect(shared.length).toBe(1)
     expect(h.win.glance).toBeNull()
     expect(h.win.activeSpace().tabIds.length).toBe(1)
+  })
+
+  it('Share hands the text alone when the page cannot make a directive for the selection', async () => {
+    const shared: SharePayload[] = []
+    const h = pageHarness(ANDROID, PHONE)
+    h.browser.platform.shell.share = (payload): Promise<void> => {
+      shared.push(payload)
+      return Promise.resolve()
+    }
+    h.viewCalls.length = 0
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'share', 'quantum foam')).toBe(true)
+    expect(answerTextFragment(h, null)).toBeTruthy()
+    await settle()
+    expect(shared).toEqual([{ text: 'quantum foam', url: undefined, tabId: h.tabId }])
+  })
+
+  it('Copy Link to Highlight copies the page URL with the text directive, and says so when the page cannot make one', async () => {
+    const h = pageHarness(ANDROID, PHONE)
+    let copied = ''
+    h.browser.platform.clipboard.writeText = (text: string) => void (copied = text)
+    h.menu(pageParams({ selectionText: 'quantum foam' }))
+    h.viewCalls.length = 0
+    h.click('Copy Link to Highlight')
+    expect(answerTextFragment(h, 'text=quantum%20foam')).toBeTruthy()
+    await settle()
+    expect(copied).toBe('https://example.com/article#:~:text=quantum%20foam')
+    // The page's URL keeps its own fragment; the directive rides behind `:~:`.
+    h.browser.tabs.tab(h.tabId)!.url = 'https://example.com/article#intro'
+    h.menu(pageParams({ selectionText: 'quantum foam' }))
+    h.viewCalls.length = 0
+    h.click('Copy Link to Highlight')
+    expect(answerTextFragment(h, 'text=quantum%20foam')).toBeTruthy()
+    await settle()
+    expect(copied).toBe('https://example.com/article#intro:~:text=quantum%20foam')
+    // Nothing to link to: the clipboard is left alone and the window hears a toast.
+    copied = ''
+    h.menu(pageParams({ selectionText: 'quantum foam' }))
+    h.viewCalls.length = 0
+    h.sent.length = 0
+    h.click('Copy Link to Highlight')
+    expect(answerTextFragment(h, null)).toBeTruthy()
+    await settle()
+    expect(copied).toBe('')
+    expect(h.sent).toContain('toast')
+    // A `zen://` page has no highlight anyone could follow: no item.
+    h.browser.tabs.tab(h.tabId)!.url = 'zen://settings'
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+      'Copy Link to Highlight'
+    )
   })
 
   it('is off without the capability even on a phone-shaped host', () => {
@@ -2188,9 +2269,10 @@ describe('the selection toolbar', () => {
       h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs').map((item) => item.id)
     ).toEqual(['glance', 'share', 'translate'])
     // The menu keeps the desktop's order and offers it for the page's own selection only.
-    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 4)).toEqual([
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 5)).toEqual([
       'Copy',
       'Search Google for “quantum foam”',
+      'Copy Link to Highlight',
       'Translate Selection',
       'Share…'
     ])

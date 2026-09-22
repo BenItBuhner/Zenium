@@ -844,6 +844,19 @@ export class Menus {
         run: (surface) => open(buildSearchUrl(engine, selection), surface)
       })
     }
+    // Chrome's Copy Link to Highlight: the menu's item for the link alone (the toolbar's Share
+    // carries it, and the phone's sheet has Copy link in Zenium's own row). Web pages only: a
+    // highlight in a `zen://` page or a file means nothing to whoever gets the link.
+    if (/^https?:\/\//i.test(tab.url)) {
+      actions.push({
+        id: 'copyHighlight',
+        label: 'Copy Link to Highlight',
+        title: 'Copy Link',
+        menu: true,
+        toolbar: false,
+        run: () => void this.copyHighlightLink(tab, win)
+      })
+    }
     // The services core's selection translation: the menu offers it for the page's own selection
     // (a text field's comes without `at`) and puts the popover where the click landed; the
     // toolbar's touch anchors nothing, so the phone shows its sheet.
@@ -874,19 +887,6 @@ export class Menus {
         menu: true,
         toolbar: true,
         run: () => void this.shareSelection(tab, selection, win)
-      })
-    }
-    // Chrome's Copy Link to Highlight: the menu's item for the link alone (the toolbar's Share
-    // carries it, and the phone's sheet has Copy link in Zenium's own row). Web pages only: a
-    // highlight in a `zen://` page or a file means nothing to whoever gets the link.
-    if (/^https?:\/\//i.test(tab.url)) {
-      actions.push({
-        id: 'copyHighlight',
-        label: 'Copy Link to Highlight',
-        title: 'Copy Link',
-        menu: true,
-        toolbar: false,
-        run: () => void this.copyHighlightLink(tab, win)
       })
     }
     // Listen from a selection (EDGE-11 / GN-13): `readAloud.start { from: 'selection-on' }`,
