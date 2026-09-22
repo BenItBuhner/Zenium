@@ -3968,9 +3968,13 @@ export interface Commands {
   'bookmark.openInWindow': { args: { ids: string[]; private: boolean }; result: void }
   /** "Bookmark all tabs": asks for the folder's name and place (`bookmark.allTabs` event). */
   'bookmark.allTabs': { args: void; result: void }
-  /** The dialog's answer: one new folder with a bookmark per tab, in tab order. */
+  /**
+   * The dialog's answer: one new folder with a bookmark per tab, in tab order. The core toasts
+   * the result ("Bookmarked 3 tabs in …") unless `quiet`, for a caller whose own toast carries
+   * an action of its own (the phone overview's Bookmark all, with Open).
+   */
   'bookmark.createFromTabs': {
-    args: { tabIds: string[]; title: string; parentId: string }
+    args: { tabIds: string[]; title: string; parentId: string; quiet?: boolean }
     result: BookmarkNode | null
   }
   'bookmark.contextMenu': {
