@@ -143,6 +143,13 @@ object BlinkTrace {
         val longTasks: Int,
         /** The longest top-level slice, ms. */
         val longestTaskMs: Double,
+        /**
+         * The longest top-level slice's time ON THE CPU (`tdur`, the thread's own clock), ms; null
+         * when the trace has no thread times. Its gap to [longestTaskMs] is the time the thread
+         * was off the CPU inside the task – waiting, or descheduled (the emulator's software GPU
+         * takes the cores at the first touch): not the chrome's work, and not in a profile.
+         */
+        val longestTaskCpuMs: Double? = null,
         /** Events read on the thread in the window (slices, pairs and instants). */
         val events: Int,
         /** Threads the trace named or carried events for. */
@@ -186,6 +193,7 @@ object BlinkTrace {
             sb.append(",\"layerChurn\":").append(layerChurn)
             sb.append(",\"longTasks\":").append(longTasks)
             sb.append(",\"longestTaskMs\":").append(FrameStats.number(longestTaskMs, 2))
+            if (longestTaskCpuMs != null) sb.append(",\"longestTaskCpuMs\":").append(FrameStats.number(longestTaskCpuMs, 2))
             sb.append(",\"perFrame\":{\"layout\":").append(FrameStats.number(perFrame(layoutCount), 3))
                 .append(",\"paint\":").append(FrameStats.number(perFrame(paintCount), 3))
                 .append(",\"styleRecalc\":").append(FrameStats.number(perFrame(styleRecalcCount), 3))
@@ -213,8 +221,9 @@ object BlinkTrace {
                 .append(", paints ").append(f2(perFrame(paintCount))).append(" (").append(paintCount).append(")")
                 .append(", style recalcs ").append(f2(perFrame(styleRecalcCount))).append(" (").append(styleRecalcCount).append(")")
                 .append(", layer updates ").append(f1(perFrame(layerChurn))).append(" (").append(layerChurn).append(")")
-            sb.append("; long tasks ").append(longTasks).append(" (longest ").append(f0(longestTaskMs)).append(" ms)")
-                .append(", busy ").append(f0(busyMs)).append(" ms: script ").append(f0(scriptMs))
+            sb.append("; long tasks ").append(longTasks).append(" (longest ").append(f0(longestTaskMs)).append(" ms")
+            if (longestTaskCpuMs != null && longTasks > 0) sb.append(", ").append(f0(longestTaskCpuMs)).append(" on the CPU")
+            sb.append(")").append(", busy ").append(f0(busyMs)).append(" ms: script ").append(f0(scriptMs))
             if (compileMs >= 0.5) sb.append(" (compiling ").append(f0(compileMs)).append(")")
             sb.append(", style ").append(f0(styleRecalcMs)).append(", layout ").append(f0(layoutMs))
                 .append(", paint ").append(f0(paintMs)).append(" ms")
@@ -241,7 +250,8 @@ object BlinkTrace {
     /** The same on a string. */
     fun parse(text: String, window: Window? = null): Reading = parse({ text.reader() }, window)
 
-    private data class Slice(val ts: Double, val dur: Double)
+    /** A complete slice: its start and length, µs, and its thread time (`tdur`) when the trace carried one. */
+    private data class Slice(val ts: Double, val dur: Double, val cpu: Double? = null)
 
     private class ThreadAcc {
         var name: String? = null
@@ -265,8 +275,8 @@ object BlinkTrace {
         var minTs = Double.MAX_VALUE
         var maxTs = -Double.MAX_VALUE
 
-        fun slice(name: String, ts: Double, durUs: Double) {
-            slices += Slice(ts, durUs)
+        fun slice(name: String, ts: Double, durUs: Double, cpuUs: Double? = null) {
+            slices += Slice(ts, durUs, cpuUs)
             when (name) {
                 FRAME -> frameMs += durUs / 1e3
                 LAYOUT -> { layout++; layoutSlices += Slice(ts, durUs) }
@@ -323,7 +333,7 @@ object BlinkTrace {
                 when (ph) {
                     "X" -> {
                         thread.events++
-                        thread.slice(name, ts, (event["dur"] as? Number)?.toDouble() ?: 0.0)
+                        thread.slice(name, ts, (event["dur"] as? Number)?.toDouble() ?: 0.0, (event["tdur"] as? Number)?.toDouble())
                     }
                     "B" -> {
                         thread.events++
@@ -367,12 +377,16 @@ object BlinkTrace {
         var busyUs = 0.0
         var longTasks = 0
         var longestUs = 0.0
+        var longestCpuUs: Double? = null
         for (slice in sorted) {
             if (slice.ts < end) continue
             end = slice.ts + slice.dur
             busyUs += slice.dur
             if (slice.dur > LONG_TASK_US) longTasks++
-            if (slice.dur > longestUs) longestUs = slice.dur
+            if (slice.dur > longestUs) {
+                longestUs = slice.dur
+                longestCpuUs = slice.cpu
+            }
         }
         val frames = if (t.frameMs.isNotEmpty()) t.frameMs.size else t.frameInstants
         return Pass(
@@ -393,6 +407,7 @@ object BlinkTrace {
                 layerChurn = t.layerUpdates,
                 longTasks = longTasks,
                 longestTaskMs = longestUs / 1e3,
+                longestTaskCpuMs = longestCpuUs?.let { it / 1e3 },
                 events = t.events,
                 threads = threads.size,
                 windowMs = windowMs,
