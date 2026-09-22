@@ -1398,12 +1398,18 @@ export class Browser {
   }
 
   /** Open a bookmark in the given tab (or a new one) and remember that it was used. */
-  openBookmark(id: string, newTab: boolean, tabId: string | null, win: ZenWindow): void {
+  openBookmark(
+    id: string,
+    newTab: boolean,
+    tabId: string | null,
+    win: ZenWindow,
+    background = false
+  ): void {
     const node = this.bookmarks.get(id)
     if (!node || node.type !== 'url' || !node.url) return
     this.bookmarks.touch(id)
-    // Same path as a typed URL so space routing applies.
-    this.submitUrlbar(node.url, newTab, tabId, false, win)
+    // Same path as a typed URL so space routing applies; `background` is the new tab behind.
+    this.submitUrlbar(node.url, newTab || background, tabId, background, win)
   }
 
   /** Open every bookmark below the given nodes in new tabs (the first one becomes active). */
@@ -2753,7 +2759,8 @@ export class Browser {
       'history.foldDevice': ({ deviceId, folded }) => this.pages.foldDevice(deviceId, folded),
 
       'session.recentlyClosed': () => this.session.summaries(),
-      'session.restoreClosed': ({ id }, win) => this.session.restoreClosed(id, win),
+      'session.restoreClosed': ({ id, background }, win) =>
+        this.session.restoreClosed(id, win, Boolean(background)),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
       'clipboard.writeText': ({ text, sensitive, confirmation }, win) => {
@@ -2786,7 +2793,8 @@ export class Browser {
       'bookmark.update': ({ id, title, url }) => void this.bookmarks.update(id, { title, url }),
       'bookmark.move': ({ ids, parentId, index }) => void this.bookmarks.move(ids, parentId, index),
       'bookmark.remove': ({ ids }) => void this.bookmarks.removeMany(ids),
-      'bookmark.open': ({ id, newTab, tabId }, win) => this.openBookmark(id, newTab, tabId, win),
+      'bookmark.open': ({ id, newTab, tabId, background }, win) =>
+        this.openBookmark(id, newTab, tabId, win, Boolean(background)),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),
       'bookmark.openInWindow': ({ ids, private: isPrivate }, win) =>
         this.openBookmarksInWindow(ids, isPrivate, win),

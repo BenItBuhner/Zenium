@@ -88,8 +88,8 @@ export function FileName({
   title?: string
   /** A record without a file (cancelled, or deleted since): the name in the deemphasised ink. */
   dim?: boolean
-  /** The file can be opened: the name is a button that does. */
-  onOpen?: () => void
+  /** The file can be opened: the name is a button that does (the click handed over, for its keys). */
+  onOpen?: (e: ReactMouseEvent<HTMLButtonElement>) => void
 }): JSX.Element {
   const { head, tail } = splitFileName(name)
   const parts = (
@@ -106,7 +106,7 @@ export function FileName({
         title={title}
         onClick={(e) => {
           e.stopPropagation()
-          onOpen()
+          onOpen(e)
         }}
       >
         {parts}

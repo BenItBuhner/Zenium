@@ -133,12 +133,15 @@ interface Picked {
  * page shows and a restored tab comes back searching, and a query the URL brings – Chrome's
  * "More from this site", the omnibox's `@history <text>`, back and forward – fills the field.
  * Selection is a mode (§9.6, §10.1 – as the phone list's long-press mode): at rest a row leads
- * with its favicon at the row's 16, no slot held for a checkbox. Ctrl- or Shift-click on a row,
- * "Select" in its ⋮ menu or Ctrl+A enters the mode: the checkbox column shows on every row while
- * it lasts (the favicons move once, at its start), a picked row sits on `--v2-selected`, a plain
- * click picks or drops a row, Shift-click picks the run from the last picked one, and the title
- * block's slot holds the count, Delete and Cancel. Cancel, Escape, dropping the last picked row
- * or deleting the selection leaves the mode and the column goes.
+ * with its favicon at the row's 16, no slot held for a checkbox. Shift-click on a row, "Select"
+ * in its ⋮ menu or Ctrl+A enters the mode – never Ctrl-click, which on every page row means one
+ * thing (§10.1 as amended): open it behind this tab, as a middle click does – a visit as a tab
+ * behind, a remote tab likewise, a Recently closed entry restored behind. In the mode the
+ * checkbox column shows on every row while it lasts (the favicons move once, at its start), a
+ * picked row sits on `--v2-selected`, a plain click picks or drops a row, Shift-click picks the
+ * run from the last picked one, and the title block's slot holds the count, Delete and Cancel.
+ * Cancel, Escape, dropping the last picked row or deleting the selection leaves the mode and
+ * the column goes.
  * Keyboard (§9.22): the arrows walk the rows, Space picks, Enter opens, Delete removes the
  * focused row or the selection, Escape leaves the mode; Ctrl+F on the tab focuses the field.
  * "Clear browsing data…" is the services dialog through the frame dialog host (§9.23).
@@ -216,8 +219,12 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
     [text]
   )
 
-  const open = (url: string, newTab: boolean): void => {
-    run('urlbar.submit', { input: url, newTab, tabId: tab.id })
+  /**
+   * A visit opens in this tab, or – a middle or Ctrl click, §10.1's one meaning – as a new tab
+   * behind it, through the page's own open path.
+   */
+  const open = (url: string, behind: boolean): void => {
+    run('urlbar.submit', { input: url, newTab: behind, tabId: tab.id, background: behind })
   }
   /**
    * A tab from another device opens as a new tab of this window – in front, or behind this one
@@ -615,11 +622,13 @@ function VisitRow({
         data-row-focus=""
         title={presentedUrl(visit.url)}
         onClick={(e) => {
-          // Shift-click picks the run from the last picked row; Ctrl-click picks this one and
-          // so enters the mode; inside the mode a plain click picks or drops the row (the
-          // middle button and Enter still open it).
+          // Shift-click picks the run from the last picked row (this one alone with nothing
+          // picked yet, entering the mode); Ctrl-click opens the page behind – §10.1's one
+          // meaning on every page row, never a pick; inside the mode a plain click picks or
+          // drops the row (the middle button and Enter still open it).
           if (e.shiftKey) onExtend(visit.id)
-          else if (e.ctrlKey || e.metaKey || selecting) onToggle(visit.id, !selected)
+          else if (e.ctrlKey || e.metaKey) onOpen(visit.url, true)
+          else if (selecting) onToggle(visit.id, !selected)
           else onOpen(visit.url, false)
         }}
         onAuxClick={(e) => e.button === 1 && onOpen(visit.url, true)}
@@ -711,10 +720,12 @@ function escapeRegExp(s: string): string {
 
 /**
  * The window's recently closed tabs and windows (Chrome's "Recently closed" on its history
- * page) as the page's first group: a row restores its entry; the heading's control clears the
- * list (on approach, as the day headings' ⋮). A closed page tab (Settings, this page's siblings)
- * carries its glyph as its favicon. Its rows are not picked, but hold the checkbox column's
- * width while the mode lasts so every favicon on the page moves as one.
+ * page) as the page's first group: a row restores its entry – a middle or Ctrl click restores a
+ * tab behind this one (§10.1's one meaning; a window entry comes back as a window either way);
+ * the heading's control clears the list (on approach, as the day headings' ⋮). A closed page
+ * tab (Settings, this page's siblings) carries its glyph as its favicon. Its rows are not
+ * picked, but hold the checkbox column's width while the mode lasts so every favicon on the
+ * page moves as one.
  */
 function RecentlyClosed({
   entries,
@@ -745,7 +756,8 @@ function RecentlyClosed({
       <ul className="zen-page-rows">
         {entries.map((entry) => {
           const host = entry.url ? presentedHost(entry.url, extensions) : ''
-          const restore = (): void => run('session.restoreClosed', { id: entry.id })
+          const restore = (behind = false): void =>
+            run('session.restoreClosed', { id: entry.id, background: behind })
           const label =
             entry.kind === 'window'
               ? `Window with ${entry.tabCount} ${entry.tabCount === 1 ? 'tab' : 'tabs'}`
@@ -773,7 +785,8 @@ function RecentlyClosed({
                 className="zen-page-row-text"
                 data-row-focus=""
                 title={entry.url ? presentedUrl(entry.url) : undefined}
-                onClick={restore}
+                onClick={(e) => restore(e.ctrlKey || e.metaKey)}
+                onAuxClick={(e) => e.button === 1 && restore(true)}
               >
                 <span className="zen-page-row-label">{label}</span>
                 <span className="zen-page-row-desc">{desc}</span>
@@ -790,7 +803,7 @@ function RecentlyClosed({
                 className="zen-v2-icon-button zen-page-row-reveal"
                 title={entry.kind === 'window' ? 'Reopen window' : 'Restore tab'}
                 aria-label={entry.kind === 'window' ? 'Reopen window' : 'Restore tab'}
-                onClick={restore}
+                onClick={() => restore()}
               >
                 <RotateCcw aria-hidden />
               </button>
@@ -957,9 +970,9 @@ function DeviceGroup({
  * `FaviconImage`), the title over the host, the ⋮ on approach hanging the history menu less the
  * visit's items (Select, Remove from History, Forget About This Page: the row names a page,
  * not a visit – `history.contextMenu` with no `visitId`). A click opens the page in a new tab
- * in front; a middle or Ctrl click one behind (the tab-opening convention – the row cannot be
- * picked, so Ctrl-click is not Select here). Not picked in the mode, but holding the checkbox
- * column's width while it lasts, as Recently closed's rows do, so every favicon moves as one.
+ * in front; a middle or Ctrl click one behind (§10.1's one meaning on every page row). Not
+ * picked in the mode, but holding the checkbox column's width while it lasts, as Recently
+ * closed's rows do, so every favicon moves as one.
  */
 function RemoteTabRow({
   device,

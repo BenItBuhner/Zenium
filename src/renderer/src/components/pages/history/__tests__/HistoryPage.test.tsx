@@ -413,7 +413,7 @@ describe('the History page tab (§10.1)', () => {
     expect(first.querySelector('button[aria-haspopup="menu"]')).not.toBeNull()
   })
 
-  it('opens a row in the tab, in a new tab on a middle click (Ctrl-click picks), and anchors the ⋮ on the row menu', async () => {
+  it('opens a row in the tab, behind it on a middle or Ctrl click (§10.1: one meaning, no pick), and anchors the ⋮ on the row menu', async () => {
     const el = await mountPage()
     const row = el.querySelector('[data-visit-id="v1"]')!
     const target = row.querySelector<HTMLButtonElement>('button[data-row-focus]')!
@@ -421,13 +421,31 @@ describe('the History page tab (§10.1)', () => {
     expect(calls('urlbar.submit').at(-1)).toEqual({
       input: 'https://example.com/docs',
       newTab: false,
-      tabId: 'history'
+      tabId: 'history',
+      background: false
     })
     await act(async () =>
       target.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
     )
-    expect(calls('urlbar.submit').at(-1)).toMatchObject({ newTab: true })
-    expect(calls('urlbar.submit')).toHaveLength(2)
+    expect(calls('urlbar.submit').at(-1)).toEqual({
+      input: 'https://example.com/docs',
+      newTab: true,
+      tabId: 'history',
+      background: true
+    })
+    // Ctrl-click is the same tab behind – on this page as on every page row – and picks nothing.
+    await act(async () =>
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('urlbar.submit').at(-1)).toMatchObject({ newTab: true, background: true })
+    await act(async () =>
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }))
+    )
+    expect(calls('urlbar.submit').at(-1)).toMatchObject({ newTab: true, background: true })
+    expect(calls('urlbar.submit')).toHaveLength(4)
+    expect(row.hasAttribute('data-selected')).toBe(false)
+    expect(el.querySelector('[data-selecting]')).toBeNull()
+    expect(el.querySelectorAll('.zen-page-row-check')).toHaveLength(0)
     const more = row.querySelector<HTMLButtonElement>(
       'button[aria-label="Actions for Example docs"]'
     )!
@@ -438,10 +456,11 @@ describe('the History page tab (§10.1)', () => {
     })
   })
 
-  it('selection is a mode (§9.6, §10.1): Ctrl-click enters it, the checkbox column shows on every row, the slot shows the count, Delete removes the picked and leaves it', async () => {
+  it('selection is a mode (§9.6, §10.1): Shift-click enters it, the checkbox column shows on every row, the slot shows the count, Delete removes the picked and leaves it', async () => {
     const el = await mountPage()
     const row = el.querySelector('[data-visit-id="v1"]')!
-    await act(async () => rowClick(el, 'v1', { ctrlKey: true }))
+    // Shift-click with nothing picked yet picks this row alone and so enters the mode.
+    await act(async () => rowClick(el, 'v1', { shiftKey: true }))
     // Picked, not opened.
     expect(calls('urlbar.submit')).toEqual([])
     expect(row.hasAttribute('data-selected')).toBe(true)
@@ -464,6 +483,13 @@ describe('the History page tab (§10.1)', () => {
     expect(text(el.querySelector('.zen-page-title-count'))).toBe('3 selected')
     await act(async () => rowClick(el, 'v3'))
     expect(text(el.querySelector('.zen-page-title-count'))).toBe('2 selected')
+    // Inside the mode too, Ctrl-click keeps its one meaning: the page behind, the pick unchanged.
+    await act(async () => rowClick(el, 'v3', { ctrlKey: true }))
+    expect(calls('urlbar.submit')).toEqual([
+      { input: 'https://zen-browser.app/', newTab: true, tabId: 'history', background: true }
+    ])
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('2 selected')
+    expect(el.querySelector('[data-visit-id="v3"]')!.hasAttribute('data-selected')).toBe(false)
     await act(async () =>
       el.querySelector<HTMLButtonElement>('[data-testid="history-delete-selected"]')!.click()
     )
@@ -475,14 +501,17 @@ describe('the History page tab (§10.1)', () => {
     expect(el.querySelectorAll('.zen-page-row-check')).toHaveLength(0)
     expect(el.querySelector('[data-testid="history-clear-browsing-data"]')).not.toBeNull()
     await act(async () => rowClick(el, 'v3'))
-    expect(calls('urlbar.submit')).toEqual([
-      { input: 'https://zen-browser.app/', newTab: false, tabId: 'history' }
-    ])
+    expect(calls('urlbar.submit').at(-1)).toEqual({
+      input: 'https://zen-browser.app/',
+      newTab: false,
+      tabId: 'history',
+      background: false
+    })
   })
 
   it('Shift-click picks the run from the last picked row; Ctrl+A picks every visit shown; Escape leaves the mode', async () => {
     const el = await mountPage()
-    await act(async () => rowClick(el, 'v2', { ctrlKey: true }))
+    await act(async () => rowClick(el, 'v2', { shiftKey: true }))
     await act(async () => rowClick(el, 'v4', { shiftKey: true }))
     expect(
       [...el.querySelectorAll('[data-selected]')].map((r) => r.getAttribute('data-visit-id'))
@@ -524,7 +553,7 @@ describe('the History page tab (§10.1)', () => {
 
   it('Cancel leaves the mode; Delete on a focused row removes just that visit', async () => {
     const el = await mountPage()
-    await act(async () => rowClick(el, 'v1', { ctrlKey: true }))
+    await act(async () => rowClick(el, 'v1', { shiftKey: true }))
     await act(async () =>
       [...el.querySelectorAll<HTMLButtonElement>('.zen-page-title-actions button')]
         .find((b) => text(b) === 'Cancel')!
@@ -626,7 +655,7 @@ describe('the History page tab (§10.1)', () => {
     )
   })
 
-  it('Recently closed is the first group: a row restores, the heading clears', async () => {
+  it('Recently closed is the first group: a row restores (behind on a middle or Ctrl click), the heading clears', async () => {
     const el = await mountPage()
     const group = el.querySelector('[data-testid="history-recently-closed"]')!
     expect(text(group.querySelector('h2'))).toBe('Recently closed')
@@ -646,7 +675,24 @@ describe('the History page tab (§10.1)', () => {
     expect(text(site.querySelector('.zen-page-row-label'))).toBe('Example Domain')
     expect(text(site.querySelector('.zen-page-row-desc'))).toBe('example.com')
     await act(async () => row.querySelector<HTMLButtonElement>('button[data-row-focus]')!.click())
-    expect(calls('session.restoreClosed')).toEqual([{ id: 'c1' }])
+    expect(calls('session.restoreClosed')).toEqual([{ id: 'c1', background: false }])
+    // §10.1's one meaning on every page row: a middle or Ctrl click restores the tab behind this
+    // one; the row's own Restore control brings it to the front as a plain click does.
+    const siteTarget = site.querySelector<HTMLButtonElement>('button[data-row-focus]')!
+    await act(async () =>
+      siteTarget.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    )
+    expect(calls('session.restoreClosed').at(-1)).toEqual({ id: 'c2', background: true })
+    await act(async () =>
+      siteTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('session.restoreClosed').at(-1)).toEqual({ id: 'c2', background: true })
+    expect(el.querySelector('[data-selecting]')).toBeNull()
+    await act(async () =>
+      site.querySelector<HTMLButtonElement>('button[aria-label="Restore tab"]')!.click()
+    )
+    expect(calls('session.restoreClosed').at(-1)).toEqual({ id: 'c2', background: false })
+    expect(calls('session.restoreClosed')).toHaveLength(4)
     await act(async () =>
       group
         .querySelector<HTMLButtonElement>('button[aria-label="Clear the recently closed list"]')!
@@ -780,7 +826,8 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     )
     expect(calls('urlbar.submit').at(-1)).toMatchObject({ newTab: true, background: true })
     expect(calls('urlbar.submit')).toHaveLength(3)
-    // Ctrl-click did not pick the row: these rows are not the mode's.
+    // Ctrl-click picked nothing: on every page row it is the tab behind (§10.1), and these rows
+    // are not the mode's besides.
     expect(el.querySelector('[data-selecting]')).toBeNull()
     // The work laptop's tab is open here too (the Open tabs scope carries the tab records): a
     // click brings it to the front instead of opening it twice; a middle click still opens one behind.
@@ -864,7 +911,7 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     await act(async () => emit('history.foldedDevicesChanged', []))
     expect(el.querySelectorAll('[data-device-id="work"] li')).toHaveLength(1)
     // Entering the mode: the remote rows hold the checkbox column's width, picked by nothing.
-    await act(async () => rowClick(el, 'v1', { ctrlKey: true }))
+    await act(async () => rowClick(el, 'v1', { shiftKey: true }))
     expect(el.querySelectorAll('[data-remote-tab] span.zen-page-row-check')).toHaveLength(3)
     expect(el.querySelectorAll('[data-remote-tab] input')).toHaveLength(0)
     // Ctrl+A picks the visits alone.

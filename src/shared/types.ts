@@ -3989,7 +3989,12 @@ export interface Commands {
   'history.foldDevice': { args: { deviceId: string; folded: boolean }; result: void }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
-  'session.restoreClosed': { args: { id: string }; result: void }
+  /**
+   * Bring back a recently closed entry. `background` (a middle or Ctrl click on the History
+   * page's row, §10.1): a tab comes back where it was without coming to the front; a window
+   * entry is a whole window and comes back as one either way.
+   */
+  'session.restoreClosed': { args: { id: string; background?: boolean }; result: void }
   'session.clearRecentlyClosed': { args: void; result: void }
 
   /**
@@ -4068,8 +4073,14 @@ export interface Commands {
   'bookmark.move': { args: { ids: string[]; parentId: string; index?: number }; result: void }
   /** Remove bookmarks and folders (folders with all their contents). */
   'bookmark.remove': { args: { ids: string[] }; result: void }
-  /** Open a bookmark (records `dateLastUsed`). */
-  'bookmark.open': { args: { id: string; newTab: boolean; tabId: string | null }; result: void }
+  /**
+   * Open a bookmark (records `dateLastUsed`); `background` with `newTab` is a tab behind the
+   * current one (a middle or Ctrl click on a manager row, §10.1), as `urlbar.submit` has it.
+   */
+  'bookmark.open': {
+    args: { id: string; newTab: boolean; tabId: string | null; background?: boolean }
+    result: void
+  }
   /** Open every bookmark in the given folders / selection in new tabs. */
   'bookmark.openAll': { args: { ids: string[] }; result: void }
   /** Open the bookmarks below the given nodes in a new (or private) window. */

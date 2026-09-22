@@ -148,7 +148,9 @@ export function DownloadsPage({ state, tab }: { state: UIState; tab: Tab }): JSX
               {text ? `No downloads match “${text}”` : 'Files you download appear here'}
             </PageEmpty>
           ) : (
-            groups.map((group) => <DayGroup key={group.day} group={group} files={files} />)
+            groups.map((group) => (
+              <DayGroup key={group.day} group={group} files={files} tabId={tab.id} />
+            ))
           )}
         </div>
       </PageColumn>
@@ -170,7 +172,15 @@ export function DownloadsPage({ state, tab }: { state: UIState; tab: Tab }): JSX
 // Day groups and rows
 // ---------------------------------------------------------------------------
 
-function DayGroup({ group, files }: { group: DownloadDayGroup; files: boolean }): JSX.Element {
+function DayGroup({
+  group,
+  files,
+  tabId
+}: {
+  group: DownloadDayGroup
+  files: boolean
+  tabId: string
+}): JSX.Element {
   return (
     <PageGroup
       heading={group.label}
@@ -180,7 +190,7 @@ function DayGroup({ group, files }: { group: DownloadDayGroup; files: boolean })
     >
       <ul className="zen-page-rows">
         {group.items.map((item) => (
-          <DownloadPageRow key={item.id} item={item} files={files} />
+          <DownloadPageRow key={item.id} item={item} files={files} tabId={tabId} />
         ))}
       </ul>
     </PageGroup>
@@ -191,10 +201,21 @@ function DayGroup({ group, files }: { group: DownloadDayGroup; files: boolean })
  * One download on the page: the shared `.zen-v2-row` as the page's §9.21 two-line row (the
  * `.zen-dl-page-row` modifier adds the two-line floor and the greyed Deleted row), focusable as
  * a whole for the arrows (§9.22) with the name a button that opens a finished file (the row's
- * Enter and a double click open it too). A right click or the Menu key asks the core for the
- * row's menu; on desktop hosts a finished file can be dragged out to the OS.
+ * Enter and a double click open it too). A middle or Ctrl click anywhere on the row – the name
+ * included – is §10.1's one meaning on every page row: it opens the download's page (the page
+ * it was taken from, else its own address) in a tab behind this one, the file left alone. A
+ * right click or the Menu key asks the core for the row's menu; on desktop hosts a finished
+ * file can be dragged out to the OS.
  */
-function DownloadPageRow({ item, files }: { item: DownloadItem; files: boolean }): JSX.Element {
+function DownloadPageRow({
+  item,
+  files,
+  tabId
+}: {
+  item: DownloadItem
+  files: boolean
+  tabId: string
+}): JSX.Element {
   const e = downloadsEngine
   const id = item.id
   const active = isActiveDownload(item)
@@ -203,12 +224,26 @@ function DownloadPageRow({ item, files }: { item: DownloadItem; files: boolean }
   const deleted = isDeletedRow(item)
   const name = displayName(item)
   const status = downloadStatus(item)
-  const host = displayHost(item.referrer || item.url)
+  const page = item.referrer || item.url
+  const host = displayHost(page)
   const inFlight = item.state === 'progressing' || item.state === 'paused'
   const resumable = canResumeDownload(item)
   const retryable = !resumable && canRetryDownload(item)
   const open = (): void => {
     if (openable) e.open(id)
+  }
+  const openPageBehind = (): void => {
+    run('urlbar.submit', { input: page, newTab: true, tabId, background: true })
+  }
+  /**
+   * A click with Ctrl or ⌘ held – on the row or its name – is the page behind, not the file;
+   * a double click's second click (`detail` 2) opens nothing more. True when the click was one.
+   */
+  const behindOn = (ev: ReactMouseEvent): boolean => {
+    if (!ev.ctrlKey && !ev.metaKey) return false
+    ev.preventDefault()
+    if (ev.detail <= 1) openPageBehind()
+    return true
   }
   const menu = (ev: ReactMouseEvent): void => {
     ev.preventDefault()
@@ -231,7 +266,19 @@ function DownloadPageRow({ item, files }: { item: DownloadItem; files: boolean }
         ev.preventDefault()
         e.dragOut(id)
       }}
-      onDoubleClick={open}
+      onClick={(ev) => {
+        if ((ev.target as HTMLElement).closest('button, input')) return
+        behindOn(ev)
+      }}
+      onAuxClick={(ev) => {
+        if (ev.button !== 1 || (ev.target as HTMLElement).closest('.zen-dl-page-actions')) return
+        ev.preventDefault()
+        openPageBehind()
+      }}
+      onDoubleClick={(ev) => {
+        // A Ctrl-double-click's first click opened the page behind already.
+        if (!ev.ctrlKey && !ev.metaKey) open()
+      }}
       onContextMenu={menu}
       onKeyDown={(ev) => {
         if (openable && ev.key === 'Enter' && ev.target === ev.currentTarget) {
@@ -246,7 +293,14 @@ function DownloadPageRow({ item, files }: { item: DownloadItem; files: boolean }
           name={name}
           title={item.savePath || item.url}
           dim={item.state === 'cancelled' || deleted}
-          onOpen={openable ? open : undefined}
+          // The name's own click stops at the button: its Ctrl-click is the page behind here.
+          onOpen={
+            openable
+              ? (ev) => {
+                  if (!behindOn(ev)) open()
+                }
+              : undefined
+          }
         />
         <span className="zen-page-row-desc tabular-nums">
           {host && <span className="zen-dl-page-host">{host}</span>}

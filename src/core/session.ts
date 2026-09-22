@@ -309,14 +309,23 @@ export class SessionService {
     if (newest) this.restoreClosed(newest.id, win)
   }
 
-  restoreClosed(id: string, win: ZenWindow = this.browser.focusedWindow()): void {
+  /**
+   * Bring back one entry: a tab to its place and to the front – or, `background` (a middle or
+   * Ctrl click on the History page's Recently closed row, §10.1), to its place alone, the tab
+   * that was active staying so; a window entry is a whole window and comes back as one.
+   */
+  restoreClosed(
+    id: string,
+    win: ZenWindow = this.browser.focusedWindow(),
+    background = false
+  ): void {
     const state = this.browser.state
     const entry = state.recentlyClosed.find((e) => e.id === id)
     if (!entry) return
     state.recentlyClosed = state.recentlyClosed.filter((e) => e.id !== id)
     if (entry.kind === 'tab') {
       const tab = this.restoreTab(entry, win)
-      this.browser.tabs.activateTab(tab.id, win)
+      if (!background) this.browser.tabs.activateTab(tab.id, win)
     } else {
       this.restoreWindow(entry, win)
     }
