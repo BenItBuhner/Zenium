@@ -7698,51 +7698,64 @@
 }
 
 /*
- * The overview's Recent pane (TAB-02, `components/phone/RecentPane.tsx`): the phone panels'
- * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
- * `.zen-v2-heading` with the panels' modifiers) standing on the overview's window backdrop, so
- * they draw in the window family (§9.29) through the control roles the overview root's
- * `data-surface="window"` resolves: the theme's ink, its 69% for a row's host and time and for
- * a group's empty sentence, the window fill for the press – where the panels' own draw in the
- * page's. A modifier by context on the primitives, unlayered beside them (§9.34), each rule
- * outranking the primitive's by specificity; the press and hover fills are not restated (the
- * row's own rule set is the one place that gates on `data-static`): the pane redefines the
- * page fill token the row reads, `--v2-fill`, as the window fill, so the primitive's own press
- * and hover draw the window family. The first heading stands under the segment, which
- * carries its own air, at 4 (§10.3's first heading, as the Groups pane's): the rule names the
- * pane's list class too, to outrank the panels' first-heading rule (phonePanels.css, the 0
- * under a pinned field) on specificity, since the two sheets' order is the bundle's.
- *
- * A device's heading (§10.3) is the group's one control: the `<h3>` keeps the primitive's beat
- * and gutter and the button inside it lays the name and the "Last active …" aside (13 at 69%,
- * tabular) out on the heading's line, then takes §9.3's 44 target around that 20 line – 12
- * above and below, folded into the heading's 20 / 4 beat by its margins, so the text stays
- * where the beat put it (the rows below are positioned and win the 8 the box reaches under
- * them). The box is 44 by declaration, not by its content: the two sizes on one baseline would
- * otherwise grow the line by a fraction and the heading with it. Pressed, it shows the window
- * fill as a row does.
+ * The tab search's reach (TAB-21, `OverviewSearchReach` in components/phone/OverviewSearch.tsx):
+ * the recently closed tabs and the other devices' tabs a query finds, as the phone panels' rows
+ * and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
+ * `.zen-v2-heading` with the panels' modifiers) under the grid on the overview's window
+ * backdrop, so they draw in the window family (§9.29) through the control roles the overview
+ * root's `data-surface="window"` resolves: the theme's ink, its 69% for a row's second line, the
+ * window fill for the press – where the panels' own draw in the page's. A modifier by context on
+ * the primitives, unlayered beside them (§9.34), each rule outranking the primitive's by
+ * specificity; the press and hover fills are not restated (the row's own rule set is the one
+ * place that gates on `data-static`): the list redefines the page fill token the row reads,
+ * `--v2-fill`, as the window fill, so the primitive's own press and hover draw the window
+ * family. The first heading keeps the primitive's 20 above (§10.3: a heading that follows rows –
+ * the cards – keeps its space): the rule names the list class too, to outrank the panels'
+ * first-heading rule (phonePanels.css, the 0 under a pinned field) on specificity, since the two
+ * sheets' order is the bundle's.
  */
-.zen-overview-recent {
+.zen-overview-search-reach {
   --v2-fill: var(--v2-window-fill);
 }
-.zen-overview-recent .zen-v2-row {
+.zen-overview-search-reach .zen-v2-row {
   color: var(--v2-control-text);
 }
-.zen-overview-recent .zen-list-subtitle,
-.zen-overview-recent .zen-v2-row.zen-recent-empty {
+.zen-overview-search-reach .zen-list-subtitle {
   color: var(--v2-control-text-deemphasized);
 }
-.zen-overview-recent .zen-v2-heading {
+.zen-overview-search-reach .zen-v2-heading {
   color: var(--v2-control-text);
 }
-.zen-overview-recent.zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {
-  margin-top: 4px;
+.zen-overview-search-reach.zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {
+  margin-top: 20px;
 }
-.zen-overview-recent .zen-v2-heading.zen-recent-device {
+
+/*
+ * A phone list's group with nothing in it, and the group's follow-up (§9.17's group form, §10.4;
+ * the History page's "From your other devices", `OtherDevicesGroup`): the empty sentence is one
+ * plain row at the gutter – the row primitive for its geometry, `data-static` for no fill and no
+ * role – 15 at 69% left-aligned like a row's label; the follow-up ("Turn on sync") is the
+ * group's next row, a target like any row, so it adds nothing to the primitive.
+ */
+.zen-v2-row.zen-list-empty-row {
+  color: var(--v2-text-deemphasized);
+}
+
+/*
+ * A device's heading in a phone list (§10.3; the History page's other devices, `DeviceGroup`) is
+ * the group's one control: the `<h3>` keeps the primitive's beat and gutter and the button inside
+ * it lays the name and the "Last active …" aside (13 at 69%, tabular) out on the heading's line,
+ * then takes §9.3's 44 target around that 20 line – 12 above and below, folded into the heading's
+ * 20 / 4 beat by its margins, so the text stays where the beat put it (the rows below are
+ * positioned and win the 8 the box reaches under them). The box is 44 by declaration, not by its
+ * content: the two sizes on one baseline would otherwise grow the line by a fraction and the
+ * heading with it. Pressed, it shows the page fill as a row does.
+ */
+.zen-v2-heading.zen-device-heading {
   display: flex;
   padding: 0;
 }
-.zen-recent-device-button {
+.zen-device-heading-button {
   display: flex;
   box-sizing: border-box;
   width: 100%;
@@ -7758,16 +7771,16 @@
   color: inherit;
   transition: background 120ms var(--zen-ease);
 }
-.zen-recent-device-button:active {
-  background: var(--v2-control-fill);
+.zen-device-heading-button:active {
+  background: var(--v2-fill);
 }
 @media (hover: hover) {
-  .zen-recent-device-button:hover {
-    background: var(--v2-control-fill);
+  .zen-device-heading-button:hover {
+    background: var(--v2-fill);
   }
 }
-.zen-recent-device-aside {
-  color: var(--v2-control-text-deemphasized);
+.zen-device-heading-aside {
+  color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-small);

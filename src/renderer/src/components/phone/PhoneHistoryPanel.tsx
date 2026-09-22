@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Ellipsis, Globe, History, Trash2, X } from 'lucide-react'
-import type { UIState } from '@shared/types'
+import type { SyncRemoteTab, UIState } from '@shared/types'
 import { displayUrl } from '@shared/url'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { run } from '@renderer/lib/api'
@@ -11,6 +11,8 @@ import {
   type HistoryRow
 } from '@renderer/lib/historyAdapter'
 import { visitTime, type DayGroup } from '@renderer/lib/historyGroups'
+import { hideDevice, OTHER_DEVICES_COPY, type RemoteDevice } from '@renderer/lib/otherDevices'
+import { openSettings } from '@renderer/lib/pages'
 import {
   deselectAll,
   NO_SELECTION,
@@ -26,6 +28,7 @@ import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay, MENU_GAP, showLocalMenu } from '@renderer/lib/ui'
 import { OverlayShell } from '../overlays/OverlayShell'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
+import { OtherDevicesGroup } from './OtherDevicesGroup'
 import {
   PhoneEmptyNote,
   PhoneGroupHeading,
@@ -60,9 +63,13 @@ interface Loaded {
  * long press starts selection mode, whose header replaces the panel's and acts on every picked
  * row. The top row clears the whole history behind the same question the desktop page asks
  * (`ClearHistorySheet`, the count of what goes, Cancel or Clear all). Recently closed tabs sit
- * above the days (`historyAdapter.recentlyClosed`). The list loads again whenever the core says
- * the history or the recently closed list changed. The search field does not take the focus as
- * the panel opens: the keyboard would come up with it (as `HistoryPage` on a phone).
+ * above the days (`historyAdapter.recentlyClosed`), and under them the other devices' open tabs
+ * as "From your other devices" (`OtherDevicesGroup`, TAB-02 / history-07: the desktop History
+ * page's two groups on the phone's; a tap opens a device's tab here, a device's heading held
+ * hides the device, and with sync off the group is the prompt to turn it on), both while nothing
+ * is searched. The list loads again whenever the core says the history or the recently closed
+ * list changed. The search field does not take the focus as the panel opens: the keyboard would
+ * come up with it (as `HistoryPage` on a phone).
  */
 export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   const tab = activeTab(state)
@@ -188,6 +195,35 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
     closeOverlay()
   }
 
+  /**
+   * Another device's tab (TAB-02): its address in a new tab in front – or, when this device
+   * already holds that very tab (the Open tabs scope carries the records too, ID-10), that tab
+   * to the front rather than a second one, as Settings › Sync's rows do (#314) – and the panel
+   * leaves on it.
+   */
+  const openRemote = (remote: SyncRemoteTab): void => {
+    if (remote.tabId in state.tabs) run('tab.activate', { tabId: remote.tabId })
+    else run('tab.create', { url: remote.url, active: true })
+    closeOverlay()
+  }
+
+  /** The group's row to Settings › Sync, where sync is turned on or Open tabs put in its scope. */
+  const openSync = (): void => {
+    openSettings('sync')
+    closeOverlay()
+  }
+
+  /** A device's heading held: its sheet, whose one item hides the device for this run of the chrome. */
+  const deviceMenu = (device: RemoteDevice): void => {
+    noteSheetOpener()
+    void showLocalMenu(
+      'history',
+      [{ label: OTHER_DEVICES_COPY.hideDevice, onSelect: () => hideDevice(device.deviceId) }],
+      tab?.id ?? null,
+      { title: device.deviceName }
+    )
+  }
+
   // Menu items are Title Case (v2 draft 9.1) and read as the core's history menus do (#119).
   const selectionMenu = (): void => {
     const picked = selectedRows
@@ -265,6 +301,14 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
               <RecentlyClosedRow key={entry.id} entry={entry} onTap={() => restore(entry)} />
             ))}
           </section>
+        )}
+        {!searching && (
+          <OtherDevicesGroup
+            state={state}
+            onOpenTab={openRemote}
+            onOpenSync={openSync}
+            onDeviceMenu={deviceMenu}
+          />
         )}
         {rows.length === 0 ? (
           <PhoneEmptyNote>

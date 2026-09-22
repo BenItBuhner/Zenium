@@ -6,15 +6,17 @@ import {
   hiddenDevicesStore,
   hideDevice,
   lastActiveLabel,
-  RECENT_COPY,
+  OTHER_DEVICES_COPY,
+  remoteTabsListed,
   remoteTabsSection,
   showHiddenDevices
-} from '../recentPane'
+} from '../otherDevices'
 
 /*
- * The Recent pane's model (TAB-02): the other devices' tabs grouped by device, the devices by
- * their last publish, the tabs by their last activity, the hidden device held back and counted,
- * the heading's aside, and why the group is empty when it is.
+ * The model of the History page's "From your other devices" group and of the tab search's reach
+ * into the same tabs (TAB-02): the other devices' tabs grouped by device, the devices by their
+ * last publish, the tabs by their last activity, the hidden device held back and counted, the
+ * heading's aside, why the group is empty when it is, and the flat list the search looks through.
  */
 
 const NOW = Date.UTC(2026, 8, 22, 12, 0, 0)
@@ -128,6 +130,33 @@ describe('remoteTabsSection', () => {
   })
 })
 
+describe('remoteTabsListed', () => {
+  it("is every listed device's tabs in the group's order, each with its device", () => {
+    const listed = remoteTabsListed(remoteTabsSection(syncOn, [pixel, desk], none))
+    expect(listed.map((m) => `${m.device.deviceId}:${m.tab.tabId}`)).toEqual([
+      'desk:d2',
+      'desk:d3',
+      'desk:d1',
+      'pixel:p1'
+    ])
+  })
+
+  it('is nothing while the group has no devices to show: sync off, tabs off, none, or all hidden', () => {
+    expect(
+      remoteTabsListed(
+        remoteTabsSection({ enabled: false, scope: { openTabs: true } }, [desk], none)
+      )
+    ).toEqual([])
+    expect(
+      remoteTabsListed(
+        remoteTabsSection({ enabled: true, scope: { openTabs: false } }, [desk], none)
+      )
+    ).toEqual([])
+    expect(remoteTabsListed(remoteTabsSection(syncOn, [idle], none))).toEqual([])
+    expect(remoteTabsListed(remoteTabsSection(syncOn, [desk], new Set(['desk'])))).toEqual([])
+  })
+})
+
 describe('hiddenDevicesStore', () => {
   beforeEach(() => {
     showHiddenDevices()
@@ -146,7 +175,7 @@ describe('hiddenDevicesStore', () => {
   })
 
   it('the show-hidden row counts what it brings back', () => {
-    expect(RECENT_COPY.showHidden(1)).toBe('Show 1 hidden device')
-    expect(RECENT_COPY.showHidden(2)).toBe('Show 2 hidden devices')
+    expect(OTHER_DEVICES_COPY.showHidden(1)).toBe('Show 1 hidden device')
+    expect(OTHER_DEVICES_COPY.showHidden(2)).toBe('Show 2 hidden devices')
   })
 })

@@ -3,7 +3,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import {
   Ellipsis,
   Group,
-  History,
   PanelLeft,
   PanelRight,
   Plus,
@@ -76,7 +75,6 @@ import {
   toggleSelected,
   type OverviewSelection
 } from '@renderer/lib/overviewSelection'
-import { openSettings } from '@renderer/lib/pages'
 import { PRIVATE_TAB_PLACEHOLDER, privateLockStore } from '@renderer/lib/privateLock'
 import {
   isPrivateTab,
@@ -96,7 +94,6 @@ import {
   regularOf,
   tabTitle
 } from '@renderer/lib/selectors'
-import { hideDevice, RECENT_COPY, type RecentDevice } from '@renderer/lib/recentPane'
 import { browserStore, openOverlay, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
@@ -114,17 +111,17 @@ import {
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
-import { OVERVIEW_SEARCH_ID, OverviewSearchField } from './OverviewSearch'
+import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
 import { noteSheetOpener } from './phonePanel'
 import { PrivateLockCover } from './PrivateLockCover'
-import { RecentPane } from './RecentPane'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
 import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
 import { useFlip } from './useFlip'
 import { useOverviewHandle } from './usePillGestures'
+import { useSearchReach } from './useSearchReach'
 
 /** Name a group gets when a gesture makes it; the header renames it in a tap. */
 const NEW_GROUP_NAME = 'Group'
@@ -136,7 +133,7 @@ const DROP_TIMEOUT_MS = 900
 const RESTORE_TIMEOUT_MS = 800
 /**
  * How long a tab opened for another device's page is waited for before the overview leaves on
- * whatever tab is active (the Recent pane's rows, TAB-02).
+ * whatever tab is active (the tab search's rows from the other devices, TAB-21 / TAB-02).
  */
 const OPEN_TIMEOUT_MS = 800
 /** Travel (px) of the entrance spring of a card the search lets back in: the exit's, run backwards. */
@@ -166,7 +163,7 @@ interface Props {
 /**
  * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
  * closed list as the menu read it), the close-all question, the recently closed list, the
- * select-tabs mode's group picker, the Recent pane's menu for one of the other devices.
+ * select-tabs mode's group picker.
  */
 type Sheet =
   | { kind: 'tab'; tabId: string }
@@ -175,7 +172,6 @@ type Sheet =
   | { kind: 'close-all' }
   | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
   | { kind: 'group-picker' }
-  | { kind: 'device'; device: RecentDevice }
 
 /**
  * The tab search (TAB-21): whether the field is pinned under the header, and what it holds. Off
@@ -222,19 +218,22 @@ interface ShownGroups {
  * that is picked when leaving), so a half-finished drag always shows exactly where things are
  * going. Cards can be held and dragged onto each other to make groups (see `useCardLift`).
  *
- * The overview's panes stand under a segment (TAB-02, TAB-03): the space's tabs; the RECENT
- * pane (`RecentPane`) – this device's recently closed tabs and the other devices' open ones, as
- * rows, no cards of its own; and, on a host with private tabs, the private ones – the private
- * session is one across the spaces, so that pane lists every private tab, as loose cards on the
- * private theme's backdrop (the window surfaces blend to it while the pane is up, §9.29), with
- * an explainer when there are none. A private card never shows in the regular pane, nor a
- * regular one in the private pane (`tabsOnPane`); the overview opens on the pane of the tab in
- * view.
+ * On a host with private tabs the overview has two panes under a segment (TAB-02, TAB-03): the
+ * space's tabs, and the private ones – the private session is one across the spaces, so that
+ * pane lists every private tab, as loose cards on the private theme's backdrop (the window
+ * surfaces blend to it while the pane is up, §9.29), with an explainer when there are none. A
+ * private card never shows in the regular pane, nor a regular one in the private pane
+ * (`tabsOnPane`); the overview opens on the pane of the tab in view.
  *
  * The header's magnifier opens the TAB SEARCH (TAB-21, `lib/overviewSearch.ts`): a field pinned
  * under the header that narrows the pane's cards to the ones whose title or address holds what
  * is typed – the cards the query drops depart in place as closing cards do while the rest glide
  * into their slots (§11.4), and come back as the exit run backwards when the query lets them.
+ * On the Tabs pane the search reaches past the cards (the #316 gate): this device's recently
+ * closed tabs and the other devices' open ones – History's two groups (TAB-02, history-07) – list
+ * as rows under headings beneath the matching cards (`OverviewSearchReach`), as Chrome's tab
+ * search lists its recently closed matches; a row brings its tab to the front and the overview
+ * leaves on it.
  */
 export function TabOverview({ state, overview, area, edge }: Props): JSX.Element {
   const { progress, phase, heroTabId } = overview
@@ -242,21 +241,17 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const active = activeTab(state)
   const picked = privateTabsStore.use((s) => s.pane)
   const hasPrivate = state.capabilities.privateTabs
-  // A host without private tabs has no Private pane to follow a private tab onto.
-  const followed = overviewPane(state, picked)
-  const pane: OverviewPane = followed === 'private' && !hasPrivate ? 'tabs' : followed
+  const pane: OverviewPane = hasPrivate ? overviewPane(state, picked) : 'tabs'
   const privatePane = pane === 'private'
-  const recentPane = pane === 'recent'
   // The private tabs are locked (INC-05): the Private pane is under the lock cover, its cards
   // blurred beneath it; the Tabs pane and the header are not.
   const locked = privateLockStore.use((s) => s.locked)
   // Taps work as soon as the overview is heading open; layout tracking waits for it to rest.
   const interactive = overviewInteractive(overview)
-  // The tab search (TAB-21): open from the header's magnifier, off with the overview and on the
-  // Recent pane, which has no cards to narrow (the field goes with the pane, the query with it):
-  // the field is reset in the render that takes it off, as the select-tabs mode's scope is.
+  // The tab search (TAB-21): open from the header's magnifier, off with the overview – the
+  // field is reset in the render that takes it off, as the select-tabs mode's scope is.
   const [search, setSearch] = useState<SearchState>(SEARCH_OFF)
-  const searchable = interactive && !recentPane
+  const searchable = interactive
   if (search.open && !searchable) setSearch(SEARCH_OFF)
   const searchOpen = search.open && searchable
   const query = searchOpen ? normalizeQuery(search.query) : ''
@@ -276,6 +271,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const groups = privatePane ? [] : groupsOf(state, space.id)
   const count = essentialsAll.length + pinnedAll.length + regularAll.length
   const found = essentials.length + pinned.length + regular.length
+  // Past the cards, on the Tabs pane: the recently closed tabs and the other devices' tabs the
+  // query finds, as rows under the grid; nothing on the Private pane (a private tab is never
+  // filed, and the other devices' pages are not private ones).
+  const reach = useSearchReach(state, query, searching && !privatePane)
+  const foundAll = found + reach.closed.length + reach.remote.length
 
   // The last private tab closing ends the session, and the overview returns to the Tabs pane
   // whether the Private pane was picked or followed (Chrome's switcher does the same); the
@@ -413,11 +413,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // What a screen reader is told of the narrowing (TalkBack, the chrome's status region): the
   // count once the typing has paused, not per letter.
   useEffect(() => {
-    const text = searchResultAnnouncement(query, found)
+    const text = searchResultAnnouncement(query, foundAll)
     if (!text) return
     const timer = setTimeout(() => announce(text), SEARCH_ANNOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [query, found])
+  }, [query, foundAll])
 
   // Where the hero's own card sits, in layout space (the root's entrance scale divided out). A
   // hero inside a collapsed group has no card to land on: it heads for the group's card instead
@@ -884,10 +884,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     ).then((tabId) => closeOverview(tabId ?? undefined))
   }
   /**
-   * The Recent pane's other rows leave the overview on the tab they bring to the front: another
-   * device's page in a new tab of this space (TAB-02), or Settings › Sync, the core's page tab,
-   * opened or brought back (`page.open`). Either way the tab in view changes, and the leave
-   * waits for the browser to show which it is.
+   * A search row from another device leaves the overview on the tab it brings to the front: the
+   * device's page in a new tab of this space, or the tab this device already holds. Either way
+   * the tab in view changes, and the leave waits for the browser to show which it is.
    */
   const leaveOn = (ask: () => void): void => {
     const before = active?.id ?? null
@@ -898,9 +897,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     }, OPEN_TIMEOUT_MS).then((tabId) => closeOverview(tabId ?? undefined))
   }
   /**
-   * Another device's tab (TAB-02): its address in a new tab of this space – or, when this
-   * device already holds that very tab (the Open tabs scope carries the records too, ID-10),
-   * that tab to the front rather than a second one, as Settings › Sync's rows do (#314).
+   * Another device's tab found by the search (TAB-21 / TAB-02): its address in a new tab of this
+   * space – or, when this device already holds that very tab (the Open tabs scope carries the
+   * records too, ID-10), that tab to the front rather than a second one, as Settings › Sync's
+   * and History's rows do (#314, `OtherDevicesGroup`).
    */
   const openRemote = (tab: SyncRemoteTab): void =>
     leaveOn(() =>
@@ -908,15 +908,6 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         ? run('tab.activate', { tabId: tab.tabId })
         : run('tab.create', { url: tab.url, spaceId: space.id, active: true })
     )
-  const openSync = (): void => leaveOn(() => openSettings('sync'))
-  /** A device's heading held (TAB-02): the one row, Hide device, for this run of the chrome. */
-  const deviceActions = (device: RecentDevice): SheetAction[] => [
-    {
-      id: 'hide-device',
-      label: RECENT_COPY.hideDevice,
-      onPick: () => hideDevice(device.deviceId)
-    }
-  ]
   const closeGroup = (folder: Folder): void => {
     const rect = rectOf(flip.element(`group:${folder.id}`))
     if (rect)
@@ -1173,44 +1164,32 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               />
             ) : (
               <>
-                {/*
-                  The Recent pane's header names the pane – its rows are no space's (the
-                  closed tabs are this device's, the open ones another's) – with no count and no
-                  menu: nothing on it is selected or closed all at once, and no card of it is
-                  searched (the closed list is short and the other devices' theirs).
-                */}
-                {recentPane ? (
-                  <History className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
-                ) : privatePane ? (
+                {privatePane ? (
                   <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
                 ) : (
                   <SpaceGlyph icon={space.icon} size={20} />
                 )}
                 <span className="zen-title min-w-0 truncate">
-                  {recentPane ? 'Recent' : privatePane ? 'Private' : space.name}
+                  {privatePane ? 'Private' : space.name}
                 </span>
-                {!recentPane && (
-                  <span
-                    className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
-                    data-testid="overview-count"
-                  >
-                    {count} tab{count === 1 ? '' : 's'}
-                  </span>
-                )}
+                <span
+                  className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
+                  data-testid="overview-count"
+                >
+                  {count} tab{count === 1 ? '' : 's'}
+                </span>
                 <span className="flex-1" />
-                {!recentPane && (
-                  <button
-                    type="button"
-                    className="zen-toolbar-button h-9 w-9"
-                    aria-label="Search tabs"
-                    aria-expanded={searchOpen}
-                    aria-controls={searchOpen ? OVERVIEW_SEARCH_ID : undefined}
-                    data-testid="overview-search-toggle"
-                    onClick={() => (searchOpen ? closeSearch() : openSearch())}
-                  >
-                    <Search className="h-[18px] w-[18px]" />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-9 w-9"
+                  aria-label="Search tabs"
+                  aria-expanded={searchOpen}
+                  aria-controls={searchOpen ? OVERVIEW_SEARCH_ID : undefined}
+                  data-testid="overview-search-toggle"
+                  onClick={() => (searchOpen ? closeSearch() : openSearch())}
+                >
+                  <Search className="h-[18px] w-[18px]" />
+                </button>
                 <button
                   type="button"
                   className="zen-toolbar-button h-9 w-9"
@@ -1223,18 +1202,16 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                     <PanelLeft className="h-[18px] w-[18px]" />
                   )}
                 </button>
-                {!recentPane && (
-                  <button
-                    type="button"
-                    className="zen-toolbar-button h-9 w-9"
-                    aria-label="More"
-                    aria-haspopup="menu"
-                    aria-expanded={sheet?.kind === 'menu'}
-                    onClick={() => void openMenu()}
-                  >
-                    <Ellipsis className="h-[18px] w-[18px]" />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-9 w-9"
+                  aria-label="More"
+                  aria-haspopup="menu"
+                  aria-expanded={sheet?.kind === 'menu'}
+                  onClick={() => void openMenu()}
+                >
+                  <Ellipsis className="h-[18px] w-[18px]" />
+                </button>
               </>
             )}
           </header>
@@ -1247,7 +1224,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               onClose={closeSearch}
             />
           )}
-          <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
+          {hasPrivate && <PaneSegment pane={pane} onPick={pickOverviewPane} />}
           <PaneSlot
             // Each pane is a slot's worth of its own – the space strip, the grid or the empty
             // explainer – coming up fresh on a 120 ms fade in while the still of the pane before
@@ -1260,18 +1237,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             {pane === 'tabs' && state.spaces.length > 1 && (
               <SpaceStrip spaces={state.spaces} activeId={space.id} />
             )}
-            {recentPane ? (
-              <RecentPane
-                state={state}
-                onRestore={restoreClosed}
-                onOpenTab={openRemote}
-                onOpenSync={openSync}
-                onDeviceMenu={(device) => {
-                  noteSheetOpener()
-                  setSheet({ kind: 'device', device })
-                }}
-              />
-            ) : privatePane && count === 0 ? (
+            {privatePane && count === 0 ? (
               <PrivateEmpty />
             ) : (
               <div
@@ -1294,7 +1260,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 }}
                 onScroll={measure}
               >
-                {searching && found === 0 && (
+                {searching && foundAll === 0 && (
                   <p className="zen-overview-search-empty" data-testid="overview-search-empty">
                     No tabs found
                   </p>
@@ -1347,6 +1313,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                   {loose.map(card)}
                   <NewTabCard pane={pane} disabled={selecting} />
                 </div>
+                {searching && !privatePane && (
+                  <OverviewSearchReach
+                    reach={reach}
+                    onRestore={restoreClosed}
+                    onOpenTab={openRemote}
+                  />
+                )}
               </div>
             )}
             {privatePane && count > 0 && <PrivateLockCover shown={locked} />}
@@ -1439,13 +1412,6 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           onSelect={() => setSelection(startSelection())}
           onRecentlyClosed={() => setSheet({ kind: 'recently-closed', closed: sheet.closed })}
           onCloseAll={closeAllAsked}
-        />
-      )}
-      {interactive && sheet?.kind === 'device' && (
-        <OverviewSheet
-          title={sheet.device.deviceName}
-          actions={deviceActions(sheet.device)}
-          onClose={() => leaveSheet('device')}
         />
       )}
       {interactive && sheet?.kind === 'close-all' && (
@@ -1969,32 +1935,26 @@ function newTabOn(pane: OverviewPane): void {
 }
 
 /**
- * The overview's panes as a tab bar above the grid (TAB-02): "Tabs", "Recent" and, on a host
- * with private tabs, "Private" – Chrome's switcher keeps Incognito last, and its Recent tabs,
- * a menu page there, is a pane here – on the shared `.zen-v2-segment` primitive (design
- * language v2 §9.34): text tabs in the window family – the picked one in the window ink with
- * the 2 px accent line under it, the others at 69% – switching on a tap with a 120 ms state
- * change (§11.4); not a segmented pill (§9.14 has none). The class is the truth for its
- * geometry and inks (a row tall at the 16 gutter, each label a 44 target); the markup carries
- * the roles.
+ * The overview's two panes as a tab bar above the grid (TAB-02): "Tabs" and "Private" on the
+ * shared `.zen-v2-segment` primitive (design language v2 §9.34, this PR's to land): text tabs in
+ * the window family – the picked one in the window ink with the 2 px accent line under it, the
+ * other at 69% – switching on a tap with a 120 ms state change (§11.4); not a segmented pill
+ * (§9.14 has none). The class is the truth for its geometry and inks (a row tall at the 16
+ * gutter, each label a 44 target); the markup carries the roles.
  */
 function PaneSegment({
   pane,
-  hasPrivate,
   onPick
 }: {
   pane: OverviewPane
-  /** The host has private tabs: the Private pane is offered. */
-  hasPrivate: boolean
   onPick: (pane: OverviewPane) => void
 }): JSX.Element {
   const panes: Array<{ id: OverviewPane; label: string }> = [
     { id: 'tabs', label: 'Tabs' },
-    { id: 'recent', label: 'Recent' },
-    ...(hasPrivate ? [{ id: 'private' as const, label: 'Private' }] : [])
+    { id: 'private', label: 'Private' }
   ]
   return (
-    <div role="tablist" aria-label="Overview panes" className="zen-v2-segment">
+    <div role="tablist" aria-label="Tabs and private tabs" className="zen-v2-segment">
       {panes.map(({ id, label }) => (
         <button
           key={id}

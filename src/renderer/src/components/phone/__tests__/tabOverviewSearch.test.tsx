@@ -3,19 +3,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ClosedEntrySummary, Space, SyncDeviceTabs, Tab, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { BLANK_URL } from '@shared/url'
 
 /*
- * The phone overview's tab search (matrix TAB-21; v2 §9.12, §11.4) and its Recent pane (TAB-02;
- * §9.17, §9.29, §10.3): the header's magnifier opens a field pinned under the header that
- * narrows the pane's cards by title and address as it is typed – the dropped cards departing in
- * place, the New Tab card never – with the count told to the status region; the X, Escape and
- * the system back clear a query and close an empty field. The Recent segment lists this device's
- * recently closed tabs and the other devices' open ones per device, each row leaving the
- * overview on the tab it brings up, a device's heading held for Hide device, and the group's
- * empty states with the row to Settings › Sync. Rendered for real in happy-dom with the sheets on
- * the frame's dialog host, the frame loop cranked by hand, the core stubbed.
+ * The phone overview's tab search (matrix TAB-21; v2 §9.12, §11.4) and its reach (the #316
+ * gate; TAB-02, §9.17, §9.27, §10.4): the header's magnifier opens a field pinned under the
+ * header that narrows the pane's cards by title and address as it is typed – the dropped cards
+ * departing in place, the New Tab card never – with the count told to the status region; the X,
+ * Escape and the system back clear a query and close an empty field. On the Tabs pane the query
+ * reaches past the cards: this device's recently closed tabs and the other devices' open ones
+ * list as rows under headings beneath the matching cards, each row leaving the overview on the
+ * tab it brings up; a hidden device, a sync that is off and the Private pane are out of its
+ * reach. Rendered for real in happy-dom with the sheets on the frame's dialog host, the frame
+ * loop cranked by hand, the core stubbed.
  */
 
 const SPACE = 'space'
@@ -51,10 +53,10 @@ const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { browserStore, claimMessageCards, uiStore } = await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
-const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { pickOverviewPane, resetOverviewPane } = await import('@renderer/lib/privateTabs')
 const { dispatchBackEvent, topBackSurface } = await import('@renderer/lib/back')
 const { announcerStore, resetAnnouncer } = await import('@renderer/lib/announce')
-const { showHiddenDevices, hiddenDevicesStore } = await import('@renderer/lib/recentPane')
+const { hideDevice, showHiddenDevices } = await import('@renderer/lib/otherDevices')
 const { remoteTabsStore } = await import('@renderer/lib/remoteTabs')
 
 // --- a profile ---------------------------------------------------------------------------------
@@ -175,6 +177,14 @@ const pages = (): Tab[] => [
   tab('blank', BLANK_URL)
 ]
 
+/** A private tab (the Android host's private session), and the state on a host that has them. */
+const privateTab = (id: string, url: string): Tab =>
+  tab(id, url, { containerId: PRIVATE_CONTAINER_ID })
+const withPrivate = (state: UIState): UIState => ({
+  ...state,
+  capabilities: { ...state.capabilities, privateTabs: true }
+})
+
 /** The entry the core files for a closed page. */
 function entry(id: string, title: string, url: string, closedAt: number): ClosedEntrySummary {
   return { id, kind: 'tab', title, url, favicon: null, closedAt, tabCount: 1 }
@@ -194,7 +204,10 @@ const remoteTab = (
   lastActive
 })
 
-/** Two devices: the laptop published two hours ago, the desktop three minutes ago. */
+/**
+ * Two devices: the laptop published two hours ago, the desktop three minutes ago. "wiki" finds
+ * one tab of the desktop's; "zenium" one of the laptop's; "archive" the desktop's other.
+ */
 const devices = (): SyncDeviceTabs[] => [
   {
     deviceId: 'device-laptop',
@@ -209,8 +222,22 @@ const devices = (): SyncDeviceTabs[] => [
     deviceId: 'device-desktop',
     deviceName: 'Home desktop',
     updatedAt: NOW - 3 * 60_000,
-    tabs: [remoteTab('d-1', 'https://archive.org/', 'Internet Archive', NOW - 4 * 60_000)]
+    tabs: [
+      remoteTab('d-1', 'https://archive.org/', 'Internet Archive', NOW - 4 * 60_000),
+      remoteTab(
+        'd-2',
+        'https://en.wikipedia.org/wiki/Web_browser',
+        'Web browser - Wikipedia',
+        NOW - 50 * 60_000
+      )
+    ]
   }
+]
+
+/** Two tabs closed here: one on Wikipedia two minutes ago, an RFC three hours ago. */
+const closedTabs = (): ClosedEntrySummary[] => [
+  entry('c2', 'Damping - Wikipedia', 'https://en.wikipedia.org/wiki/Damping', NOW - 2 * 60_000),
+  entry('c1', 'RFC 1149', 'https://www.rfc-editor.org/rfc/rfc1149.html', NOW - 3 * HOUR)
 ]
 
 const OPEN = { phase: 'open', progress: 1, heroTabId: null, target: 1 } as const
@@ -359,11 +386,14 @@ const byLabel = (label: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
 const byTestId = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-testid="${id}"]`)
-const buttonByText = (text: string): HTMLElement | undefined =>
-  [...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent?.trim() === text)
 /** The cards in the grid's order (the New Tab card among them). */
 const cellKeys = (): string[] =>
   [...document.querySelectorAll<HTMLElement>('[data-cell]')].map((el) =>
+    el.getAttribute('data-cell')!
+  )
+/** The cards of one pane's grid (the other pane's may still be fading out beside it). */
+const cellsOn = (pane: 'tabs' | 'private'): string[] =>
+  [...document.querySelectorAll<HTMLElement>(`[data-pane="${pane}"] [data-cell]`)].map((el) =>
     el.getAttribute('data-cell')!
   )
 /** The overview's header row (the cards' title rows are not it). */
@@ -375,19 +405,12 @@ const headerButtons = (): string[] =>
   [...header().querySelectorAll<HTMLElement>('button')].map(
     (b) => b.getAttribute('aria-label') ?? b.textContent?.trim() ?? ''
   )
-const segments = (): Array<[string, boolean]> =>
-  [...document.querySelectorAll<HTMLElement>('[role="tab"]')].map((b) => [
-    b.textContent?.trim() ?? '',
-    b.getAttribute('aria-selected') === 'true'
-  ])
 const field = (): HTMLInputElement | null =>
   document.querySelector<HTMLInputElement>('#overview-search')
 const sheetRows = (): string[] =>
   [...document.querySelectorAll<HTMLElement>('.zen-sheet .zen-sheet-item')].map(
     (e) => e.textContent?.trim() ?? ''
   )
-const sheetTitle = (): string | undefined =>
-  document.querySelector<HTMLElement>('.zen-sheet .zen-sheet-title')?.textContent?.trim()
 const of = (name: string): unknown[] =>
   invoke.mock.calls.filter(([n]) => n === name).map(([, args]) => args)
 /** The list row whose title reads `title` (its host and time stand beside it). */
@@ -395,6 +418,17 @@ const rowByTitle = (title: string): HTMLElement =>
   [...document.querySelectorAll<HTMLElement>('.zen-v2-row')].find(
     (r) => r.querySelector('.zen-list-title')?.textContent?.trim() === title
   )!
+/** The search's reach under the grid: its headings and rows in order, as a reader meets them. */
+const reachTexts = (): string[] =>
+  [
+    ...(byTestId('overview-search-reach')?.querySelectorAll<HTMLElement>(
+      '.zen-v2-heading, .zen-v2-row'
+    ) ?? [])
+  ].map((el) =>
+    el.classList.contains('zen-v2-heading')
+      ? `# ${el.textContent?.trim()}`
+      : (el.querySelector('.zen-list-title')?.textContent?.trim() ?? el.textContent?.trim() ?? '')
+  )
 /** The search's departures on the grid: the dropped cards, by tab. */
 const filteredExits = (): string[] =>
   departStore
@@ -421,21 +455,12 @@ function back(): void {
   })
 }
 
-/** Switch to the Recent pane and let it read its lists. */
-async function openRecent(): Promise<void> {
-  act(() => byTestId('overview-pane-recent')!.click())
+/** Open the search from the header's magnifier, type `text`, and let the reach read its lists. */
+async function search(text: string): Promise<void> {
+  if (!field()) act(() => byTestId('overview-search-toggle')!.click())
+  type(text)
   await settle()
 }
-
-/** The Recent pane's headings and rows, in order, as a reader would meet them. */
-const recentTexts = (): string[] =>
-  [
-    ...byTestId('overview-recent')!.querySelectorAll<HTMLElement>('.zen-v2-heading, .zen-v2-row')
-  ].map((el) =>
-    el.classList.contains('zen-v2-heading')
-      ? `# ${el.textContent?.trim()}`
-      : (el.querySelector('.zen-list-title')?.textContent?.trim() ?? el.textContent?.trim() ?? '')
-  )
 
 // --- (A) the tab search ------------------------------------------------------------------------
 
@@ -567,62 +592,85 @@ describe('the tab search (TAB-21)', () => {
     expect(sheetRows()).toContain('Close All Tabs (6)')
   })
 
-  it('leaves the field behind on the Recent pane and comes back empty', async () => {
-    show(stateOf(pages()))
+  it('keeps the field and its query across the segment: the Private pane is narrowed by the same words', async () => {
+    show(withPrivate(stateOf([...pages(), privateTab('p1', 'https://one.example/')])))
     act(() => byTestId('overview-search-toggle')!.click())
     type('wiki')
-    await openRecent()
-    expect(field()).toBeNull()
-    expect(headerButtons()).toEqual(['Spaces'])
-    act(() => byTestId('overview-pane-tabs')!.click())
+    expect(cellsOn('tabs')).toEqual(['coffee', 'tea', 'new-tab'])
+    act(() => byTestId('overview-pane-private')!.click())
     await settle()
-    expect(field()).toBeNull()
-    expect(cellKeys()).toHaveLength(7)
+    expect(field()!.value).toBe('wiki')
+    expect(cellsOn('private')).toEqual(['new-tab'])
+    type('example')
+    expect(cellsOn('private')).toEqual(['p1', 'new-tab'])
   })
 })
 
-// --- (B) the Recent pane -----------------------------------------------------------------------
+// --- (B) the search's reach ------------------------------------------------------------------------
 
-describe('the Recent pane (TAB-02)', () => {
-  it('is the segment between Tabs and Private, retitles the header, and lists the recently closed tabs newest first', async () => {
-    closed = [
-      entry('c2', 'Damping - Wikipedia', 'https://en.wikipedia.org/wiki/Damping', NOW - 2 * 60_000),
-      entry('c1', 'RFC 1149', 'https://www.rfc-editor.org/rfc/rfc1149.html', NOW - 3 * HOUR)
-    ]
-    const state = stateOf(pages())
-    show({ ...state, capabilities: { ...state.capabilities, privateTabs: true } })
-    expect(segments()).toEqual([
-      ['Tabs', true],
-      ['Recent', false],
-      ['Private', false]
-    ])
-    await openRecent()
-    expect(segments()).toEqual([
-      ['Tabs', false],
-      ['Recent', true],
-      ['Private', false]
-    ])
-    expect(header().textContent).toContain('Recent')
-    expect(headerButtons()).toEqual(['Spaces'])
-    expect(byTestId('overview-count')).toBeNull()
-    expect(recentTexts()).toEqual([
+describe("the search's reach (TAB-21 over TAB-02's lists)", () => {
+  it("lists the recently closed and the other devices' matches as rows under headings beneath the cards, and counts them with the cards", async () => {
+    closed = closedTabs()
+    remote = devices()
+    show(stateOf(pages(), { sync: sync(true) }))
+    act(() => byTestId('overview-search-toggle')!.click())
+    await settle()
+    // The lists are not asked for until a query needs them.
+    expect(of('sync.tabsFromDevices')).toEqual([])
+    expect(byTestId('overview-search-reach')).toBeNull()
+
+    await search('wiki')
+    expect(of('sync.tabsFromDevices')).toHaveLength(1)
+    expect(cellKeys()).toEqual(['coffee', 'tea', 'new-tab'])
+    expect(reachTexts()).toEqual([
       '# Recently closed',
       'Damping - Wikipedia',
-      'RFC 1149',
       '# From your other devices',
-      'Turn on sync to see tabs from your other devices',
-      'Turn on sync'
+      'Web browser - Wikipedia'
     ])
+    // A closed row reads its host and when it closed; a device's row its host and the device.
+    expect(rowByTitle('Damping - Wikipedia').textContent).toContain('wikipedia.org')
+    expect(rowByTitle('Web browser - Wikipedia').textContent).toContain(
+      'wikipedia.org · Home desktop'
+    )
+    // Two cards, one closed tab and one tab elsewhere: four found.
+    act(() => vi.advanceTimersByTime(600))
+    expect(announcerStore.get().text).toBe('4 tabs found')
+
+    // A heading stands only over rows: "zenium" is on the laptop and on a card, closed nowhere.
+    await search('zenium')
+    expect(cellKeys()).toEqual(['pulls', 'new-tab'])
+    expect(reachTexts()).toEqual(['# From your other devices', 'Zenium'])
+    // The address counts as it does for the cards: the RFC's is rfc-editor.org.
+    await search('rfc-editor')
+    expect(cellKeys()).toEqual(['new-tab'])
+    expect(reachTexts()).toEqual(['# Recently closed', 'RFC 1149'])
   })
 
-  it('a closed tab picked is restored and the overview leaves on the tab that appears', async () => {
-    closed = [entry('c1', 'Damping - Wikipedia', 'https://en.wikipedia.org/wiki/Damping', NOW)]
-    const state = stateOf(pages())
-    show(state)
-    await openRecent()
+  it('a query only the lists answer shows their rows over the New Tab card, not the empty sentence; one nothing answers shows the sentence alone', async () => {
+    closed = closedTabs()
+    remote = devices()
+    show(stateOf(pages(), { sync: sync(true) }))
+    await search('damping')
+    expect(cellKeys()).toEqual(['new-tab'])
+    expect(byTestId('overview-search-empty')).toBeNull()
+    expect(reachTexts()).toEqual(['# Recently closed', 'Damping - Wikipedia'])
+    act(() => vi.advanceTimersByTime(600))
+    expect(announcerStore.get().text).toBe('1 tab found')
+
+    await search('zzz')
+    expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')
+    expect(byTestId('overview-search-reach')).toBeNull()
+    act(() => vi.advanceTimersByTime(600))
+    expect(announcerStore.get().text).toBe('No tabs found')
+  })
+
+  it('a recently closed row restores the tab and the overview leaves on the tab that appears', async () => {
+    closed = closedTabs()
+    show(stateOf(pages()))
+    await search('damping')
     act(() => rowByTitle('Damping - Wikipedia').click())
-    expect(of('session.restoreClosed')).toEqual([{ id: 'c1' }])
-    // The browser shows the restored tab: the overview leaves on it.
+    expect(of('session.restoreClosed')).toEqual([{ id: 'c2' }])
     const restored = tab('back', 'https://en.wikipedia.org/wiki/Damping', { title: 'Damping' })
     act(() => browserStore.set({ state: stateOf([...pages(), restored]) }))
     await settle()
@@ -630,37 +678,25 @@ describe('the Recent pane (TAB-02)', () => {
     expect(stageStore.get().overview.target).toBe(0)
   })
 
-  it('lists the other devices by their last publish, tabs by last activity, and opens a tab in a new tab of this space', async () => {
+  it("another device's row opens the tab in a new tab of this space and the overview leaves on it", async () => {
     remote = devices()
     show(stateOf(pages(), { sync: sync(true) }))
-    await openRecent()
-    expect(of('sync.tabsFromDevices')).toHaveLength(1)
-    expect(recentTexts()).toEqual([
-      '# Recently closed',
-      'Tabs you close appear here',
-      '# From your other devices',
-      '# Home desktopLast active 3 min ago',
-      'Internet Archive',
-      '# Work laptopLast active 2 h ago',
-      'Zenium',
-      'Web | MDN'
-    ])
-    const headings = [...document.querySelectorAll<HTMLElement>('.zen-recent-device-button')]
-    expect(headings.map((h) => h.getAttribute('aria-label'))).toEqual([
-      'Home desktop, Last active 3 min ago',
-      'Work laptop, Last active 2 h ago'
-    ])
-    const row = rowByTitle('Internet Archive')
-    expect(row.textContent).toContain('archive.org')
-    act(() => row.click())
+    await search('archive')
+    expect(reachTexts()).toEqual(['# From your other devices', 'Internet Archive'])
+    act(() => rowByTitle('Internet Archive').click())
     expect(of('tab.create')).toEqual([
       { url: 'https://archive.org/', spaceId: SPACE, active: true }
     ])
+    // The browser shows the new tab in front: the overview leaves on it.
+    const opened = tab('opened', 'https://archive.org/', { title: 'Internet Archive' })
+    act(() => browserStore.set({ state: stateOf([opened, ...pages()]) }))
+    await settle()
+    expect(stageStore.get().overview.heroTabId).toBe('opened')
+    expect(stageStore.get().overview.target).toBe(0)
   })
 
-  it('a tab this device already holds under the same id comes to the front instead of opening twice', async () => {
-    // The Open tabs scope carries the tab records too (ID-10): the laptop's `hn` is this
-    // device's `hn`.
+  it('a tab this device already holds under the same id comes to the front instead of opening twice (ID-10)', async () => {
+    // The Open tabs scope carries the tab records too: the laptop's `hn` is this device's `hn`.
     remote = [
       {
         deviceId: 'device-laptop',
@@ -670,91 +706,81 @@ describe('the Recent pane (TAB-02)', () => {
       }
     ]
     show(stateOf(pages(), { sync: sync(true) }))
-    await openRecent()
+    await search('hacker')
+    expect(cellKeys()).toEqual(['hn', 'new-tab'])
     act(() => rowByTitle('Hacker News').click())
     expect(of('tab.activate')).toEqual([{ tabId: 'hn' }])
     expect(of('tab.create')).toEqual([])
   })
 
-  it("a device's heading held offers Hide device; hidden, it leaves the list with a row to show it again", async () => {
+  it("reaches no device's tabs with sync off or Open tabs out of its scope, and not a hidden device's", async () => {
     remote = devices()
-    show(stateOf(pages(), { sync: sync(true) }))
-    await openRecent()
-    const laptop = document.querySelector<HTMLElement>(
-      '[data-device-id="device-laptop"] .zen-recent-device-button'
-    )!
-    expect(laptop.getAttribute('aria-haspopup')).toBe('menu')
-    act(() => {
-      laptop.dispatchEvent(
-        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })
-      )
-    })
-    await settle()
-    await land()
-    expect(sheetTitle()).toBe('Work laptop')
-    expect(sheetRows()).toEqual(['Hide device'])
-    act(() => buttonByText('Hide device')!.click())
-    await land()
-    expect(hiddenDevicesStore.get().hidden.has('device-laptop')).toBe(true)
-    expect(recentTexts()).toEqual([
-      '# Recently closed',
-      'Tabs you close appear here',
-      '# From your other devices',
-      '# Home desktopLast active 3 min ago',
-      'Internet Archive',
-      'Show 1 hidden device'
-    ])
-    act(() => byTestId('overview-recent-show-hidden')!.click())
-    expect(hiddenDevicesStore.get().hidden.size).toBe(0)
-    expect(recentTexts()).toContain('# Work laptopLast active 2 h ago')
-  })
-
-  it('with sync off the group says so and its row opens Settings › Sync; with Open tabs off it says that instead', async () => {
     show(stateOf(pages(), { sync: sync(false) }))
-    await openRecent()
-    expect(byTestId('overview-recent-sync-off')?.textContent).toBe(
-      'Turn on sync to see tabs from your other devices'
-    )
+    await search('wiki')
     expect(of('sync.tabsFromDevices')).toEqual([])
-    act(() => buttonByText('Turn on sync')!.click())
-    expect(of('page.open')).toEqual([{ id: 'settings', section: 'sync' }])
+    expect(byTestId('overview-search-reach')).toBeNull()
+    act(() => vi.advanceTimersByTime(600))
+    expect(announcerStore.get().text).toBe('2 tabs found')
 
     act(() => browserStore.set({ state: stateOf(pages(), { sync: sync(true, false) }) }))
     render(stateOf(pages(), { sync: sync(true, false) }))
     await settle()
-    expect(byTestId('overview-recent-tabs-off')?.textContent).toBe(
-      'Turn on Open tabs in What you sync to see them'
-    )
-    expect(buttonByText('Sync settings')).toBeDefined()
     expect(of('sync.tabsFromDevices')).toEqual([])
+    expect(byTestId('overview-search-reach')).toBeNull()
+
+    act(() => browserStore.set({ state: stateOf(pages(), { sync: sync(true) }) }))
+    render(stateOf(pages(), { sync: sync(true) }))
+    await settle()
+    expect(reachTexts()).toEqual(['# From your other devices', 'Web browser - Wikipedia'])
+    // The History page's hidden device is hidden here too, until it is shown again there.
+    act(() => hideDevice('device-desktop'))
+    expect(byTestId('overview-search-reach')).toBeNull()
+    act(() => showHiddenDevices())
+    expect(reachTexts()).toEqual(['# From your other devices', 'Web browser - Wikipedia'])
   })
 
-  it('with sync on and no other device the group has its own sentence', async () => {
-    remote = []
-    show(stateOf(pages(), { sync: sync(true) }))
-    await openRecent()
-    expect(byTestId('overview-recent-no-devices')?.textContent).toBe(
-      'No open tabs on your other devices yet'
+  it("reaches nothing from the Private pane: a private tab is never filed, and the other devices' pages are not private", async () => {
+    closed = closedTabs()
+    remote = devices()
+    show(
+      withPrivate(
+        stateOf([...pages(), privateTab('p1', 'https://en.wikipedia.org/wiki/Privacy')], {
+          sync: sync(true)
+        })
+      )
     )
+    act(() => pickOverviewPane('private'))
+    await settle()
+    await search('wiki')
+    expect(cellsOn('private')).toEqual(['p1', 'new-tab'])
+    expect(byTestId('overview-search-reach')).toBeNull()
+    expect(of('sync.tabsFromDevices')).toEqual([])
+    act(() => vi.advanceTimersByTime(600))
+    expect(announcerStore.get().text).toBe('1 tab found')
   })
 
   it('reads the lists again when the core says they changed', async () => {
     remote = devices()
     show(stateOf(pages(), { sync: sync(true) }))
-    await openRecent()
+    await search('archive')
     expect(of('sync.tabsFromDevices')).toHaveLength(1)
-    // Another device published: the status' version moves, the pane asks once more.
+    // Another device published: the status' version moves, the reach asks once more.
     const moved = { ...sync(true), remoteTabsVersion: version + 1 }
     act(() => browserStore.set({ state: stateOf(pages(), { sync: moved }) }))
     render(stateOf(pages(), { sync: moved }))
     await settle()
     expect(of('sync.tabsFromDevices')).toHaveLength(2)
-    // A tab closed here: the core's event, the list read again.
-    closed = [entry('c1', 'Hacker News', 'https://news.ycombinator.com/', NOW)]
+    // A tab closed here: the core's event, the list read again, the row among the results.
+    closed = [entry('c1', 'Internet Archive Blog', 'https://blog.archive.org/', NOW)]
     act(() => {
       for (const listener of changeListeners) listener()
     })
     await settle()
-    expect(recentTexts()).toContain('Hacker News')
+    expect(reachTexts()).toEqual([
+      '# Recently closed',
+      'Internet Archive Blog',
+      '# From your other devices',
+      'Internet Archive'
+    ])
   })
 })

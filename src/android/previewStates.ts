@@ -150,7 +150,10 @@ const QR_EVENT_MARGIN_MS = 250
  * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
- * sheet on its expanded detent, `then=hold:<row>;tap:<row>` takes steps on it once it is up),
+ * sheet on its expanded detent, `then=hold:<row>;tap:<row>` takes steps on it once it is up;
+ * History's From your other devices group lists the `sync=tabs` fixture's devices, and
+ * `hold:<device name>` opens a device's sheet – with `sync=off` the group is the prompt to turn
+ * sync on; the seed's `recentlyClosed` fills the Recently closed group over it),
  * `menu=app` (the app menu sheet; `show=<text>` scrolls an item
  * into view), `menu=tabs` (the Tabs button's quick menu), `sheet=extensions` (the Extensions
  * sheet the app menu's row opens, over the active page; `then=tap:<row>;hold:<row>` taps a row
@@ -188,10 +191,9 @@ const QR_EVENT_MARGIN_MS = 250
  * page, its cards with whatever pictures the stand-in host has of the tabs; `then=` presses
  * its header and cards once it is up: `tap:More;tap:Select Tabs` enters the select-tabs mode,
  * `tap:<card's label>` picks a card in it, `press:<card title>` opens a card's hold sheet,
- * `tap:Search tabs;type:overview-search=<text>` opens the tab search and types the query,
- * `tap:Recent` shows the Recent pane – with `sync=tabs` the other devices' tabs are listed, and
- * `hold:<device name>` opens a device's sheet; the seed's `recentlyClosed` fills its first
- * group) or `urlbar=<text>` (the pill's editor over the active tab with that text typed; `newtab` opens
+ * `tap:Search tabs;type:overview-search=<text>` opens the tab search and types the query – the
+ * seed's `recentlyClosed` and, with `sync=tabs`, the other devices' tabs are in its reach, as
+ * rows under the cards) or `urlbar=<text>` (the pill's editor over the active tab with that text typed; `newtab` opens
  * it over a new tab, `clip=<text>` seeds the stand-in clipboard for the clipboard row, `then=`
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
  * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
@@ -760,6 +762,10 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
     })
   } else if (target.kind === 'overlay') {
+    // A seeded engine state stands before the overlay opens: the History page's From your other
+    // devices group reads the sync status and asks for the devices' tabs as it mounts (TAB-02),
+    // so its rows are up with the page rather than a round trip after it.
+    if (sync) seedSync(sync, browser)
     // The steps, if any, once the overlay is up and settled: a row held for selection mode.
     const then = target.then ?? []
     const settled = (): void => {
@@ -989,8 +995,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'overview' && state) {
     // The grid mounts on the next render and its cards read their pictures then; the steps, if
     // any, press its header and its cards once it is up (the select-tabs mode, a card's sheet,
-    // the Recent segment). A seeded engine state stands before the overview opens: the Recent
-    // pane reads the sync status and asks for the other devices' tabs as it mounts (TAB-02).
+    // the tab search). A seeded engine state stands before the overview opens: the search's
+    // reach reads the sync status and asks for the other devices' tabs with the query (TAB-21).
     seed()
     openOverview(state)
     const then = target.then ?? []
@@ -1307,9 +1313,10 @@ const SYNC_FIXTURE_TREE =
  * sync is live and its sheet has a folder to set up), `busy` (`chosen`, with the engine's
  * `sync.setup` held open so the passphrase sheet stays on its §9.30 busy form once sent), `on`
  * (connected: two other devices, last synced five minutes ago), `tabs` (`on` with Open tabs
- * syncing and the two devices' open tabs published: Tabs from other devices and the overview's
- * Recent pane (TAB-02) are live, the menus carry Send to your devices, and the core's sync
- * stands in for the engine so they act; see `standInEngine`), `empty` (connected, no other
+ * syncing and the two devices' open tabs published: Tabs from other devices, History's From your
+ * other devices group and the tab search's reach (TAB-02, TAB-21) are live, the menus carry
+ * Send to your devices, and the core's sync stands in for the engine so they act; see
+ * `standInEngine`), `empty` (connected, no other
  * device yet), `syncing` (a sync running), `error` (the last sync failed), `lost` (the folder's
  * permission is gone) and `merge` (the first sync waits on the merge question). The scope stays
  * the core's, so a tapped toggle shows its new state.
@@ -1503,8 +1510,8 @@ export function syncFixture(state: UIState, variant: string, now: number): UISta
           { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000 }
         ]
   // `tabs`: `on` with Open tabs among what syncs and the devices' lists published (ID-28), so
-  // Tabs from other devices, the overview's Recent pane (TAB-02) and the menus' Send to your
-  // devices (ID-27) are live.
+  // Tabs from other devices, History's From your other devices group (TAB-02) and the menus'
+  // Send to your devices (ID-27) are live.
   const tabs = variant === 'tabs'
   return {
     ...state,

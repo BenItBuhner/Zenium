@@ -1,6 +1,14 @@
 import type { JSX, RefObject } from 'react'
+import { useState } from 'react'
 import { Search, X } from 'lucide-react'
+import type { SyncRemoteTab } from '@shared/types'
+import type { ClosedEntrySummary } from '@renderer/lib/historyAdapter'
+import { OTHER_DEVICES_COPY, remoteTabLines } from '@renderer/lib/otherDevices'
 import { SEARCH_TABS_PLACEHOLDER } from '@renderer/lib/overviewSearch'
+import { RemoteTabRow } from './OtherDevicesGroup'
+import { PhoneGroupHeading } from './PhoneList'
+import { ClosedTabRow } from './RecentlyClosedSheet'
+import type { SearchReach } from './useSearchReach'
 
 /** The id of the field's input: what the preview host's `type:` step and the drivers find. */
 export const OVERVIEW_SEARCH_ID = 'overview-search'
@@ -61,6 +69,62 @@ export function OverviewSearchField({
           <X className="h-5 w-5" strokeWidth={1.75} />
         </button>
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The search's reach: recently closed tabs and the other devices' tabs
+// ---------------------------------------------------------------------------
+
+/**
+ * The reach's matches (`useSearchReach`) as rows under headings beneath the grid (§10.4's
+ * list-row form under §9.27's 15/600 headings; the rows and headings draw in the window family
+ * on the overview's backdrop, `.zen-overview-search-reach` in main.css): "Recently closed" – favicon, title, host
+ * and when the tab closed, a tap restoring it – and "From your other devices" – favicon, title,
+ * then the host and the device's name, a tap opening the tab here (or bringing it to the front
+ * when this device holds it, ID-10). A heading stands only over rows: a query nothing beyond the
+ * cards matches leaves nothing here, and the grid's §9.17 sentence is the parent's. The rows run
+ * edge to edge as every phone list's do, their text at the list's 16.
+ */
+export function OverviewSearchReach({
+  reach,
+  onRestore,
+  onOpenTab
+}: {
+  reach: SearchReach
+  onRestore: (entry: ClosedEntrySummary) => void
+  onOpenTab: (tab: SyncRemoteTab) => void
+}): JSX.Element | null {
+  // "5 min ago" is judged as the rows come up: a query's results are a glance, not a page left open.
+  const [now] = useState(() => Date.now())
+  if (reach.closed.length === 0 && reach.remote.length === 0) return null
+  return (
+    <div
+      className="zen-overview-search-reach zen-phone-list -mx-3"
+      data-testid="overview-search-reach"
+    >
+      {reach.closed.length > 0 && (
+        <section aria-label={OTHER_DEVICES_COPY.closedHeading}>
+          <PhoneGroupHeading>{OTHER_DEVICES_COPY.closedHeading}</PhoneGroupHeading>
+          {reach.closed.map((entry) => (
+            <ClosedTabRow key={entry.id} entry={entry} now={now} onTap={() => onRestore(entry)} />
+          ))}
+        </section>
+      )}
+      {reach.remote.length > 0 && (
+        <section aria-label={OTHER_DEVICES_COPY.devicesHeading}>
+          <PhoneGroupHeading>{OTHER_DEVICES_COPY.devicesHeading}</PhoneGroupHeading>
+          {reach.remote.map(({ device, tab }) => (
+            <RemoteTabRow
+              key={`${device.deviceId}:${tab.tabId}`}
+              tab={tab}
+              subtitle={`${remoteTabLines(tab).host} · ${device.deviceName}`}
+              onTap={() => onOpenTab(tab)}
+            />
+          ))}
+        </section>
+      )}
     </div>
   )
 }

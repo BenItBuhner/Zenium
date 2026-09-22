@@ -33,8 +33,11 @@ function queryWords(query: string): string[] {
   return foldSearchText(normalizeQuery(query)).split(/\s+/).filter(Boolean)
 }
 
-/** What a tab is searched by: its title as the card shows it, and its address. */
-export type SearchableTab = Pick<Tab, 'title' | 'customTitle' | 'url'>
+/**
+ * What a tab is searched by: its title as the card shows it, and its address. An open tab may
+ * carry a custom title; a recently closed one or another device's (the search's reach) has none.
+ */
+export type SearchableTab = Pick<Tab, 'title' | 'url'> & { customTitle?: Tab['customTitle'] }
 
 /**
  * The text of `tab` the query is looked for in: the title the card reads (a custom title over
