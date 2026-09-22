@@ -1,5 +1,5 @@
 import type { ContentCover, Rect, ThumbnailPicture } from '@shared/types'
-import type { NativeBridge, NativeCall } from './bridge'
+import type { NativeBridge, NativeCall, NativeCommand } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
@@ -1377,6 +1377,24 @@ export function createPreviewBridge(): NativeBridge {
           (error: unknown) =>
             host().reject(call.id, error instanceof Error ? error.message : String(error))
         )
+    },
+    // One way, in order, off the caller's task like the Kotlin host's one main-thread task; a
+    // failure is logged where the host logs its own (`JsBridge.batch`).
+    batch(json) {
+      const commands = JSON.parse(json) as NativeCommand[]
+      void Promise.resolve().then(() => {
+        for (const command of commands) {
+          const warn = (error: unknown): void =>
+            console.warn(`[zen preview] native ${command.method} failed`, error)
+          try {
+            // A handler answering with a promise (none of the view ops does) fails here too, not
+            // out of the batch: as forgiving as `JsBridge.dispatchOneWay`.
+            void Promise.resolve(run({ id: 0, ...command })).catch(warn)
+          } catch (error) {
+            warn(error)
+          }
+        }
+      })
     },
     callSync(json) {
       const result = run(JSON.parse(json) as NativeCall)
