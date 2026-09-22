@@ -953,7 +953,14 @@ declare const __zenExtBoot: Boot
       options.world === 'USER_SCRIPT'
         ? { world: 'user', messaging: options.messaging === true }
         : contentUnit
-    const scope = scopeFor(ext, options.world === 'MAIN' ? 'none' : ext.isolation, unit)
+    // This copy may be the extension's `world: "MAIN"` unit, the only one the host finds in a
+    // main frame when the extension declares no isolated-world script (Mobile simulator's
+    // `frame-element-spoofer.js` alone): an injection into the default world still runs in the
+    // extension's own scope with its `chrome`, under the `with` fallback here, as a late boot's
+    // would; only a `world: "MAIN"` injection runs on the page's window.
+    const isolation: IsolationMode =
+      options.world === 'MAIN' ? 'none' : ext.isolation === 'none' ? 'with' : ext.isolation
+    const scope = scopeFor(ext, isolation, unit)
     if (kind === 'css') {
       const key = `${ext.id}/#${String(options.id ?? options.code ?? '')}`
       if (options.remove) removeCss(key)
