@@ -129,6 +129,67 @@ describe('a desktop item dialog and its rows (§9.24)', () => {
     expect(onPress).not.toHaveBeenCalled()
   })
 
+  it('a confirmation over an item dialog is §9.20’s 320 notice, never the 400 of the dialog it covers (§9.5; the #324 lead check)', () => {
+    const onPress = vi.fn()
+    const row: ItemRow = {
+      kind: 'item',
+      id: 'search-engine:custom:example-search',
+      label: 'Example Search',
+      sheet: {
+        title: 'Example Search',
+        groups: [
+          {
+            id: 'search-engine:custom:example-search:actions',
+            heading: null,
+            rows: [
+              {
+                kind: 'action',
+                id: 'search-engine:custom:example-search:remove',
+                label: 'Remove',
+                destructive: true,
+                confirm: { title: 'Remove Example Search?', action: 'Remove' },
+                onPress
+              }
+            ]
+          }
+        ]
+      }
+    }
+    const groups: RowGroup[] = [{ id: 'search-engines', heading: 'Search engines', rows: [row] }]
+    const h = render(
+      <FrameDialogHost>
+        <DialogStack
+          requests={[
+            { kind: 'item', rowId: row.id },
+            { kind: 'confirm', rowId: 'search-engine:custom:example-search:remove' }
+          ]}
+          groups={groups}
+          ctx={ctx}
+          closeTop={() => undefined}
+        />
+      </FrameDialogHost>
+    )
+    const dialogs = [...h.querySelectorAll<HTMLElement>('[role="dialog"]')]
+    expect(dialogs.map((d) => d.getAttribute('data-dialog'))).toEqual([
+      'item:search-engine:custom:example-search',
+      'confirm:search-engine:custom:example-search:remove'
+    ])
+    const [item, prompt] = dialogs
+    // The item's rows take the form width; the prompt over it is the notice – 320 inside the
+    // 400, its edges inside the lower dialog's – and the lower dialog is inert under it.
+    expect(item!.style.width).toBe('400px')
+    expect(prompt!.style.width).toBe('320px')
+    expect(item!.hasAttribute('inert')).toBe(true)
+    expect(prompt!.hasAttribute('inert')).toBe(false)
+    // A title block and the two footer buttons, nothing else.
+    expect(prompt!.textContent).toContain('Remove Example Search?')
+    expect([...prompt!.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Cancel',
+      'Remove'
+    ])
+    expect(prompt!.querySelector('[data-row], input')).toBeNull()
+  })
+
   it('the container carries the shared no-ring mark and its controls do not: role=dialog with tabindex=-1 (§1, §9.22)', () => {
     const row = itemRow(
       () => undefined,

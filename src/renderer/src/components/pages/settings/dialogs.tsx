@@ -1,5 +1,15 @@
 import type { JSX, ReactNode } from 'react'
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { returnFocusTo, wrapTab } from '@renderer/lib/popover'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
@@ -16,7 +26,13 @@ import type {
 } from './model'
 import { findRow, optionGroups } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
-import { SheetDismissContext, type SheetDismiss } from './sheetContext'
+import {
+  SheetCoveredContext,
+  SheetDismissContext,
+  SheetFooterContext,
+  useSheetFooterSlot,
+  type SheetDismiss
+} from './sheetContext'
 
 /**
  * The dialogs a desktop Settings row opens (v2 §9.5, §9.22–9.24, §10.5): the same six requests
@@ -27,8 +43,11 @@ import { SheetDismissContext, type SheetDismiss } from './sheetContext'
  * the form width, centred over the content frame by the frame's dialog host (lib/portals.tsx),
  * which draws the §9.5 scrim, makes the chrome inert and takes the pointer. The stack is the
  * page's (`useSheetStack`, at most two deep, §9.24): a dialog under another is `inert` and
- * leaves Escape to the one on top; each resolves its row again on every render, so it always
- * shows the row's current value and closes by itself when its row is gone.
+ * leaves Escape to the one on top – the popup stack's rule (`useEscape`: the most recently
+ * opened answers), which a menulist's popover or a prompt a form opens over its dialog joins
+ * too; each resolves its row again on every render, so it always shows the row's current value
+ * and closes by itself when its row is gone. A dialog a form renders inside a dialog (the
+ * site-data viewer's Clear all prompt) covers its host the same way: `SheetCoveredContext`.
  *
  * Keyboard (§9.22): focus moves into a dialog as it opens – the checked option of a picker, the
  * field of a form, the first row of an item's rows, and for a prompt the container itself (a
@@ -147,6 +166,18 @@ interface DialogProps {
    * given: §9.22 focuses the container, never Cancel.
    */
   initial?(root: HTMLElement): HTMLElement | null
+  /**
+   * §9.20's width: `form` (400) for rows with trailing controls, forms and descriptions that
+   * wrap; `notice` (320) for a confirmation – a title block and its two footer buttons and
+   * nothing else – so a prompt over a 400 dialog reads as a prompt and not a band across it.
+   */
+  width?: 'form' | 'notice'
+  /**
+   * `list` when the body is a list of rows: the dialog stands at most 80% of the frame and the
+   * list scrolls under the title block, and a footer the body claims takes §9.20's list-body
+   * form (the hairline in the gutter, the buttons at 12) – `.zen-settings-dialog[data-body]`.
+   */
+  body?: 'list'
   className?: string
 }
 
@@ -155,12 +186,15 @@ const TABBABLE =
 
 /**
  * One v2 dialog in the frame's dialog host: the shared `.zen-v2-dialog` (the neutral panel,
- * radius 12, a hairline, the sheet shadow) at the form width, a §9.23 title block with the
- * hairline once the body has scrolled, the body scrolling between the title and whatever footer
- * its content draws (§9.11: the buttons hug the end). Escape (on top only) and the scrim close
- * it; the focus moves in as it opens and back out to its opener as it leaves. The title labels
- * the dialog and its description describes it (`aria-describedby`), so a confirmation that
- * focuses its container is announced whole.
+ * radius 12, a hairline, the sheet shadow) at §9.20's form width – or its notice width for a
+ * confirmation – a §9.23 title block with the hairline once the body has scrolled, the body
+ * scrolling between the title and whatever footer its content draws (§9.11: the buttons hug
+ * the end) – in the body for a form's own actions, or in the dialog's footer slot under the
+ * body for actions a form puts there through `SheetFooter`, drawn only while claimed (§9.20's
+ * list-body footer form when the body is a list). Escape (on top of the popup stack only) and
+ * the scrim close it; the focus moves in as it opens and back out to its opener as it leaves.
+ * The title labels the dialog and its description describes it (`aria-describedby`), so a
+ * confirmation that focuses its container is announced whole.
  */
 export function SettingsDialog(props: DialogProps): JSX.Element {
   return (
@@ -179,6 +213,8 @@ function HostedDialog({
   onClose,
   children,
   initial,
+  width = 'form',
+  body,
   className
 }: DialogProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -186,8 +222,27 @@ function HostedDialog({
   const descriptionId = useId()
   const [scrolled, setScrolled] = useState(false)
   useFrameDialog({ onScrimPress: onClose })
-  // The dismissal a row of this dialog asks for (`ActionRow.closesSheet`, a form's Cancel): the
-  // dialog has no exit motion, so `after` – the row's own action – runs as soon as it has gone.
+  // Escape is the top popup's (§9.24): the stack `useEscape` keeps, so a dialog under another,
+  // under a menulist's popover or under a prompt a form opened over it waits for its turn.
+  useEscape(onClose)
+  // A dialog rendered inside this one's body (a form's prompt) covers it while it stands, as the
+  // page's stack covers a dialog under another; this dialog tells its own host the same.
+  const [covered, setCovered] = useState(false)
+  const coverHost = useContext(SheetCoveredContext)
+  useEffect(() => {
+    if (!coverHost) return
+    coverHost(true)
+    return () => coverHost(false)
+  }, [coverHost])
+  const {
+    slot: footerSlot,
+    claimed: footerClaimed,
+    setElement: setFooterElement
+  } = useSheetFooterSlot()
+  // The sheet's dismiss as the forms and rows inside know it (`useSheetDismiss`): the dialog has
+  // no motion to wait for, so `after` – an action that opens a surface of its own once the
+  // dialog is gone (`ActionRow.closesSheet`, a form's Cancel), a prompt's confirmed action –
+  // runs at once.
   const dismiss = useCallback<SheetDismiss>(
     (after) => {
       onClose()
@@ -195,18 +250,6 @@ function HostedDialog({
     },
     [onClose]
   )
-  // Escape is the top dialog's: a dialog under another is inert and leaves the key to it.
-  useEffect(() => {
-    if (under) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [under, onClose])
   // Focus in as the dialog opens (§9.22), and back to the opener as it leaves (§9.24) – the
   // page's control, or the lower dialog's for a dialog that opened over one – unless the user
   // has already put it somewhere else outside the dialog host.
@@ -229,8 +272,9 @@ function HostedDialog({
       const now = document.activeElement
       const lost = !now || now === document.body || now.closest('.zen-frame-dialogs') !== null
       // The stack drops the lower dialog's `inert` in the commit that removes this one, so the
-      // control takes the focus at once; a control still under an `inert` as this runs (a cover
-      // its owner lets go of a render later) takes it as that `inert` goes (`returnFocusTo`).
+      // control takes the focus at once; a control still under an `inert` as this runs (an
+      // opener in the dialog this one covered – a form's Clear all under its prompt – whose host
+      // drops the cover on its next render) takes it as that `inert` goes (`returnFocusTo`).
       if (lost && opener?.isConnected) returnFocusTo(opener)
     }
   }, [])
@@ -243,14 +287,16 @@ function HostedDialog({
       aria-describedby={description ? descriptionId : undefined}
       data-dialog={name}
       data-surface="page"
-      inert={under || undefined}
+      data-body={body}
+      inert={under || covered || undefined}
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-settings-dialog zen-animate-pop', className)}
-      style={{ width: POPOVER_WIDTH.form }}
-      // The shared wrap (§9.22): Tab at the last control goes to the first, Shift+Tab at the
-      // first to the last – and from the container itself, which holds the focus in a prompt
-      // (and in any dialog with nothing tabbable), Tab enters at the first control and Shift+Tab
-      // at the last, never leaving for whatever stands before the host in the document.
+      style={{ width: width === 'notice' ? POPOVER_WIDTH.list : POPOVER_WIDTH.form }}
+      // The shared wrap (§9.22, lib/popover): Tab at the last control goes to the first,
+      // Shift+Tab at the first to the last – and from the container itself, which holds the
+      // focus in a prompt (and in any dialog with nothing tabbable), Tab enters at the first
+      // control and Shift+Tab at the last, never leaving for whatever stands before the host in
+      // the document.
       onKeyDown={(e) => {
         if (ref.current) wrapTab(ref.current, e.nativeEvent)
       }}
@@ -272,8 +318,21 @@ function HostedDialog({
         className="zen-settings-dialog-body"
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
       >
-        <SheetDismissContext.Provider value={dismiss}>{children}</SheetDismissContext.Provider>
+        <SheetDismissContext.Provider value={dismiss}>
+          <SheetFooterContext.Provider value={footerSlot}>
+            <SheetCoveredContext.Provider value={setCovered}>
+              {children}
+            </SheetCoveredContext.Provider>
+          </SheetFooterContext.Provider>
+        </SheetDismissContext.Provider>
       </div>
+      {footerClaimed && (
+        <div
+          ref={setFooterElement}
+          className="zen-settings-sheet-actions zen-settings-dialog-footer"
+          data-testid="settings-dialog-footer"
+        />
+      )}
     </div>
   )
 }
@@ -424,11 +483,14 @@ function FieldDialog({
 }
 
 /**
- * A prompt (§9.23): the question as the title block, the destructive action trailing (§9.11).
- * A title-and-notice panel, so the container itself holds the focus as the dialog opens (§9.22:
- * the title is announced, then the description) and the verb – the primary or destructive
- * action – is reached by Tab (Cancel, then it; Shift+Tab reaches it first); Cancel pre-focused,
- * the way out announced first, is the failure §9.22 names.
+ * A prompt (§9.23) at §9.20's notice width: the question as the title block over its line, the
+ * destructive action trailing (§9.11) and nothing else – 320, never the width of the dialog it
+ * covers, so a Remove prompt over an item's 400 dialog reads as a prompt and not a band across
+ * it (§9.5; the #324 lead check). A title-and-notice panel, so the container itself holds the
+ * focus as the dialog opens (§9.22: the title is announced, then the description; `initial`
+ * returns the root, as `SiteDataPrompt` does for its own prompts) and the verb – the primary or
+ * destructive action – is reached by Tab (Cancel, then it; Shift+Tab reaches it first); Cancel
+ * pre-focused, the way out announced first, is the failure §9.22 names.
  */
 function ConfirmDialog({
   row,
@@ -447,6 +509,7 @@ function ConfirmDialog({
       description={confirm.description ?? row.description}
       under={under}
       onClose={close}
+      width="notice"
       initial={(root) => root}
       className="zen-settings-dialog-prompt"
     >
@@ -463,7 +526,12 @@ function ConfirmDialog({
   )
 }
 
-/** A small form (add a route, create a container): the form draws its own footer. */
+/**
+ * A small form (add a route, create a container): the form draws its own footer. A form whose
+ * body is a list (`FormSheet.body`: the site-data viewer) is the list-bodied dialog – capped at
+ * 80% of the frame, the list scrolling under the title block, its claimed footer in §9.20's
+ * list-body form.
+ */
 function FormDialog({
   row,
   under,
@@ -481,6 +549,7 @@ function FormDialog({
       description={form.description}
       under={under}
       onClose={close}
+      body={form.body}
       initial={(root) => root.querySelector<HTMLElement>('input, textarea')}
     >
       {form.render(close)}
