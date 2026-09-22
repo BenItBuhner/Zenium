@@ -1,6 +1,6 @@
 import { app, BrowserWindow, nativeImage, net, shell, type NativeImage } from 'electron'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -281,8 +281,7 @@ export class ElectronShortcuts implements ShortcutHost {
     await chmod(executable, 0o755)
     await writeFile(join(bundle, 'Contents', 'Resources', 'app.icns'), icns)
     manifest.directories.push(bundle)
-    // Finder and LaunchServices notice a bundle whose modification time changed.
-    touch(bundle)
+    await touch(bundle)
   }
 
   // --- Linux ------------------------------------------------------------------------------------
@@ -381,8 +380,16 @@ function refreshDesktopDatabase(applications: string): void {
   execFile('update-desktop-database', [applications], { timeout: 10_000 }, () => undefined)
 }
 
-function touch(path: string): void {
-  execFile('touch', [path], { timeout: 5_000 }, () => undefined)
+/**
+ * Bump a bundle's modification time: Finder and LaunchServices notice a bundle whose mtime
+ * changed. Done in-process and awaited, never as a `touch` subprocess: `touch(1)` creates a path
+ * that is gone, and a fire-and-forget one could run after an `unpin()` that followed `pin()` had
+ * removed the bundle, leaving an empty `<App>.app` file behind (the shortcuts test's macOS flake).
+ * Best effort, like the refresh: a failure here is not a failed install.
+ */
+async function touch(path: string): Promise<void> {
+  const now = new Date()
+  await utimes(path, now, now).catch(() => undefined)
 }
 
 /**
