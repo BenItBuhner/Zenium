@@ -234,7 +234,7 @@ describe('the search-ready header (OMN-05)', () => {
     expect(header(el)).toBeNull()
     expect(commands()).not.toContain('urlbar.submit')
     // The suggestions refresh for the address, as if it had been typed.
-    expect(callsTo('urlbar.suggest')).toContainEqual({ query: PAGE, tabId: 't1' })
+    expect(callsTo('urlbar.suggest')).toContainEqual({ query: PAGE, tabId: 't1', grouped: true })
     expect(uiStore.get().urlbar.open).toBe(true)
   })
 
@@ -366,7 +366,9 @@ describe('the Refine arrow (OMN-09)', () => {
     await tap(refine)
     expect(input(el).value).toBe('cats pictures')
     expect(commands()).not.toContain('urlbar.submit')
-    expect(callsTo('urlbar.suggest')).toEqual([{ query: 'cats pictures', tabId: 't1' }])
+    expect(callsTo('urlbar.suggest')).toEqual([
+      { query: 'cats pictures', tabId: 't1', grouped: true }
+    ])
     expect(uiStore.get().urlbar.open).toBe(true)
   })
 })
@@ -621,5 +623,103 @@ describe('the desktop bar is as it was', () => {
       await Promise.resolve()
     })
     expect(commands()).not.toContain('urlbar.submit')
+  })
+})
+
+describe('the card’s section headings (OMN-18)', () => {
+  const grouped = (): Suggestion[] => [
+    row('search', 'cats', 'cats', null),
+    {
+      ...row('history', 'Cats – Wikipedia', 'cats', 'https://en.wikipedia.org/wiki/Cat'),
+      group: 'Pages'
+    },
+    { ...row('history', 'Cat videos', 'cats', 'https://videos.example/cats'), group: 'Pages' },
+    { ...row('search', 'cats for adoption', 'cats for adoption', null), group: 'Searches' },
+    { ...row('tab', 'Cat cafe', 'cats', 'https://cafe.example/'), group: 'Open tabs' }
+  ]
+  const headings = (el: HTMLElement): HTMLElement[] =>
+    Array.from(el.querySelectorAll<HTMLElement>('[data-testid="urlbar-group-heading"]'))
+  /** The list's children in DOM order: a heading's text, or a row's title. */
+  const order = (el: HTMLElement): string[] =>
+    rows(el).map((li) =>
+      li.getAttribute('data-testid') === 'urlbar-group-heading'
+        ? `# ${li.textContent}`
+        : option(li).querySelector('span')!.textContent!.trim()
+    )
+
+  it('asks the core for the sectioned order on the phone, the flat one on desktop', async () => {
+    await render(phone(tab(PAGE)))
+    expect(callsTo('urlbar.suggest')[0]).toMatchObject({ grouped: true })
+    act(() => root?.unmount())
+    invoke.mockClear()
+    await render(
+      createElement(Urlbar, {
+        state: state(tab(PAGE)),
+        urlbar: urlbarState('edit'),
+        area: { x: 0, y: 0, width: 1200, height: 800 }
+      })
+    )
+    expect(callsTo('urlbar.suggest')[0]).not.toHaveProperty('grouped')
+  })
+
+  it('draws each group’s heading over its rows at a top dock: the default match alone, then Pages, Searches, Open tabs', async () => {
+    suggestions = grouped
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    const heads = headings(el)
+    expect(heads.map((h) => h.textContent)).toEqual(['Pages', 'Searches', 'Open tabs'])
+    // The shared primitive on the card's own modifier, presentational in the listbox.
+    for (const h of heads) {
+      expect(h.className).toContain('zen-v2-heading')
+      expect(h.className).toContain('zen-omnibox-sheet-heading')
+      expect(h.getAttribute('role')).toBe('presentation')
+    }
+    expect(order(el)).toEqual([
+      'cats',
+      '# Pages',
+      'Cats – Wikipedia',
+      'Cat videos',
+      '# Searches',
+      'cats for adoption',
+      '# Open tabs',
+      'Cat cafe'
+    ])
+    // The options are the rows alone: the headings are not in the count a screen reader hears.
+    expect(el.querySelectorAll('[role="option"]')).toHaveLength(5)
+  })
+
+  it('follows each group’s last row in the DOM at a bottom dock, so it stands over the group on the reversed list', async () => {
+    suggestions = grouped
+    const el = await render(
+      createElement(Urlbar, {
+        state: state(tab(PAGE)),
+        urlbar: urlbarState('edit'),
+        area: null,
+        phoneEdge: 'bottom'
+      })
+    )
+    await type(input(el), 'cats')
+    expect(order(el)).toEqual([
+      'cats',
+      'Cats – Wikipedia',
+      'Cat videos',
+      '# Pages',
+      'cats for adoption',
+      '# Searches',
+      'Cat cafe',
+      '# Open tabs'
+    ])
+    expect(el.querySelector('ul[role="listbox"]')!.getAttribute('data-edge')).toBe('bottom')
+  })
+
+  it('keeps a heading’s element across a keystroke that keeps its group, so only an arriving one fades in', async () => {
+    suggestions = grouped
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cat')
+    const pages = headings(el).find((h) => h.textContent === 'Pages')!
+    suggestions = () => grouped().filter((r) => r.group !== 'Open tabs')
+    await type(input(el), 'cats')
+    expect(headings(el).map((h) => h.textContent)).toEqual(['Pages', 'Searches'])
+    expect(headings(el)[0]).toBe(pages)
   })
 })

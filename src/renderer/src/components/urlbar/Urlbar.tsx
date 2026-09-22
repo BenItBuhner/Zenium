@@ -265,7 +265,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       const list = await cmd('urlbar.suggest', {
         query,
         tabId: urlbar.tabId,
-        ...(engineId ? { engineId } : {})
+        ...(engineId ? { engineId } : {}),
+        // The phone's card is sectioned under headings (OMN-18); the desktop popup is flat.
+        ...(phone ? { grouped: true } : {})
       }).catch(() => [] as Suggestion[])
       if (seq !== requestSeq.current) return
       setResults(list)
@@ -300,7 +302,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
         setSelected(-1)
       }
     },
-    [urlbar.tabId]
+    [urlbar.tabId, phone]
   )
 
   useEffect(() => {
@@ -1022,21 +1024,32 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           onReveal={sheet && item.kind === 'clipboard' && !clip ? revealClip : undefined}
         />
       )
-      // A group's heading over its first row (zero-suggest's "Recent searches", omnibox-20):
-      // the shared v2 heading (§9.27's 15/600) at a popover list's beat, as the tab search
-      // popover's – 12 above, 4 below, the first 4 under the field's hairline.
+      // A group's heading over its rows: the shared v2 heading (§9.27's 15/600). The desktop
+      // popup's (zero-suggest's "Recent searches", omnibox-20) at a popover list's beat, as the
+      // tab search popover's – 12 above, 4 below, the first 4 under the field's hairline. The
+      // phone card's (OMN-18) at the phone list's beat, keyed by the group so a heading that
+      // stays across a keystroke keeps its element and only an arriving one fades in (§11.4:
+      // in place, on opacity; nothing slides). A bottom-docked card lists its rows in reverse –
+      // the first nearest the field – so there the heading follows the group's last row in the
+      // DOM to stand over the group on screen.
+      const bottom = sheet && phoneEdge === 'bottom'
+      const boundary = bottom ? results[i + 1]?.group : results[i - 1]?.group
       const heading =
-        !sheet && item.group && item.group !== results[i - 1]?.group ? (
+        item.group && item.group !== boundary ? (
           <li
             key={`group-${item.group}`}
             role="presentation"
-            className="zen-v2-heading zen-omnibox-heading"
+            className={cn(
+              'zen-v2-heading',
+              sheet ? 'zen-omnibox-sheet-heading' : 'zen-omnibox-heading'
+            )}
             data-testid="urlbar-group-heading"
           >
             {item.group}
           </li>
         ) : null
-      return heading ? [heading, row] : [row]
+      if (!heading) return [row]
+      return bottom ? [row, heading] : [heading, row]
     })
 
   const activeRow = selected >= 0 ? `zen-omnibox-row-${selected}` : undefined
@@ -1370,8 +1383,9 @@ function PhoneSheet({
               ref={fadeRows}
               role="listbox"
               aria-label="Suggestions"
+              data-edge={edge}
               className={cn(
-                'absolute inset-0 flex overflow-y-auto p-1',
+                'zen-omnibox-list absolute inset-0 flex overflow-y-auto p-1',
                 bottom ? 'flex-col-reverse' : 'flex-col'
               )}
               style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
