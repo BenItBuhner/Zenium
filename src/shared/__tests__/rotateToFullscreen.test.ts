@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ROTATE_ARM_TIMEOUT_MS,
+  ROTATE_LAYOUT_WAIT_MS,
   installRotateToFullscreen,
   rotateCandidate,
   rotateEligible,
@@ -242,7 +243,7 @@ describe("installRotateToFullscreen: the host's ask, the arm and the key", () =>
     expect(requested).toEqual([])
   })
 
-  it("judges once the viewport has taken the screen's new orientation", async () => {
+  it("judges once the viewport has taken the screen's new orientation (its resize)", () => {
     install()
     const v = playingVideo()
     define(v, 'requestFullscreen', () => Promise.resolve())
@@ -250,9 +251,44 @@ describe("installRotateToFullscreen: the host's ask, the arm and the key", () =>
     setViewport(400, 800)
     turned!(true)
     expect(sent).toEqual([])
+    // A resize that is not the turn yet (the bars) is waited through.
+    setViewport(400, 780)
+    window.dispatchEvent(new Event('resize'))
+    expect(sent).toEqual([])
     setViewport(800, 400)
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    window.dispatchEvent(new Event('resize'))
     expect(sent).toEqual([{ type: 'rotateFullscreen', armed: true }])
+    // The wait is over: a later resize judges nothing again.
+    window.dispatchEvent(new Event('resize'))
+    expect(sent).toHaveLength(1)
+  })
+
+  it("judges at the wait's end in the viewport it has when the layout is slow (Chrome's last-seen visibility)", () => {
+    vi.useFakeTimers()
+    install()
+    // The video as the portrait layout has it, in view.
+    const v = playingVideo(1920, 1080, { left: 0, top: 0, right: 400, bottom: 225 })
+    define(v, 'requestFullscreen', () => Promise.resolve())
+    setViewport(400, 800)
+    turned!(true)
+    expect(sent).toEqual([])
+    vi.advanceTimersByTime(ROTATE_LAYOUT_WAIT_MS - 1)
+    expect(sent).toEqual([])
+    vi.advanceTimersByTime(2)
+    expect(sent).toEqual([{ type: 'rotateFullscreen', armed: true }])
+  })
+
+  it('a new word from the host ends the wait for the last one', () => {
+    vi.useFakeTimers()
+    install()
+    const v = playingVideo()
+    define(v, 'requestFullscreen', () => Promise.resolve())
+    setViewport(400, 800)
+    turned!(true)
+    // Turned back before the layout caught up: the landscape ask is dropped, the portrait one
+    // finds no portrait video.
+    turned!(false)
+    vi.advanceTimersByTime(ROTATE_LAYOUT_WAIT_MS + 1)
+    expect(sent).toEqual([])
   })
 })

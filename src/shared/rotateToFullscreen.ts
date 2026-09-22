@@ -128,16 +128,17 @@ export function rotateCandidate(
 
 /**
  * Answers the host's asks. The viewport takes the screen's new orientation a layout or two
- * after the host's word, so the page judges once it has (within `ROTATE_LAYOUT_WAIT_MS`), and
- * with a video to take arms itself for the key: the next trusted `keydown` – the host's press
- * of no key – is stopped before any other listener (this one is installed ahead of the
- * activation reporter's, so the pop-up blocker never counts it) and the video's
- * `requestFullscreen()` runs in it, its outcome reported (`result`).
+ * after the host's word, so the page judges once it has (its `resize`), or at
+ * `ROTATE_LAYOUT_WAIT_MS` in the viewport it has – Chrome judges on the visibility it last
+ * observed, which is the old layout's – and with a video to take arms itself for the key: the
+ * next trusted `keydown` – the host's press of no key – is stopped before any other listener
+ * (this one is installed ahead of the activation reporter's, so the pop-up blocker never
+ * counts it) and the video's `requestFullscreen()` runs in it, its outcome reported (`result`).
  */
 export function installRotateToFullscreen(transport: RotateTransport): void {
   let armed: HTMLVideoElement | null = null
   let armTimer: ReturnType<typeof setTimeout> | null = null
-  let waiting = 0
+  let stopWaiting: (() => void) | null = null
   let swallowKeyUp = false
 
   const disarm = (): void => {
@@ -191,26 +192,35 @@ export function installRotateToFullscreen(transport: RotateTransport): void {
     true
   )
 
+  const viewportTurned = (landscape: boolean): boolean =>
+    window.innerWidth > window.innerHeight === landscape
+
   transport.onRotateFullscreen((landscape) => {
     disarm()
-    if (waiting) {
-      cancelAnimationFrame(waiting)
-      waiting = 0
-    }
-    const deadline = performance.now() + ROTATE_LAYOUT_WAIT_MS
+    stopWaiting?.()
+    stopWaiting = null
     const judge = (): void => {
-      waiting = 0
+      stopWaiting?.()
+      stopWaiting = null
       const viewport = { width: window.innerWidth, height: window.innerHeight }
-      if (viewport.width > viewport.height !== landscape) {
-        if (performance.now() < deadline) waiting = requestAnimationFrame(judge)
-        return
-      }
       const video = rotateCandidate(document, landscape, viewport)
       if (!video) return
       armed = video
       armTimer = setTimeout(disarm, ROTATE_ARM_TIMEOUT_MS)
       transport.send({ type: 'rotateFullscreen', armed: true })
     }
-    judge()
+    if (viewportTurned(landscape)) {
+      judge()
+      return
+    }
+    const onResize = (): void => {
+      if (viewportTurned(landscape)) judge()
+    }
+    window.addEventListener('resize', onResize)
+    const deadline = setTimeout(judge, ROTATE_LAYOUT_WAIT_MS)
+    stopWaiting = () => {
+      window.removeEventListener('resize', onResize)
+      clearTimeout(deadline)
+    }
   })
 }
