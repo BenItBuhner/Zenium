@@ -128,6 +128,7 @@ export function PdfOutlineSheet({
       name="pdf-outline"
       title={{ pose: 'header', text: 'Contents' }}
       focus="checked"
+      body="list"
       onClose={onClose}
       sheetRef={sheet}
       contentKey={String(rows.length)}

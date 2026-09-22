@@ -418,6 +418,34 @@ describe('BottomSheet on the recede chassis', () => {
     uiStore.set({ insets })
   })
 
+  it('a sheet whose body is a list stands at most 80 % of the layer when expanded (§9.20), marked data-body="list"; a content body keeps the top margin', async () => {
+    // Content 2000 px tall on the 800 px layer: the top margin alone would allow 760.
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 2000
+    })
+    render(
+      <BottomSheet onDismissed={() => undefined} openExpanded body="list">
+        rows
+      </BottomSheet>
+    )
+    await settle()
+    frames.run(200)
+    expect(sheets()[0].getAttribute('data-body')).toBe('list')
+    expect(parseFloat(sheets()[0].style.height)).toBe(640)
+    act(() => root!.unmount())
+    root = null
+    render(
+      <BottomSheet onDismissed={() => undefined} openExpanded>
+        rows
+      </BottomSheet>
+    )
+    await settle()
+    frames.run(200)
+    expect(sheets()[0].hasAttribute('data-body')).toBe(false)
+    expect(parseFloat(sheets()[0].style.height)).toBe(760)
+  })
+
   it('dismissed while still waiting for the page to be covered, the sheet is simply gone', () => {
     const ref = createRef<BottomSheetHandle>()
     const onDismissed = vi.fn()

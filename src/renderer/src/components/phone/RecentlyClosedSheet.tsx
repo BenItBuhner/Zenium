@@ -41,9 +41,11 @@ export function RecentlyClosedSheet({
   return (
     <PhoneSheet
       name="overview-recently-closed"
-      // A list sheet: the centred 48 header (§9.16); it opens on its first row (§9.22).
+      // A list sheet: the centred 48 header (§9.16); it opens on its first row (§9.22) and
+      // stands at most 80 % of the frame, the list scrolling under the title (§9.20).
       title={{ pose: 'header', text: 'Recently closed' }}
       focus="first"
+      body="list"
       onClose={onClose}
       sheetRef={sheet}
       contentKey={tabs.map((entry) => entry.id).join('/')}

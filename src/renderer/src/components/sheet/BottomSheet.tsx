@@ -21,6 +21,7 @@ import {
   fieldOverflow,
   REDUCED_MOTION_FADE_MS,
   SheetMotion,
+  type SheetBody,
   type SheetDetent,
   type SheetDetents
 } from '@renderer/lib/motion/sheet'
@@ -116,6 +117,14 @@ interface Props {
    * scrolls from the start. A sheet of rows or a control panel keeps the peek (§9.13).
    */
   openExpanded?: boolean
+  /**
+   * The body is a list of rows (Recently closed, the extensions list, a device picker, a
+   * document's outline): the sheet stands at most 80 % of the layer at its expanded detent and
+   * the list scrolls under the title (§9.20, `SHEET_LIST_MAX_SHARE`; the desktop dialog's
+   * `data-body="list"`, the same mark on the sheet). A form or a prompt (`content`, the default)
+   * stands as tall as its content, to the top margin.
+   */
+  body?: SheetBody
 }
 
 type Zone = 'grip' | 'body' | 'scrim'
@@ -221,7 +230,8 @@ export function BottomSheet({
   className,
   hosted = false,
   fitContent = false,
-  openExpanded = false
+  openExpanded = false,
+  body = 'content'
 }: Props): JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
@@ -442,7 +452,8 @@ export function BottomSheet({
       intrinsic,
       layer.clientHeight,
       insetTop.current,
-      insetBottom.current
+      insetBottom.current,
+      body
     )
     const m = motion()
     if (m.isOpen) m.refresh()
@@ -925,6 +936,7 @@ export function BottomSheet({
         style={{ paddingBottom: SHEET_EDGE_PAD + insets.bottom, opacity: 0, pointerEvents: 'none' }}
         data-locked="true"
         data-surface="page"
+        data-body={body === 'list' ? 'list' : undefined}
       >
         <div ref={gripRef} data-sheet-grip className="zen-sheet-grip shrink-0">
           <button

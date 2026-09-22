@@ -104,8 +104,9 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
       <PhoneSheet
         name="extensions"
         title={{ pose: 'header', text: 'Extensions' }}
-        // A list sheet opens on its first row (§9.22).
+        // A list sheet opens on its first row (§9.22) and stands at most 80 % of the frame (§9.20).
         focus="first"
+        body="list"
         onClose={closeExtensionsSheet}
         sheetRef={sheet}
         contentKey={rows.map((row) => `${row.id}:${row.badge}`).join('/')}

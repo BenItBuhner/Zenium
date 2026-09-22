@@ -3,6 +3,7 @@ import { useEffect, useId, useRef } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { sheetInitialFocus } from '@renderer/lib/popover'
+import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { takeSheetOpener } from './phonePanel'
@@ -113,6 +114,11 @@ interface Props {
   fitContent?: boolean
   /** Come in expanded: an editor whose body is the document (`BottomSheet`'s `openExpanded`). */
   openExpanded?: boolean
+  /**
+   * The body is a list of rows: the sheet stands at most 80 % of the layer and the list scrolls
+   * under the title (§9.20, `BottomSheet`'s `body`); a form or a prompt stands as tall as it is.
+   */
+  body?: SheetBody
   handleLabel?: string
   /** Another sheet stands over this one (§9.24): Escape is that sheet's until it has gone. */
   under?: boolean
@@ -144,6 +150,7 @@ function Chassis({
   contentKey,
   fitContent,
   openExpanded,
+  body: bodyKind,
   handleLabel = 'Resize sheet',
   under = false,
   sheetRef,
@@ -194,6 +201,7 @@ function Chassis({
       contentKey={contentKey}
       fitContent={fitContent}
       openExpanded={openExpanded}
+      body={bodyKind}
       handleLabel={handleLabel}
       labelledBy={titleId}
       describedBy={title.pose === 'block' ? descriptionId : undefined}

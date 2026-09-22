@@ -1,5 +1,6 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { cn } from '@renderer/lib/utils'
 import { PhoneSheet, type SheetFocus, type SheetTitle } from '../../phone/PhoneSheet'
 import type { BottomSheetHandle } from '../../sheet/BottomSheet'
@@ -161,6 +162,12 @@ interface SheetProps {
    * landing on Cancel would announce the way out first.
    */
   focus?: SheetFocus
+  /**
+   * The body is a list of rows (a picker's options, an item's rows, a list form): the sheet
+   * stands at most 80 % of the frame and the list scrolls under the title (§9.20); a form or a
+   * prompt stands as tall as it is.
+   */
+  body?: SheetBody
   sheetRef?: RefObject<BottomSheetHandle | null>
 }
 
@@ -186,6 +193,7 @@ export function SettingsSheet({
   children,
   contentKey,
   focus,
+  body,
   sheetRef
 }: SheetProps): JSX.Element {
   const own = useRef<BottomSheetHandle>(null)
@@ -218,6 +226,7 @@ export function SettingsSheet({
       name={name}
       title={pose}
       focus={focus}
+      body={body}
       under={under}
       onClose={onClose}
       contentKey={`${contentKey ?? ''}|${relayouts}|${footerClaimed ? 'footer' : ''}`}
@@ -295,6 +304,7 @@ export function OptionsSheet({
       title={row.label}
       description={row.sheetDescription}
       under={under}
+      body="list"
       onClose={close}
       sheetRef={sheet}
     >
@@ -476,6 +486,7 @@ function FormSheet({
       title={form.title}
       description={form.description}
       under={under}
+      body={form.body}
       onClose={close}
     >
       <FormBody render={form.render} />
@@ -512,6 +523,7 @@ function ItemSheet({
       description={row.sheet.description}
       descriptionTone={row.sheet.descriptionTone}
       under={under}
+      body="list"
       onClose={close}
       contentKey={String(row.sheet.groups.reduce((n, g) => n + g.rows.length, 0))}
     >
