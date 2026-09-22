@@ -245,8 +245,12 @@ export interface PageMessage {
   reader?: unknown
   /** `pdf`: the viewer's state (page count and page, zoom, find results, the outline). */
   pdf?: PdfViewerReport
-  /** `pdf`: the document's token, as the core wrote it into the viewer's shell (`PdfDocumentInfo.token`). */
-  token?: string
+  /**
+   * `pdf`: the document's token, as the core wrote it into the viewer's shell
+   * (`PdfDocumentInfo.token`). Not `token`: on Android that field is the page bridge's session
+   * token, which Kotlin checks and strips before the message reaches the core.
+   */
+  pdfToken?: string
   /** `share`: what the page asked to share (validated by the core). */
   share?: unknown
   /** `geolocation`: the shim's request (validated by the core). */
