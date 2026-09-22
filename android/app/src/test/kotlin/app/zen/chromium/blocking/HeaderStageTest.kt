@@ -375,6 +375,64 @@ class HeaderStageTest {
         assertEquals(listOf(Triple("default", ownFrame.url, listOf("seen=1; Path=/"))), sameSite.stored)
     }
 
+    // --- The per-site cookie policy: a relay without cookies (PS-23) ---------------------------
+
+    @Test
+    fun aWithheldDocumentRelaysWithoutAnyCookieAndKeepsNone() {
+        // A never-site's own document is first-party traffic that the jar would ride on; the
+        // cookie policy's word (`withCookies` false) is the desktop header stage's strip: the
+        // request's own Cookie header goes, the jar is not consulted, Set-Cookie is dropped.
+        val jar = FakeCookies().apply { jar = "session=abc" }
+        val fetcher = FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "tracker=1; Path=/", body = "<p>never</p>"))
+        val tab = FakeTab(documentUrl = null)
+        val answer = HeaderStage(jar, fetcher).relay(
+            EngineSnapshot.EMPTY, tab, navigation("https://never.example/"), mapOf("Accept" to "text/html", "Cookie" to "stale=1"), null,
+            Decision.ALLOW, withCookies = false
+        )
+        assertNotNull(answer)
+        assertEquals(200, answer!!.status)
+        assertEquals("<p>never</p>", answer.data.bufferedReader().readText())
+        assertFalse(fetcher.headers!!.keys.any { it.equals("Cookie", ignoreCase = true) })
+        assertEquals("text/html", fetcher.headers!!["Accept"])
+        assertTrue(jar.stored.isEmpty())
+        // The same document with cookies: the jar rides and the response's cookies land.
+        val withJar = FakeCookies().apply { jar = "session=abc" }
+        val plain = FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "seen=1; Path=/"))
+        assertNotNull(HeaderStage(withJar, plain).relay(EngineSnapshot.EMPTY, tab, navigation("https://never.example/"), emptyMap(), null))
+        assertEquals("session=abc", plain.headers!!["Cookie"])
+        assertEquals(1, withJar.stored.size)
+        // A frame of the never-site inside another page, and a same-site one: withheld either way.
+        val frames = FakeCookies().apply { jar = "session=abc" }
+        val frameFetcher = FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "t=1"))
+        val ownFrame = Request("https://never.example/frame", ResourceType.SUB_FRAME, "https://never.example/", thirdParty = false, partition = "default")
+        assertNotNull(HeaderStage(frames, frameFetcher).relay(EngineSnapshot.EMPTY, FakeTab(), ownFrame, mapOf("Cookie" to "x=1"), null, Decision.ALLOW, false))
+        assertFalse(frameFetcher.headers!!.containsKey("Cookie"))
+        assertTrue(frames.stored.isEmpty())
+    }
+
+    @Test
+    fun theRulesStillDecideAWithheldDocument() {
+        // The relay the cookie policy asked for is the same header stage: a header-conditioned
+        // block still applies to the response, and the origin's redirect is still mirrored.
+        val snap = EngineSnapshot(listOf(adsBlock), null)
+        val tab = FakeTab()
+        val blocked = HeaderStage(FakeCookies(), FakeFetcher(response(200, "X-Ads" to "1", "Content-Type" to "text/html")))
+            .relay(snap, tab, navigation("https://ads.example/"), emptyMap(), null, Decision.ALLOW, withCookies = false)!!
+        assertEquals(204, blocked.status)
+        assertEquals(listOf("https://ads.example/"), tab.documentsBlocked)
+        val moved = FakeCookies().apply { jar = "session=abc" }
+        val movedFetcher = FakeFetcher(response(302, "Location" to "https://ads.example/new", "Set-Cookie" to "hop=1"))
+        val tab2 = FakeTab()
+        assertEquals(204, HeaderStage(moved, movedFetcher).relay(snap, tab2, navigation("https://ads.example/old"), emptyMap(), null, Decision.ALLOW, false)!!.status)
+        assertEquals(listOf("https://ads.example/new"), tab2.redirects)
+        assertFalse(movedFetcher.headers!!.containsKey("Cookie"))
+        assertTrue(moved.stored.isEmpty())
+        // What the relay cannot carry it hands back, cookies withheld or not: WebView then loads
+        // the document itself (the recorded limit: a POSTed never-site document keeps its cookies).
+        assertNull(HeaderStage(FakeCookies(), FakeFetcher(response(200))).relay(snap, tab, navigation("https://ads.example/", "POST"), emptyMap(), null, Decision.ALLOW, false))
+        assertNull(HeaderStage(FakeCookies(), FakeFetcher(null)).relay(snap, tab, navigation("https://ads.example/"), emptyMap(), null, Decision.ALLOW, false))
+    }
+
     @Test
     fun theHeaderStageReportsOnlyAnotherMatch() {
         // An allow the request stage matched, with a header-conditioned block above it.
