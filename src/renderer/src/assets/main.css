@@ -7033,9 +7033,7 @@
  */
 :root[data-form-factor='tablet'] .zen-tablet-sidebar,
 :root[data-form-factor='tablet'] .zen-tablet-drawer-panel,
-:root[data-form-factor='tablet']
-  :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel)
-  [data-tab-scroller] {
+:root[data-form-factor='tablet'] :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel) [data-tab-scroller] {
   touch-action: pan-y;
 }
 
