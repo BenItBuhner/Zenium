@@ -138,10 +138,13 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         // 10. The pill still switches tabs: the new tab is last in the space, so a fling from the
         //     pill's left end goes to the previous tab (an article) and one from its right end back.
         remeasurePill()
+        awaitPageSettled()
         flingRight()
         expect("the pill's swipe switches to the previous tab", waitForAddress(12_000) { SECOND_HOST in it })
         SystemClock.sleep(2_500)
         shot("14-swiped")
+        remeasurePill()
+        awaitPageSettled()
         flingLeft()
         expect("the pill's swipe switches back", waitForAddress(12_000) { NEW_TAB_HOST in it })
         SystemClock.sleep(2_500)
@@ -150,7 +153,11 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         //     hold on the top bar, and the swipe.
         carryBarToTop()
         remeasurePill()
-        expect("the bar docked at the top", pill.top < height / 2)
+        // The dock by the document (`.zen-phone-bar[data-edge]`, the setting's word) and the
+        // pill's box in the upper half; the tree trails the moved bar by seconds here.
+        val edge = barEdge()
+        Log.i(tag, "after the carry: bar edge '$edge', pill $pill")
+        expect("the bar docked at the top", edge == "top" && pill.top < height / 2)
         shot("15-bar-top")
         holdBarButton("Menu")
         expect("a hold on the top bar opens the editor", waitFor("Reset to defaults", 6_000) != null)
@@ -159,6 +166,7 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         back()
         SystemClock.sleep(2_500)
         remeasurePill()
+        awaitPageSettled()
         flingRight()
         expect("the pill's swipe switches tabs at the top", waitForAddress(12_000) { SECOND_HOST in it })
         SystemClock.sleep(2_500)
@@ -233,6 +241,25 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
     }
 
+    /**
+     * Wait for the active page to have loaded (the core's word) and a moment past it before a
+     * fling. On the nightly's proof run the swipe back went into a Wikipedia page still loading
+     * at four to six frames a second (`app_time_stats` avg 250 ms) and never became a switch:
+     * the 120 ms fling fell inside one frame. The claim is a swipe on a page at rest, not one
+     * raced against the software GPU; the fling itself stays the harness's quick one.
+     */
+    private fun awaitPageSettled(timeoutMs: Long = 20_000) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var loading = true
+        while (SystemClock.uptimeMillis() < deadline) {
+            loading = activeCoreTab()?.optBoolean("loading", true) ?: true
+            if (!loading) break
+            SystemClock.sleep(250)
+        }
+        if (loading) Log.w(tag, "the active page is still loading after $timeoutMs ms; flinging anyway")
+        SystemClock.sleep(1_500)
+    }
+
     /** The pill's hold carries the whole bar to the top edge (the page slides down under it). */
     private fun carryBarToTop() {
         val insets = windowInsets()
@@ -249,11 +276,15 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         SystemClock.sleep(2_500)
     }
 
-    /** The pill moved (with the bar, or back from under the URL bar): find it again, by either name ([pillRect]). */
+    /**
+     * The pill moved (with the bar, or back from under the URL bar): find it again where the
+     * chrome lays it out ([pillBounds]: the document first, the tree – by either name – after it;
+     * the tree kept the pill's old bounds for seconds after the carry on the nightly's proof run).
+     */
     private fun remeasurePill() {
-        val found = pillRect()?.takeIf { it.width() > 100 * density }
+        val found = pillBounds()?.takeIf { it.width() > 100 * density }
         if (found == null) {
-            Log.w(tag, "pill not in the accessibility tree; keeping $pill")
+            Log.w(tag, "pill neither in the document nor the accessibility tree; keeping $pill")
             return
         }
         pill = found

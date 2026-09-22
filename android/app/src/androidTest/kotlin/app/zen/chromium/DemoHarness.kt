@@ -454,6 +454,25 @@ abstract class DemoHarness(
     /** [pillNode]'s bounds on screen; null while the tree lists no pill. */
     protected fun pillRect(): Rect? = pillNode()?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
 
+    /**
+     * The pill's box as the chrome lays it out ([domBox] of the bar's `.zen-phone-pill`, the
+     * ghost a carry draws excluded), else the tree's ([pillRect]). The document is read first
+     * because the tree trails a bar that has just moved: `navbar`'s carry to the top read the
+     * pill's bottom-edge bounds for seconds after the bar had docked at the top (the nightly's
+     * proof run, 'the bar docked at the top' called a miss with the bar there on the recording).
+     * Null with no bar up (the URL field over it) by either reading.
+     */
+    protected fun pillBounds(): Rect? = domBox(PILL_JS)?.takeIf { !it.isEmpty } ?: pillRect()
+
+    /**
+     * The edge the bar is docked at by the document: `.zen-phone-bar[data-edge]`
+     * (PhoneShell.tsx, the `phoneBarPosition` setting's word), "top" or "bottom"; null with no
+     * bar in the document or no answer from the chrome.
+     */
+    protected fun barEdge(): String? =
+        chromeJsString("(function(){var b=document.querySelector('.zen-phone-bar');return b?String(b.dataset.edge||''):''})()")
+            ?.takeIf { it.isNotEmpty() }
+
     /** The measured [pill] once [measure] has run, null before (a launch's first look). */
     private fun pillOrNull(): Rect? = if (this::pill.isInitialized && !pill.isEmpty) pill else null
 
@@ -2495,6 +2514,8 @@ abstract class DemoHarness(
         private val EMULATED_EGL = setOf("emulation", "swiftshader", "angle", "mesa")
         /** The bar's Menu button in the DOM (`BarButton.tsx`'s `data-bar-item`), for [calibrateDomBoxes]. */
         private const val MENU_BUTTON_JS = "document.querySelector('[data-bar-item=\"menu\"]')"
+        /** The bar's pill in the DOM (`PhoneShell.tsx`'s `.zen-phone-pill`, not the carry's ghost), for [pillBounds]. */
+        private const val PILL_JS = "document.querySelector('.zen-phone-bar:not([aria-hidden]) .zen-phone-pill:not(.zen-pill-ghost)')"
         /** The frames record in the run's findings: one JSON line per measured scene, and the tables. */
         const val FRAMES_RECORD = "frames.jsonl"
         const val FRAMES_TABLES = "frames.txt"
