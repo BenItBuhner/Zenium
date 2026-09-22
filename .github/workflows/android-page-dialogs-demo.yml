@@ -24,6 +24,9 @@ name: Android page dialogs demo
 # rather than on the runner.
 on:
   workflow_dispatch:
+  # TEMPORARY (#320's last authorised run): comes off with the next push.
+  push:
+    branches: [cursor/android-js-dialogs-2618]
 
 permissions:
   contents: read
