@@ -273,6 +273,37 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
     }
     expect(css).not.toMatch(/data-static/)
   })
+
+  it('draws a leading glyph in full ink like the label it introduces (§10.4): no .7 on the lead box or on a caller’s glyph', () => {
+    // The lead box itself carries no opacity; the deemphasis is §9.29's, for supplementary text.
+    expect(rule('.zen-list-lead')).not.toMatch(/opacity/)
+    // Nor does any glyph a `PhoneListRow` caller hands it (`icon={…}`): the puzzle piece before
+    // Manage extensions, the folder before a bookmark folder, the closed window's glyph, a
+    // device's kind. The one exception §10.4 grants is a stand-in for a picture the row does not
+    // have (the globe for a page with no favicon), which is `RowFavicon`'s `fallback`, never the
+    // `icon` itself – so the first tag after `icon={` is the one judged.
+    const phone = resolve(__dirname, '..')
+    const callers = [
+      'ExtensionsSheet.tsx',
+      'PhoneBookmarksPanel.tsx',
+      'PhoneHistoryPanel.tsx',
+      'RecentlyClosedSheet.tsx',
+      'SendTabSheet.tsx'
+    ]
+    let judged = 0
+    for (const file of callers) {
+      const source = readFileSync(resolve(phone, file), 'utf8')
+      for (const at of source.matchAll(/icon=\{/g)) {
+        // The tag's own attributes, up to a nested tag (a `RowFavicon`'s `fallback={<Globe …`).
+        const tag = /<(\w+)([^<>]*)/.exec(source.slice(at.index, at.index + 400))
+        if (!tag) continue
+        judged++
+        const className = /className="([^"]*)"/.exec(tag[2])?.[1] ?? ''
+        expect(className, `${file}: <${tag[1]}> as a row's leading glyph`).not.toMatch(/opacity-/)
+      }
+    }
+    expect(judged).toBeGreaterThanOrEqual(5)
+  })
 })
 
 describe('the selection header (§9.6)', () => {

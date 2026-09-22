@@ -407,7 +407,7 @@ function BookmarkNodeRow({
     <PhoneListRow
       icon={
         folder ? (
-          <Folder className="h-5 w-5 opacity-70" strokeWidth={1.75} />
+          <Folder className="h-5 w-5" strokeWidth={1.75} />
         ) : (
           <RowFavicon
             src={node.favicon}

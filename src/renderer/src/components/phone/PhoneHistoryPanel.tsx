@@ -469,7 +469,7 @@ function RecentlyClosedRow({
     <PhoneListRow
       icon={
         window ? (
-          <History className="h-5 w-5 opacity-60" strokeWidth={1.75} />
+          <History className="h-5 w-5" strokeWidth={1.75} />
         ) : (
           <RowFavicon
             src={entry.favicon}

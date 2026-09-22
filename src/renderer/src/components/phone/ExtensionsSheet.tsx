@@ -134,7 +134,7 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
           )}
           <div className="zen-sheet-sep" aria-hidden />
           <PhoneListRow
-            icon={<Puzzle className="h-5 w-5 opacity-70" strokeWidth={1.75} />}
+            icon={<Puzzle className="h-5 w-5" strokeWidth={1.75} />}
             title="Manage extensions"
             trailing={
               <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden>
