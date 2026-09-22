@@ -13,6 +13,7 @@ import {
   recedeScale,
   registerRecedeLayer,
   registerRecedeSurface,
+  subscribePageRecede,
   type RecedeHandle,
   type RecedeLayerFrame
 } from '../motion/recede'
@@ -409,6 +410,43 @@ describe('the registry', () => {
     // invalidator and the accessibility tree: `data-receding` is touched on the first and the
     // last frame only.
     expect(attributes.filter((a) => a === 'data-receding')).toEqual([])
+  })
+
+  it('tells a subscriber the page recede as it changes, 0 once more at the rest, after the surfaces carry it (the layout reporter’s re-measure)', () => {
+    const surface = document.createElement('div')
+    const release = registerRecedeSurface(surface)
+    const heard: Array<{ page: number; surface: string }> = []
+    const unsubscribe = subscribePageRecede((page) =>
+      heard.push({ page, surface: surface.style.getPropertyValue('--zen-recede') })
+    )
+    const h = layer()
+    // Registering at presence 0 changes nothing the subscriber cares about.
+    expect(heard).toEqual([])
+    h.progress(0.5)
+    h.progress(0.5)
+    h.progress(1)
+    // The frame's landing away, then the layer's release: 0 is heard once, when the value lands.
+    h.progress(0)
+    h.release()
+    expect(heard).toEqual([
+      { page: 0.5, surface: '0.5000' },
+      { page: 1, surface: '1.0000' },
+      { page: 0, surface: '0.0000' }
+    ])
+    // A stack that empties from a receded frame: 0 heard at the release.
+    const g = layer()
+    g.progress(1)
+    g.release()
+    expect(heard.slice(3)).toEqual([
+      { page: 1, surface: '1.0000' },
+      { page: 0, surface: '' }
+    ])
+    unsubscribe()
+    const k = layer()
+    k.progress(1)
+    k.release()
+    expect(heard).toHaveLength(5)
+    release()
   })
 })
 

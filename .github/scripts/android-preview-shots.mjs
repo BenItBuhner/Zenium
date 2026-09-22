@@ -40,7 +40,10 @@
 //                      `loading`, `ended` or `error`; `&rate=<n>` sets the speed chip, `&voices`
 //                      opens the voice picker), `error=<code>&url=<failed url>`
 //                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
-//                      overview over the active page) or the messages and the load
+//                      overview over the active page; `&then=tap:More;tap:Select Tabs` enters
+//                      its select-tabs mode, `tap:<a card's accessible label>` picks a card
+//                      in it, `press:<a card's title>` opens the card's hold sheet) or the
+//                      messages and the load
 //                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,
 //                      `progress=<0…1>`, in any combination, `voice=<script>` (voice search
 //                      started on the active tab, the stand-in recogniser playing `listening`,

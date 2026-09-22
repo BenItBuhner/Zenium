@@ -1,6 +1,16 @@
-import type { CSSProperties, JSX } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Ellipsis, PanelLeft, PanelRight, Plus, VenetianMask } from 'lucide-react'
+import {
+  Ellipsis,
+  Group,
+  PanelLeft,
+  PanelRight,
+  Plus,
+  Share2,
+  Star,
+  VenetianMask,
+  X
+} from 'lucide-react'
 import type {
   Folder,
   FolderColor,
@@ -11,9 +21,11 @@ import type {
   UIState
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
+import { defaultBookmarkFolderId } from '@shared/bookmarks'
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
+import { useBackSurface } from '@renderer/lib/back'
 import { closeWithUndo } from '@renderer/lib/closeUndo'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
@@ -27,8 +39,27 @@ import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
-import { reducedMotion } from '@renderer/lib/motion/spring'
+import { reducedMotion, SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { tabCardLabel } from '@renderer/lib/overviewLabels'
+import {
+  NO_SELECTION,
+  allSelected,
+  bookmarkFolderTitle,
+  bookmarkedMessage,
+  deselectAll,
+  endSelection,
+  groupableTabs,
+  isSelected,
+  pageTabs,
+  pruneSelection,
+  selectAll,
+  selectedTabs,
+  selectionTitle,
+  shareTabsPayload,
+  startSelection,
+  toggleSelected,
+  type OverviewSelection
+} from '@renderer/lib/overviewSelection'
 import { PRIVATE_TAB_PLACEHOLDER, privateLockStore } from '@renderer/lib/privateLock'
 import {
   isPrivateTab,
@@ -48,7 +79,7 @@ import {
   regularOf,
   tabTitle
 } from '@renderer/lib/selectors'
-import { browserStore, uiStore } from '@renderer/lib/ui'
+import { browserStore, openOverlay, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
@@ -94,7 +125,8 @@ interface Props {
 
 /**
  * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
- * closed list as the menu read it), the close-all question, the recently closed list.
+ * closed list as the menu read it), the close-all question, the recently closed list, the
+ * select-tabs mode's group picker.
  */
 type Sheet =
   | { kind: 'tab'; tabId: string }
@@ -102,6 +134,7 @@ type Sheet =
   | { kind: 'menu'; closed: ClosedEntrySummary[] }
   | { kind: 'close-all' }
   | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
+  | { kind: 'group-picker' }
 
 interface PendingDrop {
   /** True once the browser state shows the drop – then the card's new slot can be measured. */
@@ -228,6 +261,30 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
    */
   const leaveSheet = (kind: Sheet['kind']): void =>
     setSheet((current) => (current?.kind === kind ? null : current))
+  // The select-tabs mode (TAB-08, `lib/overviewSelection.ts`): on from the header's menu or a
+  // card's hold sheet, off by Done, back, Escape or an action. It belongs to the grid it was
+  // entered on – this pane of this space, with the overview open – and is off the moment that
+  // grid is another (a pane or space switch, the overview leaving): the mode is kept with the
+  // scope it was entered in and read as off, and reset, under any other, in the render that
+  // brings the other grid. The picks are pruned against the cards on show the same way.
+  const scope = interactive ? `${pane}|${space.id}` : null
+  const [kept, setKept] = useState<{ scope: string | null; selection: OverviewSelection }>({
+    scope,
+    selection: NO_SELECTION
+  })
+  if (kept.scope !== scope) setKept({ scope, selection: NO_SELECTION })
+  const selection = kept.scope === scope ? kept.selection : NO_SELECTION
+  const selecting = selection.on
+  const setSelection = useCallback(
+    (next: OverviewSelection | ((current: OverviewSelection) => OverviewSelection)): void =>
+      setKept((k) => ({
+        scope: k.scope,
+        selection: typeof next === 'function' ? next(k.selection) : next
+      })),
+    []
+  )
+  const exitSelection = useCallback(() => setSelection(endSelection()), [setSelection])
+  useBackSurface(selecting ? { name: 'overview-selection', onCommit: exitSelection } : null)
   const handle = useOverviewHandle({ edge })
   // Every `data-cell` under the grid – page and blank-tab cards, group cards, the New Tab card –
   // is one set on one spring; the same set answers where a card is for the morph and the exits.
@@ -276,7 +333,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   }, [heroCellKey, cardsKey, area.width, area.height, phase])
 
   // Escape closes the overview – unless a sheet or the Spaces drawer is up over it; the top
-  // surface takes the key, and the next Escape reaches the overview.
+  // surface takes the key, and the next Escape reaches the overview. While tabs are being
+  // selected, Escape ends the mode first, as back does.
   const sheetOpen = sheet !== null
   const drawerOpen = uiStore.use((s) => s.drawerOpen)
   useEffect(() => {
@@ -284,12 +342,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        closeOverview()
+        if (selecting) exitSelection()
+        else closeOverview()
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [interactive, sheetOpen, drawerOpen])
+  }, [interactive, sheetOpen, drawerOpen, selecting, exitSelection])
 
   // A card in the hand has nowhere to go once the overview leaves (the sheet stays in state but
   // off screen; the overview unmounts altogether when it is closed), and cards on their way out
@@ -717,6 +776,128 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const ordered = [...essentials, ...pinned, ...groupCards.flatMap((g) => g.tabs), ...loose]
   const placeOf = (tab: Tab): number => ordered.findIndex((t) => t.id === tab.id) + 1
 
+  // The select-tabs mode's cards: what is on show as a card can be picked – the pinned cards,
+  // the members of the groups that are open, the loose cards; a folded group's members and the
+  // essentials' row are not cards and take no check. A pick whose card has left this set (its
+  // tab closed elsewhere, its group folded) goes in this same render.
+  const checkable = [
+    ...pinned,
+    ...groupCards.flatMap((g) => (g.folder.collapsed ? [] : g.tabs)),
+    ...loose
+  ]
+  const pruned = pruneSelection(selection, new Set(checkable.map((t) => t.id)))
+  if (pruned !== selection) setSelection(pruned)
+  const chosen = selectedTabs(pruned, checkable)
+  const toggleCard = (tab: Tab): void => setSelection((s) => toggleSelected(s, tab.id))
+  const everyPicked = allSelected(
+    pruned,
+    checkable.map((t) => t.id)
+  )
+  const toggleAll = (): void =>
+    setSelection((s) =>
+      everyPicked
+        ? deselectAll(s)
+        : selectAll(
+            s,
+            checkable.map((t) => t.id)
+          )
+    )
+  /**
+   * The action row's targets (`lib/overviewSelection.ts`): Group takes the picks a group can
+   * hold and is not offered on the private pane, which makes no groups; Bookmark and Share take
+   * the pages among the picks – a private page's address is the user's to share, as Chrome lets
+   * an Incognito tab be shared. Each action ends the mode as it runs; the cards it leaves keep
+   * their places (§11.4: nothing reflows on a pick or on Done).
+   */
+  const groupable = privatePane ? [] : groupableTabs(chosen)
+  const pages = pageTabs(chosen)
+  const closeSelected = (): void => {
+    exitSelection()
+    closeTabs(chosen)
+  }
+  const groupSelected = (folderId: string | null): void => {
+    exitSelection()
+    const ids = groupable.map((t) => t.id)
+    if (folderId) groupTabs(ids, folderId)
+    else void makeGroup(ids, true)
+  }
+  /**
+   * Bookmark all (TAB-35): the pages go into one new folder "Tabs from <date>" under the
+   * phone's default folder through the core's own `bookmark.createFromTabs` – quietly, so the
+   * toast is this one (§9.33): the count, the folder, and Open, which leaves the overview and
+   * shows the folder in the Bookmarks panel.
+   */
+  const bookmarkSelected = async (): Promise<void> => {
+    exitSelection()
+    const tabIds = pages.map((t) => t.id)
+    const folder = await cmd('bookmark.createFromTabs', {
+      tabIds,
+      title: bookmarkFolderTitle(new Date()),
+      parentId: defaultBookmarkFolderId(state.platform),
+      quiet: true
+    }).catch(() => null)
+    if (!folder) return
+    const activeId = active?.id ?? null
+    pushToast(bookmarkedMessage(tabIds.length, folder.title), 'info', {
+      icon: 'star',
+      action: {
+        label: 'Open',
+        onPick: () => {
+          closeOverview()
+          void openOverlay('bookmarks', activeId, null, folder.id)
+        }
+      }
+    })
+  }
+  /** Share (SH-12): the pages as a text list through the system share sheet. */
+  const shareSelected = (): void => {
+    exitSelection()
+    run('app.share', shareTabsPayload(pages))
+  }
+  // An action's name counts the picks IT acts on, the number the picker's title and the
+  // bookmark toast will say: Close every pick, Group the groupable ones, Bookmark and Share the
+  // pages (a pinned pick among five reads "Group 4 tabs"; a blank tab, "Bookmark 4 tabs").
+  const named = (verb: string, count: number): string =>
+    `${verb} ${count} ${count === 1 ? 'tab' : 'tabs'}`
+  const selectionActions: SelectionAction[] = [
+    {
+      id: 'close',
+      label: 'Close',
+      name: named('Close', chosen.length),
+      glyph: <X className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
+      disabled: chosen.length === 0,
+      run: closeSelected
+    },
+    ...(privatePane
+      ? []
+      : [
+          {
+            id: 'group',
+            label: 'Group',
+            name: named('Group', groupable.length),
+            glyph: <Group className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
+            disabled: groupable.length === 0,
+            run: () => setSheet({ kind: 'group-picker' })
+          }
+        ]),
+    {
+      id: 'bookmark',
+      label: 'Bookmark',
+      name: named('Bookmark', pages.length),
+      glyph: <Star className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
+      disabled: pages.length === 0,
+      run: () => void bookmarkSelected()
+    },
+    {
+      id: 'share',
+      label: 'Share',
+      name: named('Share', pages.length),
+      glyph: <Share2 className="h-5 w-5" strokeWidth={1.75} aria-hidden />,
+      disabled: pages.length === 0,
+      run: shareSelected
+    }
+  ]
+
   const card = (tab: Tab): JSX.Element => (
     <OverviewCard
       key={tab.id}
@@ -729,13 +910,17 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       onClose={(t) => closeTabs([t])}
       onSwipeClose={swipedAway}
       lift={{
-        enabled: interactive && !tab.pinned,
-        swipeable: interactive && closesForReal(tab),
+        // A card in the select-tabs mode is neither picked up nor swiped away: a tap is a pick.
+        enabled: interactive && !tab.pinned && !selecting,
+        swipeable: interactive && closesForReal(tab) && !selecting,
         scroller: () => scrollRef.current,
         onMenu: (t) => setSheet({ kind: 'tab', tabId: t.id }),
         onHover: hoverAt,
         onDrop: dropCard
       }}
+      selection={
+        selecting ? { selected: isSelected(pruned, tab.id), onToggle: toggleCard } : undefined
+      }
     />
   )
 
@@ -777,43 +962,55 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           }}
         >
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
-            {privatePane ? (
-              <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+            {selecting ? (
+              <SelectionHeader
+                count={chosen.length}
+                everyPicked={everyPicked}
+                selectable={checkable.length > 0}
+                onToggleAll={toggleAll}
+                onDone={exitSelection}
+              />
             ) : (
-              <SpaceGlyph icon={space.icon} size={20} />
+              <>
+                {privatePane ? (
+                  <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+                ) : (
+                  <SpaceGlyph icon={space.icon} size={20} />
+                )}
+                <span className="zen-title min-w-0 truncate">
+                  {privatePane ? 'Private' : space.name}
+                </span>
+                <span
+                  className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
+                  data-testid="overview-count"
+                >
+                  {count} tab{count === 1 ? '' : 's'}
+                </span>
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-9 w-9"
+                  aria-label="Spaces"
+                  onClick={() => void openSpacesDrawer(active?.id ?? null)}
+                >
+                  {side === 'right' ? (
+                    <PanelRight className="h-[18px] w-[18px]" />
+                  ) : (
+                    <PanelLeft className="h-[18px] w-[18px]" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="zen-toolbar-button h-9 w-9"
+                  aria-label="More"
+                  aria-haspopup="menu"
+                  aria-expanded={sheet?.kind === 'menu'}
+                  onClick={() => void openMenu()}
+                >
+                  <Ellipsis className="h-[18px] w-[18px]" />
+                </button>
+              </>
             )}
-            <span className="zen-title min-w-0 truncate">
-              {privatePane ? 'Private' : space.name}
-            </span>
-            <span
-              className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
-              data-testid="overview-count"
-            >
-              {count} tab{count === 1 ? '' : 's'}
-            </span>
-            <span className="flex-1" />
-            <button
-              type="button"
-              className="zen-toolbar-button h-9 w-9"
-              aria-label="Spaces"
-              onClick={() => void openSpacesDrawer(active?.id ?? null)}
-            >
-              {side === 'right' ? (
-                <PanelRight className="h-[18px] w-[18px]" />
-              ) : (
-                <PanelLeft className="h-[18px] w-[18px]" />
-              )}
-            </button>
-            <button
-              type="button"
-              className="zen-toolbar-button h-9 w-9"
-              aria-label="More"
-              aria-haspopup="menu"
-              aria-expanded={sheet?.kind === 'menu'}
-              onClick={() => void openMenu()}
-            >
-              <Ellipsis className="h-[18px] w-[18px]" />
-            </button>
           </header>
           {hasPrivate && <PaneSegment pane={pane} onPick={pickOverviewPane} />}
           <PaneSlot
@@ -866,6 +1063,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                           ordered.length,
                           tab.id === active?.id
                         )}
+                        // An essential is no card: while tabs are being selected it takes no
+                        // pick and no tap (§9.30, laid out as it was).
+                        disabled={selecting}
                         onClick={() => pick(tab)}
                       >
                         <Favicon tab={tab} size={22} />
@@ -894,13 +1094,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                     />
                   ))}
                   {loose.map(card)}
-                  <NewTabCard pane={pane} />
+                  <NewTabCard pane={pane} disabled={selecting} />
                 </div>
               </div>
             )}
             {privatePane && count > 0 && <PrivateLockCover shown={locked} />}
           </PaneSlot>
           <PaneStills stills={stills} onDone={stillDone} />
+          <SelectionActions shown={selecting} actions={selectionActions} />
         </div>
         <Departures state={state} activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
@@ -954,9 +1155,18 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           groupable={!privatePane}
           others={regular.length - 1}
           onClose={() => setSheet(null)}
+          onSelect={(tab) => setSelection(startSelection(tab.id))}
           onNewGroup={(tab) => void makeGroup([tab.id], true)}
           onCloseTab={(tab) => closeTabs([tab])}
           onCloseOthers={closeOthers}
+        />
+      )}
+      {interactive && sheet?.kind === 'group-picker' && (
+        <GroupPickerSheet
+          count={groupable.length}
+          groups={groups.map((folder) => ({ folder, count: membersOf(folder.id).length }))}
+          onClose={() => leaveSheet('group-picker')}
+          onPick={groupSelected}
         />
       )}
       {interactive && sheet?.kind === 'group' && state.folders[sheet.folderId] && (
@@ -971,9 +1181,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         <OverviewMenuSheet
           title={privatePane ? 'Private' : space.name}
           privateTabs={privatePane}
+          selectable={checkable.length}
           open={regular.length}
           closed={sheet.closed.length}
           onClose={() => leaveSheet('menu')}
+          onSelect={() => setSelection(startSelection())}
           onRecentlyClosed={() => setSheet({ kind: 'recently-closed', closed: sheet.closed })}
           onCloseAll={closeAllAsked}
         />
@@ -1002,38 +1214,52 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 }
 
 /**
- * The header's menu: the recently closed list (matrix TAB-22, TAB-23) and "Close All Tabs" (TAB-06);
- * "Close Other Tabs" stays on a card's own menu, where it names the card it keeps. The rows are
- * menu items, so Title Case (v2 §9.1), as the card and group menus' rows are; a row with nothing
- * to act on keeps its count, at zero ("Recently Closed (0)"), and is disabled at .4, never hidden
- * (§9.17).
- * The private pane's menu is the one row "Close Private Tabs", named as the app menu names it:
- * no recently closed list applies there (Chrome's Incognito switcher has no Recent tabs either),
- * so the row is not there, not greyed – §9.17's rule is for a count of zero.
+ * The header's menu: "Select Tabs" (TAB-08, the select-tabs mode's entry from the header, as
+ * Chrome's tab switcher menu carries it; the header itself keeps its two icon buttons, §9.3),
+ * the recently closed list (matrix TAB-22, TAB-23) and "Close All Tabs" (TAB-06); "Close Other
+ * Tabs" stays on a card's own menu, where it names the card it keeps. The rows are menu items,
+ * so Title Case (v2 §9.1), as the card and group menus' rows are; a row with nothing to act on
+ * keeps its count, at zero ("Recently Closed (0)"), and is disabled at .4, never hidden (§9.17)
+ * – Select Tabs the same, with no card to pick.
+ * The private pane's menu is "Select Tabs" and the one row "Close Private Tabs", named as the
+ * app menu names it: no recently closed list applies there (Chrome's Incognito switcher has no
+ * Recent tabs either), so the row is not there, not greyed – §9.17's rule is for a count of zero.
  */
 function OverviewMenuSheet({
   title,
   privateTabs,
+  selectable,
   open,
   closed,
   onClose,
+  onSelect,
   onRecentlyClosed,
   onCloseAll
 }: {
   title: string
   /** Whether this is the private pane's menu. */
   privateTabs: boolean
+  /** How many cards the select-tabs mode could pick. */
+  selectable: number
   /** How many tabs "Close All Tabs" would close (the unpinned ones). */
   open: number
   /** How many tabs the recently closed list holds. */
   closed: number
   onClose: () => void
+  onSelect: () => void
   onRecentlyClosed: () => void
   onCloseAll: () => void
 }): JSX.Element {
   const counted = (label: string, n: number): string => `${label} (${n})`
+  const select: SheetAction = {
+    id: 'select',
+    label: 'Select Tabs',
+    disabled: selectable === 0,
+    onPick: onSelect
+  }
   const actions: SheetAction[] = privateTabs
     ? [
+        select,
         {
           id: 'close-all',
           label: counted('Close Private Tabs', open),
@@ -1043,6 +1269,7 @@ function OverviewMenuSheet({
         }
       ]
     : [
+        select,
         {
           id: 'recently-closed',
           label: counted('Recently Closed', closed),
@@ -1058,6 +1285,214 @@ function OverviewMenuSheet({
         }
       ]
   return <OverviewSheet title={title} actions={actions} onClose={onClose} />
+}
+
+/**
+ * The header while tabs are being selected (TAB-08; v2 §9.6): Android's contextual action bar
+ * in the overview's own 56 header – its content REPLACES the header row's (the space's name and
+ * count, Spaces, More), never stacks under it, and the Tabs | Private segment stays beneath as
+ * before. The leading X is the platform's action-mode close, named "Done" as Android names it
+ * (the back gesture does the same; a trailing Done is iOS's and is not drawn), the count in the
+ * title's place as a live region ("3 selected"; "Select tabs" before the first pick, so the
+ * mode announces itself), and Select all – Deselect all once every card is picked – as the one
+ * trailing §9.18 secondary `zen-v2-button`, in the window family (§9.29, the overview's button
+ * rule; the app has no text button). The panels' selection header (`PhoneSelectionHeader`) is
+ * the same shape; this one sits in the overview's header element, on the overview's handle, so
+ * it cannot be that component.
+ */
+function SelectionHeader({
+  count,
+  everyPicked,
+  selectable,
+  onToggleAll,
+  onDone
+}: {
+  count: number
+  /** Every card the grid offers is picked: the action reads Deselect all. */
+  everyPicked: boolean
+  /** The grid has cards to pick; without them Select all is disabled (§9.30). */
+  selectable: boolean
+  onToggleAll: () => void
+  onDone: () => void
+}): JSX.Element {
+  return (
+    <>
+      <button
+        type="button"
+        className="zen-toolbar-button -ml-1.5 h-9 w-9"
+        aria-label="Done"
+        data-testid="overview-select-done"
+        onClick={onDone}
+      >
+        <X className="h-5 w-5" strokeWidth={1.75} />
+      </button>
+      <span
+        className="zen-title min-w-0 flex-1 truncate tabular-nums"
+        aria-live="polite"
+        data-testid="overview-selected-count"
+      >
+        {selectionTitle(count)}
+      </span>
+      <button
+        type="button"
+        className="zen-v2-button"
+        disabled={!selectable}
+        data-testid="overview-select-all"
+        onClick={onToggleAll}
+      >
+        {everyPicked ? 'Deselect all' : 'Select all'}
+      </button>
+    </>
+  )
+}
+
+/** One action of the select-tabs mode's row (`SelectionActions`). */
+interface SelectionAction {
+  id: string
+  /** The one word under the glyph. */
+  label: string
+  /** What the button is called for assistive technology: the verb with the count ("Close 3 tabs"). */
+  name: string
+  glyph: ReactNode
+  /** Nothing among the picks for this action to act on: disabled at .4, laid out as it was (§9.30). */
+  disabled: boolean
+  run: () => void
+}
+
+/**
+ * The select-tabs mode's action row (TAB-08): a window-family strip (v2 §9.29) at the foot of
+ * the overview, above the bar – one band in the window fill, the group strip's tray at the
+ * card's radius, holding the actions as glyph-over-label buttons that share its width, named
+ * with their count for TalkBack. The strip's slot takes its height the moment the mode is on
+ * (one layout change; the grid's cells glide if the shorter grid moves them, §11.4) and the
+ * band slides up into the slot on `SPRING_GENTLE`, back down as the mode ends, the slot
+ * clipping it; the spring writes the transform per frame, promoted for those frames only.
+ * Under reduced motion the band fades its 120 ms in place instead (§11.3), on its own opacity
+ * transition, and leaves once that has run.
+ */
+function SelectionActions({
+  shown,
+  actions
+}: {
+  shown: boolean
+  actions: SelectionAction[]
+}): JSX.Element | null {
+  const [mounted, setMounted] = useState(shown)
+  if (shown && !mounted) setMounted(true)
+  const band = useRef<HTMLDivElement>(null)
+  const spring = useRef<SpringAnimation | null>(null)
+  const unmount = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useLayoutEffect(() => {
+    const el = band.current
+    if (!el) return
+    if (unmount.current !== null) {
+      clearTimeout(unmount.current)
+      unmount.current = null
+    }
+    spring.current ??= new SpringAnimation(
+      SPRING_GENTLE,
+      (x) => {
+        const b = band.current
+        if (!b) return
+        if (reducedMotion()) {
+          b.style.transform = ''
+          b.style.opacity = String(x)
+        } else {
+          b.style.transform = `translateY(${(1 - x) * 100}%)`
+          b.style.opacity = ''
+        }
+      },
+      (x) => {
+        const b = band.current
+        if (b) b.style.willChange = ''
+        if (x < 0.5)
+          unmount.current = setTimeout(() => setMounted(false), reducedMotion() ? 120 : 0)
+      }
+    )
+    const s = spring.current
+    // The band was just laid out at its start (below the slot, or unpainted): make sure the
+    // engine has seen it there, so the reduced-motion opacity transition has a from-value.
+    void el.getBoundingClientRect()
+    el.style.willChange = 'transform'
+    const { x, v } = s.current
+    s.start(x, v, shown ? 1 : 0)
+    return () => {
+      if (unmount.current !== null) {
+        clearTimeout(unmount.current)
+        unmount.current = null
+      }
+    }
+  }, [shown, mounted])
+  useEffect(
+    () => () => {
+      spring.current?.stop()
+    },
+    []
+  )
+  if (!mounted) return null
+  return (
+    <div className="zen-overview-actions" data-testid="overview-actions">
+      <div
+        ref={band}
+        className="zen-overview-actions-band"
+        style={reducedMotion() ? { opacity: 0 } : { transform: 'translateY(100%)' }}
+      >
+        {actions.map((action) => (
+          <button
+            key={action.id}
+            type="button"
+            className="zen-overview-action"
+            aria-label={action.name}
+            disabled={action.disabled}
+            data-testid={`overview-action-${action.id}`}
+            onClick={action.run}
+          >
+            {action.glyph}
+            <span>{action.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Group's picker (TAB-08): a 9.13 sheet of the pane's groups – "New group" first, then each
+ * group by its name and colour, with how many cards it holds – for the picks a group can take;
+ * the rows are the card menu's own ("Add to <name>"), so the two ways of grouping read alike.
+ * A picker's option row is sentence case (§9.1; the card menu's "New Group" is a menu item and
+ * Title Case, the design gate on #304). It is the overview's action sheet, on the frame's
+ * dialog host over the grid.
+ */
+function GroupPickerSheet({
+  count,
+  groups,
+  onClose,
+  onPick
+}: {
+  /** How many of the picked tabs will be grouped. */
+  count: number
+  groups: HeldGroup[]
+  onClose: () => void
+  /** A group was picked: its folder id, or null for a new group. */
+  onPick: (folderId: string | null) => void
+}): JSX.Element {
+  const actions: SheetAction[] = [
+    { id: 'new-group', label: 'New group', onPick: () => onPick(null) },
+    ...groups.map(({ folder, count: held }): SheetAction => ({
+      id: `group-${folder.id}`,
+      label: `Add to ${folder.name} (${held})`,
+      icon: <GroupDot color={folder.color} />,
+      onPick: () => onPick(folder.id)
+    }))
+  ]
+  return (
+    <OverviewSheet
+      title={`Group ${count} ${count === 1 ? 'tab' : 'tabs'}`}
+      actions={actions}
+      onClose={onClose}
+    />
+  )
 }
 
 /** The card in the hand: follows the finger, tucks in over a target, flies into its slot. */
@@ -1097,6 +1532,7 @@ function TabSheet({
   groupable,
   others,
   onClose,
+  onSelect,
   onNewGroup,
   onCloseTab,
   onCloseOthers
@@ -1109,14 +1545,19 @@ function TabSheet({
   /** How many other tabs "Close other tabs" would close. */
   others: number
   onClose: () => void
+  /** "Select Tabs": the select-tabs mode, with this card picked (TAB-08). */
+  onSelect: (tab: Tab) => void
   onNewGroup: (tab: Tab) => void
   onCloseTab: (tab: Tab) => void
   onCloseOthers: (tab: Tab) => void
 }): JSX.Element {
   const current = tab.folderId && state.folders[tab.folderId] ? tab.folderId : null
   // The rows are menu items, so Title Case (v2 §9.1, the #207 ruling): "New Group", "Close Other
-  // Tabs (3)"; a group's own name is written as the user gave it.
-  const actions: SheetAction[] = []
+  // Tabs (3)"; a group's own name is written as the user gave it. Select Tabs leads: it is the
+  // way to act on several cards, and the rows under it act on this one.
+  const actions: SheetAction[] = [
+    { id: 'select', label: 'Select Tabs', onPick: () => onSelect(tab) }
+  ]
   if (groupable && !tab.pinned && !tab.essential) {
     actions.push({ id: 'new-group', label: 'New Group', onPick: () => onNewGroup(tab) })
     for (const g of groups) {
@@ -1235,9 +1676,10 @@ function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Ele
 /**
  * The last card of the grid, a cell like the others (`data-cell`): when cards are rearranged,
  * closed or grouped it glides to its new place on the same spring as they do. On the private
- * pane it opens a private tab (INC-01).
+ * pane it opens a private tab (INC-01). While tabs are being selected it is no card to pick and
+ * takes no tap (§9.30, in its place).
  */
-function NewTabCard({ pane }: { pane: OverviewPane }): JSX.Element {
+function NewTabCard({ pane, disabled }: { pane: OverviewPane; disabled?: boolean }): JSX.Element {
   const isPrivate = pane === 'private'
   return (
     <button
@@ -1246,6 +1688,7 @@ function NewTabCard({ pane }: { pane: OverviewPane }): JSX.Element {
       style={{ aspectRatio: '3 / 4' }}
       data-cell={NEW_TAB_CELL}
       data-testid={isPrivate ? 'overview-new-private-tab' : 'overview-new-tab'}
+      disabled={disabled}
       onClick={() => newTabOn(pane)}
     >
       {isPrivate ? (

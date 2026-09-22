@@ -111,6 +111,13 @@ import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
+/**
+ * How long a `press` step's finger rests before it lifts: past the overview card's long press
+ * (`useCardLift`'s 380 ms), so the card is in the hand when the finger goes and its sheet is
+ * scheduled (250 ms after); the step's own settle then covers the sheet's slide.
+ */
+const PRESS_HOLD_MS = 480
+const PRESS_SETTLE_MS = PRESS_HOLD_MS + 250 + STEP_SETTLE_MS
 
 /**
  * The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`,
@@ -176,7 +183,9 @@ const QR_EVENT_MARGIN_MS = 250
  * `no-match`, `denied`, …; see `previewVoiceScript`), `qr=<script>` (QR scanning started, the
  * stand-in camera playing that script into the scan sheet: `scanning`, `torch`, `text`,
  * `denied`, …; see `previewQrScript`), `overview` (the tab overview open over the active
- * page, its cards with whatever pictures the stand-in host has of the tabs) or
+ * page, its cards with whatever pictures the stand-in host has of the tabs; `then=` presses
+ * its header and cards once it is up: `tap:More;tap:Select Tabs` enters the select-tabs mode,
+ * `tap:<card's label>` picks a card in it, `press:<card title>` opens a card's hold sheet) or
  * `urlbar=<text>` (the pill's editor over the active tab with that text typed; `newtab` opens
  * it over a new tab, `clip=<text>` seeds the stand-in clipboard for the clipboard row, `then=`
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
@@ -967,9 +976,12 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       whenStore(() => uiStore.get().toasts.length > 0, spec)
     }
   } else if (target.kind === 'overview' && state) {
-    // The grid mounts on the next render and its cards read their pictures then.
+    // The grid mounts on the next render and its cards read their pictures then; the steps, if
+    // any, press its header and its cards once it is up (the select-tabs mode, a card's sheet).
     openOverview(state)
-    requestAnimationFrame(() => done(spec))
+    const then = target.then ?? []
+    if (then.length === 0) requestAnimationFrame(() => done(spec))
+    else afterFrames(2, () => steps(then, finish))
   } else if (target.kind === 'urlbar') {
     applyUrlbar(target, tab?.id ?? null, finish)
   } else {
@@ -1906,7 +1918,7 @@ function steps(list: readonly PreviewStep[], then: () => void): void {
     return
   }
   takeStep(step)
-  setTimeout(() => steps(rest, then), STEP_SETTLE_MS)
+  setTimeout(() => steps(rest, then), step.kind === 'press' ? PRESS_SETTLE_MS : STEP_SETTLE_MS)
 }
 
 function takeStep(step: PreviewStep): void {
@@ -1917,6 +1929,9 @@ function takeStep(step: PreviewStep): void {
       return
     case 'hold':
       hold(step.text)
+      return
+    case 'press':
+      press(step.text)
       return
     case 'type': {
       // A finger in the field, the text, then a tap elsewhere: the field is left touched, so a
@@ -1971,10 +1986,39 @@ function hold(text: string): void {
 }
 
 /**
- * What a finger could press: a button, or a checkbox row's label (`.zen-v2-check-row`, §9.30),
+ * Rest a finger on the first button whose accessible label or own text reads `text` for the
+ * long-press time and lift it in place – an overview card, whose hold is the pointer's timer
+ * (`useCardLift`), not a `contextmenu`: the card is lifted, put back, and its sheet comes up.
+ * The pointer's events as Chromium sends a touch's: down on the card, up seen by the window.
+ */
+function press(text: string): void {
+  const button = pressable(text)
+  if (!button) return
+  const box = button.getBoundingClientRect()
+  const init: PointerEventInit = {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    pointerType: 'touch',
+    isPrimary: true,
+    clientX: box.left + box.width / 2,
+    clientY: box.top + box.height / 2,
+    button: 0,
+    buttons: 1
+  }
+  button.dispatchEvent(new PointerEvent('pointerdown', init))
+  setTimeout(
+    () => button.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 })),
+    PRESS_HOLD_MS
+  )
+}
+
+/**
+ * What a finger could press: a button, a checkbox in its span form (an overview card in the
+ * select-tabs mode, a row's box, §9.34), or a checkbox row's label (`.zen-v2-check-row`, §9.30),
  * whose whole face toggles its box.
  */
-const PRESSABLE = 'button, [role="button"], label:has(> input[type="checkbox"])'
+const PRESSABLE = 'button, [role="button"], [role="checkbox"], label:has(> input[type="checkbox"])'
 
 /** The first button a finger could press whose accessible label or own text reads `text`. */
 function pressable(text: string): HTMLElement | null {
