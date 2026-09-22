@@ -8,8 +8,10 @@
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
-//        [--force-urlbar-blur]   (the URL bar's field let go of the keyboard before the harness
-//                                 acts on the bar: the state main's boot smoke failed in)
+//        [--force-urlbar-blur]   (the URL bar's field let go of the keyboard and the chrome told
+//                                 the new tab's view took it, before the harness acts on the bar:
+//                                 the slow runner's order, which left main's boot smoke a bar with
+//                                 no caret; the caret check has to come out green through it)
 //
 // Scenarios (each one launch of the executable, on profiles under one temporary root; the pages
 // they load come from boot-fixture.mjs's server on 127.0.0.1, started once per run, so a run
@@ -76,7 +78,14 @@ import {
   buttonScreenPoint,
   startPopupFixture
 } from './popup-fixture.mjs'
-import { newTabPlan, retryDetail, rowsExpected, waitForTabWithRetry } from './navigation.mjs'
+import {
+  URLBAR_FIELD_OWNER,
+  caretVerdict,
+  newTabPlan,
+  retryDetail,
+  rowsExpected,
+  waitForTabWithRetry
+} from './navigation.mjs'
 import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
 import { skipReason, skippedEntries } from './scenario-deps.mjs'
 import {
@@ -135,9 +144,12 @@ const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
 const FIRST_PAINT_CLICK_MS = Number(opts['first-paint-click-ms'] ?? 15000)
 const WATCHDOG_MS = Number(opts['watchdog-min'] ?? 15) * 60 * 1000
 // The forced failure path of the URL bar steps: before the harness acts on a bar that is up, the
-// chrome's focused control is blurred, as the chrome itself does when a page's view takes the
-// keyboard (`focus.page` → releaseChromeFocus). Main's boot smoke was in that state three times
-// on 2026-09-22 (see Session.closeUrlbar); the steps have to get through it.
+// chrome's focused control is blurred – as the chrome itself did on `focus.page` (a page's view
+// took the keyboard) until lib/panes.ts pageTookKeyboard – and the chrome is then told the page's
+// view took the keyboard, the event the new tab's own view sends as it is shown: on a slow
+// machine after the bar has focused its field. Main's boot smoke was in the state that left three
+// times on 2026-09-22 (see Session.closeUrlbar). The steps have to get through it, and the caret
+// check in openUrlInNewTab has to read the field focused: the bar's answer to the event.
 const FORCE_URLBAR_BLUR = opts['force-urlbar-blur'] === true
 const allowlistFile = path.resolve(opts.allowlist ?? path.join(here, 'known-failures.json'))
 
@@ -1120,14 +1132,66 @@ class Session {
   }
 
   /**
-   * The chrome's focused control let go, as the chrome does on `focus.page` (lib/panes.ts
-   * releaseChromeFocus): --force-urlbar-blur's way into the state main's boot smoke failed in.
+   * The chrome's focused control let go, as the chrome did on `focus.page` until lib/panes.ts
+   * pageTookKeyboard kept the URL bar's field (releaseChromeFocus, still the answer for any other
+   * control): --force-urlbar-blur's way into the state main's boot smoke failed in.
    */
   blurChromeFocus(page = this.chrome) {
     return page.evaluate(() => {
       const el = document.activeElement
       if (el && el !== document.body) el.blur()
     })
+  }
+
+  /**
+   * The chrome told that tab `tabId`'s page view took the keyboard: the `focus.page` event as
+   * the main process sends it (`zen:event`, platform/window.ts), which the new tab's own view
+   * sends as it is shown – on a slow machine after the new-tab bar has focused its field.
+   * --force-urlbar-blur's second half (openUrlInNewTab): blurChromeFocus is the chrome's old
+   * answer to that event, this the event itself, so what the chrome does with it now – the bar
+   * keeps its field and takes the keyboard back (lib/panes.ts pageTookKeyboard) – is what the
+   * caret check reads. The view cannot be made to send it from here: under the bar it is hidden,
+   * and a hidden view's focus is one the host takes straight back, unreported (platform/views.ts).
+   */
+  pageTookKeyboard(tabId, windowId = this.mainWindowId) {
+    return this.app.evaluate(
+      ({ BrowserWindow }, { wid, tabId }) => {
+        const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
+        if (!w || w.isDestroyed()) return false
+        w.webContents.send('zen:event', 'focus.page', { tabId })
+        return true
+      },
+      { wid: windowId, tabId }
+    )
+  }
+
+  /** The active tab's id in the app state as the chrome in `page` reads it (null: none). */
+  activeTabId(page = this.chrome) {
+    return page
+      .evaluate(async () => {
+        const state = await window.zen.invoke('app.getState')
+        return state?.spaces?.find((sp) => sp.id === state.activeSpaceId)?.activeTabId ?? null
+      })
+      .catch(() => null)
+  }
+
+  /**
+   * The caret of the URL bar that is up: whether its field holds the keyboard – the chrome page
+   * has it, not a page's view, and the field is the document's active element (keyboardOwner
+   * `chrome:urlbar-input`) – waited for up to `timeoutMs`, because the bar taking the keyboard
+   * back from the new tab's view (lib/panes.ts pageTookKeyboard → focus.chrome) is an IPC round
+   * trip away. `{ focused, owner, ms, bar }` for the step's detail, `owner` the last reading and
+   * `bar` how the bar came to be up (`found-up`, `accel-t`); navigation.mjs caretVerdict judges it.
+   */
+  async urlbarCaret(bar, timeoutMs = 3000) {
+    const t0 = Date.now()
+    for (;;) {
+      const owner = await this.keyboardOwner()
+      const ms = Date.now() - t0
+      if (owner === URLBAR_FIELD_OWNER) return { focused: true, owner, ms, bar }
+      if (ms >= timeoutMs) return { focused: false, owner, ms, bar }
+      await delay(100)
+    }
   }
 
   /**
@@ -1163,13 +1227,15 @@ class Session {
    * Escape puts the rows away). Resolves `{ closed, tries }`, `closed: false` once `timeoutMs`
    * is spent.
    *
-   * Field first because the field can have lost the keyboard while the bar stayed up: the chrome
-   * blurs its focused control when a page's view takes the keyboard (`focus.page` →
-   * releaseChromeFocus), and the new tab page the onboarding's end adopts does that a moment
-   * after the new-tab bar focused its field – on the runner, after; on a fast machine, before,
-   * where the field's later focus() wins. Main's boot smoke had the bar up with no caret in
-   * `02-after-onboarding.png` three times on 2026-09-22 (9bdc1c30, 630b7dd7, 7669e6b4); one
-   * Escape then did nothing and the 5 s wait for the bar to hide ran out.
+   * Field first because the field could have lost the keyboard while the bar stayed up: the
+   * chrome used to blur its focused control whenever a page's view took the keyboard
+   * (`focus.page` → releaseChromeFocus), and the new tab page the onboarding's end adopts does
+   * that a moment after the new-tab bar focused its field – on the runner, after; on a fast
+   * machine, before, where the field's later focus() wins. Main's boot smoke had the bar up with
+   * no caret in `02-after-onboarding.png` three times on 2026-09-22 (9bdc1c30, 630b7dd7,
+   * 7669e6b4); one Escape then did nothing and the 5 s wait for the bar to hide ran out. The
+   * chrome now keeps the bar's field through that event (lib/panes.ts pageTookKeyboard); the
+   * harness still asks nothing of the caret here (openUrlInNewTab reads it, where it matters).
    */
   async closeUrlbar({ page = this.chrome, windowId = this.mainWindowId, timeoutMs = 8000 } = {}) {
     const input = this.urlbarInput(page)
@@ -1652,18 +1718,20 @@ async function runScenario(name, userData, sessionOptions, body) {
  * page).
  *
  * A bar that is already up is used, not closed first. After the onboarding the core opens a new
- * tab with its bar up in new-tab mode, and that bar's field can have let go of the keyboard by
+ * tab with its bar up in new-tab mode, and that bar's field could have let go of the keyboard by
  * the time this runs (Session.closeUrlbar says how); the one Escape this used to send then
  * closed nothing and its 5 s wait for the bar to hide ran out (main red on 9bdc1c30, 630b7dd7
  * and 7669e6b4). Focusing the field and typing into it needs no key the field must already own.
+ *
+ * The caret is read before the harness touches the field (`caret` in the result: the bar up –
+ * found up after the tour, or brought up with Accel+T – with its field holding the keyboard, or
+ * the user's typing would go nowhere), and left to the step to judge once its work is done
+ * (navigation.mjs caretVerdict): the focus-first way in is kept whatever the caret said, so the
+ * page loads, the run goes on and a regression is one failure, named.
  */
 async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
   const input = s.urlbarInput()
   await s.settle()
-  if (FORCE_URLBAR_BLUR) {
-    await s.blurChromeFocus()
-    log(`${url}: --force-urlbar-blur let the chrome's focused control go`)
-  }
   const shown = await s.urlbarState()
   const plan = newTabPlan(shown)
   const rowsBefore = await s.sidebarTabCount()
@@ -1682,6 +1750,26 @@ async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
     await s.press(`${ACCEL}+t`)
     await input.waitFor({ state: 'visible', timeout: 8000 })
   }
+  if (FORCE_URLBAR_BLUR) {
+    // The slow runner's order, forced on the bar that is up: the field had the keyboard and let
+    // go of it – the chrome's old answer to the page's view taking the keyboard – and then the
+    // event itself reaches the chrome: the new tab's own view took the keyboard. The chrome's
+    // answer now is what the caret check reads.
+    const tabId = (await s.urlbarState()).submitTabId ?? (await s.activeTabId())
+    await s.blurChromeFocus()
+    await s.pageTookKeyboard(tabId)
+    log(
+      `${url}: --force-urlbar-blur let the chrome's focused control go, then told the chrome tab ${tabId}'s view took the keyboard`
+    )
+  }
+  const caret = await s.urlbarCaret(plan.way === 'use' ? 'found-up' : 'accel-t')
+  log(
+    `${url}: the URL bar ${caret.bar === 'found-up' ? 'found up' : 'brought up with Accel+T'} ${
+      caret.focused
+        ? `has its caret (${caret.ms} ms)`
+        : `has NO caret: the keyboard is ${caret.owner} after ${caret.ms} ms`
+    }`
+  )
   await s.submitUrl(url)
   // One network hiccup on the runner (a TLS reset, `ERR_CONNECTION_RESET`) lands the tab on the
   // error page; the step retries the navigation once in that tab (Accel+L, the address again)
@@ -1715,6 +1803,7 @@ async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
     tab,
     sidebarTabs: rows,
     way: plan.way,
+    caret,
     retried: retried ? retryDetail(retried) : null
   }
 }
@@ -2127,18 +2216,23 @@ async function scenarioBoot() {
 
     await s.step('new-tab-fixture', async () => {
       // The onboarding's end opened a new tab with its URL bar up in new-tab mode: that bar
-      // takes the fixture's address and the tab loads it in place (one sidebar row).
-      const { tab, sidebarTabs, way, retried } = await openUrlInNewTab(s, page.url)
+      // takes the fixture's address and the tab loads it in place (one sidebar row). Its field
+      // has to hold the keyboard as the harness finds it (`caret`): the new tab's own view takes
+      // the keyboard as it is shown, and the chrome used to let the field go for it – after the
+      // field's focus on the runner, so the bar stood with no caret (2026-09-22, three times).
+      // Judged once the page is on screen, so a regression is this one step.
+      const { tab, sidebarTabs, way, caret, retried } = await openUrlInNewTab(s, page.url)
       await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       out.fixtureTab = tab
       await s.shot('03-fixture-page')
-      return {
+      return caretVerdict({
         url: tab.url,
         title: tab.title,
         sidebarTabs,
         way,
+        caret,
         ...(retried ? { retried } : {})
-      }
+      })
     })
 
     await s.step('quit', async () => {
@@ -2221,9 +2315,15 @@ async function scenarioWalkthrough() {
         url: r.tab.url,
         title: r.tab.title,
         sidebarTabs: r.sidebarTabs,
-        way: r.way
+        way: r.way,
+        caret: r.caret
       })
-      return { first: detail(first), second: detail(second) }
+      // Each Ctrl+T's bar with its caret as the harness found it – the user's Ctrl+T is the
+      // other shape of the new tab's race (the boot scenario has the tour's).
+      return caretVerdict({ first: detail(first), second: detail(second) }, [
+        first.caret,
+        second.caret
+      ])
     })
 
     await s.step('find-bar', async () => {
