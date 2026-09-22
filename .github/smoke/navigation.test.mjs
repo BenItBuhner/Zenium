@@ -2,12 +2,61 @@ import { describe, expect, it } from 'vitest'
 import {
   ERR_ABORTED,
   firstRetryableFailLoad,
+  isNewTabUrl,
   isRetryableFailLoad,
+  newTabPlan,
   retryDetail,
+  rowsExpected,
   waitForTabWithRetry
 } from './navigation.mjs'
 
 const URL = 'https://example.com/'
+
+describe('isNewTabUrl', () => {
+  it('takes the new tab page bare, with a path and with a query', () => {
+    expect(isNewTabUrl('zen://newtab')).toBe(true)
+    expect(isNewTabUrl('zen://newtab/')).toBe(true)
+    expect(isNewTabUrl('zen://newtab?private=1')).toBe(true)
+  })
+  it('refuses pages, other internal pages, an empty string and non-strings', () => {
+    expect(isNewTabUrl(URL)).toBe(false)
+    expect(isNewTabUrl('zen://newtabs')).toBe(false)
+    expect(isNewTabUrl('zen://settings')).toBe(false)
+    expect(isNewTabUrl('')).toBe(false)
+    expect(isNewTabUrl(null)).toBe(false)
+    expect(isNewTabUrl(undefined)).toBe(false)
+  })
+})
+
+describe('newTabPlan', () => {
+  it('uses the bar over the blank new tab: that tab takes the URL, the row count stays', () => {
+    const plan = newTabPlan({ barVisible: true, submitTabUrl: 'zen://newtab/' })
+    expect(plan).toEqual({ way: 'use', rowsAfter: 'same' })
+    expect(rowsExpected(1, plan)).toBe(1)
+  })
+  it('uses a bar whose submit opens a new tab: one more row', () => {
+    const plan = newTabPlan({ barVisible: true, submitTabUrl: null })
+    expect(plan).toEqual({ way: 'use', rowsAfter: 'one-more' })
+    expect(rowsExpected(1, plan)).toBe(2)
+  })
+  it("closes a bar over a page's own address before Accel+T", () => {
+    expect(newTabPlan({ barVisible: true, submitTabUrl: URL })).toEqual({
+      way: 'close-then-new',
+      rowsAfter: 'one-more'
+    })
+    // A tab the app state does not list is not a blank tab.
+    expect(newTabPlan({ barVisible: true, submitTabUrl: '' })).toEqual({
+      way: 'close-then-new',
+      rowsAfter: 'one-more'
+    })
+  })
+  it('opens a tab with Accel+T when the bar is down, whatever the tab argument says', () => {
+    const plan = newTabPlan({ barVisible: false, submitTabUrl: 'zen://newtab/' })
+    expect(plan).toEqual({ way: 'new', rowsAfter: 'one-more' })
+    expect(rowsExpected(0, plan)).toBe(1)
+    expect(newTabPlan({ barVisible: false, submitTabUrl: null })).toEqual(plan)
+  })
+})
 const reset = {
   type: 'did-fail-load',
   wc: 9,

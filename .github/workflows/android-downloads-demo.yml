@@ -4,10 +4,11 @@ name: Android downloads demo
 # and screenshots: a throttled file paused and resumed from the downloads sheet, a connection the
 # server cuts halfway that the downloader resumes on its own with Range, data: and blob: links
 # named from their anchors, the progress and completion notifications, a server that dies on
-# every attempt until the row fails as network-failed ("Check internet connection") and Retry
-# completes it, a file removed through download.deleteFile and one deleted behind the browser's
-# back (rows read "Deleted"; Retry downloads the file again), and the files in the system
-# Downloads app; DownloadsDemo checks every downloaded byte against the server's formula.
+# its first attempt and its three automatic resumes until the row fails as network-failed ("Check
+# internet connection") and Resume completes it, a file removed through download.deleteFile and
+# one deleted behind the browser's back (rows read "Deleted"; Retry downloads the file again), and
+# the files in the system Downloads app; DownloadsDemo checks every downloaded byte against the
+# server's formula.
 # Dispatch-only, like the gesture and site info demos: it takes about ten minutes and says
 # nothing about a change being correct. Same caveats as the gesture demo about frame rate and the
 # software GPU. The page and the files come from a small Node server
