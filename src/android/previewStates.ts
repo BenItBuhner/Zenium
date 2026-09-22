@@ -83,6 +83,7 @@ import {
   PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
   PREVIEW_READ_ALOUD_EVENT,
+  PREVIEW_SAMPLE_ORIGIN,
   PREVIEW_VOICE_EVENT,
   PREVIEW_WEB_APP,
   postPreviewManifest,
@@ -927,8 +928,12 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     const then = target.then ?? []
     const surface = (): void => {
       const now = browserStore.get().state ?? state
-      applyPrivate(target.surface, target.url ?? PRIVATE_PAGE, now, () =>
-        then.length ? steps(then, finish) : finish()
+      applyPrivate(
+        target.surface,
+        target.url ?? PRIVATE_PAGE,
+        now,
+        () => (then.length ? steps(then, finish) : finish()),
+        target.count ?? 1
       )
     }
     // The global cookie mode first, through the settings command as the Settings page writes it,
@@ -2385,6 +2390,20 @@ function takeNewTabPose(pose: PreviewNtpPose, finish: () => void): void {
 /** The page a private tab is put on when the state names none. */
 const PRIVATE_PAGE = 'https://example.com/'
 
+/**
+ * The pages the session's other private tabs open on (`count=<n>`, in this order, round again
+ * past the end): pages of the stand-in site (`PREVIEW_SAMPLE_ORIGIN`), which this host shows
+ * itself, so each row reads a page's title without the network, and none is the surface's own
+ * page (the root, or a `url=` of the spec's choosing).
+ */
+const PRIVATE_SITES = [
+  `${PREVIEW_SAMPLE_ORIGIN}/berths-on-the-north-quay`,
+  `${PREVIEW_SAMPLE_ORIGIN}/fuel-and-water`,
+  `${PREVIEW_SAMPLE_ORIGIN}/the-east-light`,
+  `${PREVIEW_SAMPLE_ORIGIN}/charts-and-corrections`,
+  `${PREVIEW_SAMPLE_ORIGIN}/visiting-boats`
+]
+
 /** The device's screen lock as the stand-in host reported it at boot, put back after a `screenlock=` spec. */
 let hostScreenLock: boolean | null = null
 
@@ -2436,13 +2455,18 @@ function lockPrivateTabs(then: () => void): void {
  * `tab.newPrivate` (the app menu's item, the quick menu's, the shortcut's), the overview through
  * the Tabs button, which lands on the active tab's pane; the Private pane over regular tabs is
  * the segment's pick. The theme blends to the private one as the tab becomes active (`useTheme`),
- * so a driver's settle covers the spring. `finish` marks the state reached.
+ * so a driver's settle covers the spring. `finish` marks the state reached. With `count` above
+ * one the session's other private tabs open first, on PRIVATE_SITES, each active in its turn as
+ * a new tab is, so the surface's own tab is the last and the one in view: a surface that lists
+ * the session (the tablet sidebar's private pose, the Private pane) has rows to list, in the
+ * order they were opened. `empty` opens none: its pane is empty.
  */
 function applyPrivate(
   surface: PreviewPrivateSurface,
   url: string,
   state: UIState,
-  finish: () => void
+  finish: () => void,
+  count = 1
 ): void {
   const from = activeTab(state)
   const onPrivateTab = (test: (tab: Tab) => boolean, then: () => void): void =>
@@ -2453,53 +2477,75 @@ function applyPrivate(
     // The grid mounts on the next render, the pane's fade after it.
     afterFrames(2, then)
   }
-  switch (surface) {
-    case 'newtab':
-      void run('tab.newPrivate', {})
-      onPrivateTab(
-        (tab) => isEmptyTabUrl(tab.url),
-        () => afterFrames(2, finish)
-      )
+  // The others first, in PRIVATE_SITES' order (PREVIEW_PRIVATE_MAX keeps them within the list,
+  // so no two wait on the same page); the surface's own tab comes after them.
+  const others = surface === 'empty' ? 0 : Math.max(0, count - 1)
+  const openOthers = (i: number, then: () => void): void => {
+    if (i >= others) {
+      then()
       return
-    case 'page':
-      void run('tab.newPrivate', { url })
-      onPrivateTab(
-        (tab) => tab.url === url,
-        () => afterFrames(2, finish)
-      )
-      return
-    case 'overview':
-      void run('tab.newPrivate', { url })
-      onPrivateTab(
-        (tab) => tab.url === url,
-        () => overviewUp(finish)
-      )
-      return
-    case 'tabs':
-      // A private tab open, the regular one active again: the overview opens on Tabs, with the
-      // segment offering Private and no private card among the regular ones.
-      void run('tab.newPrivate', { url })
-      onPrivateTab(
-        (tab) => tab.url === url,
-        () => {
-          if (!from) {
-            overviewUp(finish)
-            return
+    }
+    const site = PRIVATE_SITES[i % PRIVATE_SITES.length]
+    void run('tab.newPrivate', { url: site })
+    onPrivateTab(
+      (tab) => tab.url === site,
+      () => openOthers(i + 1, then)
+    )
+  }
+  openOthers(0, () => own())
+
+  function own(): void {
+    switch (surface) {
+      case 'newtab':
+        void run('tab.newPrivate', {})
+        onPrivateTab(
+          (tab) => isEmptyTabUrl(tab.url),
+          () => afterFrames(2, finish)
+        )
+        return
+      case 'page':
+        void run('tab.newPrivate', { url })
+        onPrivateTab(
+          (tab) => tab.url === url,
+          () => afterFrames(2, finish)
+        )
+        return
+      case 'overview':
+        void run('tab.newPrivate', { url })
+        onPrivateTab(
+          (tab) => tab.url === url,
+          () => overviewUp(finish)
+        )
+        return
+      case 'tabs':
+      case 'behind': {
+        // A private tab open, the regular one active again: on `tabs` the overview opens on Tabs,
+        // with the segment offering Private and no private card among the regular ones; on
+        // `behind` nothing opens – the regular tab in view, the session behind it, so the tablet
+        // sidebar stands in its regular pose beside a private session (W4-11).
+        const landed = (): void =>
+          surface === 'tabs' ? overviewUp(finish) : afterFrames(2, finish)
+        void run('tab.newPrivate', { url })
+        onPrivateTab(
+          (tab) => tab.url === url,
+          () => {
+            if (!from) {
+              landed()
+              return
+            }
+            void run('tab.activate', { tabId: from.id })
+            whenActiveTabIs((tab) => tab.id === from.id, landed)
           }
-          void run('tab.activate', { tabId: from.id })
-          whenActiveTabIs(
-            (tab) => tab.id === from.id,
-            () => overviewUp(finish)
-          )
-        }
-      )
-      return
-    case 'empty':
-      overviewUp(() => {
-        pickOverviewPane('private')
-        afterFrames(2, finish)
-      })
-      return
+        )
+        return
+      }
+      case 'empty':
+        overviewUp(() => {
+          pickOverviewPane('private')
+          afterFrames(2, finish)
+        })
+        return
+    }
   }
 }
 

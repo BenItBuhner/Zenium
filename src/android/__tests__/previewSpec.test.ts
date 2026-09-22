@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PREVIEW_MEDIA,
   PREVIEW_OVERLAYS,
+  PREVIEW_PRIVATE_MAX,
   PREVIEW_PRIVATE_SURFACES,
   PREVIEW_PULL_MAX,
   PREVIEW_WEBAPP_SURFACES,
@@ -290,6 +291,21 @@ describe('parsePreviewSpec', () => {
       cookies: 'allow'
     })
     expect(parsePreviewSpec('private=new&cookies=block')).toMatchObject({ cookies: 'block' })
+    // The session's size for a surface that lists it (the tablet sidebar's private pose): two
+    // to PREVIEW_PRIVATE_MAX; one, or nonsense, is the surface's own tab alone.
+    expect(parsePreviewSpec('private=page&count=3')).toEqual({
+      kind: 'private',
+      surface: 'page',
+      url: null,
+      count: 3
+    })
+    expect(parsePreviewSpec('private=tabs&count=9&then=back')).toMatchObject({
+      surface: 'tabs',
+      count: PREVIEW_PRIVATE_MAX,
+      then: [{ kind: 'back' }]
+    })
+    expect(parsePreviewSpec('private=page&count=1')).not.toHaveProperty('count')
+    expect(parsePreviewSpec('private=page&count=many')).not.toHaveProperty('count')
     expect(parsePreviewSpec('private=newtab&cookies=maybe')).toEqual({
       kind: 'private',
       surface: 'newtab',

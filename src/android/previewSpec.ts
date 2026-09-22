@@ -85,14 +85,28 @@ export type PreviewReadAloudStatus = (typeof PREVIEW_READ_ALOUD_STATUSES)[number
  * `url=<page>` names it, example.com by default; `private=<url>` is that page as well), the tab
  * overview on its Private pane with that tab (`overview`), the overview on its Tabs pane while a
  * private tab is open elsewhere (`tabs`: the segment, and no private card among the regular
- * ones), and the Private pane with no private tab (`empty`: the explainer). `cookies=<mode>`
- * sets the third-party cookie setting first (`allow`, `block-private`, `block`), for the new tab
- * page's switch in each of its states; `then=<steps>` takes steps once the surface is up
- * (`tap:More` opens the overview's header menu, a second tap on its row the question).
+ * ones), the regular tab back in view with the private ones open behind it and no overview
+ * (`behind`: the tablet sidebar's regular pose beside a private session – no private row, no
+ * count), and the Private pane with no private tab (`empty`: the explainer). `count=<n>` opens
+ * n private tabs in all (the others first, on the stand-in site's pages; `empty` takes none),
+ * for a surface that lists the session: the tablet sidebar's private pose, the Private pane.
+ * `cookies=<mode>` sets the third-party cookie setting first (`allow`, `block-private`,
+ * `block`), for the new tab page's switch in each of its states; `then=<steps>` takes steps once
+ * the surface is up (`tap:More` opens the overview's header menu, a second tap on its row the
+ * question).
  */
-export const PREVIEW_PRIVATE_SURFACES = ['newtab', 'page', 'overview', 'tabs', 'empty'] as const
+export const PREVIEW_PRIVATE_SURFACES = [
+  'newtab',
+  'page',
+  'overview',
+  'tabs',
+  'behind',
+  'empty'
+] as const
 export type PreviewPrivateSurface = (typeof PREVIEW_PRIVATE_SURFACES)[number]
 const PREVIEW_COOKIE_MODES: readonly ThirdPartyCookieMode[] = ['allow', 'block-private', 'block']
+/** The most private tabs a `private=` surface opens (`count=<n>`): the sidebar's list is full by then. */
+export const PREVIEW_PRIVATE_MAX = 6
 
 /**
  * The phone new tab page's field on its way to the omnibox (`ntp=<pose>`; NTP-02 / MOT-08,
@@ -301,6 +315,13 @@ export type PreviewState =
       surface: PreviewPrivateSurface
       /** The page the private tab is on (`page`, `overview`, `tabs`); null for the default. */
       url: string | null
+      /**
+       * How many private tabs the session holds once the surface is up (`count=<n>`, 2 to
+       * PREVIEW_PRIVATE_MAX; absent: the surface's one): the others open first, on the stand-in
+       * site's pages, so a surface that lists the session – the tablet sidebar's private pose,
+       * the Private pane – has rows to list.
+       */
+      count?: number
       /** The third-party cookie setting to put in place first; absent, the profile's stands. */
       cookies?: ThirdPartyCookieMode
       /** Steps taken once the surface is up (the overview's header menu, its question). */
@@ -775,7 +796,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
 /**
  * `private=<value>`: one of PREVIEW_PRIVATE_SURFACES, with `url=<page>` for the page the private
  * tab is on; a URL as the value is that page (`private=<url>`), and any other value – `new`,
- * `1` – is the private tab on its new tab page. `cookies=<mode>` rides along on any of them.
+ * `1` – is the private tab on its new tab page. `count=<n>` (2 to PREVIEW_PRIVATE_MAX; one, or
+ * anything else, is the surface's own tab alone) and `cookies=<mode>` ride along on any of them.
  */
 function parsePrivate(value: string, params: URLSearchParams): PreviewState {
   const state: Extract<PreviewState, { kind: 'private' }> = (
@@ -785,6 +807,8 @@ function parsePrivate(value: string, params: URLSearchParams): PreviewState {
     : /^https?:\/\//.test(value)
       ? { kind: 'private', surface: 'page', url: value }
       : { kind: 'private', surface: 'newtab', url: null }
+  const count = Number(params.get('count'))
+  if (Number.isInteger(count) && count > 1) state.count = Math.min(PREVIEW_PRIVATE_MAX, count)
   const cookies = params.get('cookies')
   if (cookies !== null && (PREVIEW_COOKIE_MODES as readonly string[]).includes(cookies)) {
     state.cookies = cookies as ThirdPartyCookieMode

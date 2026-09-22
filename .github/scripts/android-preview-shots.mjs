@@ -28,9 +28,14 @@
 //                      button's quick menu), `prompt=<permission>` (the permission prompt
 //                      sheet), `private=<surface>` (`newtab`: a private tab on its new tab page,
 //                      `page`: on a page (`&url=<page>`), `overview`: the overview on its Private
-//                      pane, `tabs`: on the Tabs pane beside a private tab, `empty`: the Private
-//                      pane with no private tab; `private=new` and `private=<url>` still read as
-//                      `newtab` and `page`; `&cookies=allow|block-private|block` sets the
+//                      pane, `tabs`: on the Tabs pane beside a private tab, `behind`: the regular
+//                      tab in view with private tabs open behind it and no overview (the tablet
+//                      sidebar's regular pose), `empty`: the Private pane with no private tab;
+//                      `private=new` and `private=<url>` still read as `newtab` and `page`;
+//                      `&count=<n>` opens n private tabs in all, the others on the stand-in
+//                      site's pages, for a surface that lists the session (the tablet sidebar's
+//                      private pose);
+//                      `&cookies=allow|block-private|block` sets the
 //                      third-party cookie setting first, for the new tab page's switch in each
 //                      of its states; `&then=tap:More` opens the overview's header menu on the
 //                      pane, `;tap:Close Private Tabs (1)` after it the question), `find=<text>`,
