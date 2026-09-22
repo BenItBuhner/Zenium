@@ -100,6 +100,15 @@ abstract class DownloadsDemoBase(stateAsset: String, shotPrefix: String, handsha
     /** Whether an accessibility label is the row for `name` reading `status` (a row is labelled `<name>. <status>`). */
     protected fun rowReads(label: String, name: String, status: String = ""): Boolean = label.startsWith("$name. $status")
 
+    /**
+     * Whether the engine's row is interrupted for good: the engine reports a network failure it
+     * will retry on its own as `interrupted` too, with the attempt's time (`autoResumeAt`; the
+     * row reads `Resuming in N s…`, HB-43), and only the failure that spends the budget
+     * (`DownloadLogic.MAX_AUTO_RESUMES`) leaves the row reading `Failed · …` with Resume or Retry.
+     */
+    protected fun restsInterrupted(row: JSONObject): Boolean =
+        row.optString("state") == "interrupted" && row.optLong("autoResumeAt", 0L) <= 0L
+
     /** Poll for a node whose label satisfies `matches`, for up to `timeoutMs`. */
     protected fun waitForRow(timeoutMs: Long, matches: (String) -> Boolean): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
