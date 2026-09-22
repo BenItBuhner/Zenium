@@ -211,15 +211,6 @@
       "estimate": 4
     },
     {
-      "id": "homepage-ntp",
-      "class": "HomepageNtpDemo",
-      "shard": "phone-a",
-      "mirrors": "android-homepage-ntp-demo.yml",
-      "dir": "homepage-ntp-demo",
-      "estimate": 4,
-      "note": "The homepage in Settings and its Home actions, the new tab page for the bottom bar, a tile's Edit / Remove and the drag reorder (W4-8); the morph and the drag are measured scenes."
-    },
-    {
       "id": "downloads",
       "class": "DownloadsDemo",
       "shard": "phone-a",
@@ -427,6 +418,15 @@
       },
       "setup": ["ffmpeg"],
       "estimate": 3
+    },
+    {
+      "id": "homepage-ntp",
+      "class": "HomepageNtpDemo",
+      "shard": "phone-b",
+      "mirrors": "android-homepage-ntp-demo.yml",
+      "dir": "homepage-ntp-demo",
+      "estimate": 4,
+      "note": "The homepage in Settings and its Home actions, the new tab page for the bottom bar, a tile's Edit / Remove and the drag reorder (W4-8); the morph and the drag are measured scenes."
     },
     {
       "id": "thumbs",
