@@ -1087,14 +1087,6 @@ class Session {
     return shot(`${this.scenario}-${name}`, this)
   }
 
-  /** The webContents holding the keyboard, as the main process sees it (null: none). */
-  focusedWebContentsId() {
-    return this.app.evaluate(({ webContents }) => {
-      const wc = webContents.getFocusedWebContents()
-      return wc && !wc.isDestroyed() ? wc.id : null
-    })
-  }
-
   /** The main window's chrome webContents id (the page the sidebar, URL bar and dialogs live in). */
   chromeWebContentsId(windowId = this.mainWindowId) {
     return this.app.evaluate(({ BrowserWindow }, wid) => {
@@ -1105,15 +1097,37 @@ class Session {
 
   /**
    * Where the keyboard is, for the steps that assert it: `chrome` (the window's chrome page, with
-   * the focused element's test id when it has one), `tab:<id>` (a page) or `none`.
+   * the focused element's test id when it has one), `tab:<id>` (a page, by its webContents id)
+   * or `none`. Asked of the main window's own documents – its chrome, then the views in its
+   * content view – and not of `webContents.getFocusedWebContents()`: on macOS a WebContentsView
+   * that is in no window (the new tab page the core preloads off the window, core/newtab.ts)
+   * reports itself focused once its document commits and goes on saying so, and Electron's
+   * answer was that view while the window's keyboard was the chrome's – the URL bar's field with
+   * its caret read as `tab:<preload>` on both macOS runners (PR #347, 2026-09-22; `facts` in
+   * the step's detail: the chrome focused, its document with the focus and the field active,
+   * the one view in the window hidden and not focused). The keyboard is the window's: a view
+   * has it only in a window, and the chrome lets go of it (a `blur`) when a view in its window
+   * takes it, so the chrome's own word comes first.
    */
-  async keyboardOwner() {
-    const [focused, chrome] = await Promise.all([
-      this.focusedWebContentsId(),
-      this.chromeWebContentsId()
-    ])
-    if (focused === null) return 'none'
-    if (focused !== chrome) return `tab:${focused}`
+  async keyboardOwner(windowId = this.mainWindowId) {
+    const owner = await this.app.evaluate(({ BrowserWindow }, wid) => {
+      const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
+      if (!w || w.isDestroyed()) return null
+      if (w.webContents.isFocused()) return 'chrome'
+      const focusedView = (view) => {
+        for (const v of view.children || []) {
+          const wc = v.webContents
+          if (wc && !wc.isDestroyed() && wc.isFocused()) return wc.id
+          const inner = focusedView(v)
+          if (inner !== null) return inner
+        }
+        return null
+      }
+      const id = focusedView(w.contentView)
+      return id === null ? null : `tab:${id}`
+    }, windowId)
+    if (owner === null) return 'none'
+    if (owner !== 'chrome') return owner
     const active = await this.chrome
       .evaluate(() => {
         const el = document.activeElement
@@ -1252,15 +1266,33 @@ class Session {
 
   /**
    * Where the keyboard is as the main process sees it, for a URL bar found with no caret
-   * (urlbarCaret's `facts.main`): whether the window has the system's focus, the focused
-   * webContents, the chrome's, and each view in the window's content view – its webContents,
-   * whether it is shown, whether it holds the keyboard, its address and bounds.
+   * (urlbarCaret's `facts.main`): whether the window has the system's focus, Electron's focused
+   * webContents and every webContents that says it is focused (`claimants`, each with whether
+   * it is in a window – a view off the window says so on macOS, keyboardOwner), the chrome's,
+   * and each view in the window's content view – its webContents, whether it is shown, whether
+   * it holds the keyboard, its address and bounds.
    */
   keyboardFacts(windowId = this.mainWindowId) {
     return this.app.evaluate(({ BrowserWindow, webContents }, wid) => {
       const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
       if (!w || w.isDestroyed()) return null
       const focused = webContents.getFocusedWebContents()
+      const inWindow = new Set()
+      const collect = (view) => {
+        for (const v of view.children || []) {
+          if (v.webContents) inWindow.add(v.webContents.id)
+          collect(v)
+        }
+      }
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed()) continue
+        inWindow.add(win.webContents.id)
+        collect(win.contentView)
+      }
+      const claimants = webContents
+        .getAllWebContents()
+        .filter((wc) => !wc.isDestroyed() && wc.isFocused())
+        .map((wc) => ({ wc: wc.id, inWindow: inWindow.has(wc.id), url: wc.getURL().slice(0, 120) }))
       const views = w.contentView.children.map((v) => {
         const wc = v.webContents
         if (!wc) return { view: 'no-webContents' }
@@ -1276,6 +1308,7 @@ class Session {
       return {
         windowFocused: w.isFocused(),
         focused: focused && !focused.isDestroyed() ? focused.id : null,
+        claimants,
         chrome: w.webContents.id,
         chromeFocused: w.webContents.isFocused(),
         views
