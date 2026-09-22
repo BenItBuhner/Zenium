@@ -628,9 +628,9 @@ declare const __zenExtBoot: Boot
 
   // A content script's `fetch` of its extension's file under the page's `connect-src`: the
   // page's fetch first, the host's answer over the bridge for an extension-origin file the
-  // policy refused (`extensionFetchRelay.ts`). Under the `with` fallback it is the scope's
-  // `fetch`; a frame with worlds keeps the world's own fetch (beyond the page's policy, as
-  // Chrome's is) and lends the relay to the stylesheet recovery below alone.
+  // policy refused (`extensionFetchRelay.ts`). It is the content scripts' `fetch` in both
+  // isolations: the `with` scope's, and the isolated world's own, which a WebView's world runs
+  // under the document's policy too (Chrome's isolated world carries the extension's).
   fetchRelay = createFetchRelay(window, {
     attachedIds: () => attached.map((e) => e.id),
     request: (id, extId, url) =>
@@ -808,6 +808,10 @@ declare const __zenExtBoot: Boot
     if (isolation === 'world') {
       shieldWorld(ext, 'world')
       root = realWindow
+      // The world's `fetch` is the relay's: the world's global is the content scripts' alone, so
+      // the page's window never sees it, and the world's own fetch runs under the document's
+      // `connect-src` on a WebView (RoPro's locale file refused on roblox.com with worlds too).
+      if (fetchRelay) root.fetch = fetchRelay.fetch
     } else {
       shieldWorld(ext, 'with')
       operations ??= collectOperations(realWindow)
@@ -823,6 +827,20 @@ declare const __zenExtBoot: Boot
     }
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
     const engine = messaging ? makeEngine(ext, context, frame, root, isolation === 'world') : null
+    // The Web Speech API's synthesis in the content scripts' scope: Chrome's content script
+    // reads the document's `speechSynthesis`, and a WebView's document has none (Speechify's
+    // content bundle dies at `speechSynthesis.getVoices()`), so the host's engine answers it
+    // here as it does an extension page's; in the world's global or the `with` scope's store,
+    // never on the page's window.
+    if (engine && context === 'content')
+      installSpeechSynthesis(root, {
+        call: (method, args) => engine.call('speechSynthesis', method, args),
+        onEvent: (listener) =>
+          engine.onHostEvent((ns, name, args) => {
+            if (ns === 'speechSynthesis') listener(name, args)
+          }),
+        listen: (event) => engine.post({ t: 'listen', event: `speechSynthesis.${event}`, on: true })
+      })
     scope = {
       ext,
       engine,

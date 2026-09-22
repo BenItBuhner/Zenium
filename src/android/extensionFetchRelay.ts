@@ -5,12 +5,14 @@ import { extensionOrigin } from '@core/extensions/runtime/plan'
  *
  * A content script may fetch its own extension's web-accessible files
  * (`fetch(chrome.runtime.getURL('locales/en.json'))`, RoPro on roblox.com): in Chrome the request
- * is the isolated world's, beyond the page's `connect-src`. On a WebView with isolated worlds the
- * world's fetch goes through the same way. Under the `with` fallback (no worlds, Chromium < 146)
- * the request is the page's, and a page whose policy names its `connect-src` refuses it: the
- * promise rejects with `TypeError: Failed to fetch` and the extension never gets the file.
+ * is the isolated world's, which carries the extension's own policy, beyond the page's
+ * `connect-src`. A WebView's isolated world carries no policy of its own (the document's applies
+ * to it: `Refused to connect because it violates the document's Content Security Policy` from the
+ * world's fetch on WebView 156), and under the `with` fallback (no worlds, Chromium < 146) the
+ * request is the page's outright; either way a page whose policy names its `connect-src` refuses
+ * it: the promise rejects with `TypeError: Failed to fetch` and the extension never gets the file.
  *
- * So the scope's `fetch` tries the page's first (a page without such a policy loads the file as
+ * So the content scripts' `fetch` tries the page's first (a page without such a policy loads the file as
  * before, `Response.url` and all) and, when a request to an attached extension's origin is
  * refused, asks the host for the file over the bridge, which no page policy governs; the host
  * answers the web-accessible file's bytes and type (`Extensions.extensionFetch`), or the reason,
