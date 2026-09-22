@@ -15,9 +15,6 @@ name: Android sync history demo
 # file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/services-sync-history-ui-24d1
 
 permissions:
   contents: read
