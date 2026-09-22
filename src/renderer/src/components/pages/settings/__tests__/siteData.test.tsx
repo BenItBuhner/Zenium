@@ -32,6 +32,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { siteDataGroups } = await import('../siteDataRows')
 const { AddPatternForm } = await import('../AddPatternForm')
 const { SiteDataViewer } = await import('../SiteDataViewer')
+const { SiteDataPage } = await import('../SiteDataPage')
 const { SettingsDialog } = await import('../dialogs')
 const { allRows, findRow } = await import('../model')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
@@ -147,7 +148,9 @@ function escape(): void {
 }
 
 beforeEach(() => {
-  invoke.mockClear()
+  // `mockReset`, not `mockClear`: a once-implementation a test queued and never consumed would
+  // otherwise answer the next test's first command.
+  invoke.mockReset()
   invoke.mockImplementation(async () => null)
 })
 afterEach(() => {
@@ -830,5 +833,306 @@ describe('the site-data viewer', () => {
       expect(alert?.dataset.tone).toBe('danger')
       expect(button(el, 'Clear all').disabled).toBe(false)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The phone's page
+// ---------------------------------------------------------------------------
+
+describe('the site-data page on the phone (§10.2; the #322 ruling (a))', () => {
+  let sizes: Array<[string, PropertyDescriptor | undefined]> = []
+  beforeEach(() => {
+    viewportStore.set({
+      ...viewportStore.get(),
+      formFactor: 'phone',
+      width: 412,
+      height: 915,
+      coarse: true,
+      hover: false
+    })
+    // The sheet chassis measures its layer and its content (happy-dom lays nothing out): a
+    // layer 800 tall and a sheet of 300, so a sheet has room to stand rather than landing down.
+    sizes = ['clientHeight', 'offsetHeight'].map((name) => [
+      name,
+      Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+    ])
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-sheet-scroll') ? 300 : 800
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 300
+    })
+  })
+  afterEach(() => {
+    act(() => viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop' }))
+    for (const [name, descriptor] of sizes) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+  })
+
+  function open(): HTMLElement {
+    return render(
+      <FrameDialogHost>
+        <SiteDataPage />
+      </FrameDialogHost>
+    )
+  }
+  const pageRows = (el: ParentNode): HTMLElement[] =>
+    Array.from(
+      el.querySelectorAll<HTMLElement>(
+        '[data-testid="site-data-page"] > section [data-row^="site-data-origin:"]'
+      )
+    )
+  const sheets = (el: ParentNode): HTMLElement[] =>
+    Array.from(
+      el.querySelectorAll<HTMLElement>('.zen-sheet [role="dialog"], [role="dialog"]')
+    ).filter((d, i, all) => all.indexOf(d) === i)
+  const topSheet = (el: ParentNode): HTMLElement => {
+    const all = sheets(el)
+    return all[all.length - 1]!
+  }
+  const clearAllRow = (el: ParentNode): HTMLElement =>
+    el.querySelector<HTMLElement>('[data-row="site-data-clear-all"]')!
+  /**
+   * A sheet's leave is a spring (§11.2), and a prompt's confirm runs once it has landed
+   * (`dismiss(after)`): wait, a frame at a time, until `done` – at most a couple of seconds.
+   */
+  async function until(done: () => boolean): Promise<void> {
+    for (let i = 0; i < 100 && !done(); i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 25))
+      })
+    }
+    expect(done()).toBe(true)
+  }
+  /** The sheet's labelled buttons: the chassis's handle (no text) is not one of the sheet's own. */
+  const labels = (el: ParentNode): string[] =>
+    buttons(el)
+      .map((b) => b.textContent ?? '')
+      .filter((t) => t !== '')
+  const standing = (el: ParentNode): HTMLElement[] =>
+    sheets(el).filter((d) => !d.closest('[data-leaving]') && !d.hasAttribute('data-leaving'))
+
+  it('is the page: its line, "Clear all site data" as the page’s action row in the danger ink before the list, then the origins as item rows under Sites – no inline Clear on any row', async () => {
+    invoke.mockImplementationOnce(async () => listing())
+    const el = open()
+    await settle()
+    const page = el.querySelector<HTMLElement>('[data-testid="site-data-page"]')!
+    expect(page.querySelector('.zen-settings-group-description')?.textContent).toBe(
+      SITE_DATA_TEXT.viewer.description
+    )
+    // The page's action row: destructive, prompting (aria-haspopup), the first row on the page.
+    const clearAll = clearAllRow(el)
+    expect(clearAll.tagName).toBe('BUTTON')
+    expect(clearAll.classList.contains('zen-settings-row-danger')).toBe(true)
+    expect(clearAll.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(clearAll.textContent).toContain('Clear all site data')
+    expect(page.querySelector('[data-row]')).toBe(clearAll)
+    // The origins under the heading with the count aside, each an item row (a button whose
+    // sheet the chevron promises), nothing pressable inside it.
+    expect(page.querySelector('h3')?.textContent).toContain('Sites')
+    expect(page.querySelector('[data-testid="site-data-count"]')?.textContent).toBe('3 sites')
+    const rows = pageRows(el)
+    expect(rows.map((r) => r.querySelector('.zen-settings-label')?.textContent)).toEqual([
+      'example.com',
+      'news.example',
+      'http://127.0.0.1:18131'
+    ])
+    for (const row of rows) {
+      expect(row.tagName).toBe('BUTTON')
+      expect(row.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(row.hasAttribute('data-static')).toBe(false)
+      expect(row.querySelector('button')).toBeNull()
+      expect(row.querySelector('.zen-settings-control')).toBeNull()
+    }
+    // No button on the page but the rows themselves (§10.4: no inline Clear).
+    expect(buttons(page).filter((b) => !b.hasAttribute('data-row'))).toHaveLength(0)
+    // The whole page is rows: no footer of its own, no prompt up.
+    expect(el.querySelector('[data-testid="settings-dialog-footer"]')).toBeNull()
+    expect(sheets(el)).toHaveLength(0)
+  })
+
+  it('an origin’s row opens its item sheet: the host as the title, the storage line as its paragraph, "Clear site data" the one row – the danger action that prompts', async () => {
+    invoke.mockImplementationOnce(async () => listing())
+    const el = open()
+    await settle()
+    act(() => pageRows(el)[0]!.click())
+    await settle()
+    expect(sheets(el)).toHaveLength(1)
+    const sheet = topSheet(el)
+    expect(sheet.textContent).toContain('example.com')
+    expect(sheet.textContent).toContain('3 cookies · 4 KB')
+    const clear = sheet.querySelector<HTMLElement>(
+      '[data-row="site-data-origin:https://example.com:clear"]'
+    )!
+    expect(clear).not.toBeNull()
+    expect(clear.classList.contains('zen-settings-row-danger')).toBe(true)
+    expect(clear.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(clear.textContent).toContain('Clear site data')
+    expect(sheet.querySelectorAll('[data-row]')).toHaveLength(1)
+    // Nothing was asked of the engine by opening the sheet.
+    expect(invoke).toHaveBeenCalledTimes(1)
+  })
+
+  it('"Clear site data" prompts over the item sheet (depth two from the page): the prompt is the title-and-notice sheet that takes the focus itself, named by its title and described by its line; its Clear runs siteData.clearSite, and the row leaves the page with its sheet', async () => {
+    invoke.mockImplementationOnce(async () => listing())
+    const el = open()
+    await settle()
+    act(() => pageRows(el)[1]!.click())
+    await settle()
+    const item = topSheet(el)
+    act(() =>
+      item
+        .querySelector<HTMLElement>('[data-row="site-data-origin:https://news.example:clear"]')!
+        .click()
+    )
+    await settle()
+    expect(sheets(el)).toHaveLength(2)
+    const prompt = topSheet(el)
+    expect(prompt).not.toBe(item)
+    const title = prompt.querySelector('.zen-sheet-title-block h2')
+    const line = prompt.querySelector('.zen-sheet-title-block p')
+    expect(title?.textContent).toBe('Clear data for news.example?')
+    expect(line?.textContent).toBe(SITE_DATA_TEXT.viewer.clearSitePrompt)
+    // §9.20's notice: a title block and the two buttons, nothing else (the chassis's handle aside).
+    expect(labels(prompt)).toEqual(['Cancel', 'Clear site data'])
+    expect(prompt.querySelector('.zen-settings-row, input')).toBeNull()
+    // §9.22: the container takes the focus, never Cancel.
+    expect(document.activeElement).toBe(prompt)
+    expect(prompt.getAttribute('tabindex')).toBe('-1')
+    expect(prompt.getAttribute('aria-labelledby')).toBe(title?.id)
+    expect(prompt.getAttribute('aria-describedby')).toBe(line?.id)
+    expect(invoke).toHaveBeenCalledTimes(1)
+
+    invoke.mockImplementationOnce(async () => null)
+    act(() => button(prompt, 'Clear site data').click())
+    // The prompt leaves first; the clear runs as it lands.
+    await until(() => invoke.mock.calls.length === 2)
+    expect(invoke).toHaveBeenLastCalledWith('siteData.clearSite', {
+      origin: 'https://news.example'
+    })
+    await settle()
+    expect(pageRows(el).map((r) => r.querySelector('.zen-settings-label')?.textContent)).toEqual([
+      'example.com',
+      'http://127.0.0.1:18131'
+    ])
+    expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe('2 sites')
+    // The row gone, the sheet opened for it has nothing to show and leaves with the prompt.
+    await until(() => standing(el).length === 0)
+  })
+
+  it('keeps a row whose clear the engine refused, the failure line on the row and in its sheet, in the danger ink', async () => {
+    invoke.mockImplementationOnce(async () => listing())
+    const el = open()
+    await settle()
+    act(() => pageRows(el)[0]!.click())
+    await settle()
+    act(() =>
+      topSheet(el)
+        .querySelector<HTMLElement>('[data-row="site-data-origin:https://example.com:clear"]')!
+        .click()
+    )
+    await settle()
+    invoke.mockImplementationOnce(async () => {
+      throw new Error('locked')
+    })
+    act(() => button(topSheet(el), 'Clear site data').click())
+    await until(() => invoke.mock.calls.length === 2)
+    await settle()
+    const row = pageRows(el)[0]!
+    expect(row.querySelector('.zen-settings-description')?.textContent).toBe(
+      'That did not work. Try again.'
+    )
+    expect(row.dataset.tone).toBe('danger')
+    expect(pageRows(el)).toHaveLength(3)
+    // The item sheet stands, its clear row saying the same.
+    const clear = el.querySelector<HTMLElement>(
+      '[data-row="site-data-origin:https://example.com:clear"]'
+    )!
+    expect(clear.querySelector('.zen-settings-description')?.textContent).toBe(
+      'That did not work. Try again.'
+    )
+    expect(clear.dataset.tone).toBe('danger')
+  })
+
+  it('"Clear all site data" prompts from the page, the prompt the same notice with the focus; its Clear all runs siteData.clearAll, then the empty line and the row at .4', async () => {
+    invoke.mockImplementationOnce(async () => listing())
+    const el = open()
+    await settle()
+    const row = clearAllRow(el)
+    expect(row.getAttribute('aria-disabled')).toBeNull()
+    act(() => row.click())
+    await settle()
+    expect(sheets(el)).toHaveLength(1)
+    const prompt = topSheet(el)
+    const title = prompt.querySelector('.zen-sheet-title-block h2')
+    expect(title?.textContent).toBe('Clear all site data?')
+    expect(prompt.querySelector('.zen-sheet-title-block p')?.textContent).toContain(
+      'signs you out everywhere'
+    )
+    expect(labels(prompt)).toEqual(['Cancel', 'Clear all'])
+    expect(document.activeElement).toBe(prompt)
+    expect(prompt.getAttribute('aria-labelledby')).toBe(title?.id)
+    expect(invoke).toHaveBeenCalledTimes(1)
+
+    invoke.mockImplementationOnce(async () => null)
+    act(() => button(prompt, 'Clear all').click())
+    await until(() => invoke.mock.calls.length === 2)
+    expect(invoke).toHaveBeenLastCalledWith('siteData.clearAll', undefined)
+    await settle()
+    expect(pageRows(el)).toHaveLength(0)
+    expect(el.querySelector('.zen-settings-empty')?.textContent).toBe(
+      'No site has stored anything yet'
+    )
+    expect(el.querySelector('[data-testid="site-data-count"]')?.textContent).toBe('0 sites')
+    expect(clearAllRow(el).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('Cancel on a prompt sends nothing and leaves the page as it was', async () => {
+    invoke.mockImplementationOnce(async () => listing())
+    const el = open()
+    await settle()
+    act(() => clearAllRow(el).click())
+    await settle()
+    act(() => button(topSheet(el), 'Cancel').click())
+    await until(() => standing(el).length === 0)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(pageRows(el)).toHaveLength(3)
+  })
+
+  it('reads while the engine lists, says so when nothing is stored (the row at .4), and the failure line when the engine did not answer', async () => {
+    let finish: (value: unknown) => void = () => undefined
+    invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const el = open()
+    expect(el.textContent).toContain('Reading…')
+    expect(clearAllRow(el).getAttribute('aria-disabled')).toBe('true')
+    act(() => finish(listing({ rows: [], total: 0, sized: false })))
+    await settle()
+    expect(el.querySelector('.zen-settings-empty')?.textContent).toBe(
+      'No site has stored anything yet'
+    )
+    expect(clearAllRow(el).getAttribute('aria-disabled')).toBe('true')
+    act(() => root!.unmount())
+    root = null
+
+    invoke.mockImplementationOnce(async () => {
+      throw new Error('no engine')
+    })
+    const failed = open()
+    await settle()
+    const line = failed.querySelector<HTMLElement>('.zen-settings-empty')
+    expect(line?.textContent).toBe('That did not work. Try again.')
+    expect(line?.dataset.tone).toBe('danger')
   })
 })
