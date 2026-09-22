@@ -810,26 +810,49 @@ class ServicesHardeningDemo {
      * Tap the node labelled `label` once it has come to rest (a sheet still sliding in reports
      * bounds a frame behind), inside its bounds but clear of the system navigation bar along
      * the bottom edge ([bottomBand], from the window's insets), which would take the tap instead.
+     *
+     * At rest means two reads agree AND the bounds lie inside the window: the Settings drill-in
+     * pane enters by a 240 ms compositor transform (`zen-settings-enter-right`, main.css) and
+     * the tree serialised the Security section's answer row mid-slide once – x 512–1216 on a
+     * 720 px screen, 70 % of the width to the right – and kept that box (the compositor finishes
+     * the slide without a layout the tree would hear of): two reads agreed on the stale box and
+     * the finger went to x 864, off the screen. Bounds off the window are not at rest, however
+     * many reads agree; a full-width row (a Settings row spans the pane) whose box stays off
+     * to the side past `settleMs` is touched at the screen's middle at the row's height, and
+     * anything else that never comes inside is reported and not touched.
      */
     private fun tapLabel(
         f: Finger,
         label: String,
         prefix: Boolean = false,
         ignoreCase: Boolean = false,
-        contains: Boolean = false
+        contains: Boolean = false,
+        settleMs: Long = 4_000
     ): Boolean {
         var target = findByLabel(label, prefix, ignoreCase, contains) ?: run {
             step("no node labelled '$label'")
             return false
         }
-        val settleBy = SystemClock.uptimeMillis() + 2_000
+        val window = Rect(0, 0, width, height)
+        val inside = { r: Rect -> window.contains(r.centerX(), r.centerY()) }
+        val settleBy = SystemClock.uptimeMillis() + settleMs
         while (SystemClock.uptimeMillis() < settleBy) {
             SystemClock.sleep(150)
             val again = findByLabel(label, prefix, ignoreCase, contains) ?: break
-            if (again == target) break
+            if (again == target && inside(again)) break
+            if (again != target && !inside(again)) step("'$label' reads $again, outside the ${width}x$height window; waiting for it to come inside")
             target = again
         }
-        val x = target.exactCenterX()
+        var x = target.exactCenterX()
+        if (!inside(target)) {
+            val fullWidthRow = target.width() >= width / 2 && target.top >= 0 && target.bottom <= height
+            if (!fullWidthRow) {
+                step("'$label' stayed outside the window at $target for ${settleMs}ms; not touched")
+                return false
+            }
+            x = width / 2f
+            step("'$label' stayed at $target, off to the side of the ${width}x$height window (the drill-in's slide in the tree's box); the finger goes to the screen's middle at its height")
+        }
         val lowest = height - bottomBand - (8 * app.resources.displayMetrics.density).toInt()
         val y = if (target.exactCenterY() > lowest) {
             max(target.top + 8f, lowest.toFloat())

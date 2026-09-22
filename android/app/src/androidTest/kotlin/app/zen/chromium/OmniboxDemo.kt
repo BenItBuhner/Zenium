@@ -367,18 +367,18 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
 
         // 8. The engine picked in Settings > Search under a finger.
         step("OMN-27 the engine picked in Settings") {
-            val menu = openMenuItem("Settings")
-            val landing = menu && awaitChrome("!!document.querySelector('$SETTINGS_SEARCH_FIELD')", 10_000)
-            SystemClock.sleep(1_000)
-            var section = landing && touchTapLabel("Search") && awaitSurface(up = true, timeoutMs = 6_000)
+            // The Settings tab on its landing, the Search category under a finger, the section
+            // proven by the document (DemoHarness's Settings toolkit: the tree trails the screen
+            // by seconds on the emulator and had no Default search engine row on the nightly).
+            var section = openSettingsSection(SEARCH_SECTION)
             if (!section) {
-                finding("  Settings > Search not reached under a finger (menu $menu, landing $landing); opened through the core instead")
+                finding("  Settings > Search not reached under a finger (section '${settingsSection()}'); opened through the core instead")
                 coreInvoke("page.open", "{\"id\":\"settings\",\"section\":\"search\"}")
-                section = awaitChrome("!!document.querySelector('$SETTINGS_SEARCH_FIELD')||true", 8_000)
+                section = awaitSettingsSection(SEARCH_SECTION)
             }
             SystemClock.sleep(1_200)
             val rowBefore = rowText(ENGINE_ROW)
-            val touched = touchTapLabel(ENGINE_ROW, prefix = true)
+            val touched = touchSettingsRow(ENGINE_ROW)
             val option = if (touched) awaitOption(ROAST_NAME, 8_000) else null
             val dom = optionDomRect(ROAST_NAME)
             val rested = (option != null || dom != null) && awaitSheetAtRest(6_000)
@@ -617,8 +617,10 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
     // --- rows and sheets -------------------------------------------------------------------------
 
     /** The accessible text of the first node reading `prefix`… (a Settings row runs label and value together); "" when none. */
+    /** The Settings row reading `prefix`… as "label, value": the document's word first (its label and value), the tree's when the document has no such row. */
     private fun rowText(prefix: String): String =
-        findNode { it.startsWith(prefix) }?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+        settingsRowValue(prefix)?.let { value -> if (value.isEmpty()) prefix else "$prefix, $value" }
+            ?: findNode { it.startsWith(prefix) }?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
 
     /** Poll until the row reading `prefix`… ends with `value` (the tree trails the screen); the text it reads then. */
     private fun awaitRowText(prefix: String, value: String, timeoutMs: Long): String {

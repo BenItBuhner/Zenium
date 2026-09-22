@@ -1385,10 +1385,24 @@ abstract class DemoHarness(
         awaitTrue(timeoutMs) { settingsRowListed(label) }
 
     /**
-     * Where the Settings control labelled `label` is on screen, by the document: scrolled into
-     * view first (to the middle: clear of the bar and the sheet's grip), read again once the
-     * scroll has landed, the document's CSS px scaled into the chrome view's place on screen.
-     * Null when the document has no such control.
+     * Whether the Settings page's panes are at rest: no animation running on the drill-in pane
+     * (its 240 ms `zen-settings-enter-*` slide, a compositor transform, main.css) or on a sheet
+     * over it. A box read mid-slide is where the row was, not where it will be – the tree kept
+     * one such box for a whole section on the nightly (ServicesHardeningDemo's note) – so a
+     * finger waits for this.
+     */
+    protected fun settingsAtRest(): Boolean =
+        chromeJs(
+            "(function(){var els=document.querySelectorAll('.zen-settings-drill-in,.zen-settings-phone,[data-sheet-layer] [role=\"dialog\"]');" +
+                "for(var i=0;i<els.length;i++){var as=els[i].getAnimations({subtree:false});for(var j=0;j<as.length;j++){if(as[j].playState==='running')return false}}return true})()"
+        ) != "false"
+
+    /**
+     * Where the Settings control labelled `label` is on screen, by the document: the panes at
+     * rest first ([settingsAtRest], up to a second), scrolled into view (to the middle: clear
+     * of the bar and the sheet's grip), read again once the scroll has landed, the document's
+     * CSS px scaled into the chrome view's place on screen. Null when the document has no such
+     * control.
      */
     protected fun settingsRowRect(label: String): Rect? {
         val find = settingsControlJs(
@@ -1407,6 +1421,8 @@ abstract class DemoHarness(
                 (origin[1] + edges[3] * density).roundToInt()
             )
         }
+        if (!settingsRowListed(label)) return null
+        awaitTrue(1_000) { settingsAtRest() }
         read() ?: return null
         SystemClock.sleep(600)
         return read()
@@ -1436,6 +1452,78 @@ abstract class DemoHarness(
 
     /** Whether the Settings row labelled `label` reads `value` in the document ([settingsRowValue]). */
     protected fun settingsRowReads(label: String, value: String): Boolean = settingsRowValue(label) == value
+
+    /**
+     * The accessible name the document gives the Settings control labelled `label`: its
+     * `aria-label` when it has one (a value row's "label, value", fix 6 of #305), else its text
+     * with the whitespace folded; null when the document has no such control.
+     */
+    protected fun settingsRowName(label: String): String? =
+        chromeJsString(settingsControlJs(label, "return row.getAttribute('aria-label')||(row.textContent||'').replace(/\\s+/g,' ').trim()"))
+
+    /**
+     * Whether the document exposes the Settings control labelled `label` to assistive
+     * technology: not under `[inert]` or `[aria-hidden=true]`, laid out and visible. Null when
+     * the document has no such control. What a tree read cannot tell apart – a control the
+     * product hides from TalkBack and a tree that has not listed it yet – the document can.
+     */
+    protected fun settingsRowExposed(label: String): Boolean? =
+        chromeJsString(
+            settingsControlJs(
+                label,
+                "if(row.closest('[inert],[aria-hidden=\"true\"]'))return 'false';var s=getComputedStyle(row);" +
+                    "return String(s.visibility!=='hidden'&&s.display!=='none'&&row.getClientRects().length>0)"
+            )
+        )?.toBooleanStrictOrNull()
+
+    /**
+     * Ask Blink to serialise the Settings page's subtree again: `aria-hidden` set on the pane
+     * (the drill-in, else the page) and taken off two frames on, which marks the subtree dirty
+     * both ways. On the nightly this WebView listed the Look and Feel section's rows in the tree
+     * only after the Colour scheme picker had come and gone – the sheet's `holdChromeInert`
+     * (lib/portals.tsx) puts `inert` on the shell roots and takes it off on release, and that
+     * toggle is what brought the rows into the tree; the four WINDOW_CONTENT_CHANGED events of
+     * the 15 s before it never had. Nothing of the product's state changes; TalkBack is not
+     * running on the emulator to hear the two frames.
+     */
+    protected fun nudgeSettingsTree(): Boolean =
+        chromeJs(
+            "(function(){var p=document.querySelector('.zen-settings-drill-in')||document.querySelector('.zen-settings-phone');if(!p)return false;" +
+                "if(p.getAttribute('aria-hidden')==='true')return false;p.setAttribute('aria-hidden','true');" +
+                "requestAnimationFrame(function(){requestAnimationFrame(function(){p.removeAttribute('aria-hidden')})});return true})()"
+        ) == "true"
+
+    /**
+     * The tree's node for the Settings control labelled `label` (its text starting with the
+     * label: a value row's label and value run together), with bounds on screen, within
+     * `timeoutMs` – the window for what only the tree can say (TalkBack's name for a row, one
+     * node for it), 15 s by default. Each round the cache is dropped and a frame asked
+     * ([awaitFresh]); at 2 s and again at 8 s without the node the subtree is serialised anew
+     * ([nudgeSettingsTree]). How long it took, or that it never came, is a [noteLine]. Null past
+     * the window.
+     */
+    protected fun awaitSettingsRowInTree(label: String, timeoutMs: Long = TREE_WINDOW_MS): AccessibilityNodeInfo? {
+        val start = SystemClock.uptimeMillis()
+        val nudges = ArrayDeque(listOf(2_000L, 8_000L))
+        while (true) {
+            val node = freshNodes { it.startsWith(label) }.firstOrNull { boundsOnScreen(Rect().also { r -> it.getBoundsInScreen(r) }) }
+            val took = SystemClock.uptimeMillis() - start
+            if (node != null) {
+                if (took > 1_000) noteLine("  (the tree listed '$label' after $took ms)")
+                return node
+            }
+            if (took >= timeoutMs) {
+                noteLine("  (the tree did not list '$label' within $timeoutMs ms; WebView events meanwhile: ${eventsSince(start)})")
+                return null
+            }
+            if (nudges.isNotEmpty() && took >= nudges.first()) {
+                nudges.removeFirst()
+                if (nudgeSettingsTree()) noteLine("  (the tree without '$label' at $took ms: the Settings subtree serialised anew)")
+            }
+            nudgeFrame()
+            SystemClock.sleep(250)
+        }
+    }
 
     /**
      * Whether the Settings switch row labelled `label` is on, by the document (`role="switch"`
@@ -2331,6 +2419,13 @@ abstract class DemoHarness(
         const val PRIVACY_SECTION = "privacy"
         const val PASSWORDS_SECTION = "passwords"
         const val SECURITY_SECTION = "security"
+        /**
+         * The window a claim on what only the accessibility tree can say (TalkBack's name for a
+         * row, one node for it) gives the tree to list a Settings control on the emulator, whose
+         * tree trails the screen by seconds ([awaitSettingsRowInTree]); the document's word is
+         * read at once.
+         */
+        const val TREE_WINDOW_MS = 15_000L
         /** Settings section ids to the labels of their landing rows (`internalPages.ts`), for [openSettingsSection]. */
         val SETTINGS_SECTIONS: Map<String, String> = mapOf(
             LOOK_SECTION to LOOK_AND_FEEL_LABEL,

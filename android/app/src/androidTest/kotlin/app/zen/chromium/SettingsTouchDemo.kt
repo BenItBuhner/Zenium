@@ -523,9 +523,7 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
         /** The option that is not the seeded `light`, and the setting it writes. */
         private const val OTHER_OPTION = "Dark"
         private const val OTHER_SCHEME = "dark"
-        /** How long the tree is given to list the risen sheet's option where the DOM has it (TalkBack's claim). */
-        private const val TREE_WINDOW_MS = 15_000L
-        /** How far (px) the tree's rect may sit from the DOM's before the touch: a rounding, not a trailing frame. */
+        /** How far (px) the tree's rect may sit from the DOM's before the touch: a rounding, not a trailing frame. The tree's window for TalkBack's claim is DemoHarness's [TREE_WINDOW_MS]. */
         private const val TREE_TOLERANCE = 6
         /** The vault seeded off camera: one login, and the passphrase its prompt asks for. */
         private const val LOGIN_URL = "https://example.com/login"
