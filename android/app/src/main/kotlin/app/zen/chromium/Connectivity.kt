@@ -68,9 +68,14 @@ class Connectivity(context: Context, private val main: Handler, private val onCh
         runCatching { cm.unregisterNetworkCallback(callback) }
     }
 
-    /** The callbacks arrive on the manager's thread; the judge and the chrome live on the main one. */
+    /**
+     * The callbacks arrive on the manager's thread; the judge and the chrome live on the main
+     * one. A callback already in flight when [stop] ran lands after it – after the host's
+     * `destroy()`, on a chrome that is gone – so the posted work checks the registration first.
+     */
     private fun post(change: () -> Boolean?) {
         main.post {
+            if (!registered) return@post
             val online = change() ?: return@post
             Log.i(TAG, if (online) "online" else "offline")
             onChange(online)
