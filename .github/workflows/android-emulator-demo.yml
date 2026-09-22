@@ -144,6 +144,13 @@ on:
         required: false
         type: string
         default: ''
+      retention-days:
+        description: >-
+          How long the findings artifact is kept (the jank report has its own 90 days); a caller
+          that gathers several jobs' findings into one artifact of its own keeps these shorter
+        required: false
+        type: number
+        default: 14
     outputs:
       emulator-died:
         description: >-
@@ -313,7 +320,7 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: ${{ inputs.artifact-path }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: ${{ inputs.retention-days }}
       - name: Keep the frame statistics for the release's table
         # Small (the records and the rendered table alone), kept longer than the findings: the
         # release dry-run reads the newest of these on main (android-jank-report.mjs main).

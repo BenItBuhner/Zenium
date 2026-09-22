@@ -115,6 +115,9 @@ jobs:
         NIGHTLY_OUT=artifacts/nightly/${{ matrix.shard }}
       artifact-name: nightly-drivers-shard-${{ matrix.shard }}-r${{ github.run_attempt }}
       artifact-path: artifacts/nightly/${{ matrix.shard }}/
+      # The shard's own upload is the summary job's input; the record is the one artifact it
+      # gathers (14 days below), so these go early.
+      retention-days: 3
       api-level: ${{ matrix.api-level }}
       target: ${{ matrix.target }}
       profile: ${{ matrix.profile }}
