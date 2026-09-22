@@ -4189,6 +4189,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             extra.put("postMessageInPage", json(tabEval(view, "(function(){try{window.postMessage({topic:'LR_PS_probe',loggedIn:false},'*');return JSON.stringify({ok:true})}catch(e){return JSON.stringify({ok:false,error:String(e&&e.name)+': '+String(e&&e.message)})}})()")))
             val lines = consoleOf(view)
             extra.put("listenerThrew", JSONArray(lines.filter { it.contains("listener threw") || it.contains("DOMException") }.takeLast(8)))
+            // Blink prints the unsanitized line (the frame origin the access was blocked against) to the console.
+            extra.put("blockedFrameLines", JSONArray(lines.filter { it.contains("Blocked a frame") || it.contains("SecurityError") }.takeLast(6)))
         }
         val scoped = extra.optJSONObject("postMessageInScope")
         val threw = extra.optJSONArray("listenerThrew")?.length() ?: 0
@@ -5866,7 +5868,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "attempt('windowPostMessage',function(){window.postMessage(msg,'*')});attempt('barePostMessage',function(){postMessage(msg,'*')});attempt('selfPostMessage',function(){self.postMessage(msg,'*')});" +
                 "attempt('windowPostMessageParsed',function(){window.postMessage(JSON.parse('{\"topic\":\"LR_PS_probe\",\"loggedIn\":false}'),'*')});attempt('windowPostMessageString',function(){window.postMessage('LR_PS_probe','*')});attempt('topPostMessage',function(){window.top.postMessage(msg,'*')});" +
                 "out.windowTag=(function(){try{return Object.prototype.toString.call(window)+' self='+(window===self)+' top='+(window===window.top)}catch(e){return String(e)}})();" +
-                "out.postMessageFn=(function(){try{var f=window.postMessage;return typeof f+' '+String(f.name)+'/'+f.length+' native='+/\\[native code\\]/.test(Function.prototype.toString.call(f))}catch(e){return String(e)}})();" +
+                "out.postMessageFn=(function(){try{var f=window.postMessage;return typeof f+' '+String(f.name)+'/'+f.length+' native='+/\\[native code\\]/.test(Function.prototype.toString.call(f))}catch(e){return String(e)+(e&&e.stack?' @ '+String(e.stack).split('\\n').slice(0,3).join(' | ').slice(0,300):'')}})();" +
+                // The step that throws, named against the real window: its `postMessage` descriptor, a
+                // direct read, the native `bind` and a bare `call` on it, and whether `bind` is native.
+                "out.real=(function(){var o={};try{var real=Function('return this')();o.realIsScopeWindow=(real===window);var d=Object.getOwnPropertyDescriptor(real,'postMessage');o.desc=d?(('get' in d)?'accessor':'data '+typeof d.value+' '+/\\[native code\\]/.test(Function.prototype.toString.call(d.value))):'none';" +
+                "var f;try{f=Reflect.get(real,'postMessage');o.get='ok '+typeof f}catch(e){o.get=String(e)}" +
+                "try{var b=Function.prototype.bind.call(f,real);o.bind='ok '+String(b.name)}catch(e){o.bind=String(e)}" +
+                "try{Function.prototype.call.call(f,real,msg,'*');o.call='ok'}catch(e){o.call=String(e)}" +
+                "o.bindNative=/\\[native code\\]/.test(Function.prototype.toString.call(Function.prototype.bind));o.href=String(real.location&&real.location.href).slice(0,80)}catch(e){o.error=String(e)}return o})();" +
                 "return JSON.stringify(out)})()"
     }
 }
