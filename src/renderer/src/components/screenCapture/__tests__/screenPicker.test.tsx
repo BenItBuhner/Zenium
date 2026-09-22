@@ -559,7 +559,12 @@ describe('ScreenPicker for an extension (chrome.desktopCapture)', () => {
   })
 
   it('a pane that opens while the OS’s list is on its way puts the keyboard on its first card once the list is in (§9.22), and not again', async () => {
-    const waiting = { ...EXTENSION_REQUEST, kinds: ['screen'] as const, loading: true, sources: [] }
+    const waiting: ScreenCaptureRequest = {
+      ...EXTENSION_REQUEST,
+      kinds: ['screen'],
+      loading: true,
+      sources: []
+    }
     const el = render(layer(stateWith([waiting])))
     await settle()
     // Nothing to land on yet: the popover's fallback, Cancel, holds the keyboard.
