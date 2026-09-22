@@ -41,6 +41,8 @@ export class FakeKotlin implements RuntimeBridge {
   /** The fake WebView has the navigation listener (`navigation` view events carry webNavigation). */
   navigationListener = false
   readonly calls: Array<{ method: string; args: Record<string, unknown> }> = []
+  /** The methods that came one way (`post`), in order; `calls` has them too. */
+  readonly posted: string[] = []
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
   readonly manifests = new Map<string, Record<string, unknown>>()
@@ -115,6 +117,12 @@ export class FakeKotlin implements RuntimeBridge {
   }
 
   send(method: string, args?: unknown): void {
+    this.dispatch(method, (args ?? {}) as Record<string, unknown>)
+  }
+
+  /** One way, as the real bridge's: dispatched, nothing answered. */
+  post(method: string, args?: unknown): void {
+    this.posted.push(method)
     this.dispatch(method, (args ?? {}) as Record<string, unknown>)
   }
 

@@ -2245,6 +2245,42 @@ describe('AndroidExtensionRuntime: chrome.system.cpu and chrome.system.memory', 
   })
 })
 
+describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
+  it('drops the bridge token Kotlin left in the frame text, and sends to endpoints one way', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    // Kotlin forwards the frame's text as written: the token rides along on every message.
+    const event = {
+      ep: 'bg1',
+      tabId: null,
+      top: true,
+      origin: `https://${ID}.ext.zenium.invalid`,
+      message: {
+        t: 'hello',
+        ext: ID,
+        ctx: 'background',
+        url: `https://${ID}.ext.zenium.invalid/bg.html`,
+        token: 'tok'
+      } as Record<string, unknown>
+    }
+    h.runtime.onMessage(event)
+    expect(event.message.token).toBeUndefined()
+
+    // A reply to a call reaches the endpoint through `post` (no `resolve` back to the chrome per
+    // message), not through a `call`; the endpoint the hello registered gets it.
+    const id = nextCallId()
+    h.runtime.onMessage({
+      ...event,
+      message: { t: 'call', id, ns: 'runtime', method: 'getPlatformInfo', args: [], token: 'tok' }
+    })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.posted).toContain('ext.send')
+    expect(h.kt.posted.filter((m) => m === 'ext.send')).toHaveLength(
+      h.kt.calledWith('ext.send').length
+    )
+  })
+})
+
 describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
   it('routes the ChromeSetting calls to the proxy module: system by default, fixed servers applied, a PAC script refused', async () => {
     const h = harness()

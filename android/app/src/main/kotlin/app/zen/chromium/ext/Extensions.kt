@@ -597,9 +597,9 @@ class Extensions(private val host: Host) {
         }
     }
 
-    private fun recordCall(ep: String, message: JSONObject) {
+    private fun recordCall(ep: String, message: JSONObject, chars: Int) {
         val ext = endpoints[ep]?.extensionId ?: message.str("ext")
-        trace(">", ep, ext, message)
+        trace(">", ep, ext, message, chars)
         val key = when (message.str("t")) {
             "call" -> "$ext ${message.str("ns")}.${message.str("method")}"
             "msg" -> "$ext runtime.sendMessage"
@@ -615,8 +615,8 @@ class Extensions(private val host: Host) {
     }
 
     private fun recordReply(ep: String, message: String) {
-        val reply = runCatching { JSONObject(message) }.getOrNull() ?: return
-        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply)
+        val reply = BridgeEnvelope.read(message) ?: return
+        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply, message.length)
         if (reply.optString("t") != "reply") return
         synchronized(callStats) {
             val key = pendingCalls.remove("$ep:${reply.opt("id")}") ?: return
@@ -635,9 +635,11 @@ class Extensions(private val host: Host) {
      * type and the little that tells messages apart (a call's method, a message's `type` field,
      * a reply's outcome). Instrumentation reads it to see where a handshake stopped.
      */
-    private fun trace(direction: String, ep: String, ext: String, message: JSONObject) {
+    private fun trace(direction: String, ep: String, ext: String, message: JSONObject, chars: Int = 0) {
         val context = endpoints[ep]?.context ?: message.str("ctx", "?")
         val t = message.str("t")
+        // A big message is an envelope here (its nested values unread): its size stands in for them.
+        val size = if (chars >= BridgeEnvelope.BIG_MESSAGE) " chars=$chars" else ""
         val detail = when (t) {
             "call" -> "${message.str("ns")}.${message.str("method")}"
             "msg", "deliver" -> {
@@ -664,7 +666,7 @@ class Extensions(private val host: Host) {
         }
         synchronized(bridgeTrace) {
             if (bridgeTrace.size >= TRACE_LINES) bridgeTrace.removeFirst()
-            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail".trimEnd())
+            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail$size".trimEnd())
         }
     }
 
@@ -988,9 +990,10 @@ class Extensions(private val host: Host) {
      */
     private fun onBridgeMessage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy, kind: String, slot: Int?) {
         val text = data ?: return
-        val message = runCatching { JSONObject(text) }.getOrNull() ?: return
+        // The host reads the envelope (top-level scalars) and hands the text on as it came; a big
+        // message is never built whole on this thread (`BridgeEnvelope`).
+        val message = BridgeEnvelope.read(text) ?: return
         if (message.str("token") != token) return
-        message.remove("token")
         val ep = message.str("ep")
         if (ep.isEmpty()) return
         bridgeCounters[0]++
@@ -1002,7 +1005,7 @@ class Extensions(private val host: Host) {
         // A private tab's document still running the script of an extension no longer allowed
         // there (the toggle flipped after the document started) has no bridge.
         if (view.isPrivateTab && served[endpoints[ep]?.extensionId ?: message.str("ext")]?.allowPrivate != true) return
-        if (debug) recordCall(ep, message)
+        if (debug) recordCall(ep, message, text.length)
         when (message.str("t")) {
             "hello" -> {
                 val context = message.str("ctx", kind)
@@ -1034,10 +1037,16 @@ class Extensions(private val host: Host) {
             }
         }
         val tabId = (view as? TabWebView)?.tabId
-        chromeEvent(
-            "ext.message",
-            json("ep" to ep, "tabId" to tabId, "top" to isMainFrame, "origin" to origin.toString(), "message" to message)
-        )
+        // The message goes to the core as the frame wrote it (one copy, no rebuild); the core
+        // drops the token it carries (`extensionRuntime.onMessage`).
+        val event = StringBuilder(text.length + 128)
+            .append("{\"ep\":").append(JSONObject.quote(ep))
+            .append(",\"tabId\":").append(if (tabId == null) "null" else JSONObject.quote(tabId))
+            .append(",\"top\":").append(isMainFrame)
+            .append(",\"origin\":").append(JSONObject.quote(origin.toString()))
+            .append(",\"message\":").append(text)
+            .append('}')
+        chromeEvent("ext.message", Host.RawJson(event.toString()))
     }
 
     /**

@@ -147,6 +147,12 @@ import type { ViewEventPayloads } from './views'
 export interface RuntimeBridge {
   call<T = void>(method: string, args?: unknown): Promise<T>
   send(method: string, args?: unknown): void
+  /**
+   * One way, nothing answered (`Bridge.post`): for what the runtime sends often and never waits
+   * for. A `send` is a call whose answer is one more `evaluateJavascript` on the chrome per
+   * message; a bridge without `post` gets a `send`.
+   */
+  post?(method: string, args?: unknown): void
 }
 
 interface RuntimeEnv {
@@ -1626,15 +1632,20 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * message carries the endpoint id; the bootstrap routes on it.
    */
   private sendTo(endpointId: string, message: Record<string, unknown>): void {
-    this.bridge.send('ext.send', {
-      ep: endpointId,
-      message: JSON.stringify({ ...message, ep: endpointId })
-    })
+    const args = { ep: endpointId, message: JSON.stringify({ ...message, ep: endpointId }) }
+    // Kotlin answers `ext.send` with nothing (a dead frame comes back as `ext.gone`): one way,
+    // so a port's state broadcast at several messages a second costs the chrome no `resolve`
+    // task per message.
+    if (this.bridge.post) this.bridge.post('ext.send', args)
+    else this.bridge.send('ext.send', args)
   }
 
   /** A bridge message from a content-script frame or an extension page. */
   onMessage(event: ExtMessageEvent): void {
     const { message, ep } = event
+    // Kotlin forwards the frame's text as written, the bridge token still in it; nothing past
+    // this point is to see the token.
+    delete message.token
     const type = String(message.t)
     if (type === 'hello') {
       this.onHello(event)

@@ -183,6 +183,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val entry = JSONObject().put("id", row.id).put("name", row.name).put("feasible", row.feasible)
             rows.put(entry)
             val started = SystemClock.uptimeMillis()
+            val refusedBefore = host.chrome.bridge.refused.get()
             try {
                 // A row's core check is read off a page on screen: the browser back in front first.
                 onScreen("before ${row.name}")
@@ -195,11 +196,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 entry.put("ms", SystemClock.uptimeMillis() - started)
                 entry.put("pssKbAfter", Debug.getPss())
                 entry.put("heapAfterKb", heapKb())
+                // Calls the chrome's bridge refused at its queue limit during the row (`JsBridge`): 0 unless
+                // an extension's message storm outran the main thread.
+                entry.put("bridgeRefused", host.chrome.bridge.refused.get() - refusedBefore)
                 entry.put("grade", listOf("background", "popup", "options", "core").joinToString("/") { entry.optJSONObject(it)?.optString("verdict") ?: "?" })
                 Log.i(
                     TAG,
                     "ROW ${row.name}: install=${entry.optJSONObject("install")?.optString("verdict")} ${entry.optString("grade")}; " +
-                        "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB"
+                        "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB, " +
+                        "bridge refused ${entry.optInt("bridgeRefused")}"
                 )
                 write()
             }
