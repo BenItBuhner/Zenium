@@ -1,6 +1,5 @@
 import type { JSX, KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LongCapture, LongCaptureCrop } from '@shared/types'
 import { SheetPresence } from '@renderer/lib/motion/presence'
 import {
@@ -9,6 +8,9 @@ import {
   uiStore,
   type LongScreenshotEditor
 } from '@renderer/lib/ui'
+import { useSheetRest } from '@renderer/lib/motion/sheetRest'
+import { Btn } from '../autofill/controls'
+import { fitScale } from './longScreenshotFit'
 import { PhoneSheet } from './PhoneSheet'
 
 /**
@@ -31,26 +33,27 @@ const MIN_CROP_PX = 48
 const EDGE_FOLLOW_PX = 40
 /** An arrow key moves a handle this far in the frame (CSS px). */
 const KEY_STEP_PX = 16
-/** The handle's band, half of it past the frame's edge when the handle sits on it (§9.9's 44). */
-const HANDLE_BAND_PX = 44
 
 /**
  * Chrome's long screenshot (SH-08): the preview card's Capture more brought the whole page –
  * from its top, cut at about ten screens – and this sheet crops it. It is the phone's form of a
  * frame dialog whose body is the document (`openExpanded`): the picture stands in a frame at the
  * body's width, scaled so the first screen of it – what the viewport screenshot showed – fits the
- * body's height with both handles in view, and the body scrolls the rest (the sheet's own
- * scroller; pulling down from its top collapses the sheet, as everywhere). Two handles mark the
- * crop's edges: §9.9's 32 × 4 grabber on a small panel pill across an accent line, each on a 44
- * px band that is theirs alone (the press stops at the band, so the chassis never mistakes a
+ * body's height at the sheet's rest (`useSheetRest`: the expanded detent as it opens, the peek if
+ * it is collapsed; one fit per detent, `fitScale`) with both handles in view, and the body
+ * scrolls the rest (the sheet's own scroller; pulling down from its top collapses the sheet, as
+ * everywhere). Two handles mark the crop's edges: §9.9's 32 × 4 grabber on a small panel pill
+ * across an accent line, each on a 44 px band that is theirs alone (the press stops at the
+ * band, so the chassis never mistakes a
  * handle's drag for its own), following the finger and pulling the picture along when it nears
  * the scroller's edge; what lies outside the crop is dimmed under the scrim. The handles are
  * sliders to the keyboard and TalkBack (the arrows move them a step). Share | Save are §9.11
- * peers in the footer, Save the primary: the host crops the full-resolution picture it holds,
- * saves it to the gallery and the picture's own card follows; Share puts it on the OS's sheet
- * as well. The sheet mounts with the picture in hand: the host stitches the page from the
- * window while the page is on screen and alone in its frame, which a sheet over it would end
- * (`openLongScreenshot`); a page that cannot be captured is a toast, and no sheet.
+ * peers in the footer, Save the primary (busy in the chassis's §9.30 form while the host
+ * writes): the host crops the full-resolution picture it holds, saves it to the gallery and the
+ * picture's own card follows; Share puts it on the OS's sheet as well. The sheet mounts with the
+ * picture in hand: the host stitches the page from the window while the page is on screen and
+ * alone in its frame, which a sheet over it would end (`openLongScreenshot`); a page that cannot
+ * be captured is a toast, and no sheet.
  */
 function LongScreenshotSheet({ editor }: { editor: LongScreenshotEditor }): JSX.Element {
   const capture = editor.capture
@@ -75,30 +78,17 @@ function LongScreenshotSheet({ editor }: { editor: LongScreenshotEditor }): JSX.
       openExpanded
       footer={
         <>
-          <button
-            type="button"
-            className="zen-v2-button"
-            data-testid="longshot-share"
-            disabled={editor.busy}
-            onClick={() => submit(true)}
-          >
+          <Btn data-testid="longshot-share" disabled={editor.busy} onClick={() => submit(true)}>
             Share
-          </button>
-          <button
-            type="button"
-            className="zen-v2-button"
-            data-primary
+          </Btn>
+          <Btn
+            variant="primary"
             data-testid="longshot-save"
-            aria-label="Save"
-            aria-busy={editor.busy || undefined}
+            busy={editor.busy}
             onClick={() => submit(false)}
           >
-            {editor.busy ? (
-              <Loader2 className="zen-spin h-4 w-4" strokeWidth={2} aria-hidden />
-            ) : (
-              'Save'
-            )}
-          </button>
+            Save
+          </Btn>
         </>
       }
     >
@@ -118,35 +108,18 @@ function CropEditor({
   capture: LongCapture
   onCrop: (crop: LongCaptureCrop) => void
 }): JSX.Element {
-  const body = useRef<HTMLDivElement>(null)
   const frame = useRef<HTMLDivElement>(null)
-  const [scale, setScale] = useState(0)
+  // The frame's scale, from the body's box at the sheet's rest: a new one when the chassis
+  // measures the sheet again (the keyboard, a turn) or the sheet heads for its other detent,
+  // and nothing while the sheet is in motion. Before the first measure, no frame.
+  const rest = useSheetRest()
+  const scale = rest ? fitScale(capture, rest) : 0
   // The first screen of the page, what the viewport screenshot showed, is the crop to start from.
   const [crop, setCrop] = useState<LongCaptureCrop>(() => ({
     top: 0,
     bottom: Math.min(capture.height, capture.viewportHeight)
   }))
   useEffect(() => onCrop(crop), [crop, onCrop])
-
-  // The frame's scale: the body's width, or less, so the first screen fits the scroller's height
-  // with both handles in view – measured again with the sheet (the keyboard, a turn).
-  useLayoutEffect(() => {
-    const el = body.current
-    if (!el) return
-    const scroller = el.closest<HTMLElement>('.zen-sheet-scroll')
-    const fit = (): void => {
-      const width = el.clientWidth
-      const height = (scroller?.clientHeight ?? 0) - HANDLE_BAND_PX * 2
-      const byWidth = width / capture.width
-      const byHeight = height > 0 ? height / capture.viewportHeight : byWidth
-      setScale(Math.max(0.05, Math.min(byWidth, byHeight)))
-    }
-    fit()
-    const ro = new ResizeObserver(fit)
-    ro.observe(el)
-    if (scroller) ro.observe(scroller)
-    return () => ro.disconnect()
-  }, [capture])
 
   const frameWidth = Math.round(capture.width * scale)
   const frameHeight = Math.round(capture.height * scale)
@@ -248,7 +221,7 @@ function CropEditor({
   )
 
   return (
-    <div ref={body} className="zen-longshot-body" data-testid="longshot-editor">
+    <div className="zen-longshot-body" data-testid="longshot-editor">
       <div
         ref={frame}
         className="zen-longshot-frame"

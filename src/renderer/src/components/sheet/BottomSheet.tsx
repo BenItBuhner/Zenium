@@ -1,5 +1,12 @@
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, Ref, SyntheticEvent } from 'react'
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import {
@@ -14,8 +21,10 @@ import {
   fieldOverflow,
   REDUCED_MOTION_FADE_MS,
   SheetMotion,
+  type SheetDetent,
   type SheetDetents
 } from '@renderer/lib/motion/sheet'
+import { SheetRestContext, type SheetRest } from '@renderer/lib/motion/sheetRest'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { isTextField, sheetInitialFocus, wrapTab } from '@renderer/lib/popover'
@@ -146,7 +155,9 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
  * catches the sheet where it is, the scrim fades with the sheet's position, and content never
  * jumps – between detents the sheet changes height with its content anchored to the top edge,
  * below the peek it slides down whole. The motion writes to the DOM straight from its frames;
- * React only renders the content.
+ * React only renders the content. A body that sizes itself to the sheet – the long-screenshot
+ * editor's picture – takes the box it has at the sheet's rest from `useSheetRest`, once per
+ * detent, never the body's live height as the sheet moves.
  *
  * The sheet is on the recede chassis (`lib/motion/recede.ts`, v2 draft §11): the page behind
  * recedes and the bottom bar fades on the sheet's own progress, reversibly, and a sheet mounted
@@ -208,7 +219,14 @@ export function BottomSheet({
   const scrimRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const gripRef = useRef<HTMLDivElement>(null)
+  const footerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  /** The body's box at the sheet's rest, for the body (`useSheetRest`). */
+  const [rest, setRest] = useState<SheetRest | null>(null)
+  /** From the last measure: the body's width and what of the sheet's height is not the body's. */
+  const restParts = useRef({ width: 0, chrome: 0 })
+  /** The detent the last published rest was computed for. */
+  const restDetent = useRef<SheetDetent | null>(null)
   // The bottom edge only: the header's hairline (`data-scrolled`) marks scrolled-under content (§9.7).
   const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'y', edges: 'end' })
   /**
@@ -297,6 +315,31 @@ export function BottomSheet({
     if (fade.current === null) scrim.style.opacity = layer.scrim.toFixed(4)
     syncLock()
   }
+
+  /** The detent the sheet rests at or heads for – before it is up, the one it comes in to. */
+  const restingDetent = (): SheetDetent => {
+    const m = motionRef.current
+    return m?.isOpen ? m.restingDetent : openExpanded ? 'expanded' : 'collapsed'
+  }
+
+  /**
+   * Tell the body the box it has at the sheet's rest (`useSheetRest`): after a measure – the
+   * parts were read then, in the measure's own layout – and when the sheet heads for its other
+   * detent (a handle tap, a drag's release). Arithmetic on the detents, no layout read, and the
+   * same box again is no render: the body hears of a change once, never of a frame.
+   */
+  const publishRest = (): void => {
+    const detent = restingDetent()
+    restDetent.current = detent
+    const { width, chrome } = restParts.current
+    const bodyHeight = Math.max(0, detents.current[detent] - chrome)
+    setRest((prev) =>
+      prev && prev.bodyWidth === width && prev.bodyHeight === bodyHeight
+        ? prev
+        : { bodyWidth: width, bodyHeight }
+    )
+  }
+
   const motion = (): SheetMotion =>
     (motionRef.current ??= new SheetMotion({
       detents: () => detents.current,
@@ -306,6 +349,7 @@ export function BottomSheet({
         // chassis (`--zen-recede`, main.css); a sheet above recedes this one by its own.
         recede.current?.progress(motionRef.current!.frame().scrim)
         paint()
+        if (restingDetent() !== restDetent.current) publishRest()
       },
       onClosed: () => landed()
     }))
@@ -373,6 +417,16 @@ export function BottomSheet({
     const height = sheet.style.height
     sheet.style.height = 'auto'
     const intrinsic = sheet.offsetHeight
+    // In the same layout, what the body's box at a detent is made of: the grip and the footer
+    // (`shrink-0`) and the bottom padding stand at every height of the sheet; the body takes the
+    // rest of the detent, at the width it has.
+    restParts.current = {
+      width: scrollRef.current?.clientWidth ?? 0,
+      chrome:
+        (gripRef.current?.offsetHeight ?? 0) +
+        (footerRef.current?.offsetHeight ?? 0) +
+        Math.max(8, insetBottom.current)
+    }
     sheet.style.height = height
     detents.current = computeDetents(
       intrinsic,
@@ -383,6 +437,7 @@ export function BottomSheet({
     const m = motion()
     if (m.isOpen) m.refresh()
     else present()
+    publishRest()
   }
 
   /**
@@ -873,9 +928,15 @@ export function BottomSheet({
           {header && <div className="zen-sheet-header">{header}</div>}
         </div>
         <div ref={bodyRef} className="zen-sheet-scroll min-h-0 flex-1 overflow-y-auto">
-          {fitContent ? <div ref={contentRef}>{children}</div> : children}
+          <SheetRestContext.Provider value={rest}>
+            {fitContent ? <div ref={contentRef}>{children}</div> : children}
+          </SheetRestContext.Provider>
         </div>
-        {footer && <div className="zen-sheet-footer shrink-0">{footer}</div>}
+        {footer && (
+          <div ref={footerRef} className="zen-sheet-footer shrink-0">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   )
