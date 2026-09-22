@@ -61,6 +61,13 @@ object BlinkTrace {
     const val STYLE_RECALC = "UpdateLayoutTree"
     const val LAYER_UPDATE = "UpdateLayer"
     val SCRIPT: Set<String> = setOf("FunctionCall", "EvaluateScript")
+    /**
+     * V8 compiling: a script's (`v8.compile`) and, with `disabled-by-default-v8.compile` on, the
+     * functions it compiles lazily on their first call and again after it flushed their bytecode
+     * (`V8.CompileCode`, `V8.CompileIgnition`, `V8.CompileLazy`, …): script time that is not the
+     * chrome's own work, and the shape of a first touch after a long idle.
+     */
+    fun isCompile(name: String): Boolean = name == "v8.compile" || name.startsWith("V8.Compile")
     /** A top-level slice this long is a long task (the Long Tasks API's 50 ms). */
     const val LONG_TASK_US = 50_000.0
 
@@ -69,8 +76,10 @@ object BlinkTrace {
      * so one trace serves every reader: `blink` (style, layout, paint), `cc` (the compositor's
      * frames), `v8` (script and GC), `renderer.scheduler`, `input`, the DevTools timeline (which
      * names `Layout` / `Paint` / `UpdateLayoutTree` / `FunctionCall` as the Performance panel
-     * does; its disabled-by-default part carries `RunTask` and `UpdateLayer`), and
-     * `blink.user_timing`, whose events are `performance.mark()` calls by name.
+     * does; its disabled-by-default part carries `RunTask` and `UpdateLayer`), `blink.user_timing`,
+     * whose events are `performance.mark()` calls by name, and V8's compile events (PERF-5: the
+     * first touch of a swipe after the app sat idle was one 55 ms listener with nothing traced
+     * inside it; a compile shows in this category and nowhere else, at no cost when none happens).
      */
     val CATEGORIES: List<String> = listOf(
         "blink",
@@ -81,7 +90,8 @@ object BlinkTrace {
         "input",
         "devtools.timeline",
         "disabled-by-default-devtools.timeline",
-        "disabled-by-default-devtools.timeline.frame"
+        "disabled-by-default-devtools.timeline.frame",
+        "disabled-by-default-v8.compile"
     )
 
     /** A stretch of the trace's clock, µs (`CLOCK_MONOTONIC`, as `System.nanoTime() / 1000`). */
@@ -122,6 +132,8 @@ object BlinkTrace {
         val layoutMs: Double = 0.0,
         /** `Paint` slices' time (nested ones counted once), ms. */
         val paintMs: Double = 0.0,
+        /** V8's compile slices' time ([isCompile]; nested ones counted once), ms: the part of the script time that was compiling. */
+        val compileMs: Double = 0.0,
         val layoutCount: Int,
         val paintCount: Int,
         val styleRecalcCount: Int,
@@ -166,7 +178,8 @@ object BlinkTrace {
             sb.append(",\"workMs\":{\"script\":").append(FrameStats.number(scriptMs, 2))
                 .append(",\"styleRecalc\":").append(FrameStats.number(styleRecalcMs, 2))
                 .append(",\"layout\":").append(FrameStats.number(layoutMs, 2))
-                .append(",\"paint\":").append(FrameStats.number(paintMs, 2)).append("}")
+                .append(",\"paint\":").append(FrameStats.number(paintMs, 2))
+                .append(",\"compile\":").append(FrameStats.number(compileMs, 2)).append("}")
             sb.append(",\"layoutCount\":").append(layoutCount)
             sb.append(",\"paintCount\":").append(paintCount)
             sb.append(",\"styleRecalcCount\":").append(styleRecalcCount)
@@ -202,7 +215,8 @@ object BlinkTrace {
                 .append(", layer updates ").append(f1(perFrame(layerChurn))).append(" (").append(layerChurn).append(")")
             sb.append("; long tasks ").append(longTasks).append(" (longest ").append(f0(longestTaskMs)).append(" ms)")
                 .append(", busy ").append(f0(busyMs)).append(" ms: script ").append(f0(scriptMs))
-                .append(", style ").append(f0(styleRecalcMs)).append(", layout ").append(f0(layoutMs))
+            if (compileMs >= 0.5) sb.append(" (compiling ").append(f0(compileMs)).append(")")
+            sb.append(", style ").append(f0(styleRecalcMs)).append(", layout ").append(f0(layoutMs))
                 .append(", paint ").append(f0(paintMs)).append(" ms")
             return sb.toString()
         }
@@ -246,6 +260,7 @@ object BlinkTrace {
         val layoutSlices = ArrayList<Slice>()
         val paintSlices = ArrayList<Slice>()
         val styleRecalcSlices = ArrayList<Slice>()
+        val compileSlices = ArrayList<Slice>()
         val open = ArrayList<Pair<String, Double>>()
         var minTs = Double.MAX_VALUE
         var maxTs = -Double.MAX_VALUE
@@ -259,6 +274,7 @@ object BlinkTrace {
                 STYLE_RECALC -> { styleRecalc++; styleRecalcSlices += Slice(ts, durUs) }
                 LAYER_UPDATE -> layerUpdates++
                 in SCRIPT -> scriptUs += durUs
+                else -> if (isCompile(name)) compileSlices += Slice(ts, durUs)
             }
         }
 
@@ -370,6 +386,7 @@ object BlinkTrace {
                 styleRecalcMs = outermostUs(t.styleRecalcSlices) / 1e3,
                 layoutMs = outermostUs(t.layoutSlices) / 1e3,
                 paintMs = outermostUs(t.paintSlices) / 1e3,
+                compileMs = outermostUs(t.compileSlices) / 1e3,
                 layoutCount = t.layout,
                 paintCount = t.paint,
                 styleRecalcCount = t.styleRecalc,

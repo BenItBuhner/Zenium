@@ -174,6 +174,26 @@ class BlinkTraceTest {
     }
 
     @Test
+    fun `V8's compile slices are the script time that was compiling - nested ones once, named in describe past half a ms`() {
+        val text = "[" + listOf(
+            event(7, 1_000, "X", BlinkTrace.FRAME, 60_000),
+            event(7, 1_100, "X", "FunctionCall", 55_000),
+            event(7, 1_200, "X", "V8.CompileLazy", 40_000),
+            event(7, 1_300, "X", "V8.CompileIgnition", 30_000), // inside the lazy compile: counted once
+            event(7, 50_000, "X", "v8.compile", 4_000),
+            event(7, 70_000, "X", "V8.CompileCode", 300) // outside the window's frame, in the trace
+        ).joinToString(",") + "]"
+        val whole = BlinkTrace.parse(text)
+        assertEquals(44.3, whole.compileMs, 1e-9)
+        assertEquals(55.0, whole.scriptMs, 1e-9)
+        assertTrue(whole.describe(), whole.describe().contains("script 55 (compiling 44), style 0"))
+        val windowed = BlinkTrace.parse(text, Window(0, 60_000))
+        assertEquals(44.0, windowed.compileMs, 1e-9)
+        assertTrue(windowed.toJson(), windowed.toJson().contains("\"workMs\":{\"script\":55,\"styleRecalc\":0,\"layout\":0,\"paint\":0,\"compile\":44}"))
+        assertFalse(scene.describe(), scene.describe().contains("compiling"))
+    }
+
+    @Test
     fun `a trace with frames as instants alone counts them, with no main-thread time`() {
         val text = "[" + listOf(
             event(3, 100, "I", BlinkTrace.FRAME_INSTANT),
@@ -269,7 +289,7 @@ class BlinkTraceTest {
         val json = scene.toJson()
         assertEquals(
             "{\"found\":true,\"thread\":\"4242:4242\",\"frames\":20,\"mainThreadMs\":{\"mean\":8.34,\"max\":30,\"p95\":18}," +
-                "\"busyMs\":252.8,\"busyPerFrameMs\":12.64,\"scriptMs\":71,\"workMs\":{\"script\":71,\"styleRecalc\":10,\"layout\":16.5,\"paint\":2.5}," +
+                "\"busyMs\":252.8,\"busyPerFrameMs\":12.64,\"scriptMs\":71,\"workMs\":{\"script\":71,\"styleRecalc\":10,\"layout\":16.5,\"paint\":2.5,\"compile\":0}," +
                 "\"layoutCount\":11,\"paintCount\":5,\"styleRecalcCount\":20," +
                 "\"layerChurn\":15,\"longTasks\":1,\"longestTaskMs\":80,\"perFrame\":{\"layout\":0.55,\"paint\":0.25,\"styleRecalc\":1,\"layerChurn\":0.75}," +
                 "\"events\":116,\"threads\":6,\"windowMs\":1000,\"whole\":false}",
