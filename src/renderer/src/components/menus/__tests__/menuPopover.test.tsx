@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -81,6 +83,23 @@ const click = (el: Element): void => {
   })
 }
 const calls = (name: string): unknown[][] => invoke.mock.calls.filter(([n]) => n === name)
+
+/** main.css without its comments, one space for every run of whitespace. */
+function stylesheet(): string {
+  return readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\s+/g, ' ')
+}
+
+/** The declarations of the first rule whose selector list is exactly `selectors`. */
+function declarations(css: string, selectors: string[]): string {
+  const list = selectors.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(',\\s*')
+  // From a rule boundary (the start, or the `}` that closed the rule before), so a selector is
+  // found as a whole list and not as the tail of a longer one.
+  const m = css.match(new RegExp(`(?:^|\\})\\s*${list}\\s*\\{([^}]*)\\}`))
+  if (!m) throw new Error(`no rule for ${selectors.join(', ')}`)
+  return m[1].trim()
+}
 
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
@@ -265,6 +284,38 @@ describe('the popover menu', () => {
     expect(hint?.textContent).toBe('Ctrl+T')
     expect(hint?.getAttribute('aria-hidden')).toBe('true')
     expect(rowOf('more').querySelector('.zen-v2-menu-hint + .zen-v2-menu-chevron')).not.toBeNull()
+  })
+
+  it('a disabled row is one ink: its chord and chevron take the label’s ink under the row’s .4, never the 69% ink compounded (§9.30)', () => {
+    // Reader View on a page with no article: the row at .4 with "Ctrl+Alt+R" beside it – in the
+    // deemphasised ink under the .4 that hint read 1.9:1 in dark (the lead's nit 1 on #299).
+    show(
+      tabMenu({
+        items: [
+          item('reader', 'Reader View', { hint: 'Ctrl+Alt+R', enabled: false }),
+          item('more', 'More Tools', { enabled: false, submenu: [item('x', 'X')] })
+        ]
+      })
+    )
+    const row = rowOf('reader')
+    expect(row.hasAttribute('disabled')).toBe(true)
+    expect(row.querySelector('.zen-v2-menu-hint')?.textContent).toBe('Ctrl+Alt+R')
+    expect(rowOf('more').querySelector('.zen-v2-menu-chevron')).not.toBeNull()
+    // The shared rule (`main.css`, every renderer-drawn menu's rows are `.zen-v2-menu-item`):
+    // the row dims once at .4, the hint is the deemphasised ink while the row is enabled, and
+    // under `:disabled` the hint and the chevron inherit the label's ink.
+    const css = stylesheet()
+    expect(declarations(css, ['.zen-v2-menu-item:disabled'])).toBe('opacity: 0.4;')
+    expect(declarations(css, ['.zen-v2-menu-hint'])).toContain('color: var(--v2-text-deemphasized);')
+    expect(declarations(css, ['.zen-v2-menu-chevron'])).toContain(
+      'color: var(--v2-text-deemphasized);'
+    )
+    expect(
+      declarations(css, [
+        '.zen-v2-menu-item:disabled .zen-v2-menu-hint',
+        '.zen-v2-menu-item:disabled .zen-v2-menu-chevron'
+      ])
+    ).toBe('color: inherit;')
   })
 
   it('an empty state’s sentence is a note row, not a menuitem: the deemphasised ink, no focus, the arrows and Tab pass it by (§9.17)', () => {
