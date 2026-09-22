@@ -19,20 +19,21 @@ class UnresponsivePolicy(private val clock: () -> Long) {
     /** The prompt is up. */
     var showing = false
         private set
-    /** When the user last chose Wait; the prompt keeps off until the renderer has been hung [WAIT_GRACE_MS] past it. */
-    private var waitedAt = Long.MIN_VALUE
+    /** When the user last chose Wait, or null; the prompt keeps off until the renderer has been hung [WAIT_GRACE_MS] past it. */
+    private var waitedAt: Long? = null
 
     /** A WebView reported the renderer unresponsive. */
     fun unresponsive(): Action {
         if (showing) return Action.NONE
-        if (clock() - waitedAt < WAIT_GRACE_MS) return Action.NONE
+        val waited = waitedAt
+        if (waited != null && clock() - waited < WAIT_GRACE_MS) return Action.NONE
         showing = true
         return Action.SHOW
     }
 
     /** A WebView reported the renderer responsive again: the page is back, the prompt goes. */
     fun responsive(): Action {
-        waitedAt = Long.MIN_VALUE
+        waitedAt = null
         if (!showing) return Action.NONE
         showing = false
         return Action.DISMISS
@@ -47,7 +48,7 @@ class UnresponsivePolicy(private val clock: () -> Long) {
     /** The user chose Exit page, or the renderer went on its own: the prompt is over and nothing carries. */
     fun ended() {
         showing = false
-        waitedAt = Long.MIN_VALUE
+        waitedAt = null
     }
 
     companion object {

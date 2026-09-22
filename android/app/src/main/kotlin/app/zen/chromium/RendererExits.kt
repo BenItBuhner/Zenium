@@ -41,7 +41,8 @@ class RendererExits(private val clock: () -> Long) {
     }
 
     private var pending: Pending? = null
-    private var lastGoneAt = Long.MIN_VALUE
+    /** When the renderer last went, or null before it ever has (a sentinel like `Long.MIN_VALUE` overflows the subtraction). */
+    private var lastGoneAt: Long? = null
     /** The host ended the renderer itself and has recorded the exit; the callbacks that follow are that exit. */
     private var expected = false
     /** When each tab's page last went, for the repeat rule. */
@@ -60,8 +61,11 @@ class RendererExits(private val clock: () -> Long) {
             lastGoneAt = now
             return null
         }
-        if (now - lastGoneAt < BATCH_MS) return null
+        val last = lastGoneAt
+        // An echo of the exit already recorded (the other WebViews sharing the renderer report
+        // it in turn); the window slides with each, so a slow chain of reports stays one exit.
         lastGoneAt = now
+        if (last != null && now - last < BATCH_MS) return null
         val exit = classify(didCrash, priorityAtExit)
         record(exit, visibleTabIds, now)
         return exit
