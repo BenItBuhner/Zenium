@@ -1,4 +1,4 @@
-import type { JSX, ReactNode, RefCallback } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useState } from 'react'
 import { ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
@@ -16,6 +16,7 @@ import {
   type SwitchRow,
   type ValueRow
 } from './model'
+import { attachLineCount } from './lineCount'
 import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
 /**
@@ -41,43 +42,6 @@ import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
 /** Which of the two row vocabularies a list draws (§10.4 / §10.5). */
 export type RowVariant = 'phone' | 'desktop'
-
-/** The row's text block as laid out: three lines or more, and where the label line starts. */
-function measureLines(row: HTMLElement): void {
-  const text = row.querySelector<HTMLElement>('.zen-settings-row-text')
-  const label = text?.querySelector<HTMLElement>('.zen-settings-label')
-  if (!text || !label) return
-  const line = parseFloat(getComputedStyle(label).lineHeight) || 20
-  const block = text.getBoundingClientRect()
-  const three = block.height > line * 2.5
-  if (three) {
-    row.dataset.lines = '3'
-    row.style.setProperty(
-      '--zen-settings-label-top',
-      `${(label.getBoundingClientRect().top - block.top).toFixed(2)}px`
-    )
-  } else {
-    delete row.dataset.lines
-    row.style.removeProperty('--zen-settings-label-top')
-  }
-}
-
-/**
- * Keep a row's line count current: measured once it is on screen and again whenever its text
- * block changes size (the label wraps at a new width, the description changes). Only rows with
- * something trailing the text need it; exported for a row drawn outside the model on the same
- * primitive (the site-data viewer's origin rows).
- */
-export const attachLineCount: RefCallback<HTMLElement> = (row) => {
-  if (!row) return
-  measureLines(row)
-  if (typeof ResizeObserver !== 'function') return
-  const text = row.querySelector('.zen-settings-row-text')
-  if (!text) return
-  const observer = new ResizeObserver(() => measureLines(row))
-  observer.observe(text)
-  return () => observer.disconnect()
-}
 
 /** What a row asks the page to open over it. */
 export type SheetRequest =

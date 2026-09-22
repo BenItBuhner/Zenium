@@ -183,7 +183,11 @@ export function SettingsSheet({
   // asks for its detents again through `useSheetRelayout`: the chassis measures on a new key.
   const [relayouts, setRelayouts] = useState(0)
   const relayout = useCallback((): void => setRelayouts((n) => n + 1), [])
-  const footer = useSheetFooterSlot()
+  const {
+    slot: footerSlot,
+    claimed: footerClaimed,
+    setElement: setFooterElement
+  } = useSheetFooterSlot()
   const pose: SheetTitle =
     description === undefined
       ? { pose: 'header', text: title }
@@ -194,13 +198,13 @@ export function SettingsSheet({
       title={pose}
       under={under}
       onClose={onClose}
-      contentKey={`${contentKey ?? ''}|${relayouts}|${footer.claimed ? 'footer' : ''}`}
+      contentKey={`${contentKey ?? ''}|${relayouts}|${footerClaimed ? 'footer' : ''}`}
       className="zen-settings-sheet"
       sheetRef={sheet}
       footer={
-        footer.claimed ? (
+        footerClaimed ? (
           <div
-            ref={footer.setElement}
+            ref={setFooterElement}
             className="zen-settings-sheet-actions zen-settings-sheet-footer"
             data-testid="settings-sheet-footer"
           />
@@ -210,7 +214,7 @@ export function SettingsSheet({
       <div className="zen-settings-sheet-body">
         <SheetDismissContext.Provider value={dismiss}>
           <SheetRelayoutContext.Provider value={relayout}>
-            <SheetFooterContext.Provider value={footer.slot}>{children}</SheetFooterContext.Provider>
+            <SheetFooterContext.Provider value={footerSlot}>{children}</SheetFooterContext.Provider>
           </SheetRelayoutContext.Provider>
         </SheetDismissContext.Provider>
       </div>

@@ -13,7 +13,8 @@ import {
 import { V2Button } from '../../extensions/v2'
 import { SheetActions, SheetFooter } from './blocks'
 import { SettingsDialog } from './dialogs'
-import { attachLineCount, RowText } from './rows'
+import { attachLineCount } from './lineCount'
+import { RowText } from './rows'
 import { SettingsSheet } from './sheets'
 import { useSheetDismiss, useSheetRelayout } from './sheetContext'
 
@@ -170,9 +171,7 @@ export function SiteDataViewer(): JSX.Element {
           {SITE_DATA_TEXT.viewer.clearAll}
         </V2Button>
       </SheetFooter>
-      {prompt && (
-        <ClearAllPrompt close={() => setPrompt(false)} confirm={clearAll} />
-      )}
+      {prompt && <ClearAllPrompt close={() => setPrompt(false)} confirm={clearAll} />}
     </div>
   )
 }
@@ -227,7 +226,13 @@ function OriginRow({
  * Clear all as §9.11 peers with the destructive one trailing; Cancel takes the focus as it opens.
  * A sheet over the viewer's sheet on the phone, a dialog over its dialog on the desktop.
  */
-function ClearAllPrompt({ close, confirm }: { close: () => void; confirm: () => void }): JSX.Element {
+function ClearAllPrompt({
+  close,
+  confirm
+}: {
+  close: () => void
+  confirm: () => void
+}): JSX.Element {
   const phone = useViewport().formFactor === 'phone'
   const t = SITE_DATA_TEXT.viewer
   if (phone)

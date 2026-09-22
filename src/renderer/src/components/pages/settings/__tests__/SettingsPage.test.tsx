@@ -15,6 +15,7 @@ import {
 } from '@shared/defaults'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { emptyPrivacyStatus } from '@shared/privacy'
+import { emptySiteDataStatus } from '@shared/siteData'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
 import type { TranslateUIState } from '@shared/translate'
@@ -243,6 +244,7 @@ function state(
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
+    siteData: emptySiteDataStatus(),
     newTabShortcuts: [],
     newTabBackground: { image: false, canPick: false },
     translate: TRANSLATE,

@@ -14,6 +14,7 @@ import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus } from '@shared/privacy'
+import { emptySiteDataStatus } from '@shared/siteData'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -320,6 +321,7 @@ function desktopState(): UIState {
       siteExceptions: ['https://news.example']
     },
     privacy: { ...emptyPrivacyStatus(), httpsOnlyExceptions: ['intranet.example'] },
+    siteData: emptySiteDataStatus(),
     translate: TRANSLATE,
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     spellcheck: {

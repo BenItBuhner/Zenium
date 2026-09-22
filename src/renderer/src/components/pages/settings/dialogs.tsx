@@ -211,7 +211,11 @@ function HostedDialog({
     coverHost(true)
     return () => coverHost(false)
   }, [coverHost])
-  const footer = useSheetFooterSlot()
+  const {
+    slot: footerSlot,
+    claimed: footerClaimed,
+    setElement: setFooterElement
+  } = useSheetFooterSlot()
   // The sheet's dismiss as the forms and rows inside know it (`useSheetDismiss`): the dialog has
   // no motion to wait for, so `after` – an action that opens a surface of its own once the
   // dialog is gone (`ActionRow.closesSheet`), a prompt's confirmed action – runs at once.
@@ -273,14 +277,16 @@ function HostedDialog({
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
       >
         <SheetDismissContext.Provider value={dismiss}>
-          <SheetFooterContext.Provider value={footer.slot}>
-            <SheetCoveredContext.Provider value={setCovered}>{children}</SheetCoveredContext.Provider>
+          <SheetFooterContext.Provider value={footerSlot}>
+            <SheetCoveredContext.Provider value={setCovered}>
+              {children}
+            </SheetCoveredContext.Provider>
           </SheetFooterContext.Provider>
         </SheetDismissContext.Provider>
       </div>
-      {footer.claimed && (
+      {footerClaimed && (
         <div
-          ref={footer.setElement}
+          ref={setFooterElement}
           className="zen-settings-sheet-actions zen-settings-dialog-footer"
           data-testid="settings-dialog-footer"
         />

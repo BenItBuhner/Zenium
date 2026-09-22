@@ -35,6 +35,7 @@ import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
+import { emptySiteDataStatus } from '@shared/siteData'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -256,6 +257,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     privacy: emptyPrivacyStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
+    siteData: emptySiteDataStatus(),
     newTabBackground: { image: false, canPick: false },
     translate: TRANSLATE,
     spellcheck: UNAVAILABLE_SPELLCHECK,
@@ -565,6 +567,15 @@ describe('the section model', () => {
       'cookies',
       'cookies-related-sites',
       'cookies-add-site',
+      'site-data',
+      'site-data-allow',
+      'site-data-allow-add',
+      'site-data-clearOnExit',
+      'site-data-clearOnExit-add',
+      'site-data-block',
+      'site-data-block-add',
+      'site-data-exit',
+      'site-data-viewer',
       'sites-permissions',
       'sites-content',
       'sites-additional',
@@ -1576,6 +1587,15 @@ describe('the section model', () => {
       'cookies',
       'cookies-related-sites',
       'cookies-add-site',
+      'site-data',
+      'site-data-allow',
+      'site-data-allow-add',
+      'site-data-clearOnExit',
+      'site-data-clearOnExit-add',
+      'site-data-block',
+      'site-data-block-add',
+      'site-data-exit',
+      'site-data-viewer',
       'sites-permissions',
       'sites-content',
       'sites-additional',
@@ -3515,7 +3535,10 @@ describe('searching the rows', () => {
     expect(at('safe-browsing')).toBe(at('safety-check-actions') + 1)
     expect(at('safe-browsing-feeds')).toBe(at('tracking-prevention') - 1)
     expect(at('cookies')).toBe(at('clear-data') + 1)
-    expect(at('cookies-add-site')).toBe(at('sites-permissions') - 1)
+    // #310's Cookies and site data groups (site-data-*) stand between the cookie groups and
+    // Site settings, where Chrome's cookies page sits; siteData.test.ts asserts their content.
+    expect(at('site-data')).toBe(at('cookies-add-site') + 1)
+    expect(at('site-data-viewer')).toBe(at('sites-permissions') - 1)
     expect(at('https-only')).toBe(at('sites-own') + 1)
     // The signals close the protection groups; after them only the private-tab lock (INC-05,
     // Chrome's Incognito lock after Do Not Track).

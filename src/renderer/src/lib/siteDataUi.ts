@@ -15,6 +15,7 @@ import {
 } from '@shared/siteData'
 import { normalizeSitePattern } from '@shared/sitePatterns'
 import { formatBytes } from '@shared/siteInfo'
+import { cmd } from './api'
 import { TYPE_LABEL } from './browsingData'
 
 /**
@@ -40,7 +41,8 @@ export const SITE_DATA_TEXT = {
     addButton: 'Add…',
     addDescription: 'A site, or [*.]site for its subdomains too',
     field: 'Site',
-    fieldHint: 'example.com covers that host; [*.]example.com its subdomains too. https:// or :8443 narrows it.',
+    fieldHint:
+      'example.com covers that host; [*.]example.com its subdomains too. https:// or :8443 narrows it.',
     placeholder: '[*.]example.com',
     invalid: 'Enter a site such as example.com or [*.]example.com',
     duplicate: 'That site is already on this list',
@@ -50,7 +52,8 @@ export const SITE_DATA_TEXT = {
   },
   clearOnExit: {
     heading: 'Delete browsing data on exit',
-    description: 'Choose what to clear every time you close Zenium. Saved passwords are never cleared this way.',
+    description:
+      'Choose what to clear every time you close Zenium. Saved passwords are never cleared this way.',
     nextLaunch: 'On this device the clearing runs the next time Zenium starts.',
     lists: 'The sites on the clear-on-exit and never lists are cleared whatever you choose here.',
     pending: 'A clear owed from the last close is still running.'
@@ -302,15 +305,54 @@ export function siteDataChoice(site: SiteDataSiteState): SiteDataChoice {
   return CHOICE_OF_STATE[site.state]
 }
 
-/** The row's value: the state's word, or the default's label when no list decides. */
-export function siteDataStateLabel(site: SiteDataSiteState): string {
-  return siteDataStateWord(site.state) ?? SITE_DATA_DEFAULT_LABELS[site.default].label
+/** The picker's current option by name (the phone row's second line starts with it). */
+export function siteDataChoiceLabel(site: SiteDataSiteState): string {
+  return SITE_DATA_TEXT.site.options[siteDataChoice(site)]
 }
 
-/** The row's second line: which entry decides, or that the default does. */
-export function siteDataStateLine(site: SiteDataSiteState): string {
-  if (site.pattern) return `By ${site.pattern} on the list`
-  return site.addable ? 'The default for sites on no list' : SITE_DATA_TEXT.site.noSite
+/**
+ * What decides for the page, beside the choice's name: the entry on the list (`[*.]example.com`,
+ * as it stands), or – under "Use the default" – the default it falls to, so the row says what
+ * that default is. A page with no site to add says so.
+ */
+export function siteDataDecider(site: SiteDataSiteState): string {
+  if (site.pattern) return `Listed as ${site.pattern}`
+  if (!site.addable) return SITE_DATA_TEXT.site.noSite
+  return SITE_DATA_DEFAULT_LABELS[site.default].label
+}
+
+/** The phone row's second line (§9.2): the choice, then what decides – as the Settings value row names its option. */
+export function siteDataRowLine(site: SiteDataSiteState): string {
+  return `${siteDataChoiceLabel(site)} · ${siteDataDecider(site)}`
+}
+
+/**
+ * The overview row's second line, when a list decides for the page: the state's word under
+ * "Cookies and site data", the storage summary keeping the trailing. Nothing for the default.
+ */
+export function siteDataOverviewLine(site: SiteDataSiteState): string | undefined {
+  return siteDataStateWord(site.state) ?? undefined
+}
+
+/**
+ * What picking a choice in the site-information sheet does: the page's site (`[*.]host`) goes
+ * onto the list picked, leaving whichever list held it; "Use the default" takes the deciding
+ * entry off its list – the entry as it stands, `[*.]example.com` for a page on a subdomain too,
+ * which is what the row named. Resolves to the reason when the engine refused (a page with no
+ * site, a list holding its thousand), null when it did as asked; the reading is the caller's to
+ * refresh.
+ */
+export async function applySiteDataChoice(
+  site: SiteDataSiteState,
+  url: string,
+  choice: SiteDataChoice
+): Promise<string | null> {
+  if (choice === 'default') {
+    if (site.pattern) await cmd('siteData.remove', { pattern: site.pattern })
+    return null
+  }
+  const result = await cmd('siteData.addSite', { list: choice, url })
+  return result.ok ? null : result.problem
 }
 
 /** The picker's four options: the default named for what it is, then the three lists. */

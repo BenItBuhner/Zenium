@@ -58,6 +58,15 @@ import { useFrameDialog } from '@renderer/lib/portals'
 import { privateLockStore } from '@renderer/lib/privateLock'
 import { activeTab } from '@renderer/lib/selectors'
 import {
+  SITE_DATA_TEXT,
+  applySiteDataChoice,
+  siteDataChoice,
+  siteDataChoiceOptions,
+  siteDataOverviewLine,
+  siteDataRowLine,
+  type SiteDataChoice
+} from '@renderer/lib/siteDataUi'
+import {
   dismissSiteInfo,
   refreshSiteInfo,
   registerSiteInfoSurface,
@@ -76,6 +85,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { useEscapeTrap } from '../bookmarks/escape'
 import { focusAnchor, wrapTab } from '../bookmarks/popover'
+import { V2MenulistSheet } from '../extensions/V2Menulist'
 import { pillChipRows, type PillChipModel, type PillChipRow } from '../phone/pillChips'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { Favicon } from '../sidebar/Favicon'
@@ -432,10 +442,14 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   const levels = useLevels()
   const { panes, register } = usePaneRegistry()
   const [confirm, setConfirm] = useState<'cookies' | 'data' | null>(null)
-  const confirmRef = useRef(confirm)
+  // The per-site cookie picker (§9.13 under a finger): a sheet over this one while it is up.
+  const [picker, setPicker] = useState(false)
+  // A sheet stacked on this one (§9.24) answers Escape and the back gesture itself.
+  const stacked = confirm !== null || picker
+  const stackedRef = useRef(stacked)
   useEffect(() => {
-    confirmRef.current = confirm
-  }, [confirm])
+    stackedRef.current = stacked
+  }, [stacked])
   const [allCookies, setAllCookies] = useState(false)
 
   const paint = useCallback((): void => {
@@ -475,11 +489,11 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
     return () => registerSiteInfoSurface(null)
   }, [levels])
 
-  // Escape (hardware keyboards exist on tablets): one level up, or away. A confirmation sheet
-  // stacked on this one answers its own Escape first (§9.24).
+  // Escape (hardware keyboards exist on tablets): one level up, or away. A confirmation or
+  // picker sheet stacked on this one answers its own Escape first (§9.24).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || confirmRef.current) return
+      if (e.key !== 'Escape' || stackedRef.current) return
       e.preventDefault()
       e.stopImmediatePropagation()
       stepBackSiteInfo()
@@ -592,6 +606,13 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
             <ConnectionRows security={security} kit={SHEET_ROWS} />
           </section>
           <section ref={register('cookies')} className="zen-sheet-pane" data-level="cookies">
+            {info && (
+              <SiteDataRow
+                site={info.siteData}
+                busy={actions.busy === 'siteData'}
+                onOpen={() => setPicker(true)}
+              />
+            )}
             <CookieRows
               info={info}
               site={site}
@@ -644,7 +665,53 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
           }}
         />
       )}
+      {picker && info && (
+        // The picker as the Settings value rows open theirs (§9.13): the menulist's sheet over
+        // this one, radio rows with the option's line under each; a pick applies once the sheet
+        // has gone, and the row above reads the new state from the next reading.
+        <V2MenulistSheet<SiteDataChoice>
+          label={SITE_DATA_TEXT.site.picker}
+          value={siteDataChoice(info.siteData)}
+          options={siteDataChoiceOptions(info.siteData, state.siteData.clearsAtNextLaunch)}
+          onPick={(choice) => {
+            if (choice !== siteDataChoice(info.siteData))
+              void actions.setSiteData(info.siteData, choice)
+          }}
+          onClose={() => setPicker(false)}
+        />
+      )}
     </>
+  )
+}
+
+/**
+ * The per-site cookie policy at the top of the cookies level (Chrome's "Cookies and site data"
+ * page reached from page info): a §9.2 two-line row naming the choice for this site and what
+ * decides it – the list entry, or the default it falls to – that opens the picker. Working
+ * (§9.30): the row keeps its look and says so. A page with no site to add is a fact, not a
+ * target.
+ */
+function SiteDataRow({
+  site,
+  busy,
+  onOpen
+}: {
+  site: SiteInfo['siteData']
+  busy: boolean
+  onOpen: () => void
+}): JSX.Element {
+  return (
+    <div className="flex flex-col">
+      <SheetRow
+        glyph={<Cookie />}
+        label={SITE_DATA_TEXT.site.label}
+        description={siteDataRowLine(site)}
+        busy={busy}
+        haspopup="dialog"
+        onClick={site.addable || site.pattern ? onOpen : undefined}
+      />
+      <div aria-hidden className="zen-sheet-sep" />
+    </div>
   )
 }
 
@@ -765,11 +832,16 @@ function SheetMainRows({
       />
       {site.web && (
         <>
+          {/*
+            The level holds the per-site policy row as well as what the site stored, so it opens
+            as soon as the reading is in; a list's word for the site is the row's second line.
+          */}
           <SheetRow
             glyph={<Cookie />}
             label="Cookies and site data"
+            description={info ? siteDataOverviewLine(info.siteData) : undefined}
             value={info ? summariseData(info) : reading ? 'Reading…' : undefined}
-            onClick={hasData ? () => push('cookies') : undefined}
+            onClick={info ? () => push('cookies') : undefined}
           />
           <SheetRow
             glyph={<ShieldCheck />}
@@ -824,6 +896,8 @@ function SheetRow({
   control,
   danger,
   disabled,
+  busy,
+  haspopup,
   onClick
 }: {
   glyph?: ReactNode
@@ -835,6 +909,10 @@ function SheetRow({
   control?: ReactNode
   danger?: boolean
   disabled?: boolean
+  /** The row's action is running (§9.30): full opacity, `aria-busy`, a press does nothing. */
+  busy?: boolean
+  /** The row opens a sheet over this one. */
+  haspopup?: 'dialog'
   onClick?: () => void
 }): JSX.Element {
   const body = (
@@ -877,7 +955,9 @@ function SheetRow({
         disabled={disabled}
         // The row's name is its label and its value, read as two parts ("Connection, Secure").
         aria-label={value ? `${label}, ${value}` : label}
-        onClick={onClick}
+        aria-busy={busy || undefined}
+        aria-haspopup={haspopup}
+        onClick={busy ? undefined : onClick}
       >
         {body}
       </button>
@@ -1212,7 +1292,7 @@ function PermissionRows({
 // ---------------------------------------------------------------------------
 
 /** Which action is running, for the control that started it to show as busy (§9.30). */
-type Busy = 'cookies' | 'data' | `permission:${string}` | null
+type Busy = 'cookies' | 'data' | 'siteData' | `permission:${string}` | null
 
 function useActions(
   tab: Tab,
@@ -1222,6 +1302,7 @@ function useActions(
   clearCookies: () => Promise<void>
   clearData: () => Promise<void>
   resetPermission: (permission?: string) => Promise<void>
+  setSiteData: (current: SiteInfo['siteData'], choice: SiteDataChoice) => Promise<void>
   openSettings: () => void
 } {
   const [busy, setBusy] = useState<Busy>(null)
@@ -1259,6 +1340,15 @@ function useActions(
     resetPermission: (permission?: string) =>
       act(`permission:${permission ?? '*'}`, async () => {
         await cmd('site.resetPermissions', { tabId: tab.id, permission })
+        refreshSiteInfo()
+      }),
+    // The site onto the list picked (Chrome's "Add" of the cookies page, from the page itself),
+    // or off its list: the engine says why when it refused (a list at its thousand); either
+    // way the reading is taken again, the row and the cookies under it with it.
+    setSiteData: (current, choice) =>
+      act('siteData', async () => {
+        const problem = await applySiteDataChoice(current, tab.url, choice)
+        if (problem) pushToast(problem, 'error')
         refreshSiteInfo()
       }),
     // Settings (§10): the site's settings live there; opening it replaces the sheet. Through the
