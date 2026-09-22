@@ -11,11 +11,14 @@ package app.zen.chromium
  * responding – and whether the same tab went within the minute before, and hands each page's
  * word to the core as it loads the page again ([take]), which shows the crash page's variant
  * (`crashPageUrl` in `src/shared/url.ts`) instead of the page. A renderer that went while the
- * app was away (the system reclaiming a background process) leaves nothing: the pages come back
- * on their own, as Chrome's do.
+ * app was away (the system reclaiming a background process, the commonest exit) leaves nothing:
+ * the pages come back on their own, as Chrome's do. Away is the activity's lifecycle – its
+ * window off screen, [Host] reads it at the callback – not the renderer's priority at exit,
+ * which is IMPORTANT under the default policy whether or not a WebView shows (nothing sets a
+ * waiving policy), nor the tabs' `View.VISIBLE`, which does not know the activity is stopped.
  *
- * Free of Android types (`RENDERER_PRIORITY_WAIVED` copied) so it runs under plain JUnit
- * (`RendererExitsTest`); [Host], [ChromeWebView] and [TabWebView] act on it.
+ * Free of Android types (`RENDERER_PRIORITY_WAIVED` copied, the lifecycle a Boolean) so it runs
+ * under plain JUnit (`RendererExitsTest`); [Host], [ChromeWebView] and [TabWebView] act on it.
  */
 class RendererExits(private val clock: () -> Long) {
     enum class Exit(
@@ -50,11 +53,13 @@ class RendererExits(private val clock: () -> Long) {
 
     /**
      * A WebView reported its renderer gone (`onRenderProcessGone`). The first report of an exit
-     * classifies it and records the word for every page on screen (`visibleTabIds`); the other
+     * classifies it – with `windowUp`, the activity's window on screen at the callback (at least
+     * STARTED; stopped, the app was away and the exit is [Exit.BACKGROUND] whatever the detail
+     * says) – and records the word for every page on screen (`visibleTabIds`); the other
      * WebViews' reports of the same exit, within [BATCH_MS], and the reports that follow an exit
      * the host began itself ([ending]) answer null. Answers the exit for the first report.
      */
-    fun gone(didCrash: Boolean, priorityAtExit: Int, visibleTabIds: Collection<String>): Exit? {
+    fun gone(didCrash: Boolean, priorityAtExit: Int, windowUp: Boolean, visibleTabIds: Collection<String>): Exit? {
         val now = clock()
         if (expected) {
             expected = false
@@ -66,7 +71,7 @@ class RendererExits(private val clock: () -> Long) {
         // it in turn); the window slides with each, so a slow chain of reports stays one exit.
         lastGoneAt = now
         if (last != null && now - last < BATCH_MS) return null
-        val exit = classify(didCrash, priorityAtExit)
+        val exit = classify(didCrash, priorityAtExit, windowUp)
         record(exit, visibleTabIds, now)
         return exit
     }
@@ -147,14 +152,15 @@ class RendererExits(private val clock: () -> Long) {
         const val REPEAT_WINDOW_MS = 60_000L
 
         /**
-         * How the renderer went, from `RenderProcessGoneDetail`. `didCrash()` is a crash; a kill
-         * is the system taking the memory back – with the page in front of the user (the
-         * renderer at a priority it would only hold while a WebView is visible) that is the
-         * memory page; a renderer at the waived priority went while the app was away, whatever
-         * the way, and the pages reload quietly on the way back.
+         * How the renderer went, from `RenderProcessGoneDetail` and the activity's lifecycle.
+         * With the app away – the activity's window off screen (`windowUp` false: stopped), or
+         * the renderer at the waived priority, which it only holds under a waiving policy while
+         * no WebView shows – the exit is the background one whatever the way, and the pages
+         * reload quietly on the way back. In front of the user, `didCrash()` is a crash and a
+         * kill is the system taking the memory back: the memory page.
          */
-        fun classify(didCrash: Boolean, priorityAtExit: Int): Exit = when {
-            priorityAtExit == RENDERER_PRIORITY_WAIVED -> Exit.BACKGROUND
+        fun classify(didCrash: Boolean, priorityAtExit: Int, windowUp: Boolean): Exit = when {
+            !windowUp || priorityAtExit == RENDERER_PRIORITY_WAIVED -> Exit.BACKGROUND
             didCrash -> Exit.CRASH
             else -> Exit.MEMORY
         }

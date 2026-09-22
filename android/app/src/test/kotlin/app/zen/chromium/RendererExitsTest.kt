@@ -15,18 +15,41 @@ class RendererExitsTest {
 
     /** A crash in front: the chrome is rebuilt, the rebooted core loads the page, the word is there once. */
     private fun crashAndRebuild(visible: Collection<String> = front): Exit? {
-        val exit = exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = visible)
+        val exit = exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = visible)
         exits.chromeRebuilt()
         return exit
     }
 
     @Test
-    fun `classification - didCrash is the crash, a kill in front is the memory page, a waived renderer went in the background`() {
-        assertEquals(Exit.CRASH, RendererExits.classify(didCrash = true, priorityAtExit = IMPORTANT))
-        assertEquals(Exit.MEMORY, RendererExits.classify(didCrash = false, priorityAtExit = IMPORTANT))
-        assertEquals(Exit.BACKGROUND, RendererExits.classify(didCrash = false, priorityAtExit = RendererExits.RENDERER_PRIORITY_WAIVED))
-        // Even a crash of a renderer nobody was looking at: the pages come back quietly.
-        assertEquals(Exit.BACKGROUND, RendererExits.classify(didCrash = true, priorityAtExit = RendererExits.RENDERER_PRIORITY_WAIVED))
+    fun `classification - didCrash is the crash, a kill in front is the memory page, away is the background`() {
+        assertEquals(Exit.CRASH, RendererExits.classify(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true))
+        assertEquals(Exit.MEMORY, RendererExits.classify(didCrash = false, priorityAtExit = IMPORTANT, windowUp = true))
+        // The activity stopped: the app was away, whatever the detail says of the way – the
+        // priority is IMPORTANT under the default policy whether or not a WebView shows.
+        assertEquals(Exit.BACKGROUND, RendererExits.classify(didCrash = false, priorityAtExit = IMPORTANT, windowUp = false))
+        assertEquals(Exit.BACKGROUND, RendererExits.classify(didCrash = true, priorityAtExit = IMPORTANT, windowUp = false))
+        // A waiving policy's word for the same thing, should one ever be set.
+        assertEquals(Exit.BACKGROUND, RendererExits.classify(didCrash = false, priorityAtExit = RendererExits.RENDERER_PRIORITY_WAIVED, windowUp = true))
+        assertEquals(Exit.BACKGROUND, RendererExits.classify(didCrash = true, priorityAtExit = RendererExits.RENDERER_PRIORITY_WAIVED, windowUp = true))
+    }
+
+    @Test
+    fun `a kill while the activity is stopped is the quiet reload - while resumed it is the memory page`() {
+        // The system reclaiming the renderer with the app in the background, the commonest exit:
+        // the front tab is still View.VISIBLE and the priority still IMPORTANT, only the lifecycle
+        // knows. Nothing is recorded; the pages come back as themselves.
+        assertEquals(Exit.BACKGROUND, exits.gone(didCrash = false, priorityAtExit = IMPORTANT, windowUp = false, visibleTabIds = front))
+        assertNull(exits.current)
+        exits.chromeRebuilt()
+        assertNull(exits.take("tab_1"))
+        // The same kill with the window up is the page.
+        now += RendererExits.BATCH_MS + 1
+        assertEquals(Exit.MEMORY, exits.gone(didCrash = false, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
+        exits.chromeRebuilt()
+        val report = exits.take("tab_1")
+        assertNotNull(report)
+        assertEquals("oom-kill", report!!.reason)
+        assertFalse(report.repeat)
     }
 
     @Test
@@ -50,7 +73,7 @@ class RendererExitsTest {
 
     @Test
     fun `the word waits for the rebuild - a core that stood asks and gets nothing consumed`() {
-        assertEquals(Exit.MEMORY, exits.gone(didCrash = false, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertEquals(Exit.MEMORY, exits.gone(didCrash = false, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         assertNull("not armed before the chrome is rebuilt", exits.take("tab_1"))
         assertEquals("oom-kill", exits.peek("tab_1")?.reason)
         exits.chromeRebuilt()
@@ -59,20 +82,20 @@ class RendererExitsTest {
 
     @Test
     fun `the WebViews sharing the renderer report one exit - the reports within the batch window are the same exit`() {
-        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         now += 200
-        assertNull(exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertNull(exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         now += RendererExits.BATCH_MS - 1
-        assertNull(exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertNull(exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         exits.chromeRebuilt()
         assertFalse("three reports of one exit are not a repeat", exits.take("tab_1")!!.repeat)
     }
 
     @Test
     fun `a background exit records nothing and clears an older record`() {
-        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         now += RendererExits.BATCH_MS + 1
-        assertEquals(Exit.BACKGROUND, exits.gone(didCrash = false, priorityAtExit = RendererExits.RENDERER_PRIORITY_WAIVED, visibleTabIds = front))
+        assertEquals(Exit.BACKGROUND, exits.gone(didCrash = false, priorityAtExit = RendererExits.RENDERER_PRIORITY_WAIVED, windowUp = true, visibleTabIds = front))
         exits.chromeRebuilt()
         assertNull(exits.take("tab_1"))
         assertNull(exits.current)
@@ -80,7 +103,7 @@ class RendererExitsTest {
 
     @Test
     fun `no page on screen - nothing is recorded`() {
-        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = emptyList()))
+        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = emptyList()))
         assertNull(exits.current)
         exits.chromeRebuilt()
         assertNull(exits.take("tab_1"))
@@ -113,7 +136,7 @@ class RendererExitsTest {
 
     @Test
     fun `a record the rebooted core never asked about goes stale`() {
-        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         exits.chromeRebuilt()
         now += RendererExits.PENDING_TTL_MS + 1
         assertNull(exits.take("tab_1"))
@@ -121,7 +144,7 @@ class RendererExitsTest {
 
     @Test
     fun `a chrome rebuilt long after the record leaves it unarmed`() {
-        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         now += RendererExits.PENDING_TTL_MS + 1
         exits.chromeRebuilt()
         assertNull(exits.take("tab_1"))
@@ -133,7 +156,7 @@ class RendererExitsTest {
         assertEquals(Exit.HUNG, exits.current)
         // The platform's report of the very exit, a kill in the platform's eyes: not a memory page.
         now += 100
-        assertNull(exits.gone(didCrash = false, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertNull(exits.gone(didCrash = false, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         exits.chromeRebuilt()
         assertEquals("hung", exits.take("tab_1")!!.reason)
     }
@@ -143,7 +166,7 @@ class RendererExitsTest {
         exits.ending(Exit.BACKGROUND, emptyList())
         assertNull(exits.current)
         now += 100
-        assertNull(exits.gone(didCrash = false, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertNull(exits.gone(didCrash = false, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         exits.chromeRebuilt()
         assertNull(exits.take("tab_1"))
     }
@@ -153,25 +176,25 @@ class RendererExitsTest {
         exits.ending(Exit.BACKGROUND, emptyList())
         exits.expectationOver()
         now += RendererExits.BATCH_MS + 1
-        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
     }
 
     @Test
     fun `the expectation is spent by one callback - a later exit is classified again`() {
         exits.ending(Exit.HUNG, front)
         now += 100
-        assertNull(exits.gone(didCrash = false, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertNull(exits.gone(didCrash = false, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         exits.chromeRebuilt()
         exits.take("tab_1")
         now += RendererExits.BATCH_MS + 1
-        assertEquals(Exit.MEMORY, exits.gone(didCrash = false, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertEquals(Exit.MEMORY, exits.gone(didCrash = false, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
     }
 
     @Test
     fun `the demo's crash - ended as a crash reads as one`() {
         exits.ending(Exit.CRASH, front)
         now += 50
-        assertNull(exits.gone(didCrash = false, priorityAtExit = IMPORTANT, visibleTabIds = front))
+        assertNull(exits.gone(didCrash = false, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
         exits.chromeRebuilt()
         assertEquals("crashed", exits.take("tab_1")!!.reason)
     }

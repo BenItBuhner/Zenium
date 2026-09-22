@@ -311,8 +311,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The tabs whose pages are on screen right now: the ones a renderer exit is about. */
     private fun visibleTabIds(): List<String> = tabs.all().filter { it.visibility == View.VISIBLE }.map { it.tabId }
 
+    /**
+     * The lifecycle gate on a renderer exit: the activity's window is on screen (at least
+     * STARTED). Stopped, the app is away and the exit is nobody's crash – the system reclaiming
+     * a background renderer, the commonest exit – so the pages come back quietly; neither the
+     * tabs' `View.VISIBLE` (which does not know the activity stopped) nor the renderer's priority
+     * at exit (IMPORTANT under the default policy, WebView showing or not) can tell that.
+     */
+    private fun windowUp(): Boolean = activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+
     override fun rendererGone(tab: TabWebView, didCrash: Boolean, priorityAtExit: Int): JSONObject? {
-        val exit = rendererExits.gone(didCrash, priorityAtExit, visibleTabIds())
+        val exit = rendererExits.gone(didCrash, priorityAtExit, windowUp(), visibleTabIds())
         if (exit != null) Log.w(TAG, "renderer exit: $exit (first report from ${tab.tabId})")
         // Whatever the prompt was about is over with the renderer.
         endUnresponsivePrompt()
@@ -1778,7 +1787,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     fun onChromeGone(dead: ChromeWebView, didCrash: Boolean, priorityAtExit: Int) {
         if (dead === chrome) {
-            val exit = rendererExits.gone(didCrash, priorityAtExit, visibleTabIds())
+            val exit = rendererExits.gone(didCrash, priorityAtExit, windowUp(), visibleTabIds())
             if (exit != null) Log.w(TAG, "renderer exit: $exit (first report from the chrome)")
         }
         rebuildChrome(dead)
