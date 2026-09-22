@@ -5,6 +5,13 @@
  * the services themselves are `src/core/safebrowsing` and `src/core/protection`.
  */
 
+import {
+  DEFAULT_CLEAR_ON_EXIT,
+  sanitizeClearOnExit,
+  type ClearOnExitSettings,
+  type SiteDataPolicy
+} from './siteData'
+
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
@@ -66,6 +73,12 @@ export interface PrivacySettings {
   gpc: boolean
   /** Send `DNT: 1` and expose `navigator.doNotTrack`. */
   dnt: boolean
+  /**
+   * Chrome's "Delete browsing data on exit" (Edge's "Choose what to clear every time you close
+   * the browser"): the types cleared when the browser closes, in `clearBrowsingData`'s
+   * vocabulary less passwords (`shared/siteData.ts`). Empty: nothing is cleared on exit.
+   */
+  clearOnExit: ClearOnExitSettings
 }
 
 export const DEFAULT_PRIVACY_SETTINGS: PrivacySettings = {
@@ -79,7 +92,8 @@ export const DEFAULT_PRIVACY_SETTINGS: PrivacySettings = {
   thirdPartyCookiesPrivate: 'default',
   thirdPartyCookieExceptions: [],
   gpc: false,
-  dnt: false
+  dnt: false,
+  clearOnExit: DEFAULT_CLEAR_ON_EXIT
 }
 
 const HTTPS_ONLY_MODES: HttpsOnlyMode[] = ['off', 'ask', 'always']
@@ -339,7 +353,8 @@ export function sanitizePrivacySettings(
       : d.thirdPartyCookiesPrivate,
     thirdPartyCookieExceptions: exceptions,
     gpc: typeof s.gpc === 'boolean' ? s.gpc : d.gpc,
-    dnt: typeof s.dnt === 'boolean' ? s.dnt : d.dnt
+    dnt: typeof s.dnt === 'boolean' ? s.dnt : d.dnt,
+    clearOnExit: sanitizeClearOnExit(s.clearOnExit)
   }
 }
 
@@ -373,6 +388,13 @@ export interface PrivacyFlags {
   dnt: boolean
   secureDnsMode: SecureDnsMode
   secureDnsServers: string[]
+  /**
+   * The per-site cookie and site-data policy (`shared/siteData.ts`): Chrome's three lists and
+   * the "block all" default. The hosts' header stages withhold `Cookie` / `Set-Cookie` by it
+   * (`cookiesWithheld` in `core/protection/policy.ts`); the Kotlin twin is
+   * `PrivacyFlags.siteData` in `privacy/PrivacyFlags.kt`.
+   */
+  siteData: SiteDataPolicy
 }
 
 /** The two cookie modes together: what the settings hold and what the flags carry. */

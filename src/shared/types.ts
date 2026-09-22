@@ -19,6 +19,13 @@ import type {
   ProtectionCheck,
   ThirdPartyCookiePrivateMode
 } from './privacy'
+import type {
+  SiteDataAddResult,
+  SiteDataDefault,
+  SiteDataList,
+  SiteDataListing,
+  SiteDataStatus
+} from './siteData'
 import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
@@ -162,6 +169,12 @@ export interface HostCapabilities {
   privateTabs: boolean
   /** The host can point the resolver at DNS-over-HTTPS servers (desktop); Android uses the system's Private DNS. */
   secureDns: boolean
+  /**
+   * Every quit of the app runs through the core (`Browser.requestQuit`, the desktop), so what
+   * Settings clears on exit is cleared at quit. Where the process ends unannounced (Android) the
+   * on-exit clear runs at the next launch instead (`SiteDataStatus.clearsAtNextLaunch`).
+   */
+  quitsThroughCore: boolean
   /**
    * The host renders `zen://newtab` as a live page (theme bridge, shortcuts, customize panel).
    * Without it new tabs stay blank and the URL bar alone stands in for a new tab page.
@@ -3176,6 +3189,11 @@ export interface UIState {
   blocking: BlockingStatus
   /** Safe Browsing feeds, HTTPS-only exceptions and the resolver's secure DNS state. */
   privacy: PrivacyStatus
+  /**
+   * Per-site cookie and site-data exceptions (the default and Chrome's three lists), what is
+   * cleared on exit and whether that happens at quit or at the next launch on this host.
+   */
+  siteData: SiteDataStatus
   /** Page translation: preferences, models on the device and the per-tab translation state. */
   translate: TranslateUIState
   /** The device facts the page controls resolve against (screen class, peripherals, font scale). */
@@ -3837,6 +3855,30 @@ export interface Commands {
     args: { range: BrowsingDataRange }
     result: BrowsingDataCount[]
   }
+
+  /**
+   * Cookies and site data (Chrome's `chrome://settings/content/siteData`): the default for sites
+   * on no list. `allow` and `block-third-party` are `Settings.privacy.thirdPartyCookies`'s word
+   * (`block-third-party` keeps a stricter `block`); `block-all` is the policy's own bit. The
+   * types cleared on exit are `Settings.privacy.clearOnExit` through `settings.update`.
+   */
+  'siteData.setDefault': { args: { default: SiteDataDefault }; result: void }
+  /**
+   * Add a site to one of the three lists, as a pattern in Chrome's grammar (`[*.]example.com`,
+   * `example.com`, `https://example.com:8443`; a bare host gets `[*.]`). A pattern on another
+   * list moves. Refused with the reason for the field when it is not a pattern or the list is full.
+   */
+  'siteData.add': { args: { list: SiteDataList; pattern: string }; result: SiteDataAddResult }
+  /** The site-information sheet's row: the page's site (`[*.]host`) onto a list. */
+  'siteData.addSite': { args: { list: SiteDataList; url: string }; result: SiteDataAddResult }
+  /** Remove a pattern from whichever list holds it. */
+  'siteData.remove': { args: { pattern: string }; result: void }
+  /** The site-data viewer: every origin with cookies, stored data or permissions, most data first. */
+  'siteData.list': { args: void; result: SiteDataListing }
+  /** Take one origin's cookies and stored data away (its permissions stay). */
+  'siteData.clearSite': { args: { origin: string }; result: void }
+  /** Every site's cookies and stored data, as the dialog's "Cookies and site data" over all time. */
+  'siteData.clearAll': { args: void; result: void }
   /** Run Safety check now: updates, Safe Browsing, passwords, permissions, notifications, extensions. */
   'privacy.safetyCheck': { args: void; result: SafetyCheckResult }
   /**

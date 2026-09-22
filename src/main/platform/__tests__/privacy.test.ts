@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Decision, RequestContext } from '../../../core/blocking/rules'
 import type { PrivacyFlags, SafeBrowsingHit } from '../../../shared/privacy'
+import { DEFAULT_SITE_DATA_POLICY } from '../../../shared/siteData'
 import type {
   ElectronPrivacy as PrivacyHostImpl,
   HostResolverConfigurator,
@@ -36,7 +37,8 @@ const FLAGS: PrivacyFlags = {
   gpc: false,
   dnt: false,
   secureDnsMode: 'automatic',
-  secureDnsServers: []
+  secureDnsServers: [],
+  siteData: DEFAULT_SITE_DATA_POLICY
 }
 
 const HIT: SafeBrowsingHit = {
@@ -223,6 +225,91 @@ describe('PrivacyRequestHandler', () => {
     const sent = { Cookie: 'id=1' }
     handler.onBeforeSendHeaders(thirdParty(), sent)
     expect(sent).toEqual({ Cookie: 'id=1' })
+  })
+
+  /** The headers of `req` after both stages, given `flags`. */
+  const afterBothStages = (
+    flags: PrivacyFlags,
+    req: HostRequest
+  ): { sent: Record<string, string>; received: Record<string, string[]> } => {
+    const handler = new PrivacyRequestHandler(() => flags)
+    const sent: Record<string, string> = { Cookie: 'id=1', Accept: '*/*' }
+    handler.onBeforeSendHeaders(req, sent)
+    const received: Record<string, string[]> = {
+      'Set-Cookie': ['id=2'],
+      'Content-Type': ['text/html']
+    }
+    handler.onHeadersReceived(req, received)
+    return { sent, received }
+  }
+  const stripped = { sent: { Accept: '*/*' }, received: { 'Content-Type': ['text/html'] } }
+  const intact = {
+    sent: { Cookie: 'id=1', Accept: '*/*' },
+    received: { 'Set-Cookie': ['id=2'], 'Content-Type': ['text/html'] }
+  }
+
+  it("strips Cookie and Set-Cookie from every request of a never-site, the document's own included", () => {
+    const flags: PrivacyFlags = {
+      ...FLAGS,
+      thirdPartyCookies: 'allow',
+      siteData: { ...DEFAULT_SITE_DATA_POLICY, block: ['[*.]never.example'] }
+    }
+    expect(afterBothStages(flags, request({ url: 'https://never.example/' }))).toEqual(stripped)
+    expect(
+      afterBothStages(
+        flags,
+        request({
+          url: 'https://api.never.example/me',
+          type: 'xmlhttprequest',
+          documentUrl: 'https://never.example/'
+        })
+      )
+    ).toEqual(stripped)
+    expect(
+      afterBothStages(
+        flags,
+        request({
+          url: 'https://never.example/embed',
+          type: 'sub_frame',
+          documentUrl: 'https://news.example/'
+        })
+      )
+    ).toEqual(stripped)
+    // The site next to it is untouched.
+    expect(afterBothStages(flags, request({ url: 'https://news.example/' }))).toEqual(intact)
+  })
+
+  it("leaves an allow-listed site's cookies alone even as a third party the mode would block", () => {
+    const flags: PrivacyFlags = {
+      ...FLAGS,
+      siteData: { ...DEFAULT_SITE_DATA_POLICY, allow: ['[*.]widgets.example'] }
+    }
+    expect(
+      afterBothStages(flags, thirdParty({ url: 'https://cdn.widgets.example/embed.js' }))
+    ).toEqual(intact)
+    // The page on the list does not carry its trackers along.
+    const page: PrivacyFlags = {
+      ...FLAGS,
+      siteData: { ...DEFAULT_SITE_DATA_POLICY, allow: ['[*.]news.example'] }
+    }
+    expect(afterBothStages(page, thirdParty())).toEqual(stripped)
+  })
+
+  it('under "block all cookies" strips every site the lists leave out and no listed one', () => {
+    const flags: PrivacyFlags = {
+      ...FLAGS,
+      thirdPartyCookies: 'allow',
+      siteData: {
+        ...DEFAULT_SITE_DATA_POLICY,
+        blockAll: true,
+        allow: ['bank.example'],
+        clearOnExit: ['[*.]shop.example']
+      }
+    }
+    expect(afterBothStages(flags, request({ url: 'https://news.example/' }))).toEqual(stripped)
+    expect(afterBothStages(flags, request({ url: 'https://bank.example/' }))).toEqual(intact)
+    expect(afterBothStages(flags, request({ url: 'https://www.bank.example/' }))).toEqual(stripped)
+    expect(afterBothStages(flags, request({ url: 'https://cart.shop.example/' }))).toEqual(intact)
   })
 })
 

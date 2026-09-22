@@ -282,6 +282,84 @@ class BlockingTest {
         assertEquals(false, json.getBoolean("remote"))
     }
 
+    /** A cookie policy that withholds `never.example`'s cookies (and its subdomains'), the way [app.zen.chromium.privacy.PrivacyFlags.cookiesWithheld] answers for the never list. */
+    private class NeverSitePolicy : RequestPolicy {
+        val asked = ArrayList<Triple<String, String?, String>>()
+
+        override fun unsafe(url: String, navigation: Boolean): SafeBrowsingHit? = null
+
+        override fun plaintextAllowed(url: String): Boolean = false
+
+        override fun cookiesWithheld(url: String, documentUrl: String?, containerId: String): Boolean {
+            asked.add(Triple(url, documentUrl, containerId))
+            val host = Domains.hostnameOf(url) ?: return false
+            return host == "never.example" || host.endsWith(".never.example")
+        }
+    }
+
+    @Test
+    fun `the cookie policy's word sends a withheld document through the header stage, and only a document`() {
+        val policy = NeverSitePolicy()
+        val tab = FakeTab(documentUrl = "https://news.example/story", containerId = "work")
+        // A never-site's navigation: relayed without cookies, whatever the rule sets say – the
+        // empty snapshot included, which otherwise passes everything.
+        val document = Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://never.example/", true, "text/html", "GET", policy)
+        assertTrue(document is Verdict.HeaderStage)
+        val relay = document as Verdict.HeaderStage
+        assertEquals(false, relay.withCookies)
+        assertEquals(ResourceType.MAIN_FRAME, relay.request.type)
+        assertEquals("https://never.example/", relay.request.url)
+        assertEquals(Decision.Action.ALLOW, relay.decision.action)
+        // The question carried the document's own request (no document URL) and the tab's container.
+        assertEquals(Triple("https://never.example/", null, "work"), policy.asked.last())
+        // A frame of the never-site inside another page: relayed too, the page named as its document.
+        val frame = Blocking.evaluate(snapshot, tab, "https://cdn.never.example/frame", false, "text/html", "GET", policy)
+        assertTrue(frame is Verdict.HeaderStage)
+        assertEquals(false, (frame as Verdict.HeaderStage).withCookies)
+        assertEquals(ResourceType.SUB_FRAME, frame.request.type)
+        assertEquals(Triple("https://cdn.never.example/frame", "https://news.example/story", "work"), policy.asked.last())
+        // A subresource is never relayed: WebView loads it; the never-site's cookies are gone from
+        // the jar instead (the recorded limit). The policy is not even asked.
+        val before = policy.asked.size
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://never.example/t.js", false, "*/*", "GET", policy))
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://never.example/pixel.png", false, "image/*", "GET", policy))
+        assertEquals(before, policy.asked.size)
+        // A document the policy does not withhold keeps the plain pass, and a relay a header rule
+        // asked for keeps its cookies.
+        assertSame(Verdict.Pass, Blocking.evaluate(snapshot, tab, "https://news.example/", true, "text/html", "GET", policy))
+        assertSame(Verdict.Pass, Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://news.example/", true, "text/html", "GET", policy))
+        val stylus = EngineSnapshot(
+            listOf(
+                RuleSetInfo.parse(
+                    JSONObject(
+                        """{"id":"ext:s:_dynamic","source":"dnr","priority":2999,"enabled":true,"rules":[
+                            {"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||fixture.example^","resourceTypes":["main_frame"],"responseHeaders":[{"header":"x-ads"}]}}
+                        ]}"""
+                    )
+                )!!
+            ),
+            null
+        )
+        val byRule = Blocking.evaluate(stylus, tab, "https://fixture.example/", true, "text/html", "GET", policy)
+        assertTrue(byRule is Verdict.HeaderStage)
+        assertEquals(true, (byRule as Verdict.HeaderStage).withCookies)
+        assertTrue(byRule.decision.needsHeaders)
+        // Both at once: the rule's relay goes without cookies.
+        val both = Blocking.evaluate(stylus, FakeTab(), "https://never.example/", true, "text/html", "GET", policy)
+        assertEquals(false, (both as Verdict.HeaderStage).withCookies)
+        // A request-stage block or redirect stands ahead of the relay: nothing to strip from a
+        // document that never loads.
+        val blocked = Blocking.evaluate(snapshot, tab, "https://malware.example/never", true, "text/html", "GET", policy)
+        assertTrue(blocked is Verdict.Empty)
+        // Without a policy the empty snapshot passes as before.
+        assertSame(Verdict.Pass, Blocking.evaluate(EngineSnapshot.EMPTY, tab, "https://never.example/", true, "text/html", "GET"))
+        // The listeners see the relay as a request that goes out, cookies or not.
+        val listeners = WebRequestListeners()
+        val heard = Blocking.evaluate(EngineSnapshot.EMPTY, listeners, tab, "https://never.example/", true, mapOf("Accept" to "text/html"), "GET", policy)
+        assertTrue(heard is Verdict.HeaderStage)
+        assertEquals(false, (heard as Verdict.HeaderStage).withCookies)
+    }
+
     @Test
     fun `HTTPS-only mode's upgrade is reported as one, and skipped for a site the user allowed over plaintext`() {
         val httpsOnly = EngineSnapshot(

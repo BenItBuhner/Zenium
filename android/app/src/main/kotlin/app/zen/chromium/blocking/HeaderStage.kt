@@ -105,7 +105,10 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
      * The profile's cookie jar rides only on a first-party relay. WebView attaches `Cookie` at the
      * network layer, after the intercept, under the profile's third-party cookie policy and
      * SameSite; a cross-site frame relayed with the whole jar would bypass both, so it goes
-     * without cookies and its `Set-Cookie` is not stored.
+     * without cookies and its `Set-Cookie` is not stored. `withCookies` false is the cookie
+     * policy's word ([RequestPolicy.cookiesWithheld]: a never-site's document, every unlisted
+     * one under "block all cookies"): the relay then carries no `Cookie` at all – the request's
+     * own header goes too – and keeps no `Set-Cookie`, the desktop header stage's strip.
      */
     fun relay(
         snap: EngineSnapshot,
@@ -113,11 +116,13 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
         req: Request,
         requestHeaders: Map<String, String>,
         observer: DecisionObserver?,
-        requestDecision: Decision = Decision.ALLOW
+        requestDecision: Decision = Decision.ALLOW,
+        withCookies: Boolean = true
     ): Answer? {
         if (req.method != "GET" && req.method != "HEAD") return null
         val headers = relayHeaders(requestHeaders)
-        val withJar = !req.isThirdParty
+        if (!withCookies) headers.keys.filter { it.equals("Cookie", ignoreCase = true) }.forEach { headers.remove(it) }
+        val withJar = withCookies && !req.isThirdParty
         if (withJar && headers.keys.none { it.equals("Cookie", ignoreCase = true) }) {
             cookies.cookieHeader(tab.containerId, req.url)?.let { headers["Cookie"] = it }
         }

@@ -567,7 +567,8 @@ export class SyncEngine implements SyncHost {
       shortcutOverrides: state.shortcutOverrides,
       bookmarks: state.bookmarks,
       boosts: this.browser.boosts.all(),
-      credentials: this.browser.passwords.syncSources()
+      credentials: this.browser.passwords.syncSources(),
+      siteData: this.browser.siteData.policy()
     }
   }
 

@@ -61,7 +61,8 @@ function fixture(io: StoreIO = memoryIo()): Fixture {
     windows: true,
     updates: false,
     agents: false,
-    secureDns: true
+    secureDns: true,
+    quitsThroughCore: true
   })
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },

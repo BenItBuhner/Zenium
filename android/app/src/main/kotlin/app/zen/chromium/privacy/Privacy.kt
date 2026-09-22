@@ -66,6 +66,17 @@ class Privacy private constructor(
 
     override fun plaintextAllowed(url: String): Boolean = flags.plaintextAllowed(url)
 
+    /**
+     * The per-site cookie policy's word on a document (the never list, "block all cookies"):
+     * relayed without cookies when blocked. The third-party rule is left to the tab's own
+     * switch (`TabWebView.applyCookiePolicy`), which WebView enforces on every request.
+     */
+    override fun cookiesWithheld(url: String, documentUrl: String?, containerId: String): Boolean {
+        val policy = flags.siteData
+        if (policy.isEmpty) return false
+        return policy.verdict(url) == SiteDataPolicy.Verdict.BLOCKED
+    }
+
     // --- the bundled snapshot (PrivacyHost.bundledSafeBrowsingFeed) ------------------------------
 
     /** The feed document the build ships for `id` (`assets/safebrowsing/<id>.json`), or null. */

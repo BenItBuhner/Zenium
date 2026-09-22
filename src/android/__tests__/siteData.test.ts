@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Bridge } from '../bridge'
-import { AndroidSiteData, cookieFromNative } from '../siteData'
+import { AndroidSiteData, cookieFromNative, originReadingFromNative } from '../siteData'
 import { AndroidTabView } from '../views'
 
 /** A bridge that records calls and answers each method from `answers`. */
@@ -70,6 +70,38 @@ describe('AndroidSiteData', () => {
       []
     )
     expect(cookieFromNative({ name: 'n', domain: 'd', secure: null, size: -3 }).size).toBe(0)
+  })
+
+  it('asks Kotlin for the origins with data, probing the ones the core knows of, and shapes its answer', async () => {
+    const { bridge, calls } = fakeBridge({
+      'site.listOrigins': [
+        { origin: 'https://www.google.com', cookies: 4, usageBytes: 20480 },
+        { origin: 'https://probe.example', cookies: 1, usageBytes: null },
+        // Malformed readings are dropped or defaulted, never thrown.
+        { origin: '', cookies: 3, usageBytes: 1 },
+        { cookies: 3 },
+        { origin: 'https://odd.example', cookies: 'many', usageBytes: -5 }
+      ]
+    })
+    const rows = await new AndroidSiteData(bridge).listOrigins('work', ['https://probe.example'])
+    expect(calls[0]).toEqual({
+      method: 'site.listOrigins',
+      args: { containerId: 'work', probe: ['https://probe.example'] }
+    })
+    expect(rows).toEqual([
+      { origin: 'https://www.google.com', cookies: 4, usageBytes: 20480 },
+      { origin: 'https://probe.example', cookies: 1, usageBytes: null },
+      { origin: 'https://odd.example', cookies: 0, usageBytes: 0 }
+    ])
+    expect(await new AndroidSiteData(fakeBridge().bridge).listOrigins('default', [])).toEqual([])
+    expect(originReadingFromNative(null)).toBeNull()
+    expect(
+      originReadingFromNative({ origin: 'https://a.example', cookies: -1, usageBytes: NaN })
+    ).toEqual({
+      origin: 'https://a.example',
+      cookies: 0,
+      usageBytes: null
+    })
   })
 
   it('reads storage per site and defaults what Kotlin leaves out', async () => {

@@ -92,6 +92,11 @@ export class ProtectionService {
     if (this.started) this.refresh()
   }
 
+  /** The per-site cookie policy (`SiteDataService`) changed: the hosts' flags carry it. */
+  onSiteDataChanged(): void {
+    if (this.started) this.refresh()
+  }
+
   /** The effective policy changed (or may have): the rule set first, then the hosts' flags. */
   private refresh(): void {
     this.syncHttpsOnlyRules()
@@ -152,7 +157,8 @@ export class ProtectionService {
       gpc: s.gpc,
       dnt: s.dnt,
       secureDnsMode: dns.mode,
-      secureDnsServers: dns.servers
+      secureDnsServers: dns.servers,
+      siteData: this.browser.siteData.policy()
     }
   }
 

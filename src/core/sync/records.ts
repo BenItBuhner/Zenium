@@ -17,6 +17,7 @@ import type {
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { OTHER_BOOKMARKS_ID, isBookmarkRoot } from '../../shared/bookmarks'
 import type { Model } from '../model'
+import type { SiteDataPolicy } from '../../shared/siteData'
 import { sha1Hex } from './sha1'
 
 /**
@@ -38,6 +39,12 @@ export type RecordType =
   | 'order'
   /** One entry of the credential store: a saved login, or a passkey's public record (ID-09). */
   | 'credential'
+  /**
+   * The per-site cookie and site-data policy (`SiteDataPolicy`, one record of the settings
+   * scope, PS-23): a peer on a build without it ignores the record, as `inScope` says nothing
+   * for a type it does not know, and neither tombstones nor applies it.
+   */
+  | 'site-data'
 
 export interface SyncRecord {
   id: string
@@ -181,6 +188,7 @@ export interface ShortcutsData {
 
 export const SETTINGS_RECORD_ID = 'settings'
 export const SHORTCUTS_RECORD_ID = 'shortcuts'
+export const SITE_DATA_RECORD_ID = 'site-data'
 
 /**
  * A saved login as Chrome's password sync carries it: the whole entry, secret included, under
@@ -338,6 +346,7 @@ export function inScope(record: SyncRecord, scope: SyncScope): boolean {
     case 'bookmark':
       return scope.bookmarks
     case 'settings':
+    case 'site-data':
       return scope.settings
     case 'shortcuts':
       return scope.shortcuts
@@ -398,6 +407,8 @@ export interface LocalSources {
    * are then neither published nor tombstoned (`diffLocal`'s `frozen`) until it opens again.
    */
   credentials?: CredentialSources | null
+  /** The per-site cookie policy (`SiteDataService.policy()`); published with the settings. */
+  siteData?: SiteDataPolicy
 }
 
 /** Snapshot of everything in scope as `{ id → { type, data } }`. */
@@ -512,6 +523,7 @@ export function collectLocal(
       compactMode: { ...rest.compactMode, sidebarPersistent: false }
     }
     out.set(SETTINGS_RECORD_ID, { type: 'settings', data })
+    if (src.siteData) out.set(SITE_DATA_RECORD_ID, { type: 'site-data', data: src.siteData })
   }
   if (scope.shortcuts) {
     const data: ShortcutsData = { overrides: src.shortcutOverrides }

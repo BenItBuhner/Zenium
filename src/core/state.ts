@@ -113,6 +113,7 @@ import {
 } from '../shared/blocking'
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
 import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
+import { emptySiteDataStatus, type SiteDataStatus } from '../shared/siteData'
 import {
   UNAVAILABLE_SPELLCHECK,
   sanitizeSpellcheck,
@@ -251,6 +252,7 @@ export interface StateExtras {
   autofill: AutofillUIState
   blocking: BlockingStatus
   privacy: PrivacyStatus
+  siteData: SiteDataStatus
   translate: TranslateUIState
   spellcheck: SpellcheckStatus
   readAloud: ReadAloudState | null
@@ -394,6 +396,7 @@ export class BrowserState {
     autofill: emptyAutofillUIState(),
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),
+    siteData: emptySiteDataStatus(),
     translate: emptyTranslateState(),
     spellcheck: UNAVAILABLE_SPELLCHECK,
     readAloud: null,
