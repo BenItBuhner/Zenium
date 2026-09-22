@@ -3542,11 +3542,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             dom.put("console", JSONArray(consoleOf(popup).takeLast(10)))
         }
         extra.put("popup", dom)
-        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        val workerConsole = backgroundView(row.id)?.let { consoleOf(it).takeLast(8) } ?: emptyList()
+        extra.put("workerConsole", JSONArray(workerConsole))
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-media-popup")
         runCatching { coreInvoke("extension.closePopup", "null") }
-        return Grade(if (dom.optBoolean("pass")) "P" else "F", "Video Downloader Plus: popup over the playing clip ${if (popup == null) "did not render" else dom.toString().take(220)}", extra)
+        // The clip list is its vendor's: the worker sends the page's URL to `api/video/fetch-video-info`
+        // and lists what the service answers. A 403 from the service to the runner (the desktop's
+        // round 6 was answered) leaves nothing to list: the service's refusal, not the runtime's.
+        val popupConsole = dom.optJSONArray("console")?.let { c -> (0 until c.length()).map { c.optString(it) } } ?: emptyList()
+        val refused = (workerConsole + popupConsole).firstOrNull { it.contains("fetch-video-info") && it.contains("403") }
+        return when {
+            dom.optBoolean("pass") -> Grade("P", "Video Downloader Plus: popup over the playing clip ${dom.toString().take(220)}", extra)
+            popup != null && refused != null -> Grade("n/m", "Video Downloader Plus: its vendor API (api/video/fetch-video-info) answered 403 Forbidden to the runner, so its popup lists no clip (\"${dom.optString("text").take(60)}\"); the clip list is the service's (not measurable here)", extra)
+            else -> Grade("F", "Video Downloader Plus: popup over the playing clip ${if (popup == null) "did not render" else dom.toString().take(220)}", extra)
+        }
     }
 
     /**
@@ -4894,13 +4904,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "out.frames=Array.prototype.map.call(document.querySelectorAll('iframe'),function(f){var fr=f.getBoundingClientRect();return (f.getAttribute('src')||'(no src)').slice(0,120)+' '+Math.round(fr.width)+'x'+Math.round(fr.height)}).slice(0,12);" +
                 "out.bodyEls=document.body?document.body.querySelectorAll('*').length:0;return JSON.stringify(out)})()"
 
+        /**
+         * The UI an extension injected into the page, by a selector: every match is read (the
+         * first match may be the bundle's `<style>` of custom properties, Speechify's, or a 0x0
+         * inline wrapper whose fixed-position panel is the thing to see, AITOPIA's), and the box
+         * that counts is the largest visible one among a match, its shadow root's nodes and its
+         * own descendants; the text is the host's.
+         */
         private const val INJECTED_UI =
-            "(function(){var el=document.querySelector(__SELECTOR__);if(!el)return JSON.stringify({pass:false});" +
+            "(function(){var list=document.querySelectorAll(__SELECTOR__);if(!list.length)return JSON.stringify({pass:false});" +
                 "var visible=function(e){var r=e.getBoundingClientRect();var cs=getComputedStyle(e);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'?r:null};" +
-                "var best=el,rect=visible(el);if(el.shadowRoot){var nodes=el.shadowRoot.querySelectorAll('*');for(var i=0;i<nodes.length;i++){var r=visible(nodes[i]);if(r&&(!rect||r.width*r.height>rect.width*rect.height)){best=nodes[i];rect=r}}}" +
+                "var skip=/^(STYLE|SCRIPT|LINK|TEMPLATE|META|NOSCRIPT)$/;var host=null,best=null,rect=null;" +
+                "var consider=function(h,e){var r=visible(e);if(r&&(!rect||r.width*r.height>rect.width*rect.height)){host=h;best=e;rect=r}};" +
+                "for(var i=0;i<list.length;i++){var el=list[i];if(skip.test(el.tagName))continue;if(!host)host=el;consider(el,el);" +
+                "var nodes=el.shadowRoot?el.shadowRoot.querySelectorAll('*'):[];for(var j=0;j<nodes.length&&j<4000;j++)consider(el,nodes[j]);" +
+                "var kids=el.querySelectorAll('*');for(var k=0;k<kids.length&&k<4000;k++)consider(el,kids[k])}" +
+                "if(!host)host=list[0];if(!best)best=host;" +
                 "var text='';if(best.tagName==='IFRAME'){try{var d=best.contentDocument;text=d&&d.body?String(d.body.innerText||''):''}catch(e){}}" +
-                "if(!text)text=String((el.shadowRoot&&el.shadowRoot.textContent)||el.textContent||'');text=text.replace(/\\s+/g,' ').trim();" +
-                "return JSON.stringify({pass:!!rect,tag:best.tagName.toLowerCase(),w:rect?Math.round(rect.width):0,h:rect?Math.round(rect.height):0,text:text.slice(0,120),host:el.tagName.toLowerCase(),shadow:!!el.shadowRoot,hostBox:Math.round(el.getBoundingClientRect().width)+'x'+Math.round(el.getBoundingClientRect().height)})})()"
+                "if(!text)text=String((host.shadowRoot&&host.shadowRoot.textContent)||host.textContent||'');text=text.replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!rect,tag:best.tagName.toLowerCase(),w:rect?Math.round(rect.width):0,h:rect?Math.round(rect.height):0,text:text.slice(0,120),host:host.tagName.toLowerCase(),shadow:!!host.shadowRoot,hostBox:Math.round(host.getBoundingClientRect().width)+'x'+Math.round(host.getBoundingClientRect().height),matches:list.length})})()"
 
         /**
          * In GoFullPage's popup: whether the FileSystem API it stores captures through is there
