@@ -17,19 +17,22 @@ import { PhoneGroupHeading, PhoneListRow, RowFavicon } from './PhoneList'
 import { useRowGestures } from './useRowGestures'
 
 /**
- * The History page's "From your other devices" group (matrix TAB-02, history-07; the #316 gate:
- * the other devices' tabs are History's group beside Recently closed, as the desktop History
- * page lists both, and Settings › Sync's row – not a pane of the overview): services'
- * `sync.tabsFromDevices` under one 15/600 heading per device with its name and when it last
- * published (`lib/otherDevices.ts` for what it lists) – the list is the one Settings › Sync reads
- * (`remoteTabsStore`, asked of the core once per `remoteTabsVersion` by `useRemoteTabs`, only
+ * The History page's other devices' tabs (matrix TAB-02, history-07; the #316 gate: they are
+ * History's groups beside Recently closed, as the desktop History page lists them, and
+ * Settings › Sync's row – not a pane of the overview; v2 §10.1): services' `sync.tabsFromDevices`
+ * as one §10.3 group PER DEVICE, headed by its name at 15/600 with when it last published as the
+ * heading's aside – no umbrella heading over them, which would stack two heading levels at one
+ * size, as Chrome's Recent tabs and Firefox's Synced Tabs list each device directly (`lib/
+ * otherDevices.ts` for what is listed; the list is the one Settings › Sync reads:
+ * `remoteTabsStore`, asked of the core once per `remoteTabsVersion` by `useRemoteTabs`, only
  * while sync is on with Open tabs in its scope) – each tab a §10.4 row: favicon, title on one
  * line, host under it. A tap opens the tab's address in a new tab (or brings the tab to the
  * front when this device already holds it under that id, ID-10) and the page leaves. A device's
- * heading is held (or tapped) for its menu – Hide Device – the page's own sheet. The group's
- * empty states are §9.17's group form: one plain 44 row in the heading's gutter, sentence case,
- * and the follow-up (Turn on sync, the sync settings) as the group's next row, an action row
- * that leaves for Settings › Sync.
+ * heading is held (or tapped) for its menu – Hide Device – the page's own sheet. With no device
+ * group to show – sync off, Open tabs out of its scope, no device publishing, every device
+ * hidden – the "From your other devices" heading stands alone over §9.17's group form: one plain
+ * 44 row in the heading's gutter with the sentence, and the follow-up (Turn on sync, the sync
+ * settings, Show hidden devices) as the group's next row, an action row.
  */
 export function OtherDevicesGroup({
   state,
@@ -54,7 +57,9 @@ export function OtherDevicesGroup({
   const [now] = useState(() => Date.now())
   return (
     <section aria-label={OTHER_DEVICES_COPY.devicesHeading} data-testid="history-other-devices">
-      <PhoneGroupHeading>{OTHER_DEVICES_COPY.devicesHeading}</PhoneGroupHeading>
+      {section.kind !== 'devices' && (
+        <PhoneGroupHeading>{OTHER_DEVICES_COPY.devicesHeading}</PhoneGroupHeading>
+      )}
       {section.kind === 'sync-off' && (
         <>
           <EmptyRow testId="history-devices-sync-off">{OTHER_DEVICES_COPY.syncOff}</EmptyRow>

@@ -2,18 +2,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { ClosedEntrySummary, Space, SyncDeviceTabs, Tab, UIState } from '@shared/types'
+import type {
+  ClosedEntrySummary,
+  HistoryDayGroup,
+  Space,
+  SyncDeviceTabs,
+  Tab,
+  UIState
+} from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
+import { dayKeyOf } from '@shared/dayKey'
 
 /*
- * The phone History page's "From your other devices" group (matrix TAB-02, history-07; the #316
- * gate: the other devices' tabs are History's group beside Recently closed, as the desktop
- * History page lists both; v2 §9.17, §10.3, §10.4): the group under the recently closed tabs
- * and over the days, one 15/600 heading per device with its name and when it last published,
+ * The phone History page's other devices' tabs (matrix TAB-02, history-07; the #316 gate: they
+ * are History's groups beside Recently closed, as the desktop History page lists them; v2 §9.17,
+ * §10.1, §10.3, §10.4): under the recently closed tabs and over the days, one group PER DEVICE
+ * headed by its name with when it last published as the aside – no umbrella heading over them –
  * the tabs as rows; a row opens the tab here (or brings it to the front, ID-10) and the page
- * leaves; a device's heading held offers Hide Device, the group's last row brings a hidden
- * device back; with sync off, Open tabs out of its scope or no device publishing, the group's
- * sentences and the row to Settings › Sync. Rendered for real in happy-dom, the core stubbed.
+ * leaves; a device's heading held offers Hide Device, the last row brings a hidden device back;
+ * with sync off, Open tabs out of its scope or no device publishing, the "From your other
+ * devices" heading stands alone over the sentence and the row to Settings › Sync. Rendered for
+ * real in happy-dom, the core stubbed.
  */
 
 const SPACE = 'space'
@@ -24,10 +33,26 @@ const HOUR = 60 * 60 * 1000
 
 let closed: ClosedEntrySummary[] = []
 let remote: SyncDeviceTabs[] = []
+/** One day of visits under the groups: the page's "Today". */
+const today = (): HistoryDayGroup[] => [
+  {
+    dayKey: dayKeyOf(NOW),
+    visits: [
+      {
+        id: 'v1',
+        url: 'https://example.com/',
+        title: 'Example Domain',
+        favicon: null,
+        visitTime: NOW - 20 * 60_000,
+        transition: 'typed'
+      }
+    ]
+  }
+]
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) => {
   if (name === 'session.recentlyClosed') return [...closed]
   if (name === 'sync.tabsFromDevices') return remote.map((d) => ({ ...d }))
-  if (name === 'history.grouped') return []
+  if (name === 'history.grouped') return today()
   return null
 })
 Object.assign(window, {
@@ -307,21 +332,32 @@ async function pick(label: string): Promise<void> {
 
 // --- the group ---------------------------------------------------------------------------------
 
-describe("the History page's From your other devices group (TAB-02)", () => {
-  it('stands under Recently closed and over the days, one heading per device by its last publish, the tabs by last activity', async () => {
+describe("the History page's other devices' groups (TAB-02)", () => {
+  it('stand under Recently closed and over the days, one group per device by its last publish with no heading over them, the tabs by last activity', async () => {
     closed = [entry('c1', 'Damping - Wikipedia', 'https://en.wikipedia.org/wiki/Damping', NOW)]
     remote = devices()
     await show(stateOf(pages(), { sync: sync(true) }))
     expect(of('sync.tabsFromDevices')).toHaveLength(1)
     expect(listTexts()).toEqual([
+      'Clear history',
       '# Recently closed',
       'Damping - Wikipedia',
-      '# From your other devices',
       '# Home desktopLast active 3 min ago',
       'Internet Archive',
       '# Work laptopLast active 2 h ago',
       'Zenium',
-      'Web | MDN'
+      'Web | MDN',
+      '# Today',
+      'Example Domain'
+    ])
+    // The devices' headings are the page's group headings (§10.3), Recently closed's siblings.
+    expect(
+      [...document.querySelectorAll<HTMLElement>('.zen-phone-list h3')].map((h) => h.textContent)
+    ).toEqual([
+      'Recently closed',
+      'Home desktopLast active 3 min ago',
+      'Work laptopLast active 2 h ago',
+      'Today'
     ])
     const headings = [...document.querySelectorAll<HTMLElement>('.zen-device-heading-button')]
     expect(headings.map((h) => h.getAttribute('aria-label'))).toEqual([
@@ -364,7 +400,6 @@ describe("the History page's From your other devices group (TAB-02)", () => {
     await pick('Hide Device')
     expect(hiddenDevicesStore.get().hidden.has('device-laptop')).toBe(true)
     expect(groupTexts()).toEqual([
-      '# From your other devices',
       '# Home desktopLast active 3 min ago',
       'Internet Archive',
       'Show 1 hidden device'
@@ -373,6 +408,20 @@ describe("the History page's From your other devices group (TAB-02)", () => {
     expect(hiddenDevicesStore.get().hidden.size).toBe(0)
     expect(groupTexts()).toContain('# Work laptopLast active 2 h ago')
     expect(byTestId('history-devices-show-hidden')).toBeNull()
+  })
+
+  it('with every device hidden, the From your other devices heading stands over the sentence and the row that shows them again', async () => {
+    remote = devices()
+    await show(stateOf(pages(), { sync: sync(true) }))
+    await hold('device-laptop')
+    await pick('Hide Device')
+    await hold('device-desktop')
+    await pick('Hide Device')
+    expect(groupTexts()).toEqual([
+      '# From your other devices',
+      'No open tabs on your other devices yet',
+      'Show 2 hidden devices'
+    ])
   })
 
   it('with sync off the group says so and its row leaves for Settings › Sync; with Open tabs off it says that instead', async () => {
@@ -442,6 +491,6 @@ describe("the History page's From your other devices group (TAB-02)", () => {
     render(stateOf(pages(), { sync: moved }))
     await settle()
     expect(of('sync.tabsFromDevices')).toHaveLength(2)
-    expect(groupTexts()[1]).toBe('# TabletLast active 1 min ago')
+    expect(groupTexts()[0]).toBe('# TabletLast active 1 min ago')
   })
 })

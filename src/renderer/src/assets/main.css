@@ -7729,6 +7729,14 @@
 .zen-overview-search-reach.zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {
   margin-top: 20px;
 }
+/* Under the grid's "no match" sentence (§9.34; the emptied grid stands between them), whose own
+   bottom padding is the gap. */
+.zen-overview-search-empty
+  ~ .zen-overview-search-reach.zen-phone-list
+  > :first-child
+  > .zen-v2-heading.zen-list-heading {
+  margin-top: 0;
+}
 
 /*
  * A phone list's group with nothing in it, and the group's follow-up (§9.17's group form, §10.4;

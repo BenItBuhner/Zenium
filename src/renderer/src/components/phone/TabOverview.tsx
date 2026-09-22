@@ -5,7 +5,6 @@ import {
   Group,
   PanelLeft,
   PanelRight,
-  Plus,
   Search,
   Share2,
   Star,
@@ -106,10 +105,11 @@ import {
   departed,
   departStore,
   rectOf,
-  releaseDepartures
+  releaseDepartures,
+  type Departure
 } from './departureStore'
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
-import { CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
+import { CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
@@ -372,18 +372,20 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // departed first, from where they stand on the grid – the cards a collapsed group folds away,
   // or an earlier query dropped, have no element and nothing to leave from – so their exits
   // start in the commit that unmounts them, the survivors gliding on the same frame (§11.4).
+  // The New Tab card goes with them while a query stands (§9.34: it is not a match, and a tap
+  // on it would open a blank page under a query), and comes back as they do when it clears.
   const searchInput = useRef<HTMLInputElement>(null)
   const changeQuery = (next: string): void => {
     const q = normalizeQuery(next)
     const leaving = [...pinnedAll, ...regularAll].filter((tab) => !tabMatchesQuery(tab, q))
-    depart(
-      leaving.flatMap((tab) => {
-        const rect = rectOf(flip.element(tab.id))
-        return rect
-          ? [{ key: tab.id, kind: 'tab' as const, tab, rect, filtered: true as const }]
-          : []
-      })
-    )
+    const exits: Departure[] = leaving.flatMap((tab) => {
+      const rect = rectOf(flip.element(tab.id))
+      return rect ? [{ key: tab.id, kind: 'tab', tab, rect, filtered: true }] : []
+    })
+    const newTab = q ? rectOf(flip.element(NEW_TAB_CELL)) : null
+    if (newTab)
+      exits.push({ key: NEW_TAB_CELL, kind: 'new-tab', isPrivate: privatePane, rect: newTab })
+    depart(exits)
     setSearch({ open: true, query: next })
   }
   const openSearch = (): void => setSearch((s) => (s.open ? s : { open: true, query: '' }))
@@ -946,6 +948,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // this close is the grid's own). A card a shorter query lets back in is drawn again: the exit
   // still running for it is dropped, and the card enters as that exit run backwards – growing
   // from .9 as it fades in on the exit's spring, a 120 ms fade under reduced motion (§11.3).
+  // The New Tab card is one of them: off with the first letter, back with the query cleared.
   const shownCards = useRef<{ query: string; ids: ReadonlySet<string> }>({
     query: '',
     ids: new Set()
@@ -954,11 +957,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   useLayoutEffect(() => {
     const was = shownCards.current
     const ids = new Set(checkable.map((t) => t.id))
+    if (!searching) ids.add(NEW_TAB_CELL)
     shownCards.current = { query, ids }
     const released: string[] = []
     for (const item of departStore.get().items) {
-      if (item.kind !== 'tab' || !item.filtered) continue
-      if (flip.element(item.tab.id)) departed(item.key)
+      const dropped = item.kind === 'new-tab' || (item.kind === 'tab' && item.filtered)
+      if (!dropped) continue
+      if (flip.element(item.key)) departed(item.key)
       else released.push(item.key)
     }
     if (released.length) releaseDepartures(released)
@@ -1260,9 +1265,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 }}
                 onScroll={measure}
               >
-                {searching && foundAll === 0 && (
+                {searching && found === 0 && (
+                  // No card matches (§9.34): §9.17's sentence where the grid was, the reach's
+                  // lists beneath it when they have rows – then the sentence names what is
+                  // missing, since the rows under it are tabs too.
                   <p className="zen-overview-search-empty" data-testid="overview-search-empty">
-                    No tabs found
+                    {foundAll === 0 ? 'No tabs found' : 'No open tabs found'}
                   </p>
                 )}
                 {essentials.length > 0 && (
@@ -1311,7 +1319,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                     />
                   ))}
                   {loose.map(card)}
-                  <NewTabCard pane={pane} disabled={selecting} />
+                  {!searching && <NewTabCard pane={pane} disabled={selecting} />}
                 </div>
                 {searching && !privatePane && (
                   <OverviewSearchReach
@@ -1901,7 +1909,8 @@ function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Ele
  * The last card of the grid, a cell like the others (`data-cell`): when cards are rearranged,
  * closed or grouped it glides to its new place on the same spring as they do. On the private
  * pane it opens a private tab (INC-01). While tabs are being selected it is no card to pick and
- * takes no tap (§9.30, in its place).
+ * takes no tap (§9.30, in its place). While a query stands it is off the grid with the cards
+ * that do not match (§9.34), its face leaving as theirs do (`NewTabFace`, `Departures`).
  */
 function NewTabCard({ pane, disabled }: { pane: OverviewPane; disabled?: boolean }): JSX.Element {
   const isPrivate = pane === 'private'
@@ -1915,12 +1924,7 @@ function NewTabCard({ pane, disabled }: { pane: OverviewPane; disabled?: boolean
       disabled={disabled}
       onClick={() => newTabOn(pane)}
     >
-      {isPrivate ? (
-        <VenetianMask className="h-6 w-6" strokeWidth={1.75} />
-      ) : (
-        <Plus className="h-6 w-6" />
-      )}
-      <span className="text-[13px] font-medium">{isPrivate ? 'New Private Tab' : 'New Tab'}</span>
+      <NewTabFace isPrivate={isPrivate} />
     </button>
   )
 }

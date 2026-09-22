@@ -429,11 +429,11 @@ const reachTexts = (): string[] =>
       ? `# ${el.textContent?.trim()}`
       : (el.querySelector('.zen-list-title')?.textContent?.trim() ?? el.textContent?.trim() ?? '')
   )
-/** The search's departures on the grid: the dropped cards, by tab. */
+/** The search's departures on the grid: the dropped cards by tab, and the New Tab card's. */
 const filteredExits = (): string[] =>
   departStore
     .get()
-    .items.filter((i) => i.kind === 'tab' && i.filtered)
+    .items.filter((i) => i.kind === 'new-tab' || (i.kind === 'tab' && i.filtered))
     .map((i) => i.key)
     .sort()
 
@@ -483,43 +483,51 @@ describe('the tab search (TAB-21)', () => {
     expect(cellKeys()).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
   })
 
-  it('narrows the grid by title and address as typed, case and diacritics folded; the dropped cards depart in place, the New Tab card stays', () => {
+  it('narrows the grid by title and address as typed, case and diacritics folded; the dropped cards depart in place and the New Tab card with them (§9.34)', () => {
     show(stateOf(pages()))
     act(() => byTestId('overview-search-toggle')!.click())
 
     type('WIKI')
-    expect(cellKeys()).toEqual(['coffee', 'tea', 'new-tab'])
-    expect(filteredExits()).toEqual(['blank', 'ex', 'hn', 'pulls'])
+    expect(cellKeys()).toEqual(['coffee', 'tea'])
+    // The New Tab card is no match: it leaves with the cards that are not, as its own exit
+    // (its face, no tab behind it), and hides no tab.
+    expect(filteredExits()).toEqual(['blank', 'ex', 'hn', 'new-tab', 'pulls'])
+    expect(departStore.get().items.find((i) => i.key === 'new-tab')).toMatchObject({
+      kind: 'new-tab',
+      isPrivate: false
+    })
     expect(departStore.get().hidden.has('new-tab')).toBe(false)
 
     // The address alone: "git" is in no title.
     type('git')
-    expect(cellKeys()).toEqual(['pulls', 'new-tab'])
+    expect(cellKeys()).toEqual(['pulls'])
     // Diacritics fold both ways: "wikipedia" finds "Wikipédia".
     type('wikipedia')
-    expect(cellKeys()).toEqual(['coffee', 'tea', 'new-tab'])
+    expect(cellKeys()).toEqual(['coffee', 'tea'])
     type('Wikipédia')
-    expect(cellKeys()).toEqual(['coffee', 'tea', 'new-tab'])
+    expect(cellKeys()).toEqual(['coffee', 'tea'])
   })
 
   it('a card the query dropped has its exit released once the grid no longer holds it', () => {
     show(stateOf(pages()))
     act(() => byTestId('overview-search-toggle')!.click())
     type('coffee')
-    // The exits of the dropped cards run from the commit that unmounted them.
-    for (const key of ['ex', 'pulls', 'tea', 'hn', 'blank'])
+    // The exits of the dropped cards run from the commit that unmounted them, the New Tab
+    // card's among them.
+    for (const key of ['ex', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
       expect(departStore.get().released.has(key), key).toBe(true)
-    // A shorter query lets them back: the exits are dropped, the cards are drawn again.
+    // A shorter query lets them back: the exits are dropped, the cards are drawn again, the
+    // New Tab card last as before.
     type('')
     expect(filteredExits()).toEqual([])
     expect(cellKeys()).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
   })
 
-  it('says nothing is found over the New Tab card, and tells the count once the typing pauses', () => {
+  it('says nothing is found where the grid was, and tells the count once the typing pauses', () => {
     show(stateOf(pages()))
     act(() => byTestId('overview-search-toggle')!.click())
     type('zzz')
-    expect(cellKeys()).toEqual(['new-tab'])
+    expect(cellKeys()).toEqual([])
     expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')
     expect(announcerStore.get().text).toBe('')
     act(() => vi.advanceTimersByTime(600))
@@ -556,7 +564,7 @@ describe('the tab search (TAB-21)', () => {
     act(() => byTestId('overview-search-toggle')!.click())
     expect(topBackSurface()?.name).toBe('overview-search')
     type('tea')
-    expect(cellKeys()).toEqual(['tea', 'new-tab'])
+    expect(cellKeys()).toEqual(['tea'])
     back()
     expect(field()).not.toBeNull()
     expect(field()!.value).toBe('')
@@ -570,7 +578,7 @@ describe('the tab search (TAB-21)', () => {
     show(stateOf(pages()))
     act(() => byTestId('overview-search-toggle')!.click())
     type('hacker')
-    expect(cellKeys()).toEqual(['hn', 'new-tab'])
+    expect(cellKeys()).toEqual(['hn'])
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
@@ -596,12 +604,16 @@ describe('the tab search (TAB-21)', () => {
     show(withPrivate(stateOf([...pages(), privateTab('p1', 'https://one.example/')])))
     act(() => byTestId('overview-search-toggle')!.click())
     type('wiki')
-    expect(cellsOn('tabs')).toEqual(['coffee', 'tea', 'new-tab'])
+    expect(cellsOn('tabs')).toEqual(['coffee', 'tea'])
     act(() => byTestId('overview-pane-private')!.click())
     await settle()
     expect(field()!.value).toBe('wiki')
-    expect(cellsOn('private')).toEqual(['new-tab'])
+    // The private pane's New Private Tab card is off the grid under the query as well.
+    expect(cellsOn('private')).toEqual([])
+    expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')
     type('example')
+    expect(cellsOn('private')).toEqual(['p1'])
+    type('')
     expect(cellsOn('private')).toEqual(['p1', 'new-tab'])
   })
 })
@@ -621,7 +633,7 @@ describe("the search's reach (TAB-21 over TAB-02's lists)", () => {
 
     await search('wiki')
     expect(of('sync.tabsFromDevices')).toHaveLength(1)
-    expect(cellKeys()).toEqual(['coffee', 'tea', 'new-tab'])
+    expect(cellKeys()).toEqual(['coffee', 'tea'])
     expect(reachTexts()).toEqual([
       '# Recently closed',
       'Damping - Wikipedia',
@@ -639,22 +651,29 @@ describe("the search's reach (TAB-21 over TAB-02's lists)", () => {
 
     // A heading stands only over rows: "zenium" is on the laptop and on a card, closed nowhere.
     await search('zenium')
-    expect(cellKeys()).toEqual(['pulls', 'new-tab'])
+    expect(cellKeys()).toEqual(['pulls'])
     expect(reachTexts()).toEqual(['# From your other devices', 'Zenium'])
     // The address counts as it does for the cards: the RFC's is rfc-editor.org.
     await search('rfc-editor')
-    expect(cellKeys()).toEqual(['new-tab'])
+    expect(cellKeys()).toEqual([])
     expect(reachTexts()).toEqual(['# Recently closed', 'RFC 1149'])
   })
 
-  it('a query only the lists answer shows their rows over the New Tab card, not the empty sentence; one nothing answers shows the sentence alone', async () => {
+  it("a query no card answers shows the grid's sentence over the lists' rows (§9.34), naming the open tabs since the rows are tabs too; one nothing answers shows the sentence alone", async () => {
     closed = closedTabs()
     remote = devices()
     show(stateOf(pages(), { sync: sync(true) }))
     await search('damping')
-    expect(cellKeys()).toEqual(['new-tab'])
-    expect(byTestId('overview-search-empty')).toBeNull()
+    expect(cellKeys()).toEqual([])
+    const sentence = byTestId('overview-search-empty')!
+    expect(sentence.textContent).toBe('No open tabs found')
     expect(reachTexts()).toEqual(['# Recently closed', 'Damping - Wikipedia'])
+    // The sentence stands where the grid was, the lists beneath it.
+    expect(
+      sentence.compareDocumentPosition(byTestId('overview-search-reach')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    // The count told is of everything found: the one closed tab.
     act(() => vi.advanceTimersByTime(600))
     expect(announcerStore.get().text).toBe('1 tab found')
 
@@ -707,7 +726,7 @@ describe("the search's reach (TAB-21 over TAB-02's lists)", () => {
     ]
     show(stateOf(pages(), { sync: sync(true) }))
     await search('hacker')
-    expect(cellKeys()).toEqual(['hn', 'new-tab'])
+    expect(cellKeys()).toEqual(['hn'])
     act(() => rowByTitle('Hacker News').click())
     expect(of('tab.activate')).toEqual([{ tabId: 'hn' }])
     expect(of('tab.create')).toEqual([])
@@ -752,7 +771,7 @@ describe("the search's reach (TAB-21 over TAB-02's lists)", () => {
     act(() => pickOverviewPane('private'))
     await settle()
     await search('wiki')
-    expect(cellsOn('private')).toEqual(['p1', 'new-tab'])
+    expect(cellsOn('private')).toEqual(['p1'])
     expect(byTestId('overview-search-reach')).toBeNull()
     expect(of('sync.tabsFromDevices')).toEqual([])
     act(() => vi.advanceTimersByTime(600))
