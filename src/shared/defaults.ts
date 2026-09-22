@@ -24,6 +24,8 @@ import { DEFAULT_PRIVACY_SETTINGS } from './privacy'
 import { DEFAULT_SPELLCHECK } from './spellcheck'
 import { DEFAULT_READER_PREFERENCES } from './reader'
 import { DEFAULT_READ_ALOUD_SETTINGS } from './readAloud'
+import { DEFAULT_FONT_SETTINGS } from './fonts'
+import { FALLBACK_LANGUAGES } from './languages'
 
 /**
  * Off until the user turns it on in Settings → AI Agents; loopback only, approval required.
@@ -265,7 +267,10 @@ export const DEFAULT_SETTINGS: Settings = {
   fullscreenHintDone: false,
   spellcheck: structuredClone(DEFAULT_SPELLCHECK),
   reader: structuredClone(DEFAULT_READER_PREFERENCES),
-  readAloud: structuredClone(DEFAULT_READ_ALOUD_SETTINGS)
+  readAloud: structuredClone(DEFAULT_READ_ALOUD_SETTINGS),
+  fonts: structuredClone(DEFAULT_FONT_SETTINGS),
+  // A profile takes the OS's languages as it loads (`defaultLanguages`); this stands in until then.
+  languages: [...FALLBACK_LANGUAGES]
 }
 
 /** Firefox's four default containers plus "No Container". */

@@ -125,6 +125,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The same rules as the core sent them, handed to every page's document-start script. */
     override var pageRulesJson: JSONObject = JSONObject()
         private set
+    /**
+     * The page fonts the core last pushed (`fonts.apply`, at its start and on every change of
+     * `Settings.fonts`), every page WebView's `WebSettings`; from the last run's document until the
+     * core's first push, so a tab restored ahead of it is laid out with the same fonts (PageFonts).
+     */
+    override var pageFonts: PageFonts = PageFonts.load(storage)
+        private set
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
 
@@ -408,6 +415,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // under the guard's own switch and bypasses, as the request engine would answer; null for
             // nothing listed. Not a navigation: it never waits for the first load.
             "privacy.lookup" -> reply(privacy.unsafe(args.str("url"), navigation = false)?.toJson())
+
+            // --- page fonts (the PageFontsHost contract, CT-25) ---------------------------------
+            "fonts.apply" -> { setPageFonts(PageFonts.fromJson(args)); reply(null) }
 
             // --- tab card thumbnails (the ThumbnailHost contract; `Thumbnails.kt` is the file layer) ---
             "thumbnail.configure" -> { thumbnails.width = args.num("width").toInt(); reply(null) }
@@ -1151,6 +1161,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         for (tab in pages) tab.dispatchConfigurationChanged(configuration)
         chrome.dispatchConfigurationChanged(configuration)
         Log.i(TAG, "theme flip to $scheme: the configuration change dispatched to ${pages.size} page(s) and the chrome")
+    }
+
+    /**
+     * The core's page fonts: every open page's `WebSettings` take them (WebView restyles the
+     * document in place), the next page is created with them, and the document is kept for a
+     * process that starts without the core (a custom tab reads it: `PageFonts.load`).
+     */
+    private fun setPageFonts(fonts: PageFonts) {
+        if (fonts == pageFonts) return
+        pageFonts = fonts
+        for (tab in tabs.all()) tab.applyFonts()
+        storage.write(PageFonts.FILE, fonts.toJson().toString()) {}
+        Log.i(TAG, "page fonts: ${fonts.standardFamily} ${fonts.size}px, floor ${fonts.minimumSize}px, applied to ${tabs.all().size} page(s)")
     }
 
     /** The core's page-controls policy: every tab re-registers its document-start script. */

@@ -121,6 +121,8 @@ import {
 } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeReadAloudSettings, type ReadAloudState } from '../shared/readAloud'
+import { sanitizeFontSettings } from '../shared/fonts'
+import { defaultLanguages, sanitizeLanguages } from '../shared/languages'
 import {
   emptyNewTabDevice,
   migrateNewTabDevice,
@@ -343,7 +345,11 @@ export class BrowserState {
   resources: ResourceSnapshot = emptyResourceSnapshot()
   /** Device facts from the host (Android reports them at boot and on configuration changes). */
   pageEnvironment: PageEnvironment = { ...DEFAULT_PAGE_ENVIRONMENT }
-  /** The host's reading of the OS colour scheme (null: the renderer reads its media query). */
+  /**
+   * The host engine's reading of the colour scheme (null: the renderer reads its media query).
+   * The engine follows the source the setting gave it (CT-23), so this is the OS's answer
+   * exactly when `settings.colorScheme` is `system` – the one case the chrome reads it for.
+   */
   systemDark: boolean | null = null
   windowBounds: Rect | null = null
   /** Windows to restore on startup (from the previous session). */
@@ -473,6 +479,16 @@ export class BrowserState {
   private exiting = false
   /** The previous run did not end with a graceful shutdown (its profile lacks the marker). */
   uncleanExit = false
+  /**
+   * The OS's languages (BCP 47, the UI locale first), set by the browser before `load()`: a
+   * profile without a languages list of its own starts from them (`defaultLanguages`, CT-41).
+   */
+  systemLocales: readonly string[] = []
+  /**
+   * This load found no languages list in the profile and took the OS's (a profile from before
+   * CT-41): the translate service folds the languages its own document listed into it, once.
+   */
+  languagesDefaulted = false
 
   constructor(
     io: StoreIO,
@@ -493,6 +509,11 @@ export class BrowserState {
       this.applyPersisted(data)
       // Profiles from before the marker count as clean; only an explicit false is a crash.
       this.uncleanExit = data.cleanExit === false
+    } else {
+      // A fresh profile's preferred languages are the OS's (CT-41), as `applyPersisted` gives a
+      // profile from before the list; the defaults name English for a host without locales.
+      this.settings.languages = defaultLanguages(this.systemLocales)
+      this.languagesDefaulted = true
     }
     this.ensureValid()
     // The blobs' folder hears which ids the session refers to; the documents of the others go at
@@ -583,6 +604,13 @@ export class BrowserState {
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
     this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)
+    this.settings.fonts = sanitizeFontSettings(data.settings?.fonts)
+    // A profile from before the list existed starts from the OS's languages, as a fresh Chrome
+    // profile's `intl.accept_languages` does; one that has a list keeps it (never empty).
+    const storedLanguages = sanitizeLanguages(data.settings?.languages)
+    this.languagesDefaulted = storedLanguages.length === 0
+    this.settings.languages =
+      storedLanguages.length > 0 ? storedLanguages : defaultLanguages(this.systemLocales)
     // The new tab page's one model (v5). The migration reads the desktop's first shape and the
     // phone's key, and runs before the sanitiser, which knows nothing of the earlier fields; it
     // reads its own result unchanged, so a migrated profile loads as it was written.

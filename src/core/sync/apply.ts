@@ -3,6 +3,8 @@ import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { sanitizePhoneBar } from '../../shared/phoneBar'
 import { migrateNewTabSettings, sanitizeNewTabSettings } from '../../shared/newTab'
 import { sanitizeSearchEngines } from '../../shared/search'
+import { sanitizeFontSettings } from '../../shared/fonts'
+import { sanitizeLanguages } from '../../shared/languages'
 import {
   createTabRecord,
   getSpace,
@@ -240,6 +242,12 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         state.settings.newTab = sanitizeNewTabSettings(
           migrateNewTabSettings({ newTab: state.settings.newTab, newTabPhone })
         )
+        // The page fonts and the preferred languages (CT-25, CT-41) are read like a profile's
+        // own: in range, canonical, never an empty languages list (a peer's list of nothing
+        // valid leaves this device's standing).
+        if ('fonts' in rest) state.settings.fonts = sanitizeFontSettings(rest.fonts)
+        if ('languages' in rest)
+          state.settings.languages = sanitizeLanguages(rest.languages, state.settings.languages)
         break
       }
       case 'site-data': {

@@ -244,13 +244,12 @@ class TabWebView(
             // (setPopupsAllowed); a blocked call is reported by the page script and listed.
             javaScriptCanOpenWindowsAutomatically = false
             mediaPlaybackRequiresUserGesture = true
-            // Chrome's typographic defaults rather than WebView's: text a page leaves unstyled is
-            // serif (Android maps Chrome's "Times New Roman" to it), and small text is not pushed
-            // up to 8 px – Chrome has no floor for absolute sizes and 6 px for relative ones.
-            standardFontFamily = "serif"
-            minimumFontSize = 1
-            minimumLogicalFontSize = 6
         }
+        // The page fonts (Settings › Appearance › Customize fonts), and under a profile that never
+        // touched them Chrome's typographic defaults rather than WebView's: text a page leaves
+        // unstyled is serif (Android maps Chrome's "Times New Roman" to it), and small text is not
+        // pushed up to 8 px – Chrome has no floor for absolute sizes and 6 px for relative ones.
+        applyFonts()
         // Present as the browser it is, not as an app's embedded view (see UserAgent).
         UserAgent.apply(settings, BuildConfig.VERSION_NAME, desktopMode, defaultUserAgent)
         applyTextZoom()
@@ -304,6 +303,17 @@ class TabWebView(
         navigationListener = null
         host.extensions?.detach(this)
         super.destroy()
+    }
+
+    // --- page fonts (the document the core pushes; see PageFonts.kt) -------------------------------
+
+    /**
+     * Bring this page's `WebSettings` in line with the host's page fonts: at creation and on
+     * every `fonts.apply` (the core's start, a Settings row, a sync merge). WebView restyles the
+     * open document as the settings change, so nothing reloads.
+     */
+    fun applyFonts() {
+        host.pageFonts.applyTo(settings)
     }
 
     // --- privacy (the policy the core pushes; see privacy/Privacy.kt) -----------------------------
