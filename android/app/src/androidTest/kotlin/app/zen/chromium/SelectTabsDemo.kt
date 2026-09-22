@@ -105,7 +105,8 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
         expect("the cards are checkboxes, none checked (${mode.cards} cards, ${mode.checked} checked)", mode.cards == CARDS && mode.checked == 0)
         expect("ONE header row, its content replaced: ${mode.header}", mode.headerRows == 1 && mode.header == listOf("Done", "Select all"))
         expect("the count reads 'Select tabs' as a live region: '${mode.title}'", mode.title == "Select tabs" && mode.live)
-        expect("the space's name and count have left the header row", !mode.headerText.contains("Work") && !mode.headerText.contains("tabs"))
+        // The overview's row reads "Work" and "7 tabs"; the mode's reads "Select tabs" (no count).
+        expect("the space's name and count have left the header row: '${mode.headerText}'", !mode.headerText.contains("Work") && !TAB_COUNT.containsMatchIn(mode.headerText))
         expect("the strip stands with Close, Group, Bookmark, Share, every one off: ${mode.actions}", mode.actions == listOf("close" to true, "group" to true, "bookmark" to true, "share" to true))
         expect("no card draws a close while the mode is on", !inDom(".zen-overview-card-close"))
         expect("the New Tab card takes no pick", awaitDom("document.querySelector('[data-testid=\"overview-new-tab\"]').disabled"))
@@ -255,7 +256,7 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
         val folder = awaitBookmarkFolder()
         expect("the core holds one folder 'Tabs from <date>' under Mobile bookmarks: '${folder?.optString("title")}'", folder != null && folder.optString("parentId") == MOBILE_BOOKMARKS)
         val children = folder?.let { bookmarkChildren(it.getString("id")) } ?: emptyList()
-        expect("it holds the $picked pages, in the grid's order: ${children.map { it.optString("title") }}", children.size == picked && children.all { it.optString("type") == "bookmark" })
+        expect("it holds the $picked pages, in the grid's order: ${children.map { it.optString("title") }}", children.size == picked && children.all { it.optString("type") == "url" })
         still("bookmarked-toast")
         // Open: the overview leaves and the Bookmarks panel opens at the folder.
         val opened = touchUntil("the toast's Open", { undoRect() }, { !inDom(".zen-overview") }, waitMs = SHEET_WAIT)
@@ -787,6 +788,8 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
         private const val SELECT_ALL = "[data-testid=\"overview-select-all\"]"
         private const val DONE = "[data-testid=\"overview-select-done\"]"
         private const val MOBILE_BOOKMARKS = "3"
+        /** The overview header's count ("7 tabs", "1 tab"). */
+        private val TAB_COUNT = Regex("\\d+ tabs?\\b")
         private const val RECT_JS = "var r=e.getBoundingClientRect();" +
             "return JSON.stringify({l:r.left,t:r.top,r:r.right,b:r.bottom,d:window.devicePixelRatio})"
 
