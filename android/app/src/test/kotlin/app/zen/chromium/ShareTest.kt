@@ -35,4 +35,46 @@ class ShareTest {
         assertEquals("png", Share.extensionFor("image/png"))
         assertEquals("png", Share.extensionFor("application/octet-stream"))
     }
+
+    // --- SH-14 / SH-11: the message, a page's files -----------------------------------------------
+
+    @Test
+    fun theMessageIsTheTextThenTheLinkOnItsOwnLine() {
+        // A page's `navigator.share({ text, url })`, or a selection with its link to the highlight.
+        assertEquals("Look at this\nhttps://a.test/p#:~:text=Look", Share.messageBody("Look at this", "https://a.test/p#:~:text=Look"))
+        // The browser's own Share… (a link alone), a selection without a link (text alone).
+        assertEquals("https://a.test/", Share.messageBody(null, "https://a.test/"))
+        assertEquals("just words", Share.messageBody("just words", null))
+        // A page that put the link in both fields does not send it twice.
+        assertEquals("https://a.test/", Share.messageBody("https://a.test/", "https://a.test/"))
+        assertNull(Share.messageBody(null, null))
+    }
+
+    @Test
+    fun aPagesFileNamesAreMadeSafeAndUnique() {
+        val taken = HashSet<String>()
+        assertEquals("photo.jpg", Share.safeFileName("photo.jpg", "image/jpeg", taken))
+        // The same name again is numbered, the extension kept.
+        assertEquals("photo (2).jpg", Share.safeFileName("photo.jpg", "image/jpeg", taken))
+        assertEquals("photo (3).jpg", Share.safeFileName("photo.jpg", "image/jpeg", taken))
+        // Path separators and control characters cannot climb out of the share folder.
+        assertEquals("_.._etc_passwd", Share.safeFileName("/../etc/passwd", "text/plain", HashSet()))
+        assertEquals("a_b.txt", Share.safeFileName("a\u0000b.txt", "text/plain", HashSet()))
+        // No name, or a dot-name, becomes one from the type.
+        assertEquals("file.png", Share.safeFileName(null, "image/png", HashSet()))
+        assertEquals("file.jpg", Share.safeFileName("...", "image/jpeg", HashSet()))
+        // A long name is cut, its extension kept.
+        val long = Share.safeFileName("x".repeat(500) + ".webp", "image/webp", HashSet())
+        assertEquals(Share.FILE_NAME_MAX, long.length)
+        assertEquals(".webp", long.takeLast(5))
+    }
+
+    @Test
+    fun theSheetsTypeIsTheFilesCommonOne() {
+        assertEquals("image/jpeg", Share.commonMimeType(listOf("image/jpeg")))
+        assertEquals("image/jpeg", Share.commonMimeType(listOf("image/jpeg", "image/jpeg")))
+        assertEquals("image/*", Share.commonMimeType(listOf("image/jpeg", "image/png")))
+        assertEquals("*/*", Share.commonMimeType(listOf("image/jpeg", "text/plain")))
+        assertEquals("application/octet-stream", Share.commonMimeType(listOf("")))
+    }
 }

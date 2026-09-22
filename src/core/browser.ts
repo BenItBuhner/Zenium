@@ -73,6 +73,7 @@ import { ReadAloudService } from './readAloud'
 import { WebNotificationService } from './webNotifications'
 import { ScreenCaptureService } from './screenCapture'
 import { ShareService } from './share'
+import { TextFragments } from './textFragments'
 import { GeolocationService } from './geolocation'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
@@ -303,6 +304,8 @@ export class Browser {
   readonly screenCapture: ScreenCaptureService
   /** The chrome's share sheet (MW-21). */
   readonly shares: ShareService
+  /** Links to a highlight: the selection's `#:~:text=` directive, made by the page (SH-11). */
+  readonly textFragments: TextFragments
   /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
   readonly geolocation: GeolocationService
   readonly windows = new Map<string, ZenWindow>()
@@ -435,6 +438,7 @@ export class Browser {
     this.searchEngines = new SearchEngineService(this)
     this.screenCapture = new ScreenCaptureService(this)
     this.shares = new ShareService(this)
+    this.textFragments = new TextFragments(this)
     this.geolocation = new GeolocationService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
@@ -2245,6 +2249,10 @@ export class Browser {
     }
     if (message.type === 'share') {
       this.shares.handleMessage(tabId, message.share)
+      return
+    }
+    if (message.type === 'textFragment') {
+      this.textFragments.handleMessage(tabId, message)
       return
     }
     if (message.type === 'geolocation') {

@@ -73,6 +73,13 @@ interface PageHost {
     fun viewEvent(tabId: String, name: String, payload: Any?)
 
     /**
+     * A page's message on its way to the core, for a host that keeps part of it for itself: the
+     * browser window writes a share call's files to its cache and forwards their addresses
+     * (`Share.spillPageShare`, SH-14). The default forwards as is. Main thread, `then` once.
+     */
+    fun preparePageMessage(message: JSONObject, then: (JSONObject) -> Unit) = then(message)
+
+    /**
      * The state a fresh WebView rebuilds `tabId`'s back/forward list from changed: `hostState`
      * as [NavigationState.hostStateOf] gives it, null when there is none to keep (a private tab,
      * an empty list, one over the cap). Main thread, with every `historyChanged`; the browser

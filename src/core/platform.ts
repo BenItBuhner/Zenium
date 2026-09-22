@@ -76,6 +76,7 @@ import type {
 } from '../shared/mediaSession'
 import type { NotificationHostMessage, NotificationPageRequest } from '../shared/notifications'
 import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
+import type { TextFragmentHostMessage } from '../shared/textFragmentScript'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
@@ -196,7 +197,12 @@ export interface PageMessage {
      * (`shared/captureState`); the tab's alert indicator is folded from every frame's (tabs-43).
      */
     | 'capture-state'
+    /** The page script answers a `textFragment` / `generate` request with the selection's directive (`shared/textFragmentScript`). */
+    | 'textFragment'
   url?: string
+  /** `textFragment`: the request's id, and the encoded `text=` directive – null when the selection cannot be linked to. */
+  id?: string
+  directive?: string | null
   /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
   title?: string
   x?: number
@@ -276,7 +282,8 @@ export interface DisplayModeHostMessage {
  * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
  * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
  * the notification polyfill's answers and events, a share call's outcome, a position, the
- * page's display mode, read aloud's extraction request and highlight.
+ * page's display mode, read aloud's extraction request and highlight, the request for the
+ * selection's text directive (a link to the highlight, SH-11).
  */
 export type PageHostMessage =
   | WebAppHostMessage
@@ -286,6 +293,7 @@ export type PageHostMessage =
   | GeolocationHostMessage
   | DisplayModeHostMessage
   | ReadAloudHostMessage
+  | TextFragmentHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {

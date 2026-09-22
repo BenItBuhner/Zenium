@@ -863,6 +863,9 @@ export class Menus {
           )
       })
     }
+    // The selection's share carries a link to the highlight (SH-11, Chrome's shared
+    // highlighting): the text, and the page's URL with the selection as its `#:~:text=`
+    // directive when the page can single it out – the text alone otherwise, as Chrome shares it.
     if (state.capabilities.share) {
       actions.push({
         id: 'share',
@@ -870,7 +873,20 @@ export class Menus {
         title: 'Share',
         menu: true,
         toolbar: true,
-        run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
+        run: () => void this.shareSelection(tab, selection, win)
+      })
+    }
+    // Chrome's Copy Link to Highlight: the menu's item for the link alone (the toolbar's Share
+    // carries it, and the phone's sheet has Copy link in Zenium's own row). Web pages only: a
+    // highlight in a `zen://` page or a file means nothing to whoever gets the link.
+    if (/^https?:\/\//i.test(tab.url)) {
+      actions.push({
+        id: 'copyHighlight',
+        label: 'Copy Link to Highlight',
+        title: 'Copy Link',
+        menu: true,
+        toolbar: false,
+        run: () => void this.copyHighlightLink(tab, win)
       })
     }
     // Listen from a selection (EDGE-11 / GN-13): `readAloud.start { from: 'selection-on' }`,
@@ -895,6 +911,19 @@ export class Menus {
       })
     }
     return actions
+  }
+
+  /** The selection onto the share sheet with its link to the highlight when the page can make one. */
+  private async shareSelection(tab: Tab, selection: string, win: ZenWindow): Promise<void> {
+    const url = await this.browser.textFragments.highlightUrl(tab.id)
+    await this.browser.share({ text: selection, url: url ?? undefined, tabId: tab.id }, win)
+  }
+
+  /** The link to the highlight on the clipboard – or a word when the selection cannot be linked to. */
+  private async copyHighlightLink(tab: Tab, win: ZenWindow): Promise<void> {
+    const url = await this.browser.textFragments.highlightUrl(tab.id)
+    if (url) this.browser.copyText(url, 'Link copied', win, 'Link copied')
+    else this.browser.toast("Couldn't make a link to this text", 'info', win)
   }
 
   /**
