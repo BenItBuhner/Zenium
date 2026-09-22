@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
@@ -7,6 +8,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONArray
@@ -16,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.Calendar
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -29,25 +32,41 @@ import java.util.concurrent.TimeUnit
  *  2. The theme flip (PC-13's note, #266's review) under a finger in Settings › Look and Feel:
  *     Colour scheme Light -> Dark. The chrome's `data-theme` and the page's
  *     `prefers-color-scheme` are both on record with epoch timestamps (the chrome's through a
- *     MutationObserver, the page's through `matchMedia`'s change event and a poll of `matches`
- *     while the page is off screen behind the Settings tab), beside the host's own log line of
- *     the configuration change it dispatched. The same rows are read in the accessibility tree
- *     for fix 6: the four value rows named once, "label, value" (#237's audit).
+ *     MutationObserver that keeps the changes of value, the page's through `matchMedia`'s change
+ *     event and a poll of `matches` while the page is off screen behind the Settings tab), beside
+ *     the host's own log line of the configuration change it dispatched. The same rows are read
+ *     in the accessibility tree for fix 6: the four value rows named once, "label, value" (#237's
+ *     audit).
  *  3. The flip with the page ON screen, through the core (`settings.update`, the row's own
  *     action): Dark -> Light -> Dark -> Light, the page's change event within a frame's reach of
- *     the chrome's attribute each time (the claim: 100 ms on the emulator's software GPU).
+ *     the chrome's polarity flip each time (the claim: 100 ms on the emulator's software GPU, or
+ *     two of the page's measured frames). The chrome hands the scheme to the host as its paint
+ *     crosses (the blend's midpoint, `pageScheme.ts`), so the page follows the chrome by the
+ *     bridge's hop and its own next frame, not the other way round.
  *  4. `desktopSite: auto` at the 600 dp crossing (seed 28, #273's run): the loaded page scrolled
  *     by a finger, then the window widened past 600 dp through `wm size` (the split-screen
  *     analogue: the density stays), keeps its document, its viewport and its scroll; a fresh load
  *     on the large screen takes the desktop layout (980); back under 600 the loaded desktop page
  *     is kept as it is, and a fresh load is the phone layout again.
  *  5. History's Select all / Deselect all (§9.6): a long press enters selection, a finger on
- *     Select all picks every shown row (the count in the header, the tree's checked boxes), a
+ *     Select all picks every shown row (the count in the header, the rows' `aria-checked`), a
  *     finger on Deselect all unpicks them with the mode kept.
  *  6. The pill's keyboard ring (A11Y-09, #272's seed): after a touch-driven focus return rings
- *     nothing, a hardware keyboard's Shift+Tab rings a bar button and then the pill itself
- *     (2 px of `--v2-ring`, read off the computed style), and the next real touch takes the ring
- *     away again (`data-input` on the root).
+ *     nothing, a hardware keyboard's Shift+Tab moves the focus to a bar button and then into the
+ *     pill, ringing the button and then the pill itself (2 px of `--v2-ring`, read off the
+ *     computed style), and the next real touch takes the ring away again (`data-input` on the
+ *     root).
+ *
+ * THE TREE ON THIS IMAGE. `UiAutomation`'s view of the chrome WebView trails the screen by
+ * seconds after a transition (#237's run had it 23 s behind a dock switch; the first run of this
+ * driver had it blank on the Look and Feel section 8 s after the drill-in and on the History panel
+ * 10 s after it rose, while the DOM had both). So every read here drops UiAutomation's cache and
+ * asks the chrome document for a frame each round (Blink serialises its tree from the lifecycle,
+ * which runs with a frame), and a finger that waits on the tree only waits so long: after that
+ * it lands on the box the DOM gives for the same control (the chrome fills the window from its
+ * top-left corner, CSS px times the density – SettingsTouchDemo's reading). The touch is the same
+ * injected finger either way and every claim is read off what follows it; which aim was used is
+ * a finding. Fix 6's claims are the tree's by nature and wait on it the longest.
  *
  * Every claim is a line in `android-phone-fixes-findings.txt` and a failed one fails the run; the
  * recording goes on to the end either way. Profile `pwa-demo-state.json` (two tabs on this
@@ -60,6 +79,8 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
     private lateinit var findings: File
     private val failures = ArrayList<String>()
     private var shotIndex = 0
+    /** Every accessibility event the app's windows sent since the run began: (uptime ms, type). */
+    private val a11yEvents: MutableList<Pair<Long, Int>> = Collections.synchronizedList(ArrayList())
 
     @Test
     fun record() {
@@ -116,6 +137,9 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
                 "1 Privacy from the sheet; 2 the theme flip under a finger + the four value rows' names; 3 the flip on screen, timestamps; " +
                 "4 desktopSite auto at the 600 dp crossing; 5 History Select all; 6 the pill's keyboard ring\n\n"
         )
+        // The events the WebView sends are the tree's only word that it changed (UiAutomation's
+        // cache lives on them): on record for the findings that say how far the tree trailed.
+        ui.setOnAccessibilityEventListener { event -> a11yEvents += SystemClock.uptimeMillis() to event.eventType }
         finding("demo server: ${server.selfCheck()}")
         awaitActiveUrl(NOTES_URL)
         // The Settings page is a chunk of its own that loads on its first open: pay for it off camera.
@@ -135,10 +159,11 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         val close = closeUrlField()
         if (!close.ok) finding("warm-up: ${close.describe()}")
         chromeJs(PROBE_JS)
+        calibrateDomBoxes()
         finding(
             "warm-up: Settings chunk ${if (painted) "painted" else "did NOT paint"} off camera; scheme ${colorScheme()}; " +
                 "theme attribute '${themeAttribute()}'; the page sees ${pageValue(SCHEME_JS)}; page frame interval ${pageValue("window.__zenFrameMs.toFixed(1)")} ms; " +
-                "data-input '${dataInput()}'"
+                "data-input '${dataInput()}'; tree cache ${if (Build.VERSION.SDK_INT >= 34) "dropped before every read" else "kept (API < 34)"}"
         )
     }
 
@@ -156,7 +181,7 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
 
     private fun privacyFromTheSheet() {
         step("1. Privacy from the site-information sheet: the site's own group on screen (N3)") {
-            val icon = awaitNode(8_000) { it == SITE_ICON_LABEL } ?: error("the pill's site icon is not in the accessibility tree")
+            val icon = pillControl(SITE_ICON_LABEL, 8_000) ?: error("the pill's site icon is not in the accessibility tree")
             if (!touchTap(icon)) error("no part of the site icon is inside the touchable window")
             val sheet = awaitChrome("!!document.querySelector('[data-testid=\"siteinfo-pill-chips\"]')", 10_000) && awaitSheetAtRest(6_000)
             finding("  a finger on '$SITE_ICON_LABEL' brings the sheet up: ${verdict(sheet)}; rows ${sheetRows()}")
@@ -166,7 +191,7 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             }
             still("siteinfo-sheet")
             // The row is found by its name's prefix: the count in it is the page's.
-            val took = touchTapLabelExpecting("Requests blocked", "the Settings tab is at Privacy asked for the site", timeoutMs = 10_000, prefix = true) {
+            val took = touchControlExpecting("Requests blocked", SHIELD_ROW_JS, "the Settings tab is at Privacy asked for the site", timeoutMs = 10_000, prefix = true) {
                 activeCoreTab()?.optString("url")?.startsWith("$SETTINGS_URL/privacy?site=") == true
             }
             val url = activeCoreTab()?.optString("url").orEmpty()
@@ -184,16 +209,13 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             )
             expect("the site's row is on screen as the page opens (not one screen down)", rowOnScreen, "privacy-row-on-screen")
             // The tree's word: the switch's node with bounds inside the window.
-            val node = awaitNode(6_000) { it.startsWith("Block on") }
+            val node = awaitFresh(10_000, "the site's row") { it.startsWith("Block on") }
             val bounds = node?.let { Rect().also { r -> it.getBoundsInScreen(r) } }
-            finding("  the tree lists '${node?.let { (it.contentDescription ?: it.text)?.toString() }}' at $bounds (window ${width}x$height, touchable $touchable)")
+            finding("  the tree lists '${node?.let { nodeName(it) }}' at $bounds (window ${width}x$height, touchable $touchable)")
             expect("the per-site switch is inside the window in the accessibility tree", bounds != null && bounds.top >= 0 && bounds.bottom <= height && bounds.height() > 0, "privacy-row-tree")
             still("privacy-from-sheet")
             // The Settings tab leaves through the core; the page is the active tab again.
-            activeCoreTab()?.optString("id")?.takeIf { it != NOTES_TAB && it != APP_TAB }?.let {
-                coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(it)}}")
-            }
-            SystemClock.sleep(1_500)
+            closeSettingsTab()
             awaitActiveUrl(NOTES_URL, 8_000)
         }
     }
@@ -206,12 +228,16 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             val landing = awaitChrome("!!document.querySelector('$SETTINGS_SEARCH')", 10_000)
             if (!landing) error("the Settings tab did not open from the menu")
             SystemClock.sleep(1_000)
-            val touched = touchTapLabel("Look and Feel", prefix = true)
+            val touched = touchControl("Look and Feel", LOOK_AND_FEEL_JS, prefix = true)
             val section = touched && awaitChrome("!!document.querySelector('$DRILL_IN $SETTINGS_ROW')", 8_000)
             finding("  Look and Feel touched $touched; its section over the landing: ${verdict(section)}")
             if (!section) error("Look and Feel did not open under a finger")
-            SystemClock.sleep(1_500)
+            SystemClock.sleep(1_200)
             // Fix 6: each value row is one node named "label, value" – the value once, after a comma.
+            // The tree is given the time it takes to list the section (the note at the top).
+            val mark = SystemClock.uptimeMillis()
+            val listed = awaitFresh(15_000, "the Look and Feel section") { it.startsWith(COLOR_SCHEME_ROW) }
+            finding("  the tree ${if (listed != null) "lists" else "does not list"} the section ${SystemClock.uptimeMillis() - mark} ms on; WebView events since the touch: ${eventsSince(mark)}")
             for ((label, value) in VALUE_ROWS) valueRowName(label, value)
             still("settings-look-light")
 
@@ -219,14 +245,20 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             chromeJs("window.__zenThemeFlips=[]")
             pageJs("window.__zenSchemeFlips=[]")
             val schemeBefore = pageValue(SCHEME_JS)
-            val rowTouched = touchTapLabel(COLOR_SCHEME_ROW, prefix = true)
-            val option = if (rowTouched) awaitNode(8_000) { it == "Dark" } else null
-            val rested = option != null && awaitSheetAtRest(6_000)
-            finding("  the Colour scheme row touched $rowTouched; the picker with 'Dark' at rest: ${verdict(rested)}")
-            if (!rested) error("the Colour scheme picker did not open under a finger")
+            val rowTouched = touchControl(COLOR_SCHEME_ROW, COLOR_SCHEME_ROW_JS, prefix = true)
+            val pickerUp = rowTouched && awaitChrome("!!document.querySelector('$PICKER_OPTION')", 8_000)
+            val rested = pickerUp && awaitSheetAtRest(6_000)
+            val option = if (rested) awaitFresh(6_000, "the 'Dark' option") { it == "Dark" } else null
+            finding("  the Colour scheme row touched $rowTouched; the picker up ${verdict(pickerUp)}, at rest ${verdict(rested)}; 'Dark' in the tree ${option != null}")
+            if (!rested) {
+                if (rowTouched) touchFault("a finger on the Colour scheme row did not open its picker")
+                error("the Colour scheme picker did not open under a finger")
+            }
             still("colour-scheme-picker")
             val touchedAt = System.currentTimeMillis()
-            val picked = touchTapLabelExpecting("Dark", "the row reads Colour scheme, Dark", timeoutMs = 8_000) { rowReads(COLOR_SCHEME_ROW, "Dark") }
+            val picked = touchControlExpecting("Dark", DARK_OPTION_JS, "the row reads Colour scheme, Dark with the picker closed", timeoutMs = 8_000) {
+                rowLabelInDom() == "$COLOR_SCHEME_ROW, Dark" && chromeValue("String(!!document.querySelector('$PICKER_OPTION'))") == "false"
+            }
             expect("a finger on 'Dark' sets the row to 'Colour scheme, Dark' (core colorScheme ${colorScheme()})", picked && colorScheme() == "dark", "flip-picked")
             // The page behind the Settings tab: its `matches` polled until it reads dark.
             val pageDarkAt = awaitPageScheme("dark", 4_000)
@@ -239,13 +271,14 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
                     "${chromeFlip?.let { c -> pageDarkAt?.let { p -> ", ${p - c.optLong("at")} ms after the chrome" } } ?: ""}); the page was ${pageValue("document.visibilityState")} behind Settings"
             )
             expect("the page behind Settings sees prefers-color-scheme: dark within a second of the chrome's flip", chromeFlip != null && pageDarkAt != null && pageDarkAt - chromeFlip.optLong("at") <= 1_000, "flip-page-behind")
-            expect("the row's name follows the value: 'Colour scheme, Dark' once", nodeCount { it.startsWith(COLOR_SCHEME_ROW) } == 1 && findNode { it == "$COLOR_SCHEME_ROW, Dark" } != null, "flip-row-name")
-            SystemClock.sleep(1_200)
+            val renamed = awaitFresh(12_000, "the row as 'Colour scheme, Dark'") { it == "$COLOR_SCHEME_ROW, Dark" }
+            val rowNodes = freshNodes { it.startsWith(COLOR_SCHEME_ROW) }.map { nodeName(it) }
+            finding("  the row in the tree after the flip: ${rowNodes.map { "'$it'" }}")
+            expect("the row's name follows the value: 'Colour scheme, Dark' once", renamed != null && rowNodes.size == 1, "flip-row-name")
+            SystemClock.sleep(800)
             still("settings-look-dark")
             // Back to the page through the core: the dark page under the dark chrome.
-            activeCoreTab()?.optString("id")?.takeIf { it != NOTES_TAB && it != APP_TAB }?.let {
-                coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(it)}}")
-            }
+            closeSettingsTab()
             awaitActiveUrl(NOTES_URL, 8_000)
             SystemClock.sleep(1_500)
             val seen = pageValue(SCHEME_JS)
@@ -258,26 +291,37 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
 
     /** Fix 6: the row labelled `label` is one node in the tree named "label, value" – not "label value", not twice. */
     private fun valueRowName(label: String, value: String) {
-        val names = findNodes { it.startsWith(label) }.map { (it.contentDescription ?: it.text)?.toString().orEmpty() }
+        val names = freshNodes { it.startsWith(label) }.map { nodeName(it) }
         val want = "$label, $value"
         finding("  '$label' in the tree: ${names.map { "'$it'" }} (wanted one node '$want')")
         expect("'$label' reads '$want' once", names.size == 1 && names[0] == want, "value-row-${label.lowercase().replace(' ', '-')}")
     }
+
+    /** The Colour scheme row's own name in the DOM (`aria-label`, fix 6), "" when the row is not there. */
+    private fun rowLabelInDom(): String =
+        chromeValue("(function(){var e=document.querySelector('[data-row=\"$COLOR_SCHEME_ROW_ID\"]');return e?(e.getAttribute('aria-label')||''):''})()")
 
     // --- 3. the flip with the page on screen: timestamps ---------------------------------------------
 
     private fun themeFlipOnScreen() {
         step("3. The flip with the page on screen (through the core, the row's own action): Dark -> Light -> Dark -> Light") {
             val frame = pageValue("window.__zenFrameMs").toDoubleOrNull() ?: 0.0
-            // A frame's reach: the chrome's `data-theme` is written a frame before it tells the
-            // host (boot.ts `syncNativeTheme` waits one rAF for the painted token), and the page
-            // reports the change at its own next frame – two frames at 60 Hz is 33 ms; the claim
-            // allows 100 ms, or two of the page's measured frames when the software GPU runs slower.
+            // A frame's reach: the chrome hands the scheme to the host in the frame its
+            // `data-theme` flips (`pageScheme.ts`, on `zen-theme-painted`), the host dispatches
+            // the configuration change at once, and the page reports the media change at its
+            // own next frame – one frame at 60 Hz is 17 ms; the claim allows 100 ms, or two of
+            // the page's measured frames when the software GPU runs slower.
             val bound = Math.max(100L, Math.round(2 * frame))
-            finding("  the page's frame interval at rest: ${"%.1f".format(frame)} ms; the claim's bound: $bound ms after the chrome")
-            for (scheme in listOf("light", "dark", "light")) {
+            // Every flip changes the scheme (scene 2 leaves it dark; should it have failed, the
+            // scheme is still light and the sequence starts with a flip to dark), and the last
+            // one leaves it light for the scenes after.
+            val flips = if (colorScheme() == "dark") listOf("light", "dark", "light") else listOf("dark", "light", "dark", "light")
+            finding("  the page's frame interval at rest: ${"%.1f".format(frame)} ms; the claim's bound: $bound ms after the chrome; the scheme is ${colorScheme()}, flips: $flips")
+            var pictured = false
+            for (scheme in flips) {
                 measuredFlip(scheme, bound)
-                if (scheme == "dark") {
+                if (scheme == "dark" && !pictured) {
+                    pictured = true
                     SystemClock.sleep(600)
                     still("theme-flip-page-dark-on-screen")
                 }
@@ -286,7 +330,7 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         }
     }
 
-    /** Flip to `scheme` through the core and compare the chrome's attribute with the page's change event. */
+    /** Flip to `scheme` through the core and compare the chrome's polarity flip with the page's change event. */
     private fun measuredFlip(scheme: String, boundMs: Long) {
         chromeJs("window.__zenThemeFlips=[]")
         pageJs("window.__zenSchemeFlips=[]")
@@ -299,7 +343,7 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         val delta = if (chromeFlip != null && event != null) event.optLong("at") - chromeFlip.optLong("at") else null
         val frameAfter = event?.optLong("frameAt", 0)?.takeIf { it > 0 }?.let { it - event.optLong("at") }
         finding(
-            "  -> $scheme: asked $asked; chrome data-theme ${chromeFlip?.optLong("at") ?: "not recorded"} (+${chromeFlip?.let { it.optLong("at") - asked } ?: "?"} ms); " +
+            "  -> $scheme: asked $asked; chrome data-theme ${chromeFlip?.optLong("at") ?: "not recorded"} (+${chromeFlip?.let { it.optLong("at") - asked } ?: "?"} ms, from '${chromeFlip?.optString("from")}'); " +
                 "host dispatched ${hostLine ?: "not in logcat"}; page change event ${event?.optLong("at") ?: "none within 3 s"} " +
                 "(${delta?.let { "$it ms after the chrome" } ?: "no delta"}; the page's next frame ${frameAfter?.let { "$it ms later" } ?: "?"}; visible ${event?.optString("visible")}); " +
                 "the page sees ${pageValue(SCHEME_JS)}"
@@ -341,7 +385,10 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             finding("  at $LARGE_SIZE (${LARGE_DP} dp wide, the large-screen class): chrome innerWidth ${chromeValue("String(window.innerWidth)")} (>= 600: $large); page $crossed")
             expect("the window crossed 600 dp", large, "cross-large")
             expect("the loaded page keeps its document (no reload)", crossed.optString("document") == document, "cross-same-document")
-            expect("the loaded page keeps its scroll (${scrollY} -> ${crossed.optDouble("scrollY")})", Math.abs(crossed.optDouble("scrollY", -1.0) - scrollY) <= 2, "cross-scroll-kept")
+            // The page's blocks are fixed heights and its lines do not wrap, so its height is the
+            // same at every width and Blink's scroll anchoring has nothing to move (run 1: a
+            // paragraph that wrapped at 400 and not at 554 took 23 px off the scroll).
+            expect("the loaded page keeps its scroll (${scrollY} -> ${crossed.optDouble("scrollY")}; height ${scrolled.optInt("docHeight")} -> ${crossed.optInt("docHeight")})", Math.abs(crossed.optDouble("scrollY", -1.0) - scrollY) <= 4, "cross-scroll-kept")
             expect("the loaded page keeps the phone layout, not the 980 desktop viewport (innerWidth ${crossed.optInt("innerWidth")})", crossed.optInt("innerWidth") in (phoneWidth - 1)..900, "cross-viewport-kept")
             still("crossing-large-kept")
 
@@ -411,10 +458,17 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             val panel = awaitChrome("!!document.querySelector('input[placeholder=\"$HISTORY_SEARCH\"]')", 10_000)
             if (!panel) error("the History panel never came up")
             SystemClock.sleep(1_500)
-            val first = HISTORY[0].second
-            val firstRow = awaitNode(8_000) { it.startsWith("$first,") } ?: error("no row reads '$first, …'")
-            val bounds = steadyBounds(firstRow) ?: error("the row '$first' went away")
-            val point = touchPoint(bounds) ?: error("no part of the row '$first' is inside the touchable window")
+            // The list's first row (the latest visit; the list runs newest first), by the name the
+            // DOM gives it – "title, host, time" – so the finger goes to a row that is on screen.
+            val firstLabel = chromeValue("(function(){var e=document.querySelector('$LIST_ROW_MAIN');return e?(e.getAttribute('aria-label')||''):''})()")
+            if (firstLabel.isEmpty()) error("the History list has no rows in the DOM")
+            val first = firstLabel.substringBefore(',')
+            val mark = SystemClock.uptimeMillis()
+            val firstRow = awaitFresh(6_000, "the row '$first'") { it.startsWith("$first,") }
+            finding("  the first row is '$firstLabel'; WebView events since the panel rose: ${eventsSince(mark)}")
+            val point = firstRow?.let { node -> steadyBounds(node)?.let { touchPoint(it) } }
+                ?: domBox(LIST_ROW_MAIN_JS)?.let { box -> touchPoint(box)?.also { finding("  (the long press aims at the DOM's box $box)") } }
+                ?: error("no part of the row '$first' is inside the touchable window")
             Finger().apply {
                 press(point.x, point.y)
                 up()
@@ -431,14 +485,16 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             finding("  the header's bulk toggle: $bulk")
             expect("the header offers 'Select all' as a §9.18 secondary zen-v2-button", bulk.optString("text") == "Select all" && bulk.optBoolean("v2") && !bulk.optBoolean("primary"), "history-bulk-button")
             still("history-one-selected")
-            val all = touchTapLabelExpecting("Select all", "every shown row is picked", timeoutMs = 6_000) { checkedRows() == shown && shown > 0 }
+            val all = touchControlExpecting("Select all", bulkButtonJs("Select all"), "every shown row is picked", timeoutMs = 6_000) { checkedRows() == shown && shown > 0 }
             expect("a finger on Select all picks every shown row ($shown)", all, "history-select-all")
             expect("the header counts them ('${headerText()}')", awaitChrome("/^$shown selected/.test((document.querySelector('.zen-phone-panel h2.zen-phone-title')||{}).textContent||'')", 4_000), "history-all-count")
-            expect("the tree reads $shown checked checkboxes", awaitTreeCount(6_000, shown) { it.isCheckable && it.isChecked }, "history-all-tree")
-            finding("  the bulk toggle now: ${bulkButton()}")
-            SystemClock.sleep(800)
+            // The tree's reading of the picked rows: a finding, the tree trailing as it does here.
+            val treeMark = SystemClock.uptimeMillis()
+            val checked = awaitTreeCount(8_000, shown) { it.isCheckable && it.isChecked }
+            finding("  the tree reads $checked checked checkbox(es) (wanted $shown) ${SystemClock.uptimeMillis() - treeMark} ms on; the bulk toggle now: ${bulkButton()}")
+            SystemClock.sleep(600)
             still("history-select-all")
-            val none = touchTapLabelExpecting("Deselect all", "no row is picked, the mode kept", timeoutMs = 6_000) {
+            val none = touchControlExpecting("Deselect all", bulkButtonJs("Deselect all"), "no row is picked, the mode kept", timeoutMs = 6_000) {
                 checkedRows() == 0 && chromeValue("String(document.querySelectorAll('$LIST_CHECKBOX_ROW').length)") == shown.toString()
             }
             expect("a finger on Deselect all unpicks every row and keeps the mode (the X remains the way out)", none, "history-deselect-all")
@@ -448,7 +504,10 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             back()
             SystemClock.sleep(1_200)
             finding("  back leaves selection: rows as buttons again ${verdict(awaitChrome("document.querySelectorAll('$LIST_CHECKBOX_ROW').length===0", 6_000))}")
-            back()
+            // The panel itself goes on the next back – only while it is still up: a back with no
+            // surface to take it would leave the app.
+            if (chromeSurfaceUp()) back()
+            awaitSurface(up = false, timeoutMs = 6_000)
             SystemClock.sleep(1_500)
         }
     }
@@ -464,12 +523,18 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
     /** The header's bulk toggle as the DOM has it: its words, its class and whether it is the primary. */
     private fun bulkButton(): JSONObject {
         val raw = chromeValue(
-            "JSON.stringify((function(){var h=document.querySelector('.zen-phone-panel header');if(!h)return {};" +
-                "var b=Array.prototype.find.call(h.querySelectorAll('button'),function(x){return /select all/i.test(x.textContent)});" +
+            "JSON.stringify((function(){var b=${bulkButtonJs(null)};" +
                 "if(!b)return {text:'none'};return {text:b.textContent.trim(),v2:b.classList.contains('zen-v2-button'),primary:b.hasAttribute('data-primary')," +
                 "icon:b.classList.contains('zen-v2-icon-button'),height:Math.round(b.getBoundingClientRect().height),disabled:b.disabled}})())"
         )
         return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+    }
+
+    /** An expression for the header's bulk toggle: the button reading `text`, or whichever of the two words with null. */
+    private fun bulkButtonJs(text: String?): String {
+        val test = if (text == null) "/^(select|deselect) all$/i.test(x.textContent.trim())" else "x.textContent.trim()===${JSONObject.quote(text)}"
+        return "(function(){var h=document.querySelector('.zen-phone-panel header');if(!h)return null;" +
+            "return Array.prototype.find.call(h.querySelectorAll('button'),function(x){return $test})||null})()"
     }
 
     // --- 6. the pill's keyboard ring -----------------------------------------------------------------
@@ -480,7 +545,7 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             if (!close.ok) finding("  (${close.describe()})")
             // A real touch on the bar's Menu button, then back: the chassis returns the focus to
             // the button under the finger's reading.
-            val menu = touchTapLabelExpecting(MENU_LABEL, "the menu sheet is up", timeoutMs = 8_000) { chromeSurfaceUp() }
+            val menu = touchControlExpecting(MENU_LABEL, barButtonJs(MENU_LABEL), "the menu sheet is up", timeoutMs = 8_000) { chromeSurfaceUp() }
             if (!menu) error("the menu never opened under a finger")
             SystemClock.sleep(1_200)
             back()
@@ -491,18 +556,18 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             expect("the last input is the touch", dataInput() == "touch", "ring-touch-first")
             expect("the focus the chassis returned under the finger draws no ring", !ring().optBoolean("rings"), "ring-touch-no-ring")
 
-            // Shift+Tab, as a hardware keyboard sends it, until a bar button holds the focus.
+            // Shift+Tab, as a hardware keyboard sends it, until the focus has MOVED to a bar button.
             var onButton = tabUntil("$BAR_BUTTON:focus", 6, shift = true)
             if (!onButton) {
                 // The focus was not on the bar when the keys began (the path is on record above):
                 // the Menu button is given the focus by script and ONE Shift+Tab moves it to its
                 // neighbour – the move that draws the ring is still the keyboard's.
-                finding("  (six Shift+Tabs did not reach a bar button; anchoring on the Menu button and pressing Shift+Tab once)")
-                chromeJs("(document.querySelector('$BAR_BUTTON[aria-label=\"$MENU_LABEL\"]')||{focus:function(){}}).focus()")
+                finding("  (six Shift+Tabs did not move the focus to a bar button; anchoring on the Menu button and pressing Shift+Tab once)")
+                chromeJs("(${barButtonJs(MENU_LABEL)}||{focus:function(){}}).focus()")
                 SystemClock.sleep(300)
                 onButton = tabUntil("$BAR_BUTTON:focus", 1, shift = true)
             }
-            expect("Shift+Tab reaches a bar button (${focusedElement()})", onButton, "ring-bar-reached")
+            expect("Shift+Tab moves the focus to a bar button (${focusedElement()})", onButton, "ring-bar-reached")
             expect("the keyboard is the last input", dataInput() == "keyboard", "ring-keyboard")
             val buttonRing = ring()
             finding("  the bar button's ring: ${ringText(buttonRing)}")
@@ -520,7 +585,7 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             still("pill-keyboard-ring")
 
             // The next real touch: the Tabs button opens the overview, back returns the focus to it – no ring.
-            val opened = touchTapLabelExpecting("Tabs (", "the overview is up", prefix = true, timeoutMs = 8_000) {
+            val opened = touchControlExpecting("Tabs (", barButtonPrefixJs("Tabs ("), "the overview is up", prefix = true, timeoutMs = 8_000) {
                 chromeValue("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
             }
             if (!opened) error("the overview never opened under a finger")
@@ -538,18 +603,26 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
     }
 
     /**
-     * Press Tab (Shift+Tab with `shift`) until the chrome's active element matches `selector`, at
-     * most `max` times; the path the focus took is a finding. True when it got there.
+     * Press Tab (Shift+Tab with `shift`) until the chrome's active element has MOVED to one that
+     * matches `selector`, at most `max` times; the path the focus took is a finding. A WebView
+     * that has lost the window's focus takes the first key to restore it to the element it had
+     * (run 1: one Shift+Tab left the Menu button where it was, and its ring was the touch's), so
+     * a press that leaves the focus where it was does not count. True when it got there.
      */
     private fun tabUntil(selector: String, max: Int, shift: Boolean): Boolean {
         val quoted = JSONObject.quote(selector)
+        var before = focusedElement()
         for (press in 1..max) {
             pressKey(KeyEvent.KEYCODE_TAB, shift)
             SystemClock.sleep(500)
-            if (chromeValue("String(!!document.activeElement&&document.activeElement.matches($quoted))") == "true") {
-                finding("  ${if (shift) "Shift+Tab" else "Tab"} x$press: ${chromeValue("window.__zenFocusPath.join(' > ')")} -> ${focusedElement()}")
+            val now = focusedElement()
+            val moved = now != before
+            if (moved && chromeValue("String(!!document.activeElement&&document.activeElement.matches($quoted))") == "true") {
+                finding("  ${if (shift) "Shift+Tab" else "Tab"} x$press: ${chromeValue("window.__zenFocusPath.join(' > ')")} -> $now")
                 return true
             }
+            if (!moved) finding("  (${if (shift) "Shift+Tab" else "Tab"} x$press left the focus on $now)")
+            before = now
         }
         finding("  ${if (shift) "Shift+Tab" else "Tab"} x$max: ${chromeValue("window.__zenFocusPath.join(' > ')")} -> ${focusedElement()}")
         return false
@@ -585,9 +658,217 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
 
     private fun dataInput(): String = chromeValue("document.documentElement.getAttribute('data-input')||''")
 
+    // --- the finger: the tree's node, else the DOM's box ---------------------------------------------
+
+    /**
+     * A real touch on the control reading `label` (its prefix with `prefix`): at the tree's node
+     * once the tree lists it with bounds on screen (`treeMs`), else at the box the DOM gives for
+     * the element `domJs` evaluates to – the tree trails the screen by seconds on this image (the
+     * note at the top) and the finger does not wait on it past that. The aim is a finding; the
+     * touch is the same injected finger either way, and a claim is read off what follows it,
+     * never off this. False, nothing injected, when neither the tree nor the DOM has the control
+     * inside the touchable window.
+     */
+    private fun touchControl(label: String, domJs: String, prefix: Boolean = false, treeMs: Long = 5_000): Boolean {
+        val node = awaitFresh(treeMs, "'$label'") { it == label || (prefix && it.startsWith(label)) }
+        if (node != null) {
+            val point = touchTapPoint(node)
+            if (point != null) return true
+            finding("  (the tree's node for '$label' went away or lies outside the touchable window)")
+        }
+        val box = domBox(domJs) ?: run {
+            finding("  '$label' is in neither the tree nor the DOM")
+            return false
+        }
+        val point = touchPoint(box) ?: run {
+            finding("  the DOM's box for '$label' ($box) lies outside the touchable window $touchable")
+            return false
+        }
+        finding("  touch at ${point.x.toInt()},${point.y.toInt()} on '$label' at the DOM's box $box (the tree had not listed it)")
+        Finger().tap(point.x, point.y)
+        return true
+    }
+
+    /**
+     * [touchControl], then up to `timeoutMs` for `took` to hold – the claim of the step, named by
+     * `effect`. True when it held; a touch that went in and did not take is a [touchFault] (the
+     * run fails at its end) and false.
+     */
+    private fun touchControlExpecting(
+        label: String,
+        domJs: String,
+        effect: String,
+        timeoutMs: Long = 6_000,
+        prefix: Boolean = false,
+        took: () -> Boolean
+    ): Boolean {
+        if (!touchControl(label, domJs, prefix)) return false
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                Log.i(tag, "the touch on '$label' took: $effect")
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /**
+     * An element's box as the chrome lays it out, in screen px: the chrome fills the window from
+     * its top-left corner, so its CSS px times the density are screen px (SettingsTouchDemo's
+     * reading). `js` is an expression for the element; null when it is none.
+     */
+    private fun domBox(js: String): Rect? {
+        val text = chromeValue(
+            "(function(){var e=($js);if(!e)return '';var r=e.getBoundingClientRect();" +
+                "return [r.left,r.top,r.right,r.bottom].map(function(v){return Math.round(v*$density)}).join(',')})()"
+        )
+        val px = text.split(',').map { it.toIntOrNull() ?: return null }
+        if (px.size != 4) return null
+        return Rect(px[0], px[1], px[2], px[3]).also { it.offset(domOffsetX, domOffsetY) }
+    }
+
+    /** What the tree's bounds add to the DOM's box (`calibrateDomBoxes`); 0 while the two agree. */
+    private var domOffsetX = 0
+    private var domOffsetY = 0
+
+    /**
+     * The DOM's box against the tree's for the same control – the bar's Menu button – once, at
+     * the warm-up: the chrome fills the window from its corner on this image (run 1: the tree's
+     * 353–502 for the DOM's 203–287 CSS px at 1.75), but should the chrome sit under an inset
+     * the tree's bounds carry, the difference is taken up so every DOM-aimed finger lands where
+     * the screen has the control (ChromeA11yDemo's `calibrate`). A difference under 4 px stays 0.
+     */
+    private fun calibrateDomBoxes() {
+        val node = awaitFresh(6_000, "the bar's Menu button") { it == MENU_LABEL } ?: return
+        val tree = Rect().also { node.getBoundsInScreen(it) }
+        val dom = domBox(barButtonJs(MENU_LABEL)) ?: return
+        val dx = Math.round(tree.exactCenterX() - dom.exactCenterX())
+        val dy = Math.round(tree.exactCenterY() - dom.exactCenterY())
+        if (Math.abs(dx) >= 4) domOffsetX = dx
+        if (Math.abs(dy) >= 4) domOffsetY = dy
+        finding("  the Menu button: tree $tree, DOM $dom -> DOM boxes offset by ${domOffsetX}x$domOffsetY")
+    }
+
+    /** The bar button labelled `label` (`aria-label`), as an expression. */
+    private fun barButtonJs(label: String): String = "document.querySelector('$BAR_BUTTON[aria-label=${JSONObject.quote(label)}]')"
+
+    /** The bar button whose label starts with `prefix` (the Tabs button counts its tabs), as an expression. */
+    private fun barButtonPrefixJs(prefix: String): String =
+        "Array.prototype.find.call(document.querySelectorAll('$BAR_BUTTON'),function(b){return (b.getAttribute('aria-label')||'').indexOf(${JSONObject.quote(prefix)})===0})"
+
+    // --- the tree, read afresh -----------------------------------------------------------------------
+
+    /**
+     * Every node whose label or text `matches`, read past UiAutomation's cache: the cache dropped
+     * (API 34), the active window walked, and – when it has no root or nothing matches – every
+     * window of the app's.
+     */
+    private fun freshNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> {
+        dropTreeCache()
+        val found = findNodes(matches)
+        if (found.isNotEmpty()) return found
+        return findInWindows(app.packageName, matches)?.let { listOf(it) } ?: emptyList()
+    }
+
+    /**
+     * Poll for the first node whose label or text `matches`, with bounds on screen, for up to
+     * `timeoutMs`: the cache dropped and a frame asked of the chrome document each round. How
+     * long the tree took to list `what` is a finding when it took over a second or never did.
+     */
+    private fun awaitFresh(timeoutMs: Long, what: String, matches: (String) -> Boolean): AccessibilityNodeInfo? {
+        val start = SystemClock.uptimeMillis()
+        val deadline = start + timeoutMs
+        while (true) {
+            val node = freshNodes(matches).firstOrNull { boundsOnScreen(Rect().also { r -> it.getBoundsInScreen(r) }) }
+            if (node != null) {
+                val took = SystemClock.uptimeMillis() - start
+                if (took > 1_000) finding("  (the tree listed $what after $took ms)")
+                return node
+            }
+            if (SystemClock.uptimeMillis() >= deadline) {
+                finding("  (the tree did not list $what within $timeoutMs ms; WebView events meanwhile: ${eventsSince(start)})")
+                return null
+            }
+            nudgeFrame()
+            SystemClock.sleep(250)
+        }
+    }
+
+    /** UiAutomation's node cache dropped (API 34), so the next walk reads the WebView's tree afresh. */
+    private fun dropTreeCache() {
+        if (Build.VERSION.SDK_INT >= 34) ui.clearCache()
+    }
+
+    /**
+     * A frame asked of the chrome document (an animation frame), so Blink runs its lifecycle – and
+     * the accessibility step that serialises the tree's changes – while a read waits on the tree
+     * (ChromeA11yDemo's `nudgeFrame`).
+     */
+    private fun nudgeFrame() {
+        chromeJs("(function(){requestAnimationFrame(function(){});return 1})()")
+    }
+
+    /** A node's name as the tree reads it: its text, else its content description (a link's). */
+    private fun nodeName(node: AccessibilityNodeInfo): String = (node.text ?: node.contentDescription)?.toString().orEmpty()
+
+    /** The accessibility events since `markUptime`, counted by type ("WINDOW_CONTENT_CHANGED x3, …"); "none" for none. */
+    private fun eventsSince(markUptime: Long): String {
+        val counts = LinkedHashMap<String, Int>()
+        synchronized(a11yEvents) {
+            for ((at, type) in a11yEvents) {
+                if (at < markUptime) continue
+                val name = AccessibilityEvent.eventTypeToString(type).removePrefix("TYPE_")
+                counts[name] = (counts[name] ?: 0) + 1
+            }
+        }
+        return if (counts.isEmpty()) "none" else counts.entries.joinToString(", ") { "${it.key} x${it.value}" }
+    }
+
+    private fun awaitTreeCount(timeoutMs: Long, count: Int, accept: (AccessibilityNodeInfo) -> Boolean): Int {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var n = 0
+        while (SystemClock.uptimeMillis() < deadline) {
+            dropTreeCache()
+            n = countNodes(accept)
+            if (n >= count) return n
+            nudgeFrame()
+            SystemClock.sleep(250)
+        }
+        return n
+    }
+
+    private fun countNodes(accept: (AccessibilityNodeInfo) -> Boolean): Int {
+        var n = 0
+        val root = ui.rootInActiveWindow ?: return 0
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 6_000) {
+            val node = queue.removeFirst()
+            visited++
+            if (accept(node)) n++
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return n
+    }
+
+    /** The sheet's rows for the folded chips, by their accessible names ("Requests blocked, 5"). */
+    private fun sheetRows(): List<String> {
+        val raw = chromeJs(
+            "JSON.stringify(Array.from(document.querySelectorAll('[data-testid=\"siteinfo-pill-chips\"] button'))" +
+                ".map(function(b){return b.getAttribute('aria-label')||b.textContent.trim()}))"
+        )
+        val text = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: return emptyList()
+        val array = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
+        return (0 until array.length()).map { array.optString(it) }
+    }
+
     // --- the theme's record ----------------------------------------------------------------------------
 
-    /** The last `data-theme` mutation to `theme` the chrome's observer recorded, or null. */
+    /** The last change of `data-theme` to `theme` the chrome's observer recorded (a change of value, not a rewrite), or null. */
     private fun lastThemeFlip(theme: String): JSONObject? {
         val raw = chromeValue("JSON.stringify((window.__zenThemeFlips||[]).filter(function(f){return f.theme===${JSONObject.quote(theme)}}).slice(-1)[0]||null)")
         return runCatching { JSONObject(raw) }.getOrNull()
@@ -661,50 +942,19 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
     private fun pageValue(code: String): String =
         runCatching { JSONTokener(pageJs("String($code)")).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
 
-    // --- the tree ----------------------------------------------------------------------------------------
-
-    private fun nodeCount(matches: (String) -> Boolean): Int = findNodes(matches).size
-
-    private fun awaitTreeCount(timeoutMs: Long, count: Int, accept: (AccessibilityNodeInfo) -> Boolean): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (countNodes(accept) >= count) return true
-            SystemClock.sleep(250)
-        }
-        return countNodes(accept) >= count
-    }
-
-    private fun countNodes(accept: (AccessibilityNodeInfo) -> Boolean): Int {
-        var n = 0
-        val root = ui.rootInActiveWindow ?: return 0
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
-        var visited = 0
-        while (queue.isNotEmpty() && visited < 6_000) {
-            val node = queue.removeFirst()
-            visited++
-            if (accept(node)) n++
-            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
-        }
-        return n
-    }
-
-    /** The sheet's rows for the folded chips, by their accessible names ("Requests blocked, 5"). */
-    private fun sheetRows(): List<String> {
-        val raw = chromeJs(
-            "JSON.stringify(Array.from(document.querySelectorAll('[data-testid=\"siteinfo-pill-chips\"] button'))" +
-                ".map(function(b){return b.getAttribute('aria-label')||b.textContent.trim()}))"
-        )
-        val text = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: return emptyList()
-        val array = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
-        return (0 until array.length()).map { array.optString(it) }
-    }
-
     // --- the colour scheme -------------------------------------------------------------------------------
 
     private fun themeAttribute(): String = chromeValue("document.documentElement.getAttribute('data-theme')||''")
 
     private fun colorScheme(): String = coreState().getJSONObject("settings").optString("colorScheme")
+
+    /** The Settings tab, whichever it is, closed through the core (the page's tab stays). */
+    private fun closeSettingsTab() {
+        activeCoreTab()?.optString("id")?.takeIf { it != NOTES_TAB && it != APP_TAB }?.let {
+            coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(it)}}")
+        }
+        SystemClock.sleep(1_500)
+    }
 
     // --- stills, steps, findings -------------------------------------------------------------------------
 
@@ -817,7 +1067,18 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         private const val SITE_ICON_LABEL = "Site information"
         private const val SITE_ROW = "tracking-site-current"
         private const val COLOR_SCHEME_ROW = "Colour scheme"
+        /** The Colour scheme row's id (`sections.tsx`), its `data-row` on the page. */
+        private const val COLOR_SCHEME_ROW_ID = "color-scheme"
+        /** A picker's option (`blocks.tsx`): the sheet's radio rows. */
+        private const val PICKER_OPTION = ".zen-sheet [role=\"radio\"]"
         private const val LIST_CHECKBOX_ROW = ".zen-phone-row > .zen-list-main[role=\"checkbox\"]"
+        /**
+         * A History visit row's main control (`PhoneListRow` under a day's `section`): a button out
+         * of selection and a checkbox in it. The list's first rows are no visits – "Clear history"
+         * (a tap on it asks to wipe the history) and the recently closed entries – so a finger
+         * looking for a visit goes by the day sections.
+         */
+        private const val LIST_ROW_MAIN = ".zen-phone-list section:not([aria-label=\"Recently closed\"]) .zen-phone-row > .zen-list-main"
         private const val HISTORY_SEARCH = "Search history"
         /** The bar's own buttons (`PhoneShell.tsx`'s `nav.zen-phone-bar`, `BarButton.tsx`): the row's controls beside the pill. */
         private const val BAR_BUTTON = ".zen-phone-bar-row .zen-toolbar-button"
@@ -827,6 +1088,20 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
         private const val PHONE_SIZE = "720x1600"
         /** The page's reading of `prefers-color-scheme`. */
         private const val SCHEME_JS = "(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')"
+
+        // The DOM's word on where a control is, for a finger the tree keeps waiting (`touchControl`).
+        /** The site-information sheet's shield row ("Requests blocked, n"). */
+        private const val SHIELD_ROW_JS =
+            "Array.prototype.find.call(document.querySelectorAll('[data-testid=\"siteinfo-pill-chips\"] button'),function(b){return (b.getAttribute('aria-label')||b.textContent||'').indexOf('Requests blocked')===0})"
+        /** The Settings landing's Look and Feel row (`CategoryRow`, by the section's id). */
+        private const val LOOK_AND_FEEL_JS = "document.querySelector('.zen-settings-category[data-section=\"look\"]')"
+        /** The Colour scheme row in Look and Feel. */
+        private const val COLOR_SCHEME_ROW_JS = "document.querySelector('[data-row=\"$COLOR_SCHEME_ROW_ID\"]')"
+        /** The picker's Dark option. */
+        private const val DARK_OPTION_JS =
+            "Array.prototype.find.call(document.querySelectorAll('$PICKER_OPTION'),function(e){return e.textContent.trim()==='Dark'})"
+        /** The History list's first row's main control. */
+        private const val LIST_ROW_MAIN_JS = "document.querySelector('$LIST_ROW_MAIN')"
 
         /** Fix 6: the four Look and Feel value rows #237's audit left with the owner, with the seeded profile's values. */
         private val VALUE_ROWS = listOf(
@@ -850,8 +1125,9 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
          * outline's four parts, the width in device pixels beside the `devicePixelRatio`, `--v2-ring`
          * as the same `rgb()` text, whether `:focus-visible` holds, and the one verdict `rings`: a
          * solid outline of `floor(2 × dpr)` device pixels in the ring's ink), the place of an
-         * element in the viewport, and the record of every `data-theme` change on the root with
-         * its epoch time.
+         * element in the viewport, and the record of every change of value of `data-theme` on the
+         * root with its epoch time (`useTheme` rewrites the attribute every frame of a blend; only
+         * a write that changes it is the polarity's flip).
          */
         private val PROBE_JS = """
             (function(){
@@ -870,7 +1146,8 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
                 var cs=getComputedStyle(el);
                 var dpr=window.devicePixelRatio,w=parseFloat(cs.outlineWidth)*dpr,want=Math.max(1,Math.floor(2*dpr));
                 var token=window.swatch(cs.getPropertyValue('--v2-ring'));
-                var rings=cs.outlineStyle==='solid'&&Math.abs(w-want)<0.02&&cs.outlineColor===token;
+                var near=function(a,b){return Math.abs(a-b)<0.02};
+                var rings=cs.outlineStyle==='solid'&&(near(w,want)||near(w,2*dpr)||near(w,Math.round(2*dpr)))&&cs.outlineColor===token;
                 return {desc:window.__zenDescribe(el),focusVisible:el.matches(':focus-visible'),
                   outlineStyle:cs.outlineStyle,outlineWidth:cs.outlineWidth,outlineOffset:cs.outlineOffset,outlineColor:cs.outlineColor,
                   dpr:dpr,widthDevicePx:w,wantDevicePx:want,ringToken:token,background:cs.backgroundColor,rings:rings}};
@@ -884,16 +1161,20 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
               window.__zenFocusPath=[];
               document.addEventListener('focusin',function(e){window.__zenFocusPath.push(window.__zenDescribe(e.target))},true);
               window.__zenThemeFlips=[];
-              new MutationObserver(function(ms){ms.forEach(function(m){if(m.attributeName==='data-theme')window.__zenThemeFlips.push({theme:document.documentElement.getAttribute('data-theme'),at:Date.now()})})})
-                .observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+              new MutationObserver(function(ms){ms.forEach(function(m){
+                  if(m.attributeName!=='data-theme')return;
+                  var now=document.documentElement.getAttribute('data-theme');
+                  if(now!==m.oldValue)window.__zenThemeFlips.push({theme:now,from:m.oldValue,at:Date.now()})})})
+                .observe(document.documentElement,{attributes:true,attributeOldValue:true,attributeFilter:['data-theme']});
               return 'probe'})()
         """.trimIndent()
 
         /**
          * The scheme page: it styles itself by `prefers-color-scheme` and says which it sees, records
          * every change of it with epoch timestamps (and the next frame's), measures its frame
-         * interval, and is tall by fixed blocks – so its height does not follow its width and a
-         * scroll position means the same at every viewport.
+         * interval, and is tall by fixed blocks with lines that do not wrap – so its height does
+         * not follow its width, a scroll position means the same at every viewport, and Blink's
+         * scroll anchoring has nothing to adjust when the window widens (scene 4).
          */
         private val SCHEME_PAGE = """
             <!doctype html><html><head><meta charset=utf-8>
@@ -902,14 +1183,14 @@ class PhoneFixesDemo : DemoHarness("pwa-demo-state.json", "android-fixes-w4", "p
             <title>Scheme and scroll</title>
             <style>
             :root{color-scheme:light dark}
-            body{margin:0;font-family:sans-serif;background:#f4f1ea;color:#1b1b1f}
-            h1{margin:0;padding:28px 20px 6px;font-size:26px}
-            p{margin:0;padding:0 20px 8px;font-size:17px;line-height:1.4}
+            body{margin:0;font-family:sans-serif;background:#f4f1ea;color:#1b1b1f;overflow-x:hidden}
+            h1{margin:0;padding:28px 20px 6px;font-size:26px;line-height:32px;white-space:nowrap;overflow:hidden}
+            p{margin:0;padding:0 20px 8px;font-size:17px;line-height:24px;white-space:nowrap;overflow:hidden}
             .block{height:300px;margin:12px 20px;border-radius:14px;background:rgba(0,0,0,.08);display:flex;align-items:center;justify-content:center;font-size:22px}
             #scheme{position:fixed;top:10px;right:12px;padding:8px 12px;border-radius:10px;background:#1b4332;color:#fff;font-size:15px;font-weight:600}
             @media (prefers-color-scheme: dark){body{background:#14161c;color:#e8e6e3}.block{background:rgba(255,255,255,.1)}#scheme{background:#d8f3dc;color:#081c15}}
             </style></head>
-            <body><h1>Scheme and scroll</h1><p>This page follows prefers-color-scheme and is 40 blocks tall.</p><div id=scheme></div>
+            <body><h1>Scheme and scroll</h1><p>Follows prefers-color-scheme; 40 blocks tall.</p><div id=scheme></div>
             ${(1..40).joinToString("") { "<div class=block>Block $it</div>" }}
             <script>
             (function(){
