@@ -1,0 +1,43 @@
+name: Android homepage and new tab page demo
+
+# Runs the homepage and the new tab page's edits on a device, each under a finger (W4-8): the
+# Homepage value row in Settings › Look and Feel › Home with its picker (Off, New tab page,
+# Specific page), Use current page and the URL sheet typed on the keyboard (SET-36 / NTP-30); the
+# app menu's Home row and the bar's optional Home item loading the homepage, both leaving the
+# menu and the bar while the homepage is Off (NTP-30); the new tab page laid out for the bottom
+# bar – the field low, the shortcuts above it, the gear in the top corner – with #243's morph
+# running from the relocated field and the top dock's layout as it was (NTP-29); a pinned tile's
+# hold menu with Edit Shortcut… (the form sheet, the name retyped, Save) and Remove (NTP-06); and
+# a pinned tile held and carried two slots along, the order written to the shared device list
+# (NTP-06). The driver (HomepageNtpDemo) writes its findings next to the recording; a claim that
+# does not hold fails the run. The morph and the drag are measured scenes (ntp-field-morph-bottom,
+# ntp-tile-drag) under the shared soft jank gate. Dispatch-only, like the other demos: it takes
+# about ten minutes. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
+# this file only picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-homepage-ntp-e05e
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-homepage-ntp-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Homepage and new tab page demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.HomepageNtpDemo
+        DEMO_DIR=homepage-ntp-demo
+        DEMO_OUT=artifacts/android-homepage-ntp-demo
+        DEMO_VIDEO=android-homepage-ntp-demo.mp4
+      artifact-name: android-homepage-ntp-demo
+      artifact-path: artifacts/android-homepage-ntp-demo/
