@@ -9416,14 +9416,17 @@
 }
 /*
  * §9.11's desktop footer: in a dialog the actions hug their labels and right-align at the 8
- * gap, primary last – a prompt's Cancel | Clear all, a form's Cancel | Add a site alike. The
- * equal split (`.zen-settings-sheet-actions > *` above) is the phone sheet's.
+ * gap, primary last – a prompt's Cancel | Clear all, a form's Cancel | Add a site alike – and
+ * hug no narrower than the button's own 96 (§9.20: a notice's two buttons are 96 + 8 + 96
+ * inside its 288). The equal split and its `min-width: 0` (`.zen-settings-sheet-actions > *`
+ * above) are the phone sheet's.
  */
 .zen-settings-dialog .zen-settings-sheet-actions {
   justify-content: flex-end;
 }
 .zen-settings-dialog .zen-settings-sheet-actions > * {
   flex: 0 0 auto;
+  min-width: 96px;
 }
 /*
  * The footer slot a form claims through `SheetFooter` (blocks.tsx; §9.11) for actions that
