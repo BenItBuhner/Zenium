@@ -20,8 +20,9 @@ import java.io.FileInputStream
  * connects to: `ERR_UNSAFE_PORT`) and a refused connection (`localhost:81`) typed into the URL
  * bar land on the zen://error page (the site, a reason, Reload); the radios off (`svc wifi
  * disable`, `svc data disable`) and a load: the page says the device is offline; the radios back
- * on and its Reload loads the page. Then Take Screenshot, with Downloads listing the file under
- * its name; a new tab's zero-suggest, which has no "Webpage not available" row and none of the
+ * on and its Reload loads the page. Then Take Screenshot, with its Screenshot saved card in the
+ * toast's slot (the picture goes to the gallery since #321, no longer to Downloads); a new tab's
+ * zero-suggest, which has no "Webpage not available" row and none of the
  * failed URLs (history.json is read as well); Zenium's fullscreen (asked for over the bridge, as
  * the menu item did), back leaving it with the app still in front; and fullscreen, Home, a
  * relaunch coming back with the bars.
@@ -97,22 +98,24 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         SystemClock.sleep(1_000)
         shot("05-reloaded")
 
-        // 6. Take Screenshot: the toast above the bar, then the file under its name in Downloads.
-        menuItem("Take Screenshot")
-        SystemClock.sleep(1_800)
+        // 6. Take Screenshot: the picture goes to the gallery and its preview card stands in the
+        //    toast's slot above the bar (#321's SH-07: `.zen-screenshot-card`, "Screenshot saved"
+        //    with the picture's size as the detail) – not to Downloads, where the run before
+        //    #321 looked for the file under its name. The card is read off the chrome's document
+        //    (the tree trails it, and it lives on the toast's clock); its Dismiss puts it away.
+        val touched = menuItem("Take Screenshot")
+        val card = awaitScreenshotCard(8_000)
+        SystemClock.sleep(1_200)
         shot("06-screenshot-toast")
-        SystemClock.sleep(1_500)
-        val touched = menuItem("Downloads")
-        val row = awaitText(SCREENSHOT_ROW, 8_000)
-        Log.i(tag, "downloads row for the screenshot: ${row ?: "none"}; numeric rows: ${texts(NUMERIC_ROW)}")
-        // The menu flow's injected touch (the rule in DemoHarness): its result is the panel with
-        // the screenshot's row, not the menu going away (a touch through to the scrim does that too).
-        if (touched && row == null) touchFault("the touch on the menu's Downloads row opened no panel with the screenshot's row")
+        Log.i(tag, "screenshot card: ${card ?: "none"}")
+        // The menu flow's injected touch (the rule in DemoHarness): its result is the card, not
+        // the menu going away (a touch through to the scrim does that too).
+        if (touched && card == null) touchFault("the touch on the menu's Take Screenshot row put up no Screenshot saved card")
+        if (card != null && !card.startsWith(SCREENSHOT_CARD_TITLE)) touchFault("the screenshot's card reads '$card', not '$SCREENSHOT_CARD_TITLE'")
+        dismissScreenshotCard()
         SystemClock.sleep(800)
-        shot("07-downloads")
-        dismissKeyboard()
-        back()
-        SystemClock.sleep(1_500)
+        shot("07-screenshot-card-dismissed")
+        SystemClock.sleep(1_000)
 
         // 7. A new tab's zero-suggest: recent history, without the failed loads.
         tapByLabel("New tab")
@@ -360,14 +363,31 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         return found
     }
 
-    private fun awaitText(pattern: Regex, timeoutMs: Long): String? {
+    /**
+     * The screenshot's preview card as the chrome's document has it (#321, ScreenshotCard.tsx):
+     * "<title>: <detail>" once it stands, null when none comes within `timeoutMs`.
+     */
+    private fun awaitScreenshotCard(timeoutMs: Long): String? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            texts(pattern).firstOrNull()?.let { return it }
+            val read = chromeJsString(
+                "(function(){var c=document.querySelector('.zen-screenshot-card');if(!c)return '';" +
+                    "var t=c.querySelector('.zen-screenshot-title'),d=c.querySelector('.zen-banner-detail');" +
+                    "return ((t&&t.textContent)||'').trim()+': '+((d&&d.textContent)||'').trim()})()"
+            ).orEmpty()
+            if (read.isNotEmpty() && read != ": ") return read
             SystemClock.sleep(250)
         }
         return null
     }
+
+    /** A finger on the card's Dismiss while it stands; the card's own clock takes it otherwise. */
+    private fun dismissScreenshotCard() {
+        val close = domBox("document.querySelector('.zen-screenshot-card .zen-message-close')") ?: return
+        Finger().tap(close.exactCenterX(), close.exactCenterY())
+        awaitTrue(4_000) { chromeJs("document.querySelector('.zen-screenshot-card')==null") == "true" }
+    }
+
 
     /** What the profile's history.json says about the failed loads (the persisted side of BH-19). */
     private fun historyReport() {
@@ -423,9 +443,8 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
         private const val ERROR_PREFIX = "zen://error"
         /** WebView's built-in error page's title: must not reach history or the zero-suggest. */
         private const val INTERSTITIAL_TITLE = "Webpage not available"
-        /** The downloads sheet's row for the screenshot: its name, then its status and summary in one label (`<name>. <status>. <summary>`). */
-        private val SCREENSHOT_ROW = Regex("^Screenshot .*\\.png")
-        private val NUMERIC_ROW = Regex("^\\d{6,}$")
+        /** The screenshot's preview card's title (#321, ScreenshotCard.tsx). */
+        private const val SCREENSHOT_CARD_TITLE = "Screenshot saved"
         private val FAILED_URLS = Regex("nonexistent\\.invalid|localhost:1|localhost:81")
     }
 }

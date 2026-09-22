@@ -46,7 +46,7 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
             back()
         }
         SystemClock.sleep(1_500)
-        tapLabel(TABS_LABEL)
+        tapTabsButton()
         if (waitFor("New Tab", 6_000) != null) {
             SystemClock.sleep(1_000)
             back()
@@ -68,7 +68,7 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
         shot("02-landscape")
 
         // 3. The overview in landscape: eight tabs in a row of four, scrolled to the end.
-        tapLabel(TABS_LABEL)
+        tapTabsButton()
         if (waitFor("New Tab", 6_000) != null) {
             SystemClock.sleep(2_000)
             shot("03-landscape-overview")
@@ -201,6 +201,20 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 
+    /**
+     * A finger on the bar's Tabs button through the shared matcher ([tabsButton]: "Tabs (" and
+     * never the count – this read "Tabs (8)" whole and found none at its warm-up, the eighth
+     * seeded tab not yet counted, a miss the demo carried to its end).
+     */
+    private fun tapTabsButton() {
+        ensureForeground()
+        val target = tabsButton() ?: run {
+            problems += "no ${TABS_LABEL_PREFIX}N) to tap"
+            return
+        }
+        Finger().tap(target.exactCenterX(), target.exactCenterY())
+    }
+
     private fun tapPill() {
         ensureForeground()
         val target = findByLabelPrefix(PILL_LABEL) ?: pill
@@ -268,7 +282,6 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
 
     companion object {
         private const val MENU_LABEL = "Menu"
-        private const val TABS_LABEL = "Tabs (8)"
         private const val HANDLE_LABEL = "Resize menu"
         /** The last enabled row of the phone menu; About below it is a label, not an action. */
         private const val LAST_ROW_LABEL = "Settings"

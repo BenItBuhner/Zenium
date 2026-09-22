@@ -101,7 +101,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         expect("a toast reads 'Closed <title>' with Undo: '${toast.orEmpty()}'", toast != null && undoRect() != null)
         expect("the card has left the grid", awaitDom("!document.querySelector('${card(TEA)}')"))
         still("closed-x-toast")
-        undo("Undo")
+        undo("Undo") { tabExists(TEA) }
         expect("Undo brings Tea back", awaitTab(TEA, exists = true))
         SystemClock.sleep(SETTLE)
         expect("Tea is back at its index, loose", trackOrder() == start)
@@ -127,7 +127,7 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
         val toast = awaitToast("Closed ")
         expect("the toast reads 'Closed <title>': '${toast.orEmpty()}'", toast != null)
         still("closed-swipe-toast")
-        undo("Undo")
+        undo("Undo") { tabExists(DAMPING) }
         expect("Undo brings Damping back", awaitTab(DAMPING, exists = true))
         SystemClock.sleep(SETTLE)
         expect("Damping is back in Research at its index", trackOrder() == start && folderOf(DAMPING) == RESEARCH)
@@ -443,19 +443,23 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
     }
 
     /**
-     * Touch the toast's action once the toast is at rest. A picked action sends the toast off at
-     * once, which is how the touch is known to have taken; a touch read as a hold leaves the
-     * toast standing (and its clock at a second at least), so the next attempt still finds it.
+     * A touch on the toast's `label` button (Undo) that has to take: `took` is the scenario's
+     * own consequence in the core (the closed tab back), touched again while the toast stands
+     * when it has not come. The toast's motion (`data-moving`) was the proof before: a card
+     * whose entry spring has not reported its rest carries the attribute standing still, so a
+     * touch the WebView had read as a hold (the repairs' second proof run, the Damping swipe's
+     * Undo: the toast stood two seconds more and left on its clock, the tab never came back and
+     * the Close all after it asked about six tabs) passed as taken and was never retried.
      */
-    private fun undo(label: String): Boolean {
+    private fun undo(label: String, took: () -> Boolean = { toastLeavingOrGone() }): Boolean {
         if (awaitRect({ undoRect() }, 6_000) == null) {
             record("  the toast's $label button never showed", false)
             return false
         }
         awaitDom("(function(){var e=document.querySelector('.zen-message-toast');return !!e&&!e.hasAttribute('data-moving')})()", 1_500)
-        val took = touchUntil("the toast's $label", { undoRect() }, { toastLeavingOrGone() }, waitMs = UNDO_TOOK_WAIT)
-        if (!took) record("  the touch on the toast's $label never took", false)
-        return took
+        val ok = touchUntil("the toast's $label", { undoRect() }, took, waitMs = UNDO_TOOK_WAIT)
+        if (!ok) record("  the touch on the toast's $label never took", false)
+        return ok
     }
 
     /**

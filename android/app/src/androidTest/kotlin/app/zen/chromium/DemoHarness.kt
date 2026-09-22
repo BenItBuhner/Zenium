@@ -473,13 +473,31 @@ abstract class DemoHarness(
         chromeJsString("(function(){var b=document.querySelector('.zen-phone-bar');return b?String(b.dataset.edge||''):''})()")
             ?.takeIf { it.isNotEmpty() }
 
+    /**
+     * The bar's Tabs button, "Tabs (N)" (PhoneShell.tsx: the count is the space's), by the
+     * leading part of its name and never the count, which changes under a driver as its tabs
+     * come and go (`layout` read "Tabs (8)" whole and found none at its warm-up, the eighth tab
+     * still on its way): the tree's node within `timeoutMs`, else the document's box
+     * (`[aria-label^="Tabs ("]`), which the tree can trail by seconds after a bar's move. Null
+     * with no bar up by either reading.
+     */
+    protected fun tabsButton(timeoutMs: Long = 4_000): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            findByLabelPrefix(TABS_LABEL_PREFIX)?.takeIf { !it.isEmpty }?.let { return it }
+            domBox("document.querySelector('.zen-phone-bar [aria-label^=\"$TABS_LABEL_PREFIX\"]')")?.takeIf { !it.isEmpty }?.let { return it }
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(200)
+        }
+    }
+
     /** The measured [pill] once [measure] has run, null before (a launch's first look). */
     private fun pillOrNull(): Rect? = if (this::pill.isInitialized && !pill.isEmpty) pill else null
 
     /** The bar's row as one of its always-present buttons reports it, wherever the bar is docked. */
     private fun barRow(): Rect? =
         findNodeWhere { node ->
-            node.isClickable && labelled { it == MENU_LABEL || it.startsWith("Tabs (") }(node)
+            node.isClickable && labelled { it == MENU_LABEL || it.startsWith(TABS_LABEL_PREFIX) }(node)
         }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }?.takeIf { !it.isEmpty }
 
     /**
@@ -1789,12 +1807,54 @@ abstract class DemoHarness(
 
     // --- the menu --------------------------------------------------------------------------------
 
-    /** A finger on the bar's Menu button: by label, else where the default bar has it (rightmost, on the pill's line). */
-    protected fun tapMenuButton() {
+    /**
+     * A finger on the bar's Menu button: by label, else where the default bar has it (rightmost,
+     * on the pill's line). The tap is READ BACK before it is taken as one: a stationary press the
+     * bar keeps 400 ms is the editor's entry point (`useBarHold`, #52), and on the recipe's
+     * software GPU a 60 ms tap can reach the chrome as a hold – the down dispatched, a long frame,
+     * the up behind the hold's timer – so the Navigation Bar editor stands where the menu should
+     * (private-lock in the repairs' second proof run: eleven checks lost to one such tap under
+     * the lock's cover). The editor (or the Tabs button's quick menu, the same recogniser) is
+     * dismissed with a back and the finger goes in again, [MENU_TAP_TRIES] times in all. True
+     * once the menu's sheet (its `Resize menu` handle) is in the chrome's document; false when
+     * nothing came within [MENU_OPEN_MS] – the caller's own wait for the handle in the tree says
+     * what that means for its claim, as before.
+     */
+    protected fun tapMenuButton(): Boolean {
         ensureForeground()
-        val button = findByLabel(MENU_LABEL) ?: computedMenuButton()
-        Finger().tap(button.exactCenterX(), button.exactCenterY())
+        repeat(MENU_TAP_TRIES) { attempt ->
+            val button = findByLabel(MENU_LABEL) ?: computedMenuButton()
+            Finger().tap(button.exactCenterX(), button.exactCenterY())
+            val deadline = SystemClock.uptimeMillis() + MENU_OPEN_MS
+            var held = false
+            while (SystemClock.uptimeMillis() < deadline) {
+                when (menuTapRead()) {
+                    "menu" -> return true
+                    "held" -> {
+                        held = true
+                        break
+                    }
+                }
+                SystemClock.sleep(150)
+            }
+            if (!held) return false
+            Log.w(tag, "the tap on Menu was read as a hold (the bar's editor opened instead); dismissing it and trying again (${attempt + 1}/$MENU_TAP_TRIES)")
+            back()
+            awaitTrue(4_000) { menuTapRead() != "held" }
+            SystemClock.sleep(800)
+        }
+        return false
     }
+
+    /**
+     * What the chrome shows for a tap on Menu: "menu" (the menu's sheet, by its handle), "held"
+     * (the bar editor or a quick menu: the hold recogniser fired), "" (nothing yet, or no answer).
+     */
+    private fun menuTapRead(): String =
+        chromeJsString(
+            "(function(){if(document.querySelector('.zen-sheet [aria-label=\"$MENU_HANDLE_LABEL\"]'))return 'menu';" +
+                "if(document.querySelector('.zen-bar-editor, .zen-quick-menu'))return 'held';return ''})()"
+        ) ?: ""
 
     private fun computedMenuButton(): Rect {
         val half = 22 * density
@@ -2435,9 +2495,14 @@ abstract class DemoHarness(
         const val NTP_FIELD_GROUP_LABEL = "Search"
         /** The pill under the private lock cover (PhoneShell.tsx, INC-05). */
         const val LOCKED_PILL_LABEL = "Private tab locked, unlock"
+        /** The bar's Tabs button's name up to its count: "Tabs (N)" ([tabsButton]). */
+        const val TABS_LABEL_PREFIX = "Tabs ("
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
+        /** [tapMenuButton]: how long the menu's sheet gets to reach the document, and how many taps are tried when one is read as a hold. */
+        const val MENU_OPEN_MS = 6_000L
+        const val MENU_TAP_TRIES = 3
 
         /** The phone Settings page's `data-section` on its landing (SettingsPage.tsx). */
         const val SETTINGS_LANDING = "landing"

@@ -128,11 +128,23 @@ abstract class ThumbsDemoBase(
     protected fun pageOf(color: Int): String = PAGES.firstOrNull { near(it.color, color) }?.name ?: "none of the pages"
 
     /**
-     * The card of the tab titled `label`: the clickable node whose name is the card's ("Green
-     * page, tab 2 of 3, …" since #237: the title, its place and its state – matched by the shared
-     * [tabCard] on the title alone), not the title text inside it.
+     * The tab whose card is titled `label`: the seeded tabs are `tab_<page>`
+     * (thumbs-demo-state.json), the purple page the red tab's navigation (BH-14).
+     */
+    protected fun tabIdOf(label: String): String =
+        if (label == "Purple page") "tab_red" else "tab_" + (PAGES.firstOrNull { it.title == label }?.name ?: label.lowercase().removeSuffix(" page"))
+
+    /**
+     * The card of the tab titled `label`: the cell the chrome's document lays out for the tab
+     * ([tabIdOf]: the `[data-tab-id]` cell's `.zen-overview-card`) first – a restored tab whose page is still
+     * loading is titled by its URL's host until the page's title arrives (the repairs' second
+     * proof run read "127.0.0.1:8137…" on the green card while the server held its page), and
+     * the picture under judgement is that card's whichever it says – then the tree's clickable
+     * node whose name is the card's ("Green page, tab 2 of 3, …" since #237: the title, its
+     * place and its state – matched by the shared [tabCard] on the title alone).
      */
     protected fun card(label: String): Rect? {
+        domBox("document.querySelector('[data-tab-id=\"${tabIdOf(label)}\"] .zen-overview-card')")?.takeIf { !it.isEmpty }?.let { return it }
         val reads = tabCard(label)
         val node = findNodeWhere {
             it.isClickable && (it.contentDescription?.toString()?.let(reads) == true || it.text?.toString()?.let(reads) == true)
@@ -191,7 +203,8 @@ abstract class ThumbsDemoBase(
     protected fun cardLook(label: String): CardLook? {
         val raw = chromeJs(
             "(function(){var t=${JSONObject.quote(label)};" +
-                "var card=Array.prototype.find.call(document.querySelectorAll('.zen-overview-card')," +
+                "var card=document.querySelector('[data-tab-id=\"${tabIdOf(label)}\"] .zen-overview-card')||" +
+                "Array.prototype.find.call(document.querySelectorAll('.zen-overview-card')," +
                 "function(c){var s=c.querySelector('.zen-overview-card-title');return !!s&&s.textContent.trim()===t});" +
                 "if(!card)return null;var p=card.querySelector('.zen-overview-card-preview');" +
                 "return {discarded:card.getAttribute('data-discarded')==='true'," +
