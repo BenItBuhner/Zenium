@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron'
+import { setDebuggerRecycler } from '../pageDebugger'
 
 interface SessionState {
   frozen: boolean
@@ -13,9 +14,16 @@ interface SessionState {
  *
  * The debugger stays attached only while an override is in effect – detaching is the only way to
  * clear Emulation overrides – so tabs that need nothing carry no DevTools session at all.
+ *
+ * The session is shared with the page's other holders (`pageDebugger.ts`); a holder that needs a
+ * fresh agent asks for a `recycle`, which puts the governor's own overrides back on the new one.
  */
 export class TabLifecycle {
   private readonly sessions = new Map<number, SessionState>()
+
+  constructor() {
+    setDebuggerRecycler((wc) => this.recycle(wc))
+  }
 
   /** Chromium tab freezing: no timers, no script, no rendering until thawed. */
   async freeze(wc: WebContents): Promise<boolean> {
@@ -116,6 +124,28 @@ export class TabLifecycle {
     this.sessions.delete(webContentsId)
   }
 
+  /**
+   * A fresh agent for the page: the session is dropped – every emulation override goes with it –
+   * and the governor's own overrides are put back on a new one, so a holder that spent a command
+   * the agent takes once (`Page.setFontFamilies`) can send it again. Without overrides of the
+   * governor's the page is left detached for the caller to attach.
+   */
+  async recycle(wc: WebContents): Promise<void> {
+    if (wc.isDestroyed()) return
+    const s = this.sessions.get(wc.id)
+    try {
+      if (wc.debugger.isAttached()) wc.debugger.detach()
+    } catch {
+      // Already detached.
+    }
+    if (!s) return
+    const { frozen, cpuThrottle, hardwareConcurrency } = s
+    this.sessions.delete(wc.id)
+    if (cpuThrottle !== 1) await this.setCpuThrottle(wc, cpuThrottle)
+    if (hardwareConcurrency !== null) await this.setHardwareConcurrency(wc, hardwareConcurrency)
+    if (frozen) await this.freeze(wc)
+  }
+
   // ---------------------------------------------------------------------------
 
   private state(wc: WebContents): SessionState {
@@ -175,17 +205,7 @@ export class TabLifecycle {
   }
 
   private async reattach(wc: WebContents): Promise<void> {
-    const s = this.sessions.get(wc.id)
-    if (!s || wc.isDestroyed()) return
-    try {
-      if (wc.debugger.isAttached()) wc.debugger.detach()
-    } catch {
-      // Already detached.
-    }
-    const { frozen, cpuThrottle, hardwareConcurrency } = s
-    this.sessions.delete(wc.id)
-    if (cpuThrottle !== 1) await this.setCpuThrottle(wc, cpuThrottle)
-    if (hardwareConcurrency !== null) await this.setHardwareConcurrency(wc, hardwareConcurrency)
-    if (frozen) await this.freeze(wc)
+    if (!this.sessions.has(wc.id)) return
+    await this.recycle(wc)
   }
 }

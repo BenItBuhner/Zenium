@@ -122,7 +122,8 @@ describe('acceptLanguages', () => {
   it('adds the base language after each region variant, as Chrome does', () => {
     expect(acceptLanguages('en-US', ['en-US'])).toBe('en-US,en')
     expect(acceptLanguages('de-DE', ['de-DE', 'en-US'])).toBe('de-DE,de,en-US,en')
-    expect(acceptLanguages('pt-BR', ['pt-BR', 'pt-PT'])).toBe('pt-BR,pt,pt-PT')
+    // `net::HttpUtil::ExpandLanguageList`: the base follows the last variant of a family.
+    expect(acceptLanguages('pt-BR', ['pt-BR', 'pt-PT'])).toBe('pt-BR,pt-PT,pt')
   })
 
   it('keeps the locale first, drops duplicates (case-insensitively) and blanks', () => {
