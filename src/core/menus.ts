@@ -1884,11 +1884,15 @@ export class Menus {
     )
   }
 
-  /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
-  showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
+  /**
+   * Long-press on a new tab page tile: open it elsewhere, pin it, edit it (a shortcut's name and
+   * address, NTP-06: the chrome's edit sheet over the page in `tabId`), or take it off the page.
+   */
+  showTopSiteContextMenu(url: string, title: string, tabId: string | null, win: ZenWindow): void {
     if (!isNavigableUrl(url)) return
     const { tabs, state, newTab } = this.browser
-    const pinned = state.newTabDevice.shortcuts.some((s) => s.url === url)
+    const shortcut = state.newTabDevice.shortcuts.find((s) => s.url === url)
+    const pageTab = tabId ?? tabs.activeTabFor(win)?.id ?? null
     this.popup(
       [
         {
@@ -1900,9 +1904,17 @@ export class Menus {
           click: () => this.browser.platform.clipboard.writeText(url)
         },
         { type: 'separator' },
+        ...(shortcut && pageTab
+          ? [
+              {
+                label: 'Edit Shortcut…',
+                click: () => newTab.openShortcutDialog(pageTab, shortcut.id, win)
+              }
+            ]
+          : []),
         {
-          label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
-          click: () => (pinned ? newTab.unpin(url) : newTab.pin(url, title))
+          label: shortcut ? 'Unpin Shortcut' : 'Pin Shortcut',
+          click: () => (shortcut ? newTab.unpin(url) : newTab.pin(url, title))
         },
         { label: 'Remove', click: () => newTab.remove(url) }
       ],
@@ -2669,6 +2681,15 @@ export class Menus {
       action: 'tab.new',
       click: () => this.browser.openNewTab(win)
     }
+    // The phone's Home (TB-15 / NTP-30): Chrome's is a toolbar button, and the phone bar's is
+    // an optional control, so the menu is where a homepage is always reachable from – this tab
+    // goes to it. With the homepage off there is no Home anywhere, as Chrome's button leaves
+    // the toolbar; a page that is not a tab (nothing active) has nowhere to go.
+    const home = when(phone && this.browser.newTab.homepageUrl() !== null, {
+      label: 'Home',
+      enabled: Boolean(active),
+      click: () => active && this.browser.goHome(active.id, win)
+    })
     // Chrome's tab search (tabs-17): a popover of the sidebar layouts, and the desktop's one
     // pointer way into it (the chord and the macOS menu bar are the others), so it keeps a row
     // in the tabs group; the phone's tab switcher searches on its own.
@@ -2949,6 +2970,7 @@ export class Menus {
           // item's glyph.
           ...this.phoneIconRow(active, win),
           separator,
+          ...home,
           newTab,
           ...privateTabs,
           ...newSpace,

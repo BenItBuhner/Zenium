@@ -218,6 +218,9 @@ export const DEFAULT_SETTINGS: Settings = {
   urlbarBehavior: 'float-typing',
   phoneBarPosition: 'bottom',
   phoneBar: defaultPhoneBar(),
+  // Chrome's default: a homepage that is the new tab page, so a profile's optional Home button
+  // (#52) keeps working when the setting arrives; "Off" is a choice.
+  homepage: { mode: 'newtab', url: '' },
   pullToRefresh: true,
   hideToolbarOnScroll: true,
   glanceEnabled: true,
