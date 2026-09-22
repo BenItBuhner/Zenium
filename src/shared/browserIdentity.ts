@@ -8,6 +8,7 @@
  * navigation without `Sec-CH-UA` or an `Accept-Language` without the base language as the marks
  * of an embedded Chromium and serve degraded pages – Google's sign-in refuses outright.
  */
+import { acceptLanguageList } from './languages'
 
 /**
  * The plain Chrome user agent for Electron's default string: the `Electron/x.y.z` and
@@ -100,34 +101,17 @@ export function hasClientHints(headers: Record<string, string>): boolean {
   return Object.keys(headers).some((name) => name.toLowerCase() === 'sec-ch-ua')
 }
 
-/** A language tag as `Accept-Language` takes it: `en`, `en-US`, `zh-Hant-TW`, `es-419`. */
-const LANGUAGE_TAG_RE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/
-
 /**
  * Chrome's `Accept-Language` list for the system's languages: the application locale first,
  * then the user's preferred languages, each region variant followed by its base language when
  * the list does not name it (`net::HttpUtil::ExpandLanguageList`), without duplicates. Entries
  * that are not language tags (a POSIX `C` or `POSIX` locale, a bare charset) are dropped, and
  * `en_US` spellings become `en-US`. The network layer turns `en-US,en` into `en-US,en;q=0.9`,
- * the header every en-US Chrome sends.
+ * the header every en-US Chrome sends. The same rule serves the preferred-languages setting
+ * (`shared/languages.ts`), which replaces the system's list once the profile has one.
  */
 export function acceptLanguages(locale: string, preferred: readonly string[]): string {
-  const out: string[] = []
-  const add = (tag: string): void => {
-    if (!LANGUAGE_TAG_RE.test(tag)) return
-    if (out.some((have) => have.toLowerCase() === tag.toLowerCase())) return
-    out.push(tag)
-  }
-  for (const raw of [locale, ...preferred]) {
-    const tag = raw
-      .trim()
-      .replace(/_/g, '-')
-      .replace(/[.@].*$/, '')
-    add(tag)
-    const dash = tag.indexOf('-')
-    if (dash > 0) add(tag.slice(0, dash))
-  }
-  return out.length > 0 ? out.join(',') : 'en-US,en'
+  return acceptLanguageList([locale, ...preferred])
 }
 
 function normalizeVersion(version: string): string {
