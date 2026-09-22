@@ -1871,6 +1871,9 @@ function SuggestionRow({
         data-selected={selected}
         data-kind={item.kind}
         data-row={item.id}
+        // The group the row is sectioned under (OMN-18), for whoever reads the card off the
+        // DOM; the heading's own mark is `data-group`, which the exit looks the heading up by.
+        data-section={item.group}
         data-leaving={ghost ? true : undefined}
         aria-hidden={ghost ? true : undefined}
         style={ghost}
@@ -1883,13 +1886,16 @@ function SuggestionRow({
           {...optionProps}
         >
           {icon}
-          <span className="min-w-0 flex-1 truncate text-[14px]">
+          <span className="min-w-0 flex-1 truncate text-[14px]" data-testid="urlbar-row-title">
             {clip ? clip.text : item.title}
           </span>
           {/* A query row with a Refine arrow reads as its text alone, as Chrome's: the verbatim
               row (no arrow) keeps naming the engine, so the others need not repeat it and lose
               their words to it. */}
-          <span className="max-w-[45%] truncate text-[13px] text-[var(--zen-muted)]">
+          <span
+            className="max-w-[45%] truncate text-[13px] text-[var(--zen-muted)]"
+            data-testid="urlbar-row-subtitle"
+          >
             {clip ? item.title : onRefine ? '' : item.subtitle}
           </span>
           {item.kind === 'tab' && <ArrowRight className="h-3.5 w-3.5 opacity-50" />}

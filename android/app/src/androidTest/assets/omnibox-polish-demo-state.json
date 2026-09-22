@@ -89,7 +89,7 @@
         "keyword": "@brew",
         "glyph": "B",
         "source": "custom",
-        "favicon": "http://127.0.0.1:18136/favicon.svg"
+        "favicon": "{{favicon}}"
       }
     ]
   },

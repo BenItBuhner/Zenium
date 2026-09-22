@@ -50,8 +50,11 @@ import java.io.FileInputStream
  *     loads the link. Text on the clipboard: "Paste and search", and the touch searches it.
  *
  * Two sites of the driver's own on the loopback ([DemoServer]): 127.0.0.1 is the seeded default
- * engine's (its suggest endpoint answers the query rows, its favicon is the engine's mark, a
- * page for the paste), 127.0.0.2 the roast site the seeded history and the second tab are on.
+ * engine's (its suggest endpoint answers the query rows, a page for the paste), 127.0.0.2 the
+ * roast site the seeded history and the second tab are on. The engine's mark is a data URL in
+ * the seeded registry ([FAVICON_URL]): the chrome is an https document, so an `http:` image of
+ * the loopback site would be mixed content the WebView blocks (as a real engine's `http:` mark
+ * would be; the shipped engines' are https), and a data URL is a favicon the registry keeps.
  * Findings in `android-omnibox-polish-findings.txt` next to the frames; the run FAILS when a
  * claim does not hold. See [DemoHarness] for the plumbing and its rule on real touches versus
  * accessibility clicks; the frame instrument is the harness's ([measureFrames]).
@@ -80,8 +83,10 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         if (failures.isNotEmpty()) error("the omnibox polish did not hold up under a finger: ${failures.joinToString("; ")}")
     }
 
+    /** The theme, and the seeded engine's mark (the state carries `{{favicon}}` where the data URL goes). */
     override fun patchState(json: String): String =
         json.replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$THEME\"")
+            .replace("{{favicon}}", FAVICON_URL)
 
     /** The history the query's Pages rows come from: three roast pages and one that never matches. */
     override fun seedMore(zen: File) {
@@ -108,16 +113,15 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         finding("warm-up: the seeded page ${if (loaded) "is up" else "did NOT report complete"}")
         // The first open pays for the editor's layout and the suggestions' first fetch: off camera.
         tapPill()
-        val field = awaitChrome("!!document.querySelector('$FIELD')", 8_000)
+        val field = awaitField(8_000)
         SystemClock.sleep(1_000)
         closeField()
-        awaitFocusPhase("rest", 6_000)
+        settle(6_000)
         finding("warm-up: the editor opened once off camera (field ${if (field) "seen" else "NOT seen"})")
         // The new tab page is a chunk of its own that loads on its first open: pay for it too.
-        coreInvoke("tab.new")
-        awaitChrome("!!document.querySelector('$NTP_FIELD')", 12_000)
+        val ntp = openNewTabPage()
+        finding("warm-up: the new tab page ${if (ntp) "opened" else "did NOT open"} once off camera")
         SystemClock.sleep(800)
-        closeField()
         closeNewTabPages()
         finding("warm-up: the demo page ${if (showBrewPage()) "is" else "is NOT"} the active tab")
         finding("sampler: ${jsString(SAMPLER)}")
@@ -144,13 +148,17 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         // 3. OMN-18: the query's rows under headings.
         step("OMN-18 a typed query's rows under group headings") {
             if (!showBrewPage()) error("the demo page is not the active tab")
-            tapPill()
-            awaitChrome("!!document.querySelector('$FIELD')", 8_000)
+            if (!openField()) error("the pill's tap opened no field")
             awaitIme(shown = true, timeoutMs = 6_000)
             SystemClock.sleep(600)
             instrumentation.sendStringSync(QUERY)
-            val grouped = awaitChrome("document.querySelectorAll('$HEADINGS').length>=3", 15_000)
-            SystemClock.sleep(1_500)
+            // The three groups up for the whole query, no row on its way out: the card at rest.
+            val grouped = awaitChrome(
+                "document.querySelectorAll('$HEADINGS:not([data-leaving])').length>=3&&(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(QUERY)}&&!document.querySelector('$ROWS[data-leaving]')",
+                15_000
+            )
+            // The emulator's software GPU trails the DOM by a second or two: the still after it has caught up.
+            SystemClock.sleep(2_500)
             shot("02-grouped-typed")
             val card = JSONObject(chromeValue(CARD_JS).ifEmpty { "{}" })
             val edge = card.optString("edge")
@@ -167,17 +175,20 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             }
             finding("  typed '$QUERY'; the card docked $edge; headings from the field outward: ${labels.joinToString(" | ")}")
             for (i in labels.indices) finding("    ${labels[i]}: ${kinds[i].joinToString(", ")} (${headings.getJSONObject(i).optString("fontSize")}/${headings.getJSONObject(i).optString("fontWeight")})")
-            finding("  loose rows at the field's end (no group): ${card.optString("loose")}")
+            finding("  rows of no section at the field's end (the default match): ${card.optString("loose").ifEmpty { "none" }}")
+            val unheaded = card.optString("unheaded")
+            if (unheaded.isNotEmpty()) finding("  rows sectioned under NO heading: $unheaded")
             val order = labels == EXPECTED_GROUPS
-            val own = labels.indices.all { i -> kinds[i].isNotEmpty() && kinds[i].all { it in GROUP_KINDS.getValue(labels[i]) } }
-            finding("  Chrome's order Pages, Searches, Open tabs $order; every group's rows of its kinds $own; headings 15/600 $type ${verdict(grouped && order && own && type)}")
-            if (!grouped || !order || !own || !type) failures += "the typed query's rows were not grouped as Chrome's (headings ${labels.joinToString()})"
+            val own = unheaded.isEmpty() && labels.indices.all { i -> kinds[i].isNotEmpty() && kinds[i].all { it in GROUP_KINDS.getValue(labels[i]) } }
+            val topLoose = card.optString("loose") == "search"
+            finding("  Chrome's order Pages, Searches, Open tabs $order; every group's rows of its kinds $own; the verbatim search alone at the field's end $topLoose; headings 15/600 $type ${verdict(grouped && order && own && topLoose && type)}")
+            if (!grouped || !order || !own || !topLoose || !type) failures += "the typed query's rows were not grouped as Chrome's (headings ${labels.joinToString()}; loose '${card.optString("loose")}')"
             // §11.4: one more letter. The Pages and Searches headings stay – as the same elements,
             // so the change cross-fades in place – and Open tabs goes with the tab that stops matching.
             chromeJs("document.querySelectorAll('$HEADINGS').forEach(function(h){h.__demoMark=1})")
             instrumentation.sendStringSync(MORE)
             val narrowed = awaitChrome("document.querySelectorAll('$HEADINGS:not([data-leaving])').length===2", 10_000)
-            SystemClock.sleep(1_200)
+            SystemClock.sleep(2_000)
             shot("02b-grouped-narrowed")
             val kept = JSONObject(chromeValue(KEPT_JS).ifEmpty { "{}" })
             val stayed = kept.optJSONArray("kept")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
@@ -193,19 +204,19 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
 
         // 4. OMN-17: the hold, the prompt, Remove; then a hold answered with Cancel.
         step("OMN-17 a hold on a history row asks on the prompt sheet; Remove forgets it") {
-            if (fieldValue() != QUERY) {
+            settle(8_000)
+            if (!fieldUp() || fieldValue() != QUERY) {
                 // The grouping step is the way to the state, not the claim: the rows again.
-                if (!urlbarOpen()) {
+                if (!fieldUp()) {
                     showBrewPage()
-                    tapPill()
-                    awaitChrome("!!document.querySelector('$FIELD')", 8_000)
+                    if (!openField()) error("the pill's tap opened no field")
                     awaitIme(shown = true, timeoutMs = 6_000)
-                } else {
+                } else if (fieldValue().isNotEmpty()) {
                     touchTapLabel(CLEAR_LABEL, timeoutMs = 4_000)
                 }
                 SystemClock.sleep(600)
                 instrumentation.sendStringSync(QUERY)
-                awaitChrome("document.querySelectorAll('$ROWS[data-kind=history]').length>=1", 12_000)
+                awaitChrome("document.querySelectorAll('$ROWS[data-kind=history]').length>=1&&!document.querySelector('$ROWS[data-leaving]')", 12_000)
                 SystemClock.sleep(1_000)
             }
             val row = historyRow() ?: error("no history row for '$QUERY' on the card")
@@ -235,7 +246,7 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             // THE touch: Remove.
             val touched = touchTapLabel(REMOVE_LABEL, timeoutMs = 6_000)
             val sheetGone = awaitChrome("document.querySelectorAll('.zen-sheet').length===0", 8_000)
-            val rowGone = awaitChrome("!Array.from(document.querySelectorAll('$ROWS .zen-omnibox-row-title')).some(function(e){return e.textContent===${JSONObject.quote(title)}})", 8_000)
+            val rowGone = awaitChrome("!Array.from(document.querySelectorAll('$ROWS $ROW_TITLE')).some(function(e){return e.textContent.trim()===${JSONObject.quote(title)}})", 8_000)
             SystemClock.sleep(1_200)
             shot("04-removed")
             val forgotten = !historyHas(url)
@@ -261,7 +272,7 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
                     val cancelled = askedAgain && touchTapLabel(CANCEL_LABEL, timeoutMs = 6_000)
                     val closed = awaitChrome("document.querySelectorAll('.zen-sheet').length===0", 8_000)
                     SystemClock.sleep(1_000)
-                    val stays = chromeValue("String(Array.from(document.querySelectorAll('$ROWS .zen-omnibox-row-title')).some(function(e){return e.textContent===${JSONObject.quote(keepTitle)}}))") == "true"
+                    val stays = chromeValue("String(Array.from(document.querySelectorAll('$ROWS $ROW_TITLE')).some(function(e){return e.textContent.trim()===${JSONObject.quote(keepTitle)}}))") == "true"
                     val kept = keepUrl == null || historyHas(keepUrl)
                     finding("  a hold on '$keepTitle', Cancel touched $cancelled; sheet gone $closed; the row stays $stays; the entry kept $kept ${verdict(cancelled && stays && kept)}")
                     if (!cancelled || !stays || !kept) failures += "the hold's Cancel did not keep '$keepTitle'"
@@ -271,47 +282,47 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
 
         // 5. NTP-09: the engine's favicon in the fields.
         step("NTP-09 the default engine's favicon at the field's start") {
-            if (!urlbarOpen()) {
-                showBrewPage()
-                tapPill()
-                awaitChrome("!!document.querySelector('$FIELD')", 8_000)
-            }
+            if (!showBrewPage()) error("the demo page is not the active tab")
+            if (!openField()) error("the pill's tap opened no field")
+            awaitIme(shown = true, timeoutMs = 6_000)
             if (fieldValue().isNotEmpty()) touchTapLabel(CLEAR_LABEL, timeoutMs = 4_000)
-            val loaded = awaitChrome("(function(){var i=document.querySelector('.zen-omnibox-field $FAVICON');return !!i&&i.complete&&i.naturalWidth>0})()", 10_000)
-            SystemClock.sleep(1_000)
+            val loaded = awaitChrome(faviconLoadedJs(".zen-omnibox-field"), 10_000)
+            SystemClock.sleep(1_500)
             shot("05-field-engine-favicon")
             val field = glyph(".zen-omnibox-field")
             finding("  the omnibox field's glyph: $field ${verdict(loaded && field.favicon20(FAVICON_URL))}")
             if (!loaded || !field.favicon20(FAVICON_URL)) failures += "the omnibox field does not show the engine's favicon at 20 px ($field)"
             closeField()
+            settle(8_000)
             // The new tab page's resting field carries the same mark; its tap morphs into the omnibox's field, which carries it too.
-            coreInvoke("tab.new")
-            awaitChrome("!!document.querySelector('$NTP_FIELD')", 12_000)
-            SystemClock.sleep(600)
-            closeField()
-            awaitChrome("!document.querySelector('$FIELD')", 6_000)
-            val ntpLoaded = awaitChrome("(function(){var i=document.querySelector('$NTP_FIELD $FAVICON');return !!i&&i.complete&&i.naturalWidth>0})()", 10_000)
-            SystemClock.sleep(1_200)
+            if (!openNewTabPage()) error("the new tab page did not open (the field ${if (fieldUp()) "is" else "is not"} up)")
+            val ntpLoaded = awaitChrome(faviconLoadedJs(NTP_FIELD), 10_000)
+            SystemClock.sleep(1_500)
             shot("06-ntp-resting-field-favicon")
             val resting = glyph(NTP_FIELD)
             finding("  the new tab page's resting field: $resting ${verdict(ntpLoaded && resting.favicon20(FAVICON_URL))}")
             if (!ntpLoaded || !resting.favicon20(FAVICON_URL)) failures += "the new tab page's field does not show the engine's favicon at 20 px ($resting)"
             val p = ntpFieldPoint() ?: error("the new tab page's field was not found")
             Finger().tap(p.x, p.y)
-            val opened = awaitChrome("!!document.querySelector('.zen-omnibox-field $FAVICON')", 8_000)
+            // The morph (§11.8) flies the double into the field's slot and lands: the omnibox's field, with the mark, once it has.
+            val landed = awaitMorphPhase("open", 12_000)
+            val opened = awaitChrome(faviconLoadedJs(".zen-omnibox-field"), 8_000)
             awaitIme(shown = true, timeoutMs = 6_000)
             SystemClock.sleep(1_500)
             shot("07-ntp-field-open-favicon")
             val morphed = glyph(".zen-omnibox-field")
-            finding("  the field's tap morphed into the omnibox (field up $opened); its glyph: $morphed ${verdict(opened && morphed.favicon20(FAVICON_URL))}")
+            finding("  the field's tap morphed into the omnibox (morph landed $landed, the field's favicon up $opened); its glyph: $morphed ${verdict(opened && morphed.favicon20(FAVICON_URL))}")
             if (!opened || !morphed.favicon20(FAVICON_URL)) failures += "the morphed field does not carry the engine's favicon ($morphed)"
             closeField()
-            awaitChrome("!document.querySelector('$FIELD')", 6_000)
+            awaitMorphPhase("rest", 10_000)
+            settle(8_000)
             // The vendor's default: no favicon, the fields' own glyphs as before.
             coreInvoke("settings.update", "{\"searchEngineId\":${JSONObject.quote(VENDOR_ENGINE_ID)}}")
             SystemClock.sleep(1_200)
             val restingDefault = glyph(NTP_FIELD)
-            Finger().tap(p.x, p.y)
+            val q = ntpFieldPoint() ?: p
+            Finger().tap(q.x, q.y)
+            awaitMorphPhase("open", 12_000)
             awaitChrome("!!document.querySelector('.zen-omnibox-field [data-testid=engine-field-glyph]')", 8_000)
             SystemClock.sleep(1_500)
             shot("08-vendor-default-glyphs")
@@ -320,6 +331,8 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             finding("  the vendor's default picked: the resting field $restingDefault; the omnibox field $fieldDefault ${verdict(plain)}")
             if (!plain) failures += "the vendor's default engine drew a favicon or lost its tile ($fieldDefault)"
             closeField()
+            awaitMorphPhase("rest", 10_000)
+            settle(8_000)
             coreInvoke("settings.update", "{\"searchEngineId\":${JSONObject.quote(ENGINE_ID)}}")
             SystemClock.sleep(600)
             closeNewTabPages()
@@ -533,18 +546,27 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
     }
 
     /** The focus machine as the chrome's store has it (`{phase, look}`), `{}` when unreadable. */
-    private fun focusState(): JSONObject =
-        runCatching { JSONObject(chromeValue("JSON.stringify(((window.__zenStores||{})['omnibox-focus']||{get:function(){return {}}}).get())")) }.getOrElse { JSONObject() }
+    private fun focusState(): JSONObject = storeState("omnibox-focus")
+
+    /** The new tab page field's morph machine (`lib/fakeboxMorph.ts`: `phase` rest, opening, open or closing), `{}` when unreadable. */
+    private fun morphState(): JSONObject = storeState("fakebox-morph")
+
+    private fun storeState(name: String): JSONObject =
+        runCatching { JSONObject(chromeValue("JSON.stringify(((window.__zenStores||{})[${JSONObject.quote(name)}]||{get:function(){return {}}}).get())")) }.getOrElse { JSONObject() }
 
     private fun focusLook(): String = chromeValue("document.documentElement.getAttribute('data-omnibox-focus')||''")
 
-    private fun awaitFocusPhase(phase: String, timeoutMs: Long): Boolean {
+    private fun awaitFocusPhase(phase: String, timeoutMs: Long): Boolean = awaitPhase(::focusState, phase, timeoutMs)
+
+    private fun awaitMorphPhase(phase: String, timeoutMs: Long): Boolean = awaitPhase(::morphState, phase, timeoutMs)
+
+    private fun awaitPhase(state: () -> JSONObject, phase: String, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (focusState().optString("phase") == phase) return true
+            if (state().optString("phase") == phase) return true
             SystemClock.sleep(100)
         }
-        return focusState().optString("phase") == phase
+        return state().optString("phase") == phase
     }
 
     /** A measured scene's summary line and its trace line (the table's first two), for the findings. */
@@ -585,24 +607,37 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
 
     // --- NTP-09 ----------------------------------------------------------------------------------
 
-    /** A field's leading glyph as the DOM has it: a favicon image (its address, loaded, its box) or the slot's own mark (its text). */
-    private class Glyph(val favicon: Boolean, val src: String, val loaded: Boolean, val w: Double, val h: Double, val text: String) {
+    /**
+     * A field's leading glyph as the DOM has it: a favicon image shown (its address, its box) or
+     * the slot's own mark (its text; the address of an image that is there but not shown, for
+     * the record), or nothing when the field itself is not up.
+     */
+    private class Glyph(val present: Boolean, val favicon: Boolean, val src: String, val loaded: Boolean, val w: Double, val h: Double, val text: String) {
         fun favicon20(url: String): Boolean = favicon && src == url && loaded && Math.abs(w - 20.0) < 0.6 && Math.abs(h - 20.0) < 0.6
-        override fun toString(): String =
-            if (favicon) "favicon '$src' loaded $loaded at ${"%.1f".format(w)}x${"%.1f".format(h)} CSS px" else "no favicon, the slot's mark '${text.ifEmpty { "(icon)" }}'"
+        override fun toString(): String = when {
+            !present -> "NO FIELD on the page"
+            favicon -> "favicon '${src.take(48)}${if (src.length > 48) "…" else ""}' loaded $loaded at ${"%.1f".format(w)}x${"%.1f".format(h)} CSS px"
+            else -> "no favicon shown, the slot's mark '${text.ifEmpty { "(icon)" }}'" + (if (src.isNotEmpty()) " (an image '${src.take(48)}…' present, loaded $loaded)" else "")
+        }
     }
 
     private fun glyph(scope: String): Glyph {
         val o = runCatching { JSONObject(chromeValue(glyphJs(scope))) }.getOrElse { JSONObject() }
-        return Glyph(o.optBoolean("favicon"), o.optString("src"), o.optBoolean("loaded"), o.optDouble("w", 0.0), o.optDouble("h", 0.0), o.optString("text"))
+        return Glyph(o.optBoolean("present"), o.optBoolean("favicon"), o.optString("src"), o.optBoolean("loaded"), o.optDouble("w", 0.0), o.optDouble("h", 0.0), o.optString("text"))
     }
 
     private fun glyphJs(scope: String): String =
-        "(function(){var s=document.querySelector(${JSONObject.quote(scope)});if(!s)return '{}';" +
+        "(function(){var s=document.querySelector(${JSONObject.quote(scope)});if(!s)return JSON.stringify({present:false});" +
             "var i=s.querySelector('$FAVICON');var g=s.querySelector('[data-testid=engine-field-glyph]');" +
-            "if(i&&i.complete&&i.naturalWidth>0&&getComputedStyle(i).visibility!=='hidden'){var r=i.getBoundingClientRect();" +
-            "return JSON.stringify({favicon:true,src:i.getAttribute('src'),loaded:true,w:r.width,h:r.height})}" +
-            "return JSON.stringify({favicon:false,src:i?i.getAttribute('src'):'',loaded:false,w:0,h:0,text:g?g.textContent.trim():''})})()"
+            "var loaded=!!(i&&i.complete&&i.naturalWidth>0);" +
+            "if(loaded&&getComputedStyle(i).visibility!=='hidden'){var r=i.getBoundingClientRect();" +
+            "return JSON.stringify({present:true,favicon:true,src:i.getAttribute('src'),loaded:true,w:r.width,h:r.height})}" +
+            "return JSON.stringify({present:true,favicon:false,src:i?i.getAttribute('src'):'',loaded:loaded,w:0,h:0,text:g?g.textContent.trim():''})})()"
+
+    /** The favicon image inside `scope` has loaded and is shown (the fallback given up for it). */
+    private fun faviconLoadedJs(scope: String): String =
+        "(function(){var i=document.querySelector(${JSONObject.quote("$scope $FAVICON")});" +
+            "return !!i&&i.complete&&i.naturalWidth>0&&getComputedStyle(i).visibility!=='hidden'})()"
 
     /** The middle of the new tab page's resting field, in screen px; null when the page shows none. */
     private fun ntpFieldPoint(): PointF? {
@@ -618,6 +653,25 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             return null
         }
         return p
+    }
+
+    /**
+     * A new tab page as the active tab, its resting field up: `tab.create` at the space page's
+     * address. (`tab.new` is not the way on this host: with no new tab page capability in the
+     * WebView's chrome it opens the omnibox in its new-tab mode over the current page instead.)
+     * A field the page's arrival opened is closed again, so the page rests. False when the
+     * page's field is not there in time.
+     */
+    private fun openNewTabPage(): Boolean {
+        val id = coreInvoke("tab.create", "{\"url\":${JSONObject.quote(BLANK_URL)},\"active\":true}").trim('"')
+        Log.i(tag, "new tab page: $id")
+        val up = awaitChrome("!!document.querySelector('$NTP_FIELD')", 12_000)
+        SystemClock.sleep(600)
+        if (urlbarOpen() || fieldUp()) {
+            closeField()
+            settle(8_000)
+        }
+        return up && awaitChrome("!!document.querySelector('$NTP_FIELD')&&!document.querySelector('$FIELD')", 6_000)
     }
 
     /** Every new tab page tab closed through the core, so the seeded page is the active tab again. */
@@ -687,6 +741,7 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
      */
     private fun holdField(shotName: String, ready: (List<ToolbarItem>) -> Boolean): List<ToolbarItem>? {
         ensureForeground()
+        settle(8_000)
         tapPill()
         // Another app's window (the clipboard overlay's chips) may have taken the touch: back out, the pill again.
         if (awaitSystemWindow(1_500)) {
@@ -695,7 +750,10 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             SystemClock.sleep(800)
             tapPill()
         }
-        awaitChrome("!!document.querySelector('$FIELD')", 8_000)
+        if (!awaitField(8_000)) {
+            finding("  the pill's tap opened no field in 8 s; the pill again")
+            openField()
+        }
         awaitIme(shown = true, timeoutMs = 6_000)
         SystemClock.sleep(800)
         if (fieldValue().isNotEmpty()) {
@@ -771,6 +829,52 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
     }
 
     /**
+     * The pill's tap, the field awaited: a settled chrome first (a tap while the focus motion
+     * is still flying home is the machine's to ignore), then the tap, and one more tap when the
+     * first opened nothing in time, said in the findings. True once the field is in the DOM.
+     */
+    private fun openField(): Boolean {
+        settle(8_000)
+        tapPill()
+        if (awaitField(8_000)) return true
+        finding("  the pill's tap opened no field in 8 s (machine ${focusState()}, bar open ${urlbarOpen()}); the pill again")
+        settle(6_000)
+        tapPill()
+        return awaitField(8_000)
+    }
+
+    private fun awaitField(timeoutMs: Long): Boolean = awaitChrome("!!document.querySelector('$FIELD')", timeoutMs)
+
+    private fun fieldUp(): Boolean = chromeValue("String(!!document.querySelector('$FIELD'))") == "true"
+
+    /**
+     * The chrome at rest between scenes: the focus motion's machine and the field morph's home
+     * or landed (`rest` or `open`, not flying – the store says the field is open through the
+     * whole closing flight, so a reading of `urlbarOpen()` mid-flight is a stale yes), the
+     * store's word on the field agreeing with the DOM's, and no sheet up. False when it does
+     * not settle in time (said by the caller's next reading rather than here).
+     */
+    private fun settle(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (settled()) return true
+            SystemClock.sleep(150)
+        }
+        val ok = settled()
+        if (!ok) Log.w(tag, "the chrome did not settle in $timeoutMs ms: focus ${focusState()}, morph ${morphState()}, bar open ${urlbarOpen()}, field up ${fieldUp()}")
+        return ok
+    }
+
+    private fun settled(): Boolean {
+        for (machine in listOf(focusState(), morphState())) {
+            val phase = machine.optString("phase", "rest")
+            if (phase != "rest" && phase != "open" && phase.isNotEmpty()) return false
+        }
+        val storeOpen = "((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true)"
+        return chromeValue("String(($storeOpen===!!document.querySelector('$FIELD'))&&document.querySelectorAll('.zen-sheet').length===0)") == "true"
+    }
+
+    /**
      * The shared close of the field (DemoHarness.closeUrlField, by the chrome's state): a field
      * left open, or a page a back reached, fails the run by name rather than the scene after it.
      */
@@ -791,8 +895,10 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
      */
     private fun showBrewPage(): Boolean {
         val url = BREW_ORIGIN + "/"
+        // Settled first: a close read mid-flight would press a back the field is already taking.
+        settle(8_000)
         closeField()
-        awaitFocusPhase("rest", 6_000)
+        settle(8_000)
         if (activeCoreTab()?.optString("id") != BREW_TAB_ID) {
             coreInvoke("tab.activate", "{\"tabId\":${JSONObject.quote(BREW_TAB_ID)}}")
             SystemClock.sleep(800)
@@ -916,13 +1022,17 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             Log.w(tag, "$name failed", e)
             finding("  FAIL: ${e.javaClass.simpleName}: ${e.message}")
             failures += "$name: ${e.message}"
-            // Whatever the step left up (the editor, a sheet, a toolbar) goes before the next one.
+            // Whatever the step left up (the editor, a sheet, a toolbar) goes before the next one:
+            // one back per reading, each given its flight (the field's close is a spring the store
+            // reports as open until it lands), and the chrome settled before the next scene reads it.
             ensureForeground()
-            repeat(3) {
-                if (!chromeSurfaceUp() && !urlbarOpen() && findByLabelPrefix(PILL_LABEL) != null) return@repeat
+            for (i in 1..4) {
+                settle(6_000)
+                if (!chromeSurfaceUp() && !urlbarOpen() && !fieldUp() && findByLabelPrefix(PILL_LABEL) != null) break
                 back()
                 SystemClock.sleep(1_000)
             }
+            settle(8_000)
         }
     }
 
@@ -941,15 +1051,11 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
 
     // --- the two sites ---------------------------------------------------------------------------
 
-    /** The seeded default engine's site: the page the demo starts on, the engine's endpoints and mark, the page a paste goes to. */
+    /** The seeded default engine's site: the page the demo starts on, the engine's endpoints, the page a paste goes to (its mark is [FAVICON_URL], a data URL). */
     private fun brewRoutes(): Map<String, Pair<String, ByteArray>> = mapOf(
         "/" to html("Brew notes", "<p>Notes on brewing coffee at home: ratios, grind sizes and water temperatures.</p>"),
         "/guide.html" to html("Brewing guide", "<p>Start with 15 g of coffee to 250 g of water.</p>"),
         "/pasted.html" to html("Pasted and gone", "<p>This page's address was on the clipboard; Paste and go loaded it.</p>"),
-        "/favicon.svg" to ("image/svg+xml" to (
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\" rx=\"4\" fill=\"#3b5bdb\"/>" +
-                "<text x=\"8\" y=\"11.5\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"10\" font-weight=\"700\" fill=\"#fff\">B</text></svg>"
-            ).toByteArray()),
         "/search" to results("Brew notes"),
         "/suggest" to suggestions("roast levels explained", "roast coffee at home", "roast profile chart")
     )
@@ -993,10 +1099,18 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         private const val ROAST_ORIGIN = "http://$ROAST_HOST:$PORT"
         /** The seeded tab on the demo page (omnibox-polish-demo-state.json). */
         private const val BREW_TAB_ID = "tab_brew"
-        /** The seeded default engine and its mark (the state's `searchEngines[0]`), and the vendor's default. */
+        /** The new tab page's address (the space page the resting field is on). */
+        private const val BLANK_URL = "zen://blank"
+        /** The seeded default engine (the state's `searchEngines[0]`) and the vendor's default. */
         private const val ENGINE_ID = "custom:brew-notes"
-        private const val FAVICON_URL = "$BREW_ORIGIN/favicon.svg"
         private const val VENDOR_ENGINE_ID = "google"
+        /** The engine's mark: a 16 px "B" tile, sized so the image has an intrinsic width whatever the WebView's SVG rules. */
+        private const val FAVICON_SVG =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\"><rect width=\"16\" height=\"16\" rx=\"4\" fill=\"#3b5bdb\"/>" +
+                "<text x=\"8\" y=\"11.5\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"10\" font-weight=\"700\" fill=\"#fff\">B</text></svg>"
+        /** The mark as the registry keeps it (`sanitizeFavicon` takes a data URL): what the seeded engine's `favicon` is, and what the fields' image must show. */
+        private val FAVICON_URL: String =
+            "data:image/svg+xml;base64," + android.util.Base64.encodeToString(FAVICON_SVG.toByteArray(), android.util.Base64.NO_WRAP)
         /** The query: three history pages, the engine's rows and the second tab match it; one letter more leaves the tab out. */
         private const val QUERY = "roast"
         private const val MORE = "e"
@@ -1036,8 +1150,16 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
          * software GPU (its flights landed 2 to 5.4 s after the tap), the tail idle.
          */
         private const val FOCUS_WINDOW_MS = 6_000L
-        /** Layouts per main-thread frame the traced window may show and still be transform and opacity alone (the mount and the rows' arrival lay out a few times). */
-        private const val LAYOUTS_PER_FRAME_MAX = 0.5
+        /**
+         * Layouts per main-thread frame the traced window may show and still read as transform
+         * and opacity alone: the harness's spring budget's ceiling ([JankBudget.SPRING_BUDGET]).
+         * The motion writes one root value per frame; the omnibox's mount, its rows' arrival and
+         * the field's focus lay out a handful of times in the window, and Blink books a layout
+         * entry of a quarter millisecond for a transform change's visual overflow on each frame
+         * (run 1's trace: 13 layouts in 18 frames, the flight's each ~0.25 ms against ~20 ms of
+         * style recalculation), which is bookkeeping, not a relayout of the chrome.
+         */
+        private val LAYOUTS_PER_FRAME_MAX = JankBudget.SPRING_BUDGET.layoutsPerFrame
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
@@ -1046,48 +1168,41 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         private const val FIELD = "[data-testid=\"urlbar-input\"]"
         private const val ROWS = ".zen-omnibox-sheet [role=\"listbox\"] > li"
         private const val HEADINGS = ".zen-omnibox-sheet [data-testid=\"urlbar-group-heading\"]"
+        private const val ROW_TITLE = "[data-testid=\"urlbar-row-title\"]"
+        private const val ROW_SUBTITLE = "[data-testid=\"urlbar-row-subtitle\"]"
         private const val FAVICON = "[data-testid=\"engine-field-favicon\"]"
         private const val NTP_FIELD = ".zen-ntp-field"
 
         /**
-         * The card as it stands, from the field outward: the dock, the headings in that order –
-         * each with its type and the kinds of the rows under it – and the rows of no group. A
-         * bottom-docked card lists its rows in reverse (the first nearest the field) with a
-         * heading after its group's rows in the DOM; a top-docked one reads top to bottom with
-         * the heading first. Leaving headings (ghosts) are left out.
+         * The card as it stands, from the field outward: the dock, the headings in the DOM's
+         * order (which reads from the field outward on either dock: a bottom-docked card lists
+         * its rows in reverse, the first nearest the field, each heading after its group's rows;
+         * a top-docked one top to bottom, each heading before its rows) – each with its type and
+         * the kinds of the rows sectioned under it (the rows' `data-section`, the heading's
+         * `data-group`) – and the rows of no section, which stand at the field's end with the
+         * default match. Leaving headings and rows (ghosts) are left out.
          */
         private val CARD_JS = """
             (function () {
               var list = document.querySelector('.zen-omnibox-sheet [role="listbox"]');
               if (!list) return '{}';
               var bottom = list.getAttribute('data-edge') === 'bottom';
-              var items = Array.prototype.slice.call(list.children);
-              var groups = [], loose = [], pending = [];
-              function heading(el) { return el.getAttribute('data-testid') === 'urlbar-group-heading'; }
-              if (bottom) {
-                items.forEach(function (el) {
-                  if (el.hasAttribute('data-leaving')) return;
-                  if (heading(el)) { groups.push({ el: el, rows: pending }); pending = []; }
-                  else pending.push(el);
-                });
-                loose = pending;
-              } else {
-                var current = null;
-                items.forEach(function (el) {
-                  if (el.hasAttribute('data-leaving')) return;
-                  if (heading(el)) { current = { el: el, rows: [] }; groups.push(current); }
-                  else if (current) current.rows.push(el);
-                  else loose.push(el);
-                });
-              }
+              var items = Array.prototype.slice.call(list.children).filter(function (el) { return !el.hasAttribute('data-leaving'); });
+              var headings = items.filter(function (el) { return el.getAttribute('data-testid') === 'urlbar-group-heading'; });
+              var rows = items.filter(function (el) { return el.getAttribute('data-testid') !== 'urlbar-group-heading'; });
+              function kind(r) { return r.getAttribute('data-kind') || '?'; }
               return JSON.stringify({
                 edge: bottom ? 'bottom' : 'top',
-                headings: groups.map(function (g) {
-                  var cs = getComputedStyle(g.el);
-                  return { label: g.el.textContent.trim(), fontSize: cs.fontSize, fontWeight: cs.fontWeight,
-                    kinds: g.rows.map(function (r) { return r.getAttribute('data-kind') || '?'; }) };
+                headings: headings.map(function (h) {
+                  var cs = getComputedStyle(h), group = h.getAttribute('data-group');
+                  return { label: h.textContent.trim(), group: group, fontSize: cs.fontSize, fontWeight: cs.fontWeight,
+                    kinds: rows.filter(function (r) { return r.getAttribute('data-section') === group; }).map(kind) };
                 }),
-                loose: loose.map(function (r) { return r.getAttribute('data-kind') || '?'; }).join(', ')
+                loose: rows.filter(function (r) { return !r.hasAttribute('data-section'); }).map(kind).join(', '),
+                unheaded: rows.filter(function (r) {
+                  var s = r.getAttribute('data-section');
+                  return s && !headings.some(function (h) { return h.getAttribute('data-group') === s; });
+                }).map(function (r) { return kind(r) + ' in ' + r.getAttribute('data-section'); }).join(', ')
               });
             })()
         """.trimIndent()
@@ -1103,15 +1218,15 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
             })()
         """.trimIndent()
 
-        /** The first history row in the DOM (nearest the field on a bottom-docked card): its title, its host and its option's box in CSS px. */
+        /** The first history row in the DOM that is not on its way out (nearest the field on a bottom-docked card): its title, its host and its option's box in CSS px. */
         private val HISTORY_ROW_JS = """
             (function () {
-              var row = document.querySelector('.zen-omnibox-sheet [role="listbox"] > li[data-kind="history"]');
+              var row = document.querySelector('.zen-omnibox-sheet [role="listbox"] > li[data-kind="history"]:not([data-leaving])');
               if (!row) return '{}';
               var option = row.querySelector('[role="option"]') || row;
               var r = option.getBoundingClientRect();
-              var title = row.querySelector('.zen-omnibox-row-title');
-              var host = row.querySelector('.zen-omnibox-row-host');
+              var title = row.querySelector('$ROW_TITLE');
+              var host = row.querySelector('$ROW_SUBTITLE');
               return JSON.stringify({ title: title ? title.textContent.trim() : '', host: host ? host.textContent.trim() : '',
                 x: r.left, y: r.top, w: r.width, h: r.height });
             })()
