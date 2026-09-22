@@ -1,8 +1,17 @@
 import type { JSX, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AppWindow, EllipsisVertical, Globe, RotateCcw, X } from 'lucide-react'
+import { AppWindow, ChevronRight, EllipsisVertical, Globe, RotateCcw, X } from 'lucide-react'
 import { internalPageOf, parseInternalPageUrl } from '@shared/internalPages'
-import type { ClosedEntrySummary, HistoryDayGroup, HistoryVisit, Tab } from '@shared/types'
+import type {
+  ClosedEntrySummary,
+  HistoryDayGroup,
+  HistoryVisit,
+  SyncDeviceTabs,
+  SyncRemoteTab,
+  SyncStatus,
+  Tab,
+  UIState
+} from '@shared/types'
 import { presentedUrl } from '@shared/url'
 import { dayKeyOf } from '@shared/dayKey'
 import { cmd, onEvent, run } from '@renderer/lib/api'
@@ -11,7 +20,12 @@ import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
+import { openSettings } from '@renderer/lib/pages'
+import { remoteTabsStore, remoteTabsWanted, useRemoteTabs } from '@renderer/lib/remoteTabs'
+import { createStore } from '@renderer/lib/store'
+import { SYNC_COPY } from '@renderer/lib/syncSetup'
 import { openClearBrowsingData } from '@renderer/lib/ui'
+import { relativeTime } from '@renderer/lib/utils'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { inTextField, walkRows } from '../rowKeys'
 import { usePageSearch } from '../usePageSearch'
@@ -19,6 +33,42 @@ import { usePageSearch } from '../usePageSearch'
 /** Visits fetched per page; "Show more" adds another page. */
 const PAGE_SIZE = 300
 const EMPTY: ReadonlySet<string> = new Set()
+
+/** The search's terms, as the core's history search reads them: every term in the title or URL. */
+function searchTerms(text: string): string[] {
+  return text.toLowerCase().split(/\s+/).filter(Boolean)
+}
+
+/** Whether a page named by `title` and `url` matches every term, as `searchVisits` reads a visit. */
+function matchesTerms(title: string, url: string, terms: readonly string[]): boolean {
+  if (terms.length === 0) return true
+  const hay = `${title} ${url}`.toLowerCase()
+  return terms.every((t) => hay.includes(t))
+}
+
+/**
+ * The other devices whose groups are folded (their id), kept for the session: a History tab
+ * closed and opened again, or a second window's, finds them folded still; a restart unfolds
+ * them all (Chrome's synced-device cards start open too).
+ */
+const collapsedDevices = createStore<{ ids: ReadonlySet<string> }>(
+  { ids: new Set() },
+  'historyCollapsedDevices'
+)
+
+/** The page's sentences for the other devices' tabs (ID-28), beside Settings › Sync's `SYNC_COPY`. */
+const REMOTE_COPY = {
+  heading: SYNC_COPY.remoteTabs,
+  syncOff: 'Turn on sync to see tabs from your other devices',
+  scopeOff: 'Turn on Open tabs in What you sync to see them',
+  manageScope: 'Manage what you sync',
+  none: 'No tabs from other devices',
+  /** The aside of a device's heading: "Last active 5 min ago", "Last active just now". */
+  lastActive: (updatedAt: number): string => {
+    const when = relativeTime(updatedAt)
+    return `Last active ${when.charAt(0).toLowerCase()}${when.slice(1)}`
+  }
+} as const
 
 /** The picked rows and the search they were picked in. */
 interface Picked {
@@ -34,9 +84,17 @@ interface Picked {
  * §9.21 two-line rows: the favicon on the first line, the title 15/20 over the host 13/20
  * deemphasised, the visit's time at the trailing edge and the row's ⋮ menu (the core's history
  * menu, the same as a right click's). Recently closed tabs and windows are the page's first group
- * while nothing is searched.
+ * while nothing is searched, and the other devices' open tabs (ID-28, Chrome's
+ * `chrome://history/syncedTabs`) follow it as §10.1 rules: each synced device its own group
+ * headed by its name with "Last active …" as its aside, newest first, folding on its heading's
+ * chevron for the session; with nothing to list, the one group "Tabs from other devices" with
+ * its §9.17 line and, while a setting is the way out, the row to Settings › Sync. A remote tab's
+ * row opens the page in a new tab (a middle or Ctrl click behind this one), or brings the tab to
+ * the front when this device already holds it; its menu is the history menu less the visit's
+ * items (`RemoteTabs`).
  *
- * The search (§9.12) filters as History's did (every term in the title or URL); the tab's URL
+ * The search (§9.12) filters as History's did (every term in the title or URL) – the other
+ * devices' rows too, a device with no match stepping aside with Recently closed; the tab's URL
  * follows it as `zen://history?q=<text>` without a history entry, so the address says what the
  * page shows and a restored tab comes back searching, and a query the URL brings – Chrome's
  * "More from this site", the omnibox's `@history <text>`, back and forward – fills the field.
@@ -51,9 +109,14 @@ interface Picked {
  * focused row or the selection, Escape leaves the mode; Ctrl+F on the tab focuses the field.
  * "Clear browsing data…" is the services dialog through the frame dialog host (§9.23).
  */
-export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
+export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const urlQuery = parseInternalPageUrl(tab.url)?.query?.q ?? ''
   const [closed, setClosed] = useState<ClosedEntrySummary[]>([])
+  // The other devices' tabs: the one reader (#314's `useRemoteTabs`, as the Settings pages call
+  // it) keeps the shared store at the status's version; the page draws the store, never fetching
+  // on its own.
+  useRemoteTabs(state.sync)
+  const devices = remoteTabsStore.use((s) => s.devices)
   const field = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
   /** The last row picked or dropped: where a Shift-click's run starts. */
@@ -122,6 +185,27 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
   const open = (url: string, newTab: boolean): void => {
     run('urlbar.submit', { input: url, newTab, tabId: tab.id })
   }
+  /**
+   * A tab from another device opens as a new tab of this window – in front, or behind this one
+   * on a middle or Ctrl click – through the page's own open path. The Open tabs scope also
+   * carries the tab records (ID-10), so a tab another device lists may already sit in this
+   * sidebar under the same id: a click then brings that tab to the front rather than opening a
+   * second one (as Settings › Sync's rows do); a click asking for a tab behind still gets one.
+   */
+  const openRemote = (remote: SyncRemoteTab, background: boolean): void => {
+    if (!background && remote.tabId in state.tabs) run('tab.activate', { tabId: remote.tabId })
+    else run('urlbar.submit', { input: remote.url, newTab: true, tabId: tab.id, background })
+  }
+  const terms = useMemo(() => searchTerms(text), [text])
+  // The devices with a tab to show for this search, newest activity first (the core lists them
+  // so; a search keeps the order and drops the devices left with nothing).
+  const remote = useMemo(
+    () =>
+      devices
+        .map((d) => ({ ...d, tabs: d.tabs.filter((t) => matchesTerms(t.title, t.url, terms)) }))
+        .filter((d) => d.tabs.length > 0),
+    [devices, terms]
+  )
   /** The visits' ids in the order the page shows them. */
   const shownIds = (): string[] =>
     [...(list.current?.querySelectorAll('[data-visit-id]') ?? [])].map(
@@ -250,10 +334,23 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
     >
       <div ref={list} data-selecting={selecting || undefined} onKeyDown={(e) => walkRows(e, list)}>
         {closed.length > 0 && !text && <RecentlyClosed entries={closed} selecting={selecting} />}
+        {state.capabilities.sync && (
+          <RemoteTabs
+            sync={state.sync}
+            devices={remote}
+            searching={Boolean(text)}
+            terms={terms}
+            selecting={selecting}
+            onOpen={openRemote}
+          />
+        )}
         <VisitList
           // A new search starts over at the first page.
           key={text}
           text={text}
+          terms={terms}
+          // A search the other devices' tabs answer is answered: no "No history matches" under them.
+          quiet={remote.length > 0}
           selected={selected}
           selecting={selecting}
           onToggle={toggle}
@@ -285,6 +382,8 @@ interface Selection {
 
 function VisitList({
   text,
+  terms,
+  quiet,
   selected,
   selecting,
   onToggle,
@@ -292,6 +391,9 @@ function VisitList({
   onOpen
 }: Selection & {
   text: string
+  terms: string[]
+  /** Another group answers the search: with no visit matching, say nothing rather than "No history matches". */
+  quiet: boolean
   onOpen: (url: string, newTab: boolean) => void
 }): JSX.Element | null {
   const [limit, setLimit] = useState(PAGE_SIZE)
@@ -314,7 +416,6 @@ function VisitList({
     }
   }, [text, limit])
 
-  const terms = useMemo(() => text.toLowerCase().split(/\s+/).filter(Boolean), [text])
   const groups = loaded?.groups ?? null
   const visitCount = useMemo(
     () => (groups ?? []).reduce((n, g) => n + g.visits.length, 0),
@@ -324,6 +425,7 @@ function VisitList({
 
   if (!loaded || !groups) return null
   if (groups.length === 0) {
+    if (quiet && text) return null
     return (
       <PageEmpty testId="history-empty">
         {text ? `No history matches “${text}”` : 'Pages you visit will show up here'}
@@ -658,5 +760,236 @@ function RecentlyClosed({
         })}
       </ul>
     </PageGroup>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Tabs from other devices (ID-28)
+// ---------------------------------------------------------------------------
+
+/**
+ * The other devices' open tabs after Recently closed (v2 §10.1; Chrome's
+ * `chrome://history/syncedTabs`, its side list's second entry – this page has one column, so
+ * the section is a run of groups where Chrome has a view). Each synced device is its own §10.3
+ * group headed by its name with "Last active …" as its aside – Chrome's Recent tabs and
+ * Firefox's Synced Tabs list devices as headings directly; a second 15/600 level under an
+ * umbrella heading would read as a sibling – newest activity first, as the core lists them
+ * (`sortDeviceTabs`: a device with no tabs or none published for 30 days is not listed).
+ * Only with nothing to list does one group headed "Tabs from other devices" stand there: its
+ * §9.17 line where its rows would be, and – while a setting is the way out – the row to
+ * Settings › Sync as §10.4's action row (the chevron, since it leaves the page): sync off, the
+ * "Turn on sync" row; sync on with Open tabs off in What you sync, "Manage what you sync"; sync
+ * on with nothing published, the line alone. While anything is searched the empty group steps
+ * aside with Recently closed – a search shows matches, not the state of a setting.
+ */
+function RemoteTabs({
+  sync,
+  devices,
+  searching,
+  terms,
+  selecting,
+  onOpen
+}: {
+  sync: SyncStatus
+  /** The devices with a tab to show (the search applied), newest activity first. */
+  devices: SyncDeviceTabs[]
+  searching: boolean
+  terms: string[]
+  selecting: boolean
+  onOpen: (tab: SyncRemoteTab, background: boolean) => void
+}): JSX.Element | null {
+  if (devices.length > 0) {
+    return (
+      <>
+        {devices.map((device) => (
+          <DeviceGroup
+            key={device.deviceId}
+            device={device}
+            terms={terms}
+            selecting={selecting}
+            onOpen={onOpen}
+          />
+        ))}
+      </>
+    )
+  }
+  if (searching) return null
+  const wanted = remoteTabsWanted(sync)
+  const line = !sync.enabled
+    ? REMOTE_COPY.syncOff
+    : !wanted
+      ? REMOTE_COPY.scopeOff
+      : REMOTE_COPY.none
+  const action = !sync.enabled ? SYNC_COPY.turnOn : !wanted ? REMOTE_COPY.manageScope : null
+  return (
+    <PageGroup
+      heading={REMOTE_COPY.heading}
+      headingId="zen-history-remote-tabs"
+      data-testid="history-remote-tabs"
+      data-state={!sync.enabled ? 'sync-off' : !wanted ? 'scope-off' : 'none'}
+    >
+      <p className="zen-page-group-empty" role="status" data-testid="history-remote-tabs-empty">
+        {line}
+      </p>
+      {action && (
+        <ul className="zen-page-rows">
+          <li className="zen-v2-row zen-page-row">
+            <button
+              type="button"
+              className="zen-page-row-text"
+              data-row-focus=""
+              data-testid="history-remote-tabs-settings"
+              onClick={() => openSettings('sync')}
+            >
+              <span className="zen-page-row-label">{action}</span>
+            </button>
+            <ChevronRight className="zen-page-row-chevron" aria-hidden />
+          </li>
+        </ul>
+      )}
+    </PageGroup>
+  )
+}
+
+/**
+ * One device's group: its name as the §9.27 heading, "Last active …" (the list's own time,
+ * `updatedAt`) as the aside, and in the heading's control slot the disclosure – a §9.3 icon
+ * button standing over the rows' ⋮ slot like the day headings' ⋮, but painted at rest: it shows
+ * a state (Chrome's synced-device card's expand button), and a folded group with no chevron
+ * would read as an empty one. The chevron points at the rows – right while they are folded
+ * away, turned down while they show, as the bookmarks tree's twisty. Folded, the rows leave
+ * the DOM (the arrows walk what is shown, §9.22) and the group keeps its heading line; the
+ * fold is the session's (`collapsedDevices`).
+ */
+function DeviceGroup({
+  device,
+  terms,
+  selecting,
+  onOpen
+}: {
+  device: SyncDeviceTabs
+  terms: string[]
+  selecting: boolean
+  onOpen: (tab: SyncRemoteTab, background: boolean) => void
+}): JSX.Element {
+  const collapsed = collapsedDevices.use((s) => s.ids.has(device.deviceId))
+  const toggle = (): void =>
+    collapsedDevices.set((s) => {
+      const ids = new Set(s.ids)
+      if (ids.has(device.deviceId)) ids.delete(device.deviceId)
+      else ids.add(device.deviceId)
+      return { ids }
+    })
+  const safeId = device.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return (
+    <PageGroup
+      heading={device.deviceName}
+      headingId={`zen-history-device-${safeId}`}
+      aside={REMOTE_COPY.lastActive(device.updatedAt)}
+      data-testid="history-remote-device"
+      data-device-id={device.deviceId}
+      data-collapsed={collapsed || undefined}
+      control={
+        <button
+          type="button"
+          className="zen-v2-icon-button zen-page-heading-twisty"
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? 'Show' : 'Hide'} tabs from ${device.deviceName}`}
+          title={collapsed ? 'Show tabs' : 'Hide tabs'}
+          onClick={toggle}
+        >
+          <ChevronRight data-open={!collapsed || undefined} aria-hidden />
+        </button>
+      }
+    >
+      {!collapsed && (
+        <ul className="zen-page-rows">
+          {device.tabs.map((remote) => (
+            <RemoteTabRow
+              key={remote.tabId}
+              device={device}
+              remote={remote}
+              terms={terms}
+              selecting={selecting}
+              onOpen={onOpen}
+            />
+          ))}
+        </ul>
+      )}
+    </PageGroup>
+  )
+}
+
+/**
+ * A tab from another device as the page's §9.21 two-line row: its favicon (the globe for none,
+ * `FaviconImage`), the title over the host, the ⋮ on approach hanging the history menu less the
+ * visit's items (Select, Remove from History, Forget About This Page: the row names a page,
+ * not a visit – `history.contextMenu` with no `visitId`). A click opens the page in a new tab
+ * in front; a middle or Ctrl click one behind (the tab-opening convention – the row cannot be
+ * picked, so Ctrl-click is not Select here). Not picked in the mode, but holding the checkbox
+ * column's width while it lasts, as Recently closed's rows do, so every favicon moves as one.
+ */
+function RemoteTabRow({
+  device,
+  remote,
+  terms,
+  selecting,
+  onOpen
+}: {
+  device: SyncDeviceTabs
+  remote: SyncRemoteTab
+  terms: string[]
+  selecting: boolean
+  onOpen: (tab: SyncRemoteTab, background: boolean) => void
+}): JSX.Element {
+  const extensions = useExtensionList()
+  const host = presentedHost(remote.url, extensions) || presentedUrl(remote.url)
+  const title = remote.title.trim() || host
+  const menu = (e: MouseEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    run('history.contextMenu', { visitId: null, url: remote.url, ...contextMenuAnchor(e) })
+  }
+  return (
+    <li
+      className="zen-v2-row zen-page-row"
+      data-remote-tab={`${device.deviceId}:${remote.tabId}`}
+      onContextMenu={menu}
+    >
+      {selecting && <span className="zen-page-row-check" aria-hidden />}
+      <span className="zen-page-row-lead" aria-hidden>
+        <FaviconImage src={remote.favicon} url={remote.url} />
+      </span>
+      <button
+        type="button"
+        className="zen-page-row-text"
+        data-row-focus=""
+        title={presentedUrl(remote.url)}
+        onClick={(e) => onOpen(remote, e.ctrlKey || e.metaKey)}
+        onAuxClick={(e) => e.button === 1 && onOpen(remote, true)}
+      >
+        <span className="zen-page-row-label">{highlight(title, terms)}</span>
+        <span className="zen-page-row-desc">{highlight(host, terms)}</span>
+      </button>
+      <button
+        type="button"
+        className="zen-v2-icon-button zen-page-row-reveal"
+        title="More actions"
+        aria-label={`Actions for ${title}`}
+        aria-haspopup="menu"
+        onClick={(e) => {
+          const box = e.currentTarget.getBoundingClientRect()
+          run('history.contextMenu', {
+            visitId: null,
+            url: remote.url,
+            x: Math.round(box.right),
+            y: Math.round(box.bottom),
+            keyboard: e.detail === 0
+          })
+        }}
+      >
+        <EllipsisVertical aria-hidden />
+      </button>
+    </li>
   )
 }

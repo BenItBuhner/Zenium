@@ -2750,6 +2750,26 @@ describe('the history row menu', () => {
     h.shown().find((item) => item.label === 'Select')!.click!()
     expect(h.sent).toEqual(['history.select'])
   })
+
+  it('a row that names no visit – a tab from another device – keeps the page’s items and drops the visit’s', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'history.contextMenu', {
+      visitId: null,
+      url: 'https://example.com/docs'
+    })
+    expect(labels(h.shown())).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Copy Link',
+      '-',
+      'More from This Site'
+    ])
+    const before = Object.keys(h.browser.state.model.tabs).length
+    h.shown().find((item) => item.label === 'Open in New Tab')!.click!()
+    expect(Object.keys(h.browser.state.model.tabs).length).toBe(before + 1)
+  })
 })
 
 // ---------------------------------------------------------------------------

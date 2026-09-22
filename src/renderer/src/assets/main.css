@@ -9835,6 +9835,33 @@
 .zen-page-heading:focus-within > .zen-page-heading-reveal {
   opacity: 1;
 }
+/*
+ * A group that folds (History's other devices, §10.1): its heading's control is the disclosure,
+ * the same 28 box over the rows' ⋮ slot as the ⋮ above, but painted at rest – it shows a state
+ * (Chrome's synced-device card's expand button), and a folded group with no chevron would read
+ * as an empty one. The chevron points at the rows: right while they are folded away, turned
+ * down while they show, as the bookmarks tree's twisty turns.
+ */
+.zen-page-heading > .zen-page-heading-twisty {
+  margin-inline-start: 4px;
+}
+.zen-page-heading-twisty > svg {
+  transition: transform 120ms var(--zen-ease);
+}
+.zen-page-heading-twisty > svg[data-open] {
+  transform: rotate(90deg);
+}
+/*
+ * A group with nothing to list (§9.17, the Settings groups' line): one plain line where its rows
+ * would be, at the heading's edge, 15 at 69 %, on the row's own pad.
+ */
+.zen-page-group-empty {
+  margin: 0;
+  padding: var(--v2-row-pad) 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
 .zen-page-rows {
   display: flex;
   flex-direction: column;
@@ -9934,6 +9961,19 @@
 .zen-page-row[data-selected] .zen-page-row-reveal,
 [data-selecting] .zen-page-row .zen-page-row-reveal {
   opacity: 1;
+}
+/*
+ * A §10.4 action row on the page (History's "Turn on sync" under the other devices' empty line):
+ * one line at the row's base height, its label at the heading's edge – the row has no glyph
+ * column, its subject being the setting it leads to – and the 16 chevron that says it leaves
+ * the page at the trailing edge, in the deemphasised ink as the Settings rows' is.
+ */
+.zen-page-row-chevron {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
 }
 /* A search's matches in a row: the text's own ink on a light accent tint, no colour of its own. */
 .zen-page mark {

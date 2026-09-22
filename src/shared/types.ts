@@ -3934,8 +3934,16 @@ export interface Commands {
   'history.deleteRange': { args: { fromMs: number; toMs: number }; result: number }
   /** Open the history page (`zen://history`). */
   'history.open': { args: void; result: void }
-  /** Context menu of a history row (open in new tab / window / private window, copy, remove…). */
-  'history.contextMenu': { args: { visitId: string; url: string } & MenuAnchor; result: void }
+  /**
+   * Context menu of a History page row (open in new tab / window / private window, copy,
+   * remove…). `visitId` null is a row that names a page but no visit – a tab from another
+   * device (ID-28) – whose menu keeps the page's items (open, copy, more from the site) and
+   * drops the visit's own (Select, Remove from History, Forget About This Page).
+   */
+  'history.contextMenu': {
+    args: { visitId: string | null; url: string } & MenuAnchor
+    result: void
+  }
   /** Menu of a day heading on the history page (delete the day). */
   'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
 
