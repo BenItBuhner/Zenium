@@ -6,6 +6,7 @@ import { useEscape } from '@renderer/hooks/useEscape'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import { placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
+import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openedFromKeyboard } from '@renderer/lib/popover'
 import {
@@ -172,6 +173,14 @@ function SheetMenu({ items, title, onClose }: Props): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const titleId = useId()
   useEscape(() => sheet.current?.dismiss())
+  // The phone's sheets register a back surface of their own (`handleSystemBack`): the system
+  // back – and the predictive gesture's pull – goes to the sheet, not past it to the page.
+  useBackSurface({
+    name: 'local-menu',
+    onProgress: (progress) => sheet.current?.backProgress(progress),
+    onCommit: () => sheet.current?.commitBack(),
+    onCancel: () => sheet.current?.cancelBack()
+  })
   const withIcons = items.some((item) => !isSeparator(item) && item.icon)
   return (
     <BottomSheet

@@ -9,6 +9,7 @@ vi.mock('@renderer/lib/api', () => ({
   onEvent: vi.fn(() => () => undefined)
 }))
 
+import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { closeAllPopovers } from '@renderer/lib/portals'
 import { viewportStore } from '@renderer/lib/formFactor'
 import type { InfoRow, SliderRow } from '../model'
@@ -127,6 +128,42 @@ describe('the info row’s ⋯ menu (§10.4)', () => {
     expect(onSelect).toHaveBeenCalledTimes(1)
     expect(document.querySelector('[role="menu"]')).toBeNull()
     expect(button.hasAttribute('aria-expanded')).toBe(false)
+  })
+
+  it('on the phone the menu is a sheet that holds the system back (a back surface of its own)', async () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'phone', coarse: true })
+    const onSelect = vi.fn()
+    const el = render(<RowView row={languageRow({}, onSelect)} ctx={ctx} />)
+    const button = rowOf(el, 'languages-preferred:en').querySelector<HTMLButtonElement>(
+      'button.zen-settings-row-menu'
+    )!
+    expect(topBackSurface()?.name).not.toBe('local-menu')
+    await act(async () => {
+      button.click()
+      await Promise.resolve()
+    })
+    const sheet = document.querySelector<HTMLElement>('[role="dialog"]')
+    expect(sheet).not.toBeNull()
+    expect([...sheet!.querySelectorAll('button.zen-sheet-item')].map((b) => b.textContent)).toEqual(
+      ['Move Up', 'Move Down', 'Remove']
+    )
+    // The sheet is the top back surface: the system back is its dismissal, never the page's.
+    expect(topBackSurface()?.name).toBe('local-menu')
+    let taken = false
+    act(() => {
+      taken = dispatchBackEvent('commit')
+    })
+    expect(taken).toBe(true)
+    // The sheet leaves on its spring (real frames here), then its surface is off the stack.
+    await act(async () => {
+      const deadline = Date.now() + 4000
+      while (topBackSurface()?.name === 'local-menu' && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+    })
+    expect(topBackSurface()?.name).not.toBe('local-menu')
+    expect(document.querySelector('button.zen-sheet-item')).toBeNull()
+    expect(onSelect).not.toHaveBeenCalled()
   })
 
   it('a dependent row disables its button with the row, one .4', () => {

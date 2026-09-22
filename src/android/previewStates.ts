@@ -140,11 +140,12 @@ const PRESS_SETTLE_MS = PRESS_HOLD_MS + 250 + STEP_SETTLE_MS
 
 /**
  * The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`,
- * …), the PDF viewer bar's (`pdf-zoom`, `pdf-outline`, `pdf-password`, …) and the default-browser
- * promo's (`default-browser`, the sheet `sheet=promo` raises; its back is a "Not now").
+ * …), a row's ⋯ menu sheet (`local-menu`, `LocalMenu` on the phone), the PDF viewer bar's
+ * (`pdf-zoom`, `pdf-outline`, `pdf-password`, …) and the default-browser promo's
+ * (`default-browser`, the sheet `sheet=promo` raises; its back is a "Not now").
  */
 const SHEET_SURFACE =
-  /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-|default-browser$|long-screenshot$)/
+  /^(?:settings-(?:options|field|confirm|form|item|detail):|local-menu$|pdf-|default-browser$|long-screenshot$)/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
