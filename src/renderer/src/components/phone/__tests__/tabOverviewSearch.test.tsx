@@ -11,8 +11,8 @@ import { BLANK_URL } from '@shared/url'
  * The phone overview's tab search (matrix TAB-21; v2 §9.12, §11.4) and its reach (the #316
  * gate; TAB-02, §9.17, §9.27, §10.4): the header's magnifier opens a field pinned under the
  * header that narrows the pane's cards by title and address as it is typed – the dropped cards
- * departing in place, the New Tab card never – with the count told to the status region; the X,
- * Escape and the system back clear a query and close an empty field. On the Tabs pane the query
+ * departing in place, the New Tab card with them – with the count told to the status region; the
+ * X, Escape and the system back clear a query and close an empty field. On the Tabs pane the query
  * reaches past the cards: this device's recently closed tabs and the other devices' open ones
  * list as rows under headings beneath the matching cards, each row leaving the overview on the
  * tab it brings up; a hidden device, a sync that is off and the Private pane are out of its
@@ -205,12 +205,37 @@ const grouped = (): UIState =>
   )
 
 /** A private tab (the Android host's private session), and the state on a host that has them. */
-const privateTab = (id: string, url: string): Tab =>
-  tab(id, url, { containerId: PRIVATE_CONTAINER_ID })
+const privateTab = (id: string, url: string, patch: Partial<Tab> = {}): Tab =>
+  tab(id, url, { ...patch, containerId: PRIVATE_CONTAINER_ID })
 const withPrivate = (state: UIState): UIState => ({
   ...state,
   capabilities: { ...state.capabilities, privateTabs: true }
 })
+
+/**
+ * A PRIVATE group (#318's `isPrivateGroup`: private tabs alone live in it, nothing saved) beside
+ * a loose private tab and the regular pages: what the Tabs pane's search must never list – not
+ * the tabs, not the group's name – whatever the query matches on the private side.
+ */
+const vault: Folder = {
+  id: 'vault',
+  spaceId: SPACE,
+  name: 'Vault',
+  icon: '🔒',
+  collapsed: false,
+  color: 'red'
+}
+const withPrivateGroup = (): UIState =>
+  withPrivate(
+    stateOf(
+      [
+        ...pages(),
+        privateTab('p1', 'https://secret.example/notes', { title: 'Secret Notes' }),
+        privateTab('p2', 'https://vault.example/keys', { title: 'Keys', folderId: vault.id })
+      ],
+      { folders: { [vault.id]: vault } }
+    )
+  )
 
 /** The entry the core files for a closed page. */
 function entry(id: string, title: string, url: string, closedAt: number): ClosedEntrySummary {
@@ -680,6 +705,51 @@ describe('the tab search (TAB-21)', () => {
     expect(cellsOn('private')).toEqual(['p1'])
     type('')
     expect(cellsOn('private')).toEqual(['p1', 'new-tab'])
+  })
+
+  it("never lists the private side on the Tabs pane – not a private tab, not a private group's name – and lists private tabs alone on the Private pane", async () => {
+    show(withPrivateGroup())
+    // Nothing private is drawn on the Tabs pane before a query, the group's name included.
+    expect(cellsOn('tabs')).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
+    expect(document.body.textContent).not.toContain('Vault')
+    act(() => byTestId('overview-search-toggle')!.click())
+
+    // A query only a private tab matches: the grid empties, the sentence stands, the count says
+    // none – the private tab is no part of what is found – and the private tab's title is
+    // nowhere in the DOM; the exits are the regular cards' and the New Tab card's alone.
+    type('secret')
+    expect(cellsOn('tabs')).toEqual([])
+    expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')
+    expect(document.body.textContent).not.toContain('Secret Notes')
+    expect(filteredExits()).toEqual(['blank', 'coffee', 'ex', 'hn', 'new-tab', 'pulls', 'tea'])
+    act(() => vi.advanceTimersByTime(600))
+    expect(announcerStore.get().text).toBe('No tabs found')
+
+    // A query the private group's member matches by address: no card, no group frame, and the
+    // group's name – the Private pane's, which no regular surface shows – is nowhere either.
+    type('vault')
+    expect(cellsOn('tabs')).toEqual([])
+    expect(cellKeys()).not.toContain('group:vault')
+    expect(document.querySelector('[aria-label^="Vault, tab group"]')).toBeNull()
+    expect(document.body.textContent).not.toContain('Vault')
+    expect(document.body.textContent).not.toContain('Keys')
+    expect(byTestId('overview-search-empty')?.textContent).toBe('No tabs found')
+
+    // The Private pane under the same words: the group's member as a loose card (the private
+    // pane groups nothing), then the other private tab, then both – and never a regular page,
+    // though `example` is in a regular page's title and in every address here.
+    act(() => byTestId('overview-pane-private')!.click())
+    await settle()
+    expect(field()!.value).toBe('vault')
+    expect(cellsOn('private')).toEqual(['p2'])
+    expect(cellKeys()).not.toContain('group:vault')
+    type('secret')
+    expect(cellsOn('private')).toEqual(['p1'])
+    type('example')
+    expect(cellsOn('private')).toEqual(['p1', 'p2'])
+    expect(cellsOn('private')).not.toContain('ex')
+    act(() => vi.advanceTimersByTime(600))
+    expect(announcerStore.get().text).toBe('2 tabs found')
   })
 })
 

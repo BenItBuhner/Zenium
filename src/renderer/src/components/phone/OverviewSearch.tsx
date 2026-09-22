@@ -15,7 +15,8 @@ export const OVERVIEW_SEARCH_ID = 'overview-search'
 
 /**
  * The tab search's field (matrix TAB-21; v2 §9.12): the phone field, 40 tall at the grid's
- * gutter, pinned between the segment and the pane it filters – the bottom of what stays put.
+ * gutter, pinned under the overview's header and over the segment – part of what stays put
+ * while the pane under it scrolls and narrows.
  * On the overview's window backdrop it is a resting control in the URL bar's own fill
  * (`--v2-urlbar`) with the panel's shadow and no hairline – the pill's look, as the new tab
  * page's field wears it – its text in the page ink: a page surface standing on the window
