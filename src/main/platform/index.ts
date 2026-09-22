@@ -166,7 +166,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // Chromium's `speechSynthesis` behind a hidden page (`platform/speech.ts`).
   readAloud: true,
   // Every session's `Accept-Language` follows the preferred languages (`session.setUserAgent`).
-  pageLanguages: true
+  pageLanguages: true,
+  // Blink on the desktop maps `serif` / `sans-serif` / `monospace` through the web preferences.
+  genericFontFamilies: true
 }
 
 /**

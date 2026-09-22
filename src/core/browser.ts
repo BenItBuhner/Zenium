@@ -354,9 +354,9 @@ export class Browser {
     if (platform.theme) {
       const theme = platform.theme
       // Pages follow Zenium's appearance (CT-23): the engine's theme source is the setting, so
-      // every page's `prefers-color-scheme` reads Light / Dark / the OS with the chrome.
+      // every page's `prefers-color-scheme` reads Light / Dark / the OS with the chrome
+      // (`setThemeSource` also takes the engine's reading into `systemDark`).
       this.setThemeSource(this.state.settings.colorScheme)
-      this.state.systemDark = theme.systemDark()
       theme.onChanged(() => {
         const dark = theme.systemDark()
         if (dark === this.state.systemDark) return
@@ -3349,11 +3349,17 @@ export class Browser {
    * Light / Dark / System. Once per value: the boot, a Settings row and a sync merge all come
    * through here, and the chrome keeps deriving its own theme from the setting (`systemDark`
    * is read for `system` alone), so the engine's answer never feeds back into the choice.
+   *
+   * The engine's reading (`shouldUseDarkColors`) follows the source it was given – under
+   * `dark` it says dark whatever the OS does – so it is re-read here, in the same turn, and
+   * the chrome coming back to `system` reads the OS at once rather than the engine's last word
+   * (the `updated` event, which would correct it, arrives a turn later).
    */
   private setThemeSource(scheme: ColorScheme): void {
     if (!this.platform.theme || this.themeSource === scheme) return
     this.themeSource = scheme
     this.platform.theme.setSource(scheme)
+    this.state.systemDark = this.platform.theme.systemDark()
   }
 
   /** Cycle spaces relative to a window's current one. */

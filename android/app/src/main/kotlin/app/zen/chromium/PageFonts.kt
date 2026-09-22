@@ -16,6 +16,16 @@ import kotlin.math.roundToInt
  * through the system's `fonts.xml` aliases. Zenium's standard family is `serif`, Chrome's
  * typographic default (Android maps Chrome's "Times New Roman" to it), not WebView's `sans-serif`.
  *
+ * What takes effect on this engine (the recorded CT-25 limit, `capabilities.genericFontFamilies`
+ * off): the standard family – Blink's initial `font-family` is the settings' standard family
+ * (`FontBuilder::StandardFontFamily`), so text a page leaves unstyled follows it – and the
+ * three sizes, which Blink reads from its `Settings` directly. The `serif` / `sansSerif` /
+ * `fixed` slots are set too but change nothing: Blink's Android font selection
+ * (`FontSelector::FamilyNameFromSettings`, its `IS_ANDROID` branch) resolves a page's generic
+ * keywords through Skia's `fonts.xml` aliases without consulting the generic-family settings,
+ * so `WebSettings.serifFontFamily` and its siblings are inert on every Android WebView. The
+ * phone's Settings rows are therefore the standard family and the two sizes.
+ *
  * The last document applied is kept in `files/zen/pages/fonts.json` for a process that starts
  * without the core (a custom tab, [CustomTabHost]), so a page there reads like the browser's,
  * the way Chrome's Custom Tabs share Chrome's fonts.

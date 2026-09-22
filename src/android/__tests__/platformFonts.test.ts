@@ -63,6 +63,11 @@ describe('AndroidPlatform.pageFonts', () => {
     ])
   })
 
+  it('says the generic-family slots change nothing on this engine (the recorded CT-25 limit)', () => {
+    const platform: Platform = new AndroidPlatform(fakeBridge().bridge, BOOT)
+    expect(platform.capabilities.genericFontFamilies).toBe(false)
+  })
+
   it('has no languages host: WebView sends the system languages (the recorded CT-41 limit)', () => {
     const platform: Platform = new AndroidPlatform(fakeBridge().bridge, BOOT)
     expect(platform.languages).toBeUndefined()

@@ -49,7 +49,12 @@ interface Recorded {
  */
 function fakePlatform(
   io: StoreIO,
-  options: { locales?: string[]; dictionaries?: string[]; pageLanguages?: boolean } = {}
+  options: {
+    locales?: string[]
+    dictionaries?: string[]
+    pageLanguages?: boolean
+    osDark?: boolean
+  } = {}
 ): Platform & { recorded: Recorded } {
   const recorded: Recorded = { themes: [], fonts: [], languages: [], spellcheck: [] }
   const pageLanguages = options.pageLanguages ?? true
@@ -100,7 +105,11 @@ function fakePlatform(
     sessions: stub(),
     app: stub<AppHost>(),
     theme: {
-      systemDark: () => false,
+      // Electron's `shouldUseDarkColors`: the OS's answer under `system`, else the source's.
+      systemDark: () => {
+        const source = recorded.themes.at(-1) ?? 'system'
+        return source === 'system' ? (options.osDark ?? false) : source === 'dark'
+      },
       onChanged: () => {},
       setSource: (scheme) => void recorded.themes.push(scheme)
     },
@@ -153,6 +162,25 @@ describe('appearance follows Settings.colorScheme in the engine (CT-23)', () => 
     browser.state.commit()
     await settle()
     expect(platform.recorded.themes).toEqual(['dark', 'light'])
+  })
+
+  it('re-reads the engine in the same turn, so the chrome coming back to System reads the OS, not the engine’s last word', () => {
+    // A light OS, the profile on Dark: the engine says dark (its source), and the chrome is dark
+    // by the setting alone.
+    const { browser, win } = started(persisted({ colorScheme: 'dark' }), { osDark: false })
+    expect(browser.state.systemDark).toBe(true)
+    expect(browser.darkScheme()).toBe(true)
+    // Back to System: the engine's reading is the OS's again before anything is broadcast.
+    browser.handleCommand(win, 'settings.update', { colorScheme: 'system' })
+    expect(browser.state.systemDark).toBe(false)
+    expect(browser.darkScheme()).toBe(false)
+    // And a dark OS under System reads dark; Light forces the pages and the chrome light.
+    const dark = started(memoryIo(), { osDark: true })
+    expect(dark.browser.state.systemDark).toBe(true)
+    expect(dark.browser.darkScheme()).toBe(true)
+    dark.browser.handleCommand(dark.win, 'settings.update', { colorScheme: 'light' })
+    expect(dark.browser.darkScheme()).toBe(false)
+    expect(dark.platform.recorded.themes).toEqual(['system', 'light'])
   })
 })
 

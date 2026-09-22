@@ -345,7 +345,11 @@ export class BrowserState {
   resources: ResourceSnapshot = emptyResourceSnapshot()
   /** Device facts from the host (Android reports them at boot and on configuration changes). */
   pageEnvironment: PageEnvironment = { ...DEFAULT_PAGE_ENVIRONMENT }
-  /** The host's reading of the OS colour scheme (null: the renderer reads its media query). */
+  /**
+   * The host engine's reading of the colour scheme (null: the renderer reads its media query).
+   * The engine follows the source the setting gave it (CT-23), so this is the OS's answer
+   * exactly when `settings.colorScheme` is `system` – the one case the chrome reads it for.
+   */
   systemDark: boolean | null = null
   windowBounds: Rect | null = null
   /** Windows to restore on startup (from the previous session). */

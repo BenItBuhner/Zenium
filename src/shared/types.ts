@@ -245,6 +245,15 @@ export interface HostCapabilities {
    * spellcheck there, and Settings says pages receive the system languages.
    */
   pageLanguages: boolean
+  /**
+   * The engine honours the generic-family slots of `Settings.fonts` (`serif`, `sansSerif`,
+   * `fixed`, CT-25) for text a page styles with the generic keywords. On the desktop it does;
+   * off on Android, where Blink's font selection never consults the generic-family settings
+   * (`FontSelector::FamilyNameFromSettings`, its Android branch) – `WebSettings.serifFontFamily`
+   * and its siblings are inert there – so only the standard family (the initial `font-family`)
+   * and the sizes take effect, and the phone's Settings rows are those three.
+   */
+  genericFontFamilies: boolean
 }
 
 export interface Rect {

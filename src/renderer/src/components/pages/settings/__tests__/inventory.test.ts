@@ -79,7 +79,8 @@ const ELECTRON: HostCapabilities = {
   popupSurface: true,
   qrScan: false,
   readAloud: true,
-  pageLanguages: true
+  pageLanguages: true,
+  genericFontFamilies: true
 }
 
 const SETTINGS_TAB = {

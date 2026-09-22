@@ -186,7 +186,10 @@ export function androidCapabilities({
     // Until boot says the device has a text-to-speech engine (`ReadAloud.kt`; `Platform.speech`).
     readAloud: false,
     // WebView sends the system's languages and cannot be told the list (CT-41's recorded limit).
-    pageLanguages: false
+    pageLanguages: false,
+    // Blink's Android font selection ignores the generic-family settings: the standard family
+    // and the sizes take effect, `serif` / `sansSerif` / `fixed` do not (CT-25's recorded limit).
+    genericFontFamilies: false
   }
 }
 
@@ -1072,7 +1075,9 @@ export class AndroidPlatform implements Platform {
   /**
    * Page fonts (Settings › Appearance › Customize fonts, CT-25): `Settings.fonts` goes to Kotlin
    * as one document (`fonts.apply`), which maps it onto every page WebView's `WebSettings` and
-   * keeps it for a custom tab (`PageFonts.kt`). The preferred languages have no host here:
+   * keeps it for a custom tab (`PageFonts.kt`). The standard family and the sizes take effect
+   * there; the generic-family slots do not (`capabilities.genericFontFamilies` is off: Blink's
+   * Android font selection never reads them). The preferred languages have no host here:
    * WebView sends the system's languages (`capabilities.pageLanguages` is off).
    */
   readonly pageFonts: PageFontsHost
