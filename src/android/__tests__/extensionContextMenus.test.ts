@@ -272,3 +272,92 @@ describe('chrome.contextMenus on the long-press menu', () => {
     expect(h.runtime.api.contextMenus.size(ID)).toBe(0)
   })
 })
+
+describe('chrome.contextMenus persistence (Chrome MenuManager semantics)', () => {
+  it('restores a worker extension’s onInstalled items at the next start, before the worker runs', async () => {
+    const h = harness()
+    await withMenus(h)
+    await call(h, 'bg1', 'contextMenus', 'create', [
+      { id: 'translate', title: 'Translate with DeepL', contexts: ['selection'] },
+      'translate'
+    ])
+    await call(h, 'bg1', 'contextMenus', 'create', [
+      { id: 'child', title: 'To German', parentId: 'translate', contexts: ['selection'] },
+      'child'
+    ])
+    const saved = h.saved('extensions-runtime.json')
+    const persisted = (saved.contextMenus as Record<string, Array<Record<string, unknown>>>)[ID]
+    expect(persisted.map((item) => item.id)).toEqual(['translate', 'child'])
+    expect(persisted[1].parentId).toBe('translate')
+
+    // Next session, same files: the items are there before any worker context exists.
+    const next = harness({ files: h.files })
+    await next.runtime.attach(record(next, {}, manifest({ permissions: ['contextMenus'] })))
+    expect(next.runtime.api.contextMenus.size(ID)).toBe(2)
+    backgroundUp(next, 'bgA', ['contextMenus.onClicked'])
+    // DeepL's onStartup path: an update of the onInstalled item finds it now.
+    const updated = await call(next, 'bgA', 'contextMenus', 'update', [
+      'translate',
+      { title: 'Translate selection with DeepL' }
+    ])
+    expect(updated.ok).toBe(true)
+    // A create of the same id is the duplicate it is in Chrome.
+    const dup = await call(next, 'bgA', 'contextMenus', 'create', [
+      { id: 'translate', title: 'Again', contexts: ['selection'] },
+      'translate'
+    ])
+    expect(String(dup.error)).toBe('Cannot create item with duplicate id translate')
+    const shown = next.runtime.api.pageContextMenuItems(
+      next.tabs.t1,
+      longPress({ linkURL: '', selectionText: 'Hallo' })
+    )
+    expect(shown.map((item) => item.label)).toEqual(['Translate selection with DeepL'])
+  })
+
+  it('keeps items across a detach and drops them only when the extension removes them or is uninstalled', async () => {
+    const h = harness()
+    await withMenus(h)
+    await call(h, 'bg1', 'contextMenus', 'create', [
+      { id: 'box', title: 'Box', type: 'checkbox', contexts: ['all'] },
+      'box'
+    ])
+    await h.runtime.detach(ID)
+    expect(h.runtime.api.contextMenus.size(ID)).toBe(0)
+    expect(Object.keys(h.saved('extensions-runtime.json').contextMenus as object)).toEqual([ID])
+
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['contextMenus'] })))
+    expect(h.runtime.api.contextMenus.size(ID)).toBe(1)
+    backgroundUp(h, 'bg2', ['contextMenus.onClicked'])
+    // A toggle is state Chrome writes: the next session restores the checked box.
+    const [box] = items(h)
+    box.click?.()
+    const written = (
+      h.saved('extensions-runtime.json').contextMenus as Record<
+        string,
+        Array<Record<string, unknown>>
+      >
+    )[ID]
+    expect(written[0].checked).toBe(true)
+
+    await call(h, 'bg2', 'contextMenus', 'removeAll', [])
+    expect(h.saved('extensions-runtime.json').contextMenus).toEqual({})
+
+    await call(h, 'bg2', 'contextMenus', 'create', [{ id: 'again', title: 'Again' }, 'again'])
+    expect(Object.keys(h.saved('extensions-runtime.json').contextMenus as object)).toEqual([ID])
+    await h.runtime.forget(ID)
+    expect(h.saved('extensions-runtime.json').contextMenus).toEqual({})
+  })
+
+  it('persists nothing for a persistent background page, which recreates its items itself', async () => {
+    const h = harness()
+    await withMenus(h, {
+      manifest_version: 2,
+      background: { scripts: ['bg.js'], persistent: true },
+      browser_action: { default_popup: 'popup.html' },
+      action: undefined
+    })
+    await call(h, 'bg1', 'contextMenus', 'create', [{ title: 'Numbered' }, 7])
+    expect(h.runtime.api.contextMenus.size(ID)).toBe(1)
+    expect(h.saved('extensions-runtime.json').contextMenus ?? {}).toEqual({})
+  })
+})

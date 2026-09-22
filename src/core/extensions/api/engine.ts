@@ -44,7 +44,7 @@ import {
  * as a tab (an options page with `open_in_tab`, a changelog).
  */
 export type EngineContextKind =
-  'content' | 'userScript' | 'background' | 'popup' | 'options' | 'offscreen' | 'page'
+  'content' | 'userScript' | 'background' | 'popup' | 'options' | 'sidePanel' | 'offscreen' | 'page'
 
 export interface EngineConfig {
   id: string

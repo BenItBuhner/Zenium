@@ -4,7 +4,7 @@
 # desktop sweep's list from its store through the chrome's command API, grades install /
 # background / popup / options / core function with the concrete outcome and disables it again
 # before the next; the runner serves the fixture pages (reachable from the emulator as 10.0.2.2)
-# and collects files/ext-compat-sweep/results.json plus the numbered screenshots. No screen
+# and collects files/ext-compat-sweep/results.json plus the numbered screenshots and the driver's text files (a row's bridge trace). No screen
 # recording: two hours of installs are not a demo; the screenshots are the evidence.
 #
 # Environment:
@@ -129,7 +129,7 @@ logcat_pid=$!
 collect() {
   for name in $(adb shell run-as "$app_id" ls files/ext-compat-sweep 2> /dev/null | tr -d '\r'); do
     case "$name" in
-      *.png | *.json) adb exec-out run-as "$app_id" cat "files/ext-compat-sweep/$name" > "$out/$name" 2> /dev/null || true ;;
+      *.png | *.json | *.txt) adb exec-out run-as "$app_id" cat "files/ext-compat-sweep/$name" > "$out/$name" 2> /dev/null || true ;;
     esac
   done
   adb exec-out run-as "$app_id" cat files/zen/extensions.json > "$out/extensions.json" 2> /dev/null || true

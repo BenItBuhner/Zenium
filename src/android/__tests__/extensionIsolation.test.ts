@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectBuiltins,
+  collectOperations,
   createScopeProxy,
   frameLocation,
   installTrustedTypesShield,
@@ -109,6 +110,53 @@ describe('the scope proxy of the with-fallback', () => {
     expect(setTimeout(() => 'ran')).toBe('ran')
     expect(scope.setTimeout).toBe(scope.setTimeout)
     expect(scope.IntersectionObserver).toBe(win.IntersectionObserver)
+  })
+
+  it("binds a page's plain-function wrapper over a window operation, as a bare call in a with block needs (Sentry's browserApiErrors)", () => {
+    const win = fakeWindow()
+    const proto = Object.getPrototypeOf(win) as Any
+    const seen: unknown[] = []
+    // A native operation: no `prototype`, refuses a receiver that is not the window.
+    const native = {
+      addEventListener(this: unknown, type: string): string {
+        if (this !== win) throw new TypeError('Illegal invocation')
+        seen.push(type)
+        return 'native'
+      }
+    }
+    Object.defineProperty(proto, 'addEventListener', {
+      value: native.addEventListener,
+      configurable: true,
+      writable: true
+    })
+    const builtins = collectBuiltins(win)
+    const operations = collectOperations(win)
+    expect(operations.has('addEventListener')).toBe(true)
+    expect(operations.has('setTimeout')).toBe(true)
+    expect(operations.has('IntersectionObserver')).toBe(false)
+    expect(operations.has('onerror')).toBe(false)
+    const scope = createScopeProxy(win, builtins, operations)
+    // The page's Sentry runs after document start: a plain `function` (it has a `prototype`)
+    // that forwards `this` to the native, put on the prototype the window inherits from.
+    const original = proto.addEventListener as (...args: unknown[]) => unknown
+    proto.addEventListener = function wrapped(this: unknown, ...args: unknown[]): unknown {
+      return original.apply(this, args)
+    }
+    const call = new Function('window', `with (window) { return addEventListener('scroll'); }`) as (
+      w: unknown
+    ) => unknown
+    expect(call(scope)).toBe('native')
+    expect(seen).toEqual(['scroll'])
+    // Without the snapshot the wrapper's shape hands it back unbound: the with block's `this`.
+    expect(() => call(createScopeProxy(win, builtins))).toThrow('Illegal invocation')
+    // The binding follows the page's current function: a second replacement is bound afresh.
+    const first = scope.addEventListener
+    proto.addEventListener = function again(this: unknown, ...args: unknown[]): unknown {
+      return original.apply(this, args) === 'native' ? 'again' : 'lost'
+    }
+    expect(scope.addEventListener).not.toBe(first)
+    expect(call(scope)).toBe('again')
+    expect(scope.addEventListener).toBe(scope.addEventListener)
   })
 
   it('forwards setter properties of the window (event handlers) and stores the rest', () => {

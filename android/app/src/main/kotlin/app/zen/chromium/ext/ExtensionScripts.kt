@@ -145,6 +145,23 @@ object ExtensionScripts {
     /** The parameters of a content-script or `executeScript` function literal; the bootstrap's `runGroup` / `exec` call it with these. */
     private const val FUNCTION_HEAD = "function(window,self,globalThis,chrome,browser,${TopLevelDeclarations.MIRROR_PARAM}){"
 
+    /**
+     * The `executeScript` wrapper's seventh parameter, where a script injection's completion value
+     * waits for the return: the bootstrap passes six arguments, so it starts undefined, and a
+     * bare assignment to it inside the `with` block resolves past the scope proxy (which answers
+     * `has` for its store and the browser's globals only) to the parameter.
+     */
+    const val COMPLETION_PARAM = "__zenCompletion"
+
+    /** The `executeScript` wrapper's head: [FUNCTION_HEAD]'s parameters and [COMPLETION_PARAM]. */
+    private const val EXEC_FUNCTION_HEAD = "function(window,self,globalThis,chrome,browser,${TopLevelDeclarations.MIRROR_PARAM},$COMPLETION_PARAM){"
+
+    /** Written before a script's last expression statement, so the statement's value is the parameter's. */
+    private const val COMPLETION_ASSIGN = "$COMPLETION_PARAM="
+
+    /** After the body and the mirror: the completion value returned. */
+    private const val COMPLETION_RETURN = "\n;return $COMPLETION_PARAM"
+
     /** The bootstrap for an extension page (background, popup, options): config only. */
     fun page(bootstrap: String, configJson: String): String =
         "(function(){var __zenExtBoot={config:$configJson,debug:false,css:{},sources:{}};\n$bootstrap\n})();"
@@ -166,11 +183,25 @@ object ExtensionScripts {
      * `code` (MV2 `tabs.executeScript({ code })`) is a script in Chrome, so its top-level
      * declarations are mirrored onto the scope after it ran ([TopLevelDeclarations]); a `func` is
      * a function there too, its declarations its own.
+     *
+     * A script's value in Chrome is its completion value – the last statement's, when that is an
+     * expression (`document.title`; Imageye's `imageScraper.js` ends in an IIFE returning its
+     * list; `tabs.detectLanguage`'s own probe is one) – where a function body's is what it
+     * returns, nothing. So when the text's last statement is an expression
+     * ([TopLevelDeclarations.lastExpressionStatement]) the wrapper writes it into its completion
+     * parameter and returns that after the mirror; a promise there is awaited by the bootstrap as
+     * a `func`'s is. A script ending in a declaration or a block answers undefined, as in Chrome.
      */
-    fun exec(token: String, extensionId: String, kind: String, payload: JSONObject, code: String?, funcSource: String?, argsJson: String?, scoped: Boolean = false): String =
-        execHead(token, extensionId, kind, payload, scoped) + execBody(code, funcSource, argsJson) +
-            (if (code != null && funcSource == null) TopLevelDeclarations.mirror(TopLevelDeclarations.scanSource(code)) else "") +
+    fun exec(token: String, extensionId: String, kind: String, payload: JSONObject, code: String?, funcSource: String?, argsJson: String?, scoped: Boolean = false): String {
+        val body = execBody(code, funcSource, argsJson)
+        val script = if (funcSource == null) code else null
+        val completion = if (script != null) TopLevelDeclarations.lastExpressionStatement(body) else null
+        val captured = if (completion == null) body else body.substring(0, completion[0]) + COMPLETION_ASSIGN + body.substring(completion[0])
+        return execHead(token, extensionId, kind, payload, scoped) + captured +
+            (if (script != null) TopLevelDeclarations.mirror(TopLevelDeclarations.scanSource(script)) else "") +
+            (if (completion != null) COMPLETION_RETURN else "") +
             execTail(scoped)
+    }
 
     /**
      * A document without the extension's bootstrap (one the runtime could not reach: loaded
@@ -183,7 +214,7 @@ object ExtensionScripts {
     private fun execHead(token: String, extensionId: String, kind: String, payload: JSONObject, scoped: Boolean): String =
         "(typeof __zenExtExec===\"function\"?__zenExtExec:function(){throw new Error(${JSONObject.quote(NO_ACCESS)})})" +
             "(${JSONObject.quote(token)},${JSONObject.quote(extensionId)},${JSONObject.quote(kind)},$payload," +
-            FUNCTION_HEAD + (if (scoped) "with(window){" else "") + "\n"
+            EXEC_FUNCTION_HEAD + (if (scoped) "with(window){" else "") + "\n"
 
     private fun execTail(scoped: Boolean): String = if (scoped) EXEC_TAIL_SCOPED else EXEC_TAIL
 
@@ -231,15 +262,19 @@ object ExtensionScripts {
         // A script's declarations (`code`, `files`) are mirrored onto the scope after the body; a
         // `func` is a function in Chrome too. The files' names are read off the builder once they
         // are in it, so the tail's room is a bound, not a measure (TopLevelDeclarations.MIRROR_ROOM).
+        // A script's completion value (the last file's last expression statement, see [exec]) is
+        // written into the completion parameter in place, which shifts the text after it once.
         val mirrored = funcSource == null && (code != null || files.isNotEmpty())
         val capacity = (prefix?.length ?: -1) + 1 + GUARD_HEAD.length + head.length + body.length +
             files.sumOf { it.length().toInt() + FILE_JOIN.length } + tail.length + GUARD_TAIL.length +
-            (if (named) SOURCE_URL_TAIL.length else 0) + (if (mirrored) TopLevelDeclarations.MIRROR_ROOM else 0)
+            (if (named) SOURCE_URL_TAIL.length else 0) +
+            (if (mirrored) TopLevelDeclarations.MIRROR_ROOM + COMPLETION_ASSIGN.length + COMPLETION_RETURN.length else 0)
         val sb = StringBuilder(capacity)
         if (prefix != null) sb.append(prefix).append('\n')
         sb.append(GUARD_HEAD).append(head)
         val names = LinkedHashSet<String>()
         val bodyStart = sb.length
+        var lastStart = bodyStart
         sb.append(body)
         if (mirrored && code != null) names.addAll(TopLevelDeclarations.scanSource(sb, bodyStart, sb.length))
         var joined = body.isNotEmpty()
@@ -248,6 +283,7 @@ object ExtensionScripts {
             if (joined) sb.append(FILE_JOIN)
             joined = true
             val fileStart = sb.length
+            lastStart = fileStart
             file.bufferedReader().use { reader ->
                 while (true) {
                     val n = reader.read(buffer)
@@ -257,7 +293,10 @@ object ExtensionScripts {
             }
             if (mirrored) names.addAll(TopLevelDeclarations.scanSource(sb, fileStart, sb.length))
         }
+        val completion = if (mirrored) TopLevelDeclarations.lastExpressionStatement(sb, lastStart, sb.length) else null
+        if (completion != null) sb.insert(completion[0], COMPLETION_ASSIGN)
         if (names.isNotEmpty()) sb.append(TopLevelDeclarations.mirror(names))
+        if (completion != null) sb.append(COMPLETION_RETURN)
         sb.append(tail).append(GUARD_TAIL)
         if (named) sb.append(SOURCE_URL_TAIL)
         return sb.toString()
