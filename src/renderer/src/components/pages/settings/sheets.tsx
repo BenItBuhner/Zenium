@@ -15,7 +15,13 @@ import type {
 } from './model'
 import { findRow, optionGroups } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
-import { SheetDismissContext, SheetRelayoutContext, useSheetDismiss } from './sheetContext'
+import {
+  SheetDismissContext,
+  SheetFooterContext,
+  SheetRelayoutContext,
+  useSheetDismiss,
+  useSheetFooterSlot
+} from './sheetContext'
 
 /**
  * The sheets a phone Settings row opens (v2 §9.13, §9.23–9.25, §10.4): a value row's picker, a
@@ -155,7 +161,9 @@ interface SheetProps {
  * One Settings sheet: the shared `PhoneSheet` with the Settings tab's class on the panel
  * (`.zen-settings-sheet`, main.css: the page's type, §9.25's edge that takes no layout so a
  * row's 16 gutter is 16 from the outer edge) and its body, which gives the rows and forms
- * inside it the sheet's dismiss and a way to ask for the detents again.
+ * inside it the sheet's dismiss, a way to ask for the detents again and the footer slot
+ * (§9.11) – the chassis's `.zen-sheet-footer` under the body, drawn while a form claims it
+ * through `SheetFooter`, and part of the content the detents are measured on.
  */
 export function SettingsSheet({
   name,
@@ -175,6 +183,7 @@ export function SettingsSheet({
   // asks for its detents again through `useSheetRelayout`: the chassis measures on a new key.
   const [relayouts, setRelayouts] = useState(0)
   const relayout = useCallback((): void => setRelayouts((n) => n + 1), [])
+  const footer = useSheetFooterSlot()
   const pose: SheetTitle =
     description === undefined
       ? { pose: 'header', text: title }
@@ -185,13 +194,24 @@ export function SettingsSheet({
       title={pose}
       under={under}
       onClose={onClose}
-      contentKey={`${contentKey ?? ''}|${relayouts}`}
+      contentKey={`${contentKey ?? ''}|${relayouts}|${footer.claimed ? 'footer' : ''}`}
       className="zen-settings-sheet"
       sheetRef={sheet}
+      footer={
+        footer.claimed ? (
+          <div
+            ref={footer.setElement}
+            className="zen-settings-sheet-actions zen-settings-sheet-footer"
+            data-testid="settings-sheet-footer"
+          />
+        ) : undefined
+      }
     >
       <div className="zen-settings-sheet-body">
         <SheetDismissContext.Provider value={dismiss}>
-          <SheetRelayoutContext.Provider value={relayout}>{children}</SheetRelayoutContext.Provider>
+          <SheetRelayoutContext.Provider value={relayout}>
+            <SheetFooterContext.Provider value={footer.slot}>{children}</SheetFooterContext.Provider>
+          </SheetRelayoutContext.Provider>
         </SheetDismissContext.Provider>
       </div>
     </PhoneSheet>

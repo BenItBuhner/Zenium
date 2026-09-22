@@ -309,8 +309,11 @@ export const SITE_DATA_DEFAULT_LABELS: Record<
   },
   'block-all': {
     label: 'Block all cookies',
+    // Browser-wide by construction: the container's cookie jar stops accepting cookies (Chrome's
+    // semantics too); the per-site lists are the exceptions. Said so the row is never read as a
+    // per-site block.
     description:
-      'No site can use cookies unless it is on the allowed list. Many sites will not work as expected.'
+      'Browser-wide, not per site: the container’s cookie jar accepts no cookies except from sites on the always-allow list. Many sites will not work.'
   }
 }
 
@@ -318,4 +321,10 @@ export const SITE_DATA_LIST_LABELS: Record<SiteDataList, string> = {
   allow: 'Sites that can always use cookies',
   clearOnExit: 'Always clear cookies when windows are closed',
   block: 'Sites that can never use cookies'
+}
+
+/** A list's heading on a host without windows (a phone): Chrome's words, with the close it has. */
+export function siteDataListLabel(list: SiteDataList, windows: boolean): string {
+  if (list === 'clearOnExit' && !windows) return 'Always clear cookies when Zenium closes'
+  return SITE_DATA_LIST_LABELS[list]
 }

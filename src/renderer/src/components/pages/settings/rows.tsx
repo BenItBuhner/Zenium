@@ -65,9 +65,10 @@ function measureLines(row: HTMLElement): void {
 /**
  * Keep a row's line count current: measured once it is on screen and again whenever its text
  * block changes size (the label wraps at a new width, the description changes). Only rows with
- * something trailing the text need it.
+ * something trailing the text need it; exported for a row drawn outside the model on the same
+ * primitive (the site-data viewer's origin rows).
  */
-const attachLineCount: RefCallback<HTMLElement> = (row) => {
+export const attachLineCount: RefCallback<HTMLElement> = (row) => {
   if (!row) return
   measureLines(row)
   if (typeof ResizeObserver !== 'function') return

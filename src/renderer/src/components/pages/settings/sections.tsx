@@ -162,6 +162,7 @@ import {
   signalsGroups
 } from './protectionRows'
 import { ShortcutRow } from './ShortcutRow'
+import { siteDataGroups } from './siteDataRows'
 import { trackingGroups } from './tracking'
 
 /**
@@ -2215,6 +2216,7 @@ function privacySection(ctx: SectionContext): RowGroup[] {
     ...trackingGroups(ctx),
     ...clearDataGroups(ctx),
     ...cookiesGroups(state, set),
+    ...siteDataGroups(ctx),
     ...siteSettingsGroups(ctx),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),

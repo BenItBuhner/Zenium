@@ -1,5 +1,15 @@
 import type { JSX, ReactNode } from 'react'
-import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { wrapTab } from '../../bookmarks/popover'
@@ -16,7 +26,12 @@ import type {
 } from './model'
 import { findRow, optionGroups } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
-import { SheetDismissContext } from './sheetContext'
+import {
+  SheetCoveredContext,
+  SheetDismissContext,
+  SheetFooterContext,
+  useSheetFooterSlot
+} from './sheetContext'
 
 /**
  * The dialogs a desktop Settings row opens (v2 §9.5, §9.22–9.24, §10.5): the same six requests
@@ -27,12 +42,16 @@ import { SheetDismissContext } from './sheetContext'
  * the form width, centred over the content frame by the frame's dialog host (lib/portals.tsx),
  * which draws the §9.5 scrim, makes the chrome inert and takes the pointer. The stack is the
  * page's (`useSheetStack`, at most two deep, §9.24): a dialog under another is `inert` and
- * leaves Escape to the one on top; each resolves its row again on every render, so it always
- * shows the row's current value and closes by itself when its row is gone.
+ * leaves Escape to the one on top – the popup stack's rule (`useEscape`: the most recently
+ * opened answers), which a menulist's popover or a prompt a form opens over its dialog joins
+ * too; each resolves its row again on every render, so it always shows the row's current value
+ * and closes by itself when its row is gone. A dialog a form renders inside a dialog (the
+ * site-data viewer's Clear all prompt) covers its host the same way: `SheetCoveredContext`.
  *
  * Keyboard (§9.22): focus moves into a dialog as it opens – the checked option of a picker, the
  * field of a form, else its first control (a prompt's Cancel) – Tab wraps inside it, Escape and
- * the scrim close it, and when it leaves the focus returns to the control that opened it. Titles
+ * the scrim close it, and when it leaves the focus returns to the control that opened it: the
+ * page's row, or the lower dialog's control for one that opened over a dialog (§9.24). Titles
  * are the rows' own and sentence case (§9.1).
  */
 
@@ -152,8 +171,10 @@ const TABBABLE =
  * One v2 dialog in the frame's dialog host: the shared `.zen-v2-dialog` (the neutral panel,
  * radius 12, a hairline, the sheet shadow) at the form width, a §9.23 title block with the
  * hairline once the body has scrolled, the body scrolling between the title and whatever footer
- * its content draws (§9.11: the buttons hug the end). Escape (on top only) and the scrim close
- * it; the focus moves in as it opens and back out to its opener as it leaves.
+ * its content draws (§9.11: the buttons hug the end) – in the body for a form's own actions,
+ * or in the dialog's footer slot under the body for actions a form puts there through
+ * `SheetFooter`, drawn only while claimed. Escape (on top of the popup stack only) and the
+ * scrim close it; the focus moves in as it opens and back out to its opener as it leaves.
  */
 export function SettingsDialog(props: DialogProps): JSX.Element {
   return (
@@ -178,20 +199,32 @@ function HostedDialog({
   const titleId = useId()
   const [scrolled, setScrolled] = useState(false)
   useFrameDialog({ onScrimPress: onClose })
-  // Escape is the top dialog's: a dialog under another is inert and leaves the key to it.
+  // Escape is the top popup's (§9.24): the stack `useEscape` keeps, so a dialog under another,
+  // under a menulist's popover or under a prompt a form opened over it waits for its turn.
+  useEscape(onClose)
+  // A dialog rendered inside this one's body (a form's prompt) covers it while it stands, as the
+  // page's stack covers a dialog under another; this dialog tells its own host the same.
+  const [covered, setCovered] = useState(false)
+  const coverHost = useContext(SheetCoveredContext)
   useEffect(() => {
-    if (under) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
+    if (!coverHost) return
+    coverHost(true)
+    return () => coverHost(false)
+  }, [coverHost])
+  const footer = useSheetFooterSlot()
+  // The sheet's dismiss as the forms and rows inside know it (`useSheetDismiss`): the dialog has
+  // no motion to wait for, so `after` – an action that opens a surface of its own once the
+  // dialog is gone (`ActionRow.closesSheet`), a prompt's confirmed action – runs at once.
+  const dismiss = useCallback(
+    (after?: () => void): void => {
       onClose()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [under, onClose])
-  // Focus in as the dialog opens (§9.22), and back to the opener as it leaves (§9.24) – unless
-  // the user has already put it somewhere else outside the dialog host.
+      after?.()
+    },
+    [onClose]
+  )
+  // Focus in as the dialog opens (§9.22), and back to the opener as it leaves (§9.24) – the
+  // page's control, or the lower dialog's for a dialog that opened over one – unless the user
+  // has already put it somewhere else outside the dialog host.
   const initialRef = useRef(initial)
   useLayoutEffect(() => {
     initialRef.current = initial
@@ -200,8 +233,7 @@ function HostedDialog({
     const root = ref.current
     if (!root) return
     const active = document.activeElement
-    const opener =
-      active instanceof HTMLElement && !active.closest('.zen-frame-dialogs') ? active : null
+    const opener = active instanceof HTMLElement && !root.contains(active) ? active : null
     const target = initialRef.current?.(root) ?? root.querySelector<HTMLElement>(TABBABLE) ?? root
     target.focus({ preventScroll: true })
     return () => {
@@ -218,7 +250,7 @@ function HostedDialog({
       aria-labelledby={titleId}
       data-dialog={name}
       data-surface="page"
-      inert={under || undefined}
+      inert={under || covered || undefined}
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-settings-dialog zen-animate-pop', className)}
       style={{ width: POPOVER_WIDTH.form }}
@@ -240,8 +272,19 @@ function HostedDialog({
         className="zen-settings-dialog-body"
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
       >
-        <SheetDismissContext.Provider value={onClose}>{children}</SheetDismissContext.Provider>
+        <SheetDismissContext.Provider value={dismiss}>
+          <SheetFooterContext.Provider value={footer.slot}>
+            <SheetCoveredContext.Provider value={setCovered}>{children}</SheetCoveredContext.Provider>
+          </SheetFooterContext.Provider>
+        </SheetDismissContext.Provider>
       </div>
+      {footer.claimed && (
+        <div
+          ref={footer.setElement}
+          className="zen-settings-sheet-actions zen-settings-dialog-footer"
+          data-testid="settings-dialog-footer"
+        />
+      )}
     </div>
   )
 }

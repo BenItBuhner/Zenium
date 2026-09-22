@@ -8274,6 +8274,11 @@
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
 }
+/* The one line that reports a failure where the rows would be (the viewer's listing refused): §1 status ink. */
+.zen-settings-empty[data-tone='danger'],
+.zen-settings-group-description[data-tone='danger'] {
+  color: var(--v2-danger);
+}
 /* The page's own empty state (§9.17): one sentence, centred in a 32 gutter, 48 under the field. */
 .zen-settings-empty-page {
   padding: 48px 32px 0;
@@ -9172,6 +9177,22 @@
 }
 .zen-settings-dialog-body > .zen-settings-sheet-actions {
   padding: 0 16px;
+}
+/*
+ * The footer slot a form claims through `SheetFooter` (blocks.tsx; §9.11) for actions that
+ * belong to the whole sheet and must stay in reach while a long body scrolls – the site-data
+ * viewer's Clear all at the foot of its list. The dialog's is its last block under the body,
+ * 16 under the body's own 16 and 16 to the edge, the buttons hugging and right-aligned at the
+ * 8 gap (§9.11's desktop footer); the phone's is the chassis's `.zen-sheet-footer` under the
+ * body, where one action spans the row and two split it, as the chassis's rule has it.
+ */
+.zen-settings-dialog-footer {
+  flex-shrink: 0;
+  justify-content: flex-end;
+  padding: 0 16px 16px;
+}
+.zen-settings-dialog-footer > * {
+  flex: 0 0 auto;
 }
 
 /*
