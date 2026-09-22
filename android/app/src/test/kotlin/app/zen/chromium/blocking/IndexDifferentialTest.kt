@@ -63,9 +63,11 @@ class IndexDifferentialTest {
 
     private fun same(a: Decision, b: Decision): Boolean =
         a.action == b.action && a.redirectUrl == b.redirectUrl && a.matchedSet == b.matchedSet &&
-            a.matchedRule == b.matchedRule && a.matchedFilter == b.matchedFilter && a.needsHeaders == b.needsHeaders
+            a.matchedRule == b.matchedRule && a.matchedFilter == b.matchedFilter && a.needsHeaders == b.needsHeaders &&
+            a.requestHeaderEdits == b.requestHeaderEdits && a.responseHeaderEdits == b.responseHeaderEdits
 
-    private fun show(d: Decision) = "${d.action} url=${d.redirectUrl} set=${d.matchedSet} rule=${d.matchedRule} filter=${d.matchedFilter} headers=${d.needsHeaders}"
+    private fun show(d: Decision) =
+        "${d.action} url=${d.redirectUrl} set=${d.matchedSet} rule=${d.matchedRule} filter=${d.matchedFilter} headers=${d.needsHeaders} edits=${d.requestHeaderEdits}/${d.responseHeaderEdits}"
 
     /**
      * Response headers as the relay hands them to the engine (`HeaderStage.relay`): a fetch's
@@ -80,7 +82,9 @@ class IndexDifferentialTest {
         mapOf("Content-Type" to listOf("text/html")),
         mapOf("Content-Type" to listOf("application/json")),
         emptyMap(),
-        mapOf("X-ADS" to listOf("banner"), "CONTENT-type" to listOf("TEXT/CSS"), "Set-Cookie" to listOf("a=1", "b=2"))
+        mapOf("X-ADS" to listOf("banner"), "CONTENT-type" to listOf("TEXT/CSS"), "Set-Cookie" to listOf("a=1", "b=2")),
+        mapOf("Content-Type" to listOf("text/css"), "x-frame-options" to listOf("DENY")),
+        mapOf("Content-Type" to listOf("text/html; charset=utf-8"), "X-Frame-Options" to listOf("SAMEORIGIN"))
     ).map { wire ->
         val fields = LinkedHashMap<String?, List<String>?>()
         fields[null] = listOf("HTTP/1.1 200 OK")
@@ -91,6 +95,23 @@ class IndexDifferentialTest {
     private fun rule(id: Int, action: String, condition: JSONObject, priority: Int = 1, redirect: String? = null): JSONObject {
         val a = JSONObject().put("type", action)
         if (redirect != null) a.put("redirect", JSONObject().put("url", redirect))
+        return JSONObject().put("id", id).put("priority", priority).put("action", a).put("condition", condition)
+    }
+
+    /** A `modifyHeaders` rule with `requestOps` / `responseOps` as `[header, operation, value?]` triples. */
+    private fun headerRule(id: Int, condition: JSONObject, priority: Int = 1, requestOps: List<List<String?>> = emptyList(), responseOps: List<List<String?>> = emptyList()): JSONObject {
+        fun ops(list: List<List<String?>>): JSONArray {
+            val out = JSONArray()
+            for (op in list) {
+                val o = JSONObject().put("header", op[0]).put("operation", op[1])
+                if (op.size > 2 && op[2] != null) o.put("value", op[2])
+                out.put(o)
+            }
+            return out
+        }
+        val a = JSONObject().put("type", "modifyHeaders")
+        if (requestOps.isNotEmpty()) a.put("requestHeaders", ops(requestOps))
+        if (responseOps.isNotEmpty()) a.put("responseHeaders", ops(responseOps))
         return JSONObject().put("id", id).put("priority", priority).put("action", a).put("condition", condition)
     }
 
@@ -184,11 +205,22 @@ class IndexDifferentialTest {
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "|https://").put("requestMethods", JSONArray(listOf("post"))).put("resourceTypes", JSONArray(listOf("xmlhttprequest")))))
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "^track|pixel^")))  // `|` literal inside a filter
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "*/img/*banner*").put("excludedNonUniqueHosts", true)))
+        // Header rules, which stack in scan order (the desktop differential's `hdr.example` shapes):
+        // on hosts the lists and the generated rules leave alone, and on a list host too.
+        a.put(headerRule(id++, JSONObject().put("urlFilter", "||hdr.example^"), priority = 2, requestOps = listOf(listOf("x-a", "set", "1"))))
+        a.put(headerRule(id++, JSONObject().put("requestDomains", JSONArray(listOf("hdr.example", "hdr2.example"))).put("resourceTypes", JSONArray(listOf("script", "image", "main_frame"))), priority = 2, responseOps = listOf(listOf("x-b", "remove"))))
+        a.put(headerRule(id++, JSONObject().put("regexFilter", "\\.(png|gif)$"), requestOps = listOf(listOf("x-c", "append", "c"))))
+        a.put(rule(id++, "allow", JSONObject().put("urlFilter", "||hdr2.example/assets/quiet^")))
+        a.put(headerRule(id++, JSONObject().put("urlFilter", "||${hosts[15]}^"), priority = 2, requestOps = listOf(listOf("user-agent", "set", "Zenium-UA-Test/1.0"), listOf("x-requested-with", "remove")), responseOps = listOf(listOf("x-frame-options", "remove"), listOf("content-security-policy", "set", "default-src 'self'"))))
         // Header-conditioned rules: decided at the headers-received stage only (`decide` with the
         // response's headers, which the relay reaches for documents); the request stage marks an
         // allow they could overturn `needsHeaders` and never names them.
         a.put(rule(id++, "block", JSONObject().put("urlFilter", "||${hosts[13]}^").put("responseHeaders", headerConditions("x-ads"))))
         a.put(rule(id++, "allow", JSONObject().put("requestDomains", JSONArray(listOf(hosts[14]))).put("excludedResponseHeaders", headerConditions("content-type", "text/html*")), priority = 3))
+        // A header-conditioned edit: its response edit joins the request stage's at the header stage, its request edit is dropped.
+        a.put(headerRule(id++, JSONObject().put("requestDomains", JSONArray(listOf("hdr.example", "hdr2.example", hosts[15]))).put("responseHeaders", headerConditions("x-frame-options")), requestOps = listOf(listOf("x-dropped", "set", "1")), responseOps = listOf(listOf("x-frame-options", "remove"))))
+        // A header-conditioned allow that caps the request stage's weaker edits once the response is not HTML.
+        a.put(rule(id++, "allow", JSONObject().put("urlFilter", "||${hosts[15]}^").put("excludedResponseHeaders", headerConditions("content-type", "text/html*")), priority = 2))
         for (i in 0 until 1200) {
             val h = host()
             val cond = JSONObject()
@@ -215,8 +247,18 @@ class IndexDifferentialTest {
             if (random.nextInt(10) == 0) cond.put("excludedRequestDomains", JSONArray(listOf(host())))
             if (random.nextInt(12) == 0) cond.put("tabIds", JSONArray(listOf(7)))
             if (random.nextInt(12) == 0) cond.put("excludedNonUniqueHosts", true)
-            val action = listOf("block", "block", "block", "allow", "redirect", "upgradeScheme")[random.nextInt(6)]
-            a.put(rule(id++, action, cond, 1 + random.nextInt(3), if (action == "redirect") "https://safe.example/${pick(words)}/$i" else null))
+            val action = listOf("block", "block", "block", "allow", "redirect", "upgradeScheme", "modifyHeaders")[random.nextInt(7)]
+            if (action == "modifyHeaders") {
+                // Header edits over the hosts the request stage's rules cover: the index must
+                // stack them as the scan does (highest effective priority first, then in scan
+                // order), whichever way it reaches them.
+                val ops = listOf(listOf("x-gen-$i", "set", "g$i"), listOf("x-shared", "append", "s$i"), listOf("x-requested-with", "remove"), listOf("user-agent", "set", "Zenium-UA-Test/$i"))
+                val requestOps = if (random.nextBoolean()) listOf(ops[random.nextInt(ops.size)]) else emptyList()
+                val responseOps = if (requestOps.isEmpty() || random.nextInt(3) == 0) listOf(listOf(pick(listOf("x-frame-options", "set-cookie", "x-r-$i")), pick(listOf("remove", "set", "append")), "r$i")) else emptyList()
+                a.put(headerRule(id++, cond, 1 + random.nextInt(3), requestOps, responseOps))
+            } else {
+                a.put(rule(id++, action, cond, 1 + random.nextInt(3), if (action == "redirect") "https://safe.example/${pick(words)}/$i" else null))
+            }
         }
         // Set B: a dynamic set scoped to partitions, with allowAllRequests.
         val b = JSONArray()
@@ -289,11 +331,17 @@ class IndexDifferentialTest {
             val rules = setsJson.getJSONObject(s).getJSONArray("rules")
             (0 until rules.length()).count { isHeaderConditioned(rules.getJSONObject(it)) }
         }
-        assertEquals("header-conditioned rules in the corpus", 3, headerConditioned)
+        assertEquals("header-conditioned rules in the corpus", 5, headerConditioned)
+        val editing = (0 until setsJson.length()).sumOf { s ->
+            val rules = setsJson.getJSONObject(s).getJSONArray("rules")
+            (0 until rules.length()).count { rules.getJSONObject(it).getJSONObject("action").getString("type") == "modifyHeaders" }
+        }
+        assertTrue("modifyHeaders rules in the corpus: $editing", editing > 100)
         val text = TextEngine.parse(texts)
         val snap = EngineSnapshot(streamed, text)
         assertEquals("every declared rule compiled (declared $declared)", declared, snap.ruleCount)
         assertEquals("header-conditioned rules counted", headerConditioned, snap.headerRuleCount)
+        assertEquals("modifyHeaders rules counted", editing, snap.modifyHeadersRuleCount)
         assertEquals("the document parser's sets decide the same", declared, EngineSnapshot(document, text).ruleCount)
         assertTrue("filters loaded: ${snap.filterCount}", snap.filterCount > 50_000)
 
@@ -321,6 +369,9 @@ class IndexDifferentialTest {
         var total = 0
         var decidedByRule = 0
         var redirected = 0
+        var edited = 0  // request-stage `modifyHeaders` decisions
+        var stacked = 0  // ... with the edits of more than one rule
+        var editedTwice = 0  // header-stage `modifyHeaders` decisions whose response edits grew (a header-conditioned edit joined)
         // The header-stage pass: what the linear reference decided (the index agreed, or `mismatches` says where not).
         var decidedTwice = 0  // header-stage decisions after a request-stage allow with `needsHeaders` (the relay's second decision)
         var direct = 0  // header-stage decisions of probes that arrived there regardless of `needsHeaders`
@@ -346,6 +397,12 @@ class IndexDifferentialTest {
                     if (byHeaderRule(d) && violations.size < 40) violations.add("a header-conditioned rule decided the request stage: ${describe(req, null)}\n    ${show(d)}")
                 }
             }
+            for (d in listOf(indexed, linear)) {
+                // Edits ride on a `modifyHeaders` decision only (a block, redirect or allow carries none).
+                if (violations.size < 40 && d.editsHeaders && d.action != Decision.Action.MODIFY_HEADERS) {
+                    violations.add("a decision other than modifyHeaders carries edits: ${describe(req, headers)}\n    ${show(d)}")
+                }
+            }
         }
 
         /**
@@ -362,11 +419,16 @@ class IndexDifferentialTest {
             total++
             if (early.matchedSet != null) decidedByRule++
             if (early.redirectUrl != null) redirected++
+            if (early.action == Decision.Action.MODIFY_HEADERS) {
+                edited++
+                if (early.requestHeaderEdits.size + early.responseHeaderEdits.size > 1) stacked++
+            }
             if (!early.needsHeaders && !arrivesDirectly) return
             for (headers in maps) {
                 val late = snap.decideLinear(req, headers)
                 check(req, headers, snap.decide(req, headers), late)
                 if (arrivesDirectly) direct++
+                if (late.action == Decision.Action.MODIFY_HEADERS && late.responseHeaderEdits.size > early.responseHeaderEdits.size) editedTwice++
                 if (late.matchedSet != null) headerStageNamed++
                 if (byHeaderRule(late)) {
                     headerStageByRule++
@@ -453,6 +515,24 @@ class IndexDifferentialTest {
         targeted.add(Request("https://$allowHost/frame.html", ResourceType.SUB_FRAME, "https://news.example/story", partition = "default"))
         targeted.add(Request("https://$allowHost/lib.js", ResourceType.SCRIPT, "https://news.example/story", partition = "default"))
         targeted.add(Request("https://$allowHost/style.css", ResourceType.STYLESHEET, "https://$allowHost/", partition = "default"))
+        // The header rules' hosts: the quiet ones and hosts[15], where the UA edit, the
+        // header-conditioned edit and the header-conditioned allow that caps the weaker edits meet
+        // the generated rules of the same host.
+        val uaHost = listHosts[15]
+        for (h in listOf("hdr.example", "hdr2.example", "cdn.hdr.example", uaHost, "www.$uaHost")) {
+            for (partition in listOf("default", "work", null)) {
+                targeted.add(Request("https://$h/", ResourceType.MAIN_FRAME, null, "GET", tabId = "tab-7", partition = partition))
+                targeted.add(Request("https://$h/index.html", ResourceType.MAIN_FRAME, null, "GET", partition = partition))
+            }
+            targeted.add(Request("https://$h/assets/quiet/style.css", ResourceType.STYLESHEET, "https://$h/", partition = "default"))
+            targeted.add(Request("https://$h/assets/quiet/index.html", ResourceType.SUB_FRAME, "https://$h/", partition = "default"))
+            targeted.add(Request("https://$h/frame.html", ResourceType.SUB_FRAME, "https://news.example/story", partition = "default"))
+            targeted.add(Request("https://$h/img/pixel.gif", ResourceType.IMAGE, "https://news.example/story", partition = "default"))
+            targeted.add(Request("https://$h/img/banner.png", ResourceType.IMAGE, "https://$h/", partition = "work"))
+            targeted.add(Request("https://$h/a.js", ResourceType.SCRIPT, "https://$h/", partition = "default"))
+            targeted.add(Request("https://$h/api/collect", ResourceType.XMLHTTPREQUEST, "https://$h/", "POST", partition = "default", typeMask = ResourceType.AMBIGUOUS_MASK))
+            targeted.add(Request("http://$h/", ResourceType.MAIN_FRAME, null, "GET", partition = "default"))
+        }
         for (req in targeted) probe(req, headerMaps, arrivesDirectly = true)
 
         assertTrue("decided something: $decidedByRule of $total", decidedByRule > 500)
@@ -465,8 +545,110 @@ class IndexDifferentialTest {
         assertTrue("header-stage redirects by a header-conditioned rule: $headerStageRedirects", headerStageRedirects >= 1)
         assertTrue("header stage differing from the request stage: $differing", differing >= 1)
         assertTrue("header stage the same as the request stage (the relay's sameMatch): $sameAsRequestStage", sameAsRequestStage >= 1)
+        assertTrue("header rules applied: $edited", edited > 10)
+        assertTrue("the edits of more than one rule stacked: $stacked", stacked > 5)
+        assertTrue("a header-conditioned edit joined at the header stage: $editedTwice", editedTwice >= 1)
         assertTrue("mismatches:\n" + mismatches.joinToString("\n"), mismatches.isEmpty())
         assertTrue("invariants:\n" + violations.joinToString("\n"), violations.isEmpty())
+    }
+
+    // --- The modifyHeaders golden fixture, shared with the desktop's `indexDifferential.test.ts` ---
+
+    /** A decision in the fixture's shape (the desktop `Decision`'s field names; empty edit lists written, `needsHeaders` only when true). */
+    private fun fixtureShape(d: Decision): JSONObject {
+        val out = JSONObject()
+        out.put(
+            "action",
+            when (d.action) {
+                Decision.Action.ALLOW -> "allow"
+                Decision.Action.BLOCK -> "block"
+                Decision.Action.REDIRECT -> "redirect"
+                Decision.Action.UPGRADE -> "upgrade"
+                Decision.Action.MODIFY_HEADERS -> "modifyHeaders"
+            }
+        )
+        if (d.redirectUrl != null) out.put("redirectUrl", d.redirectUrl)
+        if (d.matchedSet != null) {
+            val matched = JSONObject().put("setId", d.matchedSet)
+            if (d.matchedFilter != null) matched.put("filter", d.matchedFilter) else matched.put("ruleId", d.matchedRule)
+            out.put("matched", matched)
+        }
+        if (d.action == Decision.Action.MODIFY_HEADERS) {
+            fun ops(list: List<HeaderOp>): JSONArray {
+                val arr = JSONArray()
+                for (op in list) {
+                    val o = JSONObject().put("header", op.header).put("operation", op.operation.dnrName)
+                    if (op.value != null) o.put("value", op.value)
+                    arr.put(o)
+                }
+                return arr
+            }
+            out.put("requestHeaders", ops(d.requestHeaderEdits))
+            out.put("responseHeaders", ops(d.responseHeaderEdits))
+        }
+        if (d.needsHeaders) out.put("needsHeaders", true)
+        return out
+    }
+
+    /** `org.json` has no deep equality: compare the canonical text of the two. */
+    private fun canonical(o: Any?): String = when (o) {
+        is JSONObject -> o.keys().asSequence().sorted().joinToString(",", "{", "}") { "\"$it\":${canonical(o.get(it))}" }
+        is JSONArray -> (0 until o.length()).joinToString(",", "[", "]") { canonical(o.get(it)) }
+        is String -> JSONObject.quote(o)
+        else -> o.toString()
+    }
+
+    /**
+     * Both engines read `modify-headers.json` – User-Agent Switcher's session rule, two more
+     * extensions' header edits, the user's and the site exceptions' sets – and must decide each
+     * probe as the fixture says: the same action, the same match, the same edits in the same
+     * order, `needsHeaders` alike; the header stage with the fixture's response headers where it
+     * gives them. The desktop's `indexDifferential.test.ts` asserts the same file; a change to
+     * either engine's stacking shows up here first.
+     */
+    @Test
+    fun bothEnginesProduceTheSameEditsForTheModifyHeadersFixture() {
+        val fixture = JSONObject(File(repoRoot(), "android/app/src/test/resources/blocking/modify-headers.json").readText())
+        val setsJson = fixture.getJSONArray("sets")
+        val sets = (0 until setsJson.length()).map { RuleSetInfo.parse(setsJson.getJSONObject(it)) ?: error("set ${it} did not parse") }
+        val snap = EngineSnapshot(sets, null)
+        assertEquals(setsJson.length(), sets.size)
+        assertTrue("modifyHeaders rules in the fixture: ${snap.modifyHeadersRuleCount}", snap.modifyHeadersRuleCount >= 10)
+        val probes = fixture.getJSONArray("probes")
+        assertTrue("probes: ${probes.length()}", probes.length() >= 15)
+        val failures = ArrayList<String>()
+        var stages = 0
+        for (i in 0 until probes.length()) {
+            val probe = probes.getJSONObject(i)
+            val r = probe.getJSONObject("request")
+            val type = ResourceType.fromDnrName(r.getString("type")) ?: error("type ${r.getString("type")}")
+            val req = Request(
+                r.getString("url"), type, r.optString("documentUrl").ifEmpty { null }, r.optString("method", "GET"),
+                thirdParty = if (r.has("thirdParty")) r.getBoolean("thirdParty") else null,
+                partition = r.optString("partition").ifEmpty { null }
+            )
+            fun stage(expectedKey: String, headers: Map<String, List<String>>?) {
+                val expected = probe.optJSONObject(expectedKey) ?: return
+                stages++
+                val linear = snap.decideLinear(req, headers)
+                val indexed = snap.decide(req, headers)
+                if (!same(indexed, linear)) failures.add("${probe.getString("name")}: index ${show(indexed)} / linear ${show(linear)}")
+                val actual = canonical(fixtureShape(linear))
+                if (actual != canonical(expected)) failures.add("${probe.getString("name")} ($expectedKey):\n    expected ${canonical(expected)}\n    actual   $actual")
+            }
+            stage("expected", null)
+            probe.optJSONObject("responseHeaders")?.let { wire ->
+                val fields = LinkedHashMap<String?, List<String>?>()
+                fields[null] = listOf("HTTP/1.1 200 OK")
+                for (name in wire.keys()) {
+                    val values = wire.getJSONArray(name)
+                    fields[name] = (0 until values.length()).map { values.getString(it) }
+                }
+                stage("expectedWithHeaders", HeaderCondition.index(fields))
+            }
+        }
+        assertTrue("stages decided: $stages", stages >= 20)
+        assertTrue(failures.joinToString("\n"), failures.isEmpty())
     }
 
     /**

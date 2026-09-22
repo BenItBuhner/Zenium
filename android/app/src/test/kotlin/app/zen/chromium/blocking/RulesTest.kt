@@ -34,7 +34,7 @@ class RulesTest {
     @Test
     fun rulesNeedAnActionAndAValidPattern() {
         assertNull(DnrRule.parse(JSONObject("""{"id":1,"condition":{}}"""), 1))
-        assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"modifyHeaders"},"condition":{}}"""), 1))
+        assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"setCookie"},"condition":{}}"""), 1))
         assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"block"},"condition":{"regexFilter":"("}}"""), 1))
         // Header-conditioned rules are kept for the headers-received stage: their request stage
         // matches on the URL, their header stage on the response (HeaderStage relays the document).
@@ -55,6 +55,95 @@ class RulesTest {
         assertEquals(7, any.id)
         assertEquals(RuleAction.BLOCK, any.action)
         assertTrue(any.matches(req("https://anything.example/x")))
+    }
+
+    /** The twin of `rules.ts`'s `HeaderOp` / `RuleAction.requestHeaders`: what User-Agent Switcher registers. */
+    @Test
+    fun modifyHeadersRulesParseTheirEdits() {
+        val ua = rule(
+            """{"id":1,"priority":2,"action":{"type":"modifyHeaders",
+                "requestHeaders":[{"header":"User-Agent","operation":"set","value":"Mozilla/5.0 (X11; Linux x86_64) Zenium/1.0"},
+                                  {"header":"Accept-Language","operation":"append","value":"fr"},
+                                  {"header":"X-Client-Data","operation":"remove"}],
+                "responseHeaders":[{"header":"X-Frame-Options","operation":"remove"},{"header":"X-Edited","operation":"set","value":"1"}]},
+               "condition":{"resourceTypes":["main_frame","sub_frame"]}}"""
+        )
+        assertEquals(RuleAction.MODIFY_HEADERS, ua.action)
+        assertEquals(0, ua.action.rank)
+        assertTrue(ua.editsHeaders)
+        assertFalse(ua.needsHeaders)
+        assertEquals(
+            listOf(
+                HeaderOp("User-Agent", HeaderOp.Operation.SET, "Mozilla/5.0 (X11; Linux x86_64) Zenium/1.0"),
+                HeaderOp("Accept-Language", HeaderOp.Operation.APPEND, "fr"),
+                HeaderOp("X-Client-Data", HeaderOp.Operation.REMOVE, null)
+            ),
+            ua.requestHeaderEdits
+        )
+        assertEquals(listOf(HeaderOp("X-Frame-Options", HeaderOp.Operation.REMOVE, null), HeaderOp("X-Edited", HeaderOp.Operation.SET, "1")), ua.responseHeaderEdits)
+        assertTrue(ua.matches(req("https://news.example/", ResourceType.MAIN_FRAME, doc = null)))
+        assertFalse(ua.matches(req("https://news.example/a.js")))
+        assertNull(ua.target("http://news.example/"))
+        // An edit without a header name or with an operation the API does not know is left out;
+        // a rule with no edit left is kept (the desktop compiles it too), and edits nothing.
+        val sparse = rule("""{"id":2,"action":{"type":"modifyHeaders","requestHeaders":[{"operation":"set","value":"x"},{"header":"X-A","operation":"replace","value":"x"},{"header":"X-B","operation":"set"}]},"condition":{}}""")
+        assertEquals(listOf(HeaderOp("X-B", HeaderOp.Operation.SET, null)), sparse.requestHeaderEdits)
+        assertNull(sparse.responseHeaderEdits)
+        val bare = rule("""{"id":3,"action":{"type":"modifyHeaders"},"condition":{}}""")
+        assertTrue(bare.editsHeaders)
+        assertNull(bare.requestHeaderEdits)
+        assertNull(bare.responseHeaderEdits)
+        // The edits are the action's, not a condition: a block's `requestHeaders` key is nothing.
+        val block = rule("""{"id":4,"action":{"type":"block","requestHeaders":[{"header":"X","operation":"remove"}]},"condition":{}}""")
+        assertFalse(block.editsHeaders)
+        assertNull(block.requestHeaderEdits)
+        // A header-conditioned `modifyHeaders` rule: both stages of it compile.
+        val late = rule("""{"id":5,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"x-frame-options","operation":"remove"}]},"condition":{"urlFilter":"x","responseHeaders":[{"header":"x-frame-options"}]}}""")
+        assertTrue(late.editsHeaders)
+        assertTrue(late.needsHeaders)
+        assertTrue(late.matchesHeaders(mapOf("x-frame-options" to listOf("DENY"))))
+    }
+
+    /** The desktop's `applyRequestHeaderOps` / `applyResponseHeaderOps` (`webRequest.ts`), edit for edit. */
+    @Test
+    fun headerEditsApplyAsTheDesktopAppliesThem() {
+        fun op(header: String, operation: String, value: String? = null) = HeaderOp(header, HeaderOp.Operation.fromDnrName(operation)!!, value)
+        val request = linkedMapOf("User-Agent" to "Mozilla/5.0 (Linux; Android 13) WebView", "Accept" to "text/html", "X-Requested-With" to "app.zen.chromium", "Cookie" to "a=1")
+        HeaderOp.applyToRequest(
+            request,
+            listOf(
+                op("user-agent", "set", "Zenium/1.0"), // names compare without regard to case; the rule's spelling stays
+                op("Accept", "append", "application/xhtml+xml"), // single valued: a comma joins
+                op("x-requested-with", "remove"),
+                op("X-New", "append", "n"), // absent: append creates
+                op("X-Set-Nothing", "set"), // no value: nothing set
+                op("Cookie", "set"), // no value: still dropped
+                op("X-Nothing", "remove")
+            )
+        )
+        assertEquals(linkedMapOf("Accept" to "text/html, application/xhtml+xml", "user-agent" to "Zenium/1.0", "X-New" to "n"), request)
+
+        val response = linkedMapOf<String?, List<String>?>(null to listOf("HTTP/1.1 200 OK"), "Content-Type" to listOf("text/html"), "X-Frame-Options" to listOf("DENY"), "Set-Cookie" to listOf("a=1", "b=2"))
+        HeaderOp.applyToResponse(
+            response,
+            listOf(
+                op("x-frame-options", "remove"),
+                op("set-cookie", "append", "c=3"), // multi valued: a line is added
+                op("content-type", "set", "text/plain"),
+                op("X-Absent", "append", "1"),
+                op("X-Nothing", "append"), // no value: nothing appended
+                op("Content-Security-Policy", "set", "default-src 'self'")
+            )
+        )
+        assertEquals(
+            linkedMapOf<String?, List<String>?>(
+                null to listOf("HTTP/1.1 200 OK"), "Set-Cookie" to listOf("a=1", "b=2", "c=3"), "content-type" to listOf("text/plain"),
+                "X-Absent" to listOf("1"), "Content-Security-Policy" to listOf("default-src 'self'")
+            ),
+            response
+        )
+        // The status line's null key is never an edit's target.
+        assertEquals(listOf("HTTP/1.1 200 OK"), response[null])
     }
 
     @Test
@@ -246,7 +335,8 @@ class RulesTest {
         assertEquals(1700000000000L, info.updatedAt)
         assertEquals(12, info.filterCount)
         assertEquals("user.json:1700000000000:12", info.textFingerprint)
-        assertEquals(listOf(3, 2, 1), info.rules.map { it.id })
+        // Effective priority first, then the action's rank (allow 5 > block 3 > modifyHeaders 0).
+        assertEquals(listOf(3, 2, 1, 4), info.rules.map { it.id })
 
         assertNull(RuleSetInfo.parse(JSONObject("""{"id":"x"}""")))
         assertNull(RuleSetInfo.parse(JSONObject("""{"priority":1}""")))
