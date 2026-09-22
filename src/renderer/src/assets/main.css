@@ -7715,7 +7715,9 @@
  * tabular) out on the heading's line, then takes §9.3's 44 target around that 20 line – 12
  * above and below, folded into the heading's 20 / 4 beat by its margins, so the text stays
  * where the beat put it (the rows below are positioned and win the 8 the box reaches under
- * them). Pressed, it shows the window fill as a row does.
+ * them). The box is 44 by declaration, not by its content: the two sizes on one baseline would
+ * otherwise grow the line by a fraction and the heading with it. Pressed, it shows the window
+ * fill as a row does.
  */
 .zen-overview-recent .zen-v2-row {
   color: var(--v2-control-text);
@@ -7744,8 +7746,10 @@
 }
 .zen-recent-device-button {
   display: flex;
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
+  height: 44px;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
