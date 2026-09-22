@@ -482,7 +482,13 @@ describe('the app menu', () => {
     expect(separators(full.shown())).toBe(4)
   })
 
-  it('loses nothing the flat menu could do: every earlier row is a row or a submenu row now', () => {
+  it('loses nothing the flat menu could do: every one of its thirty-two rows, on a host with every capability, is a row or a submenu row now', () => {
+    /**
+     * The flat menu of main at a8cca556 as the Linux build drew it on a web page with a
+     * translate host, a speech engine and the install surface up (the #299 record's "before"
+     * list): thirty-two rows in six groups. The one claim, on the full capability set – the
+     * host-gated rows (Translate Page…, Listen to This Page, Create Shortcut…) included.
+     */
     const before = [
       'New Tab',
       'Search Tabs…',
@@ -498,11 +504,14 @@ describe('the app menu', () => {
       'Add-ons and Themes',
       'Compact Mode',
       'Change Theme…',
-      'Zoom',
+      'Zoom (100%)',
       'Split View',
       'Fullscreen',
       'Find in Page…',
       'Reader View',
+      'Listen to This Page',
+      'Translate Page…',
+      'Create Shortcut…',
       'Print…',
       'Save Page As…',
       'Take Screenshot',
@@ -514,7 +523,12 @@ describe('the app menu', () => {
       'About Zenium 1.2.3',
       'Quit'
     ]
-    const h = harness(DESKTOP)
+    expect(before).toHaveLength(32)
+    const h = pageHarness(
+      { ...DESKTOP, readAloud: true, pinShortcuts: true },
+      { translate: true, speech: true, shortcuts: true }
+    )
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
     appMenu(h)
     // The History page is the submenu's first row and keeps its chord; with nothing closed the
     // recently closed block is §9.17's one sentence – a note in the deemphasised ink, not a
@@ -525,7 +539,8 @@ describe('the app menu', () => {
     expect(history.at(-1)).toMatchObject({ enabled: false, note: true })
     expect(history.at(-1)!.click).toBeUndefined()
     // With a tab closed the block is Chrome's: the header, the entries, Restore All, Clear List
-    // – and every one of the flat menu's rows is somewhere in the tree.
+    // – and every one of the flat menu's thirty-two rows is somewhere in the tree, the top level
+    // still at Firefox's count (twenty rows here, three separators).
     const closed = h.browser.tabs.createTab(
       { url: 'https://closed.example/', active: false },
       h.win
@@ -533,7 +548,9 @@ describe('the app menu', () => {
     h.browser.tabs.closeTab(closed.id, false, h.win)
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
-    for (const label of before) expect(everywhere).toContain(label)
+    for (const label of before) expect(everywhere, label).toContain(label)
+    expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
+    expect(separators(h.shown())).toBe(3)
     expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
       'Show Full History',
       '-',
