@@ -9,11 +9,11 @@ import {
   History,
   Mic,
   Radio,
-  Search,
   Settings,
   VenetianMask
 } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
+import { defaultSearchEngineOf } from '@shared/search'
 import { getHost } from '@shared/url'
 import { MAX_NEW_TAB_SHORTCUTS, newTabSections } from '@shared/newTab'
 import { qrScanAvailable } from '@shared/qrScan'
@@ -43,6 +43,7 @@ import { contentAreaStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { useLongPress } from '../phone/useLongPress'
+import { EngineFieldGlyph } from '../urlbar/EngineFieldGlyph'
 
 interface Props {
   state: UIState
@@ -320,6 +321,13 @@ function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element 
   const voice = voiceSearchAvailable(state.capabilities)
   const camera = qrScanAvailable(state.capabilities)
   const trailing = voice || camera
+  // The engine a search from here goes to, for the field's mark (NTP-09): the same resolution
+  // as the omnibox's, so the page's field and the field it morphs into agree.
+  const engine = defaultSearchEngineOf(
+    state.searchEngines,
+    state.settings.searchEngineId,
+    state.searchEngineControl
+  )
   return (
     // The floating URL bar's field is an opaque panel on the window: a page surface of its own.
     <div
@@ -338,7 +346,9 @@ function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element 
         )}
         onClick={tapFakebox}
       >
-        <Search className="zen-ntp-placeholder h-5 w-5 shrink-0" strokeWidth={1.75} />
+        {/* The magnifier, or the engine's favicon when the engine is not the vendor's default
+            (NTP-09): the double the morph paints carries the same mark (FakeboxMorphLayer). */}
+        <EngineFieldGlyph engine={engine} fallback="magnifier" className="zen-ntp-placeholder" />
         {/* The pill's words (PhoneShell), one string for the address wherever it is asked for. */}
         <span className="zen-ntp-placeholder min-w-0 flex-1 truncate">Search or enter address</span>
       </button>

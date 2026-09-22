@@ -8,6 +8,7 @@ import type {
   ExtensionInfo,
   MenuItemDescriptor,
   PhoneBarPosition,
+  SyncDeviceTabs,
   Tab,
   UIState
 } from '@shared/types'
@@ -55,6 +56,7 @@ import {
   holdScreenshotCard,
   openExtensionsSheet,
   pickScreenshotAction,
+  openSendTabSheet,
   openMediaSheet,
   openOverlay,
   openReaderPreferences,
@@ -258,6 +260,7 @@ function apply(browser: Browser, spec: string): void {
       zoomTabId: null,
       install: null,
       extensionsSheetOpen: false,
+      sendTabSheet: null,
       barEditorOpen: false
     })
     abortPull()
@@ -713,7 +716,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (blocking)
       seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
     if (extensions) seedExtensions(extensions)
-    if (sync) seedSync(sync)
+    if (sync) seedSync(sync, browser)
     if (lastImport) seedImport(lastImport)
     if (translate) seedTranslate(translate, params.has('bar'))
     if (favicon) seedFavicon(favicon)
@@ -802,6 +805,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
         browser.state.commitVolatile()
       }
     }
+    // A seeded sync stands in the core before the menu is built (its Send to your devices item
+    // reads the engine's status), the rest of the seed once the sheet is up, as for every menu.
+    if (sync) seedSync(sync, browser)
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
       if (!uiStore.get().menu) return
@@ -829,7 +835,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     // customise sheet is the new tab page's gear, opened by name over whichever page is up.
     seed()
     if (target.sheet === 'customise') openCustomize()
-    else openExtensionsSheet()
+    else if (target.sheet === 'send-tab') {
+      if (tab) openSendTabSheet(tab.id)
+    } else openExtensionsSheet()
     const then = target.then ?? []
     if (then.length === 0) requestAnimationFrame(() => requestAnimationFrame(finish))
     else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
@@ -1303,12 +1311,15 @@ const SYNC_FIXTURE_TREE =
  * (nothing set up, no folder chosen), `chosen` (the setup draft holds a picked tree, so Turn on
  * sync is live and its sheet has a folder to set up), `busy` (`chosen`, with the engine's
  * `sync.setup` held open so the passphrase sheet stays on its §9.30 busy form once sent), `on`
- * (connected: two other devices, last synced five minutes ago), `empty` (connected, no other
- * device yet), `syncing` (a sync running), `error` (the last sync failed), `lost` (the folder's
- * permission is gone) and `merge` (the first sync waits on the merge question). The scope stays
- * the core's, so a tapped toggle shows its new state.
+ * (connected: two other devices, last synced five minutes ago), `tabs` (`on` with Open tabs
+ * syncing and the two devices' open tabs published: Tabs from other devices is live, the menus
+ * carry Send to your devices, and the core's sync stands in for the engine so they act; see
+ * `standInEngine`), `empty` (connected, no other device yet), `syncing` (a sync running),
+ * `error` (the last sync failed), `lost` (the folder's permission is gone) and `merge` (the
+ * first sync waits on the merge question). The scope stays the core's, so a tapped toggle shows
+ * its new state.
  */
-function seedSync(variant: string): void {
+function seedSync(variant: string, browser: Browser): void {
   unseedSync()
   const chosen = variant === 'chosen' || variant === 'busy'
   syncSetupStore.set({ folder: chosen ? SYNC_FIXTURE_TREE : null })
@@ -1322,11 +1333,119 @@ function seedSync(variant: string): void {
   patch()
   const unpatch = browserStore.subscribe(patch)
   const release = holdSetup(variant)
+  const restore = standInEngine(browser, variant)
   syncSeed = () => {
     unpatch()
     release()
+    restore()
   }
 }
+
+/**
+ * While the `tabs` fixture stands the core's own sync stands in as a connected engine: the menus
+ * read its status (Send to your devices is in the tab menu and the app menu with two devices to
+ * pick from), `sync.tabsFromDevices` answers the fixture's lists (`REMOTE_TABS`: the two devices'
+ * open tabs, as the engine sorts them) and `sync.sendTab` confirms with the engine's toast, "Sent
+ * to Work laptop", writing nothing – the stand-in host has no folder. Every other call goes to
+ * the real engine. Returns the undo.
+ */
+function standInEngine(browser: Browser, variant: string): () => void {
+  if (variant !== 'tabs') return () => undefined
+  const real = browser.sync
+  const status = (): UIState['sync'] =>
+    syncFixture({ sync: real.status() } as UIState, variant, Date.now()).sync
+  const standIn = new Proxy(real, {
+    get: (target, key) => {
+      if (key === 'status') return status
+      if (key === 'tabsFromDevices')
+        return async (): Promise<SyncDeviceTabs[]> => REMOTE_TABS(Date.now())
+      if (key === 'sendTab')
+        return async ({ deviceId }: { deviceId: string }): Promise<void> => {
+          const device = status().devices.find((d) => d.id === deviceId)
+          if (device) pushToast(`Sent to ${device.name}`)
+        }
+      return Reflect.get(target, key)
+    }
+  })
+  Object.defineProperty(browser, 'sync', { value: standIn, configurable: true, writable: true })
+  return () => {
+    Object.defineProperty(browser, 'sync', { value: real, configurable: true, writable: true })
+  }
+}
+
+/** A favicon the stand-in host can draw offline: a 16 px disc in the site's colour. */
+const disc = (fill: string): string =>
+  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="${fill}"/></svg>`)}`
+
+/**
+ * The other devices' open tabs of the `tabs` fixture (ID-28): the laptop's four and the
+ * desktop's two, each list newest activity first as the engine publishes it; one tab without a
+ * favicon for the globe the row falls back to.
+ */
+const REMOTE_TABS = (now: number): SyncDeviceTabs[] => [
+  {
+    deviceId: 'device-desktop',
+    deviceName: 'Home desktop',
+    updatedAt: now - 3 * 60_000,
+    tabs: [
+      {
+        tabId: 'd-1',
+        windowId: null,
+        url: 'https://www.wikipedia.org/wiki/Web_browser',
+        title: 'Web browser - Wikipedia',
+        favicon: disc('#3366cc'),
+        lastActive: now - 4 * 60_000
+      },
+      {
+        tabId: 'd-2',
+        windowId: null,
+        url: 'https://archive.org/details/software',
+        title: 'Software Library : Free Software : Internet Archive',
+        favicon: null,
+        lastActive: now - 50 * 60_000
+      }
+    ]
+  },
+  {
+    deviceId: 'device-laptop',
+    deviceName: 'Work laptop',
+    updatedAt: now - 2 * HOUR_MS,
+    tabs: [
+      {
+        tabId: 'l-1',
+        windowId: null,
+        url: 'https://github.com/BenItBuhner/Zenium/pulls',
+        title: 'Pull requests · BenItBuhner/Zenium',
+        favicon: disc('#24292f'),
+        lastActive: now - 2 * HOUR_MS
+      },
+      {
+        tabId: 'l-2',
+        windowId: null,
+        url: 'https://developer.mozilla.org/en-US/docs/Web/API/Web_Share_API',
+        title: 'Web Share API - Web APIs | MDN',
+        favicon: disc('#000000'),
+        lastActive: now - 3 * HOUR_MS
+      },
+      {
+        tabId: 'l-3',
+        windowId: null,
+        url: 'https://www.figma.com/files/recent',
+        title: 'Recents – Figma',
+        favicon: disc('#a259ff'),
+        lastActive: now - 5 * HOUR_MS
+      },
+      {
+        tabId: 'l-4',
+        windowId: null,
+        url: 'https://news.ycombinator.com/',
+        title: 'Hacker News',
+        favicon: disc('#ff6600'),
+        lastActive: now - 26 * HOUR_MS
+      }
+    ]
+  }
+]
 
 /** Stop holding a seeded sync state over the core's pushes; the setup draft goes with it. */
 function unseedSync(): void {
@@ -1388,10 +1507,15 @@ export function syncFixture(state: UIState, variant: string, now: number): UISta
           { id: 'device-laptop', name: 'Work laptop', lastSeen: now - 2 * HOUR_MS },
           { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000 }
         ]
+  // `tabs`: `on` with Open tabs among what syncs and the devices' lists published (ID-28), so
+  // Tabs from other devices is live and the menus carry Send to your devices (ID-27).
+  const tabs = variant === 'tabs'
   return {
     ...state,
     sync: {
       ...base,
+      scope: tabs ? { ...base.scope, openTabs: true } : base.scope,
+      remoteTabsVersion: tabs ? 1 : base.remoteTabsVersion,
       enabled: true,
       folder: SYNC_FIXTURE_TREE,
       folderName: 'Zenium',

@@ -1393,10 +1393,34 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
       { url: 'offscreen.html', reasons: ['BLOBS'], justification: 'again' }
     ])
     expect(second.error).toBe('Only a single offscreen document may be created.')
+    // And runtime.getContexts lists it already, Chrome's spelling (OneNote Web Clipper asks
+    // for OFFSCREEN_DOCUMENT contexts before it decides to create one; told none, it created a
+    // second time into the refusal above).
+    const loading = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [
+        {
+          contextTypes: ['OFFSCREEN_DOCUMENT'],
+          documentUrls: [`chrome-extension://${ID}/offscreen.html`]
+        }
+      ])
+    ).result as Array<Record<string, unknown>>
+    expect(loading).toHaveLength(1)
+    expect(loading[0]).toMatchObject({
+      contextType: 'OFFSCREEN_DOCUMENT',
+      documentUrl: `chrome-extension://${ID}/offscreen.html`,
+      documentOrigin: `https://${ID}.ext.zenium.invalid`,
+      tabId: -1
+    })
     hello(h, 'off1', 'offscreen', { url: `https://${ID}.ext.zenium.invalid/offscreen.html` })
     await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
+    // Up, it is listed once, as the page's endpoint.
+    const up = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: ['OFFSCREEN_DOCUMENT'] }])
+    ).result as Array<Record<string, unknown>>
+    expect(up).toHaveLength(1)
+    expect(up[0].contextId).toBe('off1')
     // The page has the extension's chrome: its runtime.sendMessage reaches the background as a
     // popup's does, with no tab on the sender.
     message(h, 'off1', { t: 'msg', id: 3, target: {}, data: { blob: 'made' } })
@@ -1849,15 +1873,195 @@ describe('AndroidExtensionRuntime: chrome.permissions', () => {
       permissions: ['webRequest', 'storage'],
       origins: ['https://example.com/*']
     })
-    // Nor can it be requested: it is not a permission of this manifest.
+    // Nor can it be requested: it is not a permission of this manifest (Chrome's lastError).
     const requested = await call(h, 'bg1', 'permissions', 'request', [
       { permissions: ['webRequestBlocking'] }
     ])
-    expect(requested.result).toBe(false)
+    expect(requested.ok).toBe(false)
+    expect(requested.error).toBe('Only permissions specified in the manifest may be requested.')
     const optional = await call(h, 'bg1', 'permissions', 'request', [
       { permissions: ['downloads'] }
     ])
     expect(optional.result).toBe(true)
+  })
+
+  it('a granted optional permission reaches every context, the next boot and the next session; a removal takes it back (desktop round 6 fix C on the phone)', async () => {
+    const h = harness()
+    const m = manifest({
+      permissions: ['storage'],
+      optional_permissions: ['downloads', 'bookmarks'],
+      optional_host_permissions: ['https://api.example.org/*']
+    })
+    await h.runtime.attach(record(h, {}, m))
+    backgroundUp(h, 'bg1', ['permissions.onAdded', 'permissions.onRemoved'])
+    hello(h, 'cs1', 'content')
+    // The boot names the optional set the contexts may still be granted, none of it held yet.
+    const firstUnits = h.kt.calledWith('ext.configure')[0].units as Array<Record<string, unknown>>
+    const firstBoot = JSON.parse(String(firstUnits[0].config)) as Record<string, unknown>
+    expect(firstBoot.extension as Record<string, unknown>).toMatchObject({
+      permissions: ['storage'],
+      optionalPermissions: ['downloads', 'bookmarks']
+    })
+    expect(h.kt.hosts.get(ID)).toBeUndefined()
+
+    const granted = await call(h, 'bg1', 'permissions', 'request', [
+      { permissions: ['downloads'], origins: ['https://api.example.org/*'] }
+    ])
+    expect(granted.result).toBe(true)
+    // Every live context hears the whole granted set at once (the shim defines
+    // `chrome.downloads` from it), the background hears `onAdded`, Kotlin's CORS proxy the host.
+    for (const ep of ['bg1', 'cs1']) {
+      const grants = events(h, ep, '__zen.grants')
+      expect(grants).toHaveLength(1)
+      expect(grants[0].args).toEqual([{ permissions: ['storage', 'downloads'] }])
+    }
+    const added = events(h, 'bg1', 'permissions.onAdded')
+    expect(added).toHaveLength(1)
+    expect(added[0].args).toEqual([
+      { permissions: ['downloads'], origins: ['https://api.example.org/*'] }
+    ])
+    expect(h.kt.hosts.get(ID)).toEqual(['https://api.example.org/*'])
+    expect((await call(h, 'bg1', 'permissions', 'getAll', [])).result).toEqual({
+      permissions: ['storage', 'downloads'],
+      origins: ['https://example.com/*', 'https://api.example.org/*']
+    })
+    expect(
+      (await call(h, 'cs1', 'permissions', 'contains', [{ permissions: ['downloads'] }])).result
+    ).toBe(true)
+    // Asked again: nothing moves, no second event.
+    expect(
+      (await call(h, 'bg1', 'permissions', 'request', [{ permissions: ['downloads'] }])).result
+    ).toBe(true)
+    expect(events(h, 'bg1', 'permissions.onAdded')).toHaveLength(1)
+    // The extension is re-planned so a context started later boots with the set.
+    await until(() => h.kt.calledWith('ext.configure').length >= 2)
+    const replanned = h.kt.calledWith('ext.configure').at(-1)!.units as Array<
+      Record<string, unknown>
+    >
+    const boot = JSON.parse(String(replanned[0].config)) as Record<string, unknown>
+    expect(boot.extension as Record<string, unknown>).toMatchObject({
+      permissions: ['storage', 'downloads'],
+      optionalPermissions: ['bookmarks']
+    })
+    // Kept for the next session, as Chrome's prefs keep the granted set.
+    const saved = h.saved('extensions-runtime.json')
+    expect((saved.grants as Record<string, unknown>)[ID]).toEqual({
+      permissions: ['downloads'],
+      origins: ['https://api.example.org/*']
+    })
+    const next = harness({ files: h.files })
+    await next.runtime.attach(record(next, {}, m))
+    backgroundUp(next, 'bgA')
+    expect((await call(next, 'bgA', 'permissions', 'getAll', [])).result).toEqual({
+      permissions: ['storage', 'downloads'],
+      origins: ['https://example.com/*', 'https://api.example.org/*']
+    })
+    expect(next.kt.hosts.get(ID)).toEqual(['https://api.example.org/*'])
+    const nextUnits = next.kt.calledWith('ext.configure')[0].units as Array<Record<string, unknown>>
+    const nextBoot = JSON.parse(String(nextUnits[0].config)) as Record<string, unknown>
+    expect(nextBoot.extension as Record<string, unknown>).toMatchObject({
+      permissions: ['storage', 'downloads'],
+      optionalPermissions: ['bookmarks']
+    })
+
+    // A required permission cannot be removed; a granted optional one can, and every context
+    // hears the set without it.
+    const required = await call(h, 'bg1', 'permissions', 'remove', [{ permissions: ['storage'] }])
+    expect(required.ok).toBe(false)
+    expect(required.error).toBe('You cannot remove required permissions.')
+    const removed = await call(h, 'bg1', 'permissions', 'remove', [{ permissions: ['downloads'] }])
+    expect(removed.result).toBe(true)
+    expect(events(h, 'cs1', '__zen.grants').at(-1)!.args).toEqual([{ permissions: ['storage'] }])
+    expect(events(h, 'bg1', 'permissions.onRemoved')[0].args).toEqual([
+      { permissions: ['downloads'], origins: [] }
+    ])
+    expect(
+      (await call(h, 'bg1', 'permissions', 'contains', [{ permissions: ['downloads'] }])).result
+    ).toBe(false)
+    expect((h.saved('extensions-runtime.json').grants as Record<string, unknown>)[ID]).toEqual({
+      permissions: [],
+      origins: ['https://api.example.org/*']
+    })
+  })
+
+  it('an optional <all_urls> lets a site pattern be requested and, granted, answers contains for it by containment (Cookie-Editor on the fixture host)', async () => {
+    const h = harness()
+    const m = manifest({
+      permissions: ['cookies', 'storage'],
+      optional_host_permissions: ['<all_urls>']
+    })
+    await h.runtime.attach(record(h, {}, m))
+    backgroundUp(h, 'bg1', ['permissions.onAdded'])
+    const origins = ['http://10.0.2.2/*', 'http://*.2.2/*']
+    // Nothing held yet: `contains` is false, and the popup asks.
+    expect((await call(h, 'bg1', 'permissions', 'contains', [{ origins }])).result).toBe(false)
+    // The request is within the optional set by containment, so it is granted as asked.
+    expect((await call(h, 'bg1', 'permissions', 'request', [{ origins }])).result).toBe(true)
+    expect(events(h, 'bg1', 'permissions.onAdded')[0].args).toEqual([{ permissions: [], origins }])
+    expect(h.kt.hosts.get(ID)).toEqual(origins)
+    expect((await call(h, 'bg1', 'permissions', 'contains', [{ origins }])).result).toBe(true)
+    // A narrower pattern than a granted one is contained too; a foreign scheme is not.
+    expect(
+      (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['http://10.0.2.2/a/*'] }]))
+        .result
+    ).toBe(true)
+    expect(
+      (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['https://10.0.2.2/*'] }]))
+        .result
+    ).toBe(false)
+    // A malformed pattern is Chrome's error, not a silent false.
+    const bad = await call(h, 'bg1', 'permissions', 'request', [{ origins: ['example.com'] }])
+    expect(bad.ok).toBe(false)
+    expect(bad.error).toContain('Invalid value for origin pattern example.com')
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.action badge colours', () => {
+  it('takes every CSS colour string Chrome takes and the [r, g, b, a] array, refuses the rest, and answers the array back (desktop round 6 fix A on the phone)', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    // Unset: Chrome's transparent black for the background, white for the text.
+    expect((await call(h, 'bg1', 'action', 'getBadgeBackgroundColor', [{}])).result).toEqual([
+      0, 0, 0, 0
+    ])
+    expect((await call(h, 'bg1', 'action', 'getBadgeTextColor', [{}])).result).toEqual([
+      255, 255, 255, 255
+    ])
+    const set = async (color: unknown): Promise<Record<string, unknown>> =>
+      call(h, 'bg1', 'action', 'setBadgeBackgroundColor', [{ color }])
+    const get = async (): Promise<unknown> =>
+      (await call(h, 'bg1', 'action', 'getBadgeBackgroundColor', [{}])).result
+    // Checker Plus for Gmail's named colour, HubSpot's hsl(), Keywords Everywhere's 4-array.
+    expect((await set('white')).ok).toBe(true)
+    expect(await get()).toEqual([255, 255, 255, 255])
+    expect(h.runtime.api.toolbarAction(ID)?.badgeBackgroundColor).toBe('rgba(255, 255, 255, 1.000)')
+    expect((await set('hsl(120, 100%, 25%)')).ok).toBe(true)
+    expect(await get()).toEqual([0, 128, 0, 255])
+    expect((await set('#ff000080')).ok).toBe(true)
+    expect(await get()).toEqual([255, 0, 0, 128])
+    expect((await set('rgba(10, 20, 30, 0.5)')).ok).toBe(true)
+    expect(await get()).toEqual([10, 20, 30, 128])
+    expect((await set([1, 2, 3, 4])).ok).toBe(true)
+    expect(await get()).toEqual([1, 2, 3, 4])
+    expect((await set([1, 2, 3])).ok).toBe(true)
+    expect(await get()).toEqual([1, 2, 3, 255])
+    // What Chrome refuses: not a colour, a short array, a channel out of range.
+    for (const bad of ['not-a-colour', 'rgb(1, 2)', [1, 2], [0, 0, 256], [1.5, 2, 3, 4]]) {
+      const answer = await set(bad)
+      expect(answer.ok).toBe(false)
+      expect(answer.error).toBe('Invalid value for color.')
+    }
+    // The refused values left the last good one standing.
+    expect(await get()).toEqual([1, 2, 3, 255])
+    // The text colour the same way.
+    expect((await call(h, 'bg1', 'action', 'setBadgeTextColor', [{ color: 'black' }])).ok).toBe(
+      true
+    )
+    expect((await call(h, 'bg1', 'action', 'getBadgeTextColor', [{}])).result).toEqual([
+      0, 0, 0, 255
+    ])
+    expect(h.runtime.api.toolbarAction(ID)?.badgeTextColor).toBe('rgba(0, 0, 0, 1.000)')
   })
 })
 

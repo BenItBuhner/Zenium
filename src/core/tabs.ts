@@ -2253,6 +2253,9 @@ export class TabManager {
         )
         if (section === 'regular' && target.folderId !== tab.folderId)
           this.moveToFolder(tabId, target.folderId)
+        // Beside a pane of its own split the tab stays in it (the strip draws the split as one
+        // row, so that slot is the row's own); anywhere else it leaves the split.
+        if (target.splitGroupId !== tab.splitGroupId) this.leaveSplitOnDrop(tab)
         return true
       }
       case 'section': {
@@ -2265,6 +2268,7 @@ export class TabManager {
           win
         )
         if (section === 'regular' && tab.folderId) this.moveToFolder(tabId, null)
+        this.leaveSplitOnDrop(tab)
         return true
       }
       case 'folder': {
@@ -2278,6 +2282,7 @@ export class TabManager {
           )
         }
         this.moveToFolder(tabId, folder.id)
+        this.leaveSplitOnDrop(tab)
         return true
       }
       case 'space': {
@@ -2332,6 +2337,19 @@ export class TabManager {
         return true
       }
     }
+  }
+
+  /**
+   * A pane dropped in the strip – beside a tab of another split or of none, on a section, into
+   * a folder – leaves its split and stays where it landed (design language v2 §9.35: the strip
+   * draws a split as one row, Zen's split-view group, and a tab dragged out of that row is out of
+   * the split, as a tab dragged out of Zen's group is). The split goes on without it; with one
+   * pane left it dissolves. A drop on the content area (an edge, a pane) is the way in.
+   */
+  private leaveSplitOnDrop(tab: Tab): void {
+    if (!tab.splitGroupId) return
+    removeTabFromSplit(this.model, tab.id)
+    this.browser.state.commit()
   }
 
   /** Index within the target's section once the dragged tab is taken out of that list. */

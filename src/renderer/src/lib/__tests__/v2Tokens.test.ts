@@ -76,9 +76,25 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // document, reading the ring token, and the one text-selection rule after it (§9.6, reading
   // `--v2-selection`); it ends where the first components layer begins.
   [" * The chrome's focus ring (v2 §1, a11y-10)", '@layer components {'],
+  // A web app's standalone window's title bar (components/app/AppTitleBar.tsx, MW-23): a window
+  // surface (§9.29) in the chassis' first components layer – the theme's ink, the title's weight
+  // and line from the scale. It ends where the tab row begins, so it is cut before the row.
+  ['.zen-app-titlebar {', '.zen-tab {'],
+  // The sidebar's tab row (components/sidebar/TabItem.tsx, SpacePanel.tsx; §5, §9.29, shell pass
+  // 7(a)): the hover and active fills in the window family. It ends where the split row begins.
+  ['.zen-tab {', '.zen-split-row {'],
+  // The split group's row in the sidebar (components/sidebar/SplitGroupRow.tsx, §9.35): the
+  // container's hover and selected fills and its segments' 60 % fill in the window family (§9.29).
+  ['.zen-split-row {', '.zen-essential {'],
+  // An Essentials tile (components/sidebar/Essentials.tsx; §5, §9.29): the window fill at rest,
+  // the hover fill on hover and on the active tile. It ends where the drop-into rules begin.
+  ['.zen-essential {', '[data-drop-into] {'],
   // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
   // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
   ['[data-drop-into] {', '.zen-panel {'],
+  // The tab row's throbber (components/sidebar/Favicon.tsx, tabs-41): its two phases in the
+  // control roles' deemphasised ink and accent (§9.29), the v1 inks as fallbacks off a surface.
+  ['.zen-tab-throbber {', '.zen-tab-favicon-in {'],
   // The overlay header (§9.7, overlays/OverlayShell.tsx): the title on the type scale, the
   // hairline in the border token once the body scrolls under it.
   ['.zen-overlay-header {', '/* The 1px outline is a spread shadow'],
@@ -165,10 +181,12 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // "Add to Home screen": what the install and name-edit sheets add to the chassis – app tile,
   // name and origin, the name field's label, the screenshot strip (components/phone/InstallSheet.tsx).
   ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back'],
-  // A web app's standalone window's title bar (components/app/AppTitleBar.tsx, MW-23): a window
-  // surface (§9.29) in the chassis' first components layer – the theme's ink, the title's weight
-  // and line from the scale.
-  ['.zen-app-titlebar {', '.zen-tab {']
+  // The toolbar icon button (§9.3, shell pass 7(a)): the 28 box's hover and pressed fills in the
+  // window family's `--v2-window-fill-hover` (§9.29), the resting opacity on the glyph.
+  [
+    '  /*\n   * The toolbar icon button (design language v2 §9.3)',
+    " * A web app's standalone window"
+  ]
 ]
 
 /**
@@ -210,9 +228,19 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/security/SecurityPromptDialog.tsx',
   'components/security/glyph.ts',
   // The address pill's blocked pop-ups chip and its count (#62) and the sidebar's tab count
-  // badge, drawn in their surface's family through the §9.29 control roles.
+  // badge, drawn in their surface's family through the §9.29 control roles; the pill's own fill
+  // and its chips' hover fills the same way (shell pass 7(a)), the zoom chip's among them.
   'components/sidebar/SidebarTop.tsx',
   'components/sidebar/SpacePanel.tsx',
+  'components/zoom/ZoomChip.tsx',
+  // The sidebar's rows on the window family (shell pass 7(a), §5 / §9.29): a row's indicator
+  // inks and its rename field's fill (TabItem), the Essentials grid's empty state, the bottom
+  // bar's space switcher fills and status line (SidebarBottom); the empty space-glyph dot's
+  // ring at §9.3's glyph stroke (SpaceGlyph, the lead's #226 note).
+  'components/sidebar/TabItem.tsx',
+  'components/sidebar/Essentials.tsx',
+  'components/sidebar/SidebarBottom.tsx',
+  'components/SpaceGlyph.tsx',
   // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
   'components/siteinfo/SiteInfoSheet.tsx',
   // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
@@ -295,6 +323,7 @@ const SURFACE = [
   'nav-active',
   'window-fill',
   'window-fill-hover',
+  'window-border',
   'selected'
 ].map((n) => `--v2-${n}`)
 
@@ -429,12 +458,14 @@ describe('design language v2 tokens', () => {
     // block and again in the phone block and the tablet block, four reads each), the tab card's
     // title row `--zen-overview-card-header` derives from the small line box (§9.21, A11Y-05:
     // once at rest, once as the two-line row from scale 1.5), the group card's title row
-    // `--zen-overview-group-header` from the same line box (one line at every size), and the two
-    // §9.29 family blocks map the tokens onto the control roles.
+    // `--zen-overview-group-header` from the same line box (one line at every size), the window
+    // chrome's hairline alias `--zen-border` reads the v2 window border (§9.29, the shell pass),
+    // and the two §9.29 family blocks map the tokens onto the control roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      9 + 4 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
+      9 + 4 + 4 + 8 + 3 + 1 + familyReads.reduce((a, b) => a + b, 0)
     )
+    expect(inside).toMatch(/--zen-border: var\(--v2-window-border\)/)
     expect(inside).toMatch(/--zen-overview-card-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/)
     expect(inside).toMatch(
       /--zen-overview-group-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/

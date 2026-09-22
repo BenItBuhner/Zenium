@@ -4,19 +4,35 @@ export const SPLIT_GAP = 6
 /** Wider gap on touch screens: the gutter between panes is the only place a finger can grab. */
 export const SPLIT_GAP_TOUCH = 12
 export const SPLIT_HEADER = 24
+/**
+ * The active pane's indicator (design language v2 §9.35, Zen's `--zen-active-split-outline-color`):
+ * a 2 px `--zen-accent` outline inside the pane's frame's radius. The page is a native view,
+ * which nothing in the chrome paints over, so every pane's view sits this far inside its
+ * frame – the band the outline takes on the active pane and leaves bare on the others, as Zen's
+ * transparent outline does – and no pane moves when the active one changes.
+ */
+export const SPLIT_OUTLINE = 2
+
+/** A pane of a split on screen. */
+export interface SplitPane {
+  tabId: string
+  /** The controls' strip above the pane. */
+  header: Rect
+  /** The pane's frame under its header: the rounded box the active pane's outline follows. */
+  frame: Rect
+  /** The page's view inside the frame, `SPLIT_OUTLINE` in on every side. */
+  rect: Rect
+}
 
 /**
  * Compute where each tab of a split group goes inside `area`. Every pane reserves a header
- * strip for the split controls (Zen draws them as an overlay on top of the active pane).
+ * strip for the split controls (Zen draws them as an overlay on top of the active pane), and
+ * its view keeps the outline's band inside its frame (`SPLIT_OUTLINE`).
  *
  * Layout semantics follow Zen: `vertical` = vertical separator (tabs side by side),
  * `horizontal` = horizontal separator (tabs stacked), `grid` = 2 columns, wrapping.
  */
-export function splitPaneRects(
-  area: Rect,
-  group: SplitGroup,
-  gap = SPLIT_GAP
-): Array<{ tabId: string; rect: Rect; header: Rect }> {
+export function splitPaneRects(area: Rect, group: SplitGroup, gap = SPLIT_GAP): SplitPane[] {
   const n = group.tabIds.length
   const sizes = normalise(group.sizes, n)
   const cells: Rect[] = []
@@ -41,14 +57,21 @@ export function splitPaneRects(
   }
   return group.tabIds.map((tabId, i) => {
     const cell = cells[i]
+    const frame = {
+      x: cell.x,
+      y: cell.y + SPLIT_HEADER,
+      width: cell.width,
+      height: Math.max(0, cell.height - SPLIT_HEADER)
+    }
     return {
       tabId,
       header: { x: cell.x, y: cell.y, width: cell.width, height: SPLIT_HEADER },
+      frame,
       rect: {
-        x: cell.x,
-        y: cell.y + SPLIT_HEADER,
-        width: cell.width,
-        height: Math.max(0, cell.height - SPLIT_HEADER)
+        x: frame.x + SPLIT_OUTLINE,
+        y: frame.y + SPLIT_OUTLINE,
+        width: Math.max(0, frame.width - 2 * SPLIT_OUTLINE),
+        height: Math.max(0, frame.height - 2 * SPLIT_OUTLINE)
       }
     }
   })
@@ -89,7 +112,14 @@ export function placementsFor(
   gap = SPLIT_GAP
 ): ViewPlacement[] {
   if (group && tabIds.length > 1) {
-    return splitPaneRects(area, group, gap).map((p) => ({ tabId: p.tabId, rect: p.rect, radius }))
+    // The view's corners stay concentric with its frame's (§2): the frame's radius less the
+    // outline's band the view sits inside.
+    const inner = Math.max(0, radius - SPLIT_OUTLINE)
+    return splitPaneRects(area, group, gap).map((p) => ({
+      tabId: p.tabId,
+      rect: p.rect,
+      radius: inner
+    }))
   }
   return tabIds.slice(0, 1).map((tabId) => ({ tabId, rect: area, radius }))
 }

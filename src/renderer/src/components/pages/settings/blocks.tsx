@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useState } from 'react'
-import { Check, CircleAlert, Copy } from 'lucide-react'
+import { Check, CircleAlert, Copy, Globe } from 'lucide-react'
 import type {
   ContainerColor,
   ContainerIcon as ContainerIconName,
@@ -572,6 +572,26 @@ export function EngineGlyph({ engine }: { engine: SearchEngine }): JSX.Element {
     )
   }
   return <span className="zen-settings-engine-glyph">{engine.glyph}</span>
+}
+
+/**
+ * A page's favicon in a row's 16 px glyph slot (Tabs from other devices), the engine glyph's
+ * frame; the globe the history rows fall back to when the page offered none or it failed to load.
+ * Remembering *which* address failed makes a new one try again without an effect.
+ */
+export function FaviconGlyph({ src }: { src: string | null | undefined }): JSX.Element {
+  const [brokenSrc, setBrokenSrc] = useState<string | null>(null)
+  if (!src || brokenSrc === src) return <Globe className="zen-settings-glyph" aria-hidden="true" />
+  return (
+    <img
+      src={src}
+      alt=""
+      className="zen-settings-glyph zen-settings-engine-favicon"
+      referrerPolicy="no-referrer"
+      draggable={false}
+      onError={() => setBrokenSrc(src)}
+    />
+  )
 }
 
 /**

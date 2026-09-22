@@ -14,6 +14,7 @@ import {
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { Essentials } from './Essentials'
 import { SidebarBottom } from './SidebarBottom'
 import { SidebarTop } from './SidebarTop'
@@ -154,7 +155,7 @@ function LocalWindowHeader({ state, compact }: { state: UIState; compact: boolea
           disabled={!canMove}
           onClick={() => setOpen(!open)}
         >
-          <FolderInput className="h-3.5 w-3.5" />
+          <FolderInput className={V2_TRAILING_GLYPH} />
         </button>
       )}
       {open && (

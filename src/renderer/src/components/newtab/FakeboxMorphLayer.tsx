@@ -1,7 +1,8 @@
 import type { JSX } from 'react'
 import { useLayoutEffect, useRef } from 'react'
-import { Camera, Mic, Search } from 'lucide-react'
+import { Camera, Mic } from 'lucide-react'
 import { qrScanAvailable } from '@shared/qrScan'
+import { defaultSearchEngineOf } from '@shared/search'
 import { voiceSearchAvailable } from '@shared/voice'
 import { fakeboxMorphStore, setFakeboxPainter, tapFakebox } from '@renderer/lib/fakeboxMorph'
 import {
@@ -11,6 +12,7 @@ import {
   widestPoseWidth
 } from '@renderer/lib/motion/fakebox'
 import { browserStore, uiStore } from '@renderer/lib/ui'
+import { EngineFieldGlyph } from '../urlbar/EngineFieldGlyph'
 
 /**
  * The new tab page's field on its way (NTP-02 / MOT-08, v2 §11.8): a double of the field, laid
@@ -59,11 +61,14 @@ function FakeboxDouble(): JSX.Element {
   const voice = capabilities ? voiceSearchAvailable(capabilities) : false
   const camera = capabilities ? qrScanAvailable(capabilities) : false
   const glyphs = (voice ? 1 : 0) + (camera ? 1 : 0)
-  // The omnibox's engine chip, as its field shows it over an empty new-tab edit.
+  // The engine both fields mark (NTP-09) – the omnibox's chip over an empty new-tab edit, the
+  // page field's glyph – resolved as the omnibox resolves it (an extension's engine included).
   const engine = state
-    ? (state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
-      state.searchEngines[0] ??
-      null)
+    ? defaultSearchEngineOf(
+        state.searchEngines,
+        state.settings.searchEngineId,
+        state.searchEngineControl
+      )
     : null
 
   // Before the first paint, so the double is never seen anywhere but at its pose.
@@ -114,7 +119,11 @@ function FakeboxDouble(): JSX.Element {
               ref={fieldWordsRef}
               className="zen-fakebox-content flex shrink-0 items-center gap-3 whitespace-nowrap"
             >
-              <Search className="h-5 w-5 shrink-0" strokeWidth={1.75} />
+              {engine ? (
+                <EngineFieldGlyph engine={engine} fallback="magnifier" />
+              ) : (
+                <span className="h-5 w-5 shrink-0" />
+              )}
               <span className="min-w-0 flex-1 truncate">{PLACEHOLDER}</span>
             </span>
           </span>
@@ -142,9 +151,11 @@ function FakeboxDouble(): JSX.Element {
               ref={omniWordsRef}
               className="zen-fakebox-content flex shrink-0 items-center gap-2.5 whitespace-nowrap"
             >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--zen-element-bg)] text-[11px] font-semibold">
-                {engine?.glyph ?? ''}
-              </span>
+              {engine ? (
+                <EngineFieldGlyph engine={engine} fallback="tile" />
+              ) : (
+                <span className="h-7 w-7 shrink-0 rounded-full bg-[var(--zen-element-bg)]" />
+              )}
               <span className="min-w-0 flex-1 truncate text-[15px] text-[var(--zen-muted)]">
                 {PLACEHOLDER}
               </span>

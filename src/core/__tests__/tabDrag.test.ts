@@ -1000,6 +1000,31 @@ describe('dropTab', () => {
     expect(order()).toEqual([a.id, c.id, b.id])
   })
 
+  it('a pane dropped in the strip leaves its split unless it lands beside a sibling (§9.35)', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const a = f.openPage(win, 'https://a.example')
+    const b = f.openPage(win, 'https://b.example')
+    const c = f.openPage(win, 'https://c.example')
+    const d = f.openPage(win, 'https://d.example')
+    f.browser.tabs.createSplit([a.id, b.id, c.id], 'vertical', win)
+    const groupId = f.browser.tabs.tab(a.id)?.splitGroupId ?? ''
+    expect(groupId).not.toBe('')
+    // Beside a sibling: the split row's own slot, so the pane stays in the split.
+    expect(f.browser.tabs.dropTab(a.id, `tab:${b.id}:after`, win)).toBe(true)
+    expect(f.browser.tabs.tab(a.id)?.splitGroupId).toBe(groupId)
+    // Beside a tab of no split: out of the split, the split going on without it.
+    expect(f.browser.tabs.dropTab(a.id, `tab:${d.id}:after`, win)).toBe(true)
+    expect(f.browser.tabs.tab(a.id)?.splitGroupId).toBeNull()
+    expect(f.browser.state.model.splitGroups[groupId].tabIds).toEqual([b.id, c.id])
+    expect(win.activeSpace().tabIds).toEqual([b.id, c.id, d.id, a.id])
+    // The section's end: out, and the split left with one pane dissolves.
+    expect(f.browser.tabs.dropTab(b.id, `section:regular:${win.activeSpace().id}`, win)).toBe(true)
+    expect(f.browser.tabs.tab(b.id)?.splitGroupId).toBeNull()
+    expect(f.browser.tabs.tab(c.id)?.splitGroupId).toBeNull()
+    expect(f.browser.state.model.splitGroups[groupId]).toBeUndefined()
+  })
+
   it('refuses a key that names nothing', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()

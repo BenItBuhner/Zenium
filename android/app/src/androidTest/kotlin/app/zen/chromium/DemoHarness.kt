@@ -6,6 +6,7 @@ import android.app.Activity
 import android.app.UiAutomation
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
@@ -201,15 +202,59 @@ abstract class DemoHarness(
         SystemClock.sleep(4_000)
     }
 
-    /** A system dialog (an ANR of some other app, say) on top of the browser would take the touches. */
+    /**
+     * A system dialog (an ANR of some other app, say) on top of the browser would take the
+     * touches: a back sends it away. The home screen in front is the browser's task put behind
+     * it (the omnibox polish run's dark act: a home key – the window manager's `Close system
+     * dialogs` and the launcher's start from uid 0 together are its path – a moment after the
+     * warm-up's first pill tap, while the activity was relaunching under a colour scheme switch
+     * and the window's height flickered a nav bar's 24 dp: the tap's likeliest landing was the
+     * home button), and no back brings a task back: the browser's own activity is started again
+     * through the shell instead – `singleTask`, so the running task comes to the front as it is,
+     * nothing re-created – as it is for anything a back did not clear. Said in the log either way.
+     */
     protected fun ensureForeground() {
-        repeat(5) {
+        repeat(5) { attempt ->
             val top = ui.rootInActiveWindow?.packageName?.toString()
             if (top == null || top == app.packageName) return
-            Log.w(tag, "window of $top is in front; sending back")
-            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-            SystemClock.sleep(1_000)
+            if (attempt > 0 || top == homePackage) {
+                Log.w(tag, "window of $top is in front; bringing the browser's task back")
+                shellCommand("am start -a android.intent.action.MAIN -n ${app.packageName}/${MainActivity::class.java.name}")
+                SystemClock.sleep(2_500)
+            } else {
+                Log.w(tag, "window of $top is in front; sending back")
+                ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                SystemClock.sleep(1_000)
+            }
         }
+    }
+
+    /**
+     * Where a finger tapping the address pill goes: the tree's pill when its centre is in the
+     * window's touchable band, the measured [pill] when the tree has it in a system bar (a stale
+     * tree mid-relaunch put the omnibox polish run's dark warm-up tap on the home button and the
+     * browser's task behind the launcher; [ensureForeground] tells the rest). A finger never goes
+     * where the system takes the touch. Shared: every driver that taps the pill by its label is
+     * open to the same stale tree.
+     */
+    protected fun pillPoint(): PointF {
+        ensureForeground()
+        val found = findByLabelPrefix(PILL_LABEL)
+        val target = when {
+            found == null -> pill
+            touchable.contains(found.centerX(), found.centerY()) -> found
+            else -> {
+                Log.w(tag, "the tree's pill $found is outside the touchable band $touchable; the measured pill $pill instead")
+                pill
+            }
+        }
+        return PointF(target.exactCenterX(), target.exactCenterY())
+    }
+
+    /** The device's home screen (the launcher), by the system's own answer; null when it has none. */
+    private val homePackage: String? by lazy {
+        val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        runCatching { app.packageManager.resolveActivity(home, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName }.getOrNull()
     }
 
     private fun measure() {

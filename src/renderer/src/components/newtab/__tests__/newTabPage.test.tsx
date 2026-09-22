@@ -6,6 +6,7 @@ import type { Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { DEFAULT_NEW_TAB_SETTINGS } from '@shared/newTab'
 import { DEFAULT_PRIVACY_SETTINGS, emptyPrivacyStatus } from '@shared/privacy'
+import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { BLANK_URL } from '@shared/url'
 
 /*
@@ -68,8 +69,10 @@ const state = {
   settings: {
     newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
     privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
-    colorScheme: 'light'
+    colorScheme: 'light',
+    searchEngineId: 'google'
   },
+  searchEngines: DEFAULT_SEARCH_ENGINES,
   newTabShortcuts: [],
   newTabHiddenHosts: [],
   bookmarks: [],
@@ -233,5 +236,45 @@ describe('the new tab route keyed on the container', () => {
     expect(priv).not.toBeNull()
     expect(priv).not.toBe(regular)
     expect(regular.isConnected).toBe(false)
+  })
+})
+
+describe('the field’s engine mark (NTP-09)', () => {
+  const withEngine = (id: string): UIState =>
+    ({ ...state, settings: { ...state.settings, searchEngineId: id } }) as UIState
+  const slot = (): HTMLElement =>
+    host!.querySelector<HTMLElement>('.zen-ntp-field [data-testid="engine-field-glyph"]')!
+
+  it('shows the magnifier for the vendor’s default, and no favicon', () => {
+    render(tab('r', 'default'), withEngine('google'))
+    expect(slot().querySelector('svg')).not.toBeNull()
+    expect(slot().querySelector('img')).toBeNull()
+  })
+
+  it('shows the chosen engine’s favicon at 20 once it loads, the magnifier until then', () => {
+    render(tab('r', 'default'), withEngine('duckduckgo'))
+    const img = slot().querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+    expect(img.getAttribute('src')).toBe('https://duckduckgo.com/favicon.ico')
+    // Not yet loaded: the magnifier is painted, the image held out of the slot.
+    expect(slot().querySelector('svg')).not.toBeNull()
+    expect(img.className).toContain('invisible')
+    act(() => {
+      img.dispatchEvent(new Event('load'))
+    })
+    expect(slot().querySelector('svg')).toBeNull()
+    expect(img.className).not.toContain('invisible')
+    expect(img.className).toContain('h-5 w-5')
+    // Arrived after the fallback was painted: it fades in place (§11.4).
+    expect(img.dataset.arrived).toBe('true')
+  })
+
+  it('keeps the magnifier when the favicon fails to load', () => {
+    render(tab('r', 'default'), withEngine('ecosia'))
+    const img = slot().querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+    act(() => {
+      img.dispatchEvent(new Event('error'))
+    })
+    expect(slot().querySelector('svg')).not.toBeNull()
+    expect(slot().querySelector('img')).toBeNull()
   })
 })

@@ -1,4 +1,4 @@
-import { matchesAnyPattern } from '@core/extensions/api/matchPattern'
+import { matchesAnyPatternOrigin } from '@core/extensions/api/matchPattern'
 import { toServedUrl } from '@core/extensions/runtime/extensionUrls'
 
 /**
@@ -45,7 +45,9 @@ export function proxiesUrl(
 ): boolean {
   if (!/^https?:\/\//i.test(url)) return false
   if (url.startsWith(options.origin + '/')) return false
-  return matchesAnyPattern(url, options.hostPermissions)
+  // By security origin, as Chrome's CORS allowlist reads a host permission: its path is not
+  // consulted (`https://mail.google.com/` reaches `/mail/u/0/feed/atom`).
+  return matchesAnyPatternOrigin(url, options.hostPermissions)
 }
 
 /** Install the patched `fetch` and `XMLHttpRequest` on an extension page's window. */

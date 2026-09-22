@@ -93,15 +93,17 @@ class CorsProxy(private val cookies: Cookies, private val userAgent: () -> Strin
     /**
      * Whether the proxy answers `request` from a page on `extensionOrigin`: an http(s) request off
      * that origin carrying it as the CORS `Origin` (a fetch, an XHR, a `crossorigin` element; a
-     * plain `<img>` or `<script>` sends none and needs no CORS), to a host in `hosts`, and not one
-     * the bootstrap marked as its own to send ([SKIP]).
+     * plain `<img>` or `<script>` sends none and needs no CORS), to the security origin of a host
+     * in `hosts` (the pattern's path is not consulted, as Chrome's CORS allowlist for an extension's
+     * host permissions takes none: `https://mail.google.com/` reaches the whole origin), and not
+     * one the bootstrap marked as its own to send ([SKIP]).
      */
     fun applies(request: Request, extensionOrigin: String, hosts: List<MatchPattern>): Boolean {
         if (!request.url.startsWith("http://") && !request.url.startsWith("https://")) return false
         if (request.url.startsWith("$extensionOrigin/")) return false
         if (request.header("Origin") != extensionOrigin) return false
         if (request.header(PROXY_HEADER) == SKIP) return false
-        return MatchPattern.anyMatches(hosts, request.url)
+        return MatchPattern.anyMatchesOrigin(hosts, request.url)
     }
 
     /** Answer `request` (a preflight or the request itself); null when the network failed and the WebView should try. */
