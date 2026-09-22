@@ -9378,7 +9378,11 @@
  * The dialogs a desktop row opens (`dialogs.tsx`, §9.5, §9.23): the shared `.zen-v2-dialog`
  * chassis at the form width in the frame's dialog host, a title block over a body that scrolls
  * between the title and its footer, 16 under the last control (§9.25). The layer sits outside
- * the page host, so it states the page's type itself, as the phone sheets do.
+ * the page host, so it states the page's type itself, as the phone sheets do. Each dialog is a
+ * stacking context of its own: the slot lays two stacked dialogs (§9.24 – a prompt over a
+ * form) in one grid cell as static siblings, and without one the browser paints both panels
+ * first and then both dialogs' text, so the lower dialog's rows and buttons drew through the
+ * prompt's panel once its pop's transform had ended.
  */
 .zen-settings-dialog {
   display: flex;
@@ -9388,6 +9392,7 @@
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
   user-select: none;
+  isolation: isolate;
 }
 .zen-settings-dialog-body {
   display: flex;
