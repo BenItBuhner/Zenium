@@ -2,12 +2,21 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Rect } from '@shared/types'
 import { POPOVER_HEIGHT_FLOOR, POPOVER_MARGIN } from '@renderer/lib/portals'
-import { PANEL_INSET, besideOrigin, layoutRect, placeBeside, rowRect } from '../panelGeometry'
+import {
+  CASCADE_OVERLAP,
+  PANEL_INSET,
+  besideOrigin,
+  layoutRect,
+  placeBeside,
+  rowRect
+} from '../panelGeometry'
 
 /*
  * The cascading folder panels' geometry (design-language-v2-draft §5, §9.20): a nested panel
- * stands flush beside the panel holding its folder's row, its first row on that row, and keeps
- * 8 inside the window by flipping to the other side, sliding, or shrinking – in that order.
+ * stands beside the panel holding its folder's row overlapping it by one pixel – so the two
+ * hairlines share that pixel and no 2 px seam is drawn where they meet – its first row on that
+ * row, and keeps 8 inside the window by flipping to the other side, sliding, or shrinking – in
+ * that order.
  */
 
 const viewport = { width: 1600, height: 1000 }
@@ -23,33 +32,46 @@ const rowAt = (i: number): Rect => ({
 const size = { width: 240, height: 200 }
 
 describe('placeBeside', () => {
-  it('stands flush on the parent’s trailing edge, its first row on the folder row (the inset above it)', () => {
+  it('stands on the parent’s trailing edge overlapping it by one pixel – the two hairlines share it – its first row on the folder row (the inset above it)', () => {
     const row = rowAt(3)
     expect(placeBeside(row, parent, viewport, size)).toEqual({
       side: 'below',
       edge: 'after',
-      left: parent.x + parent.width,
+      left: parent.x + parent.width - 1,
       top: row.y - PANEL_INSET,
       width: 240,
       maxHeight: 200
     })
   })
 
+  it('the seam is one pixel: the child’s leading hairline on the parent’s trailing one, gap 0 border to border (§9.20)', () => {
+    expect(CASCADE_OVERLAP).toBe(1)
+    const box = placeBeside(rowAt(0), parent, viewport, size)
+    // The parent's last pixel column is `parent.x + parent.width - 1`: the child starts on it.
+    expect(box.left).toBe(parent.x + parent.width - 1)
+    expect(parent.x + parent.width - box.left).toBe(1)
+  })
+
   it('the inset is the panel’s border plus the menu’s 6 padding, so row lines up with row', () => {
     expect(PANEL_INSET).toBe(1 + 6)
   })
 
-  it('flips to the parent’s leading edge when the trailing side would cross the margin', () => {
+  it('flips to the parent’s leading edge when the trailing side would cross the margin, the same one pixel over the parent’s leading hairline', () => {
     const wide: Rect = { ...parent, x: viewport.width - POPOVER_MARGIN - 100 - parent.width }
     const row = { ...rowAt(0), x: wide.x + 5 }
     const box = placeBeside(row, wide, viewport, size)
     expect(box.edge).toBe('before')
-    expect(box.left).toBe(wide.x - size.width)
-    expect(box.left + box.width).toBe(wide.x)
+    expect(box.left).toBe(wide.x - size.width + 1)
+    expect(box.left + box.width).toBe(wide.x + 1)
   })
 
   it('keeps the trailing side when it fits exactly inside the margin', () => {
-    const snug: Rect = { ...parent, x: viewport.width - POPOVER_MARGIN - size.width - parent.width }
+    // The overlap gives the child one more pixel of room: a parent one pixel nearer the margin
+    // than flush placement would allow still keeps the trailing side.
+    const snug: Rect = {
+      ...parent,
+      x: viewport.width - POPOVER_MARGIN - size.width - parent.width + 1
+    }
     const box = placeBeside(rowAt(0), snug, viewport, size)
     expect(box.edge).toBe('after')
     expect(box.left + box.width).toBe(viewport.width - POPOVER_MARGIN)

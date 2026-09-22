@@ -7,7 +7,8 @@ import {
   COVER_WAIT_MS,
   coverStatus,
   coverStore,
-  decideHidden
+  decideHidden,
+  hideFollowsCover
 } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
 import { landingStore, notePlacements } from '@renderer/lib/fullscreenLanding'
@@ -29,11 +30,11 @@ export interface LayoutInfo {
   /** Viewport rect in window coordinates (null before first measure). */
   area: Rect | null
   /**
-   * Whether chrome covers the content area, so the chrome paints the page's picture there. On
-   * Android the host is told to hide the page views a little later than this turns true: once
-   * that picture is painted (see `lib/cover.ts`); and it stays true a little after the chrome
-   * has uncovered the page: until the host has drawn the live view back (`lib/pageView.ts`), so
-   * the picture never leaves before the page is there to take its place.
+   * Whether chrome covers the content area, so the chrome paints the page's picture there. The
+   * host is told to hide the page views a little later than this turns true: once that picture
+   * is painted (see `lib/cover.ts`); on Android it also stays true a little after the chrome has
+   * uncovered the page: until the host has drawn the live view back (`lib/pageView.ts`), so the
+   * picture never leaves before the page is there to take its place.
    */
   contentHidden: boolean
 }
@@ -159,11 +160,13 @@ export function useLayoutReporter(
   const contentHidden = pageHidden(ui) || lockCover
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
+  // The live page is swapped for its cover, so the hide follows the cover's paint on every host
+  // (`hideFollowsCover`: on Electron too, the view composites above the chrome and its hide is
+  // not ordered after the chrome's frame carrying the picture).
+  const waitsForCover = hideFollowsCover()
   // Where the chrome lies under the pages – the Android chassis, whatever its form factor – the
-  // live page is swapped for its cover, so the hide follows the cover's paint. The desktop hosts
-  // report the hide the moment it is wanted, as they always have.
+  // cover also stays until the host has drawn the live page back where it was.
   const followsCover = chromeUnderPages(state.platform)
-  // ... and the cover stays until the host has drawn the live page back where it was.
   const activeTabId = activeTab(state)?.id ?? null
   const pageAway = pageViewStore.use((s) => followsCover && pageOffScreen(s, activeTabId))
   /** What the last report said about the page views (the latch of `decideHidden`). */
@@ -179,7 +182,7 @@ export function useLayoutReporter(
       // the cover is asked for, a frame of the cover's base ahead of the blurred picture being
       // the trade (the picture is decoration on the lock; the live page over the cover would be
       // the leak, INC-05). Every other cover waits for its paint as before.
-      if (followsCover && !lockCover) {
+      if (waitsForCover && !lockCover) {
         const cover = coverStatus(coverStore.get(), activeTab(state)?.id)
         const waitedOut =
           waitingSince.current !== null && Date.now() - waitingSince.current >= COVER_WAIT_MS
@@ -272,7 +275,7 @@ export function useLayoutReporter(
       notePlacements(report.placements, landingStore.get().settling)
     }
     evaluate()
-    const unsubscribe = followsCover ? coverStore.subscribe(evaluate) : null
+    const unsubscribe = waitsForCover ? coverStore.subscribe(evaluate) : null
     return () => {
       unsubscribe?.()
       if (deadline !== null) clearTimeout(deadline)
@@ -288,7 +291,7 @@ export function useLayoutReporter(
     lockCover,
     gap,
     band,
-    followsCover,
+    waitsForCover,
     formFactor
   ])
 

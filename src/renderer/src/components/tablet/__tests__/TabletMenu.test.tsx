@@ -207,4 +207,44 @@ describe('TabletMenu', () => {
     act(() => rowNamed('History').click())
     expect(pickMenuItem).toHaveBeenCalledWith('history')
   })
+
+  it('draws an empty state’s sentence as a note under the menu, not a menuitem: the keys and a press pass it by (§9.17)', () => {
+    keyboard = true
+    render(
+      <TabletMenu
+        menu={{
+          ...MENU,
+          items: [
+            item('full', 'Show Full History'),
+            {
+              id: 'sep',
+              type: 'separator',
+              label: '',
+              enabled: true,
+              checked: false,
+              submenu: null
+            },
+            {
+              ...item('none', 'No recently closed tabs'),
+              enabled: false,
+              note: true
+            }
+          ]
+        }}
+      />
+    )
+    const menu = panel()
+    const note = menu.querySelector<HTMLElement>('.zen-v2-menu-note')
+    expect(note?.textContent?.trim()).toBe('No recently closed tabs')
+    expect(note?.getAttribute('role')).toBe('none')
+    expect(
+      [...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.textContent?.trim())
+    ).toEqual(['Show Full History'])
+    // End stays on the one menuitem: the note is not a stop.
+    expect(document.activeElement).toBe(rowNamed('Show Full History'))
+    key(document.activeElement!, 'End')
+    expect(document.activeElement).toBe(rowNamed('Show Full History'))
+    act(() => note!.click())
+    expect(pickMenuItem).not.toHaveBeenCalled()
+  })
 })

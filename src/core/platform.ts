@@ -980,6 +980,19 @@ export interface MenuItemTemplate {
    * register it.
    */
   accelerator?: string
+  /**
+   * The same chord as the user reads it (`formatChord`: `Ctrl+Shift+N`, `⌘⇧N` on macOS), for a
+   * menu the renderer draws itself (`RendererMenuHost`, the desktop's in-chrome app menu): a
+   * native menu draws `accelerator` in the OS's own spelling and ignores this.
+   */
+  hint?: string
+  /**
+   * A plain sentence rather than a command – a menu's empty state (design language v2 §9.17:
+   * "No recently closed tabs", sentence case, no full stop). A renderer-drawn menu writes it in
+   * the deemphasised ink on a row of its own that takes no focus and answers no click; a native
+   * host has no such row and shows the disabled item `enabled: false` makes of it.
+   */
+  note?: boolean
 }
 
 export type MenuSource =
@@ -991,6 +1004,8 @@ export type MenuSource =
   | 'newtab'
   | 'topsite'
   | 'app'
+  /** An extension's toolbar button's context menu (a context menu: native on the desktop). */
+  | 'extension'
   | 'bookmark'
   | 'history'
   | 'download'
