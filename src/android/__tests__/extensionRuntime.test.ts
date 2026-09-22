@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Space } from '@shared/types'
 import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
 import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
@@ -1614,6 +1615,89 @@ describe('AndroidExtensionRuntime: tabs.highlight', () => {
     expect(String((await call(h, 'bg1', 'tabs', 'highlight', [{ tabs: 7 }])).error)).toContain(
       'No tab at index: 7.'
     )
+  })
+})
+
+describe('AndroidExtensionRuntime: tabs.move', () => {
+  const order = (h: Harness): string[] => h.spaces[0].tabIds
+
+  function orderedTabs(h: Harness): void {
+    for (const [id, url] of [
+      ['p1', 'https://pinned.example/'],
+      ['t2', 'https://two.example/'],
+      ['t3', 'https://three.example/']
+    ])
+      h.tabs[id] = makeTab(id, url)
+    h.tabs.p1.pinned = true
+    h.spaces.push({ id: 's1', tabIds: ['p1', 't1', 't2', 't3'] } as unknown as Space)
+    for (const id of ['p1', 't1', 't2', 't3']) h.tabs[id].spaceId = 's1'
+    h.notifyState()
+  }
+
+  it('moves a tab to the index in the one window, -1 being the end, and raises onMoved once for it', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1', ['tabs.onMoved'])
+    orderedTabs(h)
+    const ids = h.runtime.api.tabs
+    const moved = await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t1'), { index: 3 }])
+    expect(order(h)).toEqual(['p1', 't2', 't3', 't1'])
+    expect(moved.result).toMatchObject({ id: ids.chromeIdFor('t1'), index: 3, windowId: 1 })
+    const raised = events(h, 'bg1', 'tabs.onMoved')
+    expect(raised).toHaveLength(1)
+    expect(raised[0].args).toEqual([
+      ids.chromeIdFor('t1'),
+      { windowId: 1, fromIndex: 1, toIndex: 3 }
+    ])
+    await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t3'), { index: -1, windowId: 1 }])
+    expect(order(h)).toEqual(['p1', 't2', 't1', 't3'])
+    // The same slot again: nothing moved, nothing raised.
+    await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t3'), { index: -1 }])
+    expect(events(h, 'bg1', 'tabs.onMoved')).toHaveLength(2)
+  })
+
+  it('keeps a pinned tab among the pinned and a regular one behind them, as Chrome constrains the index', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    orderedTabs(h)
+    const ids = h.runtime.api.tabs
+    await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t2'), { index: 0 }])
+    expect(order(h)).toEqual(['p1', 't2', 't1', 't3'])
+    const pinned = await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('p1'), { index: 3 }])
+    expect(order(h)).toEqual(['p1', 't2', 't1', 't3'])
+    expect((pinned.result as { index: number }).index).toBe(0)
+  })
+
+  it('hands a list of tabs consecutive positions from the index, and refuses a window or an index Chrome would', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    orderedTabs(h)
+    const ids = h.runtime.api.tabs
+    // Dualless: the other tabs into the window it just created – this one – from index 1.
+    const moved = await call(h, 'bg1', 'tabs', 'move', [
+      [ids.chromeIdFor('t3'), ids.chromeIdFor('t2')],
+      { windowId: 1, index: 1 }
+    ])
+    expect(order(h)).toEqual(['p1', 't3', 't2', 't1'])
+    expect((moved.result as Array<{ index: number }>).map((t) => t.index)).toEqual([1, 2])
+    expect(
+      String(
+        (await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t1'), { windowId: 4, index: 0 }]))
+          .error
+      )
+    ).toContain('No window with id: 4.')
+    expect(
+      String((await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t1'), { index: -3 }])).error)
+    ).toContain('Value must be at least -1.')
+    expect(
+      String((await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t1'), {}])).error)
+    ).toContain("Missing required property 'index'.")
+    expect(String((await call(h, 'bg1', 'tabs', 'move', [99, { index: 0 }])).error)).toContain(
+      'No tab with id: 99.'
+    )
+    expect(order(h)).toEqual(['p1', 't3', 't2', 't1'])
   })
 })
 

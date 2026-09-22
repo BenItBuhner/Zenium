@@ -426,6 +426,42 @@ export class TabIds {
       tabs: this.visibleTabs(ext).map((t) => this.chromeTab(t))
     }
   }
+
+  /**
+   * `tabs.move`: `tab` to Chrome's `index` in its window (`-1`: the end), in one step – the tab
+   * leaves its slot and takes `index` in the shorter list, as Chrome's tab strip moves. Chrome
+   * constrains the position to the tab's block: a pinned tab stays among the pinned ones at the
+   * front, a regular one behind them. The window's order is the tab's space's here (what
+   * `chromeTab` reports as `index`); an Essential (no space, `index` 0 to extensions) is
+   * reordered among the Essentials. Answers the positions `tabs.onMoved` reports.
+   */
+  move(tab: Tab, index: number): { fromIndex: number; toIndex: number } {
+    const tabs = this.browser.tabs
+    const win = this.windowOf()
+    if (tab.essential) {
+      const list = tabs.model.essentialTabIds
+      const fromIndex = Math.max(0, list.indexOf(tab.id))
+      tabs.moveTab(tab.id, { section: 'essential', index: index < 0 ? list.length : index }, win)
+      return { fromIndex, toIndex: Math.max(0, tabs.model.essentialTabIds.indexOf(tab.id)) }
+    }
+    const space = tabs.model.spaces.find((s) => s.id === tab.spaceId)
+    if (!space) return { fromIndex: 0, toIndex: 0 }
+    const fromIndex = Math.max(0, space.tabIds.indexOf(tab.id))
+    // The model takes a pinned tab's index as its place in the list and a regular one's as its
+    // place behind the pinned block, each clamped to the block (Chrome's constraint).
+    const firstRegular = space.tabIds.findIndex((id) => !tabs.model.tabs[id]?.pinned)
+    const boundary = firstRegular === -1 ? space.tabIds.length : firstRegular
+    const wanted = index < 0 ? space.tabIds.length : index
+    tabs.moveTab(
+      tab.id,
+      {
+        section: tab.pinned ? 'pinned' : 'regular',
+        index: tab.pinned ? wanted : Math.max(0, wanted - boundary)
+      },
+      win
+    )
+    return { fromIndex, toIndex: Math.max(0, space.tabIds.indexOf(tab.id)) }
+  }
 }
 
 export class ExtensionApi {
@@ -945,6 +981,33 @@ export class ExtensionApi {
         tabs.activateTab(first.id, win)
         return ids.chromeWindow(ext)
       }
+      case 'move': {
+        // `tabs.move(tabIds, { index, windowId? })`: the phone's one window is the only one a tab
+        // can move within (Dualless moves the other tabs into the window it just "created", the
+        // same one); each tab of a list takes the next position, as Chrome hands them out.
+        const [first, second] = args
+        const props = asRecord(second)
+        if (props.windowId !== undefined && props.windowId !== null)
+          this.requireWindow(props.windowId)
+        const index = asNumber(props.index)
+        if (index === null)
+          throw new Error("Error at parameter 'moveProperties': Missing required property 'index'.")
+        if (!Number.isInteger(index) || index < -1)
+          throw new Error(
+            "Error at parameter 'moveProperties': Error at property 'index': Value must be at least -1."
+          )
+        const list = Array.isArray(first) ? first : [first]
+        const targets = list.map((value) => ids.tabFor(ext, value))
+        const moved: Array<Record<string, unknown>> = []
+        let at = index
+        for (const target of targets) {
+          const { fromIndex, toIndex } = ids.move(target, at)
+          if (fromIndex !== toIndex) this.tabMoved(target, fromIndex, toIndex)
+          moved.push(ids.chromeTab(tabs.tab(target.id) ?? target))
+          if (at !== -1) at++
+        }
+        return Array.isArray(first) ? moved : moved[0]
+      }
       case 'reload': {
         const target = targetOrActive(args[0])
         if (target) tabs.reload(target.id, Boolean(asRecord(args[1]).bypassCache))
@@ -996,6 +1059,33 @@ export class ExtensionApi {
       }
     }
     throw new Error(`chrome.tabs.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * A window id an extension passed: the phone's one window is `1`, and `WINDOW_ID_CURRENT`
+   * (`-2`) names it too; any other number is a window that does not exist (Chrome's wording),
+   * anything else no id at all.
+   */
+  private requireWindow(windowId: unknown): void {
+    if (windowId === -2 || windowId === 1) return
+    if (asNumber(windowId) === null || !Number.isInteger(windowId))
+      throw new Error('Invalid window id')
+    throw new Error(`No window with id: ${windowId}.`)
+  }
+
+  /**
+   * `tabs.onMoved` to every extension that may see the tab: Chrome raises it once per moved tab,
+   * for the window the tab moved within, and only when the position changed.
+   */
+  private tabMoved(tab: Tab, fromIndex: number, toIndex: number): void {
+    const tabId = this.tabs.chromeIdFor(tab.id)
+    for (const other of this.host.allAttached()) {
+      if (!this.tabs.visibleTo(other, tab)) continue
+      this.host.emit(other.record.id, 'tabs', 'onMoved', [
+        tabId,
+        { windowId: 1, fromIndex, toIndex }
+      ])
+    }
   }
 
   /**
@@ -1078,11 +1168,7 @@ export class ExtensionApi {
     const o = normalizeCaptureOptions(options)
     if (!this.captureQuota.take(ext.record.id, this.host.now()))
       throw new Error(CAPTURE_QUOTA_ERROR)
-    if (windowId !== undefined && windowId !== null && windowId !== -2 && windowId !== 1) {
-      if (asNumber(windowId) === null || !Number.isInteger(windowId))
-        throw new Error('Invalid window id')
-      throw new Error(`No window with id: ${windowId}.`)
-    }
+    if (windowId !== undefined && windowId !== null) this.requireWindow(windowId)
     const tab = this.tabs.activeTabFor(ext)
     if (!tab || tab.discarded) throw new Error('Failed to capture tab: view is invisible')
     const tabUrl = this.tabs.urlOf(tab)

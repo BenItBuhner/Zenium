@@ -3,9 +3,12 @@ import type {
   ExtensionInfo,
   SearchEngine,
   SearchEngineControl,
-  Tab
+  Space,
+  Tab,
+  TabSection
 } from '@shared/types'
 import { RuleEngine } from '@core/blocking/engine'
+import { moveTab as moveTabInModel, type Model } from '@core/model'
 import type { Browser } from '@core/browser'
 import type { SpeechHost, SpeechHostEvent, SpeechUtteranceOptions, StoreIO } from '@core/platform'
 import type { ReadAloudVoice } from '@shared/readAloud'
@@ -414,6 +417,8 @@ export interface Harness {
   readAloud: { status: 'idle' | 'playing' | 'paused'; pauses: number }
   files: Map<string, string>
   tabs: Record<string, Tab>
+  /** The model's spaces (`tabs.move` orders a space's `tabIds`); none until a test adds one. */
+  spaces: Space[]
   active: { id: string | null }
   /** The core's request-blocking engine the declarativeNetRequest sink feeds (`browser.blocking.engine`). */
   engine: RuleEngine
@@ -485,6 +490,10 @@ export function harness(
     }
   }
   const tabs: Record<string, Tab> = { t1: makeTab('t1', 'https://example.com/') }
+  // The model's ordered lists, for `tabs.move`: a test that orders tabs puts a space here and
+  // names it in its tabs' `spaceId`; the real model's move runs over it.
+  const spaces: Space[] = []
+  const model = { tabs, spaces, essentialTabIds: [] as string[], localSpaces: {} }
   const active = { id: 't1' as string | null }
   const created: Harness['created'] = []
   const listeners: Array<() => void> = []
@@ -532,8 +541,13 @@ export function harness(
     tabs: {
       tab: (id: string) => tabs[id],
       activeTabFor: () => (active.id ? tabs[active.id] : undefined),
-      model: { tabs, spaces: [] },
+      model,
       isPrivate: (tab: Tab) => tab.containerId === 'private',
+      moveTab: (tabId: string, target: { section: TabSection; index: number }) => {
+        const tab = tabs[tabId]
+        if (tab) moveTabInModel(model as unknown as Model, tab, target, 12)
+        notifyState()
+      },
       createTab: (opts: { url: string; active?: boolean }) => {
         const id = `t${created.length + 2}`
         tabs[id] = makeTab(id, opts.url)
@@ -603,6 +617,7 @@ export function harness(
     readAloud,
     files,
     tabs,
+    spaces,
     active,
     engine,
     containers,
