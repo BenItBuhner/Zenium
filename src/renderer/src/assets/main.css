@@ -9673,16 +9673,16 @@
  * geometry (§10.5, §5): the text column at most 664 inside 32 side margins (the page's 16 plus
  * the rows' 16 gutter), left-aligned as Zen's; groups are §9.27 sub-headings over §9.21 rows.
  * The three boxes that carry the column – the title block, the search field's wrapper and the
- * body – are therefore 728 wide at most (`--v2-page-column`): the 664 plus both margins. At
- * 664 + 2 × 16 the rows' gutter came out of the text column instead – a 632 field on a 632 text
- * column, the trailing controls 32 short of where §10.1 puts them – the count #324 corrected on
- * the Settings pane; §10.1 names 632 as that correction, not a column of its own.
+ * body – are therefore 728 wide at most, written as `.zen-settings-pane` writes its own: the 664
+ * plus 2 × (16 + 16), both margins. At 664 + 2 × 16 the rows' gutter came out of the text column
+ * instead – a 632 field on a 632 text column, the trailing controls 32 short of where §10.1 puts
+ * them – the count #324 corrected on the Settings pane; §10.1 names 632 as that correction, not
+ * a column of its own.
  * Nothing here states a row's or a control's size – those are the primitives' tokens – only
  * what the pages add: the header's beat, the column, the two-line row's slots and the reveal.
  * Unlayered like the Settings tab's rules, after them.
  * ------------------------------------------------------------------------- */
 .zen-page {
-  --v2-page-column: calc(var(--v2-content-max) + 2 * (16px + 16px));
   display: flex;
   height: 100%;
   min-height: 0;
@@ -9731,7 +9731,7 @@
  * line taken from their own margins so the line stays 28.
  */
 .zen-page-title-block {
-  max-width: var(--v2-page-column);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 16px 16px 12px;
 }
 .zen-page-title-row {
@@ -9784,7 +9784,7 @@
  */
 .zen-page-search {
   position: relative;
-  max-width: var(--v2-page-column);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 0 32px 12px;
 }
 .zen-page-search-glyph {
@@ -9812,7 +9812,7 @@
  * its trailing control ending on the field's end.
  */
 .zen-page-body {
-  max-width: var(--v2-page-column);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 0 16px 40px;
 }
 .zen-page-group {
