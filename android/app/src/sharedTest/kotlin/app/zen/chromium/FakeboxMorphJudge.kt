@@ -182,7 +182,7 @@ object FakeboxMorph {
          */
         val declared: Map<String, Declared> = emptyMap(),
         /** The sheet chassis while a sheet is in the DOM (the sheet scene); null else. */
-        val sheet: SheetLayer? = null
+        val sheetLayer: SheetLayer? = null
     ) {
         val doubleDrawn: Boolean get() = (double?.coverage ?: 0f) > EPS
         val pageFieldDrawn: Boolean get() = (pageField?.opacity ?: 0f) > EPS
@@ -308,7 +308,7 @@ object FakeboxMorph {
             declared = row.optJSONObject("dc")?.let { dc ->
                 dc.keys().asSequence().mapNotNull { key -> dc.optJSONObject(key)?.let { key to declared(it) } }.toMap()
             } ?: emptyMap(),
-            sheet = row.optJSONObject("sl")?.let {
+            sheetLayer = row.optJSONObject("sl")?.let {
                 SheetLayer(
                     box(it.getJSONObject("b")), num(it, "o"), num(it, "y"), it.optDouble("s", 1.0).toFloat(), num(it, "so"),
                     it.optJSONObject("dc")?.let(::declared), it.optInt("pa")
@@ -1106,7 +1106,7 @@ object FakeboxMorph {
                 if (a.pageFieldDrawn && b.pageFieldDrawn) Triple("the page's field", a.pageField!!.box, b.pageField!!.box) else null,
                 if (a.omniDrawn && b.omniDrawn) Triple("the omnibox's field", a.omniField!!.box, b.omniField!!.box) else null,
                 if (a.doubleDrawn && b.doubleDrawn) Triple("the double", a.double!!.box, b.double!!.box) else null,
-                if (a.sheet?.drawn == true && b.sheet?.drawn == true) Triple("the sheet", a.sheet.box, b.sheet.box) else null
+                if (a.sheetLayer?.drawn == true && b.sheetLayer?.drawn == true) Triple("the sheet", a.sheetLayer.box, b.sheetLayer.box) else null
             )
             for ((what, x, y) in pairs) {
                 compared++
@@ -1147,7 +1147,7 @@ object FakeboxMorph {
         val seen = LinkedHashMap<Pair<String, Declared>, Int>()
         for (f in frames) {
             for ((name, d) in f.declared) seen[name to d] = (seen[name to d] ?: 0) + 1
-            f.sheet?.declared?.let { seen["sheet" to it] = (seen["sheet" to it] ?: 0) + 1 }
+            f.sheetLayer?.declared?.let { seen["sheet" to it] = (seen["sheet" to it] ?: 0) + 1 }
         }
         if (seen.isEmpty()) return Verdict("the declarations", true, "no frame carried a declaration (an older sampler)", judged = false)
         val problems = ArrayList<String>()
@@ -1187,13 +1187,13 @@ object FakeboxMorph {
      * travel. A sheet drawn on no frame at all is a fault: the scene never showed it.
      */
     fun sheetInPlace(frames: List<Frame>): Verdict {
-        val drawn = frames.filter { it.sheet?.drawn == true }
-        if (drawn.isEmpty()) return Verdict("the sheet in place", false, "no frame drew the sheet (${frames.count { it.sheet != null }} frame(s) had one in the DOM)")
-        val first = drawn.first().sheet!!
+        val drawn = frames.filter { it.sheetLayer?.drawn == true }
+        if (drawn.isEmpty()) return Verdict("the sheet in place", false, "no frame drew the sheet (${frames.count { it.sheetLayer != null }} frame(s) had one in the DOM)")
+        val first = drawn.first().sheetLayer!!
         var faults = 0
         var worst: String? = null
         for (f in drawn) {
-            val s = f.sheet!!
+            val s = f.sheetLayer!!
             val fault = when {
                 !s.box.near(first.box, LINE_TOLERANCE) -> "at ${f.t} ms the sheet is drawn at ${s.box}, its first drawn frame had ${first.box}"
                 abs(s.translateY - first.translateY) > LINE_TOLERANCE -> "at ${f.t} ms the sheet's translate-y is ${s.translateY.f()}, its first drawn frame had ${first.translateY.f()}"
@@ -1224,22 +1224,22 @@ object FakeboxMorph {
      */
     fun sheetFade(frames: List<Frame>, opening: Boolean): Verdict {
         val check = if (opening) "the sheet's fade in" else "the sheet's fade out"
-        val withSheet = frames.filter { it.sheet != null }
+        val withSheet = frames.filter { it.sheetLayer != null }
         if (withSheet.isEmpty()) return Verdict(check, false, "no frame had a sheet in the DOM")
-        val opacities = withSheet.map { it.t to it.sheet!!.opacity }
+        val opacities = withSheet.map { it.t to it.sheetLayer!!.opacity }
         val ramp = opacities.filter { it.second > EPS && it.second < 1 - EPS }
-        val pending = withSheet.count { it.sheet!!.pending > 0 }
+        val pending = withSheet.count { it.sheetLayer!!.pending > 0 }
         val problems = ArrayList<String>()
         val unjudged = ArrayList<String>()
         val last = withSheet.last()
-        val end = if (opening) last.sheet!!.opacity else if (frames.last().sheet == null) 0f else last.sheet!!.opacity
+        val end = if (opening) last.sheetLayer!!.opacity else if (frames.last().sheetLayer == null) 0f else last.sheetLayer!!.opacity
         if (opening && end < 1 - EPS) problems += "the sheet ended at ${end.p()}, not whole"
-        if (!opening && frames.last().sheet != null && end > EPS) problems += "the sheet ended at ${end.p()}, still in the DOM"
-        val scrimEnd = last.sheet!!.scrim
+        if (!opening && frames.last().sheetLayer != null && end > EPS) problems += "the sheet ended at ${end.p()}, still in the DOM"
+        val scrimEnd = last.sheetLayer!!.scrim
         if (opening && scrimEnd < 0.1f) problems += "the scrim ended at ${scrimEnd.p()}, not drawn"
-        if (!opening && frames.last().sheet != null && scrimEnd > EPS) problems += "the scrim ended at ${scrimEnd.p()}, still drawn"
+        if (!opening && frames.last().sheetLayer != null && scrimEnd > EPS) problems += "the scrim ended at ${scrimEnd.p()}, still drawn"
         // The step: the last frame with the sheet at its start opacity to the first at its end (closing: or the frame after the sheet left the DOM).
-        val left = frames.getOrNull(frames.indexOfLast { it.sheet != null } + 1)
+        val left = frames.getOrNull(frames.indexOfLast { it.sheetLayer != null } + 1)
         val stepFrom = if (opening) opacities.lastOrNull { it.second <= EPS } else opacities.lastOrNull { it.second >= 1 - EPS }
         val stepTo = if (opening) opacities.firstOrNull { it.second >= 1 - EPS } else (opacities.firstOrNull { it.second <= EPS } ?: left?.let { it.t to 0f })
         val gap = if (stepFrom != null && stepTo != null && stepTo.first > stepFrom.first) stepTo.first - stepFrom.first else 0

@@ -81,7 +81,7 @@ abstract class DemoHarness(
     protected var pillY = 0f
     protected var pillCenterX = 0f
     /** When [launch] last started the app (uptime ms): the clock the core's startup schedule runs on. */
-    protected var launchedAt = 0L
+    protected var appLaunchedAt = 0L
     /**
      * The part of the window a finger's touch reaches the app in: below the status bar and above
      * the navigation bar's window. The system bars are windows of their own and take every touch
@@ -186,7 +186,7 @@ abstract class DemoHarness(
     protected fun launch() {
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        launchedAt = SystemClock.uptimeMillis()
+        appLaunchedAt = SystemClock.uptimeMillis()
         activity = instrumentation.startActivitySync(intent)
         // The chrome is a WebView booting the browser core: wait for the address pill to show up.
         val deadline = SystemClock.uptimeMillis() + 30_000
@@ -1191,7 +1191,7 @@ abstract class DemoHarness(
             baseline = baseline, trace = reading, traceMissing = if (trace) tracing else null, measured = measuredScenes
         )
         measuredScenes += result
-        val note = sweepNote(scene, t0 - launchedAt, durationMs, reading)
+        val note = sweepNote(scene, t0 - appLaunchedAt, durationMs, reading)
         File(out, FRAMES_RECORD).appendText(result.toJson() + "\n")
         File(out, FRAMES_TABLES).appendText(result.table() + (note?.let { "\n$it" } ?: "") + "\n\n")
         // The raw dump beside the reading, for a second opinion (the parser is fed such a dump on the JVM).

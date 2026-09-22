@@ -585,7 +585,7 @@ class FakeboxMorphJudgeTest {
         assertFalse(FakeboxMorph.declaredFades(frames.map { it.copy(declared = mapOf("fades" to declared("opacity", "0.2s"))) }).ok)
         // The sheet's declaration rides with its layer.
         val sheet = FakeboxMorph.SheetLayer(Box(0f, 500f, 411f, 300f), 1f, 0f, 1f, 0.4f, declared("opacity", "0.12s"), 0)
-        val withSheet = FakeboxMorph.declaredFades(frames.map { it.copy(declared = emptyMap(), sheet = sheet) })
+        val withSheet = FakeboxMorph.declaredFades(frames.map { it.copy(declared = emptyMap(), sheetLayer = sheet) })
         assertTrue(withSheet.detail, withSheet.ok)
         assertTrue(withSheet.detail, withSheet.detail.contains("sheet: transition opacity 120.0 ms"))
         // Nothing carried: not judged.
@@ -599,7 +599,7 @@ class FakeboxMorphJudgeTest {
     private fun sheetFrame(t: Int, opacity: Float?, box: Box = sheetBox, translateY: Float = 0f, scale: Float = 1f, pending: Int = 0): Frame =
         frame(t, "rest", "", 0f, bottom, omniBottom, pageField = PageField(bottom.rest, 1f), pill = well, urlbarOpen = false).copy(
             pageVisible = true,
-            sheet = opacity?.let { FakeboxMorph.SheetLayer(box, it, translateY, scale, it * 0.4f, declared("opacity", "0.12s"), pending) }
+            sheetLayer = opacity?.let { FakeboxMorph.SheetLayer(box, it, translateY, scale, it * 0.4f, declared("opacity", "0.12s"), pending) }
         )
 
     /** The menu sheet under reduced motion: mounted held at 0, the spring's jump, the 120 ms fade in. */
@@ -626,14 +626,14 @@ class FakeboxMorphJudgeTest {
         assertTrue(v.detail, v.ok)
         assertTrue(v.detail, v.detail.contains("4 drawn frame(s)"))
         // A frame drawn at the pose before the jump (the sheet still low) is the stale frame.
-        val stale = FakeboxMorph.sheetInPlace(spoil(sheetOpening(), 2) { it.copy(sheet = it.sheet!!.copy(box = sheetBox.copy(y = sheetBox.y + 120f), translateY = 120f)) })
+        val stale = FakeboxMorph.sheetInPlace(spoil(sheetOpening(), 2) { it.copy(sheetLayer = it.sheetLayer!!.copy(box = sheetBox.copy(y = sheetBox.y + 120f), translateY = 120f)) })
         assertFalse(stale.detail, stale.ok)
         assertTrue(stale.detail, stale.detail.contains("its first drawn frame had"))
         // A sheet receded (scaled) under reduced motion is a fault; one never drawn is a fault.
-        assertFalse(FakeboxMorph.sheetInPlace(spoil(sheetOpening(), 3) { it.copy(sheet = it.sheet!!.copy(scale = 0.97f)) }).ok)
+        assertFalse(FakeboxMorph.sheetInPlace(spoil(sheetOpening(), 3) { it.copy(sheetLayer = it.sheetLayer!!.copy(scale = 0.97f)) }).ok)
         assertFalse(FakeboxMorph.sheetInPlace(sheetOpening(listOf(0f, 0f))).ok)
         assertTrue(FakeboxMorph.steadyGeometry(sheetOpening()).ok)
-        assertFalse(FakeboxMorph.steadyGeometry(spoil(sheetOpening(), 3) { it.copy(sheet = it.sheet!!.copy(box = sheetBox.copy(h = 340f))) }).ok)
+        assertFalse(FakeboxMorph.steadyGeometry(spoil(sheetOpening(), 3) { it.copy(sheetLayer = it.sheetLayer!!.copy(box = sheetBox.copy(h = 340f))) }).ok)
     }
 
     @Test
@@ -830,7 +830,7 @@ class FakeboxMorphJudgeTest {
         assertEquals(null, bare.pageVisible)
         assertEquals(1f, bare.frameScale, 1e-4f)
         assertTrue(bare.declared.isEmpty())
-        assertEquals(null, bare.sheet)
+        assertEquals(null, bare.sheetLayer)
     }
 
     @Test
@@ -859,7 +859,7 @@ class FakeboxMorphJudgeTest {
         assertTrue(omnibox.animates)
         assertEquals(listOf("zen-fade", "zen-fade-out"), omnibox.animationNames)
         assertEquals(listOf(120f, 120f), omnibox.animationMs)
-        val sheet = f.sheet!!
+        val sheet = f.sheetLayer!!
         assertEquals(Box(0f, 520.5f, 411f, 300f), sheet.box)
         assertEquals(0.42f, sheet.opacity, 1e-4f)
         assertTrue(sheet.drawn)
