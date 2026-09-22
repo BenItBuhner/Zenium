@@ -30,6 +30,7 @@ function extension(isolation: IsolationMode, groups: BootGroup[]): ExtensionBoot
     version: '1.0',
     manifestVersion: 3,
     permissions: [],
+    optionalPermissions: [],
     hostPermissions: ['<all_urls>'],
     manifest: {},
     messages: null,

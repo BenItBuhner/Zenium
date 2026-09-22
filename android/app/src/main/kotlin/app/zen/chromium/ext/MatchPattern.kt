@@ -27,6 +27,19 @@ class MatchPattern private constructor(
         return pathTest == null || pathTest.matches(parsed.path)
     }
 
+    /**
+     * Whether `url` is on the pattern's security origin: scheme, host and port, the path left out,
+     * as Chrome's CORS allowlist reads an extension's host permission (a `https://mail.google.com/`
+     * permission lets its pages fetch the whole origin).
+     */
+    fun matchesOrigin(url: String): Boolean {
+        val parsed = parse(url) ?: return false
+        if (schemes == null) return parsed.scheme in ALL_URL_SCHEMES
+        if (parsed.scheme !in schemes) return false
+        if (!hostTest(parsed.host)) return false
+        return port == null || port == "*" || parsed.port == port
+    }
+
     class Parsed(val scheme: String, val host: String, val port: String, val path: String)
 
     companion object {
@@ -73,6 +86,9 @@ class MatchPattern private constructor(
 
         /** Whether `url` matches any of `patterns`. */
         fun anyMatches(patterns: List<MatchPattern>, url: String): Boolean = patterns.any { it.matches(url) }
+
+        /** Whether `url` is on the security origin of any of `patterns` (see [matchesOrigin]). */
+        fun anyMatchesOrigin(patterns: List<MatchPattern>, url: String): Boolean = patterns.any { it.matchesOrigin(url) }
 
         private fun pathGlob(glob: String): Regex {
             val sb = StringBuilder("^")

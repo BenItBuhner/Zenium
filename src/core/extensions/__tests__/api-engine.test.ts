@@ -35,12 +35,22 @@ interface Harness {
 function harness(over: Partial<EngineConfig> = {}): Harness {
   const sent: Record<string, unknown>[] = []
   const root: Record<string, unknown> = {}
+  const { manifest: manifestOver, ...rest } = over
+  const permissions = over.permissions ?? ['storage', 'tabs', 'alarms', 'scripting']
   const config: EngineConfig = {
     id: EXT,
     origin: ORIGIN,
-    manifest: { manifest_version: 3, name: 'x', version: '1' },
+    // As the runtime builds it: the granted set is what the manifest declares.
+    manifest: {
+      manifest_version: 3,
+      name: 'x',
+      version: '1',
+      permissions,
+      ...(over.optionalPermissions ? { optional_permissions: over.optionalPermissions } : {}),
+      ...manifestOver
+    },
     manifestVersion: 3,
-    permissions: ['storage', 'tabs', 'alarms', 'scripting'],
+    permissions,
     messages: { hello: { message: 'Hallo $1' } },
     uiLanguage: 'de',
     context: 'background',
@@ -48,7 +58,7 @@ function harness(over: Partial<EngineConfig> = {}): Harness {
     endpointId: 'ep1',
     url: `${ORIGIN}/_generated_background_page.html`,
     isTopFrame: true,
-    ...over
+    ...rest
   }
   const engine = createEmulatedEngine(
     config,
@@ -122,6 +132,12 @@ describe('createEmulatedEngine', () => {
   it('content scripts only see the content-script namespaces', () => {
     const h = harness({ context: 'content' })
     expect(Object.keys(h.chrome).sort()).toEqual(['dom', 'extension', 'i18n', 'runtime', 'storage'])
+    // Chrome's content scripts carry `chrome.extension` (Klarna's `typeof chrome.extension ===
+    // 'object'` test for running inside an extension; desktop round 6 fix B); the emulated
+    // engine has it on both worlds of the phone.
+    expect(typeof h.chrome.extension).toBe('object')
+    expect((h.chrome.extension as Ns).inIncognitoContext).toBe(false)
+    expect((h.chrome.extension.getURL as Fn)('a.png')).toBe(`${ORIGIN}/a.png`)
   })
 
   it('hides storage without the permission and browserAction/pageAction outside MV2', () => {
