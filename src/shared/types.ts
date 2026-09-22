@@ -4847,6 +4847,12 @@ export interface Events {
    */
   'extensions.open': void
   /**
+   * "Send to Your Devices…" on a phone with several other devices (ID-27): the chrome opens the
+   * device picker sheet for the tab – one row per device, a tap sends its page (`sync.sendTab`).
+   * The desktop's and the tablet's menus carry the devices as a submenu and never ask for it.
+   */
+  'sendTab.open': { tabId: string }
+  /**
    * Open Reader View's text preferences (size, font, theme, width) for a reader tab: the app
    * menu's "Text Preferences…" – a popover under the address pill on a mouse, a sheet on a phone.
    */

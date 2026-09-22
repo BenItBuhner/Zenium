@@ -2914,18 +2914,43 @@ describe('Send to your devices (ID-27)', () => {
       { deviceId: 'dev-2', url: PAGE_URL, tabId: h.tabId },
       h.win
     )
-    // The phone's menu sheet carries the same submenu: its drill-in level is the device picker.
-    const phone = pageHarness(ANDROID, { formFactor: 'phone' })
-    connectSync(phone, [LAPTOP, DESK])
-    expect(appMenu(phone)).toEqual(
-      expect.arrayContaining([
-        'Share…',
-        'Send to Your Devices',
-        'Send to Your Devices > Home desktop'
-      ])
+    // The tablet's popover menu cascades the same submenu.
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    connectSync(tablet, [LAPTOP, DESK])
+    expect(appMenu(tablet)).toEqual(
+      expect.arrayContaining(['Send to Your Devices', 'Send to Your Devices > Home desktop'])
     )
+  })
+
+  it('on a phone with several devices the item opens the device picker sheet instead (sendTab.open), beside Share…', () => {
+    const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+    const sendTab = connectSync(phone, [LAPTOP, DESK])
     const sheet = appMenu(phone)
-    expect(sheet.indexOf('Send to Your Devices')).toBe(sheet.indexOf('Share…') + 1)
+    expect(sheet).toContain('Send to Your Devices…')
+    expect(sheet.indexOf('Send to Your Devices…')).toBe(sheet.indexOf('Share…') + 1)
+    // No drill-in level: the picker is the chrome's sheet, asked for as the menu leaves.
+    expect(sheet.some((l) => l.startsWith('Send to Your Devices… >'))).toBe(false)
+    const item = phone.shown().find((i) => i.label === 'Send to Your Devices…')
+    expect(item?.submenu).toBeUndefined()
+    phone.sent.length = 0
+    item?.click?.()
+    expect(phone.sent).toEqual(['sendTab.open'])
+    expect(sendTab).not.toHaveBeenCalled()
+    // The tab's own menu (the overview card's hold) carries the same item.
+    phone.browser.menus.showTabContextMenu(phone.tabId, phone.win)
+    expect(labels(phone.shown())).toContain('Send to Your Devices…')
+    // One device still sends outright on the phone: one tap, the toast confirms.
+    const one = pageHarness(ANDROID, { formFactor: 'phone' })
+    const sendOne = connectSync(one, [LAPTOP])
+    expect(appMenu(one)).toContain('Send to Work laptop')
+    one
+      .shown()
+      .find((i) => i.label === 'Send to Work laptop')
+      ?.click?.()
+    expect(sendOne).toHaveBeenCalledWith(
+      { deviceId: 'dev-2', url: PAGE_URL, tabId: one.tabId },
+      one.win
+    )
   })
 
   it('keeps the item for a page that cannot travel – an internal page – disabled, so the page reads as the reason', () => {

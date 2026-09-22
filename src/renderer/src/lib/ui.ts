@@ -390,6 +390,11 @@ export interface UiState {
   /** Phone layout: the app menu's Extensions sheet (one row per extension action) is up. */
   extensionsSheetOpen: boolean
   /**
+   * Phone layout: the Send to your devices picker (`sendTab.open`, ID-27) is up for this tab –
+   * one row per other device, a tap sends the tab's page to it.
+   */
+  sendTabSheet: { tabId: string } | null
+  /**
    * Phone layout: a `FrameDialogHost` sheet holds the page under its cover, from before it
    * rises until it has left the screen (`coverPageUnderSheet`); the dialogs it hosts set their
    * own flags later and drop them sooner than the sheet's motion runs.
@@ -546,6 +551,7 @@ export const uiStore = createStore<UiState>(
     qrScan: null,
     barEditorOpen: false,
     extensionsSheetOpen: false,
+    sendTabSheet: null,
     frameSheetOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
@@ -891,6 +897,7 @@ export function chromeNeedsKeyboard(): boolean {
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
     !ui.extensionsSheetOpen &&
+    !ui.sendTabSheet &&
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
@@ -950,6 +957,7 @@ export function invalidateSnapshot(): void {
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
     !ui.extensionsSheetOpen &&
+    !ui.sendTabSheet &&
     !ui.frameSheetOpen &&
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
@@ -1786,6 +1794,27 @@ export function openExtensionsSheet(): void {
 export function closeExtensionsSheet(): void {
   if (!uiStore.get().extensionsSheetOpen) return
   uiStore.set({ extensionsSheetOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// Phone Send to your devices sheet (ID-27)
+// ---------------------------------------------------------------------------
+
+/**
+ * Open the device picker for a tab's page (`sendTab.open` from the core: the menu's "Send to
+ * Your Devices…" on a phone with several other devices). A frame-dialog sheet on the chassis,
+ * like the Extensions sheet: it takes the page's cover itself as it rises.
+ */
+export function openSendTabSheet(tabId: string): void {
+  uiStore.set({ sendTabSheet: { tabId }, drawerOpen: false })
+}
+
+/** The picker has left the screen (a device picked, its own dismissal, the back gesture). */
+export function closeSendTabSheet(): void {
+  if (!uiStore.get().sendTabSheet) return
+  uiStore.set({ sendTabSheet: null })
   invalidateSnapshot()
   returnFocusToPage()
 }

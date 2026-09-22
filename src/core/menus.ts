@@ -262,11 +262,13 @@ export class Menus {
    * Chrome's "Send to your devices" (ID-27) for a tab's page, in the shape Chrome's page menu
    * gives it: with one other device the item names it – "Send to Laptop" – and sends on the
    * click; with more, "Send to Your Devices" opens the devices, most recently seen first, one
-   * row each (on the phone the menu sheet's own drill-in level is that picker, §9.24's one sheet
-   * over the menu). Sync off, or no other device yet, and there is no item: an action with
-   * nothing to send to is not drawn disabled (§10.4). Only a web page travels (`isSendableUrl`,
-   * the engine's rule): an internal or extension page keeps the item, disabled, so the page
-   * reads as the reason. The engine confirms the hand-over with its toast, "Sent to Laptop".
+   * row each – a submenu on the desktop and the tablet, and on the phone the device picker
+   * sheet (`sendTab.open`, the chrome's `SendTabSheet`: the §9.13 picker that rises as the menu
+   * sheet leaves, so the item carries the ellipsis of a row that opens a sheet). Sync off, or no
+   * other device yet, and there is no item: an action with nothing to send to is not drawn
+   * disabled (§10.4). Only a web page travels (`isSendableUrl`, the engine's rule): an internal
+   * or extension page keeps the item, disabled, so the page reads as the reason. The engine
+   * confirms the hand-over with its toast, "Sent to Laptop".
    */
   private sendToDevicesItems(tab: Tab | undefined, win: ZenWindow): Template {
     if (!tab) return []
@@ -279,6 +281,15 @@ export class Menus {
     if (devices.length === 1) {
       const [device] = devices
       return [{ label: `Send to ${device.name}`, enabled, click: () => send(device.id) }]
+    }
+    if (win.formFactor === 'phone') {
+      return [
+        {
+          label: 'Send to Your Devices…',
+          enabled,
+          click: () => this.browser.emit('sendTab.open', { tabId: tab.id }, win)
+        }
+      ]
     }
     return [
       {
