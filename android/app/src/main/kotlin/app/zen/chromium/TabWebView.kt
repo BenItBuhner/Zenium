@@ -1602,11 +1602,11 @@ class TabWebView(
             }
             return
         }
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val location = IntArray(2)
-        getLocationInWindow(location)
-        val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
-        val encode = {
+        copyViewport { bitmap ->
+            if (bitmap == null) {
+                callback(null)
+                return@copyViewport
+            }
             encoder.execute {
                 val out = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
@@ -1614,13 +1614,45 @@ class TabWebView(
                 Handler(Looper.getMainLooper()).post { callback(out.toByteArray()) }
             }
         }
+    }
+
+    /**
+     * The visible area's pixels at full resolution (the caller's to recycle), or null when the
+     * window refuses: Take Screenshot's picture (SH-07), before the flash so it is not in it.
+     */
+    fun copyViewport(callback: (Bitmap?) -> Unit) {
+        if (width <= 0 || height <= 0 || !isShown) {
+            callback(null)
+            return
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
         try {
             PixelCopy.request(host.activity.window, rect, bitmap, { result ->
-                if (result == PixelCopy.SUCCESS) encode() else callback(null)
+                if (result == PixelCopy.SUCCESS) callback(bitmap) else {
+                    bitmap.recycle()
+                    callback(null)
+                }
             }, Handler(Looper.getMainLooper()))
         } catch (e: Exception) {
+            bitmap.recycle()
             callback(null)
         }
+    }
+
+    /**
+     * The long screenshot's capture (SH-08): the page from the viewport's top down to Chrome's
+     * ~10 screens, stitched by [PageCapture] as a bitmap the caller crops and writes.
+     */
+    fun captureLong(callback: (PageCapture.Capture?) -> Unit) {
+        val radius = radiusPx
+        val square = { on: Boolean ->
+            radiusPx = if (on) 0f else radius
+            invalidateOutline()
+        }
+        PageCapture(this, host.activity.window, encoder, square, ::evaluate).runBitmap(CapturePlan.MODE_LONG, null, callback)
     }
 
     /**

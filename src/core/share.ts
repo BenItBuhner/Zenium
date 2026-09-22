@@ -1,5 +1,11 @@
-import type { ShareAnswer, SharePayload, ShareRequest } from '../shared/types'
-import { isShareCall, shareFileInfo, type ShareFile, type ShareOutcome } from '../shared/share'
+import type { ShareAnswer, SharePayload, ShareRequest, Tab } from '../shared/types'
+import {
+  isShareCall,
+  shareFileInfo,
+  type ShareCall,
+  type ShareFile,
+  type ShareOutcome
+} from '../shared/share'
 import { newId } from '../shared/ids'
 import { displayHost } from '../shared/url'
 import type { Browser } from './browser'
@@ -14,6 +20,12 @@ interface Pending {
   files: ShareFile[]
   /** Set for a page's `navigator.share`: the page hears how it ended. */
   page: { tabId: string; callId: string } | null
+}
+
+/** A page's share the OS's own sheet is showing (Android): the host's answer settles the page's promise. */
+interface SystemPending {
+  tabId: string
+  callId: string
 }
 
 /** The text a "Copy" of a share puts on the clipboard: the link when there is one, else the text. */
@@ -39,9 +51,14 @@ export function shareMailto(request: Pick<ShareRequest, 'title' | 'text' | 'url'
  * (the chrome draws it from `url`), email, save shared files, and the OS's own sheet where there
  * is one (macOS). A page's promise resolves once a target was chosen and rejects when the sheet
  * is dismissed, as in Chrome.
+ *
+ * Where the chrome has no sheet of its own and the OS has one (`capabilities.share`, Android;
+ * SH-14), a page's call goes to the OS's sheet through the host's `share` with `awaitOutcome`,
+ * and the host's word on how it ended settles the promise the same way.
  */
 export class ShareService {
   private readonly pending: Pending[] = []
+  private readonly system: SystemPending[] = []
   private readonly now: () => number
 
   constructor(
@@ -58,8 +75,9 @@ export class ShareService {
 
   /**
    * A page called `navigator.share`. A window whose chrome has no share sheet up
-   * (`ChromeSurface`) answers at once as a dismissed sheet would – the page's promise rejects
-   * with Chrome's `AbortError` – rather than holding the call for a sheet that is not there.
+   * (`ChromeSurface`) hands the call to the OS's own sheet where the host has one (Android), or
+   * else answers at once as a dismissed sheet would – the page's promise rejects with Chrome's
+   * `AbortError` – rather than holding the call for a sheet that is not there.
    */
   handleMessage(tabId: string, call: unknown): void {
     if (!isShareCall(call)) return
@@ -70,6 +88,7 @@ export class ShareService {
     this.cancelForTab(tabId)
     const win = this.browser.tabs.windowFor(tabId)
     if (!surfaceMounted(win, 'share')) {
+      if (this.systemShare(tabId, call, tab)) return
       view.postToPage?.({ type: 'share', id: call.id, result: 'aborted' })
       return
     }
@@ -87,6 +106,44 @@ export class ShareService {
       call.files,
       { tabId, callId: call.id }
     )
+  }
+
+  /**
+   * The OS's share sheet for a page's call (SH-14): the host shows it with the page's text, link
+   * and files and answers once it has closed; `shared` when a target took the share, `aborted`
+   * when it was dismissed – or when the host could not say, since a page whose promise never
+   * settles is worse than one told its share was cancelled. False when the host has no sheet.
+   */
+  private systemShare(tabId: string, call: ShareCall, tab: Tab): boolean {
+    const { shell } = this.browser.platform
+    if (!this.browser.state.capabilities.share || !shell.share) return false
+    const entry: SystemPending = { tabId, callId: call.id }
+    this.system.push(entry)
+    const payload: SharePayload = {
+      title: call.title,
+      text: call.text,
+      url: call.url,
+      files: call.files,
+      tabId,
+      favicon: tab.favicon ?? undefined,
+      awaitOutcome: true
+    }
+    void shell
+      .share(payload)
+      .then(
+        (outcome): ShareOutcome => (outcome === 'shared' ? 'shared' : 'aborted'),
+        (): ShareOutcome => 'aborted'
+      )
+      .then((outcome) => {
+        const index = this.system.indexOf(entry)
+        // Gone already: the tab navigated or closed and the page heard `aborted` then.
+        if (index < 0) return
+        this.system.splice(index, 1)
+        this.browser.tabs
+          .view(tabId)
+          ?.postToPage?.({ type: 'share', id: call.id, result: outcome })
+      })
+    return true
   }
 
   /** The browser's own share (a Share… menu item, the toolbar). */
@@ -199,6 +256,12 @@ export class ShareService {
 
   /** The tab navigated or closed: its sheet goes and the page's promise rejects. */
   cancelForTab(tabId: string): void {
+    for (const entry of this.system.filter((p) => p.tabId === tabId)) {
+      this.system.splice(this.system.indexOf(entry), 1)
+      this.browser.tabs
+        .view(tabId)
+        ?.postToPage?.({ type: 'share', id: entry.callId, result: 'aborted' })
+    }
     const gone = this.pending.filter((p) => p.request.tabId === tabId && p.page !== null)
     if (gone.length === 0) return
     for (const entry of gone) {

@@ -42,35 +42,49 @@ class PageCapture(
 ) {
     private val main = Handler(Looper.getMainLooper())
 
+    /** The capture's pixels (the caller's to recycle) and the viewport's height in them. */
+    class Capture(val bitmap: Bitmap, val viewportHeightPx: Int)
+
     /** `quality`: the JPEG quality 0..100; anything outside is the agent's default ([JPEG_QUALITY]). */
     fun run(mode: String, region: Box?, format: String, quality: Int = -1, callback: (JSONObject?) -> Unit) {
+        val jpegQuality = if (quality in 0..100) quality else JPEG_QUALITY
+        runBitmap(mode, region) { capture ->
+            if (capture == null) callback(null) else encode(capture.bitmap, format, jpegQuality, callback)
+        }
+    }
+
+    /**
+     * The capture as a bitmap, for a caller that crops or writes it itself (the long screenshot,
+     * SH-08), or null when the view cannot be captured. Main thread; `callback` once.
+     */
+    fun runBitmap(mode: String, region: Box?, callback: (Capture?) -> Unit) {
         if (view.width <= 0 || view.height <= 0 || !view.isShown) {
             callback(null)
             return
         }
-        val jpegQuality = if (quality in 0..100) quality else JPEG_QUALITY
         // The rounded corners of the tab view would otherwise be cut out of every copy (and show
         // up once per strip in a stitched image). The same settle lets the page paint whatever the
         // core hid just before asking (the agent's cursor overlay), which a copy of the window
         // buffer would otherwise still show.
         squareCorners(true)
-        val finish: (JSONObject?) -> Unit = { result ->
+        val finish: (Capture?) -> Unit = { result ->
             squareCorners(false)
             callback(result)
         }
+        val viewportOnly = { copyView { bitmap -> finish(bitmap?.let { Capture(it, it.height) }) } }
         settle {
             if (mode == CapturePlan.MODE_VIEWPORT) {
-                copyView { bitmap -> if (bitmap == null) finish(null) else encode(bitmap, format, jpegQuality, finish) }
+                viewportOnly()
                 return@settle
             }
             readMetrics { metrics ->
                 if (metrics == null) {
                     // No page script access (about:blank before anything ran, a crashed renderer):
                     // the viewport is still worth returning.
-                    copyView { bitmap -> if (bitmap == null) finish(null) else encode(bitmap, format, jpegQuality, finish) }
+                    viewportOnly()
                     return@readMetrics
                 }
-                Stitch(mode, region, format, jpegQuality, metrics, finish).start()
+                Stitch(mode, region, metrics, finish).start()
             }
         }
     }
@@ -79,10 +93,8 @@ class PageCapture(
     private inner class Stitch(
         mode: String,
         region: Box?,
-        private val format: String,
-        private val jpegQuality: Int,
         private val metrics: PageMetrics,
-        private val callback: (JSONObject?) -> Unit
+        private val callback: (Capture?) -> Unit
     ) {
         private val density = view.resources.displayMetrics.density.toDouble()
         private val deviceScale = CapturePlan.deviceScale(view.width, metrics, density)
@@ -199,7 +211,8 @@ class PageCapture(
             val bitmap = output
             output = null
             canvas = null
-            if (bitmap == null) callback(null) else encode(bitmap, format, jpegQuality, callback)
+            if (bitmap == null) callback(null)
+            else callback(Capture(bitmap, (metrics.viewportHeight * outputScale).roundToInt().coerceIn(1, bitmap.height)))
         }
     }
 

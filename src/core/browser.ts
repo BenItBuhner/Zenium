@@ -2595,6 +2595,23 @@ export class Browser {
           if (active) this.shareTab(active.id, win)
         }
       },
+      // The preview card's and the long-screenshot editor's actions (SH-07, SH-08): the host's
+      // gallery pictures. A host without one never shows the card, so these have nothing to do.
+      'screenshot.share': async ({ uri }) => {
+        await this.platform.screenshots?.share(uri)
+      },
+      'screenshot.delete': ({ uri }) => this.platform.screenshots?.delete(uri) ?? false,
+      'screenshot.open': async ({ uri }) => {
+        await this.platform.screenshots?.open(uri)
+      },
+      'screenshot.captureLong': ({ tabId }) =>
+        this.platform.screenshots?.captureLong(tabId) ?? null,
+      'screenshot.saveLong': async ({ id, crop, share }, win) => {
+        const saved = (await this.platform.screenshots?.saveLong(id, crop, Boolean(share))) ?? null
+        if (!saved) this.toast('Could not save the screenshot', 'error', win)
+        return saved
+      },
+      'screenshot.discardLong': ({ id }) => this.platform.screenshots?.discardLong(id),
       'media.action': ({ tabId, action, seekTime, seekOffset }) =>
         this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
       'media.pictureInPicture': ({ tabId }) => this.mediaSession.enterPictureInPicture(tabId),

@@ -43,6 +43,7 @@ import {
   pushToast,
   showExternalProtocol,
   showMenu,
+  showScreenshotCard,
   showZoomBubble,
   uiStore
 } from '@renderer/lib/ui'
@@ -254,6 +255,16 @@ export function useMainEvents(): void {
         void openReaderPreferences(tabId)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
+      // Take Screenshot's picture is in the gallery (SH-07): the preview card in the toast's slot
+      // on the layouts with the message layer; the sidebar layout's narrow well takes a toast
+      // with Share for its one action.
+      onEvent('screenshot.saved', (saved) => {
+        if (isTouchLayout()) showScreenshotCard(saved)
+        else
+          pushToast('Screenshot saved', 'info', {
+            action: { label: 'Share', onPick: () => run('screenshot.share', { uri: saved.uri }) }
+          })
+      }),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
       onEvent('tab.dragOver', (over) => remoteDragOver(over)),

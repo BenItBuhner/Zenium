@@ -2043,6 +2043,80 @@
     height: var(--v2-icon);
     stroke-width: var(--v2-icon-stroke);
   }
+  /*
+   * Take Screenshot's preview card (SH-07): the toast's card with the picture for its glyph. A
+   * grid of three columns – the thumbnail, the text, the trailing slot – and two rows: the
+   * title with its detail, and under them, from the text edge to the card's trailing edge,
+   * the decision pair Share | Delete (§9.11: a pair inside a row is the row's own footer, the
+   * glyph column kept clear). The trailing slot (Capture more, the close) centres on the two
+   * text lines, as a banner's does on its title (§9.18).
+   */
+  .zen-screenshot-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: start;
+    column-gap: 8px;
+    row-gap: 8px;
+    padding-bottom: 11px;
+  }
+  .zen-screenshot-card.zen-message-toast {
+    padding-right: 6px;
+  }
+  .zen-screenshot-thumb {
+    grid-row: 1 / span 2;
+    display: block;
+    height: 64px;
+    max-width: 96px;
+    margin-top: var(--zen-message-text-inset);
+    overflow: hidden;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-panel);
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-screenshot-thumb:active {
+    transform: scale(0.97);
+  }
+  .zen-screenshot-thumb:focus-visible {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 2px;
+  }
+  .zen-screenshot-thumb img {
+    display: block;
+    height: 100%;
+    width: auto;
+    max-width: 96px;
+    object-fit: cover;
+  }
+  .zen-screenshot-text {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 0;
+  }
+  .zen-screenshot-title {
+    font-weight: var(--v2-weight-heading);
+  }
+  .zen-screenshot-trailing {
+    grid-column: 3;
+    grid-row: 1;
+    height: calc(var(--v2-line-body-box) + var(--v2-line-small-box));
+    margin-top: var(--zen-message-text-inset);
+  }
+  .zen-screenshot-actions {
+    grid-column: 2 / span 2;
+    grid-row: 2;
+    display: flex;
+    gap: 8px;
+    margin-right: 8px;
+  }
+  .zen-screenshot-actions > .zen-message-button {
+    flex: 1 1 0;
+    justify-content: center;
+    padding: 0 8px;
+  }
 
   /* The sidebar of Android's wide layouts: the toast's row, clipped so the card slides in from below it. */
   .zen-message-well {

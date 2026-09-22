@@ -92,6 +92,12 @@ interface Props {
    * follows its content instead of holding the height it opened at (the scroll offset stays).
    */
   fitContent?: boolean
+  /**
+   * Come in at the expanded detent rather than the peek: for an editor whose body is the
+   * document (the long-screenshot crop), the phone's form of the frame dialog, whose body
+   * scrolls from the start. A sheet of rows or a control panel keeps the peek (§9.13).
+   */
+  openExpanded?: boolean
 }
 
 type Zone = 'grip' | 'body' | 'scrim'
@@ -194,7 +200,8 @@ export function BottomSheet({
   label,
   className,
   hosted = false,
-  fitContent = false
+  fitContent = false,
+  openExpanded = false
 }: Props): JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
@@ -293,6 +300,7 @@ export function BottomSheet({
   const motion = (): SheetMotion =>
     (motionRef.current ??= new SheetMotion({
       detents: () => detents.current,
+      openAt: openExpanded ? 'expanded' : 'collapsed',
       onChange: () => {
         // The page behind recedes and the bottom bar fades with the same progress, through the
         // chassis (`--zen-recede`, main.css); a sheet above recedes this one by its own.

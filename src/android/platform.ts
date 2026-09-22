@@ -4,8 +4,10 @@ import type {
   Events,
   HapticKind,
   HostCapabilities,
+  LongCapture,
   PageEnvironment,
   Platform as PlatformOs,
+  ScreenshotSaved,
   ShareAction,
   ThumbnailPicture
 } from '@shared/types'
@@ -54,6 +56,7 @@ import type {
   PlatformInfo,
   PrivacyHost,
   QrScanHost,
+  ScreenshotHost,
   PrivateSessionHost,
   ReauthHost,
   SessionHost,
@@ -1069,6 +1072,8 @@ export class AndroidPlatform implements Platform {
    */
   readonly thumbnails: ThumbnailHost
   readonly qrScan: QrScanHost
+  /** Screenshots to the gallery (`Screenshots.kt`): the flash, the card's picture, the long capture (SH-07, SH-08). */
+  readonly screenshots: ScreenshotHost
   readonly mediaSession: MediaSessionHost
   readonly webNotifications: WebNotificationHost
   readonly privateSession: PrivateSessionHost
@@ -1347,6 +1352,21 @@ export class AndroidPlatform implements Platform {
       layout: (slot) => bridge.send('qr.layout', slot),
       setTorch: (on) => bridge.send('qr.setTorch', { on }),
       openSettings: () => bridge.send('qr.openSettings')
+    }
+    // Take Screenshot as Chrome's flow (`Screenshots.kt`): Kotlin flashes the page, copies the
+    // view's pixels into `MediaStore.Images` under Pictures/Zenium and answers with the card's
+    // thumbnail; the long capture is `PageCapture`'s stitched page, held as a bitmap until the
+    // editor's Save crops it. Share and the viewer are the system's; Delete is the gallery row's.
+    this.screenshots = {
+      capture: (tabId) => bridge.call<ScreenshotSaved | null>('screenshot.capture', { tabId }),
+      captureLong: (tabId) =>
+        bridge.call<LongCapture | null>('screenshot.captureLong', { tabId }),
+      saveLong: (id, crop, share) =>
+        bridge.call<ScreenshotSaved | null>('screenshot.saveLong', { id, ...crop, share }),
+      discardLong: (id) => bridge.send('screenshot.discardLong', { id }),
+      share: (uri) => bridge.call('screenshot.share', { uri }),
+      delete: (uri) => bridge.call<boolean>('screenshot.delete', { uri }),
+      open: (uri) => bridge.call('screenshot.open', { uri })
     }
     // The OS media controls (`MediaSessions.kt`): a MediaSessionCompat behind the media-style
     // notification, the lock screen and the headset buttons, fed with the session the core

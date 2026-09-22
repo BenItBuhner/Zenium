@@ -50,6 +50,8 @@ export async function writeShared(files: ShareFile[], dir: string): Promise<stri
   await mkdir(dir, { recursive: true })
   const out: string[] = []
   for (const file of files) {
+    // A file the host already holds (`uri`, Android's) never reaches Electron's sheet.
+    if (file.data === undefined) continue
     const path = await uniquePath(dir, sharedFileName(file))
     await writeFile(path, Buffer.from(file.data, 'base64'))
     out.push(path)
