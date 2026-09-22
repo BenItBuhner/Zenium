@@ -170,7 +170,9 @@ function online(f: Fixture): boolean {
 
 const PAGE = 'https://news.example/today'
 const OTHER = 'https://other.example/'
-const OFFLINE = errorPageUrl(-106, 'net::ERR_INTERNET_DISCONNECTED', PAGE)
+/** The core writes the default theme's accent into the page's URL (§9.11; the fixture's space has no theme). */
+const ACCENT = { light: '#6264dc', dark: '#8284f0' }
+const OFFLINE = errorPageUrl(-106, 'net::ERR_INTERNET_DISCONNECTED', PAGE, null, ACCENT)
 
 /** The tab's load of `url` failed with `code` and the error page committed, as the host reports it. */
 function fail(view: Recorded, code: number, name: string, url = PAGE): void {

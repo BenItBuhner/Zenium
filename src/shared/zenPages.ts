@@ -18,7 +18,14 @@ import type { CertificateDetails, Platform as PlatformOs } from './types'
 import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 import { isCertificateError } from './siteInfo'
-import { crashPageOptionsOf, errorPageCertificate, type CrashPageOptions } from './url'
+import {
+  crashPageOptionsOf,
+  errorPageAccentOf,
+  errorPageCertificate,
+  type CrashPageOptions,
+  type ErrorPageAccent
+} from './url'
+import { hexToRgb, resolveTheme, rgbToHex } from './theme'
 import { newTabPageHtml } from './newTabPage'
 import { pdfMissingPageHtml, pdfViewerPageHtml, type PdfPageLookup } from './pdfPage'
 
@@ -579,6 +586,32 @@ export function errorPageStyle(css: string = chromeStylesheet): string {
 const ERROR_STYLE = errorPageStyle()
 
 /**
+ * The active theme's accent, set on the document's root beside the token block (design language
+ * v2 §9.11): `--zen-accent` and its triple as the chrome's `.zen-window` carries them
+ * (`themeCssVariables`), the light one on `:root` and the dark one under the block's own dark
+ * selector, so the block's `--v2-accent` – the accent mixed towards black or white – resolves
+ * here as it does in the window, and a `data-primary` control is the accent and not the
+ * unresolved variable's black or white. The core writes the accent into the page's URL when it
+ * builds one; a URL without it (a page restored from an older session) takes the default
+ * theme's, the same values the chrome falls back to.
+ */
+export function errorPageAccentStyle(accent: ErrorPageAccent | null): string {
+  const rule = (selector: string, hex: string | undefined, dark: boolean): string => {
+    const rgb = (hex && hexToRgb(hex)) || resolveTheme(null, dark).accent
+    return `${selector} {\n  --zen-accent: ${rgbToHex(rgb)};\n  --zen-accent-rgb: ${rgb.join(' ')};\n}`
+  }
+  return [
+    rule(':root', accent?.light, false),
+    rule(":root[data-theme='dark']", accent?.dark, true)
+  ].join('\n')
+}
+
+/** The error document's whole stylesheet: the chrome's cuts, then the theme's accent beside them. */
+function errorDocumentStyle(accent: ErrorPageAccent | null): string {
+  return `${ERROR_STYLE}\n${errorPageAccentStyle(accent)}`
+}
+
+/**
  * Puts the chrome's root attributes on the page's root from the media the tab sees, so the token
  * block's `:root[data-theme='dark']`, `[data-pointer='coarse']` and `[data-form-factor='phone']`
  * rules apply to the page as they do to the chrome. The classification is `classifyViewport`'s
@@ -656,9 +689,10 @@ export function errorPageHtml(url: URL): string {
   const code = Number(url.searchParams.get('code') ?? 0)
   const target = url.searchParams.get('url') ?? ''
   const kind = url.searchParams.get('kind')
+  const accent = errorPageAccentOf(url.searchParams)
   if (kind === 'safebrowsing')
-    return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')))
-  if (kind === 'https-only') return httpsOnlyPageHtml(target, code)
+    return safeBrowsingPageHtml(target, threatOf(url.searchParams.get('threat')), accent)
+  if (kind === 'https-only') return httpsOnlyPageHtml(target, code, accent)
   if (code === BLOCKED_BY_CLIENT_CODE) return blockedPageHtml(target)
   const content = errorPageContent(
     code,
@@ -673,7 +707,7 @@ export function errorPageHtml(url: URL): string {
       ? reloadHtml(content)
       : ''
   const name = content.code ? `\n  <p class="zen-error-code">${escapeHtml(content.code)}</p>` : ''
-  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${ERROR_STYLE}</style></head>
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(content.site || 'Problem loading page')}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${errorDocumentStyle(accent)}</style></head>
 <body class="zen-error-page"><main>
   <h1>${escapeHtml(content.title)}</h1>
   <p>${emphasiseSite(content.reason, content.site)}</p>${name}${controls}
@@ -829,7 +863,7 @@ function warningButton(button: WarningButton, autofocus: boolean): string {
  * stacks three, primary first). Under Details, 16 below the actions, the reason, the address at
  * 13 and the secondary that goes on regardless.
  */
-function warningPageHtml(page: WarningPage): string {
+function warningPageHtml(page: WarningPage, accent: ErrorPageAccent | null): string {
   const data = Object.entries({ interstitial: page.kind, ...page.data })
     .map(([k, v]) => ` data-${k}="${escapeHtml(v)}"`)
     .join('')
@@ -837,7 +871,7 @@ function warningPageHtml(page: WarningPage): string {
     `<button type="button" id="zen-details-toggle" class="zen-v2-button zen-interstitial-action" aria-expanded="false" aria-controls="zen-details">Details</button>`,
     ...page.actions.map((b) => warningButton(b, b.primary === true))
   ]
-  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${ERROR_STYLE}</style></head>
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${errorDocumentStyle(accent)}</style></head>
 <body class="zen-error-page"><main${data}>
   <div class="zen-interstitial-title" data-tone="${page.tone}">
     ${glyph(page.glyph)}
@@ -864,22 +898,29 @@ function warningPageHtml(page: WarningPage): string {
  * request engine refused the navigation because the site is on a malware or phishing feed.
  * "Proceed anyway", under Details, excepts the host until the browser closes.
  */
-export function safeBrowsingPageHtml(target: string, threat: SafeBrowsingThreat): string {
+export function safeBrowsingPageHtml(
+  target: string,
+  threat: SafeBrowsingThreat,
+  accent: ErrorPageAccent | null = null
+): string {
   const host = hostOf(target)
   const copy = SAFE_BROWSING_THREAT_LABELS[threat]
-  return warningPageHtml({
-    kind: 'safebrowsing',
-    name: 'Security warning',
-    tone: 'danger',
-    glyph: 'shield-alert',
-    title: copy.title,
-    description: `Zenium stopped this page. ${escapeHtml(copy.description)}`,
-    actions: [{ action: 'back', label: 'Back to safety', primary: true }],
-    details: `<p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and Security.</p>`,
-    detailActions: [{ action: 'proceed', label: 'Proceed anyway (unsafe)', danger: true }],
-    target,
-    data: { threat }
-  })
+  return warningPageHtml(
+    {
+      kind: 'safebrowsing',
+      name: 'Security warning',
+      tone: 'danger',
+      glyph: 'shield-alert',
+      title: copy.title,
+      description: `Zenium stopped this page. ${escapeHtml(copy.description)}`,
+      actions: [{ action: 'back', label: 'Back to safety', primary: true }],
+      details: `<p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and Security.</p>`,
+      detailActions: [{ action: 'proceed', label: 'Proceed anyway (unsafe)', danger: true }],
+      target,
+      data: { threat }
+    },
+    accent
+  )
 }
 
 /**
@@ -887,25 +928,32 @@ export function safeBrowsingPageHtml(target: string, threat: SafeBrowsingThreat)
  * had over plaintext. "Continue" allows the site until the browser closes; "Always allow",
  * under Details, remembers it (the `https-only` permission).
  */
-export function httpsOnlyPageHtml(httpUrl: string, code: number): string {
+export function httpsOnlyPageHtml(
+  httpUrl: string,
+  code: number,
+  accent: ErrorPageAccent | null = null
+): string {
   const host = hostOf(httpUrl)
   const reason = describeNetError(code, 'The secure connection could not be made.')
-  return warningPageHtml({
-    kind: 'https-only',
-    name: 'Secure connection not available',
-    tone: 'warn',
-    glyph: 'lock-open',
-    title: 'Secure connection not available',
-    description: `Zenium tried to reach <strong>${escapeHtml(host)}</strong> over https and could not. Loading it over http means what you send and receive can be read and changed on the way.`,
-    actions: [
-      { action: 'continue', label: 'Continue to HTTP site' },
-      { action: 'back', label: 'Back to safety', primary: true }
-    ],
-    details: `<p>${escapeHtml(reason)}${code ? ` (${code})` : ''}</p>
+  return warningPageHtml(
+    {
+      kind: 'https-only',
+      name: 'Secure connection not available',
+      tone: 'warn',
+      glyph: 'lock-open',
+      title: 'Secure connection not available',
+      description: `Zenium tried to reach <strong>${escapeHtml(host)}</strong> over https and could not. Loading it over http means what you send and receive can be read and changed on the way.`,
+      actions: [
+        { action: 'continue', label: 'Continue to HTTP site' },
+        { action: 'back', label: 'Back to safety', primary: true }
+      ],
+      details: `<p>${escapeHtml(reason)}${code ? ` (${code})` : ''}</p>
     <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and Security.</p>`,
-    detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
-    target: httpUrl
-  })
+      detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
+      target: httpUrl
+    },
+    accent
+  )
 }
 
 export function readerMissingPageHtml(original: string | null): string {

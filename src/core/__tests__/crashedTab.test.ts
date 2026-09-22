@@ -134,6 +134,11 @@ function toasts(f: Fixture): string[] {
 }
 
 const PAGE = 'https://crashed.example/article?id=7'
+/**
+ * The accent the core writes into every error page's URL (§9.11): the fixture's space has no
+ * theme, so it is the default theme's, per scheme (`resolveTheme(null, dark).accent`).
+ */
+const ACCENT = { light: '#6264dc', dark: '#8284f0' }
 
 describe('a renderer that goes away in front of the user', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -150,7 +155,7 @@ describe('a renderer that goes away in front of the user', () => {
 
     view.events.onCrashed('crashed', 11)
 
-    const page = errorPageUrl(CRASH_ERROR_CODE, 'SIGSEGV', PAGE)
+    const page = errorPageUrl(CRASH_ERROR_CODE, 'SIGSEGV', PAGE, null, ACCENT)
     expect(view.loads.at(-1)).toBe(page)
     const after = f.browser.tabs.tab(tab.id)!
     expect(after.errorCode).toBe(CRASH_ERROR_CODE)
@@ -194,7 +199,9 @@ describe('a renderer that goes away in front of the user', () => {
     view.events.onNavigated(PAGE, false)
     // `forcefullyCrashRenderer` on Windows and macOS shuts the renderer down as hung.
     view.events.onCrashed('killed', 2)
-    expect(view.loads.at(-1)).toBe(errorPageUrl(CRASH_ERROR_CODE, 'RESULT_CODE_HUNG', PAGE))
+    expect(view.loads.at(-1)).toBe(
+      errorPageUrl(CRASH_ERROR_CODE, 'RESULT_CODE_HUNG', PAGE, null, ACCENT)
+    )
   })
 
   it('stands in for the page a crashed error page stood in for, never for itself', () => {
@@ -206,7 +213,7 @@ describe('a renderer that goes away in front of the user', () => {
     view.events.onCrashed('crashed', 11)
     view.events.onNavigated(view.loads.at(-1)!, false)
     view.events.onCrashed('crashed', 5)
-    expect(view.loads.at(-1)).toBe(errorPageUrl(CRASH_ERROR_CODE, 'SIGTRAP', PAGE))
+    expect(view.loads.at(-1)).toBe(errorPageUrl(CRASH_ERROR_CODE, 'SIGTRAP', PAGE, null, ACCENT))
   })
 
   it("shows the memory variant for a renderer the system killed in front of the user (Android's !didCrash)", () => {
@@ -220,7 +227,9 @@ describe('a renderer that goes away in front of the user', () => {
     view.events.onCrashed('oom-kill')
 
     // A page in front is offered again, not unloaded: the crash page says why it went.
-    expect(view.loads.at(-1)).toBe(crashPageUrl('Out of Memory', PAGE, { variant: 'memory' }))
+    expect(view.loads.at(-1)).toBe(
+      crashPageUrl('Out of Memory', PAGE, { variant: 'memory', accent: ACCENT })
+    )
     const after = f.browser.tabs.tab(tab.id)!
     expect(after.discarded).toBe(false)
     expect(after.errorCode).toBe(CRASH_ERROR_CODE)
@@ -253,7 +262,9 @@ describe('a renderer that goes away in front of the user', () => {
 
     view.events.onCrashed('hung')
 
-    expect(view.loads.at(-1)).toBe(crashPageUrl('RESULT_CODE_HUNG', PAGE, { variant: 'hung' }))
+    expect(view.loads.at(-1)).toBe(
+      crashPageUrl('RESULT_CODE_HUNG', PAGE, { variant: 'hung', accent: ACCENT })
+    )
   })
 
   it("marks a repeat within the minute on the host's word, so the page suggests closing other tabs", () => {
@@ -265,11 +276,41 @@ describe('a renderer that goes away in front of the user', () => {
 
     view.events.onCrashed('crashed', undefined, { repeat: true })
 
-    const page = crashPageUrl('CRASHED', PAGE, { variant: 'crash', repeat: true })
+    const page = crashPageUrl('CRASHED', PAGE, { variant: 'crash', repeat: true, accent: ACCENT })
     expect(view.loads.at(-1)).toBe(page)
     expect(page).toContain('repeat=1')
     // A first crash carries neither parameter: the URL is the plain crash page's.
     expect(crashPageUrl('CRASHED', PAGE)).toBe(errorPageUrl(CRASH_ERROR_CODE, 'CRASHED', PAGE))
+  })
+
+  it("writes the tab's own theme accent into the page's URL, and the private window's in a private tab (§9.11)", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    // A themed space: the accent is the theme's primary colour in both schemes.
+    const space = win.activeSpace()
+    space.theme = {
+      type: 'gradient',
+      colors: [{ c: [96, 110, 235], x: 0.3, y: 0.35, isPrimary: true }],
+      opacity: 0.55,
+      texture: 0,
+      algorithm: 'floating',
+      monochrome: false,
+      rotation: 40
+    }
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    expect(f.browser.tabs.errorPageAccent(tab.id)).toEqual({ light: '#606eeb', dark: '#606eeb' })
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+    view.events.onCrashed('crashed')
+    expect(view.loads.at(-1)).toContain('&accent=606eeb&accentDark=606eeb')
+
+    // A private tab: the private window's accent, the one its new tab page takes.
+    const priv = f.browser.createWindow({ kind: 'private', from: win })
+    const secret = f.browser.tabs.createTab({ url: PAGE, active: true }, priv)
+    expect(f.browser.tabs.errorPageAccent(secret.id)).toEqual({ light: '#a98bff', dark: '#a98bff' })
+
+    // A tab the core no longer has: the default theme's, never a throw.
+    expect(f.browser.tabs.errorPageAccent('gone')).toEqual(ACCENT)
   })
 
   it('does nothing for a clean exit', () => {

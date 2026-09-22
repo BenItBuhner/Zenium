@@ -18,6 +18,7 @@ import {
   certificateInterstitial,
   crashCodeName,
   describeNetError,
+  errorPageAccentStyle,
   errorPageContent,
   errorPageHtml,
   errorPageStyle,
@@ -403,7 +404,60 @@ describe('errorPageHtml', () => {
       '<button type="button" id="zen-error-reload" class="zen-v2-button zen-interstitial-action" onclick='
     )
     const style = html.slice(html.indexOf('<style>') + '<style>'.length, html.indexOf('</style>'))
-    expect(style).toBe(errorPageStyle())
+    expect(style).toBe(`${errorPageStyle()}\n${errorPageAccentStyle(null)}`)
+  })
+
+  describe("the theme's accent beside the token block (§9.11)", () => {
+    it("sets the window's --zen-accent on the root per scheme, so --v2-accent resolves as in the window", () => {
+      const style = errorPageAccentStyle({ light: '#6264dc', dark: '#8284f0' })
+      expect(style).toBe(
+        ':root {\n  --zen-accent: #6264dc;\n  --zen-accent-rgb: 98 100 220;\n}\n' +
+          ":root[data-theme='dark'] {\n  --zen-accent: #8284f0;\n  --zen-accent-rgb: 130 132 240;\n}"
+      )
+      // The token block derives the primary's fill from it; the page cuts that block in whole.
+      expect(errorPageStyle()).toContain(
+        '--v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);'
+      )
+      expect(errorPageStyle()).toContain(
+        '--v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);'
+      )
+    })
+
+    it("reads the accent the core wrote into the page's URL, the theme's own", () => {
+      const themed = errorPageUrl(-1, 'CRASHED', 'https://a.example/', null, {
+        light: '#606eeb',
+        dark: '#606eeb'
+      })
+      const html = errorPageHtml(parseZenUrl(themed)!)
+      expect(html).toContain(
+        ':root {\n  --zen-accent: #606eeb;\n  --zen-accent-rgb: 96 110 235;\n}'
+      )
+      expect(html).toContain(":root[data-theme='dark'] {\n  --zen-accent: #606eeb;")
+      expect(html).not.toContain('--zen-accent: #6264dc')
+    })
+
+    it("falls back to the default theme's accent for a URL without one, never the unresolved variable", () => {
+      const html = errorPageHtml(parseZenUrl(REFUSED)!)
+      expect(html).toContain(
+        ':root {\n  --zen-accent: #6264dc;\n  --zen-accent-rgb: 98 100 220;\n}'
+      )
+      expect(html).toContain(
+        ":root[data-theme='dark'] {\n  --zen-accent: #8284f0;\n  --zen-accent-rgb: 130 132 240;\n}"
+      )
+      // A value that is not a colour is no accent.
+      const bad = errorPageHtml(parseZenUrl(`${REFUSED}&accent=red&accentDark=8284f0`)!)
+      expect(bad).toContain('--zen-accent: #6264dc;')
+    })
+
+    it('reaches the warning pages too, whose Back to safety is the primary', () => {
+      const url = safeBrowsingPageUrl('https://bad.example/', 'malware', {
+        light: '#4caf50',
+        dark: '#4caf50'
+      })
+      const html = errorPageHtml(parseZenUrl(url)!)
+      expect(html).toContain('--zen-accent: #4caf50;')
+      expect(html).toContain('data-primary')
+    })
   })
 
   it('renders the certificate interstitial: Advanced then Back to safety last in the action row, the details and Proceed hidden', () => {
@@ -487,7 +541,9 @@ describe('errorPageHtml', () => {
         expect(html).toContain('<html class="zen-error-document">')
         expect(html).toContain('<body class="zen-error-page">')
         expect(html).toContain('<script>' + ERROR_PAGE_ATTRIBUTES_SCRIPT + '</script>')
-        expect(html).toContain('<style>' + errorPageStyle() + '</style>')
+        expect(html).toContain(
+          '<style>' + errorPageStyle() + '\n' + errorPageAccentStyle(null) + '</style>'
+        )
         expect(html).toContain('class="zen-interstitial-title"')
         expect(html).toContain('class="zen-interstitial-actions"')
       }

@@ -46,6 +46,7 @@ import {
   ERROR_URL_PREFIX,
   crashPageUrl,
   type CrashPageVariant,
+  type ErrorPageAccent,
   errorPageCertificate,
   errorPageUrl,
   extensionPageOf,
@@ -59,6 +60,8 @@ import {
   titleForUrl
 } from '../shared/url'
 import { isWithinScope } from '../shared/webApp'
+import { resolveTheme, rgbToHex } from '../shared/theme'
+import { PRIVATE_ACCENT } from '../shared/newTabPageScript'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import {
@@ -583,7 +586,7 @@ export class TabManager {
         if (unsafe) {
           this.httpsUpgraded.delete(tabId)
           failed()
-          v.loadURL(safeBrowsingPageUrl(url, unsafe.threat))
+          v.loadURL(safeBrowsingPageUrl(url, unsafe.threat, this.errorPageAccent(tabId)))
           return
         }
         const plaintext = this.httpsUpgraded.get(tabId)
@@ -593,7 +596,7 @@ export class TabManager {
           if (protection.httpsOnly !== 'off' && !protection.allowsPlaintext(plaintext)) {
             // HTTPS-only mode asks before loading the page over plaintext.
             failed()
-            v.loadURL(httpsOnlyPageUrl(plaintext, code))
+            v.loadURL(httpsOnlyPageUrl(plaintext, code, this.errorPageAccent(tabId)))
             return
           }
           v.loadURL(plaintext)
@@ -613,7 +616,8 @@ export class TabManager {
           code,
           description || describeNetError(code, ''),
           url,
-          certificateError?.certificate
+          certificateError?.certificate,
+          this.errorPageAccent(tabId)
         )
         if (certificateError && v.showErrorPage) this.showInterstitial(tabId, v, url, page)
         else v.loadURL(page)
@@ -671,7 +675,13 @@ export class TabManager {
           t.waiting = false
           t.progress = 1
         })
-        view()?.loadURL(crashPageUrl(code, target, { variant, repeat: details?.repeat === true }))
+        view()?.loadURL(
+          crashPageUrl(code, target, {
+            variant,
+            repeat: details?.repeat === true,
+            accent: this.errorPageAccent(tabId)
+          })
+        )
       },
       onAudioStateChanged: (audible) => {
         update((t) => (t.audible = audible), true)
@@ -807,6 +817,23 @@ export class TabManager {
 
   isPrivate(tab: Tab): boolean {
     return tab.containerId === PRIVATE_CONTAINER_ID
+  }
+
+  /**
+   * The accent an error document the tab loads inlines beside its token block (design language
+   * v2 §9.11): the tab's space theme resolved for each scheme, as the chrome sets `--zen-accent`
+   * on the window – or the private window's own accent, the one its new tab page takes – so the
+   * page's primary (the repeat-crash Reload, an interstitial's Back to safety) is the accent the
+   * window shows and not the unresolved variable.
+   */
+  errorPageAccent(tabId: string): ErrorPageAccent {
+    const tab = this.tab(tabId)
+    if (tab && this.isPrivate(tab)) return { light: PRIVATE_ACCENT, dark: PRIVATE_ACCENT }
+    const theme = (tab && getSpace(this.model, tab.spaceId)?.theme) ?? null
+    return {
+      light: rgbToHex(resolveTheme(theme, false).accent),
+      dark: rgbToHex(resolveTheme(theme, true).accent)
+    }
   }
 
   /**
