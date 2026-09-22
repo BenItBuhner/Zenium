@@ -121,5 +121,10 @@ export function layoutRectUnder(el: Element, frame: Element | null | undefined):
   const style = getComputedStyle(frame)
   const transform = parseAxisTransform(style.transform)
   if (transform === null || isIdentity(transform)) return painted
-  return layoutRectThrough(painted, clientRect(frame), transform, parseOrigin(style.transformOrigin))
+  return layoutRectThrough(
+    painted,
+    clientRect(frame),
+    transform,
+    parseOrigin(style.transformOrigin)
+  )
 }

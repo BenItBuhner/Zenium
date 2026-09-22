@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, useRef, type ReactElement } from 'react'
+import { act, useRef, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
@@ -66,7 +66,12 @@ const centre = { x: frameBox.width / 2, y: frameBox.height / 2 }
 function paint(rect: Rect, s: number): Rect {
   const ox = frameBox.x + centre.x
   const oy = frameBox.y + centre.y
-  return { x: ox + (rect.x - ox) * s, y: oy + (rect.y - oy) * s, width: rect.width * s, height: rect.height * s }
+  return {
+    x: ox + (rect.x - ox) * s,
+    y: oy + (rect.y - oy) * s,
+    width: rect.width * s,
+    height: rect.height * s
+  }
 }
 
 /** What the DOM reports this frame: the painted boxes, and the frame's computed transform. */
@@ -136,18 +141,30 @@ describe('useLayoutReporter under the recede', () => {
       return frames.length
     })
     vi.stubGlobal('cancelAnimationFrame', () => undefined)
+    // happy-dom has no ResizeObserver; the transform is not a resize, so none is needed here.
     vi.stubGlobal(
       'ResizeObserver',
       class {
-        observe(): void {}
-        disconnect(): void {}
-        unobserve(): void {}
+        observe = vi.fn()
+        disconnect = vi.fn()
+        unobserve = vi.fn()
       }
     )
     recedeTo(0)
     const rect = (r: Rect): DOMRect =>
-      ({ left: r.x, top: r.y, width: r.width, height: r.height, right: r.x + r.width, bottom: r.y + r.height, x: r.x, y: r.y }) as DOMRect
-    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      ({
+        left: r.x,
+        top: r.y,
+        width: r.width,
+        height: r.height,
+        right: r.x + r.width,
+        bottom: r.y + r.height,
+        x: r.x,
+        y: r.y
+      }) as DOMRect
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
       if (this.hasAttribute('data-frame')) return rect(painted.frame)
       if (this.hasAttribute('data-viewport')) return rect(painted.viewport)
       return rect({ x: 0, y: 0, width: 0, height: 0 })
@@ -155,7 +172,10 @@ describe('useLayoutReporter under the recede', () => {
     const computed = window.getComputedStyle.bind(window)
     vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element) =>
       el.hasAttribute('data-frame')
-        ? ({ transform: painted.transform, transformOrigin: `${centre.x}px ${centre.y}px` } as unknown as CSSStyleDeclaration)
+        ? ({
+            transform: painted.transform,
+            transformOrigin: `${centre.x}px ${centre.y}px`
+          } as unknown as CSSStyleDeclaration)
         : computed(el)
     )
     contentAreaStore.set({ area: null })

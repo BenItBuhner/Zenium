@@ -57,7 +57,12 @@ describe('layoutRectThrough: the painted box run back through the frame’s tran
   })
 
   it('a viewport inside the frame (under a 3 px load bar, above nothing) comes back to its own layout box, at every recede', () => {
-    const viewport: Rect = { x: frame.x, y: frame.y + 3, width: frame.width, height: frame.height - 3 }
+    const viewport: Rect = {
+      x: frame.x,
+      y: frame.y + 3,
+      width: frame.width,
+      height: frame.height - 3
+    }
     for (const p of [0.1, 0.35, 0.5, 0.97, 1]) {
       const s = recedeScale(p)
       const t = { scaleX: s, scaleY: s, translateX: 0, translateY: 0 }
@@ -70,9 +75,19 @@ describe('layoutRectThrough: the painted box run back through the frame’s tran
     const translate = { x: 12, y: -7 }
     const s = 0.9
     const t = { scaleX: s, scaleY: s, translateX: translate.x, translateY: translate.y }
-    const viewport: Rect = { x: frame.x, y: frame.y + 40, width: frame.width, height: frame.height - 40 }
+    const viewport: Rect = {
+      x: frame.x,
+      y: frame.y + 40,
+      width: frame.width,
+      height: frame.height - 40
+    }
     close(
-      layoutRectThrough(paint(viewport, s, origin, translate), paint(frame, s, origin, translate), t, origin),
+      layoutRectThrough(
+        paint(viewport, s, origin, translate),
+        paint(frame, s, origin, translate),
+        t,
+        origin
+      ),
       viewport
     )
   })
@@ -122,7 +137,9 @@ describe('parseAxisTransform: the computed transform as a scale and a translatio
       translateX: 12,
       translateY: -7.5
     })
-    expect(parseAxisTransform('matrix3d(0.97, 0, 0, 0, 0, 0.97, 0, 0, 0, 0, 1, 0, 3, 4, 0, 1)')).toEqual({
+    expect(
+      parseAxisTransform('matrix3d(0.97, 0, 0, 0, 0, 0.97, 0, 0, 0, 0, 1, 0, 3, 4, 0, 1)')
+    ).toEqual({
       scaleX: 0.97,
       scaleY: 0.97,
       translateX: 3,
@@ -134,7 +151,9 @@ describe('parseAxisTransform: the computed transform as a scale and a translatio
     // rotate(45deg)
     expect(parseAxisTransform('matrix(0.7071, 0.7071, -0.7071, 0.7071, 0, 0)')).toBeNull()
     expect(parseAxisTransform('matrix(1, 0.2, 0, 1, 0, 0)')).toBeNull()
-    expect(parseAxisTransform('matrix3d(1, 0.1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)')).toBeNull()
+    expect(
+      parseAxisTransform('matrix3d(1, 0.1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)')
+    ).toBeNull()
     expect(parseAxisTransform('perspective(100px)')).toBeNull()
     expect(parseAxisTransform('matrix(1, 0, 0)')).toBeNull()
   })
@@ -152,13 +171,25 @@ describe('layoutRectUnder: the frame’s computed transform, off the DOM', () =>
   })
 
   /** A frame and a viewport in it, painted as `getBoundingClientRect` reports them. */
-  function mount(painted: { frame: Rect; viewport: Rect }, style: { transform: string; transformOrigin: string }) {
+  function mount(
+    painted: { frame: Rect; viewport: Rect },
+    style: { transform: string; transformOrigin: string }
+  ): { frameEl: HTMLElement; viewportEl: HTMLElement } {
     const frameEl = document.createElement('div')
     const viewportEl = document.createElement('div')
     frameEl.appendChild(viewportEl)
     document.body.appendChild(frameEl)
     const rect = (r: Rect): DOMRect =>
-      ({ left: r.x, top: r.y, width: r.width, height: r.height, right: r.x + r.width, bottom: r.y + r.height, x: r.x, y: r.y }) as DOMRect
+      ({
+        left: r.x,
+        top: r.y,
+        width: r.width,
+        height: r.height,
+        right: r.x + r.width,
+        bottom: r.y + r.height,
+        x: r.x,
+        y: r.y
+      }) as DOMRect
     vi.spyOn(frameEl, 'getBoundingClientRect').mockImplementation(() => rect(painted.frame))
     vi.spyOn(viewportEl, 'getBoundingClientRect').mockImplementation(() => rect(painted.viewport))
     const computed = window.getComputedStyle.bind(window)
@@ -170,10 +201,18 @@ describe('layoutRectUnder: the frame’s computed transform, off the DOM', () =>
 
   it('under the recede the viewport’s layout box is answered, not its painted one', () => {
     const s = recedeScale(1)
-    const viewport: Rect = { x: frame.x, y: frame.y + 3, width: frame.width, height: frame.height - 3 }
+    const viewport: Rect = {
+      x: frame.x,
+      y: frame.y + 3,
+      width: frame.width,
+      height: frame.height - 3
+    }
     const { frameEl, viewportEl } = mount(
       { frame: paint(frame, s), viewport: paint(viewport, s) },
-      { transform: `matrix(${s}, 0, 0, ${s}, 0, 0)`, transformOrigin: `${centre.x}px ${centre.y}px` }
+      {
+        transform: `matrix(${s}, 0, 0, ${s}, 0, 0)`,
+        transformOrigin: `${centre.x}px ${centre.y}px`
+      }
     )
     close(layoutRectUnder(viewportEl, frameEl), viewport)
     // Without the frame to read, the painted box is all there is.
