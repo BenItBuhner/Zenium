@@ -946,12 +946,17 @@ export const API_SPEC: ApiSpec = {
     permissions: [TAB_CAPTURE_PERMISSION]
   },
   // `chooseDesktopMedia` answers its request id synchronously and its callback with the picker's
-  // choice; Zenium has no picker for an extension's call yet, so the answer is Chrome's cancel
-  // (an empty stream id). The shim shapes the call; the host checks the arguments.
+  // choice: the chrome's screen picker, put up by the host with the extension's name and the
+  // kinds it asked for. The shim shapes the call (its request id leads the arguments, as in
+  // Chrome's binding); the host checks the arguments and hands the stream over.
   desktopCapture: {
     methods: {
       chooseDesktopMedia: {
-        params: [{ name: 'sources', type: 'array' }, object('targetTab', true)]
+        params: [
+          { name: 'sources', type: 'array' },
+          object('targetTab', true),
+          object('options', true)
+        ]
       },
       cancelChooseDesktopMedia: { params: [integer('desktopMediaRequestId')] }
     },
@@ -1237,11 +1242,12 @@ export const CONTENT_SETTINGS_INTERNAL_METHODS = CONTENT_SETTING_METHODS
 export const USER_SCRIPTS_INTERNAL_METHODS = ['sendMessage'] as const
 
 /**
- * The calls the shim makes around a consuming document's `getUserMedia` for `tabCapture`
- * (`core/extensions/api/tabCapture.ts`): the engine's id for a stream id this layer answered,
- * and the state the call reached. Not members of `chrome.tabCapture`, but routed like ones.
+ * The calls the shim makes around a consuming document's `getUserMedia` for `tabCapture` and
+ * `desktopCapture` (`core/extensions/api/tabCapture.ts`): the engine's id for a stream id this
+ * layer answered, and the state the call reached. Not members of the namespaces, but routed
+ * like their methods.
  */
-export { TAB_CAPTURE_INTERNAL_METHODS } from './tabCapture'
+export { DESKTOP_CAPTURE_INTERNAL_METHODS, TAB_CAPTURE_INTERNAL_METHODS } from './tabCapture'
 
 /** Storage areas the host implements; the engine's `local` and `session` stay native for data. */
 export const STORAGE_AREAS = ['local', 'sync', 'session', 'managed'] as const
