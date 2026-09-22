@@ -203,6 +203,27 @@ class V2TokensPinTest {
     }
 
     /**
+     * The native sheets draw the one edge: the prompt chassis and the custom tab's menu stroke
+     * their sheet with [SheetEdge] at [PromptSheetSpec.hairlinePx] – one dp round the top and the
+     * sides, none along the bottom, as `.zen-sheet`'s border – and their separators stand the same
+     * dp tall; never a `GradientDrawable.setStroke(1, …)`, one physical pixel on all four sides
+     * (0.38 dp on the CI emulator, a run along the screen's edge). Read from the sources, as the
+     * CSS is; a sheet that leaves the chassis's edge fails here.
+     */
+    @Test
+    fun theNativeSheetsStrokeTheChassisHairline() {
+        for (name in listOf("NativePromptSheet", "CustomTabMenuSheet")) {
+            val source = File(root, "android/app/src/main/kotlin/app/zen/chromium/$name.kt").readText()
+                .replace(Regex("""/\*[\s\S]*?\*/"""), "")
+                .replace(Regex("""//[^\n]*"""), "")
+            assertTrue("$name reads its hairline from PromptSheetSpec.hairlinePx", source.contains("private val hairline = PromptSheetSpec.hairlinePx(density)"))
+            assertTrue("$name draws SheetEdge at the hairline and the sheet's radius", source.contains("SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP),"))
+            assertTrue("$name strokes no one-physical-pixel edge", !Regex("""setStroke\(1,""").containsMatchIn(source))
+            assertTrue("$name draws no one-physical-pixel line", !Regex("""LayoutParams\([A-Za-z.]*MATCH_PARENT, 1\)""").containsMatchIn(source))
+        }
+    }
+
+    /**
      * §9.25's formula, and the CSS with it: the footer's buttons stand 16 above the host's
      * safe-area inset – the gutter plus the inset the host reports, with its three hosts: 16 where
      * it reports none (the preview host), 40 over a 24 dp gesture bar, 64 over a 48 dp three-button

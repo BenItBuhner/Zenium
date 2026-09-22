@@ -20,10 +20,11 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 
 /**
  * The custom tab's menu: the phone sheet of the v2 draft (§6) drawn natively, since a custom
- * tab has no chrome. Neutral panel surface with a hairline edge and 12 dp top corners, a 32×4
- * grabber, rows 44 dp tall at 15/400 with a 20 dp glyph (the caller's own items keep the glyph
- * slot so every label lines up), hairlines with 4 dp margins between [CustomTabMenu.groups], and
- * a footer naming the browser the page is running in, as Chrome's and Firefox's custom tabs do.
+ * tab has no chrome. Neutral panel surface with the native chassis's hairline edge ([SheetEdge]:
+ * top and sides, one dp) and 12 dp top corners, a 32×4 grabber, rows 44 dp tall at 15/400 with
+ * a 20 dp glyph (the caller's own items keep the glyph slot so every label lines up), one-dp
+ * hairlines with 4 dp margins between [CustomTabMenu.groups], and a footer naming the browser
+ * the page is running in, as Chrome's and Firefox's custom tabs do.
  */
 class CustomTabMenuSheet(
     private val context: Context,
@@ -34,7 +35,9 @@ class CustomTabMenuSheet(
     private val density = context.resources.displayMetrics.density
     private val ink = ContextCompat.getColor(context, if (dark) R.color.v2_text_dark else R.color.v2_text_light)
     private val inkFaint = ColorUtils.setAlphaComponent(ink, (0.69f * 255).toInt())
-    private val hairline = ContextCompat.getColor(context, if (dark) R.color.v2_border_dark else R.color.v2_border_light)
+    private val border = ContextCompat.getColor(context, if (dark) R.color.v2_border_dark else R.color.v2_border_light)
+    /** One dp in device pixels, never under one – the sheet's edge and the separators between its groups. */
+    private val hairline = PromptSheetSpec.hairlinePx(density)
 
     fun show() {
         val dialog = BottomSheetDialog(context, if (dark) R.style.ThemeOverlay_Zen_CustomTabSheet_Dark else R.style.ThemeOverlay_Zen_CustomTabSheet)
@@ -47,7 +50,8 @@ class CustomTabMenuSheet(
     private fun content(dialog: BottomSheetDialog): View {
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            background = edge()
+            // The chassis's edge: top and sides at one dp, no run along the bottom, over the panel colour the sheet style paints.
+            background = SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP), border)
             setPadding(0, dp(8), 0, dp(8))
         }
         column.addView(grabber(), LinearLayout.LayoutParams(dp(32), dp(4)).apply {
@@ -66,15 +70,6 @@ class CustomTabMenuSheet(
         return column
     }
 
-    /** The 1 px border of the sheet, over the panel colour the sheet style paints. */
-    private fun edge(): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        val r = dp(12).toFloat()
-        cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
-        setColor(Color.TRANSPARENT)
-        setStroke(1, hairline)
-    }
-
     private fun grabber(): View = View(context).apply {
         contentDescription = context.getString(R.string.cct_menu)
         background = GradientDrawable().apply {
@@ -85,8 +80,8 @@ class CustomTabMenuSheet(
     }
 
     private fun separator(): View = View(context).apply {
-        setBackgroundColor(hairline)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply {
+        setBackgroundColor(border)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline).apply {
             topMargin = dp(4)
             bottomMargin = dp(4)
         }

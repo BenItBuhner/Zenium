@@ -333,7 +333,7 @@ class NativePromptSheet(
     private fun content(): View {
         val column = Column().apply {
             orientation = LinearLayout.VERTICAL
-            background = SheetEdge()
+            background = SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP), ink.border)
             // The container holds the focus on open (§9.22); it draws no ring for it.
             isFocusable = true
             isFocusableInTouchMode = true
@@ -354,44 +354,6 @@ class NativePromptSheet(
             dispatched
         }
         return column
-    }
-
-    /**
-     * The hairline round the sheet, over the panel fill the sheet style paints: one open path up
-     * the left side, round the two top radii, down the right side – the top and the sides, as
-     * `.zen-sheet`'s `border: 1px` with `border-bottom: 0` – and no run along the bottom, where a
-     * bottom sheet meets the screen's edge. The stroke lies inside the bounds, its outer edge on
-     * the sheet's radius, one dp wide.
-     */
-    private inner class SheetEdge : Drawable() {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = hairline.toFloat()
-            color = ink.border
-        }
-        private val path = Path()
-
-        override fun onBoundsChange(bounds: Rect) {
-            val half = hairline / 2f
-            // The stroke's centre line: half a stroke in from the edge, its radius the sheet's less that half.
-            val r = (dp(PromptSheetSpec.SHEET_RADIUS_DP) - half).coerceAtLeast(0f)
-            val left = bounds.left + half
-            val right = bounds.right - half
-            val top = bounds.top + half
-            val bottom = bounds.bottom.toFloat()
-            path.reset()
-            path.moveTo(left, bottom)
-            path.lineTo(left, top + r)
-            path.arcTo(left, top, left + 2 * r, top + 2 * r, 180f, 90f, false)
-            path.lineTo(right - r, top)
-            path.arcTo(right - 2 * r, top, right, top + 2 * r, 270f, 90f, false)
-            path.lineTo(right, bottom)
-        }
-
-        override fun draw(canvas: Canvas) = canvas.drawPath(path, paint)
-        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
-        @Deprecated("Deprecated in Java") override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
     /** §9.9: the grabber in its strip; a tap on the strip dismisses (the grip is the first thing in the order). */
@@ -761,4 +723,49 @@ class NativePromptSheet(
 
     private fun dp(value: Int): Int = (value * density + 0.5f).toInt()
     private fun sp(value: Int): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value.toFloat(), context.resources.displayMetrics).toInt()
+}
+
+/**
+ * The hairline round a native phone sheet, over the panel fill the sheet style paints: one open
+ * path up the left side, round the two top radii, down the right side – the top and the sides,
+ * as `.zen-sheet`'s `border: 1px` with `border-bottom: 0` – and no run along the bottom, where a
+ * bottom sheet meets the screen's edge. The stroke lies inside the bounds, its outer edge on the
+ * sheet's radius, [hairline] px wide – [PromptSheetSpec.hairlinePx], one dp, never the one
+ * physical pixel a `setStroke(1, …)` would draw on all four sides. The one edge for the app's
+ * native sheets: the prompt chassis ([NativePromptSheet]) and the custom tab's menu
+ * ([CustomTabMenuSheet]) draw it.
+ */
+internal class SheetEdge(
+    private val hairline: Int,
+    private val radius: Int,
+    color: Int
+) : Drawable() {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = hairline.toFloat()
+        this.color = color
+    }
+    private val path = Path()
+
+    override fun onBoundsChange(bounds: Rect) {
+        val half = hairline / 2f
+        // The stroke's centre line: half a stroke in from the edge, its radius the sheet's less that half.
+        val r = (radius - half).coerceAtLeast(0f)
+        val left = bounds.left + half
+        val right = bounds.right - half
+        val top = bounds.top + half
+        val bottom = bounds.bottom.toFloat()
+        path.reset()
+        path.moveTo(left, bottom)
+        path.lineTo(left, top + r)
+        path.arcTo(left, top, left + 2 * r, top + 2 * r, 180f, 90f, false)
+        path.lineTo(right - r, top)
+        path.arcTo(right - 2 * r, top, right, top + 2 * r, 270f, 90f, false)
+        path.lineTo(right, bottom)
+    }
+
+    override fun draw(canvas: Canvas) = canvas.drawPath(path, paint)
+    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+    @Deprecated("Deprecated in Java") override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
