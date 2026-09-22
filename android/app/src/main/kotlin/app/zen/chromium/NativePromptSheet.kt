@@ -52,7 +52,8 @@ object PromptSheetSpec {
     /**
      * `.zen-sheet`'s `border: 1px` – a CSS px, one dp on the device: the hairline round the sheet's
      * top and sides (`border-bottom: 0`: none along the screen's edge), under a scrolled title block
-     * (§9.7), round a field (§9.12), a checkbox (§9.14). Drawn at [hairlinePx].
+     * and, its mirror, over a pinned footer while content remains beneath (§9.7), round a field
+     * (§9.12), a checkbox (§9.14). Drawn at [hairlinePx].
      */
     const val HAIRLINE_DP = 1
     /** `SHEET_TOP_MARGIN` (lib/motion/sheet.ts): the page kept in view above an expanded sheet. */
@@ -103,7 +104,7 @@ object PromptSheetSpec {
     const val DESCRIPTION_GAP_DP = 4
     /** §9.23: body copy 16 from what it introduces – the title block's 16 to the body (§9.7), a paragraph's 16 to the row or field after it. */
     const val BODY_GAP_DP = 16
-    /** §9.7: the hairline under a pinned title block comes and goes on `.zen-sheet-grip`'s 120 ms. */
+    /** §9.7: the hairline under a pinned title block, and its mirror over a pinned footer, come and go on `.zen-sheet-grip`'s 120 ms. */
     const val HAIRLINE_FADE_MS = 120
 
     /** `--v2-control` on a phone: a field's and a button's height. */
@@ -175,7 +176,10 @@ object PromptSheetSpec {
  * title's start at the 8 gap, the title 17/600 on 22, and an optional description 15 at 69 % on
  * 20, 4 under it, for a sentence of OURS ("Changes you made may not be saved.", "This page isn't
  * responding…") – 16 to the body; the body, which SCROLLS under the block with §9.7's hairline at
- * the boundary once it has moved: optional body copy 15/400 in the text ink – the PAGE's words,
+ * the boundary once it has moved and above the footer with that line's mirror – at the footer's
+ * top edge while content remains beneath, gone at scroll end, so the last visible line never
+ * hangs clipped over the buttons; a body that fits draws neither: optional body copy 15/400 in
+ * the text ink – the PAGE's words,
  * an `alert`'s or `confirm`'s message, which may run long –, an optional §9.12 field under its
  * label (a `prompt`'s message is that label, 4 above the 40 field, the value selected), an
  * optional §9.14 check row ("Don't ask again", "Don't let this page create more dialogs") whose
@@ -491,23 +495,24 @@ class NativePromptSheet(
     }
 
     /**
-     * The body in its scroller under §9.7's hairline: a 1 px line in the border ink over the body's
-     * top edge – the pinned block's bottom edge – that fades in once the body has scrolled under the
-     * block and out again at the top, on the chassis's 120 ms; nothing at rest.
+     * The body in its scroller between §9.7's two hairlines, each a 1 px line in the border ink
+     * over an edge of the body's viewport, on the chassis's 120 ms. Under the block: over the
+     * body's top edge – the pinned block's bottom edge – while content has scrolled under the
+     * block (`canScrollVertically(-1)`), gone again at the top. Its mirror, over the footer: over
+     * the body's bottom edge – the pinned footer's top edge, where the clipped last line would
+     * otherwise hang bare over the buttons – while content remains beneath
+     * (`canScrollVertically(1)`), gone at scroll end. Both read the scroller's state on every
+     * scroll and every layout: a long body has content beneath from the first layout, so the
+     * footer's line is in the at-rest frame, and the keyboard's lift, which takes the body's room,
+     * is a layout. A body that fits draws neither.
      */
     private fun scrollingBody(body: View): View {
         val frame = FrameLayout(context)
-        val boundary = View(context).apply {
-            setBackgroundColor(ink.border)
-            alpha = 0f
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        var scrolled = false
-        val scroller = BodyScroller { y ->
-            val now = y > 0
-            if (now == scrolled) return@BodyScroller
-            scrolled = now
-            boundary.animate().alpha(if (now) 1f else 0f).setDuration(PromptSheetSpec.HAIRLINE_FADE_MS.toLong()).start()
+        val underBlock = Hairline()
+        val overFooter = Hairline()
+        val scroller = BodyScroller { scroller ->
+            underBlock.show(scroller.canScrollVertically(-1))
+            overFooter.show(scroller.canScrollVertically(1))
         }.apply {
             // `.zen-sheet-scroll`: no scrollbar, and no glow at the ends (`overscroll-behavior: contain`;
             // the platform's would be the Activity theme's edge colour, an ink outside the table).
@@ -516,8 +521,33 @@ class NativePromptSheet(
             addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         frame.addView(scroller, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        frame.addView(boundary, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline, Gravity.TOP))
+        frame.addView(underBlock, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline, Gravity.TOP))
+        frame.addView(overFooter, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline, Gravity.BOTTOM))
         return frame
+    }
+
+    /**
+     * One of §9.7's two lines over the body's edges: a hairline in the border ink that comes and
+     * goes on the chassis's 120 ms as the state it is told changes – set outright the first time,
+     * as the sheet comes up, so a long body's footer line is in the at-rest frame.
+     */
+    private inner class Hairline : View(context) {
+        private var shown: Boolean? = null
+
+        init {
+            setBackgroundColor(ink.border)
+            alpha = 0f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+
+        fun show(on: Boolean) {
+            if (on == shown) return
+            val first = shown == null
+            shown = on
+            val target = if (on) 1f else 0f
+            if (first) alpha = target
+            else animate().alpha(target).setDuration(PromptSheetSpec.HAIRLINE_FADE_MS.toLong()).start()
+        }
     }
 
     /** A paragraph at the body size on its line box, 15/400, in the ink given: body copy in the text, a description at 69 %. */
@@ -650,8 +680,10 @@ class NativePromptSheet(
 
     /**
      * §9.11: peers splitting the width at 8, the primary trailing; one action spans the row. 16
-     * above the peers, and §9.25's 16 below them – above the host's inset the sheet pads for, so
-     * 16 to the edge where it reports none and 40 over a 24 bar ([PromptSheetSpec.footerToEdge]).
+     * above the peers – under §9.7's mirror line, drawn over the body's edge above while content
+     * remains beneath ([scrollingBody]) – and §9.25's 16 below them – above the host's inset the
+     * sheet pads for, so 16 to the edge where it reports none and 40 over a 24 bar
+     * ([PromptSheetSpec.footerToEdge]).
      */
     private fun footer(): View {
         val row = LinearLayout(context).apply {
@@ -737,11 +769,20 @@ class NativePromptSheet(
         }
     }
 
-    /** The body's scroller: as tall as its content, or as tall as the column leaves it, and it says when it has scrolled. */
-    private inner class BodyScroller(private val onScrolled: (Int) -> Unit) : ScrollView(context) {
+    /**
+     * The body's scroller: as tall as its content, or as tall as the column leaves it, and it says
+     * where its content stands against its edges after every scroll and every layout (§9.7's two
+     * lines read it then).
+     */
+    private inner class BodyScroller(private val onEdges: (ScrollView) -> Unit) : ScrollView(context) {
         override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
             super.onScrollChanged(l, t, oldl, oldt)
-            onScrolled(t)
+            onEdges(this)
+        }
+
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            super.onLayout(changed, l, t, r, b)
+            onEdges(this)
         }
     }
 
