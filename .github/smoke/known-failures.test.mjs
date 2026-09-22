@@ -163,6 +163,18 @@ describe('formatFailure', () => {
       `harness: ${'x'.repeat(10)}`
     )
   })
+  it('names the screen grabbed as the step failed', () => {
+    const f = {
+      kind: 'step',
+      scenario: 'boot',
+      step: 'onboarding',
+      message: 'not painted',
+      screen: '02-boot-onboarding-failed.png'
+    }
+    expect(formatFailure(f)).toBe(
+      'step [boot/onboarding]: not painted (screen: 02-boot-onboarding-failed.png)'
+    )
+  })
 })
 
 describe('known-failures.json', () => {
