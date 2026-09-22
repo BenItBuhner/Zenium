@@ -1,17 +1,29 @@
 import http from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { FRAME_RECT, buttonScreenPoint, fixturePages, startPopupFixture } from './popup-fixture.mjs'
+import {
+  COOKIE_PATH,
+  COOKIE_SET_PATH,
+  FIXTURE_COOKIE,
+  FRAME_RECT,
+  buttonScreenPoint,
+  fixturePages,
+  fixtureSetCookieHeader,
+  startPopupFixture
+} from './popup-fixture.mjs'
 
 /** GET `path` from the fixture's socket with the Host header a browser sends for `host`. */
-function get(fixture, path, host) {
+function get(fixture, path, host, headers = {}) {
   return new Promise((resolve, reject) => {
     http
-      .get({ host: '127.0.0.1', port: fixture.port, path, headers: { host } }, (res) => {
-        let body = ''
-        res.setEncoding('utf8')
-        res.on('data', (chunk) => (body += chunk))
-        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }))
-      })
+      .get(
+        { host: '127.0.0.1', port: fixture.port, path, headers: { host, ...headers } },
+        (res) => {
+          let body = ''
+          res.setEncoding('utf8')
+          res.on('data', (chunk) => (body += chunk))
+          res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }))
+        }
+      )
       .on('error', reject)
   })
 }
@@ -45,6 +57,29 @@ describe('fixturePages', () => {
     expect(pages['/popup.html']).toContain('window.__roundTrip = new Promise(')
     expect(pages['/popup.html']).toContain("window.opener.postMessage({ type: 'smoke-ping'")
   })
+
+  it('has the cookie page read the fixture cookie by name and keep the reading for the harness', () => {
+    const page = pages[COOKIE_PATH]
+    expect(COOKIE_PATH).toBe('/cookie.html')
+    expect(page).toContain(`pair.split('=')[0] === '${FIXTURE_COOKIE.name}'`)
+    expect(page).toContain(
+      'window.__smoke = { origin: location.origin, cookie: document.cookie, has }'
+    )
+    expect(page).toContain("has ? 'Cookie: ' + document.cookie : 'Cookie: none'")
+    // The set page is a redirect, not a document.
+    expect(pages[COOKIE_SET_PATH]).toBeUndefined()
+  })
+})
+
+describe('fixtureSetCookieHeader', () => {
+  it('sets a persistent, site-wide, same-site cookie', () => {
+    expect(fixtureSetCookieHeader()).toBe(
+      'zenium_smoke=set-by-the-fixture; Max-Age=86400; Path=/; SameSite=Lax'
+    )
+    expect(fixtureSetCookieHeader({ name: 'a', value: 'b', maxAge: 60 })).toBe(
+      'a=b; Max-Age=60; Path=/; SameSite=Lax'
+    )
+  })
 })
 
 describe('startPopupFixture', () => {
@@ -60,6 +95,8 @@ describe('startPopupFixture', () => {
     expect(fixture.topUrl).toBe(`${fixture.topOrigin}/`)
     expect(fixture.frameUrl).toBe(`${fixture.frameOrigin}/frame.html`)
     expect(fixture.popupUrl).toBe(`${fixture.topOrigin}/popup.html`)
+    expect(fixture.cookieSetUrl).toBe(`${fixture.topOrigin}/cookie-set.html`)
+    expect(fixture.cookieUrl).toBe(`${fixture.topOrigin}/cookie.html`)
   })
 
   it('serves the three pages uncached, a blank favicon and nothing else', async () => {
@@ -88,6 +125,31 @@ describe('startPopupFixture', () => {
         { path: '/frame.html', host: `localhost:${fixture.port}`, dest: undefined }
       ])
     )
+  })
+
+  it('sets the fixture cookie from the set path and redirects to the page that reads it', async () => {
+    const host = `127.0.0.1:${fixture.port}`
+    const set = await get(fixture, COOKIE_SET_PATH, host)
+    expect(set.status).toBe(302)
+    expect(set.headers['set-cookie']).toEqual([fixtureSetCookieHeader()])
+    expect(set.headers.location).toBe(COOKIE_PATH)
+    expect(set.headers['cache-control']).toBe('no-store')
+
+    const page = await get(fixture, COOKIE_PATH, host)
+    expect(page.status).toBe(200)
+    expect(page.headers['set-cookie']).toBeUndefined()
+    expect(page.body).toContain('Reading the cookie…')
+  })
+
+  it('logs the Cookie header each request carried', async () => {
+    const host = `127.0.0.1:${fixture.port}`
+    const before = fixture.requests.length
+    await get(fixture, COOKIE_PATH, host, { cookie: fixtureSetCookieHeader().split(';')[0] })
+    await get(fixture, COOKIE_PATH, host)
+    expect(fixture.requests.slice(before)).toEqual([
+      { path: COOKIE_PATH, host, dest: undefined, cookie: 'zenium_smoke=set-by-the-fixture' },
+      { path: COOKIE_PATH, host, dest: undefined, cookie: undefined }
+    ])
   })
 })
 

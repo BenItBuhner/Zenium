@@ -4,6 +4,7 @@ import {
   DEFAULT_SEARCH_ENGINES,
   buildSearchUrl,
   completeWwwCom,
+  engineFieldFavicon,
   engineKeywords,
   matchEngineKeyword,
   matchKeyword,
@@ -125,6 +126,22 @@ describe('search engines', () => {
     expect(completeWwwCom('two words')).toBe('two words')
     expect(completeWwwCom('https://x')).toBe('https://x')
     expect(completeWwwCom('')).toBe('')
+  })
+
+  it('marks a field with the engine’s favicon only when the engine is not the vendor’s default (NTP-09)', () => {
+    // The vendor's default is not marked: the slot keeps the letter tile or the magnifier.
+    expect(engineFieldFavicon(google)).toBeNull()
+    // Every shipped engine carries its site's icon in the registry; the others show it.
+    for (const engine of DEFAULT_SEARCH_ENGINES) {
+      expect(engine.favicon).toMatch(/^https:\/\/.+\/favicon\.ico$/)
+      if (engine !== google) expect(engineFieldFavicon(engine)).toBe(engine.favicon)
+    }
+    // A user's engine whose site offered no icon shows none: the slot falls back.
+    expect(engineFieldFavicon({ id: 'custom-1', favicon: null })).toBeNull()
+    expect(engineFieldFavicon({ id: 'custom-2' })).toBeNull()
+    expect(engineFieldFavicon({ id: 'custom-3', favicon: 'https://s.example/i.png' })).toBe(
+      'https://s.example/i.png'
+    )
   })
 
   it("reads the terms out of an engine's results page, its own additions and `+` aside; another engine's page or path is not one", () => {

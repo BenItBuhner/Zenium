@@ -2,9 +2,10 @@ name: Desktop smoke (Windows, macOS)
 
 # Boots the packaged desktop app on GitHub-hosted Windows and macOS runners with Playwright for
 # Electron (.github/smoke/smoke.mjs) and keeps to the basics so the jobs stay short: first launch
-# and onboarding, one visible window titled Zenium, a tab on example.com through the URL bar, a
-# graceful quit that marks the profile cleanly exited, the profile coming back without a "Restore
-# pages?" bar, plus 1.5x DPI and OS dark mode screenshots. Windows additionally installs the NSIS
+# and onboarding, one visible window titled Zenium, a tab on a page of the harness's own fixture
+# server (127.0.0.1; the smoke needs no internet) through the URL bar, a graceful quit that marks
+# the profile cleanly exited, the profile coming back without a "Restore pages?" bar, plus 1.5x
+# DPI and OS dark mode screenshots. Windows additionally installs the NSIS
 # build silently, boots the installed executable and uninstalls it. Every JS error, crash and
 # blocking dialog fails the run unless .github/smoke/known-failures.json names it. Screenshots,
 # logs and result.json per build are uploaded as artifacts. The Linux smoke in ci.yml runs on

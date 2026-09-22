@@ -1,0 +1,149 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              70,
+              120,
+              220
+            ],
+            "x": 0.3,
+            "y": 0.3,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              200,
+              110,
+              170
+            ],
+            "x": 0.7,
+            "y": 0.7
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 30
+      },
+      "tabIds": [
+        "tab_doc_a",
+        "tab_doc_b",
+        "tab_github",
+        "tab_article",
+        "tab_long",
+        "tab_extra"
+      ],
+      "activeTabId": "tab_article",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [
+    {
+      "id": "folder_docs",
+      "spaceId": "space_main",
+      "name": "Docs",
+      "icon": "📚",
+      "collapsed": false,
+      "color": "blue"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "tab_doc_a",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": "folder_docs",
+      "url": "http://127.0.0.1:18170/article?doc=a",
+      "title": "Web browser (Docs A)",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_doc_b",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": "folder_docs",
+      "url": "http://127.0.0.1:18170/github?doc=b",
+      "title": "Zenium (Docs B)",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_github",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18170/github",
+      "title": "BenItBuhner/Zenium: the browser",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_article",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18170/article",
+      "title": "Web browser - Wikipedia",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_long",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18170/",
+      "title": "The bar that hides on scroll",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_extra",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18170/article?page=2",
+      "title": "Web browser, again",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "phoneBarPosition": "bottom",
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_article"
+      },
+      "compact": false
+    }
+  ]
+}

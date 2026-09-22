@@ -47,6 +47,7 @@ import type {
   MediaSessionAction,
   MediaSessionHost,
   NetHost,
+  PageFontsHost,
   PasswordsHost,
   PickedTextFile,
   PerformanceHost,
@@ -183,7 +184,12 @@ export function androidCapabilities({
     popupSurface: false,
     qrScan: false,
     // Until boot says the device has a text-to-speech engine (`ReadAloud.kt`; `Platform.speech`).
-    readAloud: false
+    readAloud: false,
+    // WebView sends the system's languages and cannot be told the list (CT-41's recorded limit).
+    pageLanguages: false,
+    // Blink's Android font selection ignores the generic-family settings: the standard family
+    // and the sizes take effect, `serif` / `sansSerif` / `fixed` do not (CT-25's recorded limit).
+    genericFontFamilies: false
   }
 }
 
@@ -433,6 +439,12 @@ export interface HostEventPayloads {
     originX?: number
     originY?: number
   }
+  /**
+   * Paste and go / Paste and search touched in the omnibox field's floating toolbar
+   * (`ChromeWebView.kt`'s `FieldActionMode`, OMN-23): which of the two, and the tab the field
+   * was editing for (null for a field whose submit opens a new tab).
+   */
+  'urlbar.paste': { action: 'go' | 'search'; tabId: string | null }
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
@@ -1003,6 +1015,18 @@ export function bundledListFrom(raw: unknown): BundledFilterList | null {
 }
 
 /**
+ * The OS's languages as the chrome document sees them (`PlatformInfo.locales`, CT-41): the chrome
+ * WebView's `navigator.languages` is the system's locale list, the UI locale first – the same
+ * list the page WebViews send as `Accept-Language`, which is why a profile's preferred languages
+ * start from it. Empty where the document has none (the tests), and the core starts from English.
+ */
+function chromeLocales(): readonly string[] {
+  if (typeof navigator === 'undefined') return []
+  const languages = Array.isArray(navigator.languages) ? navigator.languages : []
+  return languages.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
+}
+
+/**
  * The chrome's background worker (`backgroundWorker.ts`), a module Web Worker Vite bundles
  * beside the chrome the way the translate engine's is (`renderer/translate/engine.ts`); null
  * where the document has no `Worker` (the tests), and the core's work stays on the main thread.
@@ -1048,6 +1072,15 @@ export class AndroidPlatform implements Platform {
   readonly autofill: AndroidAutofillHost
   readonly blocking: BlockingHost
   readonly privacy: PrivacyHost
+  /**
+   * Page fonts (Settings › Appearance › Customize fonts, CT-25): `Settings.fonts` goes to Kotlin
+   * as one document (`fonts.apply`), which maps it onto every page WebView's `WebSettings` and
+   * keeps it for a custom tab (`PageFonts.kt`). The standard family and the sizes take effect
+   * there; the generic-family slots do not (`capabilities.genericFontFamilies` is off: Blink's
+   * Android font selection never reads them). The preferred languages have no host here:
+   * WebView sends the system's languages (`capabilities.pageLanguages` is off).
+   */
+  readonly pageFonts: PageFontsHost
   /**
    * The background worker the core's heavy parsing runs in (`backgroundWorker.ts`, a module Web
    * Worker of the chrome document) and the demo harness's hold on the startup sweeps.
@@ -1103,7 +1136,7 @@ export class AndroidPlatform implements Platform {
     boot: BootInfo,
     io: AndroidStoreIO = new AndroidStoreIO(bridge, boot.files, boot.deferred)
   ) {
-    this.info = { os: boot.os ?? 'android', version: boot.version }
+    this.info = { os: boot.os ?? 'android', version: boot.version, locales: chromeLocales() }
     this.extensionsRoot = boot.extensionsRoot || null
     this.capabilities = {
       ...androidCapabilities({
@@ -1127,6 +1160,7 @@ export class AndroidPlatform implements Platform {
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
     this.privacy = new AndroidPrivacyHost(bridge)
+    this.pageFonts = { apply: (fonts) => bridge.send('fonts.apply', { ...fonts }) }
     const holdBackgroundWork = boot.holdBackgroundWork === true
     this.performance = {
       createBackgroundWorker: () => spawnBackgroundWorker(),
@@ -1167,7 +1201,11 @@ export class AndroidPlatform implements Platform {
         return kind === 'url' || kind === 'text' || kind === 'image' ? kind : 'none'
       },
       read: () => bridge.call<string>('clipboard.read', {}),
-      markUsed: () => bridge.send('clipboard.markUsed')
+      markUsed: () => bridge.send('clipboard.markUsed'),
+      // The core's Paste and go / Paste and search (`urlbar.pasteAndGo`, `urlbar.pasteAndSearch`;
+      // the field toolbar's item, OMN-23) read the clipboard through this once they run; without
+      // it they do nothing. The same read as the row's: the system's toast is its word about it.
+      readText: () => bridge.call<string>('clipboard.read', {})
     }
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),
@@ -1526,6 +1564,22 @@ export class AndroidPlatform implements Platform {
             ? { x: action.originX, y: action.originY }
             : undefined
         browser.menus.runSelectionAction(action.tabId, action.id, action.text, origin)
+        return
+      }
+      case 'urlbar.paste': {
+        // The host's payload, checked before it runs anything: one of the two actions.
+        const p = (payload ?? {}) as Partial<HostEventPayloads['urlbar.paste']>
+        if (p.action !== 'go' && p.action !== 'search') return
+        const tabId = typeof p.tabId === 'string' ? p.tabId : null
+        // As the chrome context menu's item (core/menus.ts, #119): an open bar closes, as a
+        // submit does, and the command reads the clipboard once and goes where typed text
+        // would, or searches it whatever it looks like.
+        browser.emit('urlbar.close', undefined, this.window)
+        browser.handleCommand(
+          this.window,
+          p.action === 'go' ? 'urlbar.pasteAndGo' : 'urlbar.pasteAndSearch',
+          { tabId }
+        )
         return
       }
       case 'pause':
