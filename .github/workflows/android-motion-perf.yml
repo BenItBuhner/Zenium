@@ -9,8 +9,8 @@ name: Android motion perf
 # the capture, the drag, the release, a fling, the drag between two grouped tabs with their
 # ribbons) and the overview's open and close (the pull in its pieces, the pick that closes it, a
 # fling open, the system's back gesture over it; on six tabs and on thirty), each group picked
-# by the `scenes` input (`DEMO_SCENES`; the push trigger's default is the group under audit on
-# the branch). The shared workflow renders the record into the job summary and the
+# by the `scenes` input (`DEMO_SCENES`; an audit branch's temporary push trigger, when one is
+# on, runs the group under audit). The shared workflow renders the record into the job summary and the
 # `jank-report-*` artifact; the driver's `perf-motion.json` and `findings.txt` in the demo
 # artifact carry its in-chrome probe (what each scene wrote to the DOM) beside the traces
 # (`trace-<scene>.json.gz`, for chrome://tracing or the Perfetto UI). The measured scenes run
@@ -21,10 +21,6 @@ name: Android motion perf
 # about fifteen minutes. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
-  # TEMPORARY (the profile's before / after runs on the audit's branch: worker tokens cannot
-  # dispatch); removed before the merge.
-  push:
-    branches: [cursor/android-perf-overview-cf22]
   workflow_dispatch:
     inputs:
       theme:
