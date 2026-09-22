@@ -74,12 +74,10 @@ export const SITE_DATA_TEXT = {
   },
   clearOnExit: {
     heading: 'Delete browsing data on exit',
-    // The choice and the passwords line, nothing more (the #322 ruling on Q6); the host that
-    // clears at its next start says so once, in the choice's own sentence.
+    // The choice and the passwords line, nothing more, on both hosts (the #322 ruling on Q6);
+    // the next-start timing is said once, on the phone's Clear on exit row (ruling (d)).
     description:
       'Choose what to clear every time you close Zenium. Saved passwords are never cleared this way.',
-    descriptionNextLaunch:
-      'Choose what to clear when you close Zenium; it is cleared the next time Zenium starts. Saved passwords are never cleared this way.',
     pending: 'A clear owed from the last close is still running.'
   },
   viewer: {
@@ -261,13 +259,13 @@ export function clearOnExitRows(): Array<{ type: ClearOnExitType; label: string 
 }
 
 /**
- * The on-exit group's paragraph: the choice – with the timing in its sentence on a host that
- * clears at its next start – and the passwords line; the owed clear's line only while one is
- * owed, since that is a status and not copy.
+ * The on-exit group's paragraph: the choice and the passwords line on both hosts (the timing is
+ * the Clear on exit row's, once); the owed clear's line only while one is owed, since that is
+ * a status and not copy.
  */
 export function clearOnExitDescription(status: SiteDataStatus): string {
   const t = SITE_DATA_TEXT.clearOnExit
-  const parts: string[] = [status.clearsAtNextLaunch ? t.descriptionNextLaunch : t.description]
+  const parts: string[] = [t.description]
   if (status.pendingClear) parts.push(t.pending)
   return parts.join(' ')
 }

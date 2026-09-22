@@ -334,10 +334,12 @@ describe('the Cookies and site data groups', () => {
     })
   })
 
-  it('say when the host clears at the next launch and while a clear is still owed', () => {
+  it('keep the group to the choice and the passwords line on a next-launch host, and say an owed clear', () => {
     const { ctx } = context(status({ clearsAtNextLaunch: true, pendingClear: true }))
     const exit = siteDataGroups(ctx).find((g) => g.id === 'site-data-exit')!
-    expect(exit.description).toContain('the next time Zenium starts')
+    // The timing is the Clear on exit row's to say, once (#322 Q6, (d)), not this group's.
+    expect(exit.description).not.toContain('the next time Zenium starts')
+    expect(exit.description).toContain('Saved passwords are never cleared this way')
     expect(exit.description).toContain('still running')
   })
 

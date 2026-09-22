@@ -175,17 +175,17 @@ describe('clear on exit', () => {
     expect(rows.find((r) => r.type === 'recentlyClosed')?.label).toBe('Recently closed tabs')
   })
 
-  it('describes the group: the choice and the passwords line, the host’s timing once, a pending clear', () => {
+  it('describes the group: the choice and the passwords line on both hosts, a pending clear', () => {
     const base = ui.clearOnExitDescription(status())
     expect(base).toBe(ui.SITE_DATA_TEXT.clearOnExit.description)
     expect(base).toContain('Saved passwords are never cleared this way')
-    // The host that clears at its next start says so in the choice's own sentence, once (#322
-    // Q6 and (d)); the lists' standing clear is theirs to say, not this group's.
+    expect(base.split('. ')).toHaveLength(2)
+    // The next-start timing is the phone's Clear on exit row's to say, once (#322 Q6 and (d)):
+    // the group's paragraph is the same two sentences on the host that clears at its next start,
+    // and the lists' standing clear is theirs to say, not this group's.
     const nextLaunch = ui.clearOnExitDescription(status({ clearsAtNextLaunch: true }))
-    expect(nextLaunch).toContain('the next time Zenium starts')
-    expect(nextLaunch.match(/next time Zenium starts/g)).toHaveLength(1)
-    expect(nextLaunch).toContain('Saved passwords are never cleared this way')
-    expect(nextLaunch.split('. ').length).toBeLessThanOrEqual(3)
+    expect(nextLaunch).toBe(base)
+    expect(nextLaunch).not.toContain('next time Zenium starts')
     expect(ui.clearOnExitDescription(status({ block: ['a.example'] }))).toBe(base)
     expect(ui.clearOnExitDescription(status({ clearOnExit: ['a.example'] }))).toBe(base)
     expect(ui.clearOnExitDescription(status({ pendingClear: true }))).toContain('still running')
