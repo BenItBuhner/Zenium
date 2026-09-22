@@ -89,8 +89,8 @@ const SNAPSHOT_TIMEOUT_MS = 600
  * area is scaled down to it on both sides before the encode (`snapshot`, `standinScale`); one
  * under it is encoded as captured, 1:1 – no CSS-pixel width clamp. 2.5 Mpx is the largest round
  * number whose native JPEG 90 encode stays inside a frame's 16.7 ms on the runner-class machine
- * (a 4-core Xeon, the packaged build): the encode runs at 5.2–7.1 ms per Mpx from 1.1 to 6 Mpx,
- * a frame scaled to the ceiling took 15.8 and 17.5 ms, one at 3.0 Mpx 18.5–21.2 – and the
+ * (a 4-core Xeon, the packaged build): the encode runs at 5–8 ms per Mpx from 1.1 to 6 Mpx, a
+ * frame scaled to the ceiling took 15.8–17.5 ms over two runs, one at 3.0 Mpx 18.5–23.4 – and the
  * smallest that leaves a 1920 × 1200 monitor's page (1856 × 1184, 2.20 Mpx) at 1:1, where
  * 2.0 Mpx would resample it. A 2560 × 1440 monitor's page (3.55 Mpx) scales to 2093 × 1194 and a
  * DPR-2 1600 × 1000 window's (3072 × 1968, 6.05 Mpx) to 1975 × 1265. The numbers behind it are in
@@ -982,8 +982,7 @@ export class ElectronTabView implements TabView {
         scales.length ? Math.max(...scales) : 1,
         SNAPSHOT_MAX_PIXELS
       )
-      const scaled =
-        fit.scale < 1 ? image.resize({ width: fit.width, height: fit.height }) : image
+      const scaled = fit.scale < 1 ? image.resize({ width: fit.width, height: fit.height }) : image
       return `data:image/jpeg;base64,${scaled.toJPEG(SNAPSHOT_JPEG_QUALITY).toString('base64')}`
     } catch {
       return null
