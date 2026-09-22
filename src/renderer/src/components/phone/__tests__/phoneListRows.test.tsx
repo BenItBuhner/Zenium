@@ -4,7 +4,13 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { PhoneEmptyNote, PhoneGroupHeading, PhoneIconButton, PhoneListRow } from '../PhoneList'
+import {
+  PhoneEmptyNote,
+  PhoneGroupHeading,
+  PhoneIconButton,
+  PhoneListRow,
+  PhoneSelectionHeader
+} from '../PhoneList'
 
 /*
  * The phone history and bookmarks rows on the shared row primitive (design language v2 draft
@@ -247,5 +253,59 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
       expect(row.firstElementChild!.getAttribute('role')).toBe('button')
     }
     expect(css).not.toMatch(/data-static/)
+  })
+})
+
+describe('the selection header (§9.6)', () => {
+  const buttons = (el: ParentNode): string[] =>
+    [...el.querySelectorAll<HTMLElement>('button')].map((b) => b.getAttribute('aria-label')!)
+
+  it('offers Select all as a shared icon button before the list’s actions, with the count, until every shown row is picked', () => {
+    const picks: boolean[] = []
+    const el = render(
+      <PhoneSelectionHeader
+        count={2}
+        total={5}
+        onSelectAll={(all) => picks.push(all)}
+        onExit={noop}
+        actions={
+          <PhoneIconButton label="Remove from history" onClick={noop}>
+            <svg />
+          </PhoneIconButton>
+        }
+      />
+    )
+    expect(el.querySelector('h2')!.textContent).toBe('2 selected')
+    expect(buttons(el)).toEqual(['Stop selecting', 'Select all', 'Remove from history'])
+    const selectAllButton = el.querySelector<HTMLButtonElement>('[aria-label="Select all"]')!
+    expect(selectAllButton.classList.contains('zen-v2-icon-button')).toBe(true)
+    act(() => selectAllButton.click())
+    expect(picks).toEqual([true])
+  })
+
+  it('flips to Deselect all once every shown row is picked, and asks for the unpick', () => {
+    const picks: boolean[] = []
+    const el = render(
+      <PhoneSelectionHeader
+        count={5}
+        total={5}
+        onSelectAll={(all) => picks.push(all)}
+        onExit={noop}
+        actions={null}
+      />
+    )
+    expect(buttons(el)).toEqual(['Stop selecting', 'Deselect all'])
+    act(() => el.querySelector<HTMLButtonElement>('[aria-label="Deselect all"]')!.click())
+    expect(picks).toEqual([false])
+  })
+
+  it('has no Select all for a list that does not ask for one, and a disabled one over an empty list', () => {
+    const el = render(<PhoneSelectionHeader count={1} onExit={noop} actions={null} />)
+    expect(buttons(el)).toEqual(['Stop selecting'])
+    const empty = render(
+      <PhoneSelectionHeader count={0} total={0} onSelectAll={noop} onExit={noop} actions={null} />
+    )
+    const button = empty.querySelector<HTMLButtonElement>('[aria-label="Select all"]')!
+    expect(button.disabled).toBe(true)
   })
 })
