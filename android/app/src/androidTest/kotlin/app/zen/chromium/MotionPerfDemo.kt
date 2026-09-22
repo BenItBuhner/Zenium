@@ -246,8 +246,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * capture listener on the window is the first to run for an event and a bubble listener on
      * the window the last, so their gap is every listener between, React's root ones and the
      * microtasks each of them leaves behind – the trace has the dispatch's time but not its
-     * event's name), and the commands the chrome sent the core (`cmd`, by name: what a scene
-     * asks of the host). Installed once; reset per scene.
+     * event's name; listeners on `document`, `#root` and its first child cut the longest one
+     * into React's capture listener, the path inside and React's bubble listener, and
+     * `performance.mark`s at the cuts put them in the trace), and the commands the chrome sent
+     * the core (`cmd`, by name: what a scene asks of the host). Installed once; reset per scene.
      */
     private fun installProbe(): String = chromeJs(
         "(function(){if(window.__motion)return 'kept';" +
@@ -262,9 +264,21 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             "for(var j=0;j<r.addedNodes.length;j++){if(isStage(r.addedNodes[j]))p.stageMounts++}" +
             "if(inPill(t)&&r.addedNodes.length)p.pillRemounts++}}})" +
             ".observe(document.documentElement,{attributes:true,attributeFilter:['style'],childList:true,subtree:true});" +
-            "var at={};['pointerover','pointerenter','pointerdown','touchstart','pointermove','touchmove','pointerup','touchend','pointercancel','gotpointercapture','lostpointercapture','click']" +
-            ".forEach(function(ty){window.addEventListener(ty,function(){at[ty]=performance.now();var r=p.ev[ty]||(p.ev[ty]={n:0,ms:0,max:0});r.n++},true);" +
-            "window.addEventListener(ty,function(){var d=performance.now()-(at[ty]||performance.now());var r=p.ev[ty];r.ms+=d;if(d>r.max)r.max=d},false)});" +
+            "var at={},root=document.getElementById('root'),inner=root&&root.firstElementChild;" +
+            "var seg=function(r,k,d){if(d>(r[k]||0))r[k]=d};" +
+            "['pointerover','pointerenter','pointerdown','touchstart','pointermove','touchmove','pointerup','touchend','pointercancel','gotpointercapture','lostpointercapture','click']" +
+            ".forEach(function(ty){var t={};" +
+            "window.addEventListener(ty,function(){at[ty]=t.w0=performance.now();performance.mark('probe:'+ty+':w0');var r=p.ev[ty]||(p.ev[ty]={n:0,ms:0,max:0});r.n++},true);" +
+            // React's listeners sit on #root, capture and bubble, registered before these: a
+            // capture listener on #root runs after React's capture one, a bubble listener on
+            // #root's first child before React's bubble one. So the cuts are React's capture
+            // listener (d0 → r0), the path inside (r0 → i1), React's bubble listener (i1 → d1).
+            "document.addEventListener(ty,function(){t.d0=performance.now()},true);" +
+            "if(root)root.addEventListener(ty,function(){t.r0=performance.now();performance.mark('probe:'+ty+':r0')},true);" +
+            "if(inner)inner.addEventListener(ty,function(){t.i1=performance.now();performance.mark('probe:'+ty+':i1')},false);" +
+            "document.addEventListener(ty,function(){t.d1=performance.now()},false);" +
+            "window.addEventListener(ty,function(){var now=performance.now();performance.mark('probe:'+ty+':w1');var d=now-(at[ty]||now);var r=p.ev[ty];r.ms+=d;if(d>r.max)r.max=d;" +
+            "if(t.d0&&t.r0)seg(r,'reactCapture',t.r0-t.d0);if(t.r0&&t.i1)seg(r,'inner',t.i1-t.r0);if(t.i1&&t.d1)seg(r,'reactBubble',t.d1-t.i1);t={}},false)});" +
             "if(window.zen&&typeof window.zen.invoke==='function'){var o=window.zen.invoke;window.zen.invoke=function(n){p.cmd[n]=(p.cmd[n]||0)+1;return o.apply(this,arguments)}}" +
             "return 'installed'})()"
     )
@@ -279,7 +293,12 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         val parts = ev.keys().asSequence().map { it to ev.getJSONObject(it) }
             .sortedByDescending { it.second.optDouble("max", 0.0) }
             .filter { it.second.optDouble("ms", 0.0) >= 0.5 }
-            .map { (ty, r) -> "$ty ${r.optInt("n")}x ${f1(r.optDouble("ms"))} ms (max ${f1(r.optDouble("max"))})" }
+            .map { (ty, r) ->
+                val cuts = listOf("reactCapture", "inner", "reactBubble").filter { r.has(it) }
+                    .map { "${it.removePrefix("react").lowercase()} ${f1(r.optDouble(it))}" }
+                "$ty ${r.optInt("n")}x ${f1(r.optDouble("ms"))} ms (max ${f1(r.optDouble("max"))}" +
+                    (if (cuts.isEmpty()) ")" else "; longest: ${cuts.joinToString(", ")})")
+            }
             .toList()
         return if (parts.isEmpty()) "none over 0.5 ms" else parts.joinToString(", ")
     }
