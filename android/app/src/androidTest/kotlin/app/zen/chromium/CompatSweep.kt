@@ -3647,9 +3647,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /**
      * RoPro (round 7's open row): its markers on the roblox.com game page (round 7's fix 4), and
      * beside them its locale fetch (`<extension origin>/locales/en.json`), which Roblox's
-     * `connect-src` refuses under the `with` fallback: the row's bridge trace says whether the
-     * host answered the file over the bridge (`extFetch` / `extFetchDone`, this round's fix) and
-     * the page's console keeps the policy's line either way (the page's fetch is tried first).
+     * `connect-src` refuses under the `with` fallback and in a WebView's isolated world alike:
+     * the row's bridge trace says whether the host answered the file over the bridge
+     * (`extFetch` / `extFetchDone`, this round's fix) and the page's console keeps the policy's
+     * line either way (the page's fetch is tried first).
      */
     private fun ropro(row: Row, entry: JSONObject): Grade {
         val evidence = StepEvidence(row)
@@ -3664,7 +3665,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             line.contains("Refused to connect") && line.contains(Extensions.ORIGIN_SUFFIX)
         }
         extra.put("extFetch", JSONObject().put("asked", asked).put("answered", answered).put("refused", refused).put("lines", JSONArray(lines.takeLast(12))).put("policyLines", policyLines))
-        val relay = if (worlds) "the world's own fetch (no relay on a WebView with worlds)" else "extension-origin fetch relay: $asked asked, $answered answered, $refused refused; $policyLines connect-src line(s) in the page's console"
+        // The relay is the content scripts' fetch in both isolations (a WebView's isolated world
+        // runs under the document's connect-src too).
+        val relay = "extension-origin fetch relay (${if (worlds) "the world's" else "the with scope's"} fetch): $asked asked, $answered answered, $refused refused; $policyLines connect-src line(s) in the page's console"
         return Grade(grade.verdict, "${grade.note}; $relay", extra)
     }
 
