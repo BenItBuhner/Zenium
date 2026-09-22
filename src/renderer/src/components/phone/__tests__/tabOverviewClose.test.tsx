@@ -119,7 +119,9 @@ function stateOf(tabs: Tab[], settings: Partial<UIState['settings']> = {}): UISt
     extensions: [],
     bookmarks: [],
     recentlyClosed: [],
-    closingTabIds: []
+    closingTabIds: [],
+    // Sync off: the tab search's reach has no other devices to look through (TAB-21).
+    sync: { enabled: false, scope: { openTabs: false } }
   } as unknown as UIState
 }
 

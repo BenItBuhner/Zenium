@@ -66,7 +66,11 @@ export function RecentlyClosedSheet({
   )
 }
 
-function ClosedTabRow({
+/**
+ * One recently closed tab as a row – favicon, title, host and when it closed – the shape the
+ * sheet and the tab search's Recently closed rows (`OverviewSearchReach`) share.
+ */
+export function ClosedTabRow({
   entry,
   now,
   onTap

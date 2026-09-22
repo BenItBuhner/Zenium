@@ -35,12 +35,25 @@ import {
   SYSTEM_STORAGE_NO_PERMISSION_ERROR,
   SYSTEM_STORAGE_PERMISSION
 } from '@core/extensions/api/systemStorage'
+import {
+  cpuInfo,
+  memoryInfo,
+  SYSTEM_CPU_NO_PERMISSION_ERROR,
+  SYSTEM_CPU_PERMISSION,
+  SYSTEM_MEMORY_NO_PERMISSION_ERROR,
+  SYSTEM_MEMORY_PERMISSION,
+  type RawCpuReading,
+  type RawMemoryReading
+} from '@core/extensions/api/systemInfo'
+import { TAB_CAPTURE_PERMISSION, type CaptureInfo } from '@core/extensions/api/tabCapture'
 import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '@core/extensions/api/tabs'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import {
   chromeExtensionOrigin,
   presentExtensionUrl,
+  sameExtensionOrigin,
+  sameExtensionUrl,
   toServedUrl
 } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
@@ -143,6 +156,10 @@ export interface ApiHost {
   detectTextLanguage(text: string): Promise<DetectedLanguage>
   /** `system.display.getInfo`: the phone's screen as the chrome page sees it (`extensionSystemDisplay.ts`). */
   screen(): PhoneScreen
+  /** `system.cpu.getInfo`: the phone's processors as Kotlin reads them (`Runtime`, `/proc` where readable). */
+  cpu(): Promise<RawCpuReading>
+  /** `system.memory.getInfo`: the phone's memory as `ActivityManager` reports it, in bytes. */
+  memory(): Promise<RawMemoryReading>
   /** Hear of the screen turning (its orientation changing); `system.display.onDisplayChanged` follows. */
   onScreenChange(listener: () => void): void
   exec(request: ExecRequest): Promise<unknown>
@@ -796,6 +813,18 @@ export class ExtensionApi {
         if (!this.holdsPermission(ext, SYSTEM_DISPLAY_PERMISSION))
           throw new Error(SYSTEM_DISPLAY_NO_PERMISSION_ERROR)
         return answerSystemDisplay(method, this.host.screen())
+      case 'system.cpu':
+        // The phone's processors in Chrome's shape (`systemInfo.ts`) over what Kotlin reads,
+        // for an extension that declared the permission (Speechify's background at start).
+        if (!this.holdsPermission(ext, SYSTEM_CPU_PERMISSION))
+          throw new Error(SYSTEM_CPU_NO_PERMISSION_ERROR)
+        if (method === 'getInfo') return cpuInfo(await this.host.cpu())
+        break
+      case 'system.memory':
+        if (!this.holdsPermission(ext, SYSTEM_MEMORY_PERMISSION))
+          throw new Error(SYSTEM_MEMORY_NO_PERMISSION_ERROR)
+        if (method === 'getInfo') return memoryInfo(await this.host.memory())
+        break
       case 'proxy':
         // `proxy.settings`, a ChromeSetting over the WebView's proxy override (`extensionProxy.ts`).
         return this.proxy.call(ext, method, args)
@@ -819,6 +848,17 @@ export class ExtensionApi {
           this.host.browser.tabs.createTab({ url, active: false }, this.host.window())
           return this.tabs.peekNext()
         }
+        break
+      case 'tabCapture':
+        // The WebView has no tab capture to source a stream from (no `getDisplayMedia`, no tab
+        // media source for `getUserMedia`: compat round 9's AHA Music), so `capture` and
+        // `getMediaStreamId` stay unimplemented below; `getCapturedTabs` answers as Chrome does
+        // when nothing is being captured, the empty list, for an extension that declared the
+        // permission. Mobile simulator asks it on every action click and reads `.some` off the
+        // answer before it opens its simulator page (round 9, row 8); the rejection left it
+        // with `undefined` and a TypeError in its worker instead of the page.
+        if (method === 'getCapturedTabs' && this.holdsPermission(ext, TAB_CAPTURE_PERMISSION))
+          return [] satisfies CaptureInfo[]
         break
     }
     throw new Error(`chrome.${ns}.${method} ${NOT_IMPLEMENTED}`)
@@ -1183,6 +1223,7 @@ export class ExtensionApi {
       typeof details.code === 'string'
         ? details.code
         : await this.host.readFile(id, String(details.file ?? ''))
+    const fromFile = typeof details.file === 'string'
     const cssId = typeof details.file === 'string' ? details.file : (code ?? '')
     await this.injectFrames(frames, (frameId) =>
       this.host.exec({
@@ -1190,7 +1231,7 @@ export class ExtensionApi {
         tabId: target.id,
         frameId,
         kind: 'css',
-        payload: { id: cssId, code: code ?? '' },
+        payload: { id: cssId, code: code ?? '', file: fromFile },
         code: null,
         files: null,
         funcSource: null,
@@ -1369,14 +1410,16 @@ export class ExtensionApi {
         const tab = resolveTab()
         const frames = this.targetFrames(ext, tab, target)
         const remove = method === 'removeCSS'
-        const sheets: Array<{ id: string; code: string }> = []
+        // A file's text is localized by the frame (`__MSG_@@extension_id__`, the extension's
+        // messages) as Chrome localizes it; an inline `css` string is injected as written.
+        const sheets: Array<{ id: string; code: string; file: boolean }> = []
         if (typeof injection.css === 'string') {
-          sheets.push({ id: injection.css, code: injection.css })
+          sheets.push({ id: injection.css, code: injection.css, file: false })
         } else {
           for (const file of asStringArray(injection.files)) {
             const text = remove ? '' : await this.host.readFile(id, file)
             if (!remove && text === null) throw new Error(`Could not load file: '${file}'.`)
-            sheets.push({ id: file, code: text ?? '' })
+            sheets.push({ id: file, code: text ?? '', file: true })
           }
         }
         await this.injectFrames(frames, async (frameId) => {
@@ -1386,7 +1429,7 @@ export class ExtensionApi {
               tabId: tab.id,
               frameId,
               kind: 'css',
-              payload: { id: sheet.id, code: sheet.code, remove },
+              payload: { id: sheet.id, code: sheet.code, remove, file: sheet.file },
               code: null,
               files: null,
               funcSource: null,
@@ -2046,23 +2089,35 @@ export interface ExtensionContext {
  * only the contexts whose value is among the listed ones (`incognito` a single boolean); an
  * empty filter keeps them all. Tampermonkey asks for `OFFSCREEN_DOCUMENT` contexts to know
  * whether to create its offscreen document: with the filter ignored it never did.
+ *
+ * `documentUrls` and `documentOrigins` match in either spelling of an extension's own URL
+ * (`extensionUrls.ts`): the context carries Chrome's, the filter an extension builds carries
+ * what `runtime.getURL` or `location` gave it, the served one. OneNote Web Clipper asks
+ * `getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [runtime.getURL('offscreen.html')] })`
+ * for its offscreen document; told none while it was up, it created a second and was refused.
  */
 export function filterContexts(
   contexts: ExtensionContext[],
   filter: Record<string, unknown>
 ): ExtensionContext[] {
-  const listed = (name: string, value: unknown): boolean => {
+  const listed = (
+    name: string,
+    value: unknown,
+    same: (wanted: string, value: string) => boolean = (a, b) => a === b
+  ): boolean => {
     const wanted = filter[name]
     if (!Array.isArray(wanted)) return true
-    return wanted.some((entry) => entry === value)
+    return wanted.some((entry) =>
+      typeof entry === 'string' && typeof value === 'string' ? same(entry, value) : entry === value
+    )
   }
   return contexts.filter(
     (context) =>
       listed('contextIds', context.contextId) &&
       listed('contextTypes', context.contextType) &&
       listed('documentIds', context.documentId) &&
-      listed('documentOrigins', context.documentOrigin) &&
-      listed('documentUrls', context.documentUrl) &&
+      listed('documentOrigins', context.documentOrigin, sameExtensionOrigin) &&
+      listed('documentUrls', context.documentUrl, sameExtensionUrl) &&
       listed('frameIds', context.frameId) &&
       listed('tabIds', context.tabId) &&
       listed('windowIds', context.windowId) &&

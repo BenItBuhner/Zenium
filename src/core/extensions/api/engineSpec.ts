@@ -677,11 +677,14 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   tts: 'tts',
   contentSettings: 'contentSettings',
   printerProvider: 'printerProvider',
-  // Under `chrome.system` (the engine makes the holder with `cpu` and `memory` rejecting): the
-  // phone's one screen and its no storage devices, for extensions declaring the permission (LINE
-  // sizes its sign-in window from `system.display.getInfo` before it opens it).
+  // Under `chrome.system` (the shim makes the holder): the phone's one screen and its no storage
+  // devices, its processors and its memory, for extensions declaring the permission (LINE sizes
+  // its sign-in window from `system.display.getInfo` before it opens it; Speechify's background
+  // reads `system.cpu.getInfo` at start).
   'system.display': 'system.display',
-  'system.storage': 'system.storage'
+  'system.storage': 'system.storage',
+  'system.cpu': 'system.cpu',
+  'system.memory': 'system.memory'
 }
 
 /** Permissions that grant a namespace registered under another name. */
