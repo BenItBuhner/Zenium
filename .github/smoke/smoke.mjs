@@ -446,6 +446,28 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
     wc.on('unresponsive', () =>
       emit({ type: 'unresponsive', wc: wc.id, url: safe(() => wc.getURL(), '') })
     )
+    // The keyboard's every move between the window's documents, as the main process sees it: a
+    // webContents taking (`took`) or losing it, whether it is the chrome's, and for a page view
+    // whether the view was on screen at that moment. What a URL bar with no caret is read
+    // against (Session.urlbarCaret's `facts`): the chrome hears a page taking the keyboard only
+    // when its view is shown or the core asked for it (platform/views.ts).
+    const viewOf = () =>
+      BrowserWindow.getAllWindows()
+        .flatMap((w) => safe(() => w.contentView.children, []))
+        .find((v) => safe(() => v.webContents && v.webContents.id === wc.id, false))
+    const keyboard = (took) => {
+      const view = viewOf()
+      emit({
+        type: 'keyboard',
+        wc: wc.id,
+        chrome: isChrome(wc),
+        took,
+        visible: view ? safe(() => view.getVisible(), null) : null,
+        url: safe(() => wc.getURL(), '').slice(0, 120)
+      })
+    }
+    wc.on('focus', () => keyboard(true))
+    wc.on('blur', () => keyboard(false))
     wc.on('did-fail-load', (_e, code, desc, url, isMain) =>
       emit({ type: 'did-fail-load', wc: wc.id, code, desc, url, isMain })
     )
@@ -808,6 +830,7 @@ class Session {
       timeout: RENDER_WAIT_MS
     })
     this.timings.chromeRenderedMs = Date.now() - t0
+    await this.traceFocus()
     this.mainWindowId = await this.app.evaluate(({ BrowserWindow }) => {
       const wins = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id)
       return wins.length ? wins[0].id : null
@@ -1176,20 +1199,129 @@ class Session {
   }
 
   /**
+   * The chrome page in `page` keeps a trace of what moves its keyboard, for a URL bar found with
+   * no caret (urlbarCaret's `facts.chrome`): the core's events about the keyboard and the bar
+   * (`focus.page`, `newtab.opened`, `urlbar.toggle`, `layout.applied`), the document gaining and
+   * losing the window's keyboard (`window.focus` / `window.blur`), and its focused element
+   * changing (`focusin` / `focusout`, the element by test id or tag). Installed once per page,
+   * at launch; the last 500 entries are kept.
+   */
+  traceFocus(page = this.chrome) {
+    return page
+      .evaluate(() => {
+        if (window.__zenSmokeFocus) return false
+        const trace = []
+        const name = (el) => {
+          if (!(el instanceof Element)) return null
+          if (el === document.body) return 'body'
+          return el.getAttribute('data-testid') || el.tagName
+        }
+        const push = (ev, extra) => {
+          if (trace.length >= 500) trace.shift()
+          trace.push({ at: Date.now(), ev, ...extra })
+        }
+        window.zen.on('focus.page', (p) =>
+          push('focus.page', { tabId: p?.tabId ?? null, active: name(document.activeElement) })
+        )
+        window.zen.on('newtab.opened', (p) => push('newtab.opened', { tabId: p?.tabId ?? null }))
+        window.zen.on('urlbar.toggle', (p) => push('urlbar.toggle', { mode: p?.mode ?? null }))
+        window.zen.on('layout.applied', (p) =>
+          push('layout.applied', {
+            contentHidden: p?.contentHidden ?? null,
+            hid: p?.hid?.length ?? 0,
+            shown: p?.shown?.length ?? 0
+          })
+        )
+        window.addEventListener('focus', () =>
+          push('window.focus', { active: name(document.activeElement) })
+        )
+        window.addEventListener('blur', () =>
+          push('window.blur', { active: name(document.activeElement) })
+        )
+        document.addEventListener('focusin', (e) => push('focusin', { el: name(e.target) }), true)
+        document.addEventListener(
+          'focusout',
+          (e) => push('focusout', { el: name(e.target), to: name(e.relatedTarget) }),
+          true
+        )
+        window.__zenSmokeFocus = trace
+        return true
+      })
+      .catch(() => false)
+  }
+
+  /**
+   * Where the keyboard is as the main process sees it, for a URL bar found with no caret
+   * (urlbarCaret's `facts.main`): whether the window has the system's focus, the focused
+   * webContents, the chrome's, and each view in the window's content view – its webContents,
+   * whether it is shown, whether it holds the keyboard, its address and bounds.
+   */
+  keyboardFacts(windowId = this.mainWindowId) {
+    return this.app.evaluate(({ BrowserWindow, webContents }, wid) => {
+      const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
+      if (!w || w.isDestroyed()) return null
+      const focused = webContents.getFocusedWebContents()
+      const views = w.contentView.children.map((v) => {
+        const wc = v.webContents
+        if (!wc) return { view: 'no-webContents' }
+        const gone = wc.isDestroyed()
+        return {
+          wc: wc.id,
+          visible: typeof v.getVisible === 'function' ? v.getVisible() : null,
+          focused: !gone && wc.isFocused(),
+          url: gone ? null : wc.getURL().slice(0, 120),
+          bounds: typeof v.getBounds === 'function' ? v.getBounds() : null
+        }
+      })
+      return {
+        windowFocused: w.isFocused(),
+        focused: focused && !focused.isDestroyed() ? focused.id : null,
+        chrome: w.webContents.id,
+        chromeFocused: w.webContents.isFocused(),
+        views
+      }
+    }, windowId)
+  }
+
+  /**
    * The caret of the URL bar that is up: whether its field holds the keyboard – the chrome page
    * has it, not a page's view, and the field is the document's active element (keyboardOwner
    * `chrome:urlbar-input`) – waited for up to `timeoutMs`, because the bar taking the keyboard
    * back from the new tab's view (lib/panes.ts pageTookKeyboard → focus.chrome) is an IPC round
    * trip away. `{ focused, owner, ms, bar }` for the step's detail, `owner` the last reading and
    * `bar` how the bar came to be up (`found-up`, `accel-t`); navigation.mjs caretVerdict judges it.
+   * A caret that does not come carries the case for the verdict: `owners`, every reading the
+   * owner changed with, and `facts` – the main process's view of the keyboard (keyboardFacts),
+   * its keyboard moves of the last ten seconds (hookMain's `keyboard` events) and the chrome's
+   * own trace of them (traceFocus).
    */
   async urlbarCaret(bar, timeoutMs = 3000) {
     const t0 = Date.now()
+    const owners = []
     for (;;) {
       const owner = await this.keyboardOwner()
       const ms = Date.now() - t0
+      if (!owners.length || owners[owners.length - 1].owner !== owner) owners.push({ ms, owner })
       if (owner === URLBAR_FIELD_OWNER) return { focused: true, owner, ms, bar }
-      if (ms >= timeoutMs) return { focused: false, owner, ms, bar }
+      if (ms >= timeoutMs) {
+        const since = t0 - 10000
+        const main = await this.keyboardFacts().catch((e) => ({ error: String(e.message || e) }))
+        const chrome = await this.chrome
+          .evaluate((since) => {
+            const el = document.activeElement
+            return {
+              hasFocus: document.hasFocus(),
+              active:
+                el && el !== document.body ? el.getAttribute('data-testid') || el.tagName : null,
+              trace: (window.__zenSmokeFocus || []).filter((e) => e.at >= since).slice(-200)
+            }
+          }, since)
+          .catch((e) => ({ error: String(e.message || e) }))
+        const keyboard = this.readEvents()
+          .filter((e) => e.type === 'keyboard' && e.t >= since)
+          .map(({ t, wc, chrome, took, visible, url }) => ({ t, wc, chrome, took, visible, url }))
+        return { focused: false, owner, ms, bar, owners, facts: { main, chrome, keyboard } }
+      }
       await delay(100)
     }
   }
@@ -1767,7 +1899,9 @@ async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
     `${url}: the URL bar ${caret.bar === 'found-up' ? 'found up' : 'brought up with Accel+T'} ${
       caret.focused
         ? `has its caret (${caret.ms} ms)`
-        : `has NO caret: the keyboard is ${caret.owner} after ${caret.ms} ms`
+        : `has NO caret: the keyboard is ${caret.owner} after ${caret.ms} ms; the case: ${JSON.stringify(
+            { owners: caret.owners, ...caret.facts }
+          ).slice(0, 6000)}`
     }`
   )
   await s.submitUrl(url)
