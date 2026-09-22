@@ -4421,6 +4421,24 @@ describe('ID-08’s Sync category on a phone', () => {
         url: 'https://example.com/docs/page',
         active: true
       })
+      // A tab this device already holds under the same id (the Open tabs scope carried its
+      // record, ID-10): its row brings that tab to the front rather than opening a second one.
+      remoteTabsStore.set({
+        version: 2,
+        devices: [{ ...laptop, tabs: [{ ...laptop.tabs[0]!, tabId: 'site' }] }]
+      })
+      const heldRow = row(
+        section('sync', syncState(connected({ scope: openTabs }))),
+        'sync-remote-tabs'
+      )
+      if (heldRow.kind !== 'item') throw new Error('not an item row')
+      const held = heldRow.sheet.groups[0]?.rows[0]
+      if (held?.kind !== 'action') throw new Error('not an action')
+      invoke.mockClear()
+      held.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('tab.activate', { tabId: 'site' })
+      expect(invoke).not.toHaveBeenCalledWith('tab.create', expect.anything())
+      remoteTabsStore.set({ version: 1, devices: [laptop, desktop] })
       // The sheet's rows are the item's, reachable by id as any item sheet's rows are; the
       // landing's search does not walk them (hundreds of tabs would flood it), the row itself is found.
       expect(findRow(model.groups, 'sync-remote-tab:dev-2:t1')).toBe(first)
