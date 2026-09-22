@@ -137,6 +137,13 @@ on:
         required: false
         type: string
         default: soft
+      ref:
+        description: >-
+          The commit, branch or tag to check out, build and run (a sweep of another ref than the
+          workflow's own, as the nightly's dispatch offers); the workflow's own commit when empty
+        required: false
+        type: string
+        default: ''
     outputs:
       emulator-died:
         description: >-
@@ -172,6 +179,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}

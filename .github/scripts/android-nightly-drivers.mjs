@@ -22,7 +22,8 @@
 //     under <dir>/<artifact name>/), the manifest saying which drivers were expected: driver,
 //     result, scenes / checks, duration, jank verdict, the artifact link; the failures with their
 //     reasons and the skips with theirs under it. Printed to stdout (the workflow appends it to
-//     the job summary); exits 1 when any driver failed or left no result.
+//     the job summary); exits 1 when any driver failed, left no result or was not run (the
+//     shard's budget spent, the emulator gone).
 //
 //   node android-nightly-drivers.mjs check
 //     The manifest against the sources: every concrete *Demo class under androidTest is a driver
@@ -77,7 +78,9 @@ export function sourceDriverClasses(dir = DRIVER_SOURCES) {
   for (const name of readdirSync(dir).sort()) {
     if (!name.endsWith('.kt')) continue
     const source = readFileSync(join(dir, name), 'utf8')
-    for (const match of source.matchAll(/^((?:abstract|open|internal|private|sealed)\s+)*class\s+(\w+Demo)\b/gm)) {
+    for (const match of source.matchAll(
+      /^((?:abstract|open|internal|private|sealed)\s+)*class\s+(\w+Demo)\b/gm
+    )) {
       if (/\babstract\b/.test(match[0])) continue
       classes.set(match[2], name)
     }
@@ -93,7 +96,9 @@ export function declaredHandshakeDir(className, dir = DRIVER_SOURCES) {
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.kt')) continue
     const source = readFileSync(join(dir, name), 'utf8')
-    const match = source.match(new RegExp(`class\\s+${className}\\b[^{\\n]*?:\\s*\\w+\\(([^)\\n]*)\\)`))
+    const match = source.match(
+      new RegExp(`class\\s+${className}\\b[^{\\n]*?:\\s*\\w+\\(([^)\\n]*)\\)`)
+    )
     if (!match) continue
     const args = match[1]
     const named = args.match(/handshakeDir\s*=\s*"([^"]*)"/)
@@ -196,7 +201,10 @@ export function writePlan(manifest, shard, dir) {
   const drivers = driversOf(manifest, shard)
   drivers.forEach((driver, i) => {
     const name = `${String(i + 1).padStart(2, '0')}-${driver.id}.env`
-    writeFileSync(join(dir, name), envLines({ ...runnerKeysOf(driver), ...environmentOf(manifest, driver) }))
+    writeFileSync(
+      join(dir, name),
+      envLines({ ...runnerKeysOf(driver), ...environmentOf(manifest, driver) })
+    )
   })
   return drivers.map((d) => d.id)
 }
@@ -204,7 +212,8 @@ export function writePlan(manifest, shard, dir) {
 /** The setup steps a shard needs: its own, then its drivers', each once, in first-seen order. */
 export function setupSteps(manifest, shard) {
   const steps = new Set(manifest.shards[shard]?.setup ?? [])
-  for (const driver of driversOf(manifest, shard)) for (const step of driver.setup ?? []) steps.add(step)
+  for (const driver of driversOf(manifest, shard))
+    for (const step of driver.setup ?? []) steps.add(step)
   return [...steps]
 }
 
@@ -220,11 +229,13 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
     ids.add(driver.id)
     if (!/^[a-z0-9][a-z0-9-]*$/.test(driver.id))
       problems.push(`driver id '${driver.id}' is not a lowercase kebab-case name`)
-    if (!manifest.shards[driver.shard]) problems.push(`${driver.id}: unknown shard '${driver.shard}'`)
+    if (!manifest.shards[driver.shard])
+      problems.push(`${driver.id}: unknown shard '${driver.shard}'`)
     const classes = classesOf(driver)
     if (classes.length === 0) problems.push(`${driver.id}: names no class`)
     for (const cls of classes) {
-      if (!sources.has(cls)) problems.push(`${driver.id}: class ${cls} is not declared under androidTest`)
+      if (!sources.has(cls))
+        problems.push(`${driver.id}: class ${cls} is not declared under androidTest`)
       covered.set(cls, [...(covered.get(cls) ?? []), driver.id])
     }
     if (!driver.mirrors) problems.push(`${driver.id}: says not which workflow it mirrors`)
@@ -248,7 +259,9 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
     for (const step of shard.setup ?? [])
       if (!SETUP_STEPS.has(step)) problems.push(`shard ${name}: unknown setup step '${step}'`)
     if (!(shard['budget-minutes'] < shard['timeout-minutes']))
-      problems.push(`shard ${name}: the budget (${shard['budget-minutes']} min) must be under the job timeout (${shard['timeout-minutes']} min)`)
+      problems.push(
+        `shard ${name}: the budget (${shard['budget-minutes']} min) must be under the job timeout (${shard['timeout-minutes']} min)`
+      )
   }
   const skipped = new Map()
   for (const skip of manifest.skip) {
@@ -256,16 +269,22 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
     if (skip.class) {
       skipped.set(skip.class, skip)
       if (covered.has(skip.class))
-        problems.push(`${skip.class} is both a driver (${covered.get(skip.class).join(', ')}) and skipped`)
+        problems.push(
+          `${skip.class} is both a driver (${covered.get(skip.class).join(', ')}) and skipped`
+        )
       if (skip.absent && sources.has(skip.class))
-        problems.push(`${skip.class} has landed: it is skipped as absent, give it its line on a shard`)
+        problems.push(
+          `${skip.class} has landed: it is skipped as absent, give it its line on a shard`
+        )
       if (!skip.absent && !sources.has(skip.class))
         problems.push(`skipped class ${skip.class} is not declared under androidTest`)
     }
   }
   for (const cls of [...sources.keys()].sort()) {
     if (!covered.has(cls) && !skipped.has(cls))
-      problems.push(`${cls} (${sources.get(cls)}) is neither a driver in the manifest nor in its skip list with a reason`)
+      problems.push(
+        `${cls} (${sources.get(cls)}) is neither a driver in the manifest nor in its skip list with a reason`
+      )
   }
   return problems
 }
@@ -319,7 +338,8 @@ export function jankVerdict(records) {
   if (faults.length) return `**FAULT** ${faults.map((r) => `\`${r.scene}\``).join(', ')}`
   if (over.length)
     return `over: ${over.map((r) => `\`${r.scene}\``).join(', ')} (soft gate, reported)`
-  if (gated.length === 0) return `${records.length} scene${records.length === 1 ? '' : 's'} reported only`
+  if (gated.length === 0)
+    return `${records.length} scene${records.length === 1 ? '' : 's'} reported only`
   return `within (${gated.length} of ${records.length} gated)`
 }
 
@@ -329,7 +349,10 @@ const clock = (seconds) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 const code = (text) => `\`${String(text).replace(/`/g, '')}\``
-const cell = (text) => String(text ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ')
+const cell = (text) =>
+  String(text ?? '')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ')
 
 /**
  * Reads the shards' results under `dir` (one subdirectory per downloaded artifact, each with the
@@ -360,7 +383,10 @@ export function readResults(dir) {
     const infoFile = join(root, 'shard.json')
     const shardInfo = existsSync(infoFile) ? JSON.parse(readFileSync(infoFile, 'utf8')) : null
     shard ??= shardInfo?.shard ?? relative(dir, root)
-    shards.set(shard, { shard, root, results, shardInfo })
+    // A re-run leaves the shard's earlier attempt beside the new one: the latest attempt counts.
+    const before = shards.get(shard)
+    if (before && (before.shardInfo?.attempt ?? 1) > (shardInfo?.attempt ?? 1)) continue
+    shards.set(shard, { shard, root, dirName: relative(dir, root), results, shardInfo })
   }
   return shards
 }
@@ -369,7 +395,11 @@ export function readResults(dir) {
  * The table and its notes.
  * @returns {{ markdown: string, failed: string[], counts: Record<string, number> }}
  */
-export function summarize(manifest, shardResults, { shard = 'all', artifactUrl = '', artifactName = '' } = {}) {
+export function summarize(
+  manifest,
+  shardResults,
+  { shard = 'all', artifactUrl = '', artifactName = '' } = {}
+) {
   const names = shard && shard !== 'all' ? [shard] : shardNames(manifest)
   const rows = []
   const failures = []
@@ -377,7 +407,11 @@ export function summarize(manifest, shardResults, { shard = 'all', artifactUrl =
   const notRun = []
   const counts = { PASS: 0, FAIL: 0, SKIP: 0 }
   const link = (path) =>
-    artifactUrl ? `[${path}](${artifactUrl})` : artifactName ? `${code(artifactName)} › ${path}` : path
+    artifactUrl
+      ? `[${path}](${artifactUrl})`
+      : artifactName
+        ? `${code(artifactName)} › ${path}`
+        : path
   for (const name of names) {
     const found = shardResults.get(name)
     for (const driver of driversOf(manifest, name)) {
@@ -393,25 +427,43 @@ export function summarize(manifest, shardResults, { shard = 'all', artifactUrl =
         continue
       }
       const result = r.result
-      counts[result] = (counts[result] ?? 0) + 1
+      // A SKIP the shard wrote for a driver it could not run (the emulator gone, the budget spent)
+      // is coverage missed, counted apart from a failure and from the manifest's skips.
+      const unrun =
+        result === 'SKIP' &&
+        (r.reason?.startsWith('the emulator') || r.reason?.startsWith('shard budget'))
+      counts[unrun ? 'NOT_RUN' : result] = (counts[unrun ? 'NOT_RUN' : result] ?? 0) + 1
       const records = framesUnder(join(found.root, driver.id))
       const checks = []
       if (records.length) checks.push(`${records.length} scene${records.length === 1 ? '' : 's'}`)
-      if (r.touches) checks.push(`${r.touches} touch${r.touches === 1 ? '' : 'es'}${r.touchFaults ? ` (${r.touchFaults} did not take)` : ''}`)
+      if (r.touches)
+        checks.push(
+          `${r.touches} touch${r.touches === 1 ? '' : 'es'}${r.touchFaults ? ` (${r.touchFaults} did not take)` : ''}`
+        )
       if (r.shots) checks.push(`${r.shots} shot${r.shots === 1 ? '' : 's'}`)
       if (r.videos) checks.push(`${r.videos} video${r.videos === 1 ? '' : 's'}`)
       const resultCell =
-        result === 'PASS' ? 'PASS' : result === 'SKIP' ? 'SKIP' : `**${result}**`
+        result === 'PASS'
+          ? 'PASS'
+          : result === 'SKIP'
+            ? unrun
+              ? '**SKIP**'
+              : 'SKIP'
+            : `**${result}**`
       rows.push([
         classesOf(driver).join(', '),
         resultCell,
-        checks.join(' · ') || '–',
+        checks.join(' · ') || (result === 'SKIP' ? cell(r.reason || 'no reason given') : '–'),
         clock(r.seconds),
         jankVerdict(records),
         link(path)
       ])
-      if (result === 'FAIL') failures.push(`${code(driver.id)} (${classesOf(driver).join(', ')}, mirrors ${code(driver.mirrors)}): ${r.reason || 'see its instrument.txt'}`)
-      else if (result === 'SKIP') (r.reason?.startsWith('the emulator') || r.reason?.startsWith('shard budget') ? notRun : skips).push(`${code(driver.id)}: ${r.reason || 'no reason given'}`)
+      if (result === 'FAIL')
+        failures.push(
+          `${code(driver.id)} (${classesOf(driver).join(', ')}, mirrors ${code(driver.mirrors)}): ${r.reason || 'see its instrument.txt'}`
+        )
+      else if (result === 'SKIP')
+        (unrun ? notRun : skips).push(`${code(driver.id)}: ${r.reason || 'no reason given'}`)
     }
   }
   for (const skip of manifest.skip) {
@@ -422,8 +474,10 @@ export function summarize(manifest, shardResults, { shard = 'all', artifactUrl =
   }
   const lines = []
   lines.push(
-    `**${counts.PASS} passed, ${counts.FAIL} failed, ${counts.SKIP} skipped** across ${names.length} shard${names.length === 1 ? '' : 's'}` +
-      (artifactUrl ? ` · findings and videos: [${artifactName || 'the artifact'}](${artifactUrl})` : '') +
+    `**${counts.PASS} passed, ${counts.FAIL} failed${counts.NOT_RUN ? `, ${counts.NOT_RUN} not run` : ''}, ${counts.SKIP} skipped** across ${names.length} shard${names.length === 1 ? '' : 's'}` +
+      (artifactUrl
+        ? ` · findings and videos: [${artifactName || 'the artifact'}](${artifactUrl})`
+        : '') +
       '.',
     ''
   )
@@ -436,27 +490,42 @@ export function summarize(manifest, shardResults, { shard = 'all', artifactUrl =
     const failed = done.filter((r) => r.result === 'FAIL').length + (total - done.length)
     const took = info?.seconds !== undefined ? ` in ${clock(info.seconds)}` : ''
     const died = info?.emulatorDied ? ' · **the emulator went away**' : ''
-    return `- ${code(name)} (${manifest.shards[name].title}): ${passed} of ${total} passed, ${failed} failed${took}${died}${found ? '' : ' · **no results**'}`
+    const where = found ? ` · ${code(found.dirName + '/')}` : ' · **no results**'
+    return `- ${code(name)} (${manifest.shards[name].title}): ${passed} of ${total} passed, ${failed} failed${took}${died}${where}`
   })
   lines.push(...shardLines, '')
-  lines.push('| driver | result | scenes / checks | duration | jank verdict | artifact |', '| --- | --- | --- | ---: | --- | --- |')
+  lines.push(
+    '| driver | result | scenes / checks | duration | jank verdict | artifact |',
+    '| --- | --- | --- | ---: | --- | --- |'
+  )
   for (const row of rows) lines.push(`| ${row.map(cell).join(' | ')} |`)
   lines.push('')
   if (failures.length) lines.push('### Failed', '', ...failures.map((f) => `- ${f}`), '')
-  if (notRun.length) lines.push('### Not run', '', ...notRun.map((f) => `- ${f}`), '')
+  if (notRun.length)
+    lines.push(
+      '### Not run',
+      '',
+      ...notRun.map((f) => `- ${f}`),
+      '',
+      'A driver not run is coverage missed: the run is red for it like for a failure.',
+      ''
+    )
   if (skips.length) lines.push('### Skipped', '', ...skips.map((f) => `- ${f}`), '')
   lines.push(
-    'Result: PASS is the driver\'s `OK (…)` (its wrapper\'s own checks included); FAIL its failure, a timeout or an emulator death; SKIP a listed reason. ' +
+    "Result: PASS is the driver's `OK (…)` (its wrapper's own checks included); FAIL its failure, a timeout or an emulator death; SKIP a listed reason (in bold when the shard could not run the driver). " +
       'Scenes are the frames records (`frames.jsonl`), touches the fingers the harness put on controls (`the touch on … took`), shots the screenshots. ' +
-      'The jank verdict is the soft gate\'s over its scenes (the recipe\'s software GPU: see android-jank-report.mjs). One artifact holds every driver\'s directory under its shard.'
+      "The jank verdict is the soft gate's over its scenes (the recipe's software GPU: see android-jank-report.mjs). One artifact holds every driver's directory under its shard."
   )
-  return { markdown: lines.join('\n'), failed: failures, counts }
+  return { markdown: lines.join('\n'), failed: failures, notRun, counts }
 }
 
 // --- estimate ----------------------------------------------------------------------------------
 
 export function estimate(manifest) {
-  const lines = ['| shard | image | drivers | estimate (drivers) | job timeout |', '| --- | --- | ---: | ---: | ---: |']
+  const lines = [
+    '| shard | image | drivers | estimate (drivers) | job timeout |',
+    '| --- | --- | ---: | ---: | ---: |'
+  ]
   let total = 0
   for (const [name, shard] of Object.entries(manifest.shards)) {
     const drivers = driversOf(manifest, name)
@@ -509,15 +578,20 @@ function main() {
       return
     }
     case 'summary': {
-      if (!args.results) throw new Error('usage: summary --results <dir> [--shard all|<shard>] [--artifact-url <url>] [--artifact-name <name>]')
-      const { markdown, failed } = summarize(manifest, readResults(args.results), {
+      if (!args.results)
+        throw new Error(
+          'usage: summary --results <dir> [--shard all|<shard>] [--artifact-url <url>] [--artifact-name <name>]'
+        )
+      const { markdown, failed, notRun } = summarize(manifest, readResults(args.results), {
         shard: args.shard || 'all',
         artifactUrl: args['artifact-url'] || '',
         artifactName: args['artifact-name'] || ''
       })
       console.log(markdown)
-      if (failed.length) {
-        console.error(`${failed.length} driver${failed.length === 1 ? '' : 's'} failed`)
+      if (failed.length || notRun.length) {
+        console.error(
+          `${failed.length} driver${failed.length === 1 ? '' : 's'} failed, ${notRun.length} not run`
+        )
         process.exitCode = 1
       }
       return
@@ -529,7 +603,9 @@ function main() {
         process.exitCode = 1
       } else {
         const sources = sourceDriverClasses()
-        console.log(`${manifest.drivers.length} drivers cover ${sources.size} classes; ${manifest.skip.length} skipped with a reason`)
+        console.log(
+          `${manifest.drivers.length} drivers cover ${sources.size} classes; ${manifest.skip.length} skipped with a reason`
+        )
       }
       return
     }

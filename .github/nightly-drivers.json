@@ -9,7 +9,7 @@
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
-      "timeout-minutes": 85,
+      "timeout-minutes": 90,
       "budget-minutes": 68
     },
     "phone-b": {
@@ -20,7 +20,7 @@
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
-      "timeout-minutes": 85,
+      "timeout-minutes": 90,
       "budget-minutes": 68
     },
     "phone-c": {
@@ -31,7 +31,7 @@
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -show-kernel",
       "display": "720x1600@280",
-      "timeout-minutes": 85,
+      "timeout-minutes": 90,
       "budget-minutes": 68,
       "note": "-camera-back emulated: the QR scan demo reads the emulated camera."
     },
@@ -43,7 +43,7 @@
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
-      "timeout-minutes": 85,
+      "timeout-minutes": 90,
       "budget-minutes": 68
     },
     "api35": {
@@ -54,12 +54,9 @@
       "emulator-gpu": "swangle",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
       "display": "720x1600@280",
-      "timeout-minutes": 85,
+      "timeout-minutes": 90,
       "budget-minutes": 68,
-      "setup": [
-        "ffmpeg",
-        "perfetto-python"
-      ]
+      "setup": ["ffmpeg", "perfetto-python"]
     },
     "webview": {
       "title": "AOSP image (-writable-system) with the Chromium snapshot WebView swapped in",
@@ -69,11 +66,9 @@
       "emulator-gpu": "swiftshader_indirect",
       "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -writable-system",
       "display": "720x1600@280",
-      "timeout-minutes": 85,
+      "timeout-minutes": 90,
       "budget-minutes": 68,
-      "setup": [
-        "webview-snapshot"
-      ],
+      "setup": ["webview-snapshot"],
       "env": {
         "WEBVIEW_APK": "artifacts/webview/SystemWebView.apk"
       },
@@ -221,9 +216,7 @@
       "shard": "phone-a",
       "mirrors": "android-downloads-demo.yml",
       "dir": "downloads-demo",
-      "setup": [
-        "downloads-server"
-      ],
+      "setup": ["downloads-server"],
       "estimate": 3.5
     },
     {
@@ -234,9 +227,7 @@
       "dir": "firstrun-demo",
       "script": ".github/scripts/android-firstrun-demo.sh",
       "out": "artifacts/android-firstrun-demo",
-      "needs": [
-        "browser-role"
-      ],
+      "needs": ["browser-role"],
       "estimate": 3,
       "note": "The wrapper enables Chrome and hands it the browser role for the choice the demo makes; the runner puts both back after."
     },
@@ -258,9 +249,7 @@
       "dir": "ext-demo",
       "script": ".github/scripts/android-ext-runtime-demo.sh",
       "out": "artifacts/android-ext-runtime-demo",
-      "setup": [
-        "ext-crx"
-      ],
+      "setup": ["ext-crx"],
       "timeout": 1500,
       "estimate": 12,
       "note": "The strict job (the image's WebView). The workflow's AOSP job is SOFT_FAIL=1 and never red, so it is not the nightly's signal. Runs the engine probe, the scroll budget and ExtensionDemo, last on the shard: its own device prep repeats the settle."
@@ -404,9 +393,7 @@
       "env": {
         "SIDELOAD_ZIP": "artifacts/ext/uBlock0.chromium.zip"
       },
-      "setup": [
-        "ublock-zip"
-      ],
+      "setup": ["ublock-zip"],
       "estimate": 3
     },
     {
@@ -419,17 +406,12 @@
       "env": {
         "DEMO_THEME": "light"
       },
-      "setup": [
-        "ffmpeg"
-      ],
+      "setup": ["ffmpeg"],
       "estimate": 3
     },
     {
       "id": "thumbs",
-      "classes": [
-        "ThumbsDemo",
-        "ThumbsRestoreDemo"
-      ],
+      "classes": ["ThumbsDemo", "ThumbsRestoreDemo"],
       "shard": "phone-b",
       "mirrors": "android-thumbs-demo.yml",
       "script": ".github/scripts/android-thumbs-demo.sh",
@@ -607,9 +589,7 @@
       "shard": "phone-c",
       "mirrors": "(none: dispatch-only driver without a workflow)",
       "dir": "autofill-demo",
-      "needs": [
-        "pin"
-      ],
+      "needs": ["pin"],
       "timeout": 900,
       "estimate": 4,
       "note": "Needs a device PIN (the runner sets 1234 before and clears it after); the shop is served from the instrumentation."
@@ -635,9 +615,7 @@
       "mirrors": "android-passwords-demo.yml",
       "dir": "passwords-ui-demo",
       "script": ".github/scripts/android-passwords-ui-demo.sh",
-      "needs": [
-        "pin"
-      ],
+      "needs": ["pin"],
       "timeout": 1200,
       "estimate": 7.5,
       "note": "The wrapper sets the device PIN and lets its authentication age 75 s; the runner clears the PIN after."
@@ -755,9 +733,7 @@
       "shard": "phone-d",
       "mirrors": "(none: dispatch-only driver without a workflow)",
       "dir": "services-hardening-demo",
-      "setup": [
-        "hardening-server"
-      ],
+      "setup": ["hardening-server"],
       "estimate": 3,
       "note": "Its pages come from services-hardening-demo-server.mjs on the runner (10.0.2.2:8787) with a demo PKCS#12 made in the setup for the certificate chooser."
     },
@@ -778,9 +754,7 @@
       "mirrors": "(none: android-passwords-engine-demo.sh has no workflow)",
       "dir": "passwords-demo",
       "script": ".github/scripts/android-passwords-engine-demo.sh",
-      "needs": [
-        "pin"
-      ],
+      "needs": ["pin"],
       "timeout": 900,
       "estimate": 5,
       "note": "The wrapper sets the device PIN; the runner clears it after."
@@ -797,10 +771,7 @@
     },
     {
       "id": "ntp-morph",
-      "classes": [
-        "FakeboxMorphDemo",
-        "FakeboxMorphReducedDemo"
-      ],
+      "classes": ["FakeboxMorphDemo", "FakeboxMorphReducedDemo"],
       "shard": "phone-d",
       "mirrors": "android-ntp-morph-demo.yml:space",
       "script": ".github/scripts/android-ntp-morph-demo.sh",
@@ -821,9 +792,7 @@
       "env": {
         "DEMO_THEME": "light"
       },
-      "setup": [
-        "ffmpeg"
-      ],
+      "setup": ["ffmpeg"],
       "estimate": 3,
       "note": "The wrapper cuts the recording into frames and reads them (android-sheet-recede-frames.mjs)."
     },
@@ -837,9 +806,7 @@
       "env": {
         "DEMO_THEME": "light"
       },
-      "setup": [
-        "ffmpeg"
-      ],
+      "setup": ["ffmpeg"],
       "estimate": 3
     },
     {
@@ -850,9 +817,7 @@
       "dir": "back-demo",
       "script": ".github/scripts/android-back-demo.sh",
       "out": "artifacts/android-back-demo",
-      "needs": [
-        "navigation"
-      ],
+      "needs": ["navigation"],
       "estimate": 3,
       "note": "Its own script: gestural navigation for the predictive back; the runner puts three-button navigation back after."
     },
@@ -882,9 +847,7 @@
       "env": {
         "STATUS_BAR_ASSERT": "true"
       },
-      "needs": [
-        "navigation"
-      ],
+      "needs": ["navigation"],
       "timeout": 1500,
       "estimate": 8,
       "note": "Its own script (gestural navigation for its scenes; the runner puts three-button navigation back); one take (no before APK)."
@@ -917,9 +880,7 @@
         "DEMO_ARGS": "-e cycles 10 -e live 1",
         "DEMO_RECORD": "0"
       },
-      "setup": [
-        "perfetto-python"
-      ],
+      "setup": ["perfetto-python"],
       "timeout": 2100,
       "estimate": 20,
       "note": "The workflow's ten cycles against the live page, without the recording; its own report (menu-perf-report.md) is in the findings. Last on the shard: the longest."
@@ -988,10 +949,7 @@
     },
     {
       "id": "ntp-morph-private",
-      "classes": [
-        "FakeboxMorphScrubDemo",
-        "FakeboxMorphScrubReducedDemo"
-      ],
+      "classes": ["FakeboxMorphScrubDemo", "FakeboxMorphScrubReducedDemo"],
       "shard": "webview",
       "mirrors": "android-ntp-morph-demo.yml:private",
       "script": ".github/scripts/android-ntp-morph-demo.sh",

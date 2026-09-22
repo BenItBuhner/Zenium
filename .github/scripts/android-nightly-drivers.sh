@@ -128,11 +128,18 @@ fi
 
 # --- the drivers -----------------------------------------------------------------------------------
 
+read_env_file() { # file: exports its NAME=value lines (a value may hold spaces; no quoting)
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in '' | '#'*) continue ;; esac
+    export "${line?}"
+  done < "$1"
+}
+
 mkdir -p "$out"
 plan=$(mktemp -d)
 node "$helper" plan "$shard" "$plan" > /dev/null
-# shellcheck disable=SC1091
-set -a; . "$plan/shard.env"; set +a
+read_env_file "$plan/shard.env"
 budget_s=${NIGHTLY_BUDGET_S:-4080}
 display=${NIGHTLY_DISPLAY:-720x1600@280}
 shard_started=$(date +%s)
@@ -206,14 +213,6 @@ write_result() { # id, classes, result, seconds, reason, dir
   printf '%-22s %-4s %5ss  %s\n' "$id" "$result" "$seconds" "$reason" | tee -a "$summary"
 }
 
-read_env_file() { # file: exports its NAME=value lines
-  local line
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in '' | '#'*) continue ;; esac
-    export "${line?}"
-  done < "$1"
-}
-
 failed=0
 prepared=0
 died=0
@@ -232,8 +231,10 @@ for env_file in "$plan"/[0-9]*.env; do
       exit 0
     fi
     if [ "$remaining" -lt "$NIGHTLY_ESTIMATE_S" ] || [ "$remaining" -lt 60 ]; then
+      # Not run is not covered: the shard fails for it (the summary counts it apart from a failure).
       write_result "$id" "$NIGHTLY_CLASSES" SKIP 0 "shard budget: $((remaining / 60)) min left, the driver takes about $((NIGHTLY_ESTIMATE_S / 60)) min" "$dir"
-      exit 0
+      echo "::error::$id not run: the shard's budget of $((budget_s / 60)) min is spent (the drivers before it took longer than estimated)"
+      exit 1
     fi
     cap=$NIGHTLY_TIMEOUT
     [ "$cap" -gt "$remaining" ] && cap=$remaining
@@ -323,9 +324,12 @@ for env_file in "$plan"/[0-9]*.env; do
 done
 
 shard_seconds=$(( $(date +%s) - shard_started ))
+# The commit is the checkout's own (a dispatch may sweep another ref than the workflow's), the
+# attempt the run's: on a re-run the summary keeps the shard's latest.
 jq -cn --arg shard "$shard" --arg title "${NIGHTLY_TITLE:-$shard}" --argjson seconds "$shard_seconds" \
-  --argjson died "$died" --arg sha "${GITHUB_SHA:-}" --arg run "${GITHUB_RUN_ID:-}" \
-  '{shard: $shard, title: $title, seconds: $seconds, emulatorDied: ($died == 1), sha: $sha, run: $run}' > "$out/shard.json"
+  --argjson died "$died" --arg sha "$(git rev-parse HEAD 2> /dev/null || echo "${GITHUB_SHA:-}")" \
+  --arg run "${GITHUB_RUN_ID:-}" --argjson attempt "${GITHUB_RUN_ATTEMPT:-1}" \
+  '{shard: $shard, title: $title, seconds: $seconds, emulatorDied: ($died == 1), sha: $sha, run: $run, attempt: $attempt}' > "$out/shard.json"
 echo "== $shard: the drivers on this boot ($((shard_seconds / 60)) min)"
 cat "$summary"
 rm -rf "$plan"
