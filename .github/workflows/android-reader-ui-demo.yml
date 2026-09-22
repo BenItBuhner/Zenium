@@ -16,6 +16,9 @@ name: Android reader UI demo
 # 34): that is where the speech engine is.
 on:
   workflow_dispatch:
+  # TEMPORARY (removed before merge): one run of this branch's head for the late-voices fix.
+  push:
+    branches: [cursor/services-read-aloud-late-voices-24d1]
 
 permissions:
   contents: read
