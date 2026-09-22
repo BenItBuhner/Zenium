@@ -275,11 +275,16 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             if (openOverview()) {
                 val header = groupHeaderRect()
                 if (header != null) {
+                    // Each tap's effect checked before its still, as the scenes' taps are: a tap
+                    // the system drops (`leaveGroup`) would leave a still named for a state it
+                    // does not show, and the group folded behind the pick.
                     Finger().tap(header.exactCenterX(), header.exactCenterY())
                     SystemClock.sleep(FOLD_SETTLE_MS)
+                    leaveGroup(collapsed = true, "group-folded")
                     shot("group-folded")
                     Finger().tap(header.exactCenterX(), header.exactCenterY())
                     SystemClock.sleep(FOLD_SETTLE_MS)
+                    leaveGroup(collapsed = false, "group-unfolded")
                     shot("group-unfolded")
                 }
                 pickActiveCard()
@@ -334,12 +339,17 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             finding("overview-group$suffix: the overview did not open; the group scenes are skipped")
             return
         }
-        val header = groupHeaderRect()
-        if (header == null) {
+        val found = groupHeaderRect()
+        if (found == null) {
             finding("overview-group$suffix: no $GROUP_NAME group header on screen (${groupState()}); the group scenes are skipped")
             closeOverview()
             return
         }
+        // The fold scene folds an OPEN group, as seeded: a group left folded (a tap of the set
+        // before this one that the system dropped, say) is unfolded off the record first, so the
+        // scene's name says what its tap did.
+        leaveGroup(collapsed = false, "overview-group$suffix (before the scenes)")
+        val header = groupHeaderRect() ?: found
         finding("overview-group$suffix: ${cardsInGrid()} cards in the grid; the $GROUP_NAME group ${groupState()}; header at $header")
         scene("overview-group-fold$suffix", JankBudget.Kind.SPRING, profile = true) {
             Finger().tap(header.exactCenterX(), header.exactCenterY())
@@ -361,11 +371,13 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     }
 
     /**
-     * The group as the scene `name` should have left it, off the record: an injected tap the
-     * system drops (#339's retry saw the InputDispatcher drop OverviewDemo's step-7 tap, "no
-     * targets were found") folds nothing, and the next scene would then fold where it should
-     * unfold; so when the state is not `collapsed`, the header is tapped again and the fold given
-     * its time, and the finding says so (the scene's own numbers say "the tap folded nothing").
+     * The group as the step `name` should have left it (or should find it), off the record: an
+     * injected tap the system drops (#339's retry saw the InputDispatcher drop OverviewDemo's
+     * step-7 tap, "no targets were found") folds nothing, and the next scene would then fold where
+     * it should unfold; so when the state is not `collapsed`, the header is tapped again and the
+     * fold given its time, and the finding says so (a scene's own numbers say "the tap folded
+     * nothing"). Every tap on the group – the scenes', the recorded pass's, and the scenes' own
+     * starting state – is checked through here.
      */
     private fun leaveGroup(collapsed: Boolean, name: String) {
         if (groupState().startsWith("collapsed") == collapsed) return
@@ -374,10 +386,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             finding("$name: the group is ${groupState()} and its header is off screen; left as it is")
             return
         }
-        finding("$name: the tap did not take (the group is ${groupState()}); tapped again off the record")
+        finding("$name: the group is ${groupState()}, not ${if (collapsed) "collapsed" else "open"} as it should be (a tap did not take); tapped off the record")
         Finger().tap(header.exactCenterX(), header.exactCenterY())
         SystemClock.sleep(FOLD_SETTLE_MS)
-        finding("$name: the group is ${groupState()} after the second tap")
+        finding("$name: the group is ${groupState()} after the off-record tap")
     }
 
     /**
@@ -1046,7 +1058,11 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
          */
         private const val FOLD_SETTLE_MS = 5_000L
         private const val FOLD_REST_MS = 1_500L
-        /** `SpringAnimation.tick`'s longest step (s → ms): a frame longer than this advances the spring by this much only. */
+        /**
+         * `SpringAnimation.tick`'s longest step: a frame longer than this advances the spring by
+         * this much only. The twin of `SPRING_STEP_CLAMP_MS` in `lib/motion/spring.ts`, which is
+         * the source; `spring.test.ts` pins the two equal, so a change there fails here by name.
+         */
         private const val SPRING_STEP_CLAMP_MS = 64.0
         /** The probe's timeline cap per scene (a frame's entry each; the thirty-tab glide is under a hundred). */
         private const val TIMELINE_MAX = 800
