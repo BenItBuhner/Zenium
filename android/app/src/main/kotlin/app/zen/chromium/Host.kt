@@ -170,6 +170,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
     /** The share sheet, in both directions (after `io`: it fetches on it). */
     val share = Share(this, io)
+    /** Screenshots to the gallery and the long screenshot held for its editor (`screenshot.*`; SH-07, SH-08). */
+    val screenshots = Screenshots(this, io)
     /** The pages' media on the OS controls: the media notification, the lock screen, picture-in-picture (`media.*`). */
     val media = MediaSessions(this, io)
     /** The pages' Web Notifications on the shade, one channel per site (`notification.*`). */
@@ -303,6 +305,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         }
         chrome.viewEvent(tabId, name, payload)
     }
+    /** A page's share call: its files to the cache first, their addresses on to the core (SH-14). */
+    override fun preparePageMessage(message: JSONObject, then: (JSONObject) -> Unit) = share.spillPageShare(message, then)
     override fun navigationStateChanged(tabId: String, hostState: String?) = navigation.stateChanged(tabId, hostState)
     override fun viewBound(viewId: String, tabId: String) = navigation.forget(viewId)
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
@@ -730,6 +734,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.openPath" -> { downloads.open(args.str("path"), ""); reply(null) }
             "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
             "app.share" -> share.share(args, reply)
+            "screenshot.capture" -> screenshots.capture(args.str("tabId"), reply)
+            "screenshot.captureLong" -> screenshots.captureLong(args.str("tabId"), reply)
+            "screenshot.saveLong" -> screenshots.saveLong(args.str("id"), args.num("top").toInt(), args.num("bottom").toInt(), args.bool("share"), reply)
+            "screenshot.discardLong" -> { screenshots.discardLong(args.str("id")); reply(null) }
+            "screenshot.share" -> screenshots.share(args.str("uri"), reply)
+            "screenshot.delete" -> screenshots.delete(args.str("uri"), reply)
+            "screenshot.open" -> screenshots.open(args.str("uri"), reply)
             "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
             "app.openPrivateDnsSettings" -> { openPrivateDnsSettings(); reply(null) }
             "app.openKeyboardSettings" -> { openKeyboardSettings(); reply(null) }

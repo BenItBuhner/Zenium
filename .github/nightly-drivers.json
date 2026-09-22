@@ -621,6 +621,18 @@
       "note": "The wrapper sets the device PIN and lets its authentication age 75 s; the runner clears the PIN after."
     },
     {
+      "id": "share-screenshot",
+      "class": "ShareScreenshotDemo",
+      "shard": "phone-d",
+      "mirrors": "android-share-screenshot-demo.yml",
+      "dir": "share-screenshot-demo",
+      "env": {
+        "DEMO_KEEP": "com.google.android.apps.photos com.google.android.apps.nbu.files"
+      },
+      "estimate": 4,
+      "note": "First on the shard: the device is prepared once per shard by the first driver's environment, and the card's thumbnail opens the picture in the image's Photos or Files app, so its DEMO_KEEP leaves those two enabled for the shard (as its workflow does for its run)."
+    },
+    {
       "id": "newtab",
       "class": "NewTabDemo",
       "shard": "phone-d",

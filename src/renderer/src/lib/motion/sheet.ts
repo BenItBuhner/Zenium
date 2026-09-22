@@ -222,6 +222,11 @@ export interface SheetMotionOptions {
   travel?: () => number
   /** A sheet with a peek and an expanded detent: their heights, measured by the component. */
   detents?: () => SheetDetents
+  /**
+   * The detent the sheet comes in to (the peek unless said otherwise): an editor whose body is
+   * the document – the long-screenshot crop – opens expanded, as a frame dialog fills its frame.
+   */
+  openAt?: SheetDetent
   onChange: (state: SheetState) => void
   /** The dismissal finished: the sheet may be unmounted. */
   onClosed: () => void
@@ -305,7 +310,7 @@ export class SheetMotion {
   present(): void {
     if (this.state.phase === 'closed') {
       this.position = 0
-      this.resting = 'collapsed'
+      this.resting = this.options.openAt ?? 'collapsed'
       // `p` runs 0 → 1 over the way in to the detent.
       this.presenceTravel = this.detents()[this.resting]
     } else {

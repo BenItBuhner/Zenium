@@ -104,6 +104,8 @@ interface Props {
   contentKey?: string
   /** Measure the detents again whenever the content changes size (`BottomSheet`'s `fitContent`). */
   fitContent?: boolean
+  /** Come in expanded: an editor whose body is the document (`BottomSheet`'s `openExpanded`). */
+  openExpanded?: boolean
   handleLabel?: string
   /** Another sheet stands over this one (§9.24): Escape is that sheet's until it has gone. */
   under?: boolean
@@ -134,6 +136,7 @@ function Chassis({
   className,
   contentKey,
   fitContent,
+  openExpanded,
   handleLabel = 'Resize sheet',
   under = false,
   sheetRef,
@@ -180,6 +183,7 @@ function Chassis({
       onDismissed={onClose}
       contentKey={contentKey}
       fitContent={fitContent}
+      openExpanded={openExpanded}
       handleLabel={handleLabel}
       labelledBy={titleId}
       className={className}
