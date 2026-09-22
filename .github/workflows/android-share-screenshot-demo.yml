@@ -26,6 +26,10 @@ concurrency:
 jobs:
   record:
     name: Share and screenshot demo
+    # TEMPORARY with the push trigger above: this run is queued only to cancel the one a push
+    # with the trigger still on started beyond the authorised run and retry (the concurrency
+    # group above cancels the run in progress); its own job is skipped.
+    if: false
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
