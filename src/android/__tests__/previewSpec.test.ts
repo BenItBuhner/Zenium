@@ -48,7 +48,9 @@ describe('parsePreviewSeed', () => {
     expect(parsePreviewSeed('siteinfo=cookies&sitedata=many,never')).toMatchObject({
       siteData: { origins: 'many', site: 'block' }
     })
-    expect(parsePreviewSeed('sitedata=block')).toMatchObject({ siteData: { origins: 'some', site: 'block' } })
+    expect(parsePreviewSeed('sitedata=block')).toMatchObject({
+      siteData: { origins: 'some', site: 'block' }
+    })
     expect(parsePreviewSeed('sitedata=allow')).toMatchObject({ siteData: { site: 'allow' } })
     expect(parsePreviewSeed('sitedata=clear,exit')).toMatchObject({
       siteData: { site: 'clearOnExit', exit: true }
