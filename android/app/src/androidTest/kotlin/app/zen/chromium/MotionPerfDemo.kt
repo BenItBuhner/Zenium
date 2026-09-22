@@ -44,9 +44,10 @@ import kotlin.math.roundToInt
  *
  * The scenes are measured BEFORE the recorder rolls (screenrecord composes a second copy of
  * every frame on the emulator's software GPU); the recorded part is the media: the slow swipe,
- * the fling back, the grouped swipe. The scenes start after the app's startup sweep (Safe
- * Browsing's and the blocker's first twenty seconds), which would otherwise land in a window as
- * long tasks of the app's, not the swipe's.
+ * the fling back, the grouped swipe. The app's startup sweeps (Safe Browsing's, the blocker's)
+ * are held for the run when the workflow asks (`holdBackgroundWork`, #313); without the hold the
+ * scenes start after the sweeps' window, which would otherwise land in a scene as long tasks of
+ * the app's, not the swipe's.
  *
  * Beside the harness's numbers an in-chrome probe (a MutationObserver on the chrome's tree)
  * counts what each scene wrote to the DOM: the cards' style writes (one per card per frame
@@ -123,11 +124,13 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         settle()
         flingRight()
         settle()
-        // The app's startup sweep (Safe Browsing's lists, the blocker's) is the app's long
-        // tasks, not the swipe's: the scenes wait it out.
+        // The app's startup sweeps (Safe Browsing's lists, the blocker's) are the app's long
+        // tasks, not the swipe's: held for the run (`holdBackgroundWork`), or waited out.
         val sinceLaunch = SystemClock.uptimeMillis() - launchedAt
-        if (sinceLaunch < SWEEP_MS) {
-            finding("waiting ${SWEEP_MS - sinceLaunch} ms for the startup sweep to pass")
+        if (holdBackgroundWork) {
+            finding("the startup sweeps are held for the run")
+        } else if (sinceLaunch < SWEEP_MS) {
+            finding("waiting ${SWEEP_MS - sinceLaunch} ms for the startup sweeps to pass")
             SystemClock.sleep(SWEEP_MS - sinceLaunch)
         }
         finding("active tab before the scenes: ${activeTabId()}")
@@ -430,8 +433,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         private const val START_TAB = "tab_article"
         /** The grouped scene starts on the group's first tab and drags to its second. */
         private const val GROUP_TAB = "tab_doc_a"
-        /** The startup sweep's window, from the app's launch. */
-        private const val SWEEP_MS = 30_000L
+        /** The startup sweeps' window from the app's launch (the blocker's at 20 s, Safe Browsing's at 35 s since #313), waited out when they are not held. */
+        private const val SWEEP_MS = 40_000L
         private const val LOAD_TIMEOUT_MS = 30_000L
         private const val LOADED_SETTLE_MS = 1_500L
         private const val HOLD_MS = 1_200L

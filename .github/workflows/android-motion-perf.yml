@@ -6,19 +6,18 @@ name: Android motion perf
 # the harness's jank gate (`traceFrames`: HWUI's frame statistics, reported, and the chrome
 # WebView's own Chromium trace read into the renderer main thread's time per frame, its style /
 # layout / paint split and its long tasks, gated) – the tab swipe in its pieces (the touch and
-# the capture, the hold, the drag, the release, a fling, the drag between two grouped tabs with
-# their ribbons). The shared workflow renders the record into the job summary and the
+# the capture, the drag, the release, a fling, the drag between two grouped tabs with their
+# ribbons). The shared workflow renders the record into the job summary and the
 # `jank-report-*` artifact; the driver's `perf-motion.json` and `findings.txt` in the demo
 # artifact carry its in-chrome probe (what each scene wrote to the DOM) beside the traces
 # (`trace-<scene>.json.gz`, for chrome://tracing or the Perfetto UI). The measured scenes run
 # before the recorder rolls, since screenrecord composes a second copy of every frame on the
-# emulator's software GPU; the recorded part is the media. Dispatch-only: about fifteen minutes.
-# The build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+# emulator's software GPU; the recorded part is the media. The app's startup sweeps (Safe
+# Browsing's, the blocker's) are HELD for the run (`holdBackgroundWork`, #313: the sweep is not
+# the motion under test; the release table's stand-ins keep measuring without it). Dispatch-only:
+# about fifteen minutes. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml.
 on:
-  # TEMPORARY (the profile's before / after runs on the audit's branch: worker tokens cannot
-  # dispatch); removed before the merge.
-  push:
-    branches: [cursor/android-perf-tab-swipe-cf22]
   workflow_dispatch:
     inputs:
       theme:
@@ -57,6 +56,7 @@ jobs:
         DEMO_THEME=${{ inputs.theme || 'light' }}
         DEMO_OUT=artifacts/android-motion-perf
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
+        DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=480
       api-level: '35'
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
@@ -79,6 +79,7 @@ jobs:
         DEMO_THEME=${{ inputs.theme || 'light' }}
         DEMO_OUT=artifacts/android-motion-perf
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
+        DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=480
       api-level: '35'
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
