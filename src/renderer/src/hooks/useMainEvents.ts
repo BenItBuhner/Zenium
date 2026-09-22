@@ -13,7 +13,7 @@ import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
-import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
+import { focusPane, pageTookKeyboard } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
@@ -222,7 +222,9 @@ export function useMainEvents(): void {
       // F6 / Shift+F6 / Shift+Alt+T / Shift+Alt+B: the keyboard moves between the chrome's panes
       // and the page (lib/panes.ts).
       onEvent('focus.pane', (request) => void focusPane(request)),
-      onEvent('focus.page', () => void releaseChromeFocus()),
+      // A page's view took the keyboard: the chrome's stale focused control is let go – but the
+      // open URL bar keeps its field and takes the keyboard back (lib/panes.ts).
+      onEvent('focus.page', ({ tabId }) => void pageTookKeyboard(tabId)),
       onEvent('zoom.changed', ({ tabId, factor }) => {
         // Chrome's bubble, for the page on screen. The host with the page-controls sheet
         // (Android) shows the zoom there instead. Either way the reader hears the new level.
