@@ -207,6 +207,8 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
         var startMono = 0L
         var endBoot = 0L
         var endMono = 0L
+        liftBoot = 0L
+        liftMono = 0L
         measureFrames(sceneKey, JankBudget.Kind.GESTURE, baseline) {
             SystemClock.sleep(400)
             cookie = capture.sceneBegin(label)
@@ -230,7 +232,8 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
         finding(
             "[$label] ${summary.optInt("frames")} frames, ${summary.optInt("janky")} janky (${summary.optString("jankyPercent")}%), " +
                 "50/90/95/99th ${summary.optInt("p50")}/${summary.optInt("p90")}/${summary.optInt("p95")}/${summary.optInt("p99")} ms; " +
-                "window ${(endBoot - startBoot) / 1_000_000} ms; ui layouts ${views["layouts"]}, draws ${views["draws"]}, page bounds changes ${views["pageBounds"]}; " +
+                "window ${(endBoot - startBoot) / 1_000_000} ms (the lift at ${if (liftBoot > 0) "${(liftBoot - startBoot) / 1_000_000} ms" else "?"}); " +
+                "ui layouts ${views["layouts"]}, draws ${views["draws"]}, page bounds changes ${views["pageBounds"]}; " +
                 "chrome barScroll ${chrome.optInt("barScroll")}, style writes ${chrome.optInt("styleWrites")} (root ${chrome.optInt("rootStyleWrites")}), " +
                 "data-bar-hidden flips ${chrome.optInt("hiddenFlips")}, data-bar-away flips ${chrome.optInt("awayFlips")}, " +
                 "column resizes ${chrome.optInt("columnChanges")}, host frames ${chrome.opt("hostFrames") ?: "?"} (one way ${chrome.opt("hostPosts") ?: "?"}); " +
@@ -241,6 +244,7 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
             .put("name", name)
             .put("startBootNs", startBoot).put("endBootNs", endBoot)
             .put("startMonoUs", startMono).put("endMonoUs", endMono)
+            .apply { if (liftBoot > 0) put("liftBootNs", liftBoot).put("liftMonoUs", liftMono) }
             .put("gfx", gfxFile.name)
             .put("gfxSummary", summary)
             .put("views", JSONObject(views))
@@ -253,13 +257,30 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
 
     // --- the gestures --------------------------------------------------------------------------------
 
+    /**
+     * When the scene's finger lifted, in the traces' two clocks (0: no lift yet): `perf-scenes.json`
+     * carries it as `liftBootNs` / `liftMonoUs`, and the analysis splits the scene there – what the
+     * renderer main thread did under the finger and what after it. The return scene's question
+     * (§11.5 as amended on #270): the page's short relayout is to land after the lift, never in
+     * the frames under the finger.
+     */
+    private var liftBoot = 0L
+    private var liftMono = 0L
+
+    /** The finger's lift, on the record: read at once, before the tail. */
+    private fun Finger.lift() {
+        up()
+        liftBoot = capture.nowBoot()
+        liftMono = capture.nowMono()
+    }
+
     /** A slow drag down the page: the bar goes off one to one under the finger, then the page scrolls with it hidden. */
     private fun slowHide() {
         Finger().apply {
             down(pageX, height * 0.72f)
             moveBy(0f, -HIDE_DRAG_DP * density, HIDE_MS)
             hold(150)
-            up()
+            lift()
         }
         SystemClock.sleep(TAIL_MS)
     }
@@ -269,18 +290,24 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
         Finger().apply {
             down(pageX, height * 0.70f)
             moveBy(0f, -FLING_DP * density, 90)
-            up()
+            lift()
         }
         SystemClock.sleep(FLING_TAIL_MS)
     }
 
-    /** A slow drag back up the page: the bar comes back one to one, then the page scrolls with it shown. */
+    /**
+     * A slow drag back up the page: the bar comes back one to one over the drag's first two
+     * fifths (its travel past the slop), then the page scrolls with it shown for the rest, the
+     * finger holds and lifts, and the tail takes the rest (the bar is home already: the rest is
+     * at once). Before #270's follow-up the page was laid out short the frame the bar arrived,
+     * under the finger; now it is at the rest, after the lift.
+     */
     private fun returnDrag() {
         Finger().apply {
             down(pageX, height * 0.45f)
             moveBy(0f, RETURN_DRAG_DP * density, RETURN_MS)
             hold(150)
-            up()
+            lift()
         }
         SystemClock.sleep(TAIL_MS)
     }
@@ -291,7 +318,7 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
             down(pageX, height * 0.84f)
             hold(60)
             moveBy(0f, -LONG_SCROLL_FRACTION * height, LONG_SCROLL_MS)
-            up()
+            lift()
         }
         SystemClock.sleep(TAIL_MS)
     }

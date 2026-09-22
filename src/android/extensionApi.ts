@@ -11,6 +11,9 @@ import {
   normalizeCaptureOptions
 } from '@core/extensions/api/capture'
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
+import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import type { ScopedValues } from '@core/extensions/api/privacy'
+import type { ProxyConfig } from '@core/extensions/api/proxy'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import {
@@ -22,6 +25,7 @@ import {
   SYSTEM_STORAGE_NO_PERMISSION_ERROR,
   SYSTEM_STORAGE_PERMISSION
 } from '@core/extensions/api/systemStorage'
+import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '@core/extensions/api/tabs'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import {
@@ -43,7 +47,8 @@ import type { AndroidDeclarativeNetRequest } from './extensionDnr'
 import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
-import { answerProxySetting } from './extensionProxy'
+import { AndroidProxy } from './extensionProxy'
+import { AndroidSidePanel } from './extensionSidePanel'
 import { answerSystemDisplay, type PhoneScreen } from './extensionSystemDisplay'
 import { AndroidTts } from './extensionTts'
 
@@ -114,6 +119,9 @@ export interface ApiHost {
   ): void
   /** Deliver `chrome.<ns>.<name>` to one endpoint, listener or not (a `contextMenus` `onclick` holder). */
   emitTo(endpointId: string, ns: string, name: string, args: unknown[]): void
+  /** `chrome.contextMenus` items of a lazy-background extension, kept across worker starts and sessions (Chrome's `MenuManager` storage). */
+  contextMenuItems(id: string): unknown
+  setContextMenuItems(id: string, items: PersistedMenuItem[]): void
   /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
   icon(id: string): string | null
   readFile(id: string, path: string): Promise<string | null>
@@ -146,8 +154,22 @@ export interface ApiHost {
   forgetNotifications(extensionId: string): void
   /** Whether the app may post notifications right now (`getPermissionLevel`). */
   notificationsAllowed(): Promise<boolean>
-  openPopup(id: string): void
+  /** The toolbar tap, or `action.openPopup()` from the API (`fromApi`: the popup even where the tap would open the side panel). */
+  openPopup(id: string, fromApi?: boolean): void
   openOptions(id: string): void
+  /** `chrome.sidePanel`: the panel document in the runtime's sheet (`extensionSidePanel.ts`). */
+  showSidePanel(ext: AttachedExtension, url: string): void
+  hideSidePanel(): void
+  /** `sidePanel.setPanelBehavior({ openPanelOnActionClick })`, kept across sessions. */
+  sidePanelOnActionClick(id: string): boolean
+  setSidePanelOnActionClick(id: string, on: boolean): void
+  /** `chrome.proxy.settings`: an extension's values by scope, kept across sessions (`extensionProxy.ts`). */
+  proxyValues(id: string): unknown
+  setProxyValues(id: string, values: ScopedValues): void
+  /** Apply the resolved configuration to the process's WebViews through `ProxyController` (`system` clears it). */
+  applyProxy(config: ProxyConfig): Promise<void>
+  /** Whether a private tab is open (Chrome's `incognito_session_only` scope needs one). */
+  privateTabOpen(): boolean
   /**
    * `chrome.offscreen`: the extension's one hidden document. `openOffscreen` resolves once the
    * page said hello (Chrome's `createDocument` resolves when the document is created), or
@@ -383,6 +405,9 @@ export class TabIds {
 export class ExtensionApi {
   readonly tabs: TabIds
   readonly contextMenus: AndroidContextMenus
+  readonly sidePanel: AndroidSidePanel
+  /** `chrome.proxy.settings` over the WebView's proxy override (`extensionProxy.ts`). */
+  readonly proxy: AndroidProxy
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
   readonly notifications: AndroidNotifications
@@ -408,7 +433,32 @@ export class ExtensionApi {
       chromeTab: (tab) => this.tabs.chromeTab(tab),
       visibleTo: (ext, tab) => this.tabs.visibleTo(ext, tab),
       icon: (id) => host.icon(id),
-      grantActiveTab: (id, tab) => this.activeTab.grant(id, tab, this.tabs.urlOf(tab))
+      grantActiveTab: (id, tab) => this.activeTab.grant(id, tab, this.tabs.urlOf(tab)),
+      persistedItems: (id) => host.contextMenuItems(id),
+      persistItems: (id, items) => host.setContextMenuItems(id, items)
+    })
+    this.sidePanel = new AndroidSidePanel({
+      attached: (id) => host.attached(id),
+      tabFor: (ext, value) => this.tabs.tabFor(ext, value),
+      chromeIdFor: (tabId) => this.tabs.chromeIdFor(tabId),
+      activeTabFor: (ext) => this.tabs.activeTabFor(ext),
+      activateTab: (tabId) => host.browser.tabs.activateTab(tabId, host.window()),
+      showSheet: (ext, url) => host.showSidePanel(ext, url),
+      hideSheet: () => host.hideSidePanel(),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args),
+      behavior: (id) => host.sidePanelOnActionClick(id),
+      setBehavior: (id, on) => host.setSidePanelOnActionClick(id, on)
+    })
+    this.proxy = new AndroidProxy({
+      attached: (id) => host.attached(id),
+      allAttached: () => host.allAttached(),
+      allowedInPrivate: (id) => host.attached(id)?.record.allowPrivate === true,
+      privateTabOpen: () => host.privateTabOpen(),
+      persistedValues: (id) => host.proxyValues(id),
+      persistValues: (id, values) => host.setProxyValues(id, values),
+      apply: (config) => host.applyProxy(config),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args),
+      warn: (message) => console.warn(`[zen] ${message}`)
     })
     this.cookies = new AndroidCookies({
       read: (containerId, url) => host.readCookies(containerId, url),
@@ -465,10 +515,19 @@ export class ExtensionApi {
     )
   }
 
+  /** The extension attached: what this layer restores before its background runs. */
+  load(ext: AttachedExtension): void {
+    this.contextMenus.load(ext)
+    this.sidePanel.load(ext)
+    this.proxy.load(ext)
+  }
+
   /** The extension is going away: drop what this layer remembers about it. */
   forget(id: string): void {
     this.actions.delete(id)
     this.contextMenus.forget(id)
+    this.sidePanel.forget(id)
+    this.proxy.unload(id)
     this.activeTab.forget(id)
     this.grantedHosts.delete(id)
     this.captureQuota.forget(id)
@@ -585,6 +644,7 @@ export class ExtensionApi {
 
   /** A tab closed: the overrides extensions set for it go. */
   tabRemoved(chromeTabId: number): void {
+    this.sidePanel.tabRemoved(chromeTabId)
     let changed = false
     for (const record of this.actions.values())
       changed = record.perTab.delete(chromeTabId) || changed
@@ -625,6 +685,8 @@ export class ExtensionApi {
         return this.tts.call(id, endpoint.id, method, args, true)
       case 'contextMenus':
         return this.contextMenus.call(ext, endpoint.id, method, args)
+      case 'sidePanel':
+        return this.sidePanel.call(ext, method, args)
       case 'webNavigation':
         return this.webNavigationCall(ext, method, args)
       case 'cookies': {
@@ -671,9 +733,8 @@ export class ExtensionApi {
           throw new Error(SYSTEM_DISPLAY_NO_PERMISSION_ERROR)
         return answerSystemDisplay(method, this.host.screen())
       case 'proxy':
-        // `proxy.settings`, a ChromeSetting: the system's value, not controllable on the WebView
-        // (`extensionProxy.ts`); the calls come from extensions that declared the permission.
-        return answerProxySetting(method, args)
+        // `proxy.settings`, a ChromeSetting over the WebView's proxy override (`extensionProxy.ts`).
+        return this.proxy.call(ext, method, args)
       case 'extension':
         // The store's record carries both toggles (the runtime scopes tabs, events and rules by them).
         if (method === 'isAllowedFileSchemeAccess') return ext.record.allowFileAccess === true
@@ -697,6 +758,21 @@ export class ExtensionApi {
         break
     }
     throw new Error(`chrome.${ns}.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * The URL an API navigation (`tabs.create` / `tabs.update` / `windows.create`) lands on: a
+   * path is the extension's own page; a `file://` address needs the extension's file-access
+   * switch, as in Chrome, which refuses the call ("Cannot navigate to a file URL without local
+   * file access.") instead of opening the file. Without the check the phone opened a tab on
+   * the address, where the tab WebView (no file access) shows an error page and the
+   * extension (Enable local file links) never learns to ask for the switch.
+   */
+  private navigationUrl(ext: AttachedExtension, url: string): string {
+    const full = tabUrlFrom(ext.record.id, url)
+    if (isFileNavigation(full) && ext.record.allowFileAccess !== true)
+      throw new Error(FILE_URL_WITHOUT_ACCESS_ERROR)
+    return full
   }
 
   // --- tabs ------------------------------------------------------------------
@@ -763,10 +839,7 @@ export class ExtensionApi {
         const props = asRecord(args[0])
         const tab = tabs.createTab(
           {
-            url:
-              typeof props.url === 'string'
-                ? tabUrlFrom(ext.record.id, props.url)
-                : undefined,
+            url: typeof props.url === 'string' ? this.navigationUrl(ext, props.url) : undefined,
             active: props.active === undefined ? true : Boolean(props.active),
             pinned: Boolean(props.pinned)
           },
@@ -780,7 +853,7 @@ export class ExtensionApi {
         const target = targetOrActive(first)
         if (!target) throw new Error('No active tab.')
         if (typeof props.url === 'string')
-          tabs.navigate(target.id, tabUrlFrom(ext.record.id, props.url))
+          tabs.navigate(target.id, this.navigationUrl(ext, props.url))
         if (props.active === true) tabs.activateTab(target.id, win)
         if (props.muted !== undefined && Boolean(props.muted) !== target.muted)
           tabs.toggleMute(target.id)
@@ -1076,7 +1149,7 @@ export class ExtensionApi {
         const url = Array.isArray(props.url) ? props.url[0] : props.url
         if (typeof url === 'string')
           this.host.browser.tabs.createTab(
-            { url: tabUrlFrom(ext.record.id, url), active: true },
+            { url: this.navigationUrl(ext, url), active: true },
             this.host.window()
           )
         return this.tabs.chromeWindow(ext)
@@ -1169,7 +1242,7 @@ export class ExtensionApi {
       case 'isEnabled':
         return state.enabled
       case 'openPopup':
-        this.host.openPopup(id)
+        this.host.openPopup(id, true)
         return undefined
       case 'getUserSettings':
         return { isOnToolbar: true }
@@ -1829,6 +1902,8 @@ export function contextTypeOf(context: EngineContextKind): string {
       return 'BACKGROUND'
     case 'popup':
       return 'POPUP'
+    case 'sidePanel':
+      return 'SIDE_PANEL'
     case 'offscreen':
       return 'OFFSCREEN_DOCUMENT'
     default:

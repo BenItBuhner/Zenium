@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { DownloadItem } from '@shared/types'
-import { downloadFolderLabel, downloadStatus, formatEta } from '../downloadText'
+import {
+  downloadFolderLabel,
+  downloadLocationLabel,
+  downloadStatus,
+  formatEta
+} from '../downloadText'
 
 const NOW = 1_700_000_000_000
 
@@ -100,8 +105,49 @@ describe('downloadStatus', () => {
         NOW
       )
     ).toBe('Blocked · Uncommon file')
+    // The lesser tier by type is named as such (HB-19 / PS-34), not folded into Dangerous.
+    expect(
+      downloadStatus(
+        item({
+          state: 'completed',
+          danger: { level: 'suspicious', reason: 'archive', message: '' }
+        }),
+        NOW
+      )
+    ).toBe('Blocked · Suspicious')
     expect(downloadStatus({ ...flagged, dangerAccepted: true, completedAt: NOW }, NOW)).toBe(
       '3.0 MB · Just now'
+    )
+  })
+
+  it('reads a transfer refused as insecure as blocked, whatever its type (HB-44)', () => {
+    const blocked = item({ state: 'insecure-blocked', savePath: '', receivedBytes: 0 })
+    expect(downloadStatus(blocked, NOW)).toBe('Blocked · Insecure download')
+    expect(
+      downloadStatus(
+        {
+          ...blocked,
+          danger: { level: 'dangerous', reason: 'executable', message: 'This file can harm.' }
+        },
+        NOW
+      )
+    ).toBe('Blocked · Insecure download')
+  })
+
+  it('counts an interrupted row down to the downloader’s own next attempt (HB-43), else reads Failed', () => {
+    const scheduled = item({
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-disconnected',
+      errorMessage: 'Check internet connection',
+      autoResumeAt: NOW + 2_500
+    })
+    expect(downloadStatus(scheduled, NOW)).toBe('Resuming in 3 s…')
+    expect(downloadStatus(scheduled, NOW + 2_000)).toBe('Resuming in 1 s…')
+    expect(downloadStatus(scheduled, NOW + 2_500)).toBe('Resuming…')
+    expect(downloadStatus(scheduled, NOW + 9_000)).toBe('Resuming…')
+    expect(downloadStatus({ ...scheduled, autoResumeAt: undefined }, NOW)).toBe(
+      'Failed · Check internet connection'
     )
   })
 
@@ -157,5 +203,25 @@ describe('downloadFolderLabel', () => {
   it('shows a desktop path as it is', () => {
     expect(downloadFolderLabel('/home/me/Files/Invoices')).toBe('/home/me/Files/Invoices')
     expect(downloadFolderLabel('C:\\Users\\me\\Desktop')).toBe('C:\\Users\\me\\Desktop')
+  })
+})
+
+describe('downloadLocationLabel (Settings › Downloads › Location, HB-20)', () => {
+  it('shows the engine’s resolved folder over the setting, the way Chrome’s row shows a path', () => {
+    expect(downloadLocationLabel('/home/me/Downloads', null)).toBe('/home/me/Downloads')
+    expect(downloadLocationLabel('/home/me/Files', '/home/me/Files')).toBe('/home/me/Files')
+  })
+
+  it('falls back to the setting until the engine answers, then to the system folder by name', () => {
+    expect(downloadLocationLabel(null, '/home/me/Files')).toBe('/home/me/Files')
+    expect(
+      downloadLocationLabel(
+        undefined,
+        'content://com.android.externalstorage.documents/tree/primary%3ADownload%2FZenium'
+      )
+    ).toBe('Download/Zenium')
+    expect(downloadLocationLabel(null, null)).toBe('The system Downloads folder')
+    // A host that cannot name one answers empty: the setting's words stay.
+    expect(downloadLocationLabel('', null)).toBe('The system Downloads folder')
   })
 })

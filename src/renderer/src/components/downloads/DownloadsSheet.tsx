@@ -20,20 +20,24 @@ import {
 } from 'lucide-react'
 import type { DownloadItem, UIState } from '@shared/types'
 import {
+  awaitsAutoResume,
+  awaitsDecision,
   canResumeDownload,
   canRetryDownload,
   displayName,
-  isActiveDownload
+  isActiveDownload,
+  isInsecureBlocked
 } from '@shared/downloadsShell'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { downloadStatus } from '@renderer/lib/downloadText'
-import { downloadsEngine, showsDangerDecision } from '@renderer/lib/downloadsEngine'
+import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import {
-  dangerActionLabels,
   dangerSummary,
+  decisionLabels,
   fileGlyphFor,
   hasClearable,
+  insecureSummary,
   isDeletedRow,
   isOnDisk,
   splitFileName,
@@ -59,18 +63,28 @@ const GLYPHS: Record<FileGlyph, LucideIcon> = {
 /** How long a Keep / Delete button spins before it gives up on a reply that never came (§9.30). */
 const BUSY_TIMEOUT_MS = 8000
 
+/** How often "2 min ago" moves while the sheet is up. */
+const AGE_TICK_MS = 30_000
+/** How often a `Resuming in N s…` row counts down; only while one does (HB-43). */
+const COUNTDOWN_TICK_MS = 1000
+
 /**
  * The Android downloads surface: Chrome's download list in the phone sheet chassis (v2 §6,
  * §9.16, §9.24–§9.25). Newest first, on the shared `.zen-v2-row` (§9.34) as §9.2 two-line
  * rows: a running row shows its progress and time left with Pause and Cancel, a paused or
  * resumable interrupted one Resume, a failed one `Failed · <the engine's reason>` with Retry
- * (the same states the desktop bubble and page show, #161); a finished row opens on tap and can
- * be shown in the system Downloads app or taken off the list, and one whose file the engine
- * found gone reads `Deleted` with Retry, as Chrome's does; a flagged file waits behind its
- * warning with Keep and Delete, the pressed one busy until the engine answers. The header's
- * trailing control opens Settings › Downloads; an action row under the list, past a hairline,
- * clears the finished rows. As the sheet opens, the finished files are checked for still being
- * on disk, so a row whose file went since reads Deleted (the desktop page does the same).
+ * (the same states the desktop bubble and page show, #161; the interface's verbs table names
+ * the verb per state), one the downloader will try again itself `Resuming in N s…` with Resume
+ * and Cancel (HB-43); a finished row opens on tap and can be shown in the system Downloads app
+ * or taken off the list, and one whose file the engine found gone reads `Deleted` with Retry,
+ * as Chrome's does; a flagged file waits behind its warning – the tier named, `Blocked ·
+ * Dangerous` or `Blocked · Suspicious`, over the verdict's sentence – with Keep and Delete, and
+ * a transfer refused as insecure (HB-44) behind `Blocked · Insecure download` with Keep anyway
+ * (while the type allows it) and Discard, the pressed one busy until the engine answers. The
+ * header's trailing control opens Settings › Downloads; an action row under the list, past a
+ * hairline, clears the finished rows. As the sheet opens, the finished files are checked for
+ * still being on disk, so a row whose file went since reads Deleted (the desktop page does the
+ * same).
  *
  * The overlay host renders it inside the shell's content column, which is chrome that goes
  * inert under a sheet (`holdChromeInert`, lib/portals.tsx), so the sheet must not mount there:
@@ -111,20 +125,33 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
     if (current) downloadsEngine.refreshFiles(downloadsEngine.list(current))
   }, [])
 
-  // "2 min ago" moves while the sheet is up.
+  // "2 min ago" moves while the sheet is up; a row counting down to its automatic resume (HB-43)
+  // moves every second, while there is one (the text alone changes: no layout property
+  // animates). Each schedule arriving – the first attempt's and every later one's – re-reads the
+  // clock on the next frame and restarts the second from there: the last tick can be up to 30 s
+  // old, and a countdown drawn from it would open high.
+  const schedules = items
+    .flatMap((item) => (item.autoResumeAt ? [item.autoResumeAt] : []))
+    .join(',')
+  const counting = schedules !== ''
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000)
-    return () => clearInterval(timer)
-  }, [])
+    const tick = (): void => setNow(Date.now())
+    const timer = setInterval(tick, counting ? COUNTDOWN_TICK_MS : AGE_TICK_MS)
+    const first = counting ? setTimeout(tick, 0) : null
+    return () => {
+      clearInterval(timer)
+      if (first !== null) clearTimeout(first)
+    }
+  }, [counting, schedules])
 
   const clearable = hasClearable(items)
   // Rows coming and going (or growing a Keep / Delete row, or the Clear list row appearing)
   // re-measure the detents; a progress tick does not, since a re-measure also scrolls the list
   // back to its top.
   const contentKey =
-    (items.map((item) => `${item.id}${showsDangerDecision(item) ? '!' : ''}`).join(',') ||
-      'empty') + (clearable ? '+clear' : '')
+    (items.map((item) => `${item.id}${awaitsDecision(item) ? '!' : ''}`).join(',') || 'empty') +
+    (clearable ? '+clear' : '')
 
   const toSettings = (): void => {
     handoff.current = true
@@ -201,22 +228,32 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
  * cancelled or Deleted one its name too, as the desktop row does.
  *
  * The row is a target only while its file opens: then the whole row takes the primitive's press
- * fill. Every other row – running, paused, failed, cancelled, Deleted, waiting on a verdict – is
- * the static form (§9.34, `data-static`): its icon buttons or its Keep / Delete are the targets,
- * the row around them draws no fill and no pointer cursor, and its body keeps no role; the body
- * stays a focusable box so the row reads as one unit (`<name>. <status>`) before its controls.
+ * fill. Every other row – running, paused, failed, cancelled, Deleted, waiting on a verdict or
+ * blocked as insecure – is the static form (§9.34, `data-static`): its icon buttons or its
+ * Keep / Delete (Keep anyway / Discard) are the targets, the row around them draws no fill and
+ * no pointer cursor, and its body keeps no role; the body stays a focusable box so the row
+ * reads as one unit (`<name>. <status>. <the verdict's sentence>`) before its controls.
+ *
+ * A row waiting on the user names its tier on the status line (`Blocked · Dangerous`, `Blocked
+ * · Suspicious`, `Blocked · Insecure download`) and carries the sentence under it, as the
+ * desktop row's detail does; the ink is the tier's. A row counting down to the downloader's
+ * own next attempt (HB-43) reads `Resuming in N s…` in the plain ink – nothing has been given
+ * up on – and keeps Resume (now) and Cancel, the interface's verbs for that state.
  */
 export function DownloadRow({ item, now }: { item: DownloadItem; now: number }): JSX.Element {
   const active = isActiveDownload(item)
-  const flagged = showsDangerDecision(item)
+  const flagged = awaitsDecision(item)
+  const blocked = isInsecureBlocked(item)
+  const scheduled = awaitsAutoResume(item)
   const deleted = isDeletedRow(item)
   const openable = isOnDisk(item)
   const resumable = canResumeDownload(item)
   const name = displayName(item)
   const status = downloadStatus(item, now)
-  const summary = flagged ? dangerSummary(item.danger) : ''
-  const tone: 'danger' | 'warn' | undefined =
-    item.state === 'interrupted' || (flagged && item.danger.level === 'dangerous')
+  const summary = blocked ? insecureSummary(item) : flagged ? dangerSummary(item.danger) : ''
+  const tone: 'danger' | 'warn' | undefined = scheduled
+    ? undefined
+    : item.state === 'interrupted' || (flagged && item.danger.level === 'dangerous')
       ? 'danger'
       : flagged
         ? 'warn'
@@ -248,7 +285,11 @@ export function DownloadRow({ item, now }: { item: DownloadItem; now: number }):
         aria-label={summary ? `${name}. ${status}. ${summary}` : `${name}. ${status}`}
         className="zen-downloads-main"
         data-gone={
-          item.state === 'cancelled' || item.state === 'interrupted' || deleted || undefined
+          item.state === 'cancelled' ||
+          item.state === 'interrupted' ||
+          blocked ||
+          deleted ||
+          undefined
         }
         data-dim={item.state === 'cancelled' || deleted || undefined}
         onClick={openable ? open : undefined}
@@ -264,13 +305,14 @@ export function DownloadRow({ item, now }: { item: DownloadItem; now: number }):
             {item.private && <span className="zen-v2-badge">Private</span>}
           </span>
           <span className="zen-downloads-status" data-tone={tone}>
-            {summary || status}
+            {status}
           </span>
+          {summary && <span className="zen-downloads-detail">{summary}</span>}
           {active && <ProgressBar item={item} />}
         </span>
       </div>
       {flagged ? (
-        <DangerActions item={item} />
+        <DecisionActions item={item} />
       ) : (
         <div className="zen-downloads-actions">
           {item.state === 'progressing' && (
@@ -280,7 +322,7 @@ export function DownloadRow({ item, now }: { item: DownloadItem; now: number }):
           {!resumable && canRetryDownload(item) && (
             <IconButton label="Retry" icon={RotateCw} onClick={() => e.retry(item.id)} />
           )}
-          {active ? (
+          {active || scheduled ? (
             <IconButton label="Cancel" icon={X} onClick={() => e.cancel(item.id)} />
           ) : (
             <>
@@ -327,15 +369,21 @@ function ProgressBar({ item }: { item: DownloadItem }): JSX.Element {
 }
 
 /**
- * Keep / Delete for a file the engine flagged, worded and weighted as Chrome's bubble words
- * them (`dangerActionLabels`; the desktop rows share the table), the row's own footer under its
- * text: two peers splitting the width at an 8 gap, the prominent one trailing (§9.11). The
- * pressed one is busy until the engine answers – the row leaves the danger state or goes – and
- * the other waits disabled meanwhile (§9.30: busy keeps its ink and width under a 16 px spinner
- * and says `aria-busy`; disabled is the whole control at .4).
+ * The pair for a row waiting on the user, worded per state by the interface's verbs table
+ * (`decisionLabels`; the desktop rows share its weighting): Keep / Delete for a file the engine
+ * flagged, Keep anyway / Discard for a transfer refused as insecure – or Discard alone when the
+ * type is one Chrome offers no Keep for. On every tier the protective verb – Delete, Discard –
+ * is the filled primary and the releasing one the plain secondary (§6 as amended for #297: the
+ * primary is the action the app recommends; the danger ink is for actions that destroy the
+ * user's own data, so neither takes `data-danger`). The row's own footer under the sentence it
+ * answers, starting at the text column with the glyph column kept clear (§9.11, Chrome's
+ * indent; `.zen-downloads-decision`): two peers splitting the rest at an 8 gap, the primary
+ * trailing. The pressed one is busy until the engine answers – the row leaves its waiting state
+ * or goes – and the other waits disabled meanwhile (§9.30: busy keeps its ink and width under a
+ * 16 px spinner and says `aria-busy`; disabled is the whole control at .4).
  */
-function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
-  const labels = dangerActionLabels(item.danger)
+function DecisionActions({ item }: { item: DownloadItem }): JSX.Element {
+  const labels = decisionLabels(item)
   const [busy, setBusy] = useState<'keep' | 'discard' | null>(null)
   useEffect(() => {
     if (!busy) return
@@ -348,21 +396,22 @@ function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
     if (which === 'keep') downloadsEngine.acceptDanger(item.id)
     else downloadsEngine.discard(item.id)
   }
-  // Keep leads and Delete trails, as the desktop rows order them: the destructive or prominent
-  // action on the trailing side (§9.11).
+  // Keep leads and Delete trails, as the desktop rows order them: the primary on the trailing
+  // side (§9.11).
   return (
     <div className="zen-downloads-decision">
-      <BusyButton
-        primary={labels.prominent === 'keep'}
-        busy={busy === 'keep'}
-        disabled={busy === 'discard'}
-        onClick={() => decide('keep')}
-      >
-        {labels.keep}
-      </BusyButton>
+      {labels.keep !== null && (
+        <BusyButton
+          primary={labels.prominent === 'keep'}
+          busy={busy === 'keep'}
+          disabled={busy === 'discard'}
+          onClick={() => decide('keep')}
+        >
+          {labels.keep}
+        </BusyButton>
+      )}
       <BusyButton
         primary={labels.prominent === 'discard'}
-        danger={labels.prominent !== 'discard'}
         busy={busy === 'discard'}
         disabled={busy === 'keep'}
         onClick={() => decide('discard')}
@@ -373,19 +422,20 @@ function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
   )
 }
 
-/** The v2 button with the §9.30 busy state, as the extensions UI and the new tab sheet draw it. */
+/**
+ * The v2 button with the §9.30 busy state, as the extensions UI and the new tab sheet draw it:
+ * the secondary, or the accent-filled primary (`data-primary`); never the danger ink here (§6).
+ */
 function BusyButton({
   children,
   onClick,
   primary,
-  danger,
   busy,
   disabled
 }: {
   children: ReactNode
   onClick: () => void
   primary?: boolean
-  danger?: boolean
   busy?: boolean
   disabled?: boolean
 }): JSX.Element {
@@ -394,7 +444,6 @@ function BusyButton({
       type="button"
       className="zen-v2-button"
       data-primary={primary || undefined}
-      data-danger={danger || undefined}
       aria-busy={busy || undefined}
       disabled={disabled}
       onClick={onClick}

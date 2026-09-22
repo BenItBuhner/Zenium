@@ -122,13 +122,55 @@ class ExtensionScriptsTest {
     fun `executeScript wrapper turns func plus args into a call and code into a body`() {
         val withFunc = ExtensionScripts.exec("tok", "abcdefghijklmnopabcdefghijklmnop", "js", JSONObject("""{"world":"MAIN"}"""), null, "(a, b) => a + b", "[1,2]")
         // A document without the bootstrap answers with Chrome's refusal, not a TypeError about the bridge.
-        assertTrue(withFunc.startsWith("""(typeof __zenExtExec==="function"?__zenExtExec:function(){throw new Error("${ExtensionScripts.NO_ACCESS}")})("tok","abcdefghijklmnopabcdefghijklmnop","js",{"world":"MAIN"},function(window,self,globalThis,chrome,browser,__zenMirror){"""))
+        assertTrue(withFunc.startsWith("""(typeof __zenExtExec==="function"?__zenExtExec:function(){throw new Error("${ExtensionScripts.NO_ACCESS}")})("tok","abcdefghijklmnopabcdefghijklmnop","js",{"world":"MAIN"},function(window,self,globalThis,chrome,browser,__zenMirror,__zenCompletion){"""))
         assertTrue(ExtensionScripts.NO_ACCESS.startsWith("Cannot access contents of the page."))
         assertTrue(withFunc.contains("return ((a, b) => a + b).apply(null,[1,2]);"))
+        assertFalse(withFunc.contains("__zenCompletion="))
         val withCode = ExtensionScripts.exec("tok", "abcdefghijklmnopabcdefghijklmnop", "js", JSONObject(), "document.title", null, null)
-        assertTrue(withCode.contains("{\ndocument.title\n})"))
+        assertTrue(withCode.contains("{\n__zenCompletion=document.title\n;return __zenCompletion\n})"))
         val css = ExtensionScripts.exec("tok", "abcdefghijklmnopabcdefghijklmnop", "css", JSONObject("""{"code":"a{}"}"""), null, null, null)
         assertTrue(css.contains(""""css",{"code":"a{}"},function"""))
+    }
+
+    @Test
+    fun `a script injection's completion value is its last expression statement's, kept past the mirror, and a declaration's end or a func has none`() {
+        val id = "abcdefghijklmnopabcdefghijklmnop"
+        // Imageye's scraper shape: declarations, then an IIFE whose value is the script's.
+        val scraper = "var seen = new Set();\nfunction collect() { return [...document.images].map(i => i.src) }\n(function() { collect().forEach(s => seen.add(s)); return [...seen] })()"
+        val code = ExtensionScripts.exec("tok", id, "js", JSONObject(), scraper, null, null)
+        val mirror = """try{__zenMirror("seen",seen)}catch(e){}try{__zenMirror("collect",collect)}catch(e){}"""
+        assertTrue(code.contains("var seen = new Set();\nfunction collect() { return [...document.images].map(i => i.src) }\n__zenCompletion=(function() { collect().forEach(s => seen.add(s)); return [...seen] })()\n;" + mirror + "\n;return __zenCompletion\n})"))
+        // In the with scope the assignment and the return sit inside the block, where the bare name resolves to the parameter.
+        val scoped = ExtensionScripts.exec("tok", id, "js", JSONObject(), "document.title", null, null, scoped = true)
+        assertTrue(scoped.contains(",__zenCompletion){with(window){\n__zenCompletion=document.title\n;return __zenCompletion\n}})"))
+        // A script ending in a declaration answers undefined, as Chrome's does: nothing written, nothing returned.
+        val declaration = ExtensionScripts.exec("tok", id, "js", JSONObject(), "foo();\nfunction f() {}", null, null)
+        assertFalse(declaration.contains("__zenCompletion="))
+        assertFalse(declaration.contains("return __zenCompletion"))
+        assertTrue(declaration.contains("{\nfoo();\nfunction f() {}\n;" + """try{__zenMirror("f",f)}catch(e){}""" + "\n})"))
+        // A func returns what it returns; a CSS injection has no completion.
+        val func = ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "async () => document.title", "[]")
+        assertFalse(func.contains("__zenCompletion="))
+        assertTrue(func.contains("{\nreturn (async () => document.title).apply(null,[]);\n})"))
+        val css = ExtensionScripts.exec("tok", id, "css", JSONObject("""{"code":"a{}"}"""), null, null, null)
+        assertFalse(css.contains("__zenCompletion="))
+        // Streamed files: the last file's last expression statement, written in place, the same text as the composed form.
+        val dir = createTempDir("ext-scripts-completion")
+        try {
+            val a = File(dir, "a.js").apply { writeText("var helper = 1") }
+            val b = File(dir, "b.js").apply { writeText(scraper) }
+            val streamed = ExtensionScripts.execScript("tok", id, "js", JSONObject(), null, listOf(a, b), null, null, null, false)
+            assertEquals(ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", JSONObject(), "var helper = 1\n;\n" + scraper, null, null)), streamed)
+            assertTrue(streamed.contains("\n;\nvar seen = new Set();\n"))
+            assertTrue(streamed.contains("\n__zenCompletion=(function() {"))
+            assertEquals(1, streamed.split("__zenCompletion=").size - 1)
+            // A first file ending in an expression gives no value when the last file ends in a declaration.
+            val streamedDeclaration = ExtensionScripts.execScript("tok", id, "js", JSONObject(), null, listOf(b, a), null, null, null, false)
+            assertFalse(streamedDeclaration.contains("__zenCompletion="))
+            assertFalse(streamedDeclaration.contains("return __zenCompletion"))
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
@@ -137,12 +179,14 @@ class ExtensionScriptsTest {
         // A Lit-built file: the write goes to globalThis, the read is the bare name; both must be the scope's.
         val lit = "globalThis.litPropertyMetadata = new WeakMap(); litPropertyMetadata.get(1)"
         val scoped = ExtensionScripts.exec("tok", id, "js", JSONObject(), lit, null, null, scoped = true)
-        assertTrue(scoped.contains("function(window,self,globalThis,chrome,browser,__zenMirror){with(window){\n$lit\n}})"))
+        // The script's last statement is an expression, so its value is kept for the return (the completion value).
+        val captured = "globalThis.litPropertyMetadata = new WeakMap(); __zenCompletion=litPropertyMetadata.get(1)\n;return __zenCompletion"
+        assertTrue(scoped.contains("function(window,self,globalThis,chrome,browser,__zenMirror,__zenCompletion){with(window){\n$captured\n}})"))
         val func = ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "() => litPropertyMetadata", "[]", scoped = true)
         assertTrue(func.contains("{with(window){\nreturn (() => litPropertyMetadata).apply(null,[]);\n}})"))
         // Unscoped (an isolated world, a MAIN-world injection): the bare function body.
         val plain = ExtensionScripts.exec("tok", id, "js", JSONObject("""{"world":"MAIN"}"""), lit, null, null)
-        assertTrue(plain.contains("function(window,self,globalThis,chrome,browser,__zenMirror){\n$lit\n})"))
+        assertTrue(plain.contains("function(window,self,globalThis,chrome,browser,__zenMirror,__zenCompletion){\n$captured\n})"))
         assertFalse(plain.contains("with(window)"))
         // The streamed form composes the same text, with a file in place of the code.
         val dir = createTempDir("ext-scripts-scoped")
@@ -178,7 +222,7 @@ class ExtensionScriptsTest {
             assertEquals(ExtensionScripts.named(ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "(a, b) => a + b", "[1,2]"))), func)
             // Code before files: joined like two files.
             val both = ExtensionScripts.execScript("tok", id, "js", JSONObject(), "first()", listOf(b), null, null, null, false)
-            assertTrue(both.contains("{\nfirst()\n;\n(function(){ return shared })()\n})"))
+            assertTrue(both.contains("{\nfirst()\n;\n__zenCompletion=(function(){ return shared })()\n;return __zenCompletion\n})"))
         } finally {
             dir.deleteRecursively()
         }

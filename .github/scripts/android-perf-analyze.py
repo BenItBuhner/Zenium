@@ -167,8 +167,10 @@ def parse_gfx(text):
         gpu = None
         if g("GpuCompleted") and g("SwapBuffersCompleted") and g("GpuCompleted") > g("SwapBuffersCompleted"):
             gpu = (g("GpuCompleted") - g("SwapBuffersCompleted")) / 1e6
-        frames.append({"total": total, "ui": ui, "latency": latency, "gpu": gpu, "stages": stages_ms})
+        frames.append({"total": total, "ui": ui, "latency": latency, "gpu": gpu, "stages": stages_ms, "vsyncNs": g("IntendedVsync")})
     out["sample"] = len(frames)
+    # The frames' vsyncs (CLOCK_MONOTONIC ns, the Chromium trace's clock): what a scene split at its lift counts its frames by.
+    out["vsyncNs"] = sorted(f["vsyncNs"] for f in frames)
     if frames:
         out["stageMean"] = {k: statistics.fmean(f["stages"][k] for f in frames) for k in STAGES}
         out["stageP95"] = {k: percentile([f["stages"][k] for f in frames], 95) for k in STAGES}
@@ -434,6 +436,43 @@ def analyse_main_thread(thread, marks, start_us, end_us, gfx_frames):
     return result
 
 
+def split_at_lift(thread, marks, scene, gfx):
+    """The scene's window cut at the finger's lift: the main thread under the finger and after it.
+
+    A gesture scene records when its finger lifted (`liftMonoUs`, BarHidePerfDemo's `Finger.lift`);
+    each half gets the whole analysis over its own frames (the framestats vsyncs that fall in it),
+    and with it the moments that answer the return scene's question (§11.5 as amended on #270):
+    the page's `resize` events (`p:resize` marks) and the biggest `Layout` slices, in ms from the
+    lift – negative under the finger, positive after it. The page's short relayout belongs after.
+    """
+    lift = scene.get("liftMonoUs")
+    start, end = scene["startMonoUs"], scene["endMonoUs"]
+    if not lift or not start < lift < end:
+        return None
+    vsyncs = [v / 1000.0 for v in (gfx or {}).get("vsyncNs") or []]
+    frames_before = sum(1 for v in vsyncs if start <= v < lift) or None
+    frames_after = sum(1 for v in vsyncs if lift <= v < end) or None
+    halves = {
+        "underFinger": analyse_main_thread(thread, marks, start, lift, frames_before),
+        "afterLift": analyse_main_thread(thread, marks, lift, end, frames_after),
+    }
+    for half, frames in (("underFinger", frames_before), ("afterLift", frames_after)):
+        if halves[half] is not None:
+            halves[half]["gfxFrames"] = frames
+            halves[half]["windowMs"] = ((lift - start) if half == "underFinger" else (end - lift)) / 1000.0
+    resizes = [(ts - lift) / 1000.0 for ts, label, _pid, _tid in marks if label == "p:resize" and start <= ts < end]
+    layouts = sorted(
+        ((dur / 1000.0, (ts - lift) / 1000.0) for ts, dur, name in thread.events if name == "Layout" and start <= ts < end),
+        key=lambda pair: -pair[0],
+    )[:3]
+    return {
+        "liftAtMs": (lift - start) / 1000.0,
+        "halves": halves,
+        "resizesFromLiftMs": resizes,
+        "biggestLayouts": [{"ms": ms_, "fromLiftMs": at} for ms_, at in layouts],
+    }
+
+
 def analyse_blink(path, scenes, gfx_by_label):
     """Per scene, the renderer main thread; the busiest `CrRendererMain` of the trace (there is one renderer, a restart aside)."""
     threads, process_names, marks = load_blink(path)
@@ -446,17 +485,19 @@ def analyse_blink(path, scenes, gfx_by_label):
     for scene in scenes:
         start = scene["startMonoUs"]
         end = scene["endMonoUs"]
-        gfx_frames = (gfx_by_label.get(scene["label"]) or {}).get("frames")
+        gfx = gfx_by_label.get(scene["label"]) or {}
+        gfx_frames = gfx.get("frames")
         best = None
         for pid, thread in mains:
             r = analyse_main_thread(thread, [m for m in marks if m[2] == pid], start, end, gfx_frames)
             if r and (best is None or r.get("events", 0) > best[1].get("events", 0)):
-                best = (pid, r)
+                best = (pid, r, thread)
         if best:
-            pid, r = best
+            pid, r, thread = best
             r["pid"] = pid
             first = coverage[str(pid)]["firstUs"]
             r["covered"] = first <= start
+            r["split"] = split_at_lift(thread, [m for m in marks if m[2] == pid], scene, gfx)
             per_scene[scene["label"]] = r
         else:
             per_scene[scene["label"]] = {"events": 0}
@@ -728,6 +769,38 @@ def build_report(record, gfx_by_label, blink_by_page, perfetto, scenes_flat):
         "(the chrome is told, the page is not). Without marks (a trace from before they were planted) everything is unmarked."
     )
     lines.append("")
+
+    # Table 2b: the gesture scenes cut at the finger's lift (the relayout's timing, §11.5).
+    split_scenes = [(scene, blink_of(scene).get("split")) for scene in scenes_flat]
+    split_scenes = [(scene, split) for scene, split in split_scenes if split]
+    if split_scenes:
+        lines.append("### Under the finger and after the lift (the gesture scenes cut where the finger left the glass)")
+        lines.append("")
+        lines.append("| page | scene | half | window ms | frames | main thread busy ms | ms / frame | style recalcs n | layouts n (max ms) | paints n | long tasks > 50 ms n / ms (max) | page resize events, ms from the lift | biggest layouts, ms (ms from the lift) |")
+        lines.append("|---|---|---|---:|---:|---:|---:|---:|---|---:|---|---|---|")
+        for scene, split in split_scenes:
+            resizes = ", ".join(f"{at:+.0f}" for at in split.get("resizesFromLiftMs") or []) or "none"
+            biggest = ", ".join(f"{b['ms']:.0f} ({b['fromLiftMs']:+.0f})" for b in split.get("biggestLayouts") or []) or "none"
+            for half, title in (("underFinger", f"under the finger (lift at +{split['liftAtMs']:.0f} ms)"), ("afterLift", "after the lift")):
+                m = (split.get("halves") or {}).get(half) or {}
+                if not m or m.get("events", 0) == 0:
+                    lines.append(f"| {scene['pageKey']} | {scene['name']} | {title} | {fmt(m.get('windowMs'), 0)} | {fmt(m.get('gfxFrames'))} | no renderer events | – | – | – | – | – | {resizes} | {biggest} |")
+                    continue
+                layouts = (m.get("named") or {}).get("Layout") or {}
+                lines.append(
+                    f"| {scene['pageKey']} | {scene['name']} | {title} | {fmt(m.get('windowMs'), 0)} | {fmt(m.get('gfxFrames'))} | {fmt(m.get('busyMs'), 0)} | {fmt(m.get('msPerGfxFrame'))} | "
+                    f"{fmt(((m.get('named') or {}).get('UpdateLayoutTree') or {}).get('count', 0))} | {fmt(layouts.get('count', 0))} ({fmt(layouts.get('maxMs'), 0)}) | "
+                    f"{fmt(((m.get('named') or {}).get('Paint') or {}).get('count', 0))} | "
+                    f"{fmt(m.get('longTaskCount'))} / {fmt(m.get('longTaskMs'), 0)} ({fmt(m.get('longTaskMaxMs'), 0)}) | {resizes} | {biggest} |"
+                )
+        lines.append("")
+        lines.append(
+            "The lift is the driver's `Finger.lift` (`liftMonoUs` in perf-scenes.json); frames are the framestats vsyncs that fall in each half. "
+            "The page's resize events and the biggest `Layout` slices are placed in ms from the lift: negative is under the finger, inside the "
+            "gesture's frames; positive is after it, at the rest. §11.5 (as amended on #270): the page grows at the hide's first frame and shrinks "
+            "at the return's REST, after the bar has arrived – so on the return scene the page's resize and its relayout belong on the positive side."
+        )
+        lines.append("")
 
     # Table 3: long tasks.
     lines.append("### The long tasks (> 50 ms) of the renderer main thread per scene")
