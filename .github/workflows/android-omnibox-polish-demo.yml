@@ -1,0 +1,104 @@
+name: Android omnibox polish demo
+
+# Records wave 4's omnibox polish (W4-6: OMN-18 grouped suggestions, OMN-17 the hold's removal
+# on its prompt sheet, OMN-23 Paste and go / Paste and search in the field's own floating
+# toolbar, NTP-09 the default engine's favicon in the fields, MOT-07 the pill's tap into the field
+# on one spring) on a hardware-accelerated Android emulator under REAL fingers, and uploads the
+# video, the stills, the findings and the per-frame rows. OmniboxPolishDemo reads each claim off
+# the chrome's DOM, the core's state or the system's own windows, never off the still alone, and
+# the run FAILS when one does not hold: a typed query's rows under §9.27 headings in Chrome for
+# Android's order (Pages, Searches, Open tabs) with one more letter keeping the staying headings
+# as their elements (§11.4); a hold on a history row opening the §9.23 prompt, a real touch on
+# Remove forgetting the entry (history.delete, read back) and on Cancel keeping it; the engine's
+# favicon at 20 CSS px in the omnibox field, the new tab page's resting field and the field its tap
+# morphs into, the vendor's default showing the tile and the magnifier; a link on the clipboard
+# and a hold on the empty field offering "Paste and go" beside the system's Paste, the touch
+# loading it, text offering "Paste and search" and the touch searching it. The focus motion's
+# frame cost goes through DemoHarness.traceFrames with the chrome WebView's trace around a real
+# tap and a back (omnibox-focus-open / omnibox-focus-close), the keyboard disabled: the layouts
+# per main-thread frame are the rule's measure (transform and opacity alone), reported into the
+# job summary's frame table and never failed on (the emulator's software GPU). Both sites are the
+# driver's own on the loopback.
+#
+# Two acts, in parallel, each on its own emulator: the light and the dark colour scheme (the
+# same claims; the dark's stills are the design record's). Dispatch-only, like the other demos:
+# about fifteen minutes an act, and it says nothing about a change being correct. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the driver and
+# the theme. One more boot per act when the emulator itself went away under the driver, never
+# when the driver failed.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W4-6's verification run; removed before the PR is marked ready): worker tokens
+  # cannot dispatch workflows, so the branch's pushes drive the run.
+  push:
+    branches:
+      - cursor/android-omnibox-polish-e5ba
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-omnibox-polish-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Omnibox polish demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OmniboxPolishDemo
+        DEMO_DIR=omnibox-polish-demo
+        DEMO_OUT=artifacts/android-omnibox-polish-demo
+        DEMO_VIDEO=android-omnibox-polish-demo-light.mp4
+        DEMO_THEME=light
+      artifact-name: android-omnibox-polish-demo-light
+      artifact-path: artifacts/android-omnibox-polish-demo/
+
+  light-again:
+    name: Omnibox polish demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OmniboxPolishDemo
+        DEMO_DIR=omnibox-polish-demo
+        DEMO_OUT=artifacts/android-omnibox-polish-demo
+        DEMO_VIDEO=android-omnibox-polish-demo-light.mp4
+        DEMO_THEME=light
+      artifact-name: android-omnibox-polish-demo-light-second-boot
+      artifact-path: artifacts/android-omnibox-polish-demo/
+
+  dark:
+    name: Omnibox polish demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OmniboxPolishDemo
+        DEMO_DIR=omnibox-polish-demo
+        DEMO_OUT=artifacts/android-omnibox-polish-demo
+        DEMO_VIDEO=android-omnibox-polish-demo-dark.mp4
+        DEMO_THEME=dark
+      artifact-name: android-omnibox-polish-demo-dark
+      artifact-path: artifacts/android-omnibox-polish-demo/
+
+  dark-again:
+    name: Omnibox polish demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OmniboxPolishDemo
+        DEMO_DIR=omnibox-polish-demo
+        DEMO_OUT=artifacts/android-omnibox-polish-demo
+        DEMO_VIDEO=android-omnibox-polish-demo-dark.mp4
+        DEMO_THEME=dark
+      artifact-name: android-omnibox-polish-demo-dark-second-boot
+      artifact-path: artifacts/android-omnibox-polish-demo/
