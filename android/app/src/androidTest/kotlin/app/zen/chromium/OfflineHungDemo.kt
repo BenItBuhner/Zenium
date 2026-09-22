@@ -84,15 +84,28 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         finding("warm-up: the seeded page ${if (loaded) "is up" else "did NOT report complete"}")
         val client = WebViewFeatureReport.rendererClient()
         finding("warm-up: renderer client $client; host connectivity online=${hostOnline()}")
-        // The first pill tap pays for the editor's layout off camera.
+        // The first pill tap pays for the editor's layout off camera; the field is then closed the
+        // harness's way, by the chrome's own state (an empty field has no Clear button to wait for,
+        // and a field left open hides the page's view – what every claim below reads).
         val point = pillPoint()
         Finger().tap(point.x, point.y)
-        if (waitFor(CLEAR_LABEL, 6_000) != null) {
-            SystemClock.sleep(1_500)
-            back()
-        }
+        awaitUrlbar(true, 6_000)
+        SystemClock.sleep(1_500)
+        val close = closeUrlField()
+        finding("warm-up: closeUrlField() – ${close.describe()}")
+        claim(!urlbarOpen(), "the URL field is closed before the scenes (the page's view is what the claims read)")
         SystemClock.sleep(2_000)
         Log.i(tag, "warm-up done")
+    }
+
+    /** The chrome's store says the URL field is open (or not); false when it does not say so in time. */
+    private fun awaitUrlbar(open: Boolean, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (urlbarOpen() == open) return true
+            SystemClock.sleep(150)
+        }
+        return urlbarOpen() == open
     }
 
     override fun demo() {
@@ -203,8 +216,8 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         val shown = awaitPrompt(true, 20_000)
         val promptMs = SystemClock.uptimeMillis() - tappedAt
         claim(shown, "the unresponsive prompt showed $promptMs ms after the tap on the hung page")
-        claim(promptNode(WAIT_LABEL) != null && promptNode(EXIT_LABEL) != null, "the prompt offers Wait and Exit page")
-        claim(promptNode(SITE) != null, "the prompt's title block names the site ($SITE)")
+        claim(awaitPromptNode(WAIT_LABEL) && awaitPromptNode(EXIT_LABEL), "the prompt offers Wait and Exit page")
+        claim(awaitPromptNode(SITE), "the prompt's title block names the site ($SITE)")
         SystemClock.sleep(1_500)
         // The native sheet's still: the run's design record for the §9.23 imitation.
         shot("10-unresponsive-prompt")
@@ -304,8 +317,26 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
      */
     private fun promptNode(label: String): AccessibilityNodeInfo? = findInWindows(app.packageName) { it == label }
 
+    /**
+     * The prompt's `label` is in the tree, given up to `timeoutMs`: the host's flag turns as the
+     * dialog is asked to show, and its window reaches the accessibility tree a moment after the
+     * 120 ms fade has begun.
+     */
+    private fun awaitPromptNode(label: String, timeoutMs: Long = 6_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (promptNode(label) != null) return true
+            SystemClock.sleep(150)
+        }
+        return promptNode(label) != null
+    }
+
     /** A real touch on the prompt's `label`; a fault of the run when the sheet has no such control on screen. */
     private fun touchPrompt(label: String) {
+        if (!awaitPromptNode(label)) {
+            touchFault("the prompt has no '$label' to touch")
+            return
+        }
         val node = promptNode(label) ?: run {
             touchFault("the prompt has no '$label' to touch")
             return
@@ -348,12 +379,20 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         claim(awaitPage(path, 20_000), "the page $path is up on $tabId (${pageState()})")
     }
 
-    /** The tab on screen: its URL and progress, read on the main thread. */
+    /**
+     * The tab on screen: its URL and progress, read on the main thread. WebView's own URL for a
+     * `zen://` page (a `loadDataWithBaseURL` document) is the page's address as a rule, but after
+     * the list is rebuilt behind a renderer exit it can be the `data:` header the document was
+     * loaded under; the host's word on the document ([TabWebView.currentUrl], the `zen://` name)
+     * stands in for that placeholder.
+     */
     private fun pageState(): Pair<String, Int> {
         var state = "" to 0
         instrumentation.runOnMainSync {
             val tab = host.tabs.all().firstOrNull { it.isShown }
-            state = (tab?.url ?: "") to (tab?.progress ?: 0)
+            val raw = tab?.url ?: ""
+            val url = if (raw.startsWith("data:")) tab?.currentUrl ?: raw else raw
+            state = url to (tab?.progress ?: 0)
         }
         return state
     }
@@ -494,8 +533,6 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         private const val CRASH_CODE = "-1"
         /** The offline codes (`core/connectivity.ts`): ERR_INTERNET_DISCONNECTED, ERR_NAME_NOT_RESOLVED, ERR_ADDRESS_UNREACHABLE. */
         private val OFFLINE_CODES = setOf("-106", "-105", "-109")
-        /** The URL bar's clear button: there once the bar is open. */
-        private const val CLEAR_LABEL = "Clear"
         private const val RELOAD_LABEL = "Reload"
         private const val SHOW_TABS_LABEL = "Show tabs"
         private const val WAIT_LABEL = "Wait"
