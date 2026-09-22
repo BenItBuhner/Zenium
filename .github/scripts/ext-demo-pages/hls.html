@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zenium HLS fixture</title>
+    <style>
+      body {
+        font: 18px system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      pre {
+        background: #f4f4f4;
+        padding: 12px;
+        max-width: 640px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>HLS fixture</h1>
+    <p>
+      This page fetches an HLS playlist (<code>stream.m3u8</code>) the way a player would before it
+      loads the first segment. Stream recorders that watch the tab's requests for a playlist have
+      one to find here; nothing plays.
+    </p>
+    <p>Playlist: <span id="state">loading</span></p>
+    <pre id="playlist"></pre>
+    <script>
+      window.__hls = { fetched: false, lines: 0 }
+      var state = document.getElementById('state')
+      function load() {
+        fetch('/stream.m3u8', { cache: 'no-store' })
+          .then(function (r) { return r.text() })
+          .then(function (text) {
+            window.__hls.fetched = true
+            window.__hls.lines = text.split('\n').filter(Boolean).length
+            document.getElementById('playlist').textContent = text
+            state.textContent = 'fetched, ' + window.__hls.lines + ' lines'
+          })
+          .catch(function (e) { state.textContent = 'fetch failed: ' + e.message })
+      }
+      load()
+      // A player re-reads a live playlist every few seconds; a recorder attached late still sees one.
+      setInterval(load, 5000)
+    </script>
+  </body>
+</html>
