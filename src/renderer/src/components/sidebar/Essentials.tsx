@@ -64,7 +64,7 @@ export function Essentials({ essentials, activeTabId, compact }: Props): JSX.Ele
           />
         ))}
         {essentials.length === 0 && showZone && (
-          <div className="col-span-full rounded-lg border border-dashed border-[var(--zen-border)] py-3 text-center text-xs text-[var(--zen-muted)]">
+          <div className="col-span-full rounded-lg border border-dashed border-[var(--zen-border)] py-3 text-center text-xs text-[var(--v2-control-text-deemphasized)]">
             Drop here to add to Essentials
           </div>
         )}

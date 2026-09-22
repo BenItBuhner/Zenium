@@ -1,9 +1,10 @@
-import { useCallback, useSyncExternalStore } from 'react'
 import type { MediaState, Tab, UIState } from '@shared/types'
 import { orderMediaEntries } from '@shared/mediaHub'
 import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { TOOLBAR_BUTTON, TOOLBAR_GAP } from '@renderer/lib/extensions/toolbar'
 import { createStore } from '@renderer/lib/store'
+import { PILL_PADDING, PILL_TOOLS_TIER } from '@renderer/components/urlbar/pillChipTiers'
 
 /**
  * What the desktop's media hub (MW-16: Chrome's global media controls, a toolbar button with a
@@ -42,6 +43,47 @@ export function mediaHubVisible(state: UIState): boolean {
 }
 
 /**
+ * The pill the hub's toolbar button must leave standing (design language v2 §9.29): the button
+ * is tiered by the row's width exactly as the pill's chips are, never by the active tab – at
+ * the 240 sidebar it folds into the app menu's "Now Playing…" row with the accent dot on ⋯ –
+ * and a folding button returns where the pill, with the button's own slot back in the row,
+ * still holds the box the star and the tools return at: the tier's `PILL_TOOLS_TIER` content
+ * box (110, the stylesheet's `@container (width < 110px)`; §9.29's "130 px pill"), 126 in the
+ * row's `PILL_PADDING`. Never where the pill first reaches that box without the button: a
+ * button returning there took the pill straight back under the tier it had just met (270 gave
+ * 125 → 94, and the address gave way to the title) and flipped its reading.
+ */
+export const MEDIA_HUB_PILL = PILL_PADDING + PILL_TOOLS_TIER
+
+/** A toolbar button's pitch in the row: its box and the gap before it (§5, 28 + 4). */
+const TOOLBAR_SLOT = TOOLBAR_BUTTON + TOOLBAR_GAP
+
+/**
+ * The row width at which the hub's button returns, given the count of the row's other buttons:
+ * the pill's tier box, the other buttons' slots and the hub's own. With the four always-there
+ * buttons (back, forward, reload, ⋯) that is 286 – the 302 sidebar, its 8 px gutters aside –
+ * where the pill with the button is 126 and the star is up with it; at 301 it would be 125.
+ */
+export function mediaHubReturnRow(otherButtons: number): number {
+  return MEDIA_HUB_PILL + (otherButtons + 1) * TOOLBAR_SLOT
+}
+
+/**
+ * Whether the row is wide enough for the hub's button: the pill the row would give its other
+ * buttons – back, forward, reload, ⋯, the puzzle piece and the downloads button while they are
+ * up; not the pinned actions, which fold by the pill's own floor – and the hub's own slot still
+ * holds `MEDIA_HUB_PILL`. The hub's slot is in the sum, so the pill reads the same on either
+ * side of the return: at 302 the button arrives over a 126 pill, the star up; at 270, where the
+ * star returned over the same 126, the button leaves it so. An unmeasured row (0) shows the
+ * button, as the pinned actions show before the row has a width. Pure, for the unit tests; the
+ * row measures itself and asks.
+ */
+export function mediaHubButtonFits(rowWidth: number, otherButtons: number): boolean {
+  if (rowWidth <= 0) return true
+  return rowWidth >= mediaHubReturnRow(otherButtons)
+}
+
+/**
  * Something plays: the accent dot on the hub's toolbar button, and – while that button has
  * folded (`mediaHubFolded`) – the same dot on the "⋯" menu button, whose menu then carries the
  * "Now Playing…" row (§9.29 – Firefox's badge on its menu button).
@@ -67,44 +109,34 @@ export const MEDIA_HUB_BUTTON = '[data-zen-media-hub-button]'
 export const APP_MENU_BUTTON = '[data-zen-app-menu-button]'
 
 /**
- * Whether the hub's toolbar button has folded: it is not in the row, or the row's stylesheet has
- * taken its box (`checkVisibility`). The fold is the toolbar's width tier's to make – at the 240
- * sidebar the hub "folds into the app menu as a Now playing row with an accent dot on ⋯", and
- * "returns as a button at 270" (§9.29) – by unmounting the button or by hiding it from a
- * stylesheet; this only reads the result, as `mediaHubAnchor()` does, so the dot, the row and the
- * anchor never disagree, and no width draws the dot twice. Until the tier lands the button is
- * always up while there is media, and the row and the ⋯ dot stay away.
+ * Whether the hub has folded into the app menu, for the row that decides it (the ⋯ button's dot
+ * and name): there is media to control and the row has not put the button up. The fold is the
+ * toolbar's width tier's to make – at the 240 sidebar the hub "folds into the app menu as a Now
+ * playing row with an accent dot on ⋯", and returns as a button where the pill, with the
+ * button's slot back, still holds the star's box (§9.29; the 302 sidebar with the always-there
+ * buttons) – and the row makes it from its own measured width (`useElementWidth` on the row:
+ * the ResizeObserver that follows a sidebar drag) with `mediaHubButtonFits`, in the render that
+ * mounts or unmounts the
+ * button. Read from the same render, the dot moves button ↔ ⋯ in the commit that moves the
+ * button: no frame shows both or neither, at no width, by construction – where a read of the
+ * DOM after the commit (`mediaHubFolded`) is a commit behind, and a `ResizeObserver` on the
+ * button fires for a node the row's own observer pass has already detached (Chromium's
+ * "ResizeObserver loop completed with undelivered notifications", the shell pass (a) drive's
+ * finding). Pure, for the unit tests.
  */
-export function mediaHubFolded(): boolean {
-  return !document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON)?.checkVisibility()
+export function mediaHubFoldedAt(state: UIState, hubButtonUp: boolean): boolean {
+  return mediaHubVisible(state) && !hubButtonUp
 }
 
 /**
- * `mediaHubFolded()` as a value the toolbar row renders from (the ⋯ button's dot and name).
- * The DOM is the store: the snapshot is re-read after every commit of the row (the snapshot
- * function is new each render, so React checks it once the row's own changes – the button
- * mounting or unmounting with the media, or with the width once the tier is in – are in the
- * document) and whenever the button's box changes under a stylesheet (the tier's fold by CSS,
- * a `ResizeObserver` on the button, re-attached as the button comes and goes with the media)
- * or the window resizes.
+ * Whether the hub's toolbar button has folded, read from the document: it is not in the row, or
+ * nothing lays its box out (`checkVisibility`). For the moments between renders – the menu
+ * request the core builds the "Now Playing…" row for, the anchor the popover hangs from – where
+ * the row has committed what it decided (`mediaHubFoldedAt`); the row itself renders from its
+ * width, never from this, so the dot, the row and the anchor cannot disagree.
  */
-export function useMediaHubFolded(state: UIState): boolean {
-  const present = mediaHubVisible(state)
-  const subscribe = useCallback(
-    (onChange: () => void): (() => void) => {
-      window.addEventListener('resize', onChange)
-      const button = present ? document.querySelector(MEDIA_HUB_BUTTON) : null
-      const observer =
-        button && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onChange) : null
-      if (button) observer?.observe(button)
-      return () => {
-        window.removeEventListener('resize', onChange)
-        observer?.disconnect()
-      }
-    },
-    [present]
-  )
-  return useSyncExternalStore(subscribe, () => mediaHubFolded())
+export function mediaHubFolded(): boolean {
+  return !document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON)?.checkVisibility()
 }
 
 /**
