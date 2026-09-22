@@ -25,9 +25,10 @@ interface Props {
  * picture itself – the thumbnail, 64 tall at the start, a button that opens the picture in the
  * system's viewer – with "Screenshot saved" as the title and the picture's size as the detail;
  * Share | Delete as the row's own footer under the sentence they answer (§9.11's decision pair
- * at the text edge), Capture more as the one trailing secondary action (§9.33) beside the §9.3
- * close. It rides the shared message motion: up from the frame's bottom edge, off by a swipe,
- * the close, an action or the clock, paused under a finger.
+ * at the text edge; Delete in §6's danger ink, the saved file being the user's data), Capture
+ * more as the one trailing secondary action (§9.33) beside the §9.3 close. It rides the shared
+ * message motion: up from the frame's bottom edge, off by a swipe, the close, an action or the
+ * clock, paused under a finger.
  */
 export function ScreenshotCard({ card, onMeasure }: Props): JSX.Element {
   const { ref, handlers } = useMessageMotion({
@@ -93,6 +94,7 @@ export function ScreenshotCard({ card, onMeasure }: Props): JSX.Element {
         <button
           type="button"
           className="zen-message-button zen-v2-message-action"
+          data-danger=""
           onClick={() => pickScreenshotAction(card.id, 'delete')}
         >
           Delete

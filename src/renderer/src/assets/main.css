@@ -1893,6 +1893,11 @@
   .zen-message-button:active:not(:disabled) {
     transform: scale(0.98);
   }
+  /* A destroying action on a card – the capture card's Delete, whose file is the user's data –
+     takes §6's danger ink as `.zen-v2-button[data-danger]` does: ink only, the fill stays. */
+  .zen-message-button[data-danger] {
+    color: var(--v2-danger);
+  }
   .zen-message-button:disabled,
   .zen-message-close:disabled {
     opacity: 0.4;
