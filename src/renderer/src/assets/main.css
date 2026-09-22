@@ -383,6 +383,22 @@
   outline-offset: var(--v2-ring-offset);
 }
 
+/*
+ * A container that holds the focus by design draws no ring (§1, §9.22): a dialog's root – the
+ * settings dialogs, a prompt, a popover or a sheet with `role="dialog"` – takes the focus as it
+ * opens when it has no field to hand it to, and gives it up to the first Tab. It is not a
+ * control, and a ring round a whole panel with nothing tabbable inside marked nothing. The mark
+ * is `tabindex="-1"`: a container the keyboard is sent to and cannot reach by Tab – so the
+ * dialog's own controls keep their ring, and no dialog states `outline: none` for itself. The
+ * `:root` carries the weight over the coarse-pointer form of the v2 ring rule above (0,4,0),
+ * which a phone's `data-pointer` would otherwise put ahead; the rule sits under it so it wins
+ * the tie, and beats the base floor and the plain form outright.
+ */
+:root [role='dialog'][tabindex='-1']:focus-visible,
+:root [role='alertdialog'][tabindex='-1']:focus-visible {
+  outline: none;
+}
+
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
 @supports (color: oklch(from red clamp(0.3, l, 0.6) c h)) {
   :root {
@@ -882,8 +898,10 @@
  * bookmarks strip's clip or a bar the control fills to the edge cannot cut it, and a control
  * scrolled flush to a scroller's edge keeps the whole ring. The base layer is the floor: a
  * component's own rule wins – the `zen-v2-` primitives' shared ring, a field's, a chip whose ring
- * its pill or face carries – and so does `outline-none` on a container that focuses itself by
- * design (a popover, a dialog, a listbox, a menu whose cursor is its row's fill) and shows no ring.
+ * its pill or face carries – and so does the shared no-ring rule for a container that focuses
+ * itself by design (`[role='dialog'][tabindex='-1']:focus-visible` beside the v2 ring rule: a
+ * dialog, a popover or a sheet), or `outline-none` on a listbox or a menu whose cursor is its
+ * row's fill.
  *
  * The ring snaps on whole, as Chrome's does. At rest every element already holds the ring's
  * colour, width and offset – with the style at `none` nothing shows – so a control's own
@@ -3371,10 +3389,6 @@
     corner-shape: var(--zen-corner);
     transform-origin: 50% 100%;
     will-change: transform;
-  }
-  /* The dialog takes the focus itself when its first control must not (BottomSheet); no ring. */
-  .zen-sheet:focus {
-    outline: none;
   }
   /*
    * The header after the grip strip: 48 tall, the title 17/600 at line-height 22 centred over
@@ -9508,9 +9522,10 @@
   stroke-width: var(--v2-icon-stroke);
 }
 /*
- * Footer actions (§9.11): two peers split the width, 8 apart, the primary trailing. In a form
- * the form's 16 gap and gutter place them; straight in a sheet's body (a prompt, §9.23) they
- * sit at the sheet's 16 (§9.25), 16 under the title block's own padding.
+ * Footer actions (§9.11): on the phone's sheet two peers split the width, 8 apart, the primary
+ * trailing (the desktop dialog's hug is with the dialog rules below). In a form the form's 16
+ * gap and gutter place them; straight in a sheet's body (a prompt, §9.23) they sit at the
+ * sheet's 16 (§9.25), 16 under the title block's own padding.
  */
 .zen-settings-sheet-actions {
   display: flex;
@@ -9997,10 +10012,14 @@
 }
 /*
  * §9.11's desktop footer: in a dialog the actions hug their labels and right-align at the 8
- * gap, primary last – a prompt's Cancel | Clear all, a form's Cancel | Add a site alike – and
- * hug no narrower than the button's own 96 (§9.20: a notice's two buttons are 96 + 8 + 96
- * inside its 288). The equal split and its `min-width: 0` (`.zen-settings-sheet-actions > *`
- * above) are the phone sheet's.
+ * gap, primary last – a prompt's Cancel | Delete, a form's Cancel | Create or Add a site alike –
+ * and hug no narrower than the button's own 96 at the 32 control height (§9.20: a notice's two
+ * buttons are 96 + 8 + 96 inside its 288, a form's the same at the end of its 366). The equal
+ * split and its `min-width: 0` (`.zen-settings-sheet-actions > *` above) are the phone sheet's:
+ * a dialog is never the phone's – a phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`)
+ * – so the pose is the surface's, not a pointer query's, and the phone's rule is not touched.
+ * The busy state keeps the button's width: the label stays in the flow unpainted under the
+ * spinner (§9.30, extensions.css).
  */
 .zen-settings-dialog .zen-settings-sheet-actions {
   justify-content: flex-end;
@@ -10320,12 +10339,10 @@
 }
 /*
  * Its `aria-expanded` says which way the rows are, not that a popover is up: the shared icon
- * button's lit fill for an open anchor (§9.20, `extensions.css`) does not reach the disclosure
- * at rest – the chevron's turn is the state – while the hover and press fills stay its own.
+ * button's lit fill is the popover anchor's alone (`[aria-haspopup][aria-expanded]`, §9.20,
+ * `extensions.css`), so a disclosure – which carries no `aria-haspopup` – takes none at rest
+ * without a rule of its own; the chevron's turn is the state, the hover and press fills its own.
  */
-.zen-page-heading > .zen-page-heading-twisty[aria-expanded='true']:not(:hover, :active) {
-  background: none;
-}
 /* The heading's 8 is to its rows; folded, there are none, and the next group's 20 beat is from the heading's line. */
 .zen-page-group[data-collapsed] > .zen-page-heading {
   margin-bottom: 0;

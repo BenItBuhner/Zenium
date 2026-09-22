@@ -83,6 +83,10 @@ const pagePreload = join(__dirname, '../preload/page.js')
 
 /** How long a page gets to hand over a frame before an overlay opens without its picture. */
 const SNAPSHOT_TIMEOUT_MS = 600
+/** A capture wider than this is resized to it before the encode (`snapshot`). */
+const SNAPSHOT_MAX_WIDTH = 1400
+/** The stand-in's JPEG quality (`snapshot`: the numbers behind it). */
+const SNAPSHOT_JPEG_QUALITY = 90
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
 const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'AltGr'])
@@ -909,10 +913,22 @@ export class ElectronTabView implements TabView {
   }
 
   /**
-   * JPEG snapshot of the page, used to keep a dimmed preview behind overlays (URL bar, Glance).
-   * A page that has not painted yet (still in its TLS handshake, waiting on a sign-in) gives
-   * `capturePage` nothing to copy and the promise never settles: the overlay that asked must not
-   * wait on it, so an unanswered capture counts as no picture.
+   * JPEG snapshot of the page, used to keep a preview behind overlays: dimmed under the URL bar,
+   * Glance and a dialog, plain under a popover or the app menu (§6), where it stands in for the
+   * live page for as long as the menu is up. A page that has not painted yet (still in its TLS
+   * handshake, waiting on a sign-in) gives `capturePage` nothing to copy and the promise never
+   * settles: the overlay that asked must not wait on it, so an unanswered capture counts as no
+   * picture.
+   *
+   * Quality 90: at 65 the encoder haloed the text edges under an undimmed menu (#299's 5–7 % of
+   * pixels off). Measured on the packaged build over a 1600×1000 window of prose: 90 takes the
+   * frame's pixels more than 32 levels off the live page from 14.3 % to 13.8 % (10.6 → 8.6 % on
+   * the default layout's 1352-wide page, where nothing is resampled), the mean channel error down
+   * 9 % / 23 %, for 8.0 ms and 413 KB against 6.7 ms and 228 KB – PNG would be exact where the
+   * page is not resampled, at 51 ms an encode, over the frame budget. The 1400 clamp is kept as
+   * the encoder's stage: where it engages, the resample back up to the frame is the floor of the
+   * difference whatever the encoder (PNG through it: 10.6 % at 106 ms and 1.3 MB). The
+   * Android host's cover is its own copy and encode (`TabWebView.snapshot`).
    */
   async snapshot(): Promise<string | null> {
     try {
@@ -922,8 +938,9 @@ export class ElectronTabView implements TabView {
       ])
       if (!image || image.isEmpty()) return null
       const size = image.getSize()
-      const scaled = size.width > 1400 ? image.resize({ width: 1400 }) : image
-      return `data:image/jpeg;base64,${scaled.toJPEG(65).toString('base64')}`
+      const scaled =
+        size.width > SNAPSHOT_MAX_WIDTH ? image.resize({ width: SNAPSHOT_MAX_WIDTH }) : image
+      return `data:image/jpeg;base64,${scaled.toJPEG(SNAPSHOT_JPEG_QUALITY).toString('base64')}`
     } catch {
       return null
     }

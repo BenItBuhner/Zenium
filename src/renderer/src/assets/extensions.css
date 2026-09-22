@@ -402,12 +402,15 @@
   /*
    * Icon buttons are main.css's `.zen-v2-icon-button` (§9.3, §9.34). The anchor keeps its
    * pressed fill while its popover is open (§9.20) – on a desktop; on a phone the anchor opens
-   * a sheet, not a popover, so it keeps `aria-expanded` and not the lit fill.
+   * a sheet, not a popover, so it keeps `aria-expanded` and not the lit fill. The fill is the
+   * popover ANCHOR's – `[aria-haspopup]` with `[aria-expanded]` – and never a disclosure's:
+   * `aria-expanded` is also WAI-ARIA's attribute for a control that folds rows out (History's
+   * device twisty, a tree's branch), whose state is its chevron's turn, not a fill at rest.
    */
-  .zen-v2-icon-button[aria-expanded='true'] {
+  .zen-v2-icon-button[aria-haspopup][aria-expanded='true'] {
     background: var(--v2-fill);
   }
-  [data-form-factor='phone'] .zen-v2-icon-button[aria-expanded='true'] {
+  [data-form-factor='phone'] .zen-v2-icon-button[aria-haspopup][aria-expanded='true'] {
     background: transparent;
   }
 
