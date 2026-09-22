@@ -21,11 +21,6 @@ name: Android overview demo
 # and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver and the
 # demo it runs.
 on:
-  # TEMPORARY (the coordinator's one authorised OverviewDemo run on this head: no token in the
-  # project can dispatch; no `demo` input on a push = the `overview` sequence); removed in the
-  # next commit.
-  push:
-    branches: [cursor/android-harness-group-card-labels-cf22]
   workflow_dispatch:
     inputs:
       demo:
