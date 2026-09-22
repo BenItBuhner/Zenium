@@ -2749,6 +2749,8 @@ export class Browser {
         this.menus.showHistoryContextMenu(visitId, url, win, anchor),
       'history.dayMenu': ({ dayKey, count }, win) =>
         this.menus.showHistoryDayMenu(dayKey, count, win),
+      'history.foldedDevices': () => this.pages.foldedDeviceIds(),
+      'history.foldDevice': ({ deviceId, folded }) => this.pages.foldDevice(deviceId, folded),
 
       'session.recentlyClosed': () => this.session.summaries(),
       'session.restoreClosed': ({ id }, win) => this.session.restoreClosed(id, win),

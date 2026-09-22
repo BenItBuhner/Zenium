@@ -164,10 +164,13 @@ const DEVICES: SyncDeviceTabs[] = [
 let groups: HistoryDayGroup[] = GROUPS
 let closed: ClosedEntrySummary[] = CLOSED
 let devices: SyncDeviceTabs[] = []
+/** The core's folded devices (`history.foldedDevices`), as the session holds them. */
+let folded: string[] = []
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name) => {
   if (name === 'history.grouped') return groups
   if (name === 'session.recentlyClosed') return closed
   if (name === 'sync.tabsFromDevices') return devices
+  if (name === 'history.foldedDevices') return folded
   return null
 })
 /** The core's events the page listens for, fired by name. */
@@ -317,12 +320,21 @@ function rowClick(el: HTMLElement, id: string, init: MouseEventInit = {}): void 
   )!.dispatchEvent(new MouseEvent('click', { bubbles: true, ...init }))
 }
 
+/** The page's session store of folded devices, one per chrome document: a fresh one per test. */
+function freshFoldStore(): void {
+  const stores = (globalThis as { __zenStores?: Record<string, { set: (p: object) => void }> })
+    .__zenStores
+  stores?.historyCollapsedDevices?.set({ ids: new Set(), asked: false })
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   invoke.mockClear()
   groups = GROUPS
   closed = CLOSED
   devices = []
+  folded = []
+  freshFoldStore()
 })
 
 afterEach(() => {
@@ -818,6 +830,8 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     expect(twisty().querySelector('svg')!.hasAttribute('data-open')).toBe(true)
     await act(async () => twisty().click())
     expect(card().hasAttribute('data-collapsed')).toBe(true)
+    // The fold is the session's: the core is told, and holds it for every window's chrome.
+    expect(calls('history.foldDevice')).toEqual([{ deviceId: 'phone', folded: true }])
     expect(twisty().getAttribute('aria-expanded')).toBe('false')
     expect(twisty().getAttribute('aria-label')).toBe('Show tabs from Pixel 9')
     expect(twisty().querySelector('svg')!.hasAttribute('data-open')).toBe(false)
@@ -834,6 +848,14 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     await act(async () => twisty().click())
     expect(card().hasAttribute('data-collapsed')).toBe(false)
     expect(card().querySelectorAll('li')).toHaveLength(2)
+    expect(calls('history.foldDevice').at(-1)).toEqual({ deviceId: 'phone', folded: false })
+    // Another window folded the laptop: the core's word reaches this one and it folds here too.
+    await act(async () => emit('history.foldedDevicesChanged', ['work']))
+    expect(el.querySelector('[data-device-id="work"]')!.hasAttribute('data-collapsed')).toBe(true)
+    expect(el.querySelectorAll('[data-device-id="work"] li')).toHaveLength(0)
+    expect(card().hasAttribute('data-collapsed')).toBe(false)
+    await act(async () => emit('history.foldedDevicesChanged', []))
+    expect(el.querySelectorAll('[data-device-id="work"] li')).toHaveLength(1)
     // Entering the mode: the remote rows hold the checkbox column's width, picked by nothing.
     await act(async () => rowClick(el, 'v1', { ctrlKey: true }))
     expect(el.querySelectorAll('[data-remote-tab] span.zen-page-row-check')).toHaveLength(3)
@@ -847,6 +869,20 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
       target.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }))
     )
     expect(text(el.querySelector('.zen-page-title-count'))).toBe('5 selected')
+  })
+
+  it('a fresh chrome (a second window) starts from the folds the core holds', async () => {
+    devices = DEVICES
+    folded = ['work']
+    // A window's chrome is a document of its own: its store has not asked the core yet.
+    const el = await mountPage(tab(), state(sync(true)))
+    expect(calls('history.foldedDevices')).toHaveLength(1)
+    expect(el.querySelector('[data-device-id="work"]')!.hasAttribute('data-collapsed')).toBe(true)
+    expect(el.querySelectorAll('[data-device-id="work"] li')).toHaveLength(0)
+    expect(el.querySelector('[data-device-id="phone"]')!.hasAttribute('data-collapsed')).toBe(false)
+    // Mounted again in the same chrome, it does not ask twice.
+    await remount(tab(), state(sync(true)))
+    expect(calls('history.foldedDevices')).toHaveLength(1)
   })
 
   it('the search filters the devices’ rows too – a device left with nothing steps aside – and a match answers the search when history has none', async () => {

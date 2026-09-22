@@ -3978,6 +3978,15 @@ export interface Commands {
   }
   /** Menu of a day heading on the history page (delete the day). */
   'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
+  /**
+   * The other devices whose groups the History page keeps folded (ID-28, "Tabs from other
+   * devices"), by device id – the session's, held by the core so a History tab closed and opened
+   * again or a second window's chrome (a renderer of its own) finds them folded still; a restart
+   * unfolds them all (Chrome's synced-device cards start open too).
+   */
+  'history.foldedDevices': { args: void; result: string[] }
+  /** Fold or unfold one device's group; every window hears `history.foldedDevicesChanged`. */
+  'history.foldDevice': { args: { deviceId: string; folded: boolean }; result: void }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
   'session.restoreClosed': { args: { id: string }; result: void }
@@ -4969,6 +4978,8 @@ export interface Events {
    * (v2 §10.1 – the checkbox column shows on every row while anything is picked).
    */
   'history.select': { visitId: string }
+  /** The History page's folded device groups changed (`history.foldDevice`): the ids now folded. */
+  'history.foldedDevicesChanged': string[]
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –

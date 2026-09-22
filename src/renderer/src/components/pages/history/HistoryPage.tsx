@@ -49,12 +49,42 @@ function matchesTerms(title: string, url: string, terms: readonly string[]): boo
 /**
  * The other devices whose groups are folded (their id), kept for the session: a History tab
  * closed and opened again, or a second window's, finds them folded still; a restart unfolds
- * them all (Chrome's synced-device cards start open too).
+ * them all (Chrome's synced-device cards start open too). The set is the core's
+ * (`history.foldedDevices`) – each window's chrome is a renderer of its own, so a store here
+ * alone would be the window's – mirrored into this document once (`asked`) and kept current by
+ * `history.foldedDevicesChanged`; a toggle lands here first so the chevron turns on the click.
  */
-const collapsedDevices = createStore<{ ids: ReadonlySet<string> }>(
-  { ids: new Set() },
+const collapsedDevices = createStore<{ ids: ReadonlySet<string>; asked: boolean }>(
+  { ids: new Set(), asked: false },
   'historyCollapsedDevices'
 )
+
+/** The folded devices, mirrored from the core while any device group is mounted. */
+function useCollapsedDevices(): ReadonlySet<string> {
+  useEffect(() => {
+    if (!collapsedDevices.get().asked) {
+      collapsedDevices.set({ asked: true })
+      void cmd('history.foldedDevices', undefined).then((ids) =>
+        collapsedDevices.set({ ids: new Set(ids) })
+      )
+    }
+    return onEvent('history.foldedDevicesChanged', (ids) =>
+      collapsedDevices.set({ ids: new Set(ids) })
+    )
+  }, [])
+  return collapsedDevices.use((s) => s.ids)
+}
+
+/** Fold or unfold a device's group: here at once, and the core's for the session. */
+function foldDevice(deviceId: string, folded: boolean): void {
+  collapsedDevices.set((s) => {
+    const ids = new Set(s.ids)
+    if (folded) ids.add(deviceId)
+    else ids.delete(deviceId)
+    return { ids }
+  })
+  run('history.foldDevice', { deviceId, folded })
+}
 
 /** The page's sentences for the other devices' tabs (ID-28), beside Settings › Sync's `SYNC_COPY`. */
 const REMOTE_COPY = {
@@ -881,14 +911,8 @@ function DeviceGroup({
   selecting: boolean
   onOpen: (tab: SyncRemoteTab, background: boolean) => void
 }): JSX.Element {
-  const collapsed = collapsedDevices.use((s) => s.ids.has(device.deviceId))
-  const toggle = (): void =>
-    collapsedDevices.set((s) => {
-      const ids = new Set(s.ids)
-      if (ids.has(device.deviceId)) ids.delete(device.deviceId)
-      else ids.add(device.deviceId)
-      return { ids }
-    })
+  const collapsed = useCollapsedDevices().has(device.deviceId)
+  const toggle = (): void => foldDevice(device.deviceId, !collapsed)
   const safeId = device.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')
   return (
     <PageGroup
