@@ -2801,7 +2801,18 @@ async function setFixtureCookie(s, fixture, shotName) {
  * from the launch's watermark `from`, which have to find the cookie gone. The step's detail.
  */
 async function restoredCookiePageWithoutCookie(s, fixture, from, shotName) {
-  const tab = await s.waitForTab(fixture.cookieUrl, 30000)
+  let tab
+  try {
+    tab = await s.waitForTab(fixture.cookieUrl, 30000)
+  } catch (e) {
+    // What the restore did instead: the tabs, the main-frame load failures, the fixture's log.
+    e.detail = {
+      tabs: await s.tabs().catch(() => null),
+      failedLoads: s.readEvents().filter((ev) => ev.type === 'did-fail-load'),
+      requests: fixture.requests.slice(from)
+    }
+    throw e
+  }
   await s.settle()
   const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
   if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
@@ -2954,7 +2965,9 @@ async function scenarioClearOnExit() {
     const marker = owedClear({ types: CLEAR_ON_EXIT_TYPES })
     const seeded = writeOwedClear(owedData, marker)
     const launchFrom = fixture.requests.length
-    return runScenario('clear-on-exit-owed-launch', owedData, {}, async (s, out) => {
+    // Awaited here: a `return` of the bare promise would run the `finally` (the fixture's
+    // close) before the launch, and the restored tab would find the server gone.
+    return await runScenario('clear-on-exit-owed-launch', owedData, {}, async (s, out) => {
       out.fixture = pages
       out.seeded = seeded
       await s.step('owed-clear-consumed', async () => {
