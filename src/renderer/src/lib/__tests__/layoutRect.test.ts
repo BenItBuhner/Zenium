@@ -6,6 +6,7 @@ import {
   isIdentity,
   layoutRectThrough,
   layoutRectUnder,
+  onLayoutGrid,
   parseAxisTransform,
   parseOrigin
 } from '../layoutRect'
@@ -109,6 +110,43 @@ describe('layoutRectThrough: the painted box run back through the frame’s tran
       const t = { scaleX: s, scaleY: s, translateX: 0, translateY: 0 }
       expect(layoutRectThrough(painted, painted, t, centre)).toEqual(painted)
     }
+  })
+
+  it('answers on the layout grid (1/64 px), exactly the box a measure at rest reports', () => {
+    // A transformed rect reaches getBoundingClientRect through the compositor's floats: each
+    // painted value carries float32's rounding (about 1e-4 px at 800 px), and the division adds
+    // float64's dust even without it. The layout box the run-back answers is what `sameRect`
+    // compares to the re-measure at the recede's rest, and what the host truncates to device
+    // pixels: it has to be the rest's value to the bit, not a hair under it.
+    const s = recedeScale(1)
+    const t = { scaleX: s, scaleY: s, translateX: 0, translateY: 0 }
+    const tall: Rect = { x: 8, y: 80, width: 396, height: 824 }
+    const viewport: Rect = { x: tall.x, y: tall.y + 3, width: tall.width, height: tall.height - 3 }
+    const about = { x: tall.width / 2, y: tall.height / 2 }
+    const painted = (r: Rect): Rect => {
+      const ox = tall.x + about.x
+      const oy = tall.y + about.y
+      return { x: ox + (r.x - ox) * s, y: oy + (r.y - oy) * s, width: r.width * s, height: r.height * s }
+    }
+    const float32 = (r: Rect): Rect => ({
+      x: Math.fround(r.x),
+      y: Math.fround(r.y),
+      width: Math.fround(r.width),
+      height: Math.fround(r.height)
+    })
+    // Float64 inputs: the arithmetic alone is off the grid (7.999999999999993 for 8).
+    expect(layoutRectThrough(painted(tall), painted(tall), t, about)).toEqual(tall)
+    // Float32 inputs, as the compositor reports them: 823.99999… for 824 before the grid.
+    const rough = layoutRectThrough(float32(painted(viewport)), float32(painted(tall)), t, about)
+    expect(rough).toEqual(viewport)
+    // What the host would have laid out from the ungridded answer, one device pixel short.
+    const density = 2.625
+    expect(Math.trunc(onLayoutGrid(823.99997) * density)).toBe(Math.trunc(824 * density))
+    expect(Math.trunc(823.99997 * density)).toBe(Math.trunc(824 * density) - 1)
+    // The grid itself: 1/64 px steps, halves rounded away from zero as Math.round has them.
+    expect(onLayoutGrid(0.0078125)).toBe(0.015625)
+    expect(onLayoutGrid(357.5)).toBe(357.5)
+    expect(onLayoutGrid(357.50001)).toBe(357.5)
   })
 })
 

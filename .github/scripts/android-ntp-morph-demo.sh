@@ -12,8 +12,13 @@
 #                           portrait, on the image's own WebView, as the other phone demos run);
 #                 `private` FakeboxMorphScrubDemo then FakeboxMorphScrubReducedDemo (the private
 #                           page in landscape, which needs the Chromium snapshot WebView: private
-#                           tabs need MULTI_PROFILE, which the API 34 image's WebView 113 lacks)
+#                           tabs need MULTI_PROFILE, which the API 34 image's WebView 113 lacks);
+#                 `reduced` FakeboxMorphReducedDemo twice, the profile seeded light and then dark
+#                           (android-reduced-motion-demo.yml: §11.3's no-transition checks and the
+#                           before / after stills; the dark run's directory has a -dark suffix)
 #   MORPH_OUT   – where the artifacts go (a directory per driver below it)
+#   MORPH_STYLESHEET – a word for the summary: which stylesheet the build carries (`before`,
+#                 main's, or `after`, the branch's; android-reduced-motion-demo.yml)
 #   WEBVIEW_APK – the snapshot SystemWebView.apk for the private act, swapped in by the shared
 #                 script on the first driver (an AOSP image booted with -writable-system)
 #
@@ -40,7 +45,8 @@ app_id=io.github.benitbuhner.zenium.debug
 cmdline_file=/data/local/tmp/webview-command-line
 mkdir -p "$out"
 
-# class, handshake directory under the app's files/, whether it runs under reduced motion.
+# class, handshake directory under the app's files/, whether it runs under reduced motion, and
+# the colour scheme the profile is seeded with (light when left out).
 case "$act" in
   space)
     drivers=(
@@ -54,8 +60,14 @@ case "$act" in
       "FakeboxMorphScrubReducedDemo ntp-morph-scrub-reduced-demo 1"
     )
     ;;
+  reduced)
+    drivers=(
+      "FakeboxMorphReducedDemo ntp-morph-reduced-demo 1 light"
+      "FakeboxMorphReducedDemo ntp-morph-reduced-demo 1 dark"
+    )
+    ;;
   *)
-    echo "::error::MORPH_ACT must be 'space' or 'private', not '$act'"
+    echo "::error::MORPH_ACT must be 'space', 'private' or 'reduced', not '$act'"
     exit 1
     ;;
 esac
@@ -74,37 +86,43 @@ fresh_app() {
   adb shell rm -f '/sdcard/demo-part-*' > /dev/null 2>&1 || true
 }
 
-run_driver() { # class, handshake directory
-  DEMO_CLASS=app.zen.chromium.$1 DEMO_DIR=$2 DEMO_OUT=$out/$2 DEMO_VIDEO=$2.mp4 DEMO_THEME=light \
+run_driver() { # class, handshake directory, output directory under $out, theme
+  DEMO_CLASS=app.zen.chromium.$1 DEMO_DIR=$2 DEMO_OUT=$out/$3 DEMO_VIDEO=$3.mp4 DEMO_THEME=$4 \
     DEMO_PREPARED=$prepared WEBVIEW_APK=${WEBVIEW_APK:-} bash .github/scripts/android-gesture-demo.sh
 }
 
 summary=$out/summary.txt
 : > "$summary"
-echo "new tab page morph, act '$act'" >> "$summary"
+echo "new tab page morph, act '$act'${MORPH_STYLESHEET:+, stylesheet: $MORPH_STYLESHEET}" >> "$summary"
 failed=0
 prepared=0
 for spec in "${drivers[@]}"; do
-  read -r class dir reduced <<< "$spec"
+  read -r class hdir reduced theme <<< "$spec"
+  theme=${theme:-light}
+  # The dark run of the reduced act records into its own directory beside the light one.
+  dir=$hdir
+  [ "$theme" = dark ] && dir=$hdir-dark
+  label=$class
+  [ "$act" = reduced ] && label="$class ($theme)"
   note=""
   if [ "$reduced" = 1 ]; then
     animation_scales 0
-    echo "animator, transition and window animation scales set to 0 for $class"
+    echo "animator, transition and window animation scales set to 0 for $label"
   fi
   started=$(date +%s)
-  echo "::group::$class"
-  run_driver "$class" "$dir"
+  echo "::group::$label"
+  run_driver "$class" "$hdir" "$dir" "$theme"
   status=$?
   echo "::endgroup::"
   prepared=1
   if [ "$reduced" = 1 ] && [ "$status" -ne 0 ] && [ ! -f "$out/$dir/emulator-died" ] \
     && grep -q REDUCED_MOTION_NOT_REPORTED "$out/$dir/instrument.txt" 2> /dev/null; then
-    echo "::warning::$class: the WebView did not report prefers-reduced-motion under animator_duration_scale 0; forcing the query through $cmdline_file and running once more"
+    echo "::warning::$label: the WebView did not report prefers-reduced-motion under animator_duration_scale 0; forcing the query through $cmdline_file and running once more"
     mv "$out/$dir" "$out/$dir-scale-only"
     adb shell "echo '_ --force-prefers-reduced-motion' > $cmdline_file"
     fresh_app
-    echo "::group::$class (forced prefers-reduced-motion)"
-    run_driver "$class" "$dir"
+    echo "::group::$label (forced prefers-reduced-motion)"
+    run_driver "$class" "$hdir" "$dir" "$theme"
     status=$?
     echo "::endgroup::"
     note="  (prefers-reduced-motion forced through the WebView's command-line file: the animator scale alone was not read)"
@@ -115,24 +133,24 @@ for spec in "${drivers[@]}"; do
   fi
   took=$(( $(date +%s) - started ))
   if [ -f "$out/$dir/emulator-died" ]; then
-    printf '%-30s DIED  %4ds  the emulator went away under the driver\n' "$class" "$took" | tee -a "$summary"
+    printf '%-38s DIED  %4ds  the emulator went away under the driver\n' "$label" "$took" | tee -a "$summary"
     cp "$out/$dir/emulator-died" "$out/emulator-died"
     failed=1
     break
   fi
   if [ "$status" -eq 0 ]; then
-    printf '%-30s PASS  %4ds%s\n' "$class" "$took" "$note" | tee -a "$summary"
+    printf '%-38s PASS  %4ds%s\n' "$label" "$took" "$note" | tee -a "$summary"
   else
     failed=1
     reason=$(grep -m1 -E 'check\(s\) failed|touch\(es\) did not take|REDUCED_MOTION|did not take|Error|Exception|never reached' "$out/$dir/instrument.txt" 2> /dev/null \
       | sed -E 's/^INSTRUMENTATION_STATUS: (stack|stream)=//' | head -c 400)
-    printf '%-30s FAIL  %4ds  %s%s\n' "$class" "$took" "${reason:-see $dir/instrument.txt}" "$note" | tee -a "$summary"
-    echo "::error::$class did not pass: ${reason:-see $dir/instrument.txt}"
+    printf '%-38s FAIL  %4ds  %s%s\n' "$label" "$took" "${reason:-see $dir/instrument.txt}" "$note" | tee -a "$summary"
+    echo "::error::$label did not pass: ${reason:-see $dir/instrument.txt}"
   fi
   # The verdict lines, one per check, are the run's result: surface them in the job log.
   for findings in "$out/$dir"/*-findings.txt; do
     [ -f "$findings" ] || continue
-    echo "::group::$class findings"
+    echo "::group::$label findings"
     cat "$findings"
     echo "::endgroup::"
   done

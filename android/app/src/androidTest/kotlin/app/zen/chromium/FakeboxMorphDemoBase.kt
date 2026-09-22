@@ -6,6 +6,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -60,7 +61,14 @@ import kotlin.math.roundToInt
  *    it between drivers, and the driver refuses to run when the WebView does not report it
  *    ([REDUCED_MOTION_NOT_REPORTED]: the script then forces the query through the WebView's
  *    command-line file and runs the driver again). Under it the spring's part is a 120 ms fade
- *    in place, nothing travels, and the scrub still follows the finger (§11.3).
+ *    in place, nothing travels, and the scrub still follows the finger (§11.3). Reduced motion
+ *    is NO transition, not a shortened one (§11.3 as ruled; a shortened transition draws its
+ *    start value until the compositor starts it – a frame of stale geometry, the page hidden
+ *    1.0–1.3 s after the commit in #243's runs): the space page's driver also opens and closes
+ *    the menu sheet ([sheetOpenClose]) and every reduced scene is judged for the page visible on
+ *    the commit's first frame, no frame of stale geometry, and what the stylesheet resolves to
+ *    (nothing shortened; the kept fades opacity-only at 120 ms). `android-reduced-motion-demo.yml`
+ *    runs this driver alone, light and dark, on the branch's stylesheet and on main's.
  *
  * The bar's hide-on-scroll stays gated off on the page throughout (the two scroll-driven motions
  * never meet, #200): every sample carries the gate and the value. Gesture navigation is turned
@@ -97,6 +105,10 @@ abstract class FakeboxMorphDemoBase(
         }
     }
 
+    /** The seeded profile's colour scheme, from the `theme` argument (`DEMO_THEME`): the reduced-motion act records light and dark. */
+    override fun patchState(json: String): String =
+        json.replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$THEME\"")
+
     /** The most visited tiles the page shows (letter tiles: no favicons are fetched for the hosts). */
     override fun seedMore(zen: File) {
         val now = System.currentTimeMillis()
@@ -128,7 +140,7 @@ abstract class FakeboxMorphDemoBase(
         findings = File(out, "$shotPrefix-findings.txt")
         findings.writeText(
             "Zenium Android new tab page field morph (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density, " +
-                "${if (scrub) "the private page in landscape" else "the space page in portrait"}${if (reduced) ", reduced motion" else ""})\n" +
+                "${if (scrub) "the private page in landscape" else "the space page in portrait"}${if (reduced) ", reduced motion" else ""}, $THEME)\n" +
                 "Judged frame by frame by FakeboxMorphJudge (design language v2 §11.8); one line per check, PASS or FAIL.\n\n"
         )
         finding("start: ${describeActive()}; WebView ${webViewVersion()}")
@@ -237,9 +249,14 @@ abstract class FakeboxMorphDemoBase(
         dock("bottom")
     }
 
-    /** Reduced motion on the space page: the tap and the dismissal are fades in place, at both docks. */
+    /**
+     * Reduced motion on the space page: the tap and the dismissal are fades in place, at both
+     * docks, and the menu sheet's open and close at the bottom dock are the same fade – the sheet
+     * where the spring jumped it, the page under it neither receding nor moving.
+     */
     private fun reducedScenes() {
         tapAndDismiss("reduced-bottom", edge = "bottom", keyboard = true)
+        sheetOpenClose("reduced-sheet")
         dock("top")
         tapAndDismiss("reduced-top", edge = "top", keyboard = true)
         dock("bottom")
@@ -307,6 +324,73 @@ abstract class FakeboxMorphDemoBase(
         finding("  $how; phase ${phaseNow()}; ${FakeboxMorph.describe(closing)}")
         check(scene, "the dismissal brought the field home", (close?.ok ?: true) && rested && !urlbarOpen(), "at rest $rested, bar open ${urlbarOpen()}")
         judge(scene, closing, reducedRun = reduced, g = g, opening = false)
+    }
+
+    /**
+     * The menu sheet under reduced motion (§11.3, no transition): a real finger on the bar's Menu
+     * button – the sheet spring jumps the sheet to its detent and the chassis fades it and its
+     * scrim in over 120 ms where it stands (`BottomSheet`, main.css's `.zen-sheet-detents` rule),
+     * the page under it neither receding (the recede's gain is 0) nor moving – and a finger on
+     * the scrim above it takes it down the same way: the fade out, then the jump off and the
+     * unmount. Judged for its place (no frame at a pose before the jump: the stale geometry a
+     * shortened transition on the written transform drew), its fade (120 ms, over more than one
+     * frame), the page's geometry (steady, visible, unscaled) and what the stylesheet declares
+     * on the frame's elements (no shortened duration left; opacity alone at 120 ms).
+     */
+    private fun sheetOpenClose(scene: String) {
+        section("$scene: the menu sheet opened by a finger on Menu and closed by a finger on its scrim, under reduced motion")
+        settleAtRest()
+        startSampling()
+        tapMenuButton()
+        val up = awaitSheet(up = true, timeoutMs = 6_000)
+        SystemClock.sleep(900)
+        shot("$scene-open")
+        val opening = stopSampling("$scene-opening")
+        val stood = snapshot()
+        finding("  Menu tapped; sheet up $up at ${stood.optJSONObject("sl")?.let { box(it) }} (opacity ${"%.2f".format(stood.optDouble("so"))}); ${FakeboxMorph.describe(opening)}")
+        if (!up) touchFault("the touch on Menu did not bring the sheet up ($scene)")
+        judgeSheet(scene, opening, opening = true)
+
+        startSampling()
+        val scrim = tapSheetScrim(stood)
+        if (scrim == null) back()
+        val down = awaitSheet(up = false, timeoutMs = 6_000)
+        SystemClock.sleep(700)
+        shot("$scene-closed")
+        val closing = stopSampling("$scene-closing")
+        finding("  ${scrim?.let { "scrim tapped at $it" } ?: "no sheet box to aim beside: a back instead"}; sheet gone $down; ${FakeboxMorph.describe(closing)}")
+        check(scene, "the sheet went down and left the DOM", down, "a sheet layer in the DOM: ${!down}")
+        judgeSheet(scene, closing, opening = false)
+    }
+
+    /** A real finger on the sheet's scrim, midway between the frame's top and the sheet's top edge; null with no sheet box. */
+    private fun tapSheetScrim(stood: JSONObject): PointF? {
+        val sheet = stood.optJSONObject("sl")?.let { box(it) } ?: return null
+        val frameTop = readGeometry().optDouble("frameTop", 0.0).toFloat()
+        if (sheet.y - frameTop < 48f) return null
+        val p = PointF(sheet.cx * density, (frameTop + sheet.y) / 2 * density)
+        Finger().tap(p.x, p.y)
+        return p
+    }
+
+    private fun awaitSheet(up: Boolean, timeoutMs: Long): Boolean = awaitChrome(
+        if (up) "(function(){var s=document.querySelector('[data-sheet-layer] .zen-sheet-detents');return !!s&&parseFloat(getComputedStyle(s).opacity)>0.97})()"
+        else "!document.querySelector('[data-sheet-layer]')",
+        timeoutMs
+    )
+
+    /** The checks a sheet scene's frames are held to under reduced motion: the sheet's place and fade, the geometry, the page, the declarations, the bar's gate. */
+    private fun judgeSheet(scene: String, frames: List<FakeboxMorph.Frame>, opening: Boolean) {
+        if (frames.isEmpty()) {
+            fail(scene, "no frames were sampled")
+            return
+        }
+        report(scene, FakeboxMorph.sheetInPlace(frames))
+        report(scene, FakeboxMorph.sheetFade(frames, opening))
+        report(scene, FakeboxMorph.steadyGeometry(frames))
+        report(scene, FakeboxMorph.pageShows(frames))
+        report(scene, FakeboxMorph.declaredFades(frames))
+        report(scene, FakeboxMorph.barStays(frames))
     }
 
     /**
@@ -920,8 +1004,10 @@ abstract class FakeboxMorphDemoBase(
     /**
      * The checks a segment's frames are held to: one surface, no pop, the line, monotone, the
      * words' handover, the bar's gate on every segment; the landing (opening) or the return
-     * (closing); under reduced motion the fade in place instead of the line and the words.
-     * `opening` null: a sequence with both directions (the mid-flight turn).
+     * (closing); under reduced motion the fade in place instead of the line and the words, and
+     * §11.3's no-transition checks: the page visible from the commit's first frame, no frame of
+     * stale geometry, nothing shortened in the stylesheet and the kept fades opacity-only at
+     * 120 ms. `opening` null: a sequence with both directions (the mid-flight turn).
      */
     private fun judge(scene: String, frames: List<FakeboxMorph.Frame>, reducedRun: Boolean, g: FakeboxMorph.Geometry, opening: Boolean?) {
         if (frames.isEmpty()) {
@@ -932,6 +1018,9 @@ abstract class FakeboxMorphDemoBase(
         report(scene, FakeboxMorph.barStays(frames))
         if (reducedRun) {
             report(scene, FakeboxMorph.reducedFade(frames))
+            report(scene, FakeboxMorph.pageShows(frames))
+            report(scene, FakeboxMorph.steadyGeometry(frames))
+            report(scene, FakeboxMorph.declaredFades(frames))
         } else {
             report(scene, FakeboxMorph.noJump(frames))
             report(scene, FakeboxMorph.onTheLine(frames, g))
@@ -1189,6 +1278,10 @@ abstract class FakeboxMorphDemoBase(
          */
         private const val COST_WINDOW_MS = 7_000L
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
+        /** The `theme` argument: `dark`, else light (the shared script's `DEMO_THEME`). */
+        private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
+            if (it == "dark") "dark" else "light"
+        }
 
         /**
          * The chrome-side sampler: one row per animation frame while it runs, as [FakeboxMorph.parse]
@@ -1197,7 +1290,14 @@ abstract class FakeboxMorphDemoBase(
          * which are relative to the double's box; boxes are `getBoundingClientRect` in CSS px.
          * `geometry()` reads the page's rest geometry (the field's natural box with the scroll
          * folded out, the pill's slot, the frame's top edge) and the page's overflow; `state()` one
-         * reading of the machine for the driver's own steps.
+         * reading of the machine for the driver's own steps. Every row also carries, for the
+         * reduced-motion checks (§11.3, no transition): `pv`, the page not `visibility: hidden`;
+         * `cf`, the content frame's transform scale (the recede); `dc`, what the stylesheet
+         * resolves to on the page's fades, the omnibox sheet, the page, the content column, the
+         * bar, the content frame and a sheet's scrim (transition properties and durations,
+         * animation names and durations); and `sl` while a sheet is on the chassis
+         * (`[data-sheet-layer]`): the detents' box, opacity, translate-y, scale and declarations,
+         * the scrim's opacity, and the layer's pending animations.
          */
         private val SAMPLER = """
             (function(){
@@ -1227,29 +1327,58 @@ abstract class FakeboxMorphDemoBase(
               // transition of theirs still pending – no start time yet, the compositor's next frame
               // owed – is the emulator's lag, and the judge excuses the frame under reduced motion.
               var FADED = '.zen-ntp-scroll, .zen-ntp-field, .zen-ntp-fades, .zen-fakebox-layer, .zen-omnibox-sheet, .zen-omnibox-field, .zen-phone-bar';
-              var pending = function(){
+              var pendingWhere = function(hit){
                 if (!document.getAnimations) return 0;
                 var n = 0, all = document.getAnimations();
                 for (var k = 0; k < all.length; k++) {
                   var a = all[k], tg = a.pending && a.effect && a.effect.target;
-                  if (tg && tg.closest && tg.closest(FADED)) n++;
+                  if (tg && hit(tg)) n++;
                 }
                 return n;
               };
+              var pending = function(){ return pendingWhere(function(tg){ return tg.closest && tg.closest(FADED); }); };
+              // The transform's scale (x) and translate-y off the computed matrix: 1 and 0 with none.
+              var mat = function(el){
+                var t = getComputedStyle(el).transform;
+                var m = t && t !== 'none' ? t.match(/matrix(3d)?\((.+)\)/) : null;
+                if (!m) return { s: 1, y: 0 };
+                var v = m[2].split(',').map(parseFloat);
+                return m[1] ? { s: r2(v[0]), y: r2(v[13]) } : { s: r2(v[0]), y: r2(v[5]) };
+              };
+              // What the stylesheet resolves to on an element: the transition's properties and
+              // durations, the animation's names and durations (the judge's Declared; reduced
+              // motion must leave no shortened duration and only the 120 ms opacity fades).
+              var decl = function(el){ var c = getComputedStyle(el); return { tp: c.transitionProperty, td: c.transitionDuration, an: c.animationName, ad: c.animationDuration }; };
+              var DECLARED = { fades: '.zen-ntp-fades', omnibox: '.zen-omnibox-sheet', page: '.zen-ntp', column: '.zen-content-column', bar: BAR, frame: '.zen-content-frame', scrim: '.zen-sheet-scrim' };
               var frames = [], start = 0, raf = 0;
               var sample = function(now){
                 var root = document.documentElement, rs = getComputedStyle(root);
                 var fm = S('fakebox-morph') || {}, ui = S('ui') || {}, bh = S('bar-hide') || {};
                 var scroller = q('.zen-ntp-scroll'), dbl = q('.zen-fakebox'), pf = q('.zen-ntp-field'), of = q('.zen-omnibox-field');
                 var bar = q(BAR), pl = q(BAR + ' .zen-phone-pill'), sheet = q('.zen-omnibox-sheet');
+                var ntp = q('.zen-ntp'), cf = q('.zen-content-frame'), sl = q('[data-sheet-layer]');
                 var row = {
                   t: Math.round(now - start), ph: fm.phase || '', lk: root.dataset.fakebox || '',
                   m: num(rs.getPropertyValue('--zen-ntp-morph')), p: num(rs.getPropertyValue('--zen-ntp-pill')),
                   sc: scroller ? r2(scroller.scrollTop) : 0, uo: !!(ui.urlbar && ui.urlbar.open),
                   ib: num(rs.getPropertyValue('--zen-inset-bottom')),
                   bar: bar ? eff(bar) : -1, sh: sheet ? eff(sheet) : -1, pg: scroller ? eff(scroller) : -1,
-                  ba: !!bh.allowed, bh: num(bh.progress), pa: pending()
+                  ba: !!bh.allowed, bh: num(bh.progress), pa: pending(),
+                  // The page not `visibility: hidden` (null with no page), the content frame's scale (the recede).
+                  pv: ntp ? getComputedStyle(ntp).visibility !== 'hidden' : null, cf: cf ? mat(cf).s : 1
                 };
+                var dc = {};
+                for (var key in DECLARED) { var de = q(DECLARED[key]); if (de) dc[key] = decl(de); }
+                row.dc = dc;
+                if (sl) {
+                  // The sheet chassis (BottomSheet): the detents' box, opacity, transform and declarations, the scrim's opacity.
+                  var det = q('.zen-sheet-detents', sl), scr = q('.zen-sheet-scrim', sl);
+                  if (det) {
+                    var tm = mat(det);
+                    row.sl = { b: box(det), o: eff(det), y: tm.y, s: tm.s, so: scr ? own(scr) : 0, dc: decl(det),
+                      pa: pendingWhere(function(tg){ return sl.contains(tg); }) };
+                  }
+                }
                 if (dbl) {
                   var fc = q('.zen-fakebox-field .zen-fakebox-content', dbl), fld = q('.zen-fakebox-field', dbl), om = q('.zen-fakebox-omni', dbl);
                   row.d = { b: box(dbl), r: num(getComputedStyle(dbl).borderTopLeftRadius), l: eff(dbl),
@@ -1285,10 +1414,12 @@ abstract class FakeboxMorphDemoBase(
                 state: function(){
                   var fm = S('fakebox-morph') || {}, ui = S('ui') || {}, rs = getComputedStyle(document.documentElement);
                   var sc = q('.zen-ntp-scroll'), dbl = q('.zen-fakebox'), pf = q('.zen-ntp-field'), of = q('.zen-omnibox-field'), sh = q('.zen-omnibox-sheet');
+                  var det = q('[data-sheet-layer] .zen-sheet-detents');
                   return JSON.stringify({ ph: fm.phase || '', lk: document.documentElement.dataset.fakebox || '',
                     m: num(rs.getPropertyValue('--zen-ntp-morph')), p: num(rs.getPropertyValue('--zen-ntp-pill')),
                     sc: sc ? r2(sc.scrollTop) : 0, uo: !!(ui.urlbar && ui.urlbar.open), ib: num(rs.getPropertyValue('--zen-inset-bottom')),
-                    d: dbl ? box(dbl) : null, pf: pf ? box(pf) : null, pl: pill(), of: of ? box(of) : null, sh: sh ? box(sh) : null });
+                    d: dbl ? box(dbl) : null, pf: pf ? box(pf) : null, pl: pill(), of: of ? box(of) : null, sh: sh ? box(sh) : null,
+                    sl: det ? box(det) : null, so: det ? eff(det) : -1 });
                 }
               };
               return 'installed';

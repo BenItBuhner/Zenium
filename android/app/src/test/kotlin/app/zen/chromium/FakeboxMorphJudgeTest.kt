@@ -499,6 +499,178 @@ class FakeboxMorphJudgeTest {
         assertFalse(FakeboxMorph.reducedFade(moved).ok)
     }
 
+    // --- reduced motion: no transition ----------------------------------------------------------------
+
+    /** A reduced closing as the page draws it: hidden under the open omnibox, visible from the commit's first frame. */
+    private fun reducedClosing(visibleFrom: Int = 1): List<Frame> {
+        val frames = ArrayList<Frame>()
+        frames += frame(0, "open", "open", 1f, top, omniTop, omniField = OmniField(omniTop, 1f, 1f), pageField = PageField(top.rest, 0f))
+        listOf(1f, 0.6f, 0.2f).forEachIndexed { i, c ->
+            frames += frame(40 + i * 40, "closing", "closing", 0f, top, omniTop, pageField = PageField(top.rest, 1 - c), omniField = OmniField(omniTop, c, c), pill = well)
+        }
+        frames += frame(160, "rest", "", 0f, top, omniTop, pageField = PageField(top.rest, 1f), pill = well, urlbarOpen = false)
+        frames += frame(200, "rest", "", 0f, top, omniTop, pageField = PageField(top.rest, 1f), pill = well, urlbarOpen = false)
+        return frames.mapIndexed { i, f -> f.copy(pageVisible = if (i == 0) false else i >= visibleFrom) }
+    }
+
+    @Test
+    fun `the page is visible on the first frame after the commit and every frame after`() {
+        val v = FakeboxMorph.pageShows(reducedClosing())
+        assertTrue(v.detail, v.ok)
+        assertTrue(v.detail, v.detail.contains("the commit at 40 ms (open -> closing): the page visible on its first frame"))
+        // #243's run: the page still hidden for two frames past the commit (the shortened transition on visibility).
+        val late = FakeboxMorph.pageShows(reducedClosing(visibleFrom = 3))
+        assertFalse(late.detail, late.ok)
+        assertTrue(late.detail, late.detail.contains("2 frame(s) with the page hidden off the omnibox; first: frame 1 (closing, 40 ms), visible again at 120 ms (80 ms hidden)"))
+        assertTrue(late.detail, late.detail.contains("HIDDEN on its first frame"))
+        // The page hidden under the open omnibox is the design.
+        assertTrue(FakeboxMorph.pageShows(reducedClosing().map { if (it.phase == "open") it.copy(pageVisible = false) else it }).ok)
+        // An older sampler carried no flag: not judged.
+        val bare = FakeboxMorph.pageShows(reducedClosing().map { it.copy(pageVisible = null) })
+        assertTrue(bare.ok)
+        assertFalse(bare.judged)
+    }
+
+    @Test
+    fun `steady geometry holds every drawn box frame to frame, the keyboard's inset excused, the frame unscaled`() {
+        val frames = reducedOpening(listOf(0.3f, 0.7f, 1f))
+        val v = FakeboxMorph.steadyGeometry(frames)
+        assertTrue(v.detail, v.ok)
+        assertTrue(v.detail, v.detail.contains("the content frame at scale 1 on every frame"))
+        // The omnibox's field drawn 30 px higher for one frame with nothing else changed: a stale frame.
+        val stale = spoil(frames, 2) { it.with(omniField = OmniField(omniTop.copy(y = omniTop.y + 30f), it.omniField!!.backdrop, it.omniField.content)) }
+        val caught = FakeboxMorph.steadyGeometry(stale)
+        assertFalse(caught.detail, caught.ok)
+        assertTrue(caught.detail, caught.detail.contains("the omnibox's field drawn at"))
+        assertTrue(caught.detail, caught.detail.contains("with the keyboard's inset unchanged"))
+        // The same move on the frame the keyboard's inset changed is the target's ride, not a fault.
+        val keyboard = stale.mapIndexed { i, f -> if (i >= 2) f.copy(insetBottom = 300f) else f }
+        val excused = FakeboxMorph.steadyGeometry(keyboard)
+        assertTrue(excused.detail, excused.ok)
+        assertTrue(excused.detail, excused.detail.contains("moved with the keyboard's inset"))
+        // The page receding under reduced motion (the gain not 0) is a fault.
+        val receded = FakeboxMorph.steadyGeometry(spoil(frames, 3) { it.copy(frameScale = 0.97f) })
+        assertFalse(receded.detail, receded.ok)
+        assertTrue(receded.detail, receded.detail.contains("the page recedes under reduced motion"))
+    }
+
+    private fun declared(tp: String, td: String, an: String = "none", ad: String = "0s") = FakeboxMorph.Declared(
+        transitionProperties = tp.split(",").map { it.trim() },
+        transitionMs = FakeboxMorph.parseTimes(td),
+        animationNames = an.split(",").map { it.trim() },
+        animationMs = FakeboxMorph.parseTimes(ad)
+    )
+
+    @Test
+    fun `the declarations leave nothing shortened and keep only the opacity fades at 120 ms`() {
+        val kept = mapOf(
+            "fades" to declared("opacity", "0.12s"),
+            "omnibox" to declared("none", "0s", an = "zen-fade", ad = "0.12s"),
+            "page" to declared("none", "0.2s"),
+            "frame" to declared("none", "0s")
+        )
+        val frames = reducedOpening(listOf(0.3f, 0.7f, 1f)).map { it.copy(declared = kept) }
+        val v = FakeboxMorph.declaredFades(frames)
+        assertTrue(v.detail, v.ok)
+        assertTrue(v.detail, v.detail.contains("4 element(s)"))
+        assertTrue(v.detail, v.detail.contains("fades: transition opacity 120.0 ms"))
+        assertTrue(v.detail, v.detail.contains("omnibox: animation zen-fade 120.0 ms"))
+        // The old rule: every duration 0.01 ms (`1e-05s` as the computed style serialises it).
+        val old = FakeboxMorph.declaredFades(frames.map { it.copy(declared = mapOf("page" to declared("all", "1e-05s", an = "none", ad = "1e-05s"))) })
+        assertFalse(old.detail, old.ok)
+        assertTrue(old.detail, old.detail.contains("shortened, not removed"))
+        // A transition that still names transform, an animation that is not a fade, a fade at the wrong length.
+        assertTrue(FakeboxMorph.declaredFades(frames.map { it.copy(declared = mapOf("column" to declared("transform, opacity", "0.12s, 0.12s"))) }).detail.contains("transitions transform, opacity"))
+        assertTrue(FakeboxMorph.declaredFades(frames.map { it.copy(declared = mapOf("bar" to declared("none", "0s", an = "zen-pop", ad = "0.12s"))) }).detail.contains("animates zen-pop"))
+        assertFalse(FakeboxMorph.declaredFades(frames.map { it.copy(declared = mapOf("fades" to declared("opacity", "0.2s"))) }).ok)
+        // The sheet's declaration rides with its layer.
+        val sheet = FakeboxMorph.SheetLayer(Box(0f, 500f, 411f, 300f), 1f, 0f, 1f, 0.4f, declared("opacity", "0.12s"), 0)
+        val withSheet = FakeboxMorph.declaredFades(frames.map { it.copy(declared = emptyMap(), sheetLayer = sheet) })
+        assertTrue(withSheet.detail, withSheet.ok)
+        assertTrue(withSheet.detail, withSheet.detail.contains("sheet: transition opacity 120.0 ms"))
+        // Nothing carried: not judged.
+        val bare = FakeboxMorph.declaredFades(frames.map { it.copy(declared = emptyMap()) })
+        assertTrue(bare.ok)
+        assertFalse(bare.judged)
+    }
+
+    private val sheetBox = Box(0f, 520f, 411f, 300f)
+
+    private fun sheetFrame(t: Int, opacity: Float?, box: Box = sheetBox, translateY: Float = 0f, scale: Float = 1f, pending: Int = 0): Frame =
+        frame(t, "rest", "", 0f, bottom, omniBottom, pageField = PageField(bottom.rest, 1f), pill = well, urlbarOpen = false).copy(
+            pageVisible = true,
+            sheetLayer = opacity?.let { FakeboxMorph.SheetLayer(box, it, translateY, scale, it * 0.4f, declared("opacity", "0.12s"), pending) }
+        )
+
+    /** The menu sheet under reduced motion: mounted held at 0, the spring's jump, the 120 ms fade in. */
+    private fun sheetOpening(opacities: List<Float> = listOf(0.3f, 0.7f, 1f, 1f), pending: Int = 0): List<Frame> {
+        val frames = ArrayList<Frame>()
+        frames += sheetFrame(0, null)
+        frames += sheetFrame(40, 0f)
+        opacities.forEachIndexed { i, o -> frames += sheetFrame(80 + i * 40, o, pending = pending) }
+        return frames
+    }
+
+    /** Its departure: the fade out, then the jump off and the unmount. */
+    private fun sheetClosing(opacities: List<Float> = listOf(1f, 0.6f, 0.2f)): List<Frame> {
+        val frames = ArrayList<Frame>()
+        opacities.forEachIndexed { i, o -> frames += sheetFrame(i * 40, o) }
+        frames += sheetFrame(opacities.size * 40, null)
+        frames += sheetFrame(opacities.size * 40 + 40, null)
+        return frames
+    }
+
+    @Test
+    fun `the sheet stands where the spring jumped it on every drawn frame`() {
+        val v = FakeboxMorph.sheetInPlace(sheetOpening())
+        assertTrue(v.detail, v.ok)
+        assertTrue(v.detail, v.detail.contains("4 drawn frame(s)"))
+        // A frame drawn at the pose before the jump (the sheet still low) is the stale frame.
+        val stale = FakeboxMorph.sheetInPlace(spoil(sheetOpening(), 2) { it.copy(sheetLayer = it.sheetLayer!!.copy(box = sheetBox.copy(y = sheetBox.y + 120f), translateY = 120f)) })
+        assertFalse(stale.detail, stale.ok)
+        assertTrue(stale.detail, stale.detail.contains("its first drawn frame had"))
+        // A sheet receded (scaled) under reduced motion is a fault; one never drawn is a fault.
+        assertFalse(FakeboxMorph.sheetInPlace(spoil(sheetOpening(), 3) { it.copy(sheetLayer = it.sheetLayer!!.copy(scale = 0.97f)) }).ok)
+        assertFalse(FakeboxMorph.sheetInPlace(sheetOpening(listOf(0f, 0f))).ok)
+        assertTrue(FakeboxMorph.steadyGeometry(sheetOpening()).ok)
+        assertFalse(FakeboxMorph.steadyGeometry(spoil(sheetOpening(), 3) { it.copy(sheetLayer = it.sheetLayer!!.copy(box = sheetBox.copy(h = 340f))) }).ok)
+    }
+
+    @Test
+    fun `the sheet fades in and out over more than one frame within the window`() {
+        val fadeIn = FakeboxMorph.sheetFade(sheetOpening(), opening = true)
+        assertTrue(fadeIn.detail, fadeIn.ok)
+        assertTrue(fadeIn.judged)
+        assertTrue(fadeIn.detail, fadeIn.detail.contains("faded in to 1.00, over 2 part-way frames (40 ms)"))
+        val fadeOut = FakeboxMorph.sheetFade(sheetClosing(), opening = false)
+        assertTrue(fadeOut.detail, fadeOut.ok)
+        assertTrue(fadeOut.detail, fadeOut.detail.contains("faded out and left the DOM, over 2 part-way frames (40 ms)"))
+        // One frame caught part way is a fade seen once, not one "over 1 frame (0 ms)".
+        val once = FakeboxMorph.sheetFade(sheetOpening(listOf(0.46f, 1f, 1f)), opening = true)
+        assertTrue(once.detail, once.ok)
+        assertTrue(once.detail, once.detail.contains("faded in to 1.00, one frame caught part way (at 0.46), the scrim at 0.40"))
+        // A cut 0 -> 1 between two frames 40 ms apart: no fade.
+        val cut = FakeboxMorph.sheetFade(sheetOpening(listOf(1f, 1f)), opening = true)
+        assertFalse(cut.detail, cut.ok)
+        assertTrue(cut.detail, cut.detail.contains("cut 0 -> 1"))
+        // The same step across a gap wider than the fade, or with the fade pending on the compositor: not judged.
+        val wide = FakeboxMorph.sheetFade(sheetOpening(listOf(1f, 1f)).map { if (it.t >= 80) it.copy(t = it.t + 200) else it }, opening = true)
+        assertTrue(wide.detail, wide.ok)
+        assertFalse(wide.judged)
+        val pending = FakeboxMorph.sheetFade(sheetOpening(listOf(1f, 1f), pending = 2), opening = true)
+        assertTrue(pending.detail, pending.ok)
+        assertFalse(pending.judged)
+        assertTrue(pending.detail, pending.detail.contains("pending on the compositor"))
+        // A fade that runs the wrong way, one that never arrives, one that overstays the window.
+        assertFalse(FakeboxMorph.sheetFade(sheetOpening(listOf(0.7f, 0.3f, 1f, 1f)), opening = true).ok)
+        assertFalse(FakeboxMorph.sheetFade(sheetOpening(listOf(0.3f, 0.7f, 0.8f)), opening = true).ok)
+        val slow = FakeboxMorph.sheetFade(sheetOpening(listOf(0.1f, 0.3f, 0.5f, 0.7f, 0.9f, 1f)).mapIndexed { i, f -> if (i >= 2) f.copy(t = f.t + i * 150) else f }, opening = true)
+        assertFalse(slow.detail, slow.ok)
+        assertTrue(slow.detail, slow.detail.contains("expected"))
+        // A closing that leaves the sheet in the DOM at 1 never faded.
+        assertFalse(FakeboxMorph.sheetFade(listOf(sheetFrame(0, 1f), sheetFrame(40, 1f), sheetFrame(400, 1f)), opening = false).ok)
+    }
+
     // --- the bar's hide, the end state, the wire ----------------------------------------------------
 
     @Test
@@ -659,5 +831,50 @@ class FakeboxMorphJudgeTest {
         val pulled = FakeboxMorph.parse(JSONObject("""{"t":0,"ph":"open","lk":"pulled","m":0.6,"p":0,"sc":0,"uo":true,"ib":0}"""))
         assertTrue(pulled.pulled)
         assertTrue(pulled.inFlight)
+        assertEquals(null, bare.pageVisible)
+        assertEquals(1f, bare.frameScale, 1e-4f)
+        assertTrue(bare.declared.isEmpty())
+        assertEquals(null, bare.sheetLayer)
+    }
+
+    @Test
+    fun `the reduced-motion keys parse from the sampler's row`() {
+        val row = JSONObject(
+            """{"t":120,"ph":"rest","lk":"","m":0,"p":0,"sc":0,"uo":false,"ib":0,"pv":true,"cf":0.97,
+               "dc":{"fades":{"tp":"opacity","td":"0.12s","an":"none","ad":"0s"},
+                     "page":{"tp":"none","td":"1e-05s","an":"none","ad":"1e-05s"},
+                     "omnibox":{"tp":"none","td":"0s","an":"zen-fade, zen-fade-out","ad":"0.12s, 0.12s"}},
+               "sl":{"b":{"x":0,"y":520.5,"w":411,"h":300},"o":0.42,"y":0,"s":1,"so":0.17,
+                     "dc":{"tp":"opacity","td":"0.12s","an":"none","ad":"0s"},"pa":1}}"""
+        )
+        val f = FakeboxMorph.parse(row)
+        assertEquals(true, f.pageVisible)
+        assertEquals(0.97f, f.frameScale, 1e-4f)
+        val fades = f.declared.getValue("fades")
+        assertTrue(fades.transitions)
+        assertFalse(fades.animates)
+        assertEquals(listOf("opacity"), fades.transitionProperties)
+        assertEquals(120f, fades.transitionMs.single(), 1e-3f)
+        val page = f.declared.getValue("page")
+        assertFalse(page.transitions)
+        assertEquals(0.01f, page.transitionMs.single(), 1e-5f)
+        assertEquals(0.01f, page.animationMs.single(), 1e-5f)
+        val omnibox = f.declared.getValue("omnibox")
+        assertTrue(omnibox.animates)
+        assertEquals(listOf("zen-fade", "zen-fade-out"), omnibox.animationNames)
+        assertEquals(listOf(120f, 120f), omnibox.animationMs)
+        val sheet = f.sheetLayer!!
+        assertEquals(Box(0f, 520.5f, 411f, 300f), sheet.box)
+        assertEquals(0.42f, sheet.opacity, 1e-4f)
+        assertTrue(sheet.drawn)
+        assertEquals(0.17f, sheet.scrim, 1e-4f)
+        assertEquals(1, sheet.pending)
+        assertTrue(sheet.declared!!.transitions)
+        assertEquals(listOf(0f, 120f), FakeboxMorph.parseTimes("0s, 0.12s"))
+        assertEquals(listOf(40f), FakeboxMorph.parseTimes("40ms"))
+        val hidden = FakeboxMorph.parse(JSONObject("""{"t":0,"ph":"open","lk":"open","m":1,"p":0,"sc":0,"uo":true,"ib":0,"pv":false}"""))
+        assertEquals(false, hidden.pageVisible)
+        val noPage = FakeboxMorph.parse(JSONObject("""{"t":0,"ph":"rest","lk":"","m":0,"p":0,"sc":0,"uo":false,"ib":0,"pv":null}"""))
+        assertEquals(null, noPage.pageVisible)
     }
 }

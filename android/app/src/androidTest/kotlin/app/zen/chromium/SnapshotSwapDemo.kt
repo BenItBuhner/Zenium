@@ -112,14 +112,23 @@ class SnapshotSwapDemo : DemoHarness("snapshot-demo-state.json", "snapshot", "sn
     private fun tapSiteIcon(f: Finger) = siteIcon().let { f.tap(it.x, it.y) }
 
     /**
-     * The site icon sits at the start of the pill; the accessibility tree knows it by its label.
-     * Looked up before the clock starts: on the emulator the tree can trail the screen by seconds.
+     * The site-information glyph at the start of the pill – the sheet's one opener (v2 §9.29) –
+     * looked up before the clock starts (on the emulator the tree can trail the screen by
+     * seconds) as the pill's own clickable node of that label, in the pill's row
+     * ([pillControl]): the plain label walk answers a page's own "Site information" text first
+     * when the page carries those words (PERF-4's recede runs), and the finger lands on whatever
+     * that node's clipped bounds say. What both lookups answer goes into the findings, so a
+     * run's record says which node was aimed at.
      */
-    private fun siteIcon(): PointF =
-        waitFor(SITE_ICON_LABEL, 4_000)?.let { PointF(it.exactCenterX(), it.exactCenterY()) } ?: run {
-            Log.w(tag, "site icon not in the accessibility tree; tapping the start of the pill")
+    private fun siteIcon(): PointF {
+        val node = pillControl(SITE_ICON_LABEL)
+        val plain = findNode { it == SITE_ICON_LABEL }
+        findings.append("site icon: ${describeNode(node)}; the plain label walk answers ${describeNode(plain)}\n")
+        return node?.let { steadyBounds(it) }?.let { touchPoint(it) } ?: run {
+            Log.w(tag, "site icon not in the pill's row of the accessibility tree; tapping the start of the pill")
             PointF(pill.left + 22 * density, pillY)
         }
+    }
 
     private fun menuButton(): PointF =
         waitFor(MENU_LABEL, 4_000)?.let { PointF(it.exactCenterX(), it.exactCenterY()) } ?: run {
