@@ -238,38 +238,49 @@ function containerRow(remove: ActionRow): ItemRow {
 /**
  * The page's stack as `useSheetStack` keeps it: a row's press pushes a request, `closeTop`
  * drops the last, and a page row stands before the host in the document as the thing that
- * opened the first dialog.
+ * opened the first dialog (its press opens `opens`). `[data-cover]` around the host stands for
+ * an `inert` the stack does not manage.
  */
 function Stack({
   groups,
   initial,
-  onRequests
+  opens
 }: {
   groups: readonly RowGroup[]
   initial: readonly SheetRequest[]
-  onRequests?: (requests: readonly SheetRequest[]) => void
+  opens?: SheetRequest
 }): JSX.Element {
   const [requests, setRequests] = useState<readonly SheetRequest[]>(initial)
-  const update = (next: readonly SheetRequest[]): void => {
-    setRequests(next)
-    onRequests?.(next)
-  }
   return (
     <>
-      <button type="button" data-page-row>
+      <button
+        type="button"
+        data-page-row
+        onClick={() => opens && setRequests([...requests, opens])}
+      >
         Personal
       </button>
-      <FrameDialogHost>
-        <DialogStack
-          requests={requests}
-          groups={groups}
-          ctx={{ open: (request) => update([...requests, request]) }}
-          closeTop={() => update(requests.slice(0, -1))}
-        />
-      </FrameDialogHost>
+      <div data-cover>
+        <FrameDialogHost>
+          <DialogStack
+            requests={requests}
+            groups={groups}
+            ctx={{ open: (request) => setRequests([...requests, request]) }}
+            closeTop={() => setRequests(requests.slice(0, -1))}
+          />
+        </FrameDialogHost>
+      </div>
     </>
   )
 }
+
+const escape = (): void =>
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  })
+
+/** The mutation observers' callbacks run as microtasks; let them. */
+const tick = (): Promise<void> => act(async () => undefined)
 
 /** A Tab press on `from`; the event comes back, `defaultPrevented` when the dialog moved the focus itself. */
 function tab(from: Element, shift = false): KeyboardEvent {
@@ -344,5 +355,87 @@ describe('a prompt holds the focus itself as it opens (§9.22, §9.23)', () => {
         '[data-dialog="item:container:personal"] [data-row="container-rename:personal"]'
       )
     )
+  })
+})
+
+/**
+ * A page row opens the item dialog, its Remove row opens the prompt over it: two dialogs on the
+ * stack, the lower inert. The way back is what the tests are about.
+ */
+function stackTwo(): {
+  h: HTMLElement
+  pageRow: HTMLElement
+  removeRow: HTMLElement
+} {
+  const remove = deleteRow(() => undefined)
+  const item = containerRow(remove)
+  const groups: RowGroup[] = [{ id: 'containers', heading: 'Containers', rows: [item] }]
+  const h = render(<Stack groups={groups} initial={[]} opens={{ kind: 'item', rowId: item.id }} />)
+  const pageRow = h.querySelector<HTMLElement>('[data-page-row]')!
+  act(() => pageRow.focus())
+  act(() => pageRow.click())
+  const itemDialog = h.querySelector<HTMLElement>('[data-dialog="item:container:personal"]')!
+  expect(itemDialog).not.toBeNull()
+  const removeRow = itemDialog.querySelector<HTMLElement>('[data-row="container-delete:personal"]')!
+  act(() => removeRow.focus())
+  act(() => removeRow.click())
+  const prompt = h.querySelector<HTMLElement>('[data-dialog="confirm:container-delete:personal"]')!
+  expect(prompt).not.toBeNull()
+  expect(document.activeElement).toBe(prompt)
+  expect(itemDialog.hasAttribute('inert')).toBe(true)
+  return { h, pageRow, removeRow }
+}
+
+/** The prompt while it is open: the host keeps a closed panel in the slot, `[data-leaving]`, for its way out. */
+const LIVE_PROMPT = '[data-dialog^="confirm:"]:not([data-leaving])'
+
+describe('Escape gives the focus back down the stack one hop at a time (§9.22, §9.24)', () => {
+  it('two stacked dialogs, Escape twice: the prompt returns to the row that opened it in the item dialog, the item dialog to the page row', () => {
+    const { h, pageRow, removeRow } = stackTwo()
+    // The first Escape closes the prompt alone; the item dialog is live again and the control
+    // that opened the prompt has the focus – not `body`, not the page row.
+    escape()
+    expect(h.querySelector(LIVE_PROMPT)).toBeNull()
+    const itemDialog = h.querySelector<HTMLElement>('[data-dialog="item:container:personal"]')!
+    expect(itemDialog).not.toBeNull()
+    expect(itemDialog.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement).toBe(removeRow)
+    // The second closes the item dialog: the row that opened it on the page.
+    escape()
+    expect(h.querySelector('[data-dialog]:not([data-leaving])')).toBeNull()
+    expect(document.activeElement).toBe(pageRow)
+  })
+
+  it('a return the lower dialog’s inert still refuses waits for that inert to go, not one fixed frame', async () => {
+    const { h, removeRow } = stackTwo()
+    // A cover the stack does not drop with the prompt (a dialog's own state, let go of a render
+    // later): the control refuses the focus as the prompt's cleanup runs, and it falls to `body`.
+    const cover = h.querySelector<HTMLElement>('[data-cover]')!
+    cover.setAttribute('inert', '')
+    escape()
+    expect(h.querySelector(LIVE_PROMPT)).toBeNull()
+    expect(document.activeElement).toBe(document.body)
+    // Nothing happens while the cover stands.
+    await tick()
+    expect(document.activeElement).toBe(document.body)
+    // As the inert goes the control takes the focus.
+    cover.removeAttribute('inert')
+    await tick()
+    expect(document.activeElement).toBe(removeRow)
+  })
+
+  it('leaves the focus where something else put it meanwhile', async () => {
+    const { h } = stackTwo()
+    const cover = h.querySelector<HTMLElement>('[data-cover]')!
+    cover.setAttribute('inert', '')
+    escape()
+    expect(document.activeElement).toBe(document.body)
+    const other = document.createElement('button')
+    document.body.appendChild(other)
+    act(() => other.focus())
+    cover.removeAttribute('inert')
+    await tick()
+    expect(document.activeElement).toBe(other)
+    other.remove()
   })
 })

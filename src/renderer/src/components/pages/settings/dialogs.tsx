@@ -1,6 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { wrapTab } from '@renderer/lib/popover'
+import { returnFocusTo, wrapTab } from '@renderer/lib/popover'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { V2TitleBlock } from '../../extensions/v2'
@@ -34,8 +34,10 @@ import { SheetDismissContext, type SheetDismiss } from './sheetContext'
  * field of a form, the first row of an item's rows, and for a prompt the container itself (a
  * title-and-notice panel holds the focus; landing on Cancel, the way out, is the failure §9.22
  * names) – Tab wraps inside it, from the container too, Escape and the scrim close it, and when
- * it leaves the focus returns to the control that opened it. Titles are the rows' own and
- * sentence case (§9.1).
+ * it leaves the focus returns to the control that opened it: the page's row, or the lower
+ * dialog's control for one that opened over a dialog (§9.24) – one hop down the stack at a
+ * time, and a return the lower dialog's `inert` still refuses waits for that `inert` to go.
+ * Titles are the rows' own and sentence case (§9.1).
  */
 
 /** Every open dialog, lowest first; each resolves its row in `groups`. */
@@ -205,8 +207,9 @@ function HostedDialog({
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [under, onClose])
-  // Focus in as the dialog opens (§9.22), and back to the opener as it leaves (§9.24) – unless
-  // the user has already put it somewhere else outside the dialog host.
+  // Focus in as the dialog opens (§9.22), and back to the opener as it leaves (§9.24) – the
+  // page's control, or the lower dialog's for a dialog that opened over one – unless the user
+  // has already put it somewhere else outside the dialog host.
   const initialRef = useRef(initial)
   useLayoutEffect(() => {
     initialRef.current = initial
@@ -214,15 +217,21 @@ function HostedDialog({
   useEffect(() => {
     const root = ref.current
     if (!root) return
+    // The opener is whatever held the focus as this dialog came: a row of the page, or – for a
+    // prompt over an item dialog – the item dialog's control, so the return goes one hop down
+    // the stack (the prompt to that control, the item dialog in its turn to its row), never
+    // past the lower dialog to the page.
     const active = document.activeElement
-    const opener =
-      active instanceof HTMLElement && !active.closest('.zen-frame-dialogs') ? active : null
+    const opener = active instanceof HTMLElement && !root.contains(active) ? active : null
     const target = initialRef.current?.(root) ?? root.querySelector<HTMLElement>(TABBABLE) ?? root
     target.focus({ preventScroll: true })
     return () => {
       const now = document.activeElement
       const lost = !now || now === document.body || now.closest('.zen-frame-dialogs') !== null
-      if (lost && opener?.isConnected) opener.focus({ preventScroll: true })
+      // The stack drops the lower dialog's `inert` in the commit that removes this one, so the
+      // control takes the focus at once; a control still under an `inert` as this runs (a cover
+      // its owner lets go of a render later) takes it as that `inert` goes (`returnFocusTo`).
+      if (lost && opener?.isConnected) returnFocusTo(opener)
     }
   }, [])
   return (
