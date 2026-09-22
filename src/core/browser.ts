@@ -2,6 +2,7 @@ import type {
   AppWindowInfo,
   BookmarkImportResult,
   BookmarkNode,
+  ColorScheme,
   CommandArgs,
   CommandName,
   CommandResult,
@@ -65,6 +66,8 @@ import { PrintService } from './print'
 import { PdfViewerService } from './pdf'
 import { PageControls } from './pageControls'
 import { SpellcheckService } from './spellcheck'
+import { LanguagesService } from './languages'
+import { PageFontsService } from './pageFonts'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
@@ -92,10 +95,10 @@ import {
   createSpace,
   cycleSpace,
   deleteFolder,
-  folderTabs,
   getSpace,
   nextFolderColor,
   orderedTabsForSpace,
+  regularFolderTabs,
   reorderContainer,
   reorderSpace,
   sectionIndexOf,
@@ -147,6 +150,8 @@ import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
+import { sanitizeFontSettings } from '../shared/fonts'
+import { sanitizeLanguages } from '../shared/languages'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -285,6 +290,12 @@ export class Browser {
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
   readonly spellcheck: SpellcheckService
+  /** The preferred languages: the pages' `Accept-Language`, translate's and spellcheck's defaults (CT-41). */
+  readonly languages: LanguagesService
+  /** The page fonts and the minimum font size in every page view (CT-25). */
+  readonly pageFonts: PageFontsService
+  /** The theme source last handed to the host (`ThemeHost.setSource`), so a sync merge's change reaches it too. */
+  private themeSource: ColorScheme | null = null
   /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
   readonly find = new FindMemory()
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
@@ -332,6 +343,8 @@ export class Browser {
       platform.info.version
     )
     this.state.liveWindows = () => this.allWindows()
+    // A profile without a preferred languages list starts from the OS's languages (CT-41).
+    this.state.systemLocales = platform.info.locales ?? []
     this.state.load()
     const performance = platform.performance
     this.background = new BackgroundWork({
@@ -340,8 +353,10 @@ export class Browser {
     })
     if (platform.theme) {
       const theme = platform.theme
-      theme.setSource(this.state.settings.colorScheme)
-      this.state.systemDark = theme.systemDark()
+      // Pages follow Zenium's appearance (CT-23): the engine's theme source is the setting, so
+      // every page's `prefers-color-scheme` reads Light / Dark / the OS with the chrome
+      // (`setThemeSource` also takes the engine's reading into `systemDark`).
+      this.setThemeSource(this.state.settings.colorScheme)
       theme.onChanged(() => {
         const dark = theme.systemDark()
         if (dark === this.state.systemDark) return
@@ -425,6 +440,8 @@ export class Browser {
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.spellcheck = new SpellcheckService(this)
+    this.languages = new LanguagesService(this)
+    this.pageFonts = new PageFontsService(this)
     this.print = new PrintService(this)
     this.pdf = new PdfViewerService(this)
     this.privacy = new PrivacyService(this)
@@ -998,6 +1015,8 @@ export class Browser {
         win.updateTitle()
       }
       this.syncCaptionColors()
+      // A sync merge writes the appearance without `updateSettings`: the pages follow it too.
+      this.setThemeSource(this.state.settings.colorScheme)
       // The table is rebuilt (a new array) when the preset or the overrides change, from
       // Settings or from another device: hosts with their own copy get it then.
       if (this.state.shortcuts !== this.syncedShortcuts) this.syncShortcuts()
@@ -1013,6 +1032,10 @@ export class Browser {
     this.protection.start()
     // A clear on exit the last close left owed runs now, off the boot path.
     this.siteData.start()
+    // The pages' languages and fonts reach the host before the first page view is made, so the
+    // restored tabs' first requests and layouts carry the settings (CT-41, CT-25).
+    this.languages.start()
+    this.pageFonts.start()
     // With "restore previous session" off, the last session's tabs are forgotten at once, whether
     // or not a window opens now.
     if (!this.state.settings.restoreSession) this.state.forgetSession()
@@ -1516,7 +1539,9 @@ export class Browser {
   newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
     const folder = this.state.model.folders[folderId]
     if (!folder) throw new Error('Folder not found')
-    const members = folderTabs(this.state.model, folderId)
+    // The group's members are its regular ones: a private tab in it lends neither its place
+    // nor its container to a tab the group's menu makes.
+    const members = regularFolderTabs(this.state.model, folderId)
     const last = members[members.length - 1]
     const created = this.tabs.createTab(
       {
@@ -1552,8 +1577,78 @@ export class Browser {
   deleteFolder(folderId: string, unpack: boolean): void {
     this.liveFolders.onFolderDeleted(folderId)
     const closed = deleteFolder(this.state.model, folderId, unpack)
-    for (const id of closed) this.tabs.closeTab(id, true)
+    // A private tab in the group was none of its tabs on the surface that deletes it: it is
+    // loose now (the model ungrouped it) and stays open, as the group's regular tabs close.
+    for (const id of closed) {
+      const tab = this.tabs.tab(id)
+      if (tab && !this.tabs.isPrivate(tab)) this.tabs.closeTab(id, true)
+    }
     this.state.commit()
+  }
+
+  /**
+   * Chrome's "Close group" where groups are saved (TAB-16): the tabs close, the group stays as a
+   * saved one with their pages (`Folder.savedTabs`), listed in the Tab groups pane until it is
+   * opened again or deleted.
+   */
+  closeFolder(folderId: string, win: ZenWindow = this.focusedWindow()): void {
+    this.tabs.closeFolderTabs(folderId, win)
+  }
+
+  /**
+   * "Open" a saved group (TAB-16): its pages come back as tabs of the group, in the order they
+   * were kept, at the end of the space's regular tabs – unloaded but for the first, which is
+   * made active – and the group is expanded. An open group is expanded and its first member
+   * activated instead. Resolves with the tab made active, or null with nothing to open.
+   */
+  openFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string | null {
+    const m = this.state.model
+    const folder = m.folders[folderId]
+    if (!folder) return null
+    const now = Date.now()
+    // The group's live members are its regular ones: a private tab in it is not what a regular
+    // surface's row opens (`regularFolderTabs`).
+    const live = regularFolderTabs(m, folderId)
+    if (live.length > 0) {
+      folder.collapsed = false
+      folder.lastUsedAt = now
+      this.tabs.activateTab(live[0].id, win)
+      this.state.commit()
+      return live[0].id
+    }
+    const saved = folder.savedTabs ?? []
+    if (saved.length === 0) return null
+    const space = getSpace(m, folder.spaceId)
+    if (!space) return null
+    const restored: Tab[] = []
+    for (const page of saved) {
+      const last = restored[restored.length - 1]
+      const tab = this.tabs.createTab(
+        {
+          url: page.url,
+          spaceId: space.id,
+          active: false,
+          load: false,
+          // The first at the end of the space's tabs, as Chrome reopens a saved group; each
+          // next one behind the one before, so the group keeps its order.
+          index: last ? undefined : Number.MAX_SAFE_INTEGER,
+          afterTabId: last?.id,
+          containerId: space.containerId,
+          folderId
+        },
+        win
+      )
+      // The row and the card read as the page did until it loads again.
+      tab.title = page.title || tab.title
+      tab.favicon = page.favicon ?? null
+      restored.push(tab)
+    }
+    folder.savedTabs = null
+    folder.collapsed = false
+    folder.lastUsedAt = now
+    this.tabs.activateTab(restored[0].id, win)
+    this.state.commit()
+    return restored[0].id
   }
 
   /** Delete a space without asking (sync applied a deletion made elsewhere). */
@@ -2551,6 +2646,8 @@ export class Browser {
         this.createFolder(spaceId, name, icon, win, { color, rename }).id,
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
+      'folder.close': ({ folderId }, win) => this.closeFolder(folderId, win),
+      'folder.open': ({ folderId }, win) => this.openFolder(folderId, win),
       'folder.contextMenu': ({ folderId, ...anchor }, win) =>
         this.menus.showFolderContextMenu(folderId, win, anchor),
       'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),
@@ -3100,6 +3197,10 @@ export class Browser {
         ),
       'translate.selection': ({ tabId, text, target }) =>
         this.translate.translateSelection(tabId, { text, target }),
+      'translate.reader': ({ tabId, target, source }) =>
+        this.translate.translateReader(tabId, { target, source }),
+      'translate.readerShowOriginal': ({ tabId, original }) =>
+        this.translate.showReaderOriginal(tabId, original),
       'translate.setPreferences': (patch) => this.translate.setPreferences(patch),
       'translate.setLanguageRule': ({ language, rule }) =>
         this.translate.setLanguageRule(language, rule),
@@ -3126,7 +3227,7 @@ export class Browser {
         if (isPickableSearchEngine(state.searchEngines, searchEngineId))
           state.settings.searchEngineId = searchEngineId
         state.settings.colorScheme = colorScheme
-        this.platform.theme?.setSource(colorScheme)
+        this.setThemeSource(colorScheme)
         state.settings.onboardingDone = true
         for (const url of essentials) {
           const known = ONBOARDING_ESSENTIALS.find((e) => e.url === url)
@@ -3172,7 +3273,9 @@ export class Browser {
       autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
       spellcheck: JSON.stringify(s.spellcheck),
       reader: JSON.stringify(s.reader),
-      readAloud: JSON.stringify(s.readAloud)
+      readAloud: JSON.stringify(s.readAloud),
+      fonts: JSON.stringify(s.fonts),
+      languages: s.languages.join(',')
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -3243,6 +3346,13 @@ export class Browser {
           ...s.reader,
           ...(value as Partial<Settings['reader']>)
         })
+      } else if (key === 'fonts' && value && typeof value === 'object') {
+        // A one-row patch (`size: 20`) keeps the other fonts; every value is brought in range.
+        s.fonts = sanitizeFontSettings({ ...s.fonts, ...(value as Partial<Settings['fonts']>) })
+      } else if (key === 'languages') {
+        // The list whole, canonical and deduplicated; nothing valid leaves the current one
+        // standing (Chrome keeps the last language from being removed).
+        s.languages = sanitizeLanguages(value, s.languages)
       } else if (key === 'newTab' && value && typeof value === 'object') {
         // A one-section patch (`modules: { greeting: true }`) must not drop the other sections.
         const incoming = value as Partial<Settings['newTab']>
@@ -3278,7 +3388,7 @@ export class Browser {
     ) {
       this.tabs.broadcastPageFlags()
     }
-    if (before.colorScheme !== s.colorScheme) this.platform.theme?.setSource(s.colorScheme)
+    if (before.colorScheme !== s.colorScheme) this.setThemeSource(s.colorScheme)
     if (before.windowSync !== s.windowSync) {
       // Leaving "pinned only" shares every tab again; entering it keeps existing tabs shared.
       if (s.windowSync !== 'pinned')
@@ -3302,7 +3412,28 @@ export class Browser {
     if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()
     if (before.reader !== JSON.stringify(s.reader)) this.reader.onPreferencesChanged()
     if (before.readAloud !== JSON.stringify(s.readAloud)) this.readAloud.onSettingsChanged()
+    if (before.fonts !== JSON.stringify(s.fonts)) this.pageFonts.onSettingsChanged()
+    if (before.languages !== s.languages.join(',')) this.languages.onSettingsChanged()
     this.state.commit()
+  }
+
+  /**
+   * Hand the appearance to the host's engine (CT-23): `nativeTheme.themeSource` on the desktop,
+   * the app's night mode on Android, so every page's `prefers-color-scheme` follows Zenium's
+   * Light / Dark / System. Once per value: the boot, a Settings row and a sync merge all come
+   * through here, and the chrome keeps deriving its own theme from the setting (`systemDark`
+   * is read for `system` alone), so the engine's answer never feeds back into the choice.
+   *
+   * The engine's reading (`shouldUseDarkColors`) follows the source it was given – under
+   * `dark` it says dark whatever the OS does – so it is re-read here, in the same turn, and
+   * the chrome coming back to `system` reads the OS at once rather than the engine's last word
+   * (the `updated` event, which would correct it, arrives a turn later).
+   */
+  private setThemeSource(scheme: ColorScheme): void {
+    if (!this.platform.theme || this.themeSource === scheme) return
+    this.themeSource = scheme
+    this.platform.theme.setSource(scheme)
+    this.state.systemDark = this.platform.theme.systemDark()
   }
 
   /** Cycle spaces relative to a window's current one. */

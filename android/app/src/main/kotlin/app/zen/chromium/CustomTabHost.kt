@@ -36,6 +36,8 @@ class CustomTabHost(
     override val blocking = Blocking.shared(activity)
     /** And the privacy policy the browser last applied (kept on disk for a process without the core). */
     override val privacy = Privacy.shared(activity)
+    /** And the page fonts it last applied, the same way: a page here reads like the browser's (PageFonts). */
+    override val pageFonts = PageFonts.load(Storage(activity))
     override val keys = Keys()
     override val downloads = Downloads(activity, this)
     override val permissions = Permissions(this)

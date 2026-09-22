@@ -614,13 +614,17 @@ export function installReaderExtras(doc: Document): ReaderExtras | null {
   const lang = documentLanguage(doc)
   const lineFocus = new LineFocus(doc, article)
   let syllablesOn = false
+  /** Watches the article's content (below); its own marks' changes are taken off it. */
+  let content: MutationObserver | null = null
   const apply = (): void => {
     const wanted = extrasOf(root)
     lineFocus.setLines(wanted.lineFocus)
     if (wanted.syllables !== syllablesOn) {
       syllablesOn = wanted.syllables
-      if (syllablesOn) markSyllables(article, lang)
+      // The language as shown: a translated article (CT-36) is marked in its target language.
+      if (syllablesOn) markSyllables(article, documentLanguage(doc) || lang)
       else unmarkSyllables(article)
+      content?.takeRecords()
     }
   }
   const view = doc.defaultView
@@ -632,6 +636,19 @@ export function installReaderExtras(doc: Document): ReaderExtras | null {
       apply()
       if (records.some((r) => !EXTRAS_ATTRIBUTES.has(r.attributeName ?? ''))) lineFocus.relayout()
     }).observe(root, { attributes: true })
+    // The article's text changes under the extras when its translation comes in or the Show
+    // original toggle flips (CT-36, the core swapping units through `window.zenReaderShow`):
+    // the syllable marks are made again for the text now shown, in the language now shown, and
+    // the band's lines moved under it.
+    content = new view.MutationObserver(() => {
+      if (syllablesOn) {
+        unmarkSyllables(article)
+        markSyllables(article, documentLanguage(doc) || lang)
+        content?.takeRecords()
+      }
+      lineFocus.relayout()
+    })
+    content.observe(article, { childList: true, subtree: true, characterData: true })
   }
   onReadAloudSentence((range) => lineFocus.follow(range))
   apply()

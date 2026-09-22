@@ -1,0 +1,1009 @@
+{
+  "$comment": "The nightly all-drivers sweep (android-nightly-drivers.yml): every instrumentation driver under android/app/src/androidTest/kotlin/app/zen/chromium, the shard (one emulator boot) it runs on and the environment its own workflow gives it. android-nightly-drivers.mjs reads it (the matrix, the plan, the table) and android-nightly-drivers.test.mjs asserts every concrete *Demo class is either a driver here or in `skip` with a reason. Fields: id (its directory in the artifact), class / classes (the *Demo classes it covers), shard, mirrors (the workflow file[:job or input] whose environment it takes), dir (DEMO_DIR, the handshake directory), script (a wrapper instead of android-gesture-demo.sh), out (where a script with a fixed output path leaves its findings, moved into the artifact), env (script-env lines), setup (named steps the shard runs before the emulator: see the runner), needs (pin, browser-role, navigation: state the runner sets or puts back), timeout (seconds for the driver, 720 by default), estimate (minutes, for the plan), note.",
+  "shards": {
+    "phone-a": {
+      "title": "Phone A: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68
+    },
+    "phone-b": {
+      "title": "Phone B: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68
+    },
+    "phone-c": {
+      "title": "Phone C: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "note": "-camera-back emulated: the QR scan demo reads the emulated camera."
+    },
+    "phone-d": {
+      "title": "Phone D: API 34 Google APIs, pixel_6",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68
+    },
+    "api35": {
+      "title": "Phone, API 35 Google APIs, pixel_6",
+      "api-level": "35",
+      "target": "google_apis",
+      "profile": "pixel_6",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "setup": ["ffmpeg", "perfetto-python"]
+    },
+    "webview": {
+      "title": "AOSP image (-writable-system) with the Chromium snapshot WebView swapped in",
+      "api-level": "34",
+      "target": "default",
+      "profile": "pixel_6",
+      "emulator-gpu": "swiftshader_indirect",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -writable-system",
+      "display": "720x1600@280",
+      "timeout-minutes": 90,
+      "budget-minutes": 68,
+      "setup": ["webview-snapshot"],
+      "env": {
+        "WEBVIEW_APK": "artifacts/webview/SystemWebView.apk"
+      },
+      "note": "swiftshader_indirect as the AOSP jobs ask (android-private-demo.yml: swangle draws a chrome frame every 1.3-3.5 s on this image); -camera-back emulated for the fullscreen demo."
+    },
+    "tablet": {
+      "title": "Tablet: API 34 Google APIs, pixel_tablet at 1280x800@160",
+      "api-level": "34",
+      "target": "google_apis",
+      "profile": "pixel_tablet",
+      "emulator-gpu": "swangle",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel",
+      "display": "1280x800@160",
+      "timeout-minutes": 60,
+      "budget-minutes": 45
+    }
+  },
+  "drivers": [
+    {
+      "id": "gesture",
+      "class": "GestureDemo",
+      "shard": "phone-a",
+      "mirrors": "android-gesture-demo.yml",
+      "dir": "gesture-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "errors",
+      "class": "ErrorPagesDemo",
+      "shard": "phone-a",
+      "mirrors": "android-errors-demo.yml",
+      "dir": "errors-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "omnibox-polish",
+      "class": "OmniboxPolishDemo",
+      "shard": "phone-a",
+      "mirrors": "android-omnibox-polish-demo.yml:light",
+      "dir": "omnibox-polish-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 2.5,
+      "note": "The workflow runs light and dark; the nightly runs light."
+    },
+    {
+      "id": "pill-chip-fold",
+      "class": "PillChipFoldDemo",
+      "shard": "phone-a",
+      "mirrors": "android-pill-chip-fold-demo.yml",
+      "dir": "pill-chip-fold-demo",
+      "env": {
+        "DEMO_THEME": "dark"
+      },
+      "estimate": 2.5
+    },
+    {
+      "id": "settings-tab",
+      "class": "SettingsTabDemo",
+      "shard": "phone-a",
+      "mirrors": "android-settings-tab-demo.yml",
+      "dir": "settings-tab-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 2.5
+    },
+    {
+      "id": "pdf-viewer",
+      "class": "PdfViewerDemo",
+      "shard": "phone-a",
+      "mirrors": "android-pdf-viewer-demo.yml:driver=engine",
+      "dir": "pdf-viewer-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "first-tap",
+      "class": "FirstTapDemo",
+      "shard": "phone-a",
+      "mirrors": "android-overview-demo.yml:demo=first-tap",
+      "dir": "firsttap-demo",
+      "estimate": 2
+    },
+    {
+      "id": "swipe-reorder",
+      "class": "SwipeReorderDemo",
+      "shard": "phone-a",
+      "mirrors": "android-overview-demo.yml:demo=swipe-reorder",
+      "dir": "swipe-demo",
+      "estimate": 1.5
+    },
+    {
+      "id": "touchfix",
+      "class": "TouchFixDemo",
+      "shard": "phone-a",
+      "mirrors": "android-touchfix-demo.yml",
+      "dir": "touchfix-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 1.5
+    },
+    {
+      "id": "ptr",
+      "class": "PullToRefreshDemo",
+      "shard": "phone-a",
+      "mirrors": "android-ptr-demo.yml",
+      "dir": "ptr-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 3
+    },
+    {
+      "id": "bar-star-listen-on",
+      "class": "BarStarListenOnDemo",
+      "shard": "phone-a",
+      "mirrors": "android-bar-star-listen-on-demo.yml",
+      "dir": "bar-star-listen-on-demo",
+      "estimate": 3
+    },
+    {
+      "id": "sync",
+      "class": "SyncDemo",
+      "shard": "phone-a",
+      "mirrors": "android-sync-demo.yml",
+      "dir": "sync-demo",
+      "estimate": 3
+    },
+    {
+      "id": "zoom",
+      "class": "ZoomSheetDemo",
+      "shard": "phone-a",
+      "mirrors": "android-zoom-demo.yml",
+      "dir": "zoom-demo",
+      "env": {
+        "DEMO_THEME": "dark"
+      },
+      "estimate": 4
+    },
+    {
+      "id": "downloads",
+      "class": "DownloadsDemo",
+      "shard": "phone-a",
+      "mirrors": "android-downloads-demo.yml",
+      "dir": "downloads-demo",
+      "setup": ["downloads-server"],
+      "estimate": 3.5
+    },
+    {
+      "id": "firstrun",
+      "class": "FirstRunDemo",
+      "shard": "phone-a",
+      "mirrors": "android-firstrun-demo.yml",
+      "dir": "firstrun-demo",
+      "script": ".github/scripts/android-firstrun-demo.sh",
+      "out": "artifacts/android-firstrun-demo",
+      "needs": ["browser-role"],
+      "estimate": 3,
+      "note": "The wrapper enables Chrome and hands it the browser role for the choice the demo makes; the runner puts both back after."
+    },
+    {
+      "id": "text-tools",
+      "class": "TextToolsUiDemo",
+      "shard": "phone-a",
+      "mirrors": "android-text-tools-demo.yml",
+      "dir": "text-tools-demo",
+      "script": ".github/scripts/android-text-tools-demo.sh",
+      "timeout": 900,
+      "estimate": 4.5
+    },
+    {
+      "id": "ext-runtime",
+      "class": "ExtensionDemo",
+      "shard": "phone-a",
+      "mirrors": "android-ext-runtime-demo.yml:record",
+      "dir": "ext-demo",
+      "script": ".github/scripts/android-ext-runtime-demo.sh",
+      "out": "artifacts/android-ext-runtime-demo",
+      "setup": ["ext-crx"],
+      "timeout": 1500,
+      "estimate": 12,
+      "note": "The strict job (the image's WebView). The workflow's AOSP job is SOFT_FAIL=1 and never red, so it is not the nightly's signal. Runs the engine probe, the scroll budget and ExtensionDemo, last on the shard: its own device prep repeats the settle."
+    },
+    {
+      "id": "share",
+      "class": "ShareDemo",
+      "shard": "phone-b",
+      "mirrors": "android-share-demo.yml",
+      "dir": "share-demo",
+      "estimate": 1
+    },
+    {
+      "id": "pwa",
+      "class": "PwaDemo",
+      "shard": "phone-b",
+      "mirrors": "android-pwa-demo.yml",
+      "dir": "pwa-demo",
+      "estimate": 1.5
+    },
+    {
+      "id": "blocking",
+      "class": "BlockingDemo",
+      "shard": "phone-b",
+      "mirrors": "android-sheet-touch-audit.yml",
+      "dir": "blocking-demo",
+      "estimate": 1.5,
+      "note": "No workflow of its own: the sheet touch audit chains it."
+    },
+    {
+      "id": "appicon",
+      "class": "AppIconDemo",
+      "shard": "phone-b",
+      "mirrors": "android-appicon-demo.yml",
+      "dir": "appicon-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 1.5,
+      "note": "The workflow runs light and dark; the nightly runs light."
+    },
+    {
+      "id": "pdf-viewer-ui",
+      "class": "PdfViewerUiDemo",
+      "shard": "phone-b",
+      "mirrors": "android-pdf-viewer-demo.yml",
+      "dir": "pdf-viewer-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "settings-touch",
+      "class": "SettingsTouchDemo",
+      "shard": "phone-b",
+      "mirrors": "android-settings-touch-demo.yml",
+      "dir": "settings-touch-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 2.5
+    },
+    {
+      "id": "safebrowsing",
+      "class": "SafeBrowsingDemo",
+      "shard": "phone-b",
+      "mirrors": "android-safebrowsing-demo.yml",
+      "dir": "safebrowsing-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "overview",
+      "class": "OverviewDemo",
+      "shard": "phone-b",
+      "mirrors": "android-overview-demo.yml",
+      "dir": "overview-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "group-strip",
+      "class": "GroupStripDemo",
+      "shard": "phone-b",
+      "mirrors": "android-group-strip-demo.yml",
+      "dir": "group-strip-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "nav-snapshot",
+      "class": "NavSnapshotDemo",
+      "shard": "phone-b",
+      "mirrors": "android-nav-snapshot-demo.yml",
+      "dir": "nav-snapshot-demo",
+      "env": {
+        "DEMO_CLASS": "app.zen.chromium.NavigationStateWebViewTest,app.zen.chromium.NavSnapshotDemo"
+      },
+      "estimate": 3,
+      "note": "The WebView navigation-state test runs ahead of the driver on the one instrumentation, as the workflow does."
+    },
+    {
+      "id": "bar-hide",
+      "class": "BarHideDemo",
+      "shard": "phone-b",
+      "mirrors": "android-bar-hide-demo.yml",
+      "dir": "bar-hide-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 3
+    },
+    {
+      "id": "download-safety",
+      "class": "DownloadSafetyDemo",
+      "shard": "phone-b",
+      "mirrors": "android-download-safety-demo.yml",
+      "dir": "download-safety-demo",
+      "estimate": 3.5
+    },
+    {
+      "id": "safebrowsing-snapshot",
+      "class": "SafeBrowsingSnapshotDemo",
+      "shard": "phone-b",
+      "mirrors": "(none: dispatch-only driver without a workflow)",
+      "dir": "safebrowsing-snapshot-demo",
+      "timeout": 900,
+      "estimate": 3,
+      "note": "Serves its sites from a loopback server inside the instrumentation; parses the warm feeds (seconds on the debug build)."
+    },
+    {
+      "id": "read-aloud",
+      "class": "ReadAloudDemo",
+      "shard": "phone-b",
+      "mirrors": "android-read-aloud-demo.yml",
+      "dir": "read-aloud-demo",
+      "estimate": 4
+    },
+    {
+      "id": "ext-store",
+      "class": "ExtensionStoreDemo",
+      "shard": "phone-b",
+      "mirrors": "android-ext-store-demo.yml",
+      "dir": "ext-store-demo",
+      "script": ".github/scripts/android-ext-store-demo.sh",
+      "env": {
+        "SIDELOAD_ZIP": "artifacts/ext/uBlock0.chromium.zip"
+      },
+      "setup": ["ublock-zip"],
+      "estimate": 3
+    },
+    {
+      "id": "snapshot",
+      "class": "SnapshotSwapDemo",
+      "shard": "phone-b",
+      "mirrors": "android-snapshot-demo.yml",
+      "dir": "snapshot-demo",
+      "script": ".github/scripts/android-snapshot-demo.sh",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "setup": ["ffmpeg"],
+      "estimate": 3
+    },
+    {
+      "id": "thumbs",
+      "classes": ["ThumbsDemo", "ThumbsRestoreDemo"],
+      "shard": "phone-b",
+      "mirrors": "android-thumbs-demo.yml",
+      "script": ".github/scripts/android-thumbs-demo.sh",
+      "timeout": 900,
+      "estimate": 5,
+      "note": "Two acts on the one boot (cards, then the restore after a process death), under act-1/ and act-2/."
+    },
+    {
+      "id": "a11y-chrome",
+      "class": "ChromeA11yDemo",
+      "shard": "phone-b",
+      "mirrors": "android-a11y-chrome-demo.yml:record",
+      "dir": "a11y-chrome-demo",
+      "env": {
+        "DEMO_INSTRUMENT_FLAGS": "--no-hidden-api-checks"
+      },
+      "timeout": 1500,
+      "estimate": 11,
+      "note": "Every scene but the private one (that scene needs the multi-profile WebView: the webview shard's a11y-chrome-private). Last on the shard: TalkBack and the font scale are put back by the runner's reset in any case."
+    },
+    {
+      "id": "site-controls",
+      "class": "SiteControlsDemo",
+      "shard": "phone-c",
+      "mirrors": "android-site-controls-demo.yml",
+      "dir": "site-controls-demo",
+      "estimate": 1.5
+    },
+    {
+      "id": "menu-sheet",
+      "class": "MenuSheetDemo",
+      "shard": "phone-c",
+      "mirrors": "android-menu-sheet-demo.yml",
+      "dir": "menu-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 1.5,
+      "note": "The workflow runs light and dark; the nightly runs light."
+    },
+    {
+      "id": "layout",
+      "class": "LayoutDemo",
+      "shard": "phone-c",
+      "mirrors": "android-layout-demo.yml",
+      "dir": "layout-demo",
+      "estimate": 2
+    },
+    {
+      "id": "blocking-ui",
+      "class": "BlockingUiDemo",
+      "shard": "phone-c",
+      "mirrors": "android-blocking-ui-demo.yml",
+      "dir": "blocking-ui-demo",
+      "estimate": 2
+    },
+    {
+      "id": "tab-close",
+      "class": "TabCloseDemo",
+      "shard": "phone-c",
+      "mirrors": "android-tab-close-demo.yml",
+      "dir": "tabclose-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "select-tabs",
+      "class": "SelectTabsDemo",
+      "shard": "phone-c",
+      "mirrors": "android-select-tabs-demo.yml",
+      "dir": "selecttabs-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "overview-motion",
+      "class": "OverviewMotionDemo",
+      "shard": "phone-c",
+      "mirrors": "android-overview-demo.yml:demo=motion",
+      "dir": "motion-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "loading",
+      "class": "LoadingFeedbackDemo",
+      "shard": "phone-c",
+      "mirrors": "android-loading-demo.yml",
+      "dir": "loading-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 2.5
+    },
+    {
+      "id": "a11y-pill-chips",
+      "class": "PillChipsA11yDemo",
+      "shard": "phone-c",
+      "mirrors": "android-a11y-pill-chips-demo.yml",
+      "dir": "a11y-pill-chips-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "cert-interstitial",
+      "class": "CertInterstitialDemo",
+      "shard": "phone-c",
+      "mirrors": "(none: dispatch-only driver without a workflow)",
+      "dir": "cert-interstitial-demo",
+      "estimate": 3,
+      "note": "Loads the three badssl.com pages over the network."
+    },
+    {
+      "id": "qr",
+      "class": "QrDemo",
+      "shard": "phone-c",
+      "mirrors": "android-qr-demo.yml",
+      "dir": "qr-demo",
+      "env": {
+        "DEMO_REVOKE": "android.permission.CAMERA"
+      },
+      "estimate": 3,
+      "note": "CAMERA revoked before the driver (the shared script does it after the install), granted back after."
+    },
+    {
+      "id": "credential-safety",
+      "class": "CredentialSafetyDemo",
+      "shard": "phone-c",
+      "mirrors": "android-credential-safety-demo.yml",
+      "dir": "credential-safety-demo",
+      "estimate": 3
+    },
+    {
+      "id": "history-bookmarks",
+      "class": "HistoryBookmarksDemo",
+      "shard": "phone-c",
+      "mirrors": "android-history-bookmarks-demo.yml",
+      "dir": "history-bookmarks-demo",
+      "estimate": 3.5
+    },
+    {
+      "id": "pagecontrols",
+      "class": "PageControlsDemo",
+      "shard": "phone-c",
+      "mirrors": "android-pagecontrols-demo.yml",
+      "dir": "pagecontrols-demo",
+      "env": {
+        "DEMO_THEME": "dark"
+      },
+      "estimate": 4
+    },
+    {
+      "id": "translate",
+      "class": "TranslateDemo",
+      "shard": "phone-c",
+      "mirrors": "android-translate-demo.yml",
+      "dir": "translate-demo",
+      "script": ".github/scripts/android-translate-demo.sh",
+      "env": {
+        "TRANSLATE_SEQUENCE": "engine"
+      },
+      "estimate": 3
+    },
+    {
+      "id": "translate-ui",
+      "class": "TranslateUiDemo",
+      "shard": "phone-c",
+      "mirrors": "android-translate-demo.yml:sequence=ui",
+      "dir": "translate-demo",
+      "script": ".github/scripts/android-translate-demo.sh",
+      "env": {
+        "TRANSLATE_SEQUENCE": "ui"
+      },
+      "estimate": 3
+    },
+    {
+      "id": "autofill",
+      "class": "AutofillDemo",
+      "shard": "phone-c",
+      "mirrors": "(none: dispatch-only driver without a workflow)",
+      "dir": "autofill-demo",
+      "needs": ["pin"],
+      "timeout": 900,
+      "estimate": 4,
+      "note": "Needs a device PIN (the runner sets 1234 before and clears it after); the shop is served from the instrumentation."
+    },
+    {
+      "id": "perf-bar-hide",
+      "class": "BarHidePerfDemo",
+      "shard": "phone-c",
+      "mirrors": "android-perf-bar-hide.yml",
+      "dir": "perf-bar-hide",
+      "env": {
+        "DEMO_RECORD": "0",
+        "DEMO_PERFETTO_CONFIG": ".github/scripts/android-perf-bar-hide.pbtx"
+      },
+      "timeout": 1200,
+      "estimate": 5,
+      "note": "No recording (the encoder would load the measurement); the workflow's Perfetto analysis (post-script) is not run: the frames record is the nightly's verdict."
+    },
+    {
+      "id": "passwords-ui",
+      "class": "PasswordsUiDemo",
+      "shard": "phone-c",
+      "mirrors": "android-passwords-demo.yml",
+      "dir": "passwords-ui-demo",
+      "script": ".github/scripts/android-passwords-ui-demo.sh",
+      "needs": ["pin"],
+      "timeout": 1200,
+      "estimate": 7.5,
+      "note": "The wrapper sets the device PIN and lets its authentication age 75 s; the runner clears the PIN after."
+    },
+    {
+      "id": "newtab",
+      "class": "NewTabDemo",
+      "shard": "phone-d",
+      "mirrors": "android-newtab-demo.yml",
+      "dir": "newtab-demo",
+      "estimate": 1.5
+    },
+    {
+      "id": "siteinfo",
+      "class": "SiteInfoDemo",
+      "shard": "phone-d",
+      "mirrors": "android-siteinfo-demo.yml",
+      "dir": "siteinfo-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 1.5,
+      "note": "The workflow runs light and dark; the nightly runs light."
+    },
+    {
+      "id": "menu-row",
+      "class": "MenuIconRowDemo",
+      "shard": "phone-d",
+      "mirrors": "android-menu-row-demo.yml",
+      "dir": "menu-row-demo",
+      "estimate": 2
+    },
+    {
+      "id": "focus-ring",
+      "class": "FocusRingDemo",
+      "shard": "phone-d",
+      "mirrors": "android-focus-ring-demo.yml",
+      "dir": "focus-ring-demo",
+      "estimate": 2
+    },
+    {
+      "id": "navbar",
+      "class": "NavbarDemo",
+      "shard": "phone-d",
+      "mirrors": "android-navbar-demo.yml",
+      "dir": "navbar-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "phone-fixes",
+      "class": "PhoneFixesDemo",
+      "shard": "phone-d",
+      "mirrors": "android-phone-fixes-demo.yml",
+      "dir": "phone-fixes-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "selection",
+      "class": "SelectionDemo",
+      "shard": "phone-d",
+      "mirrors": "android-selection-demo.yml",
+      "dir": "selection-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "customtabs",
+      "class": "CustomTabsDemo",
+      "shard": "phone-d",
+      "mirrors": "android-customtabs-demo.yml",
+      "dir": "customtabs-demo",
+      "estimate": 2.5
+    },
+    {
+      "id": "voice",
+      "class": "VoiceDemo",
+      "shard": "phone-d",
+      "mirrors": "android-voice-demo.yml",
+      "dir": "voice-demo",
+      "env": {
+        "DEMO_REVOKE": "android.permission.RECORD_AUDIO"
+      },
+      "estimate": 2.5,
+      "note": "RECORD_AUDIO revoked before the driver, granted back after."
+    },
+    {
+      "id": "input-back",
+      "class": "InputBackDemo",
+      "shard": "phone-d",
+      "mirrors": "android-input-back-demo.yml",
+      "dir": "input-back-demo",
+      "estimate": 3
+    },
+    {
+      "id": "reader-ui",
+      "class": "ReaderUiDemo",
+      "shard": "phone-d",
+      "mirrors": "android-reader-ui-demo.yml",
+      "dir": "reader-ui-demo",
+      "estimate": 3
+    },
+    {
+      "id": "tab-groups",
+      "class": "TabGroupsDemo",
+      "shard": "phone-d",
+      "mirrors": "android-tab-groups-demo.yml:phone",
+      "dir": "tab-groups-demo",
+      "estimate": 3
+    },
+    {
+      "id": "tab-search-recent",
+      "class": "TabSearchRecentDemo",
+      "shard": "phone-d",
+      "mirrors": "android-tab-search-recent-demo.yml",
+      "dir": "tabsearch-demo",
+      "estimate": 5,
+      "note": "The overview's tab search and the History page's other-devices group: sets sync up through the engine over a plain directory and seeds two devices' open-tabs documents (19 scenes)."
+    },
+    {
+      "id": "omnibox",
+      "class": "OmniboxDemo",
+      "shard": "phone-d",
+      "mirrors": "android-omnibox-demo.yml",
+      "dir": "omnibox-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 3.5
+    },
+    {
+      "id": "services-hardening",
+      "class": "ServicesHardeningDemo",
+      "shard": "phone-d",
+      "mirrors": "(none: dispatch-only driver without a workflow)",
+      "dir": "services-hardening-demo",
+      "setup": ["hardening-server"],
+      "estimate": 3,
+      "note": "Its pages come from services-hardening-demo-server.mjs on the runner (10.0.2.2:8787) with a demo PKCS#12 made in the setup for the certificate chooser."
+    },
+    {
+      "id": "import",
+      "class": "ImportDemo",
+      "shard": "phone-d",
+      "mirrors": "android-import-demo.yml",
+      "dir": "import-demo",
+      "script": ".github/scripts/android-import-demo.sh",
+      "timeout": 900,
+      "estimate": 4
+    },
+    {
+      "id": "passwords-engine",
+      "class": "PasswordsEngineDemo",
+      "shard": "phone-d",
+      "mirrors": "(none: android-passwords-engine-demo.sh has no workflow)",
+      "dir": "passwords-demo",
+      "script": ".github/scripts/android-passwords-engine-demo.sh",
+      "needs": ["pin"],
+      "timeout": 900,
+      "estimate": 5,
+      "note": "The wrapper sets the device PIN; the runner clears it after."
+    },
+    {
+      "id": "sync-history",
+      "class": "SyncHistoryDemo",
+      "shard": "phone-d",
+      "mirrors": "android-sync-history-demo.yml",
+      "dir": "sync-history-demo",
+      "script": ".github/scripts/android-sync-history-demo.sh",
+      "timeout": 900,
+      "estimate": 5.5
+    },
+    {
+      "id": "ntp-morph",
+      "classes": ["FakeboxMorphDemo", "FakeboxMorphReducedDemo"],
+      "shard": "phone-d",
+      "mirrors": "android-ntp-morph-demo.yml:space",
+      "script": ".github/scripts/android-ntp-morph-demo.sh",
+      "out": "artifacts/android-ntp-morph-demo",
+      "env": {
+        "MORPH_ACT": "space"
+      },
+      "timeout": 1200,
+      "estimate": 6,
+      "note": "The space act: the morph and the reduced-motion run (the wrapper sets the animator scales to 0 for it and back)."
+    },
+    {
+      "id": "sheet-leave",
+      "class": "SheetLeaveDemo",
+      "shard": "api35",
+      "mirrors": "android-sheet-leave-demo.yml",
+      "dir": "sheet-leave-demo",
+      "script": ".github/scripts/android-sheet-leave-demo.sh",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "setup": ["ffmpeg"],
+      "estimate": 3,
+      "note": "The wrapper cuts the recording into frames and reads them (android-sheet-recede-frames.mjs)."
+    },
+    {
+      "id": "sheet-recede",
+      "class": "SheetRecedeDemo",
+      "shard": "api35",
+      "mirrors": "android-sheet-recede-demo.yml",
+      "dir": "sheet-recede-demo",
+      "script": ".github/scripts/android-sheet-recede-demo.sh",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "setup": ["ffmpeg"],
+      "estimate": 3
+    },
+    {
+      "id": "back",
+      "class": "BackDemo",
+      "shard": "api35",
+      "mirrors": "android-back-demo.yml",
+      "dir": "back-demo",
+      "script": ".github/scripts/android-back-demo.sh",
+      "out": "artifacts/android-back-demo",
+      "needs": ["navigation"],
+      "estimate": 3,
+      "note": "Its own script: gestural navigation for the predictive back; the runner puts three-button navigation back after."
+    },
+    {
+      "id": "wake",
+      "class": "WakeDemo",
+      "shard": "api35",
+      "mirrors": "android-wake-demo.yml",
+      "dir": "wake-demo",
+      "script": ".github/scripts/android-wake-demo.sh",
+      "out": "artifacts/android-wake-demo",
+      "env": {
+        "WAKE_ASSERT": "true"
+      },
+      "timeout": 1200,
+      "estimate": 6,
+      "note": "Its own script (renderer deaths and the wake); one take (no before APK)."
+    },
+    {
+      "id": "status-bar",
+      "class": "StatusBarDemo",
+      "shard": "api35",
+      "mirrors": "android-status-bar-demo.yml",
+      "dir": "status-bar-demo",
+      "script": ".github/scripts/android-status-bar-demo.sh",
+      "out": "artifacts/android-status-bar-demo",
+      "env": {
+        "STATUS_BAR_ASSERT": "true"
+      },
+      "needs": ["navigation"],
+      "timeout": 1500,
+      "estimate": 8,
+      "note": "Its own script (gestural navigation for its scenes; the runner puts three-button navigation back); one take (no before APK)."
+    },
+    {
+      "id": "motion-perf",
+      "class": "MotionPerfDemo",
+      "shard": "api35",
+      "mirrors": "android-motion-perf.yml",
+      "dir": "perf-motion",
+      "env": {
+        "DEMO_THEME": "light",
+        "DEMO_ARGS": "-e holdBackgroundWork true",
+        "DEMO_HANDSHAKE_S": "480",
+        "DEMO_RECORD": "0"
+      },
+      "timeout": 1200,
+      "estimate": 8,
+      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own)."
+    },
+    {
+      "id": "menu-perf",
+      "class": "MenuSheetPerfDemo",
+      "shard": "api35",
+      "mirrors": "android-menu-perf.yml",
+      "dir": "menu-perf-demo",
+      "script": ".github/scripts/android-menu-perf.sh",
+      "env": {
+        "DEMO_THEME": "light",
+        "DEMO_ARGS": "-e cycles 10 -e live 1",
+        "DEMO_RECORD": "0"
+      },
+      "setup": ["perfetto-python"],
+      "timeout": 2100,
+      "estimate": 20,
+      "note": "The workflow's ten cycles against the live page, without the recording; its own report (menu-perf-report.md) is in the findings. Last on the shard: the longest."
+    },
+    {
+      "id": "private",
+      "class": "PrivateTabsDemo",
+      "shard": "webview",
+      "mirrors": "android-private-demo.yml",
+      "dir": "private-demo",
+      "timeout": 900,
+      "estimate": 6
+    },
+    {
+      "id": "private-lock",
+      "class": "PrivateLockDemo",
+      "shard": "webview",
+      "mirrors": "android-private-lock-demo.yml",
+      "dir": "private-lock-demo",
+      "timeout": 1200,
+      "estimate": 7
+    },
+    {
+      "id": "media",
+      "class": "MediaDemo",
+      "shard": "webview",
+      "mirrors": "android-media-demo.yml",
+      "dir": "media-demo",
+      "timeout": 900,
+      "estimate": 5
+    },
+    {
+      "id": "media-ui",
+      "class": "MediaUiDemo",
+      "shard": "webview",
+      "mirrors": "android-media-demo.yml:driver=ui",
+      "dir": "media-demo",
+      "timeout": 900,
+      "estimate": 5
+    },
+    {
+      "id": "fullscreen",
+      "class": "FullscreenDemo",
+      "shard": "webview",
+      "mirrors": "android-fullscreen-demo.yml",
+      "dir": "media-demo",
+      "env": {
+        "DEMO_REVOKE": "android.permission.CAMERA"
+      },
+      "timeout": 900,
+      "estimate": 5,
+      "note": "CAMERA revoked before the driver, granted back after."
+    },
+    {
+      "id": "a11y-chrome-private",
+      "class": "ChromeA11yDemo",
+      "shard": "webview",
+      "mirrors": "android-a11y-chrome-demo.yml:record-private",
+      "dir": "a11y-chrome-demo",
+      "env": {
+        "DEMO_SCENES": "private"
+      },
+      "timeout": 900,
+      "estimate": 4,
+      "note": "The private scene alone, on the multi-profile WebView."
+    },
+    {
+      "id": "ntp-morph-private",
+      "classes": ["FakeboxMorphScrubDemo", "FakeboxMorphScrubReducedDemo"],
+      "shard": "webview",
+      "mirrors": "android-ntp-morph-demo.yml:private",
+      "script": ".github/scripts/android-ntp-morph-demo.sh",
+      "out": "artifacts/android-ntp-morph-demo",
+      "env": {
+        "MORPH_ACT": "private",
+        "WEBVIEW_APK": ""
+      },
+      "timeout": 1200,
+      "estimate": 6,
+      "note": "The private act (the scrub and its reduced-motion run). WEBVIEW_APK is blanked for it: the swap already took on this boot, and the wrapper's first act would otherwise swap again."
+    },
+    {
+      "id": "tablet",
+      "class": "TabletLayoutDemo",
+      "shard": "tablet",
+      "mirrors": "android-tablet-demo.yml",
+      "dir": "tablet-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 3
+    },
+    {
+      "id": "tablet-groups",
+      "class": "TabletGroupsDemo",
+      "shard": "tablet",
+      "mirrors": "android-tab-groups-demo.yml:tablet",
+      "dir": "tablet-groups-demo",
+      "estimate": 2
+    }
+  ],
+  "skip": [
+    {
+      "workflow": "android-ext-compat-sweep.yml",
+      "reason": "the extension program's compatibility sweep (CompatSweep, not a demo driver): two 210-minute jobs over the extension corpus, hours long; that program dispatches it"
+    }
+  ]
+}

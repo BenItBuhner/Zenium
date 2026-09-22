@@ -463,7 +463,20 @@ describe('the card and group menus', () => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })
     act(() => settleSprings())
-    expect(sheetLabels()).toEqual(['Rename', 'Collapse', 'Ungroup', 'Close Group (2 Tabs)'])
+    expect(sheetLabels()).toEqual([
+      'Rename',
+      'Collapse',
+      'Ungroup',
+      'Close Group (2 Tabs)',
+      'Delete Group'
+    ])
+    // Close Group keeps the group, saved with its pages (`folder.close`): the plain ink, as on
+    // every group menu; Delete Group alone takes the danger ink (v2 §6).
+    const items = [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')]
+    const ink = (label: string): string =>
+      items.find((el) => el.textContent?.startsWith(label))!.style.color
+    expect(ink('Close Group')).toBe('')
+    expect(ink('Delete Group')).toBe('var(--zen-danger)')
     // The colour swatches are a radio group, named for assistive technology; not menu rows.
     expect(document.querySelector('[role="radiogroup"][aria-label="Colour"]')).not.toBeNull()
   })
@@ -1366,10 +1379,60 @@ describe('the private pane', () => {
     act(() => resetOverviewPane())
   })
 
-  it('a host without private tabs has no segment, and a private card never reaches its grid', () => {
+  it('a host without private tabs has no Private segment, and a private card never reaches its grid', () => {
     render(stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], []))
-    expect(host!.querySelector('[role="tablist"]')).toBeNull()
+    // The segment stays for the Groups pane (TAB-16); the Private pane alone needs the host's say.
+    expect([...host!.querySelectorAll('[role="tab"]')].map((b) => b.textContent)).toEqual([
+      'Tabs',
+      'Groups'
+    ])
+    // The list's name names the segments present, no more.
+    const tablist = (): string | null =>
+      host!.querySelector('[role="tablist"]')!.getAttribute('aria-label')
+    expect(tablist()).toBe('Tabs and groups')
     expect(cellKeys()).toEqual(['a', NEW_TAB_CELL])
+    render(mixed())
+    expect(tablist()).toBe('Tabs, groups and private tabs')
+  })
+
+  it('PRIVATE-BROWSING LEAK, fixed: a group that private tabs alone fill is named on no regular surface of the overview – not a card’s sheet, not the Groups pane, not its count', () => {
+    // Ghost: a PRIVATE group (private tabs alone, nothing saved), made on the tablet's sidebar;
+    // Research: a regular group. The space holds the private tabs among the regular ones.
+    const ghost: Folder = { ...folder, id: 'ghost', name: 'Ghost', color: 'red' }
+    render(
+      withPrivate(
+        stateOf(
+          [
+            tab('a', 'https://a.example/'),
+            tab('m1', 'https://one.example/', { folderId: GROUP }),
+            privateTab('p1', 'https://p1.example/', { folderId: 'ghost' }),
+            privateTab('p2', 'https://p2.example/', { folderId: 'ghost' })
+          ],
+          [folder, ghost]
+        )
+      )
+    )
+    const sheetLabels = (): Array<string | null> =>
+      [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].map((el) => el.textContent)
+    // The Tabs pane: no card of Ghost's, and a held card's sheet offers Research alone.
+    expect(cellKeys()).toEqual([`group:${GROUP}`, 'm1', 'a', NEW_TAB_CELL])
+    expect(host!.textContent).not.toContain('Ghost')
+    pickUp('a')
+    const p = at('a', 0.5, 0.5)
+    letGo(p.x, p.y)
+    act(() => elapse(300))
+    act(() => settleSprings())
+    expect(sheetLabels()).toContain('Add to Research')
+    expect(sheetLabels().some((label) => label?.includes('Ghost'))).toBe(false)
+    expect(document.body.textContent).not.toContain('Ghost')
+    // The Groups pane: Research's row alone, one group counted, Ghost's name nowhere.
+    act(() => host!.querySelector<HTMLElement>('[data-testid="overview-pane-groups"]')!.click())
+    expect(countShown()).toBe('1 group')
+    expect(
+      [...host!.querySelectorAll<HTMLElement>('.zen-list-title')].map((el) => el.textContent)
+    ).toEqual(['Research'])
+    expect(host!.textContent).not.toContain('Ghost')
+    expect(host!.innerHTML).not.toContain('Ghost')
   })
 
   it('the regular pane shows the space without its private tabs; the private pane every private tab and no regular one', () => {

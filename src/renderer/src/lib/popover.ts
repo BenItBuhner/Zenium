@@ -1,7 +1,38 @@
 /*
- * The keyboard side of the renderer's popovers (v2 draft §9.22). One popover at a time and light
- * dismiss are the chrome layer's (lib/popoverStore.ts, through `useLightDismiss`).
+ * The keyboard side of the renderer's popovers (v2 draft §9.22) and the anchor's `aria-expanded`
+ * (§9.20). One popover at a time and light dismiss are the chrome layer's (lib/popoverStore.ts,
+ * through `useLightDismiss`).
  */
+
+/**
+ * `aria-expanded` on the control a popover hangs from, held for the popover's life – the anchor
+ * wears its pressed fill and says what it has open while the popover stands (§9.20) – and given
+ * back when it leaves. A count, not a flag: one anchor can carry two surfaces. The sidebar's
+ * "⋯" has the app menu and, while the hub's toolbar button has folded (§9.29), the media hub's
+ * popover too, which opens from the menu's own "Now Playing…" row as the menu leaves – so the
+ * first hold sets the attribute, the last release puts back what the anchor said at rest (the
+ * hub button's own `false`, nothing on the "⋯"), and a surface leaving while another still
+ * stands changes nothing. One source of truth per anchor: nothing else writes `aria-expanded`
+ * on a control held here.
+ */
+const holds = new WeakMap<Element, { count: number; rest: string | null }>()
+
+export function holdExpanded(anchor: HTMLElement): () => void {
+  const hold = holds.get(anchor) ?? { count: 0, rest: anchor.getAttribute('aria-expanded') }
+  hold.count += 1
+  holds.set(anchor, hold)
+  anchor.setAttribute('aria-expanded', 'true')
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    hold.count -= 1
+    if (hold.count > 0) return
+    holds.delete(anchor)
+    if (hold.rest === null) anchor.removeAttribute('aria-expanded')
+    else anchor.setAttribute('aria-expanded', hold.rest)
+  }
+}
 
 /**
  * Whether the popover about to open was reached with the keyboard: the control that has focus

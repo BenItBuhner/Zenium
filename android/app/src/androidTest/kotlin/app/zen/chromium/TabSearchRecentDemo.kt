@@ -26,7 +26,7 @@ import kotlin.math.roundToInt
  * chrome's DOM or the core's state, never off the chrome's word alone:
  *
  *  1. the overview opens with the search closed: no field, no keyboard, no field focused; the
- *     segment holds no Recent;
+ *     segment is Tabs | Groups (| Private where the WebView has multi-profile), no Recent;
  *  2. the header's magnifier opens the §9.12 field pinned under the header, focused, the
  *     keyboard up with it (the tap is the user's ask; nothing else ever focuses it);
  *  3. typing narrows the pane's cards by TITLE ("wiki": Damping, Tea, Coffee stay; the
@@ -142,10 +142,12 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("the magnifier stands in the header, collapsed: ${headerLabels()}", headerLabels() == listOf("Search tabs", "Spaces", "More"))
         // The Tabs button that was touched may hold the focus; what matters is that no field does.
         expect("no field has the focus and the keyboard is down (active element: '${activeElement()}')", activeElement() != "INPUT" && !imeShown())
-        // The Private segment draws only where the WebView has multi-profile (`capabilities.privateTabs`);
-        // the Google APIs image's WebView has not. No Recent segment on either (§9.34: History's groups).
+        // The header's three segments at most (§9.34): Tabs | Groups | Private, the Private one drawing
+        // only where the WebView has multi-profile (`capabilities.privateTabs`; the Google APIs image's
+        // has not). No Recent segment on either: the recently closed and the other devices' tabs are
+        // History's groups.
         val segments = segmentLabels()
-        expect("the segment starts at Tabs and holds no Recent: $segments", segments.firstOrNull() == "Tabs" && "Recent" !in segments)
+        expect("the segment is Tabs | Groups (| Private), no Recent: $segments", segments == listOf("Tabs", "Groups") || segments == listOf("Tabs", "Groups", "Private"))
     }
 
     /** 2. The magnifier opens the field, focused, the keyboard with it. */

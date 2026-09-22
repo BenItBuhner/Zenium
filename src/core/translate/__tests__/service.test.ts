@@ -9,6 +9,8 @@ import type {
   EngineTransport
 } from '../../../shared/translateEngine'
 import { TRANSLATE_RUNTIME_GLOBAL } from '../../../shared/translateScript'
+import { defaultLanguages, sanitizeLanguages } from '../../../shared/languages'
+import { DEFAULT_READER_PREFERENCES } from '../../../shared/reader'
 import type { Browser } from '../../browser'
 import type {
   TabView,
@@ -17,6 +19,7 @@ import type {
   TranslateModelStore
 } from '../../platform'
 import { TranslateService, translatablePageUrl } from '../service'
+import { ReaderService, type RawArticle } from '../../reader'
 
 /**
  * The service is exercised end to end below the hosts: the page side is the real runtime
@@ -136,11 +139,26 @@ interface Harness {
   /** Events the service sent to the chrome (`browser.emit`). */
   emitted: Array<{ name: string; payload: unknown }>
   toasts: string[]
+  /** The preferred languages setting as it stands. */
+  languages: () => string[]
+  reader: ReaderService
+  /** Tabs whose read-aloud session was told the reader's text changed. */
+  readAloudRestarts: string[]
 }
 
 const WINDOW = { id: 'win-1' }
 
-function harness(options: { locales?: string[]; stored?: string; url?: string } = {}): Harness {
+function harness(
+  options: {
+    locales?: string[]
+    stored?: string
+    url?: string
+    /** The profile's preferred languages (`Settings.languages`); the OS locales' when omitted. */
+    languages?: string[]
+    /** This load found no languages list and took the OS's (a pre-CT-41 profile). */
+    languagesDefaulted?: boolean
+  } = {}
+): Harness {
   const host = new FakeHost(options.locales)
   const view = new FakeView(options.url ?? PAGE_URL)
   const written = new Map<string, string>()
@@ -148,7 +166,30 @@ function harness(options: { locales?: string[]; stored?: string; url?: string } 
   const emitted: Array<{ name: string; payload: unknown }> = []
   const toasts: string[] = []
   let present = true
+  // The preferred languages setting the service reads its languages-you-read list from, and
+  // the `LanguagesService` round trip a change to the rows takes (`set` → `onLanguagesChanged`).
+  const state = {
+    commitVolatile: vi.fn(),
+    commit: vi.fn(),
+    languagesDefaulted: options.languagesDefaulted ?? false,
+    settings: {
+      languages: options.languages ?? defaultLanguages(options.locales ?? ['en-US']),
+      reader: structuredClone(DEFAULT_READER_PREFERENCES)
+    }
+  }
+  const readAloudRestarts: string[] = []
   const browser = {
+    languages: {
+      set: (languages: readonly string[]) => {
+        state.settings.languages = sanitizeLanguages(languages, state.settings.languages)
+        service.onLanguagesChanged()
+      }
+    },
+    readAloud: {
+      onReaderTextChanged: (tabId: string) => {
+        readAloudRestarts.push(tabId)
+      }
+    },
     emit: (name: string, payload: unknown) => {
       emitted.push({ name, payload })
     },
@@ -174,25 +215,34 @@ function harness(options: { locales?: string[]; stored?: string; url?: string } 
       }
     },
     tabs: {
-      tab: (id: string) => (id === TAB && present ? { id, url: view.url } : null),
+      tab: (id: string) => (id === TAB && present ? { id, url: view.url, title: 'Tab' } : null),
       view: (id: string) => (id === TAB && present ? (view as unknown as TabView) : null),
+      navigate: (id: string, url: string) => {
+        if (id === TAB) view.url = url
+      },
       windowFor: () => WINDOW,
       close: () => {
         present = false
       }
     },
-    state: { commitVolatile: vi.fn() }
-  }
+    state
+  } as Record<string, unknown>
+  // The real reader service: the article store and the document's rendering the reader
+  // translation works through (`articleOf`, `split`, `shown`, `pushShown`).
+  browser.reader = new ReaderService(browser as unknown as Browser)
   const service = new TranslateService(browser as unknown as Browser)
   return {
     service,
     host,
     view,
     browser: browser as unknown as Browser,
+    reader: browser.reader as ReaderService,
     written,
     fetched,
     emitted,
-    toasts
+    toasts,
+    readAloudRestarts,
+    languages: () => state.settings.languages
   }
 }
 
@@ -234,10 +284,10 @@ afterEach(() => {
 })
 
 describe('translatablePageUrl', () => {
-  it('accepts web, file and reader documents only', () => {
+  it('accepts web and file documents only: the reader translates on request, never offered', () => {
     expect(translatablePageUrl('https://example.com/')).toBe(true)
     expect(translatablePageUrl('file:///tmp/a.html')).toBe(true)
-    expect(translatablePageUrl('zen://reader?url=x')).toBe(true)
+    expect(translatablePageUrl('zen://reader?url=x')).toBe(false)
     expect(translatablePageUrl('zen://newtab')).toBe(false)
     expect(translatablePageUrl('about:blank')).toBe(false)
   })
@@ -631,5 +681,166 @@ describe('TranslateService', () => {
     expect(h.host.transports[0].terminated).toBe(1)
     await h.service.translateSelection(TAB, { text: 'Hola mundo' })
     expect(h.host.transports).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Reader View (CT-36)
+// ---------------------------------------------------------------------------
+
+const ARTICLE: RawArticle = {
+  title: 'Un título',
+  byline: 'Autora',
+  content: `<div><p>Este es un párrafo con <a href="/x">un enlace</a> dentro del texto.</p>
+<h2>Segundo título</h2>
+<pre>código intacto</pre>
+<ul><li>Primero</li><li>Segundo con <code>código</code> dentro</li></ul></div>`,
+  length: 120,
+  lang: 'es'
+}
+
+/**
+ * Put the tab in Reader View on the article and render its document into the test's DOM (with
+ * the document's own script, so `window.zenReaderShow` is the real one).
+ */
+function openReader(h: Harness, raw: RawArticle = ARTICLE): string {
+  h.reader.open(TAB, raw)
+  const id = new URL(h.view.url).searchParams.get('id') as string
+  renderReader(h, id)
+  return id
+}
+
+function renderReader(h: Harness, id: string): void {
+  const html = h.reader.pageHtml(id) as string
+  const main = /<main>([\s\S]*)<\/main>/.exec(html)?.[1] ?? ''
+  const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1] ?? ''
+  document.body.innerHTML = `<main>${main}</main>`
+  delete (window as unknown as Record<string, unknown>).zenReaderShow
+  new Function(script)()
+}
+
+const shownUnits = (): string[] =>
+  [...document.querySelectorAll('main > article [data-zu]')].map((el) => el.innerHTML)
+
+describe('TranslateService reader (CT-36)', () => {
+  it('never offers on a reader tab and points the menu at the Text preferences', async () => {
+    const h = harness()
+    active = h.service
+    openReader(h)
+    expect(h.view.url.startsWith('zen://reader?id=')).toBe(true)
+    expect(h.service.canTranslate(TAB)).toBe(false)
+    h.service.onPageReady(TAB)
+    expect(h.service.tabState(TAB)).toBeNull()
+    await h.service.open(TAB)
+    expect(h.toasts).toEqual(['Translate this article from the reader’s Text preferences.'])
+    await expect(h.service.translatePage(TAB)).rejects.toThrow(/cannot be translated/)
+  })
+
+  it('translates the article in the core and swaps the units into the open document', async () => {
+    const h = harness()
+    active = h.service
+    const id = openReader(h)
+    expect(shownUnits()).toEqual([
+      'Este es un párrafo con <a href="/x">un enlace</a> dentro del texto.',
+      'Segundo título',
+      'Primero',
+      'Segundo con <code>código</code> dentro'
+    ])
+    await h.service.translateReader(TAB)
+    const state = h.service.readerState(TAB)
+    expect(state).toMatchObject({
+      status: 'translated',
+      source: 'es',
+      target: 'en',
+      progress: { done: 4, total: 4 },
+      showOriginal: false,
+      error: null
+    })
+    // The engine saw the runtime's shape of every unit (inline elements as markers), plus the title.
+    const sent = h.host.transports[0].posted.filter((m) => m.op === 'translate')
+    expect(sent.map((m) => (m as { texts: string[] }).texts)).toEqual([
+      [
+        'Este es un párrafo con <span data-zt="0">un enlace</span> dentro del texto.',
+        'Segundo título',
+        'Primero',
+        'Segundo con <img data-zt="0"> dentro'
+      ],
+      ['Un título']
+    ])
+    expect(shownUnits()).toEqual([
+      '[Este es un párrafo con <a href="/x">un enlace</a> dentro del texto.]',
+      '[Segundo título]',
+      '[Primero]',
+      '[Segundo con <code>código</code> dentro]'
+    ])
+    expect(document.querySelector('main > header h1')?.textContent).toBe('[Un título]')
+    expect(document.title).toBe('[Un título]')
+    expect(document.documentElement.lang).toBe('en')
+    expect(document.querySelector('pre')?.textContent).toBe('código intacto')
+    // A reload renders the translation from the core.
+    const reloaded = h.reader.pageHtml(id) as string
+    expect(reloaded).toContain('<span data-zu="1">[Segundo título]</span>')
+    expect(reloaded).toContain('<title>[Un título]</title>')
+    expect(reloaded).toContain('lang="en"')
+    expect(h.service.uiState().reader?.[TAB]?.status).toBe('translated')
+    expect(h.readAloudRestarts).toEqual([TAB])
+  })
+
+  it('shows the original and the translation again on the toggle, the translation kept', async () => {
+    const h = harness()
+    active = h.service
+    const id = openReader(h)
+    await h.service.translateReader(TAB)
+    const translations = h.host.transports[0].posted.filter((m) => m.op === 'translate').length
+    h.service.showReaderOriginal(TAB, true)
+    expect(h.service.readerState(TAB)?.showOriginal).toBe(true)
+    expect(shownUnits()[1]).toBe('Segundo título')
+    expect(document.querySelector('main > header h1')?.textContent).toBe('Un título')
+    expect(document.documentElement.lang).toBe('es')
+    expect(h.reader.pageHtml(id)).toContain('<span data-zu="1">Segundo título</span>')
+    // Asked to translate again into the same language: the kept translation shows, no engine work.
+    await h.service.translateReader(TAB)
+    expect(h.service.readerState(TAB)?.showOriginal).toBe(false)
+    expect(shownUnits()[1]).toBe('[Segundo título]')
+    expect(h.host.transports[0].posted.filter((m) => m.op === 'translate')).toHaveLength(
+      translations
+    )
+    // Read aloud on the tab followed each change of what is shown.
+    expect(h.readAloudRestarts).toEqual([TAB, TAB, TAB])
+  })
+
+  it('redoes the translation for another target and drops it when the tab leaves the article', async () => {
+    const h = harness()
+    active = h.service
+    const id = openReader(h)
+    await h.service.translateReader(TAB)
+    await h.service.translateReader(TAB, { target: 'de' })
+    expect(h.service.readerState(TAB)).toMatchObject({ status: 'translated', target: 'de' })
+    expect(h.reader.article(id)?.translation?.target).toBe('de')
+    h.view.url = PAGE_URL
+    h.service.onNavigated(TAB)
+    expect(h.service.readerState(TAB)).toBeNull()
+    expect(h.reader.article(id)?.translation).toBeNull()
+    expect(h.service.uiState().reader).toEqual({})
+  })
+
+  it('refuses what it cannot do with the page translation’s messages', async () => {
+    const h = harness()
+    active = h.service
+    await expect(h.service.translateReader(TAB)).rejects.toThrow(/cannot be translated/)
+    openReader(h)
+    await expect(h.service.translateReader(TAB, { target: 'es' })).rejects.toThrow(/already in es/)
+    expect(h.service.readerState(TAB)?.status).toBe('error')
+    await expect(h.service.translateReader(TAB, { source: 'xx' })).rejects.toThrow(
+      /no translation model/
+    )
+  })
+
+  it('takes the first preferred language as the target', async () => {
+    const h = harness({ languages: ['de-DE', 'en'] })
+    active = h.service
+    openReader(h)
+    await h.service.translateReader(TAB)
+    expect(h.service.readerState(TAB)).toMatchObject({ source: 'es', target: 'de' })
   })
 })

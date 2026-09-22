@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Ellipsis,
@@ -23,7 +23,6 @@ import type {
 } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { defaultBookmarkFolderId } from '@shared/bookmarks'
-import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { announce } from '@renderer/lib/announce'
 import { cmd, run } from '@renderer/lib/api'
@@ -37,6 +36,7 @@ import {
   overviewInteractive,
   type OverviewState
 } from '@renderer/lib/gestures/stage'
+import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
 import { groupColorHex, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { overviewColumns } from '@renderer/lib/layout'
@@ -109,6 +109,7 @@ import {
   type Departure
 } from './departureStore'
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
+import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
 import { CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
@@ -145,6 +146,11 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 /** How long the search waits after a keystroke before its count is announced. */
 const SEARCH_ANNOUNCE_MS = 500
 /**
+ * How long the Tabs pane waits for a group's card to show – a saved group's pages coming back as
+ * tabs (`folder.open`) – before a "show the group" request from the Groups pane is dropped.
+ */
+const REVEAL_TIMEOUT_MS = 800
+/**
  * The middle of a card, as fractions of its width and height inset from each edge, is where a
  * dragged card merges into it; the bands outside put the dragged card before or after it.
  */
@@ -163,7 +169,7 @@ interface Props {
 /**
  * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
  * closed list as the menu read it), the close-all question, the recently closed list, the
- * select-tabs mode's group picker.
+ * select-tabs mode's group picker, a Groups pane row's menu and the delete-group question.
  */
 type Sheet =
   | { kind: 'tab'; tabId: string }
@@ -172,6 +178,15 @@ type Sheet =
   | { kind: 'close-all' }
   | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
   | { kind: 'group-picker' }
+  | { kind: 'group-row'; folderId: string }
+  | { kind: 'delete-group'; folderId: string }
+
+/** A group the Groups pane asked the Tabs pane to show: scrolled to once its card is there. */
+interface Reveal {
+  folderId: string
+  /** When to give up waiting for the card (`performance.now()`). */
+  deadline: number
+}
 
 /**
  * The tab search (TAB-21): whether the field is pinned under the header, and what it holds. Off
@@ -218,8 +233,10 @@ interface ShownGroups {
  * that is picked when leaving), so a half-finished drag always shows exactly where things are
  * going. Cards can be held and dragged onto each other to make groups (see `useCardLift`).
  *
- * On a host with private tabs the overview has two panes under a segment (TAB-02, TAB-03): the
- * space's tabs, and the private ones – the private session is one across the spaces, so that
+ * The overview's panes stand under a segment (TAB-02, TAB-03, TAB-16): the space's tabs; its
+ * tab GROUPS as rows (`GroupsPane`, Chrome's "Tab groups" pane) – the open ones, and the SAVED
+ * ones whose tabs have closed but whose pages the group kept, to be opened again; and, on a host
+ * with private tabs, the private ones – the private session is one across the spaces, so that
  * pane lists every private tab, as loose cards on the private theme's backdrop (the window
  * surfaces blend to it while the pane is up, §9.29), with an explainer when there are none. A
  * private card never shows in the regular pane, nor a regular one in the private pane
@@ -241,17 +258,22 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const active = activeTab(state)
   const picked = privateTabsStore.use((s) => s.pane)
   const hasPrivate = state.capabilities.privateTabs
-  const pane: OverviewPane = hasPrivate ? overviewPane(state, picked) : 'tabs'
+  // A host without private tabs has no Private pane to follow a private tab onto.
+  const followed = overviewPane(state, picked)
+  const pane: OverviewPane = followed === 'private' && !hasPrivate ? 'tabs' : followed
   const privatePane = pane === 'private'
+  const groupsPane = pane === 'groups'
   // The private tabs are locked (INC-05): the Private pane is under the lock cover, its cards
   // blurred beneath it; the Tabs pane and the header are not.
   const locked = privateLockStore.use((s) => s.locked)
   // Taps work as soon as the overview is heading open; layout tracking waits for it to rest.
   const interactive = overviewInteractive(overview)
   // The tab search (TAB-21): open from the header's magnifier, off with the overview – the
-  // field is reset in the render that takes it off, as the select-tabs mode's scope is.
+  // field is reset in the render that takes it off, as the select-tabs mode's scope is. It is
+  // the card panes' – Tabs and Private – as Chrome's Hub search box is: the Groups pane lists
+  // groups as rows, not tabs as cards, so it has no magnifier, and a pick of it closes the search.
   const [search, setSearch] = useState<SearchState>(SEARCH_OFF)
-  const searchable = interactive
+  const searchable = interactive && !groupsPane
   if (search.open && !searchable) setSearch(SEARCH_OFF)
   const searchOpen = search.open && searchable
   const query = searchOpen ? normalizeQuery(search.query) : ''
@@ -268,7 +290,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const essentials = searching ? filterTabs(essentialsAll, query) : essentialsAll
   const pinned = searching ? filterTabs(pinnedAll, query) : pinnedAll
   const regular = searching ? filterTabs(regularAll, query) : regularAll
-  const groups = privatePane ? [] : groupsOf(state, space.id)
+  // The space's groups, less the PRIVATE ones (`isPrivateGroup`: private tabs alone live in
+  // them, nothing saved) – the Private pane's, whose existence and name no regular surface
+  // shows: not the Tabs pane's group sheets, not the Groups pane, not its count. `liveOf` names
+  // a group's live members, private ones included, the way the space holds them.
+  const liveOf = (folderId: string): Tab[] =>
+    regularOf(state, space).filter((t) => t.folderId === folderId)
+  const groups = privatePane
+    ? []
+    : groupsOf(state, space.id).filter((f) => !isPrivateGroup(f, liveOf(f.id)))
   const count = essentialsAll.length + pinnedAll.length + regularAll.length
   const found = essentials.length + pinned.length + regular.length
   // Past the cards, on the Tabs pane: the recently closed tabs and the other devices' tabs the
@@ -310,7 +340,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const i = Math.min(liftSlot.index, without.length)
     return [...without.slice(0, i), dragged, ...without.slice(i)]
   }
+  // A group's members on this pane: the grid's (`membersOf`: the ones a query leaves, what its
+  // card shows and departs with) and the pane's whole (`liveMembersOf`: what "Close Group"
+  // closes, what a whole-group close reads, the count on the sheets' rows – a query narrows what
+  // is shown, not what a group is).
   const membersOf = (folderId: string): Tab[] => regular.filter((t) => t.folderId === folderId)
+  const liveMembersOf = (folderId: string): Tab[] =>
+    regularAll.filter((t) => t.folderId === folderId)
   const loose = shown(
     privatePane ? regular : regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
     null
@@ -583,7 +619,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     lingering: new Map()
   }))
   const held = new Map<string, HeldGroup>()
-  for (const folder of groups) {
+  // The Groups pane draws rows, not cards: nothing there is held, so nothing lingers.
+  for (const folder of groupsPane ? [] : groups) {
     const count = members.get(folder.id)?.length ?? 0
     if (count) held.set(folder.id, { folder, count })
   }
@@ -819,11 +856,30 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         return rect ? [{ key: tab.id, kind: 'tab' as const, tab, rect }] : []
       })
     )
+  /**
+   * Close `tabs` at once, with the one undo, and run `after` with them. The tabs that make up a
+   * whole group among them – every live member of it – close as the group does ("Close Group",
+   * the core's `folder.close`), so the group stays SAVED with all their pages (TAB-16) rather
+   * than with the last one closed, which is what closing them one by one would leave it; the
+   * rest close one by one. A card's own close, Close Other Tabs, Close All Tabs and the
+   * select-tabs mode's Close all read this one rule.
+   */
+  const closeSet = (tabs: Tab[], after?: () => void): void => {
+    const ids = new Set(tabs.map((t) => t.id))
+    const whole = groups.filter((f) => {
+      const live = liveMembersOf(f.id)
+      return live.length > 0 && live.every((t) => ids.has(t.id))
+    })
+    const asGroup = new Set(whole.flatMap((f) => liveMembersOf(f.id).map((t) => t.id)))
+    undoable(tabs, () => {
+      for (const f of whole) run('folder.close', { folderId: f.id })
+      for (const t of tabs) if (!asGroup.has(t.id)) run('tab.close', { tabId: t.id })
+      after?.()
+    })
+  }
   const closeTabs = (tabs: Tab[]): void => {
     departAll(tabs)
-    undoable(tabs, () => {
-      for (const tab of tabs) run('tab.close', { tabId: tab.id })
-    })
+    closeSet(tabs)
   }
   // "Close other tabs" closes the other cards of this pane – the core's `tab.closeOthers` takes
   // the whole space, private tabs included, and would end the private session from the regular
@@ -833,10 +889,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const closeOthers = (tab: Tab): void => {
     const others = regularAll.filter((t) => t.id !== tab.id)
     departAll(others)
-    undoable(others, () => {
-      for (const t of others) run('tab.close', { tabId: t.id })
-      run('tab.activate', { tabId: tab.id })
-    })
+    closeSet(others, () => run('tab.activate', { tabId: tab.id }))
   }
   /**
    * "Close All Tabs": every unpinned card of the pane goes (Zen's Clear tabs); pinned ones stay.
@@ -853,10 +906,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       run('tab.closePrivate', undefined)
       return
     }
-    undoable(regularAll, () => {
-      if (hasPrivate) for (const t of regularAll) run('tab.close', { tabId: t.id })
-      else run('space.closeUnpinned', { spaceId: space.id })
-    })
+    if (hasPrivate) closeSet(regularAll)
+    else undoable(regularAll, () => run('space.closeUnpinned', { spaceId: space.id }))
   }
   const closeAllAsked = (): void => {
     if (regularAll.length === 0) return
@@ -910,7 +961,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         ? run('tab.activate', { tabId: tab.tabId })
         : run('tab.create', { url: tab.url, spaceId: space.id, active: true })
     )
-  const closeGroup = (folder: Folder): void => {
+  /** A group's card leaves the grid visibly, with its cards, where it stands (the Groups pane has none). */
+  const departGroup = (folder: Folder): void => {
     const rect = rectOf(flip.element(`group:${folder.id}`))
     if (rect)
       depart([
@@ -923,8 +975,67 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           columns
         }
       ])
-    run('folder.delete', { folderId: folder.id, unpack: false })
   }
+  /**
+   * "Close Group" (TAB-16): the group's tabs close – with the one Undo, as any close here – and
+   * the group stays, SAVED with their pages, on the Groups pane; the core's `folder.close`.
+   */
+  const closeGroup = (folder: Folder): void => {
+    departGroup(folder)
+    undoable(liveMembersOf(folder.id), () => run('folder.close', { folderId: folder.id }))
+  }
+  // The Groups pane's rows (TAB-16, `lib/groupRows.ts`): the space's groups by state, a group's
+  // private members counting for nothing (a group with pages saved and private tabs alone live
+  // is a saved group).
+  const rows = groupRows(groups, liveOf)
+  const rowOf = (folderId: string): GroupRow | null =>
+    [...rows.open, ...rows.saved].find((row) => row.folder.id === folderId) ?? null
+  const renamingId = uiStore.use((s) => s.renamingFolderId)
+  // The header's count on the Groups pane: every group listed, open, saved or empty.
+  const groupCount = rows.open.length + rows.saved.length
+  /**
+   * "Delete Group": the group's record goes, its live tabs closing with it (undoable, loose) or
+   * its saved pages forgotten. It asks first (§9.23, `DeleteGroupSheet`) when there is anything
+   * to lose; an empty group just goes.
+   */
+  const deleteGroupAsked = (row: GroupRow): void => {
+    if (row.count > 0) setSheet({ kind: 'delete-group', folderId: row.folder.id })
+    else run('folder.delete', { folderId: row.folder.id, unpack: false })
+  }
+  const deleteGroup = (row: GroupRow): void => {
+    const live = liveMembersOf(row.folder.id)
+    const remove = (): void => run('folder.delete', { folderId: row.folder.id, unpack: false })
+    if (live.length === 0) {
+      remove()
+      return
+    }
+    departGroup(row.folder)
+    undoable(live, remove)
+  }
+  /**
+   * The Groups pane's tap (TAB-16): the group is shown in the Tabs pane, expanded and scrolled
+   * to – a saved one opened first, its pages coming back as tabs of the group (`folder.open`),
+   * the Tabs pane catching its card as the tabs arrive (`reveal`); an empty group has nothing to
+   * show and its row takes no tap.
+   */
+  const reveal = useRef<Reveal | null>(null)
+  const showGroup = (row: GroupRow): void => {
+    if (row.kind === 'empty') return
+    if (row.kind === 'saved') void cmd('folder.open', { folderId: row.folder.id }).catch(() => null)
+    else if (row.folder.collapsed)
+      run('folder.update', { folderId: row.folder.id, patch: { collapsed: false } })
+    reveal.current = { folderId: row.folder.id, deadline: performance.now() + REVEAL_TIMEOUT_MS }
+    pickOverviewPane('tabs')
+  }
+  useLayoutEffect(() => {
+    const asked = reveal.current
+    if (!asked) return
+    const card = pane === 'tabs' ? flip.element(`group:${asked.folderId}`) : null
+    // Not there yet: the next commit (the opened group's tabs arriving) has another look, up to
+    // the deadline; past it the request is dropped on whichever commit finds it stale.
+    if (card) card.scrollIntoView({ block: 'start' })
+    if (card || performance.now() > asked.deadline) reveal.current = null
+  })
   /** A card swiped off the grid is already out of sight: just close the tab. */
   const swipedAway = (tab: Tab): void => undoable([tab], () => run('tab.close', { tabId: tab.id }))
 
@@ -936,13 +1047,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 
   // The select-tabs mode's cards: what is on show as a card can be picked – the pinned cards,
   // the members of the groups that are open, the loose cards; a folded group's members and the
-  // essentials' row are not cards and take no check. A pick whose card has left this set (its
-  // tab closed elsewhere, its group folded) goes in this same render.
-  const checkable = [
-    ...pinned,
-    ...groupCards.flatMap((g) => (g.folder.collapsed ? [] : g.tabs)),
-    ...loose
-  ]
+  // essentials' row are not cards and take no check, and the Groups pane shows no card at all.
+  // A pick whose card has left this set (its tab closed elsewhere, its group folded) goes in
+  // this same render.
+  const checkable = groupsPane
+    ? []
+    : [...pinned, ...groupCards.flatMap((g) => (g.folder.collapsed ? [] : g.tabs)), ...loose]
   // The search's departures and returns (TAB-21). A card the query dropped is off the grid in
   // this commit: its exit runs from here (`Departures` waits for the browser to show a close;
   // this close is the grid's own). A card a shorter query lets back in is drawn again: the exit
@@ -1121,6 +1231,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     />
   )
 
+  // A Groups pane row's sheet and the delete question read their row live: a group gone from
+  // under them (deleted elsewhere) leaves them nothing to show.
+  const rowSheet = sheet?.kind === 'group-row' ? rowOf(sheet.folderId) : null
+  const deleteSheet = sheet?.kind === 'delete-group' ? rowOf(sheet.folderId) : null
+
   const heroRect = hero ? lerpRect(area, heroCell ?? shrunk(area), p) : null
   const contentRadius =
     parseFloat(
@@ -1181,20 +1296,24 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                   className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
                   data-testid="overview-count"
                 >
-                  {count} tab{count === 1 ? '' : 's'}
+                  {groupsPane
+                    ? `${groupCount} group${groupCount === 1 ? '' : 's'}`
+                    : `${count} tab${count === 1 ? '' : 's'}`}
                 </span>
                 <span className="flex-1" />
-                <button
-                  type="button"
-                  className="zen-toolbar-button h-9 w-9"
-                  aria-label="Search tabs"
-                  aria-expanded={searchOpen}
-                  aria-controls={searchOpen ? OVERVIEW_SEARCH_ID : undefined}
-                  data-testid="overview-search-toggle"
-                  onClick={() => (searchOpen ? closeSearch() : openSearch())}
-                >
-                  <Search className="h-[18px] w-[18px]" />
-                </button>
+                {!groupsPane && (
+                  <button
+                    type="button"
+                    className="zen-toolbar-button h-9 w-9"
+                    aria-label="Search tabs"
+                    aria-expanded={searchOpen}
+                    aria-controls={searchOpen ? OVERVIEW_SEARCH_ID : undefined}
+                    data-testid="overview-search-toggle"
+                    onClick={() => (searchOpen ? closeSearch() : openSearch())}
+                  >
+                    <Search className="h-[18px] w-[18px]" />
+                  </button>
+                )}
                 <button
                   type="button"
                   className="zen-toolbar-button h-9 w-9"
@@ -1229,11 +1348,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               onClose={closeSearch}
             />
           )}
-          {hasPrivate && <PaneSegment pane={pane} onPick={pickOverviewPane} />}
+          <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
           <PaneSlot
-            // Each pane is a slot's worth of its own – the space strip, the grid or the empty
-            // explainer – coming up fresh on a 120 ms fade in while the still of the pane before
-            // fades out over the same slot (v2 §11.4); the cells start fresh with it.
+            // Each pane is a slot's worth of its own – the space strip, the grid, the groups'
+            // rows or the empty explainer – coming up fresh on a 120 ms fade in while the still
+            // of the pane before fades out over the same slot (v2 §11.4); the cells start fresh
+            // with it.
             pane={pane}
             root={rootRef}
             onLeave={leavePane}
@@ -1242,7 +1362,17 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
             {pane === 'tabs' && state.spaces.length > 1 && (
               <SpaceStrip spaces={state.spaces} activeId={space.id} />
             )}
-            {privatePane && count === 0 ? (
+            {groupsPane ? (
+              <GroupsPane
+                rows={rows}
+                renamingId={renamingId}
+                onOpen={showGroup}
+                onMenu={(row) => {
+                  noteSheetOpener()
+                  setSheet({ kind: 'group-row', folderId: row.folder.id })
+                }}
+              />
+            ) : privatePane && count === 0 ? (
               <PrivateEmpty />
             ) : (
               <div
@@ -1396,7 +1526,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       {interactive && sheet?.kind === 'group-picker' && (
         <GroupPickerSheet
           count={groupable.length}
-          groups={groups.map((folder) => ({ folder, count: membersOf(folder.id).length }))}
+          groups={groups.map((folder) => ({ folder, count: liveMembersOf(folder.id).length }))}
           onClose={() => leaveSheet('group-picker')}
           onPick={groupSelected}
         />
@@ -1404,9 +1534,29 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       {interactive && sheet?.kind === 'group' && state.folders[sheet.folderId] && (
         <GroupSheet
           folder={state.folders[sheet.folderId]}
-          count={membersOf(sheet.folderId).length}
-          onClose={() => setSheet(null)}
+          count={liveMembersOf(sheet.folderId).length}
+          onClose={() => leaveSheet('group')}
           onCloseGroup={closeGroup}
+          onDelete={(folder) => {
+            const row = rowOf(folder.id)
+            if (row) deleteGroupAsked(row)
+          }}
+        />
+      )}
+      {interactive && rowSheet && (
+        <GroupRowSheet
+          row={rowSheet}
+          onClose={() => leaveSheet('group-row')}
+          onOpen={showGroup}
+          onCloseGroup={closeGroup}
+          onDelete={deleteGroupAsked}
+        />
+      )}
+      {interactive && deleteSheet && (
+        <DeleteGroupSheet
+          row={deleteSheet}
+          onClose={() => leaveSheet('delete-group')}
+          onConfirm={deleteGroup}
         />
       )}
       {interactive && sheet?.kind === 'menu' && (
@@ -1824,19 +1974,26 @@ function TabSheet({
   return <OverviewSheet title={tabTitle(tab)} actions={actions} onClose={onClose} />
 }
 
+/**
+ * A group card's hold sheet (the header's menu): the colour swatches (`GroupColorPalette`, the
+ * Groups pane's row sheet shares them), Rename, Collapse / Expand, Ungroup, then Close Group –
+ * its tabs close and the group stays saved with their pages on the Groups pane (TAB-16) – and
+ * Delete Group, which asks first (§9.23) since the group holds tabs. Menu items, so Title Case
+ * (v2 §9.1): the count keeps its unit, capitalised with the rest.
+ */
 function GroupSheet({
   folder,
   count,
   onClose,
-  onCloseGroup
+  onCloseGroup,
+  onDelete
 }: {
   folder: Folder
   count: number
   onClose: () => void
   onCloseGroup: (folder: Folder) => void
+  onDelete: (folder: Folder) => void
 }): JSX.Element {
-  const palette = Object.keys(FOLDER_COLORS) as FolderColor[]
-  // Menu items, so Title Case (v2 §9.1): the count keeps its unit, capitalised with the rest.
   const actions: SheetAction[] = [
     {
       id: 'rename',
@@ -1854,47 +2011,24 @@ function GroupSheet({
       label: 'Ungroup',
       onPick: () => run('folder.delete', { folderId: folder.id, unpack: true })
     },
+    // Close Group destroys nothing the saved group does not keep (`folder.close`): the plain
+    // ink, as on the Groups pane's row sheet and the tablet's menu; Delete Group alone is danger.
     {
       id: 'close',
       label: `Close Group (${count} ${count === 1 ? 'Tab' : 'Tabs'})`,
-      destructive: true,
       onPick: () => onCloseGroup(folder)
+    },
+    {
+      id: 'delete',
+      label: 'Delete Group',
+      destructive: true,
+      onPick: () => onDelete(folder)
     }
   ]
   return (
     <OverviewSheet
       title={folder.name}
-      header={
-        <div
-          className="flex items-center gap-2 px-3 pb-2 pt-1"
-          role="radiogroup"
-          aria-label="Colour"
-        >
-          {palette.map((color) => {
-            const selected = (folder.color ?? null) === color
-            return (
-              <button
-                key={color}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                aria-label={color}
-                className={cn(
-                  'zen-group-swatch flex h-8 w-8 items-center justify-center rounded-full',
-                  selected && 'zen-group-swatch-selected'
-                )}
-                style={{ '--zen-swatch': FOLDER_COLORS[color] } as CSSProperties}
-                onClick={() => run('folder.update', { folderId: folder.id, patch: { color } })}
-              >
-                <span
-                  className="h-5 w-5 rounded-full"
-                  style={{ background: FOLDER_COLORS[color] }}
-                />
-              </button>
-            )
-          })}
-        </div>
-      }
+      header={<GroupColorPalette folder={folder} />}
       actions={actions}
       onClose={onClose}
     />
@@ -1939,26 +2073,34 @@ function newTabOn(pane: OverviewPane): void {
 }
 
 /**
- * The overview's two panes as a tab bar above the grid (TAB-02): "Tabs" and "Private" on the
- * shared `.zen-v2-segment` primitive (design language v2 §9.34, this PR's to land): text tabs in
- * the window family – the picked one in the window ink with the 2 px accent line under it, the
- * other at 69% – switching on a tap with a 120 ms state change (§11.4); not a segmented pill
- * (§9.14 has none). The class is the truth for its geometry and inks (a row tall at the 16
- * gutter, each label a 44 target); the markup carries the roles.
+ * The overview's panes as a tab bar above the grid (TAB-02, TAB-16): "Tabs", "Groups" and –
+ * where the host has private tabs – "Private" on the shared `.zen-v2-segment` primitive (design
+ * language v2 §9.34): text tabs in the window family – the picked one in the window ink with the
+ * 2 px accent line under it, the others at 69% – switching on a tap with a 120 ms state change
+ * (§11.4); not a segmented pill (§9.14 has none). The class is the truth for its geometry and
+ * inks (a row tall at the 16 gutter, each label a 44 target); the markup carries the roles.
  */
 function PaneSegment({
   pane,
+  hasPrivate,
   onPick
 }: {
   pane: OverviewPane
+  hasPrivate: boolean
   onPick: (pane: OverviewPane) => void
 }): JSX.Element {
   const panes: Array<{ id: OverviewPane; label: string }> = [
     { id: 'tabs', label: 'Tabs' },
-    { id: 'private', label: 'Private' }
+    { id: 'groups', label: 'Groups' }
   ]
+  if (hasPrivate) panes.push({ id: 'private', label: 'Private' })
   return (
-    <div role="tablist" aria-label="Tabs and private tabs" className="zen-v2-segment">
+    <div
+      role="tablist"
+      // The list's name says what it holds: Private only where the host has it.
+      aria-label={hasPrivate ? 'Tabs, groups and private tabs' : 'Tabs and groups'}
+      className="zen-v2-segment"
+    >
       {panes.map(({ id, label }) => (
         <button
           key={id}

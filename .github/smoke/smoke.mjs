@@ -3,17 +3,23 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,scale,dark] [--extra-args=--no-sandbox]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark]
+//        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
 //
-// Scenarios (each one launch of the executable, on profiles under one temporary root):
-//   boot         first launch: onboarding, one visible window titled Zenium, a tab on example.com
-//                opened through the URL bar, a graceful quit (the preset's chord, "Quit Zenium?"
-//                answered when several tabs are open) that leaves `cleanExit: true` in the profile
+// Scenarios (each one launch of the executable, on profiles under one temporary root; the pages
+// they load come from boot-fixture.mjs's server on 127.0.0.1, started once per run, so a run
+// needs no internet):
+//   boot         first launch: onboarding (on screen – in the DOM and painted – within the
+//                first-launch render budget, then clicked through with the same budget), one
+//                visible window titled Zenium, a tab on the fixture's first page opened through
+//                the URL bar, a graceful quit (the preset's chord, "Quit Zenium?" answered when
+//                several tabs are open) that leaves `cleanExit: true` in the profile
 //   restore      the profile from `boot` comes back with its tab loaded, no onboarding and no
-//                "Restore pages?" bar
+//                "Restore pages?" bar (skipped, like `crash`, when boot's launch or onboarding
+//                failed: that profile is not past onboarding; scenario-deps.mjs)
 //   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
 //                Ctrl+F (the field takes the keyboard, Escape closes the bar and hands it back to
 //                the page), Ctrl+plus/minus/0 with the zoom bubble, F11, Ctrl+N, Ctrl+Shift+N,
@@ -26,19 +32,30 @@
 //                then "Quit Zenium?" (#129); Escape between steps (Linux job)
 //   crash        the profile from `boot`, killed while it runs (`cleanExit: false` stays behind);
 //                the next launch lists the tabs unloaded and offers "Restore pages?", Restore
-//                loads example.com, the run quits cleanly (Linux job; two launches: crash and
+//                loads the page again, the run quits cleanly (Linux job; two launches: crash and
 //                crash-restore)
+//   clear-on-exit  clear browsing data on exit (#310), on the local fixture's cookie page. The
+//                quit run: a profile seeded with privacy.clearOnExit = cookies + cache sets the
+//                fixture's cookie, quits (the run happens once the quit is agreed, ahead of the
+//                final write) within the budget, cleanExit: true, no owed marker in sitedata.json;
+//                the relaunch restores the page and the cookie is gone (the wire, the page, the
+//                jar). The owed clear at launch: a profile without clear-on-exit sets the cookie
+//                and quits (the jar's file names it), the marker is written into sitedata.json by
+//                hand, the launch consumes it (the field null) and the cookie is gone (Linux job;
+//                four launches: clear-on-exit, clear-on-exit-relaunch, clear-on-exit-owed-seed,
+//                clear-on-exit-owed-launch)
 //   scale        --force-device-scale-factor=1.5 renders at devicePixelRatio 1.5
 //   dark         OS dark mode (or nativeTheme where the OS has no switch) reaches the chrome
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore); the walkthrough and the crash pair run on Linux under Xvfb only.
+// restore); the walkthrough, the crash pair and clear-on-exit run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
 // failed step is a "failure". Failures matching .github/smoke/known-failures.json are reported by
 // their bug id and tolerated; anything else makes the run exit 1. Console errors logged by the web
-// pages themselves (https://…) are recorded but never gate.
+// pages themselves (http(s)://…, the fixture's included) are recorded but never gate. A failed
+// step also grabs the screen as it was (<scenario>-<step>-failed.png, named in the failure).
 //
 // Exit codes: 0 pass (only known failures, if any), 1 unexpected failures, 2 usage, 3 watchdog.
 
@@ -48,10 +65,25 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fixture.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
-import { buttonScreenPoint, startPopupFixture } from './popup-fixture.mjs'
+import {
+  COOKIE_PATH,
+  FIXTURE_COOKIE,
+  buttonScreenPoint,
+  startPopupFixture
+} from './popup-fixture.mjs'
 import { retryDetail, waitForTabWithRetry } from './navigation.mjs'
 import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
+import { skipReason, skippedEntries } from './scenario-deps.mjs'
+import {
+  SITE_DATA_FILE,
+  cookieRequests,
+  owedClear,
+  owedClearOf,
+  sessionClearsSince,
+  withOwedClear
+} from './site-data.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -91,9 +123,12 @@ const RENDER_WAIT_MS = Math.max(RENDER_BUDGET_MS, FIRST_LAUNCH_RENDER_BUDGET_MS)
 const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 15000)
 const STEP_TIMEOUT_MS = Number(opts['step-timeout-ms'] ?? 60000)
 const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
-// Budget for a click on a button the chrome has just painted for the first time (onboarding,
-// the crash-restore bar). Playwright waits for the button to be actionable; on a busy runner
-// that took 5.1 s on one green run and 8 s on a red one, so 5 s is a margin, not a check.
+// Budget for a click on a button the chrome has just painted for the first time (the
+// crash-restore bar). Playwright waits for the button to be actionable; on a busy runner that
+// took 5.1 s on one green run and 8 s on a red one, so 5 s is a margin, not a check. What the
+// wait is for: the button has to hold still across two animation frames, and a chrome page whose
+// window has no frames yet runs none (see Session.waitForFrames). The onboarding's clicks, on the
+// run's cold launch, first wait for the frames and then click within the launch's render budget.
 const FIRST_PAINT_CLICK_MS = Number(opts['first-paint-click-ms'] ?? 15000)
 const WATCHDOG_MS = Number(opts['watchdog-min'] ?? 15) * 60 * 1000
 const allowlistFile = path.resolve(opts.allowlist ?? path.join(here, 'known-failures.json'))
@@ -183,6 +218,10 @@ function withTimeout(promise, ms, label) {
 }
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** Evaluated in a page: resolves once two animation frames have run, i.e. the page is painting. */
+const twoAnimationFrames = () =>
+  new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))
 
 /** Poll `fn` until it returns a truthy value; throws with `what` when the deadline passes. */
 async function waitFor(fn, timeoutMs, what, intervalMs = 150) {
@@ -285,17 +324,22 @@ function osScreenshot(file) {
   return { status: 1, stderr: 'unsupported platform' }
 }
 
-async function shot(name, session = null) {
+/** The screen as it is right now: no bring-to-front, no settle (the app may be gone or stuck). */
+function grabScreen(name) {
   const file = path.join(outDir, `${String(++shotIndex).padStart(2, '0')}-${name}.png`)
-  if (session) {
-    await session.bringToFront().catch(() => undefined)
-    await session.settle().catch(() => undefined)
-  }
   const r = osScreenshot(file)
   const ok = fs.existsSync(file) && fs.statSync(file).size > 0
   if (!ok) log(`screenshot ${name} failed: ${r.stderr || r.stdout || r.error || 'no file'}`)
   result.screenshots.push({ name, file: path.basename(file), ok })
-  return path.basename(file)
+  return { file: path.basename(file), ok }
+}
+
+async function shot(name, session = null) {
+  if (session) {
+    await session.bringToFront().catch(() => undefined)
+    await session.settle().catch(() => undefined)
+  }
+  return grabScreen(name).file
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -305,7 +349,7 @@ async function shot(name, session = null) {
 // the process exiting mid-quit; the harness reads the file, never main-process memory.
 // ---------------------------------------------------------------------------------------------
 
-function hookMain({ app, webContents, BrowserWindow, Menu, dialog }, options) {
+function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, options) {
   const g = globalThis
   if (g.__smoke) return { hooked: false, reason: 'already hooked' }
   let fsModule = null
@@ -456,6 +500,49 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog }, options) {
     }
     proto.__smokeWrapped = true
   }
+  // The engine's clears, timed: "clear browsing data" ends in `session.clearStorageData`,
+  // `clearCache` and `clearCodeCaches` (src/main/platform/sessions.ts), so the clear-on-exit
+  // scenario reads from these whether a run happened, on which partition and how long the engine
+  // took. The methods sit on the Session prototype (gin's constructible classes fill it); the
+  // wrap is recorded in the hook result, so a build where they moved fails the step in words.
+  const sessionProto = safe(() => Object.getPrototypeOf(session.defaultSession), null)
+  const sessionClears = []
+  if (sessionProto && !sessionProto.__smokeWrapped) {
+    for (const name of ['clearStorageData', 'clearCache', 'clearCodeCaches']) {
+      const orig = sessionProto[name]
+      if (typeof orig !== 'function') continue
+      sessionProto[name] = function (...args) {
+        const t0 = Date.now()
+        const storagePath = safe(() => this.storagePath, null)
+        const opt = args[0] && typeof args[0] === 'object' ? args[0] : undefined
+        const outcome = orig.apply(this, args)
+        Promise.resolve(outcome).then(
+          () =>
+            emit({
+              type: 'session-clear',
+              method: name,
+              storagePath,
+              options: opt,
+              ok: true,
+              ms: Date.now() - t0
+            }),
+          (err) =>
+            emit({
+              type: 'session-clear',
+              method: name,
+              storagePath,
+              options: opt,
+              ok: false,
+              error: clip((err && err.message) || err),
+              ms: Date.now() - t0
+            })
+        )
+        return outcome
+      }
+      sessionClears.push(name)
+    }
+    sessionProto.__smokeWrapped = true
+  }
   app.on('browser-window-created', (_e, w) =>
     emit({ type: 'window-created', window: w.id, windows: BrowserWindow.getAllWindows().length })
   )
@@ -561,7 +648,7 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog }, options) {
   wrapDialog('showOpenDialogSync', 'file-sync')
   wrapDialog('showSaveDialog', 'file')
   wrapDialog('showSaveDialogSync', 'file-sync')
-  return { hooked: true, transport: smoke.transport }
+  return { hooked: true, transport: smoke.transport, sessionClears }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -760,7 +847,10 @@ class Session {
     throw new Error(`no chrome page (file://…/index.html) within ${timeoutMs} ms; pages: ${urls}`)
   }
 
-  /** Runs one fenced step; a failure is recorded and the scenario carries on. */
+  /**
+   * Runs one fenced step; a failure is recorded, with the screen as it was at that moment
+   * (`screen`, the file's name), and the scenario carries on.
+   */
   async step(name, fn, { timeoutMs = STEP_TIMEOUT_MS, fatal = false } = {}) {
     const t = Date.now()
     const entry = { name, ok: false, ms: 0 }
@@ -773,7 +863,11 @@ class Session {
       entry.error = String(e && (e.stack || e.message || e)).slice(0, 4000)
       // What the step had gathered before it failed (an error thrown with a `detail`).
       if (e && typeof e === 'object' && e.detail !== undefined) entry.detail = e.detail
-      log(`step ${name} FAILED: ${entry.error.split('\n')[0]}`)
+      const screen = grabScreen(`${this.scenario}-${name}-failed`)
+      if (screen.ok) entry.screen = screen.file
+      log(
+        `step ${name} FAILED: ${entry.error.split('\n')[0]}${screen.ok ? ` (screen: ${screen.file})` : ''}`
+      )
     }
     entry.ms = Date.now() - t
     this.steps.push(entry)
@@ -917,16 +1011,33 @@ class Session {
 
   /** Two animation frames in the chrome page: the last DOM change has been committed and painted. */
   settle(page = this.chrome) {
-    return withTimeout(
-      page.evaluate(
-        () =>
-          new Promise((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))
-          )
-      ),
-      3000,
-      'settle'
-    ).catch(() => false)
+    return withTimeout(page.evaluate(twoAnimationFrames), 3000, 'settle').catch(() => false)
+  }
+
+  /**
+   * Waits for the chrome page to run two animation frames; resolves with how long they took, or
+   * null when none ran within `timeoutMs`. A page whose DOM is complete but whose window has no
+   * frames yet – the GPU process still coming up on a cold launch (the compositor's frames are
+   * what drive animation-frame callbacks), the window not shown or occluded – runs no callback at
+   * all, so a single evaluate would hang for the whole wait: each attempt is fenced at a second
+   * and asked again until the deadline (a stale attempt resolving later goes nowhere).
+   */
+  async waitForFrames(timeoutMs, page = this.chrome) {
+    const t0 = Date.now()
+    const deadline = t0 + timeoutMs
+    for (;;) {
+      const slice = Math.min(1000, deadline - Date.now())
+      if (slice <= 0) return null
+      const attempt = Date.now()
+      const ticked = await withTimeout(page.evaluate(twoAnimationFrames), slice, 'frames').then(
+        () => true,
+        () => false
+      )
+      if (ticked) return Date.now() - t0
+      // An evaluate that failed outright (the page gone) rather than timing out: not a busy loop.
+      if (Date.now() - attempt < slice)
+        await delay(Math.min(250, Math.max(0, deadline - Date.now())))
+    }
   }
 
   shot(name) {
@@ -994,6 +1105,33 @@ class Session {
         return wc.executeJavaScript(code)
       },
       { tabId, code }
+    )
+  }
+
+  /**
+   * The cookies named `name` in the jar of tab `tabId`'s session (its container's partition), and
+   * where that partition keeps its files: what the engine holds, read from the main process
+   * rather than from the page.
+   */
+  tabCookies(tabId, name) {
+    return this.app.evaluate(
+      async ({ webContents }, { tabId, name }) => {
+        const wc = webContents.fromId(tabId)
+        if (!wc || wc.isDestroyed()) throw new Error(`tab webContents ${tabId} is gone`)
+        const cookies = await wc.session.cookies.get({ name })
+        return {
+          storagePath: wc.session.storagePath,
+          cookies: cookies.map((c) => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            session: c.session,
+            expirationDate: c.expirationDate
+          }))
+        }
+      },
+      { tabId, name }
     )
   }
 
@@ -1200,8 +1338,15 @@ class Session {
   failures() {
     const out = []
     for (const st of this.steps) {
-      if (!st.ok)
-        out.push({ kind: 'step', scenario: this.scenario, step: st.name, message: st.error })
+      if (!st.ok) {
+        out.push({
+          kind: 'step',
+          scenario: this.scenario,
+          step: st.name,
+          message: st.error,
+          ...(st.screen ? { screen: st.screen } : {})
+        })
+      }
     }
     for (const e of this.readEvents()) {
       const f = failureFromEvent(e, this.scenario)
@@ -1244,11 +1389,15 @@ const HARNESS_SETTINGS = {
   shortcutPreset: 'chrome'
 }
 
-function freshProfile(name, { onboardingDone = false } = {}) {
+/**
+ * A profile with the harness settings, past onboarding when asked, plus `settings` on top (a
+ * scenario's own, e.g. `privacy.clearOnExit`; the state's sanitisers fill in the rest).
+ */
+function freshProfile(name, { onboardingDone = false, settings: extra = {} } = {}) {
   const dir = path.join(profileRoot, name)
   fs.rmSync(dir, { recursive: true, force: true })
   fs.mkdirSync(path.join(dir, 'zen'), { recursive: true })
-  const settings = structuredClone(HARNESS_SETTINGS)
+  const settings = { ...structuredClone(HARNESS_SETTINGS), ...structuredClone(extra) }
   if (onboardingDone) settings.onboardingDone = true
   writeJson(path.join(dir, 'zen', 'state.json'), { version: 2, settings })
   return dir
@@ -1284,6 +1433,60 @@ function assertCleanState(userData, url) {
     throw new Error(`state.json has no ${url} tab: ${JSON.stringify(state)}`)
   }
   return state
+}
+
+/**
+ * The profile's site-data document (#310's `sitedata.json`, beside state.json) as the smoke reads
+ * it: `doc` parsed (undefined without a file), `owed` what it owes (site-data.mjs's
+ * `owedClearOf`: undefined for no file, null for a marker dropped or never written, else the
+ * marker), `error` for a file that is not JSON (a write mid-rename would be: reread).
+ */
+function readSiteData(userData) {
+  const file = path.join(userData, 'zen', SITE_DATA_FILE)
+  if (!fs.existsSync(file)) return { file, doc: undefined, owed: undefined }
+  try {
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return { file, doc, owed: owedClearOf(doc) }
+  } catch (e) {
+    return { file, error: String(e.message) }
+  }
+}
+
+/** Writes `marker` into the profile's sitedata.json as the clear its next launch owes. */
+function writeOwedClear(userData, marker) {
+  const { file, doc } = readSiteData(userData)
+  const written = withOwedClear(doc ?? null, marker)
+  writeJson(file, written)
+  return written
+}
+
+/** The document after a quit that owes nothing: present (when `expectFile`) and no marker. */
+function assertNoOwedClear(userData, { expectFile = true } = {}) {
+  const siteData = readSiteData(userData)
+  if (siteData.error) throw new Error(`${SITE_DATA_FILE} unreadable: ${siteData.error}`)
+  if (expectFile && siteData.doc === undefined) {
+    throw new Error(`${SITE_DATA_FILE} missing: the marker was never written before the run`)
+  }
+  if (siteData.owed) {
+    throw new Error(
+      `${SITE_DATA_FILE} still owes a clear (the run did not report done): ${JSON.stringify(siteData.doc)}`
+    )
+  }
+  return siteData.doc ?? null
+}
+
+/**
+ * Whether the partition's cookie store on disk names `name`: the SQLite `Cookies` file (and
+ * its journal, where a commit may still sit) keeps cookie names in clear text, so a persistent
+ * cookie that survived a quit shows there. The evidence a cookie was in the profile before the
+ * launch that clears it.
+ */
+function cookieStoreNames(storagePath, name) {
+  const files = fs.existsSync(storagePath)
+    ? fs.readdirSync(storagePath).filter((f) => f.startsWith('Cookies'))
+    : []
+  const named = files.filter((f) => fs.readFileSync(path.join(storagePath, f)).includes(name))
+  return { storagePath, files, named, found: named.length > 0 }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1335,8 +1538,9 @@ async function runScenario(name, userData, sessionOptions, body) {
 /**
  * Accel+T, the URL typed into the bar that comes up, Enter: a new tab row in the sidebar and the
  * page loaded. Returns the tab (as the main process sees it) and the sidebar row count.
+ * `landsOn` is where the tab ends up when `url` redirects (the fixture's cookie set page).
  */
-async function openUrlInNewTab(s, url) {
+async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
   const input = s.chrome.locator('[data-testid="urlbar-input"]')
   // A blank first tab already shows the URL bar; Accel+T would toggle it away. Close it first.
   if (
@@ -1360,7 +1564,7 @@ async function openUrlInNewTab(s, url) {
   // and says so in its detail. A second failure fails the step (navigation.mjs).
   const { tab, retried } = await waitForTabWithRetry({
     url,
-    loaded: async () => (await s.tabs()).find((t) => t.url.startsWith(url) && !t.loading),
+    loaded: async () => (await s.tabs()).find((t) => t.url.startsWith(landsOn) && !t.loading),
     events: async () => s.readEvents().slice(eventsBefore),
     retry: async (failure) => {
       log(`${url}: ${retryDetail(failure)}`)
@@ -1682,10 +1886,12 @@ function xdotoolClick(x, y) {
 // Scenarios
 // ---------------------------------------------------------------------------------------------
 
-const EXAMPLE_TITLE = 'Example Domain'
-const EXAMPLE_URL = 'https://example.com'
-// A second page for the multi-tab steps (IANA's, like example.com; also titled "Example Domain").
-const SECOND_URL = 'https://example.net'
+// The pages the scenarios load (boot-fixture.mjs): `first` (the boot tab, restored by the later
+// scenarios; the walkthrough's active tab), `second` (the walkthrough's other tab), `handoff`
+// (the second instance's URL), each `{ url, title }` on the run's 127.0.0.1 origin. Started once
+// per run by main(), ahead of the first scenario, so the URL `boot` persists – port included – is
+// the one `restore` and `crash-restore` load again.
+let bootSite = null
 
 /** The window a user sees: one of them, titled with the product name, its chrome on screen. */
 async function assertMainWindow(s) {
@@ -1705,51 +1911,96 @@ async function assertMainWindow(s) {
 }
 
 /**
- * Every platform's first launch: onboarding, one window titled Zenium, a tab on example.com and
- * a graceful quit that marks the profile cleanly exited (JS errors and dialogs gate on their own).
+ * Every platform's first launch: onboarding, one window titled Zenium, a tab on the fixture's
+ * first page and a graceful quit that marks the profile cleanly exited (JS errors and dialogs
+ * gate on their own).
  */
 async function scenarioBoot() {
   const userData = freshProfile('profile')
+  const page = bootSite.first
   return runScenario('boot', userData, {}, async (s, out) => {
+    out.fixture = { origin: bootSite.origin, page: page.url }
     await s.step('onboarding', async () => {
+      // The onboarding has the launch's render budget (the run's first launch is the cold one:
+      // FIRST_LAUNCH_RENDER_BUDGET_MS) to be on screen, which is two things: in the DOM
+      // (`visible`: laid out, nothing hiding it – a wait Playwright polls on timers) and painted
+      // (the page runs animation frames, which the compositor's frames drive). The clicks then
+      // get the same budget. Kept apart because they come apart: on 2026-09-22 (#327's merge
+      // ref, ubuntu-latest) the onboarding was in the DOM 2 s after a cold launch that took 4 s
+      // to its chrome, and the window stayed blank for the 25 s after it – no frame, because
+      // the GPU process was still probing GL through Mesa (some 190 MB of libgallium/libLLVM
+      // paged in from a cold disk, under an Xvfb that has no GPU to find) before settling on
+      // the software compositor; the Linux job now launches with --disable-gpu, which skips
+      // that probe (ci.yml). Playwright's click, which needs the button to hold still across
+      // two animation frames, waited its FIRST_PAINT_CLICK_MS out with nothing to measure and
+      // the failure read "locator.click: Timeout 15000ms exceeded". Now it reads what was
+      // missing, with the screen at that moment and what the main process knew of the GPU
+      // (`gpu`: Electron's getGPUFeatureStatus – gpu_compositing "disabled_software" is the
+      // Xvfb norm, with or without the flag).
+      const budget = s.renderBudgetMs
       const onboarding = s.chrome.locator('[data-testid="onboarding"]')
-      await onboarding.waitFor({ state: 'visible', timeout: 10000 })
+      const gpuStatus = () =>
+        s.app.evaluate(({ app }) => app.getGPUFeatureStatus()).catch((e) => String(e.message || e))
+      const t0 = Date.now()
+      await onboarding.waitFor({ state: 'visible', timeout: budget })
+      const visibleMs = Date.now() - t0
+      await s.bringToFront().catch(() => undefined)
+      const paintedMs = await s.waitForFrames(Math.max(1, budget - visibleMs))
+      if (paintedMs === null) {
+        const win = await s.window().catch(() => null)
+        const gpu = await gpuStatus()
+        const where = win
+          ? `window ${win.visible ? 'visible' : 'not visible'}, ${win.bounds.width}x${win.bounds.height}, title "${win.title}"`
+          : 'no window'
+        const compositing =
+          gpu && typeof gpu === 'object'
+            ? `gpu_compositing ${gpu.gpu_compositing}`
+            : `gpu status: ${gpu}`
+        const error = new Error(
+          `onboarding in the DOM after ${visibleMs} ms but not painted: no animation frame in the chrome page within the ${budget} ms render budget (${where}; ${compositing})`
+        )
+        error.detail = { visibleMs, paintedMs: null, renderBudgetMs: budget, window: win, gpu }
+        throw error
+      }
       await s.shot('01-first-launch')
-      await s.chrome
-        .getByRole('button', { name: 'Continue' })
-        .click({ timeout: FIRST_PAINT_CLICK_MS })
-      await s.chrome
-        .getByRole('button', { name: 'Skip tour' })
-        .click({ timeout: FIRST_PAINT_CLICK_MS })
+      await s.chrome.getByRole('button', { name: 'Continue' }).click({ timeout: budget })
+      await s.chrome.getByRole('button', { name: 'Skip tour' }).click({ timeout: budget })
       await onboarding.waitFor({ state: 'detached', timeout: 10000 })
       await s.shot('02-after-onboarding')
-      return 'completed'
+      return {
+        completed: true,
+        visibleMs,
+        paintedMs,
+        renderBudgetMs: budget,
+        gpu: await gpuStatus()
+      }
     })
 
     await s.step('window', () => assertMainWindow(s))
 
-    await s.step('new-tab-example-com', async () => {
-      const { tab, sidebarTabs, retried } = await openUrlInNewTab(s, EXAMPLE_URL)
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
-      out.exampleTab = tab
-      await s.shot('03-example-com')
+    await s.step('new-tab-fixture', async () => {
+      const { tab, sidebarTabs, retried } = await openUrlInNewTab(s, page.url)
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
+      out.fixtureTab = tab
+      await s.shot('03-fixture-page')
       return { url: tab.url, title: tab.title, sidebarTabs, ...(retried ? { retried } : {}) }
     })
 
     await s.step('quit', async () => {
       const r = await s.quitGracefully()
-      out.stateAfterQuit = assertCleanState(userData, EXAMPLE_URL)
+      out.stateAfterQuit = assertCleanState(userData, page.url)
       return { ...r, state: out.stateAfterQuit }
     })
   })
 }
 
 /**
- * The profile from `boot` comes back after its graceful quit: the example.com tab, no onboarding
+ * The profile from `boot` comes back after its graceful quit: the fixture's tab, no onboarding
  * and no "Restore pages?" bar (the clean-exit marker was written, #129).
  */
 async function scenarioRestore() {
   const userData = path.join(profileRoot, 'profile')
+  const page = bootSite.first
   // Read before the launch: the app's first (debounced) write of the new run flips the marker
   // back to false, and how soon it lands after the chrome renders differs per platform.
   const stateBefore = readState(userData)
@@ -1759,18 +2010,18 @@ async function scenarioRestore() {
       if (stateBefore.cleanExit !== true) {
         throw new Error(`profile not marked cleanly exited: ${JSON.stringify(stateBefore)}`)
       }
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       const onboarding = await s.chrome.locator('[data-testid="onboarding"]').count()
       if (onboarding) throw new Error('onboarding shown again on the second launch')
       // The page is loaded, not merely listed (after a crash it would be held back).
-      const tab = await s.waitForTab(EXAMPLE_URL, 30000)
+      const tab = await s.waitForTab(page.url, 30000)
       await s.settle()
       const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
       if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
       await s.shot('01-restored')
       return {
         sidebarTabs: await s.sidebarTabCount(),
-        exampleTitles: await s.sidebarTab(EXAMPLE_TITLE).count(),
+        fixtureTitles: await s.sidebarTab(page.title).count(),
         liveTabs: (await s.tabs()).map((t) => t.url),
         loaded: tab.url,
         persisted: out.stateBefore.tabs
@@ -1779,7 +2030,7 @@ async function scenarioRestore() {
     await s.step('window', () => assertMainWindow(s))
     await s.step('quit', async () => {
       const r = await s.quitGracefully()
-      return { ...r, state: assertCleanState(userData, EXAMPLE_URL) }
+      return { ...r, state: assertCleanState(userData, page.url) }
     })
   })
 }
@@ -1791,19 +2042,24 @@ async function scenarioRestore() {
  */
 async function scenarioWalkthrough() {
   const userData = freshProfile('profile-walkthrough', { onboardingDone: true })
+  const page = bootSite.first
   return runScenario('walkthrough', userData, {}, async (s, out) => {
+    out.fixture = {
+      origin: bootSite.origin,
+      pages: { first: page.url, second: bootSite.second.url, handoff: bootSite.handoff.url }
+    }
     await s.step('new-tab', async () => {
       // The fresh window's blank tab takes the first URL; the second Ctrl+T must add a row. The
-      // example.com tab comes last so it is the active one the following steps act on.
-      const first = await openUrlInNewTab(s, SECOND_URL)
-      const second = await openUrlInNewTab(s, EXAMPLE_URL)
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      // fixture's first page comes last so it is the active tab the following steps act on.
+      const first = await openUrlInNewTab(s, bootSite.second.url)
+      const second = await openUrlInNewTab(s, page.url)
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       if (second.sidebarTabs !== first.sidebarTabs + 1) {
         throw new Error(
           `${second.sidebarTabs} sidebar rows after the second Ctrl+T, ${first.sidebarTabs} after the first`
         )
       }
-      out.exampleTab = second.tab
+      out.fixtureTab = second.tab
       await s.shot('01-two-tabs')
       return {
         first: { url: first.tab.url, title: first.tab.title, sidebarTabs: first.sidebarTabs },
@@ -1813,8 +2069,8 @@ async function scenarioWalkthrough() {
 
     await s.step('find-bar', async () => {
       await s.reset()
-      const tab = out.exampleTab
-      if (!tab) throw new Error('no example.com tab to find in')
+      const tab = out.fixtureTab
+      if (!tab) throw new Error('no fixture tab to find in')
       await s.press(`${ACCEL}+f`)
       const bar = s.chrome.locator('[data-testid="find-bar"]')
       await bar.first().waitFor({ state: 'visible', timeout: 8000 })
@@ -1828,7 +2084,18 @@ async function scenarioWalkthrough() {
         5000,
         'keyboard in the find field'
       )
-      await input.first().fill('Example')
+      // The fixture's first page has the word a known number of times: the count says the page
+      // was searched, not just that the bar opened.
+      await input.first().fill(FIND_WORD)
+      const counter = s.chrome.locator('[data-testid="find-count"]').first()
+      const count = await waitFor(
+        async () => {
+          const text = ((await counter.textContent().catch(() => null)) ?? '').trim()
+          return text === `1/${FIND_MATCHES}` ? text : null
+        },
+        8000,
+        `the find count reading 1/${FIND_MATCHES} for "${FIND_WORD}"`
+      )
       await s.shot('02-find-bar')
       await s.press('Escape')
       await bar.first().waitFor({ state: 'hidden', timeout: 8000 })
@@ -1841,13 +2108,12 @@ async function scenarioWalkthrough() {
         5000,
         `keyboard back on the page (tab ${tab.id})`
       )
-      return { opened, closed }
+      return { opened, count, closed }
     })
 
     await s.step('zoom', async () => {
       await s.reset()
-      const zoom = async () =>
-        (await s.tabs()).find((t) => t.url.startsWith(EXAMPLE_URL))?.zoomFactor
+      const zoom = async () => (await s.tabs()).find((t) => t.url.startsWith(page.url))?.zoomFactor
       const bubble = s.chrome.locator('[data-zoom-bubble]')
       const level = bubble.locator('#zen-zoom-level')
       /** The bubble is up and says `percent`; the page's factor agrees. */
@@ -2149,10 +2415,144 @@ async function scenarioWalkthrough() {
       return { address, reads, tooltip, owner, after, rows: rowsBefore }
     })
 
+    await s.step('settings-stacked-dialogs', async () => {
+      await s.reset()
+      // Two stacked desktop dialogs – a Settings item dialog and the Remove prompt over it – each
+      // paint in a stacking context of their own, ranked by slot index (design language v2 §9.24;
+      // the chassis rule `.zen-frame-dialogs-slot > * { isolation: isolate; z-index:
+      // sibling-index() }`). `sibling-index()` is Chromium 138+'s, so the unit test can only pin
+      // the rule's text; here the computed values are read – z-index 1 and 2, never `auto` – and
+      // a hit test in the overlap has to land in the upper dialog, never in the lower one's
+      // positioned children (the live bug the rule closes).
+      const page = s.chrome.locator('[data-testid="settings-page"]')
+      const rowsBefore = await s.sidebarTabCount()
+      if (IS_MAC) {
+        await s.press('Meta+,')
+      } else {
+        const button = s.chrome.locator('[data-zen-app-menu-button]').first()
+        await button.click({ timeout: 5000 })
+        const menu = s.chrome.locator('.zen-v2-menu[role="menu"]').first()
+        await menu.waitFor({ state: 'visible', timeout: 5000 })
+        await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click({ timeout: 5000 })
+        await menu.waitFor({ state: 'hidden', timeout: 5000 })
+      }
+      await page.first().waitFor({ state: 'visible', timeout: 10000 })
+      await s.settle()
+      await s.chrome.locator('.zen-settings-nav-item', { hasText: 'Search' }).first().click()
+      // An engine to open a dialog on: the "Add search engine" form dialog adds one.
+      await s.chrome.locator('[data-row="add-search-engine"] button').first().click()
+      const form = s.chrome.locator('[data-dialog="form:add-search-engine"]')
+      await form.waitFor({ state: 'visible', timeout: 5000 })
+      const name = 'Smoke Search'
+      await form.locator('#search-engine-name').fill(name)
+      await form.locator('#search-engine-url').fill('https://example.com/search?q=%s')
+      await form.getByRole('button', { name: 'Add', exact: true }).click()
+      await form.waitFor({ state: 'hidden', timeout: 5000 })
+      // The form's root leaves the slot with its fade; the ranks below count live roots only.
+      await waitFor(
+        () =>
+          s.chrome.evaluate(
+            () => !document.querySelector('.zen-frame-dialogs-slot > [data-leaving]')
+          ),
+        5000,
+        'the form dialog’s root gone from the slot'
+      )
+      const item = s.chrome.locator('[data-row^="search-engine:"]', { hasText: name }).first()
+      await item.waitFor({ state: 'visible', timeout: 5000 })
+      const itemId = await item.getAttribute('data-row')
+      await item.click()
+      const dialog = s.chrome.locator(`[data-dialog="item:${itemId}"]`)
+      await dialog.waitFor({ state: 'visible', timeout: 5000 })
+      await s.settle()
+      await dialog.locator(`[data-row="${itemId}:remove"]`).first().click()
+      const prompt = s.chrome.locator(`[data-dialog="confirm:${itemId}:remove"]`)
+      await prompt.waitFor({ state: 'visible', timeout: 5000 })
+      // Past the prompt's pop (its transform would be a stacking context of its own making).
+      await delay(400)
+      await s.settle()
+      const stack = await s.chrome.evaluate((id) => {
+        const slot = document.querySelector('.zen-frame-dialogs[data-open] .zen-frame-dialogs-slot')
+        if (!slot) return { error: 'no open dialog slot' }
+        const roots = [...slot.children].map((root) => {
+          const style = getComputedStyle(root)
+          return {
+            dialog: root.getAttribute('data-dialog'),
+            zIndex: style.zIndex,
+            isolation: style.isolation,
+            leaving: root.hasAttribute('data-leaving'),
+            inert: root.hasAttribute('inert')
+          }
+        })
+        const upper = slot.lastElementChild
+        const box = upper.getBoundingClientRect()
+        // The overlap: the prompt is centred over the item dialog, so its centre and its title
+        // corner both lie over the lower dialog's body.
+        const probe = (x, y) => {
+          const hit = document.elementFromPoint(x, y)
+          return {
+            x: Math.round(x),
+            y: Math.round(y),
+            inUpper: upper.contains(hit),
+            inLower: [...slot.children].some((root) => root !== upper && root.contains(hit)),
+            hit: hit
+              ? `${hit.tagName.toLowerCase()}.${[...hit.classList].slice(0, 2).join('.')}`
+              : null
+          }
+        }
+        return {
+          roots,
+          probes: [
+            probe(box.left + box.width / 2, box.top + box.height / 2),
+            probe(box.left + 24, box.top + 24)
+          ],
+          expected: [`item:${id}`, `confirm:${id}:remove`]
+        }
+      }, itemId)
+      if (stack.error) throw new Error(stack.error)
+      const live = stack.roots.filter((root) => !root.leaving)
+      const detail = { itemId, ...stack }
+      const fail = (why) => {
+        const err = new Error(`${why}: ${JSON.stringify(stack)}`)
+        err.detail = detail
+        throw err
+      }
+      if (live.map((root) => root.dialog).join(',') !== stack.expected.join(',')) {
+        fail('the slot does not hold the item dialog and its prompt, in that order')
+      }
+      if (live[0].zIndex !== '1' || live[1].zIndex !== '2') {
+        fail(
+          'the stacked dialog roots’ computed z-index is not 1 and 2 (sibling-index() unresolved?)'
+        )
+      }
+      if (!live.every((root) => root.isolation === 'isolate')) {
+        fail('a stacked dialog root is not a stacking context of its own (isolation)')
+      }
+      if (!live[0].inert || live[1].inert) {
+        fail('the lower dialog is not inert under the prompt (or the prompt is)')
+      }
+      if (!stack.probes.every((p) => p.inUpper && !p.inLower)) {
+        fail('a hit test in the overlap did not land in the upper dialog')
+      }
+      await s.shot('08b-settings-stacked-dialogs')
+      // The prompt's Remove takes the engine with it; both dialogs leave.
+      await prompt.getByRole('button', { name: 'Remove', exact: true }).click({ timeout: 5000 })
+      await prompt.waitFor({ state: 'hidden', timeout: 5000 })
+      await dialog.waitFor({ state: 'hidden', timeout: 5000 })
+      await item.waitFor({ state: 'hidden', timeout: 5000 })
+      await s.press(`${ACCEL}+w`)
+      await page.first().waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore,
+        8000,
+        `the Settings row gone (${rowsBefore} rows before)`
+      )
+      return detail
+    })
+
     await s.step('context-menu', async () => {
       await s.reset()
-      const tab = (await s.tabs()).find((t) => t.url.startsWith(EXAMPLE_URL))
-      if (!tab) throw new Error('example.com tab missing')
+      const tab = (await s.tabs()).find((t) => t.url.startsWith(page.url))
+      if (!tab) throw new Error('the fixture tab is missing')
       const menusBefore = await s.app.evaluate(() => globalThis.__smoke.menus.length)
       await s.app.evaluate(() => {
         globalThis.__smoke.autoCloseMenuMs = 1200
@@ -2189,7 +2589,8 @@ async function scenarioWalkthrough() {
       await s.reset()
       const rowsBefore = await s.sidebarTabCount()
       const t = Date.now()
-      const child = spawn(opts.exe, [...s.launchArgs(), 'https://example.org'], {
+      const handoff = bootSite.handoff
+      const child = spawn(opts.exe, [...s.launchArgs(), handoff.url], {
         stdio: 'ignore',
         env: s.launchEnv()
       })
@@ -2197,7 +2598,8 @@ async function scenarioWalkthrough() {
         child.on('exit', (code, signal) => resolve({ code, signal, ms: Date.now() - t }))
       )
       child.on('error', (e) => log(`second instance spawn error: ${e.message}`))
-      const tab = await s.waitForTab('https://example.org', 30000)
+      const tab = await s.waitForTab(handoff.url, 30000)
+      await s.sidebarTab(handoff.title).first().waitFor({ state: 'visible', timeout: 15000 })
       await waitFor(
         async () => (await s.sidebarTabCount()) === rowsBefore + 1,
         15000,
@@ -2470,7 +2872,7 @@ async function scenarioWalkthrough() {
     await s.step('quit', async () => {
       await s.reset()
       const r = await s.quitGracefully()
-      out.stateAfterQuit = assertCleanState(userData, EXAMPLE_URL)
+      out.stateAfterQuit = assertCleanState(userData, page.url)
       return { ...r, state: out.stateAfterQuit }
     })
   })
@@ -2479,17 +2881,18 @@ async function scenarioWalkthrough() {
 /**
  * The run that does not end well (#129): the profile from `boot` is killed while it runs, which
  * leaves the state file with `cleanExit: false`. The next launch lists the tabs but loads no
- * page, offers "Restore pages?", Restore brings example.com back, and a graceful quit marks the
- * profile clean again.
+ * page, offers "Restore pages?", Restore brings the fixture's page back, and a graceful quit
+ * marks the profile clean again.
  */
 async function scenarioCrash() {
   const userData = path.join(profileRoot, 'profile')
+  const page = bootSite.first
   const stateBeforeCrash = readState(userData)
   const killed = await runScenario('crash', userData, {}, async (s, out) => {
     out.stateBefore = stateBeforeCrash
     await s.step('running-marker', async () => {
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
-      await s.waitForTab(EXAMPLE_URL, 30000)
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
+      await s.waitForTab(page.url, 30000)
       // The first write of the run carries the marker (the startup commit is debounced).
       const state = await waitFor(
         () => {
@@ -2522,7 +2925,7 @@ async function scenarioCrash() {
       }
       const bar = s.chrome.locator('[data-crash-restore]').first()
       await bar.waitFor({ state: 'visible', timeout: 15000 })
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       await s.settle()
       const text = ((await bar.textContent()) ?? '').replace(/\s+/g, ' ').trim()
       const m = /Restore (\d+) pages?/.exec(text)
@@ -2535,7 +2938,7 @@ async function scenarioCrash() {
         )
       }
       // Held back: the tabs are listed, no page of theirs is loaded yet.
-      const loaded = (await s.tabs()).filter((t) => t.url.startsWith('https://'))
+      const loaded = (await s.tabs()).filter((t) => isWebPage(t.url))
       if (loaded.length) {
         throw new Error(`pages loaded before the answer: ${loaded.map((t) => t.url).join(', ')}`)
       }
@@ -2547,16 +2950,307 @@ async function scenarioCrash() {
       await bar
         .getByRole('button', { name: 'Restore', exact: true })
         .click({ timeout: FIRST_PAINT_CLICK_MS })
-      const tab = await s.waitForTab(EXAMPLE_URL, 45000)
+      const tab = await s.waitForTab(page.url, 45000)
       await bar.waitFor({ state: 'hidden', timeout: 8000 })
       await s.shot('02-restored-after-crash')
       return { url: tab.url, title: tab.title, sidebarTabs: await s.sidebarTabCount() }
     })
     await s.step('quit', async () => {
       const r = await s.quitGracefully()
-      return { ...r, state: assertCleanState(userData, EXAMPLE_URL) }
+      return { ...r, state: assertCleanState(userData, page.url) }
     })
   })
+}
+
+// ---------------------------------------------------------------------------------------------
+// Clear browsing data on exit (#310)
+// ---------------------------------------------------------------------------------------------
+
+/** What the quit run's profile clears on exit: the cookies (the jar and the site storage) and the cache. */
+const CLEAR_ON_EXIT_TYPES = ['cookies', 'cache']
+
+/**
+ * The fixture's cookie in tab `tab`, read three ways that have to agree: the page's
+ * (`window.__smoke.has`, what `document.cookie` held as the page loaded), the jar's (the tab's
+ * session, asked from the main process) and the wire's (the fixture's requests for the cookie
+ * page from watermark `from` on: did the browser send the Cookie header?).
+ */
+async function cookieReadings(s, fixture, tab, from) {
+  const page = await waitFor(
+    () => s.tabEval(tab.id, 'window.__smoke || null').catch(() => null),
+    10000,
+    `the cookie page's reading in tab ${tab.id}`
+  )
+  const jar = await s.tabCookies(tab.id, FIXTURE_COOKIE.name)
+  const wire = cookieRequests(fixture.requests, COOKIE_PATH, FIXTURE_COOKIE.name, from)
+  return { page, jar, wire }
+}
+
+/** The cookie is there, persistent, and went out on every request for the page. */
+function assertCookiePresent({ page, jar, wire }) {
+  const { name, value } = FIXTURE_COOKIE
+  if (page.has !== true) {
+    throw new Error(`the page reads no ${name} cookie: ${JSON.stringify(page)}`)
+  }
+  if (jar.cookies.length !== 1 || jar.cookies[0].value !== value) {
+    throw new Error(
+      `the jar holds ${JSON.stringify(jar.cookies)}, expected one ${name}=${value} (${jar.storagePath})`
+    )
+  }
+  if (jar.cookies[0].session !== false) {
+    throw new Error(
+      `${name} is a session cookie (the jar would not write it to disk): ${JSON.stringify(jar.cookies[0])}`
+    )
+  }
+  if (wire.total < 1 || wire.withCookie !== wire.total) {
+    throw new Error(
+      `the Cookie header went out on ${wire.withCookie} of ${wire.total} requests for ${COOKIE_PATH}: ${JSON.stringify(wire.cookies)}`
+    )
+  }
+}
+
+/** The cookie is gone from the page, the jar and every request for the page. */
+function assertCookieGone({ page, jar, wire }) {
+  const { name } = FIXTURE_COOKIE
+  if (page.has !== false) {
+    throw new Error(`the page still reads the ${name} cookie: ${JSON.stringify(page)}`)
+  }
+  if (jar.cookies.length) {
+    throw new Error(`the jar still holds ${JSON.stringify(jar.cookies)} (${jar.storagePath})`)
+  }
+  if (wire.total < 1) {
+    throw new Error(
+      `no request for ${COOKIE_PATH} reached the fixture: the tab did not load from it`
+    )
+  }
+  if (wire.withCookie) {
+    throw new Error(
+      `the Cookie header went out on ${wire.withCookie} of ${wire.total} requests for ${COOKIE_PATH}: ${JSON.stringify(wire.cookies)}`
+    )
+  }
+}
+
+/**
+ * `/cookie-set.html` through the URL bar (a persistent first-party cookie from a Set-Cookie
+ * header, the tab landing on `/cookie.html`, which reads it and sets nothing), then the three
+ * readings, which have to find the cookie. The step's detail.
+ */
+async function setFixtureCookie(s, fixture, shotName) {
+  const from = fixture.requests.length
+  const { tab, sidebarTabs } = await openUrlInNewTab(s, fixture.cookieSetUrl, {
+    landsOn: fixture.cookieUrl
+  })
+  const readings = await cookieReadings(s, fixture, tab, from)
+  await s.shot(shotName)
+  assertCookiePresent(readings)
+  return { tab: { id: tab.id, url: tab.url }, sidebarTabs, ...readings }
+}
+
+/**
+ * The tab restored on `/cookie.html` (loaded, no "Restore pages?" bar) and the three readings
+ * from the launch's watermark `from`, which have to find the cookie gone. The step's detail.
+ */
+async function restoredCookiePageWithoutCookie(s, fixture, from, shotName) {
+  let tab
+  try {
+    tab = await s.waitForTab(fixture.cookieUrl, 30000)
+  } catch (e) {
+    // What the restore did instead: the tabs, the main-frame load failures, the fixture's log.
+    e.detail = {
+      tabs: await s.tabs().catch(() => null),
+      failedLoads: s.readEvents().filter((ev) => ev.type === 'did-fail-load'),
+      requests: fixture.requests.slice(from)
+    }
+    throw e
+  }
+  await s.settle()
+  const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+  if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
+  const readings = await cookieReadings(s, fixture, tab, from)
+  await s.shot(shotName)
+  assertCookieGone(readings)
+  return { tab: { id: tab.id, url: tab.url }, sidebarTabs: await s.sidebarTabCount(), ...readings }
+}
+
+/**
+ * The Linux job's clear browsing data on exit (#310): two profiles, four launches, one fixture
+ * server for all of them (a tab restored on the cookie page needs its port back).
+ *
+ * The quit run. A profile seeded with `privacy.clearOnExit` = cookies + cache (through the
+ * harness's state.json write) sets the fixture's cookie and the three readings agree it is
+ * there. The quit chord (the preset's) and Quit: `Browser.requestQuit` runs
+ * `SiteDataService.runOnExit` once the quit is agreed, ahead of `shutdown`'s final write, with
+ * 3 s to spend – the marker written first, dropped on `done`. After the exit: within the 15 s
+ * budget, `cleanExit: true`, sitedata.json there and owing nothing (the outcome `done`, read from
+ * the file: the service is not reachable from the main process's globals), and the engine's
+ * clears on the events log from the chord on – `clearStorageData` on the tab's partition, the
+ * cache's – timed. The relaunch restores the tab on `/cookie.html` (a page that sets nothing):
+ * the request carries no Cookie header, the page reads none, the jar holds none; a clean quit.
+ *
+ * The owed clear at launch. A profile without clear-on-exit sets the cookie and quits: nothing
+ * cleared, no marker, and the partition's Cookies file names the cookie – it is in the profile.
+ * The marker `readPendingClear` takes back is written into sitedata.json by hand; the launch
+ * runs it from `start()` ahead of the windows: the field goes null (a debounced write, polled),
+ * the restored page loads without the cookie, the jar is empty; a clean quit owing nothing.
+ *
+ * The `deferred` outcome (an engine clear slower than the 3 s budget) is not deterministic
+ * under Xvfb and is left to the service's unit tests.
+ */
+async function scenarioClearOnExit() {
+  const fixture = await startPopupFixture()
+  const pages = { set: fixture.cookieSetUrl, read: fixture.cookieUrl, cookie: FIXTURE_COOKIE }
+  try {
+    // --- The quit run -------------------------------------------------------------------------
+    const userData = freshProfile('profile-clear-on-exit', {
+      onboardingDone: true,
+      settings: { privacy: { clearOnExit: { types: CLEAR_ON_EXIT_TYPES } } }
+    })
+    const quitRun = await runScenario('clear-on-exit', userData, {}, async (s, out) => {
+      out.fixture = pages
+      out.clearOnExit = CLEAR_ON_EXIT_TYPES
+      await s.step('cookie-set', async () => {
+        const detail = await setFixtureCookie(s, fixture, '01-cookie-set')
+        out.storagePath = detail.jar.storagePath
+        return detail
+      })
+      await s.step('quit-runs-the-clear', async () => {
+        const hooked = s.hookResult?.sessionClears ?? []
+        if (!hooked.includes('clearStorageData')) {
+          throw new Error(
+            `the hook did not wrap session.clearStorageData (wrapped: ${JSON.stringify(hooked)}): the engine's clears cannot be read`
+          )
+        }
+        const chordAt = Date.now()
+        const r = await s.quitGracefully()
+        const state = assertCleanState(userData, pages.read)
+        const siteData = assertNoOwedClear(userData)
+        const clears = sessionClearsSince(s.readEvents(), chordAt)
+        const detail = { ...r, state, siteData, clears }
+        const storage = clears.find(
+          (c) => c.method === 'clearStorageData' && c.ok && c.storagePath === out.storagePath
+        )
+        if (!storage) {
+          throw Object.assign(
+            new Error(
+              `no clearStorageData on ${out.storagePath} between the quit chord and the exit: ${JSON.stringify(clears)}`
+            ),
+            { detail }
+          )
+        }
+        if (!clears.some((c) => c.method === 'clearCache' && c.ok)) {
+          throw Object.assign(
+            new Error(
+              `no clearCache between the quit chord and the exit: ${JSON.stringify(clears)}`
+            ),
+            { detail }
+          )
+        }
+        return detail
+      })
+    })
+    if (quitRun.fatal) return quitRun
+
+    const stateBefore = readState(userData)
+    const relaunchFrom = fixture.requests.length
+    const relaunch = await runScenario('clear-on-exit-relaunch', userData, {}, async (s, out) => {
+      out.stateBefore = stateBefore
+      await s.step('cookie-gone', async () => {
+        if (stateBefore.cleanExit !== true) {
+          throw new Error(`profile not marked cleanly exited: ${JSON.stringify(stateBefore)}`)
+        }
+        return restoredCookiePageWithoutCookie(
+          s,
+          fixture,
+          relaunchFrom,
+          '02-cookie-gone-after-quit'
+        )
+      })
+      await s.step('quit', async () => {
+        const r = await s.quitGracefully()
+        return {
+          ...r,
+          state: assertCleanState(userData, pages.read),
+          siteData: assertNoOwedClear(userData)
+        }
+      })
+    })
+    if (relaunch.fatal) return relaunch
+
+    // --- The owed clear at launch -------------------------------------------------------------
+    const owedData = freshProfile('profile-owed-clear', { onboardingDone: true })
+    let storagePath = null
+    const seed = await runScenario('clear-on-exit-owed-seed', owedData, {}, async (s, out) => {
+      out.fixture = pages
+      await s.step('cookie-set', async () => {
+        const detail = await setFixtureCookie(s, fixture, '03-owed-seed-cookie-set')
+        storagePath = detail.jar.storagePath
+        out.storagePath = storagePath
+        return detail
+      })
+      await s.step('quit-keeps-the-cookie', async () => {
+        const chordAt = Date.now()
+        const r = await s.quitGracefully()
+        const state = assertCleanState(owedData, pages.read)
+        const siteData = assertNoOwedClear(owedData, { expectFile: false })
+        const clears = sessionClearsSince(s.readEvents(), chordAt)
+        if (clears.length) {
+          throw new Error(
+            `a quit without clear-on-exit cleared through the engine: ${JSON.stringify(clears)}`
+          )
+        }
+        // The jar's file names the cookie: it is in the profile for the launch that clears it.
+        const store = cookieStoreNames(storagePath, FIXTURE_COOKIE.name)
+        if (!store.found) {
+          throw new Error(
+            `no Cookies file under ${storagePath} names ${FIXTURE_COOKIE.name} after the quit: ${JSON.stringify(store)}`
+          )
+        }
+        return { ...r, state, siteData, clears, store }
+      })
+    })
+    if (seed.fatal) return seed
+
+    // By hand: the marker readPendingClear (src/core/siteData.ts) takes back, as the quit
+    // writes it (`noteExiting`): the types, the site lists as they stood (none), when.
+    const marker = owedClear({ types: CLEAR_ON_EXIT_TYPES })
+    const seeded = writeOwedClear(owedData, marker)
+    const launchFrom = fixture.requests.length
+    // Awaited here: a `return` of the bare promise would run the `finally` (the fixture's
+    // close) before the launch, and the restored tab would find the server gone.
+    return await runScenario('clear-on-exit-owed-launch', owedData, {}, async (s, out) => {
+      out.fixture = pages
+      out.seeded = seeded
+      await s.step('owed-clear-consumed', async () => {
+        // start() ran the clear ahead of the windows; the marker goes with the run's end (a
+        // debounced write, so the file is polled, never read once).
+        const siteData = await waitFor(
+          () => {
+            const sd = readSiteData(owedData)
+            return sd.owed === null ? sd : null
+          },
+          15000,
+          `${SITE_DATA_FILE} with pendingClear: null (the owed clear consumed)`,
+          250
+        )
+        // The engine's clears of the launch, when the hook was in place early enough to see them
+        // (the run starts before Playwright attaches; recorded, not required).
+        return { siteData: siteData.doc, clears: sessionClearsSince(s.readEvents(), 0) }
+      })
+      await s.step('cookie-gone', () =>
+        restoredCookiePageWithoutCookie(s, fixture, launchFrom, '04-owed-clear-at-launch')
+      )
+      await s.step('quit', async () => {
+        const r = await s.quitGracefully()
+        return {
+          ...r,
+          state: assertCleanState(owedData, pages.read),
+          siteData: assertNoOwedClear(owedData)
+        }
+      })
+    })
+  } finally {
+    await fixture.close()
+  }
 }
 
 async function scenarioScale() {
@@ -2705,11 +3399,18 @@ function finish(exitCode) {
     informational: info,
     allowlist: entries.map((e) => e.id)
   }
+  // What the fixture served: the pages the run loaded came from 127.0.0.1, or the log says which
+  // did not arrive.
+  if (bootSite) result.fixture = { origin: bootSite.origin, requests: bootSite.requests }
   result.finishedAt = new Date().toISOString()
   writeJson(path.join(outDir, 'result.json'), result)
 
   log(`== ${opts.label} (${process.platform} ${process.arch}) ==`)
   for (const [name, sc] of Object.entries(result.scenarios)) {
+    if (sc.skipped) {
+      log(`${name.padEnd(8)} skipped: ${sc.skipped} (${sc.note})`)
+      continue
+    }
     const steps = sc.session?.steps ?? []
     const failed = steps.filter((st) => !st.ok).map((st) => st.name)
     const t = sc.session?.timings ?? {}
@@ -2761,17 +3462,37 @@ async function main() {
     }
     return finish()
   }
+  // The pages every scenario loads, from this process on 127.0.0.1 for the whole run: `boot`
+  // persists their URL, so the port has to hold until `restore` and `crash-restore` have loaded
+  // it again (a server that cannot bind fails the run as a harness error).
+  bootSite = await startBootFixture()
+  result.fixture = { origin: bootSite.origin }
+  log(
+    `fixture on ${bootSite.origin}: ${[bootSite.first, bootSite.second, bootSite.handoff].map((p) => p.url).join(' ')}`
+  )
   for (const name of scenarios) {
     const run = {
       boot: scenarioBoot,
       restore: scenarioRestore,
       walkthrough: scenarioWalkthrough,
       crash: scenarioCrash,
+      'clear-on-exit': scenarioClearOnExit,
       scale: scenarioScale,
       dark: scenarioDark
     }[name]
     if (!run) {
       result.scenarios[name] = { fatal: `unknown scenario ${name}` }
+      continue
+    }
+    // A scenario whose profile `boot` failed to leave past onboarding would only meet the
+    // onboarding again and time out behind it: reported as skipped, the boot failure gates.
+    const reason = skipReason(name, result.scenarios)
+    if (reason) {
+      for (const [session, entry] of skippedEntries(name, reason)) {
+        result.scenarios[session] = entry
+        log(`${session}: skipped: ${reason} (${entry.note})`)
+      }
+      writeJson(path.join(outDir, 'result.json'), result)
       continue
     }
     try {
@@ -2784,6 +3505,7 @@ async function main() {
     if (currentSession && !currentSession.exit) killAppProcesses()
   }
   clearTimeout(watchdog)
+  await bootSite.close()
   finish()
 }
 

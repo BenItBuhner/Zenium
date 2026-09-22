@@ -1659,8 +1659,20 @@
     place-items: center;
     pointer-events: none;
   }
+  /*
+   * Every hosted dialog root is a stacking context of its own, ranked by its place in the slot
+   * (§9.24: later on top). Two stacked dialogs – a form and its prompt – are siblings in the one
+   * grid cell, and a root was a stacking context only while its pop's transform ran: after it
+   * the lower dialog's positioned children (a footer, a field's ring) painted over the upper
+   * one, interleaved. `isolation` closes each root; `z-index: sibling-index()` (Chromium 138+)
+   * ranks the roots by slot index, so the order is the slot's to give and no dialog carries the
+   * rule itself. Where the function is not understood, the roots still paint in tree order as
+   * closed contexts.
+   */
   .zen-frame-dialogs-slot > * {
     grid-area: 1 / 1;
+    isolation: isolate;
+    z-index: sibling-index();
   }
   .zen-frame-dialogs[data-open] .zen-frame-dialogs-slot > * {
     pointer-events: auto;
@@ -1915,6 +1927,19 @@
     .zen-animate-in,
     .zen-animate-fade {
       animation: zen-fade 120ms var(--zen-ease) !important;
+    }
+  }
+  /*
+   * The desktop popover's way out when it collapses into its anchor (§9.22; `DesktopPopover`
+   * in siteControls/primitives.tsx draws the reversed pop as an inline 180 ms transition on
+   * opacity and transform): under reduced motion the same 120 ms opacity fade in place as the
+   * frame dialogs' `zen-fade-out`, nothing travels. The component writes opacity alone for it,
+   * but an inline transition is removed by the global rule at the foot like any other, so the
+   * fade is declared here, `!important`, and the popover unmounts on its `transitionend`.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-desktop-popover[data-collapsing] {
+      transition: opacity 120ms var(--zen-ease) !important;
     }
   }
   /*
@@ -5593,6 +5618,15 @@
    * the pane wide. The footer is §9.11's: hugging, right-aligned, the 8 gap; the system-audio
    * checkbox leads it, its box centred on the line rather than on a row's first text line.
    */
+  /*
+   * A host in the title block's description (the site asking, or the one an extension shares
+   * with): an identity the user is asked to trust is never elided (§9.23). The description wraps
+   * as every description does; the picker puts a `<wbr>` after each of the host's dots, so a host
+   * too long for the line breaks there, and this takes a lone label longer than the whole line.
+   */
+  .zen-scpick-origin {
+    overflow-wrap: anywhere;
+  }
   .zen-scpick-panes {
     border-bottom: 1px solid transparent;
     transition: border-color 120ms var(--zen-ease);
@@ -5607,6 +5641,13 @@
     flex-direction: column;
     padding: 16px;
     overflow-y: auto;
+  }
+  /*
+   * One pane alone (an extension asked for one kind): no segment over it, so the title block's
+   * own 16 is the gap to the cards and its hairline is the one that shows on scroll.
+   */
+  .zen-scpick-list[data-alone] {
+    padding-top: 0;
   }
   .zen-scpick-state {
     display: flex;
@@ -7199,6 +7240,69 @@
 }
 
 /*
+ * A tab group's row on the tablet sidebar (TABLET-04, v2 §9.36; `SpacePanel`'s `FolderRow`): a
+ * row like Zen's folder, not a chip – the 44 row at full width on the list's 46 pitch, the
+ * phone overview's own group header (`GroupCard`'s "Reading · 2 ▾") on the sidebar's grid. In
+ * the glyph slot – the favicon's 16 box, so the group's mark centres on the favicon column – a
+ * 10 dot of the group's colour (`--zen-group-rgb`) for an open group, a 2 px ring of it for a
+ * SAVED one, its tabs closed and its pages kept (the Groups pane's two states); a folder given
+ * its own icon on the desktop keeps it, as a glyph at 14 that holds while text scales (§4).
+ * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
+ * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
+ * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
+ * = the X's 2 + 22); a saved row, with nothing to fold, keeps the chevron's box empty so the
+ * counts share one edge. The name being edited takes the name's slot at the same 14. The rail
+ * shows the glyph alone, centred. The rows of an open group sit 24 in (§9.36), where the
+ * desktop's indent is 20 and the rail's none. The block of header and rows (`.zen-group-fold`)
+ * is clipped while its height runs on the fold's spring (`useGroupFold`) and left alone at
+ * rest, so a lifted row's ghost and a focus ring are never cut.
+ */
+.zen-group-row-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+.zen-group-row-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgb(var(--zen-group-rgb));
+}
+.zen-group-row-glyph[data-saved] .zen-group-row-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
+}
+.zen-group-row-icon {
+  font-size: calc(14px / var(--zen-text-zoom, 1));
+  line-height: 1;
+}
+.zen-group-row-count {
+  flex-shrink: 0;
+  color: var(--v2-control-text-deemphasized, var(--zen-muted));
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.zen-group-row-chevron {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-right: 14px;
+  opacity: 0.69;
+}
+:root[data-form-factor='tablet'] .zen-tab.zen-group-row input {
+  font-size: 14px;
+}
+:root[data-form-factor='tablet'] .zen-group-fold > .zen-tab:not(.zen-group-row, .justify-center) {
+  margin-left: 24px;
+}
+.zen-group-fold[data-folding] {
+  overflow: hidden;
+}
+
+/*
  * The drawer (`TabletDrawer`): the expanded sidebar over the page in a window too narrow to
  * dock it, on the phone Spaces drawer's panel (`.zen-drawer-panel`: the space-tinted panel
  * colour, blurred, flush with the window's edge and rounded towards the content). The sidebar's
@@ -7991,6 +8095,66 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * The overview's Groups pane (TAB-16, `components/phone/GroupsPane.tsx`): the phone panels'
+ * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
+ * `.zen-v2-heading` with the panels' modifiers) and the row's 44 icon button standing on the
+ * overview's window backdrop, so they draw in the window family (§9.29): the pane resolves the
+ * page ink and fills the primitives read to the control roles the overview root's
+ * `data-surface="window"` sets – the theme's ink, its 69% for the count and the time, the
+ * window fill for the press – and the primitives' own rules draw them, gates and all (§9.34's
+ * one row rule: the disabled row of an empty group keeps its no-fill, the static rename row its
+ * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
+ * gutter's end; the first heading stands under the segment (or the space strip), which already
+ * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
+ * open group, the same as a 2 px ring for a saved one, whose tabs are closed (`--zen-group-color`
+ * on the glyph). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
+ * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
+ * own 40 is for a list whose field carries 8 under it, and the segment carries none.
+ */
+.zen-overview-groups {
+  --v2-text: var(--v2-control-text);
+  --v2-text-deemphasized: var(--v2-control-text-deemphasized);
+  --v2-fill: var(--v2-control-fill);
+  --v2-fill-hover: var(--v2-control-fill-hover);
+}
+.zen-overview-groups .zen-v2-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-overview-groups > :first-child > .zen-v2-heading {
+  margin-top: 4px;
+}
+.zen-overview-groups-aside {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-overview-group-glyph {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--zen-group-color);
+}
+.zen-overview-group-glyph[data-saved] {
+  border: 2px solid var(--zen-group-color);
+  background: transparent;
+}
+/* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
+.zen-overview-groups .zen-overview-group-rename {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+}
+.zen-overview-groups > .zen-phone-empty {
+  padding-top: 48px;
+}
+
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
 .zen-v2-card-radio {
   border-radius: var(--v2-radius-card);
@@ -8169,7 +8333,9 @@
 /*
  * The shared checkbox (§9.34, §6; #93 owns the rule, the values are the ones the extensions
  * surfaces drew it with): 16 on a mouse, 20 on a phone, radius 2, the accent fill with an
- * on-accent check when on, the hover fill on a mouse. As a row's leading box it sits
+ * on-accent check when on, the hover fill on a mouse while off only – the hover rule at 0,3,0
+ * outranks `:checked` at 0,2,0, so it must step aside from every checked form itself (a checked
+ * box under the pointer had lost its accent to `--v2-fill`). As a row's leading box it sits
  * (line − box) / 2 below the first text line's top (§9.2) and never grows the line. Disabled is
  * the one number (§9.30). A check row disabled as a dependent row puts the .4 on its content –
  * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
@@ -8196,7 +8362,12 @@
     border-color 120ms var(--zen-ease);
 }
 @media (hover: hover) {
-  .zen-v2-checkbox:hover:not(:disabled) {
+  .zen-v2-checkbox:hover:not(
+      :disabled,
+      :checked,
+      [aria-checked='true'],
+      [aria-checked='true'] > *
+    ) {
     background: var(--v2-fill);
   }
 }
@@ -9446,7 +9617,10 @@
  * The content column (§10.5, §5): scrolls on its own; its text column is 664 at most inside 32
  * side margins – the pane's 16 plus the rows' own 16 gutter, so a row's hover fill runs 16
  * past its text on both sides, as Zen's do, and the section title, the sub-headings and the
- * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred.
+ * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred. The find field
+ * spans that same 664 from the same 32 (its 16 padding plus the search wrapper's 16 margin),
+ * so §10.3's one edge holds on both sides: text on the field's leading edge, every row's
+ * trailing control ending on its trailing edge.
  */
 .zen-settings-content {
   position: relative;
@@ -9487,8 +9661,14 @@
 .zen-settings-content[data-scrolled] > .zen-settings-find::after {
   opacity: 1;
 }
+/*
+ * The pane's box is the text column plus both margins: its own 16 padding and the rows' 16
+ * gutter on each side, 728 for the 664. At 664 + 2 × 16 the rows' gutter came out of the text
+ * column instead, and every trailing control stopped 32 short of the find field's end (1138
+ * against 1170 at 1600 wide) while the labels sat on its start.
+ */
 .zen-settings-pane {
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 8px 16px 40px;
 }
 /*

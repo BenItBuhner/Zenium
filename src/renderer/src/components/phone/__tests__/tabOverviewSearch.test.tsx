@@ -2,7 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { ClosedEntrySummary, Space, SyncDeviceTabs, Tab, UIState } from '@shared/types'
+import type {
+  ClosedEntrySummary,
+  Folder,
+  Space,
+  SyncDeviceTabs,
+  Tab,
+  UIState
+} from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import { BLANK_URL } from '@shared/url'
@@ -16,8 +23,10 @@ import { BLANK_URL } from '@shared/url'
  * reaches past the cards: this device's recently closed tabs and the other devices' open ones
  * list as rows under headings beneath the matching cards, each row leaving the overview on the
  * tab it brings up; a hidden device, a sync that is off and the Private pane are out of its
- * reach. Rendered for real in happy-dom with the sheets on the frame's dialog host, the frame
- * loop cranked by hand, the core stubbed.
+ * reach. The search is the card panes' – the Groups pane (TAB-16) has no magnifier – and a query
+ * narrows what is shown, not what a group is: a group's close and count read the whole group.
+ * Rendered for real in happy-dom with the sheets on the frame's dialog host, the frame loop
+ * cranked by hand, the core stubbed.
  */
 
 const SPACE = 'space'
@@ -176,6 +185,31 @@ const pages = (): Tab[] => [
   tab('hn', 'https://news.ycombinator.com/', { title: 'Hacker News' }),
   tab('blank', BLANK_URL)
 ]
+
+/** A tab group of the space (its card on the grid), and two pages in it beside a loose one. */
+const research: Folder = {
+  id: 'research',
+  spaceId: SPACE,
+  name: 'Research',
+  icon: '📚',
+  collapsed: false,
+  color: 'blue'
+}
+const grouped = (): UIState =>
+  stateOf(
+    [
+      tab('m1', 'https://en.wikipedia.org/wiki/Coffee', {
+        title: 'Coffee - Wikipedia',
+        folderId: research.id
+      }),
+      tab('m2', 'https://github.com/BenItBuhner/Zenium', {
+        title: 'Zenium',
+        folderId: research.id
+      }),
+      tab('a', 'https://a.example/', { title: 'A' })
+    ],
+    { folders: { [research.id]: research } }
+  )
 
 /** A private tab (the Android host's private session), and the state on a host that has them. */
 const privateTab = (id: string, url: string): Tab =>
@@ -598,6 +632,44 @@ describe('the tab search (TAB-21)', () => {
     await land()
     // Five pages and a blank tab are open whatever the query shows.
     expect(sheetRows()).toContain('Close All Tabs (6)')
+  })
+
+  it("is the card panes' alone: the Groups pane has no magnifier, and picking it closes an open search", async () => {
+    show(stateOf(pages()))
+    act(() => byTestId('overview-search-toggle')!.click())
+    type('wiki')
+    expect(cellsOn('tabs')).toEqual(['coffee', 'tea'])
+    act(() => byTestId('overview-pane-groups')!.click())
+    await settle()
+    expect(field()).toBeNull()
+    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    // Back on the Tabs pane the magnifier is back and the grid whole: the query did not keep.
+    act(() => byTestId('overview-pane-tabs')!.click())
+    await settle()
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
+    expect(field()).toBeNull()
+    expect(cellsOn('tabs')).toEqual(['ex', 'coffee', 'pulls', 'tea', 'hn', 'blank', 'new-tab'])
+  })
+
+  it("reads a group whole under a query: the one card of it shown closes its tab alone, and the group's sheet counts every member", async () => {
+    show(grouped())
+    act(() => byTestId('overview-search-toggle')!.click())
+    type('wiki')
+    // The group's card stays for its one match; the other member and the loose page left.
+    expect(cellKeys()).toEqual(['group:research', 'm1'])
+    act(() => byLabel('Close Coffee - Wikipedia')!.click())
+    // One tab closes, not the group: the group is whole only when every live member goes.
+    expect(of('tab.close')).toEqual([{ tabId: 'm1' }])
+    expect(of('folder.close')).toEqual([])
+
+    // The group's own sheet counts the pane's members, as its Close Group closes them.
+    const header = document.querySelector<HTMLElement>('[aria-label^="Research, tab group"]')!
+    act(() => {
+      header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    })
+    await settle()
+    await land()
+    expect(sheetRows()).toContain('Close Group (2 Tabs)')
   })
 
   it('keeps the field and its query across the segment: the Private pane is narrowed by the same words', async () => {

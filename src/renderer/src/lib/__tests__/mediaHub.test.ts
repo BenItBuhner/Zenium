@@ -180,13 +180,13 @@ describe('mediaTitle, with the shared detail line under it', () => {
 describe('the hub open state', () => {
   it('opens from the button, taking the keyboard for the chrome when the button had it', () => {
     openMediaHub()
-    expect(mediaHubUi.get()).toEqual({ open: true, fromKeyboard: false })
+    expect(mediaHubUi.get()).toEqual({ open: true, fromKeyboard: false, buttonUp: false })
     expect(run).not.toHaveBeenCalled()
     closeMediaHub()
     expect(mediaHubUi.get().open).toBe(false)
 
     openMediaHub({ fromKeyboard: true })
-    expect(mediaHubUi.get()).toEqual({ open: true, fromKeyboard: true })
+    expect(mediaHubUi.get()).toEqual({ open: true, fromKeyboard: true, buttonUp: false })
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
   })
 

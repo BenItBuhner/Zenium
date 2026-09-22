@@ -35,7 +35,9 @@ import type {
   ClipboardHost,
   ConfirmOptions,
   DialogHost,
+  LanguagesHost,
   NetHost,
+  PageFontsHost,
   PageMessage,
   PasswordsHost,
   PerformanceHost,
@@ -55,7 +57,8 @@ import {
   type PageDialogAnswer
 } from '../../shared/pageDialogIpc'
 import { FileStoreIO } from './storeIo'
-import { SessionManager, buildUserAgent } from './sessions'
+import { SessionManager, buildUserAgent, systemLocales } from './sessions'
+import { acceptLanguageList } from '../../shared/languages'
 import { installZenProtocol } from './protocol'
 import { ElectronDownloads } from './downloads'
 import { ElectronDownloadsShell } from './downloadsShell'
@@ -161,7 +164,11 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // No camera to scan with on the desktop hosts; the camera buttons stay away.
   qrScan: false,
   // Chromium's `speechSynthesis` behind a hidden page (`platform/speech.ts`).
-  readAloud: true
+  readAloud: true,
+  // Every session's `Accept-Language` follows the preferred languages (`session.setUserAgent`).
+  pageLanguages: true,
+  // Blink on the desktop maps `serif` / `sans-serif` / `monospace` through the web preferences.
+  genericFontFamilies: true
 }
 
 /**
@@ -183,6 +190,10 @@ export class ElectronPlatform implements Platform {
   readonly net: NetHost
   readonly app: AppHost
   readonly theme: ThemeHost
+  /** The preferred languages as every session's `Accept-Language` (CT-41). */
+  readonly languages: LanguagesHost
+  /** The page fonts in every page view's web preferences, live where the debugger is free (CT-25). */
+  readonly pageFonts: PageFontsHost
   readonly siteData: ElectronSiteData
   readonly passwords: PasswordsHost
   readonly blocking: ElectronBundledLists
@@ -224,7 +235,11 @@ export class ElectronPlatform implements Platform {
     private readonly userDataDir: string,
     options: { holdBackgroundWork?: boolean } = {}
   ) {
-    this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
+    this.info = {
+      os: process.platform as PlatformOs,
+      version: app.getVersion(),
+      locales: systemLocales()
+    }
     this.performance = electronPerformanceHost({
       holdBackgroundWork: options.holdBackgroundWork === true,
       spawnWorker: () => createBackgroundWorker({})
@@ -447,6 +462,12 @@ export class ElectronPlatform implements Platform {
         nativeTheme.themeSource = scheme
       }
     }
+    this.languages = {
+      apply: (languages) => this.sessions.setAcceptLanguages(acceptLanguageList(languages))
+    }
+    this.pageFonts = {
+      apply: (fonts) => this.views.applyFonts(fonts)
+    }
   }
 
   /**
@@ -488,7 +509,9 @@ export class ElectronPlatform implements Platform {
     this.downloads.bind(browser.downloads, {
       tabIdFor: (source) => this.views.tabIdForWebContents(source) ?? null,
       parentWindow: (sourceTabId) =>
-        browserWindowOf(sourceTabId ? browser.tabs.windowFor(sourceTabId) : browser.focusedWindow()),
+        browserWindowOf(
+          sourceTabId ? browser.tabs.windowFor(sourceTabId) : browser.focusedWindow()
+        ),
       stopNavigation: (tabId) => {
         const view = this.views.viewForTab(tabId)
         if (view && !view.isDestroyed()) view.stop()
@@ -582,6 +605,7 @@ export class ElectronPlatform implements Platform {
       }
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
+    this.attachChromePermissions()
     this.registerIpc(browser)
     attachSecurityHandlers(browser, this.views, extensionApi.webRequest)
     configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
@@ -597,12 +621,35 @@ export class ElectronPlatform implements Platform {
   }
 
   /**
-   * `tabCaptureAllows`: whether an extension's `chrome.tabCapture` request stands behind a media
-   * request the engine makes on a tab for a consuming document of `securityOrigin`.
+   * The chrome's own session (the default one: the browser windows' documents, nothing of a
+   * page's). Electron grants a session without handlers every request; that stands for the
+   * chrome's documents, and the one grant made explicit is Local Font Access – the Customize
+   * fonts pickers list the installed fonts through the chrome document's `queryLocalFonts()`
+   * (CT-25). Pages live in the container sessions, whose handlers refuse `local-fonts` outright
+   * (the Fonts content setting is deny-only), so no page ever sees the list.
+   */
+  private attachChromePermissions(): void {
+    const chromeDocument = (wc: WebContents | null): boolean =>
+      wc !== null && !wc.isDestroyed() && this.windows.windowForWebContents(wc.id) !== undefined
+    const ses = session.defaultSession
+    ses.setPermissionRequestHandler((wc, permission, callback) => {
+      callback(permission === 'local-fonts' ? chromeDocument(wc) : true)
+    })
+    ses.setPermissionCheckHandler((wc, permission) =>
+      permission === 'local-fonts' ? chromeDocument(wc) : true
+    )
+  }
+
+  /**
+   * `captureAllows`: whether an extension's capture stands behind a media request the engine
+   * makes on `target` for a consuming document of `securityOrigin` – a `chrome.tabCapture`
+   * request on the captured tab, or a `chrome.desktopCapture` pick the consuming document is
+   * redeeming (`getUserMedia` with `chromeMediaSource: "desktop"`, which Electron parses natively
+   * once this handler allows it).
    */
   private attachPermissions(
     ses: Session,
-    tabCaptureAllows: (target: WebContents, securityOrigin: string | undefined) => boolean
+    captureAllows: (target: WebContents, securityOrigin: string | undefined) => boolean
   ): void {
     const { permissions, external } = this.browser
     ses.setPermissionRequestHandler((webContents, rawPermission, callback, details) => {
@@ -617,14 +664,12 @@ export class ElectronPlatform implements Platform {
       // An extension's tab capture arrives the same way, on the captured tab, from the
       // consuming document's origin: the user's gesture on the extension was the consent
       // (Chrome's `tabCaptureForTab`), and the engine's stream registry already tied the id to
-      // that one document and moment.
+      // that one document and moment. So does a `chooseDesktopMedia` pick's `getUserMedia`, on
+      // the consuming document itself: the picker was the consent.
       if (
         permission === 'display-capture' &&
         webContents &&
-        tabCaptureAllows(
-          webContents,
-          'securityOrigin' in details ? details.securityOrigin : undefined
-        )
+        captureAllows(webContents, 'securityOrigin' in details ? details.securityOrigin : undefined)
       ) {
         callback(true)
         return

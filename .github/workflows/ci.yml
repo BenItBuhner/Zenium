@@ -86,18 +86,47 @@ jobs:
         # is not setuid and ubuntu-latest denies unprivileged user namespaces. Every profile lives
         # under a temporary XDG_CONFIG_HOME; the scenarios, their screenshots and result.json land
         # in smoke-out/unpacked. boot and restore run on every platform; the crash pair (a killed
-        # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only –
+        # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only
+        # (clear-on-exit too, in the step after this one) –
         # the walkthrough ends with a pop-up opened by a real xdotool click on a button inside a
         # cross-origin iframe of a local fixture (the #142 regressions: the frame's gesture must
         # reach the pop-up blocker and the pop-up's page must run the page preload). Known bugs
         # are named through .github/smoke/known-failures.json.
+        # --disable-gpu (both smoke steps): under Xvfb there is no GPU, and Chromium's GPU process
+        # finds that out by probing GL through Mesa – some 190 MB of libgallium/libLLVM paged in
+        # from the runner's disk on the run's first launch – before it settles on the software
+        # compositor it would have used anyway. On 2026-09-22 (#327's merge ref) that probe left
+        # the first launch's window without a single frame for 27 s, so the onboarding's click
+        # timed out (#333). With the flag the GPU process skips the probe and starts as the
+        # software compositor it ends up as: the same rendering path, a 47 MB GPU process instead
+        # of 261 MB, and the first paint 31 ms after the DOM instead of 3.5 s on a disk throttled
+        # to 6 MB/s locally. No effect on what the smokes check (chrome, tabs, restore, quit,
+        # cookies); the sign-in smoke below runs without it, as before.
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough --extra-args=--no-sandbox
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough
+          --extra-args="--no-sandbox --disable-gpu"
+      - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
+        # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches
+        # (two profiles: one seeded with privacy.clearOnExit = cookies + cache, one owed a clear
+        # written into sitedata.json by hand) get their own log, result.json and screenshots under
+        # smoke-out/clear-on-exit. The cookie comes from the same local fixture server the
+        # walkthrough's pop-up step uses; the engine's clears are read off the main-process event
+        # log, the outcome off sitedata.json (no owed marker after the quit), the cookie's absence
+        # off the wire, the page and the jar. Runs after a red step above as well (its own
+        # profiles, its own harness run): the verdict then has both results instead of a missing
+        # one, and a first-launch failure up there is not this scenario's.
+        if: ${{ !cancelled() }}
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label clear-on-exit
+          --out "$SMOKE_OUT" --scenarios clear-on-exit --extra-args="--no-sandbox --disable-gpu"
       - name: Verdict (log and step summary)
         if: always()
-        run: node .github/smoke/verdict.mjs --out "$SMOKE_OUT" --expect unpacked --title linux-x64
+        run: >
+          node .github/smoke/verdict.mjs --out "$SMOKE_OUT" --expect unpacked,clear-on-exit
+          --title linux-x64
       - name: Sign-in fidelity smoke test
         # After the boot smoke and its verdict, so a failure here never hides the boot results.
         # Boots the packaged build under Xvfb on its own (no automation flags, so the check on

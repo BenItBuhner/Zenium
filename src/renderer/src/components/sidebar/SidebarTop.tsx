@@ -63,6 +63,7 @@ import { actionable } from '@renderer/lib/extensions/toolbar'
 import {
   mediaHubButtonFits,
   mediaHubFoldedAt,
+  mediaHubUi,
   mediaHubVisible,
   mediaPlaying
 } from '@renderer/lib/mediaHub'
@@ -205,6 +206,14 @@ export function NavRow({
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
   const mediaFolded = mediaHubFoldedAt(state, hubUp)
+  // The decision published for the hub's popover (`mediaHubUi.buttonUp`), from this commit's
+  // layout phase: where the button returns or folds in the row's own observer pass – a sidebar
+  // drag, no state push – the popover re-reads its anchor before the frame paints, so the hold
+  // on `aria-expanded` and the box hand over ⋯ ↔ button with the dot, in the same frame.
+  useLayoutEffect(() => {
+    mediaHubUi.set({ buttonUp: hubUp })
+    return () => mediaHubUi.set({ buttonUp: false })
+  }, [hubUp])
   useEffect(() => {
     // Alt+F / F10: the menu opens from this button with the keyboard on it, so Escape closes
     // the menu and leaves the focus here (design language v2 §9.22).
