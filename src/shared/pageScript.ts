@@ -17,6 +17,7 @@ import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
 import type { CaptureStateReport } from './captureState'
+import { installRotateToFullscreen, rotateManaged } from './rotateToFullscreen'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -54,6 +55,7 @@ export interface PageScriptMessage {
     | 'opensearch'
     | 'readAloud'
     | 'fullscreen'
+    | 'rotateFullscreen'
     | 'capture-state'
   url?: string
   /** `opensearch`: the link's `title`, the engine's name when its description has none. */
@@ -89,12 +91,23 @@ export interface PageScriptMessage {
   readAloud?: ReadAloudExtraction
   /**
    * `fullscreen` (hosts with `reportFullscreen`): the document has a fullscreen element
-   * (`active`), and when it is a `<video>` or holds one, the video's natural size – 0 × 0 while
-   * the size is not known (no video, or its metadata still to come).
+   * (`active`); whether it is a `<video>` or holds one (`video`); whether it is a `<video>` of
+   * the browser's own, the kind a turn of the screen leaves (`rotate`, `rotateManaged`); and
+   * then the video's natural size – 0 × 0 while the size is not known (no video, or its
+   * metadata still to come).
    */
   active?: boolean
+  video?: boolean
+  rotate?: boolean
   videoWidth?: number
   videoHeight?: number
+  /**
+   * `rotateFullscreen` (hosts with `onRotateFullscreen`): the page has a playing video for the
+   * screen's new orientation and waits for the host's key (`armed`), or its `requestFullscreen`
+   * settled (`result`).
+   */
+  armed?: boolean
+  result?: 'entered' | 'failed'
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
@@ -153,6 +166,12 @@ export interface PageScriptTransport {
    * (`installFullscreenReporter`).
    */
   reportFullscreen?: boolean
+  /**
+   * Hosts whose screen turns a playing video fullscreen (Android, as Chrome's does, MED-02):
+   * the host says when the screen turned, the script judges the page's videos and takes the
+   * host's key for the video's `requestFullscreen()` (`installRotateToFullscreen`).
+   */
+  onRotateFullscreen?(listener: (landscape: boolean) => void): void
   /**
    * Hosts that offer a page's own search engine (Chrome for Android's "Recently visited" engines):
    * the script posts the address of the first `<link rel="search"
@@ -231,6 +250,13 @@ export function installPageScript(transport: PageScriptTransport): void {
   }
 
   const zap = installZap(transport)
+  // Ahead of the activation reporter: rotate-to-fullscreen's key (the host's, not the user's) is
+  // stopped by its listener before the reporter's sees it, so the pop-up blocker never counts it.
+  if (transport.onRotateFullscreen)
+    installRotateToFullscreen({
+      send: transport.send.bind(transport),
+      onRotateFullscreen: transport.onRotateFullscreen.bind(transport)
+    })
   installActivationReporter(transport)
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
@@ -360,19 +386,23 @@ export function fullscreenVideoOf(element: Element): HTMLVideoElement | null {
 }
 
 /**
- * Tells the host, at every `fullscreenchange`, whether the document has a fullscreen element
- * and the natural size of the video it shows (0 × 0 for none, or none known yet). The host
- * turns the screen by it: a landscape video takes Android to landscape as Chrome's does
- * (MED-01). A video in fullscreen before its metadata arrived reports again at
- * `loadedmetadata`, as Chrome's orientation lock waits for the size before it locks. The
- * engine's own `onShowCustomView` comes before the page's event, so the host pairs the two.
+ * Tells the host, at every `fullscreenchange`, whether the document has a fullscreen element,
+ * whether that element shows a video at all (`video`: the exit hint's cue reads it, MED-03 – a
+ * video's hint shows once, any other element's toast every time) and the natural size of the
+ * video it shows (0 × 0 for none, or none known yet). The host turns the screen by the size: a
+ * landscape video takes Android to landscape as Chrome's does (MED-01). A video in fullscreen
+ * before its metadata arrived reports again at `loadedmetadata`, as Chrome's orientation lock
+ * waits for the size before it locks. The engine's own `onShowCustomView` comes before the
+ * page's event, so the host pairs the two.
  */
 export function installFullscreenReporter(transport: Pick<PageScriptTransport, 'send'>): void {
   let awaitingMetadata: HTMLVideoElement | null = null
-  const send = (active: boolean, video: HTMLVideoElement | null): void =>
+  const send = (element: Element | null, video: HTMLVideoElement | null): void =>
     transport.send({
       type: 'fullscreen',
-      active,
+      active: element !== null,
+      video: video !== null,
+      rotate: element !== null && rotateManaged(element),
       videoWidth: video?.videoWidth ?? 0,
       videoHeight: video?.videoHeight ?? 0
     })
@@ -381,7 +411,7 @@ export function installFullscreenReporter(transport: Pick<PageScriptTransport, '
     awaitingMetadata = null
     if (!video || e.target !== video) return
     const element = fullscreenElementOf(document)
-    if (element && fullscreenVideoOf(element) === video) send(true, video)
+    if (element && fullscreenVideoOf(element) === video) send(element, video)
   }
   const report = (): void => {
     if (awaitingMetadata) {
@@ -390,11 +420,11 @@ export function installFullscreenReporter(transport: Pick<PageScriptTransport, '
     }
     const element = fullscreenElementOf(document)
     if (!element) {
-      send(false, null)
+      send(null, null)
       return
     }
     const video = fullscreenVideoOf(element)
-    send(true, video)
+    send(element, video)
     if (video && video.videoWidth === 0) {
       awaitingMetadata = video
       video.addEventListener('loadedmetadata', onMetadata, { once: true })

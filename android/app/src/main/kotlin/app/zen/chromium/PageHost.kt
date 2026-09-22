@@ -141,12 +141,20 @@ interface PageHost {
     fun exitFullscreen(tab: TabWebView)
     /**
      * The page's `fullscreenchange` ([PageMessageRoute.Fullscreen]): a fullscreen element is
-     * there or gone, with the natural size of the video it shows (0 × 0 for none known), from
-     * the main document (`mainFrame`) or from one of its frames, whose embed's video the main
-     * document cannot see into. A host that turns the screen with a landscape video reads it
-     * (MED-01); the default leaves it.
+     * there or gone, whether it shows a video at all (`video`), whether it is a `<video>` with
+     * the browser's controls (`rotate`, the kind that turns with the screen, MED-02) and the
+     * natural size of the video it shows (0 × 0 for none known), from the main document
+     * (`mainFrame`) or from one of its frames, whose embed's video the main document cannot see
+     * into. A host that turns the screen with a landscape video reads the size (MED-01) and
+     * cues the exit hint by the element (MED-03); the default leaves it.
      */
-    fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {}
+    fun fullscreenVideo(tab: TabWebView, active: Boolean, video: Boolean, rotate: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {}
+    /**
+     * Rotate-to-fullscreen's word from the page ([PageMessageRoute.RotateFullscreen], MED-02):
+     * armed for the host's key, or its request settled. A host without a screen to turn has
+     * nothing to do.
+     */
+    fun rotateFullscreen(tab: TabWebView, armed: Boolean, result: String?) {}
     /**
      * The page view was laid out at a new size (device px). The browser's host tells the chrome
      * once the frame at that size is drawn (`view.sized`), for the chrome's return from a

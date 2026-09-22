@@ -607,7 +607,8 @@ class TabWebView(
             is PageMessageRoute.EvalResult -> pendingEvals.remove(route.id)?.invoke(route.value)
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
             is PageMessageRoute.Fullscreen ->
-                host.fullscreenVideo(this, route.active, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
+                host.fullscreenVideo(this, route.active, route.video, route.rotate, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
+            is PageMessageRoute.RotateFullscreen -> host.rotateFullscreen(this, route.armed, route.result)
             is PageMessageRoute.Forward ->
                 if (route.message.optString("type") == "share") host.preparePageMessage(route.message) { host.viewEvent(tabId, "pageMessage", it) }
                 else host.viewEvent(tabId, "pageMessage", route.message)
@@ -919,6 +920,21 @@ class TabWebView(
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * A press of no key (`KEYCODE_UNKNOWN`), for rotate-to-fullscreen (MED-02): the engine counts
+     * any key down that is neither a modifier's nor Escape as the user's activation
+     * (`KeyboardEventManager::KeyEvent`), which a `<video>`'s `requestFullscreen()` needs, and
+     * Chrome's own rotate delegate grants the page the same. The page sees a `keydown` of
+     * "Unidentified" that the page script takes before the page does
+     * (`installRotateToFullscreen`). Not the user's activation to the core: the pop-up blocker's
+     * word stays theirs (`reportActivation` is not called).
+     */
+    fun pressForActivation() {
+        val now = SystemClock.uptimeMillis()
+        super.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_UNKNOWN, 0))
+        super.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_UNKNOWN, 0))
     }
 
     // --- AI agent input (trusted MotionEvent / KeyEvent synthesis) -------------------------------

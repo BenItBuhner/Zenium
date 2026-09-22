@@ -37,16 +37,41 @@ class PageMessagesTest {
     @Test
     fun aFullscreenReportIsTheHostsOwnWithItsVideoSize() {
         assertEquals(
-            PageMessageRoute.Fullscreen(true, 1920, 1080),
-            routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to 1920, "videoHeight" to 1080), token)
+            PageMessageRoute.Fullscreen(true, true, true, 1920, 1080),
+            routePageMessage(
+                message("type" to "fullscreen", "active" to true, "video" to true, "rotate" to true, "videoWidth" to 1920, "videoHeight" to 1080),
+                token
+            )
         )
         // Fullscreen ended, or an element without a video: no size.
-        assertEquals(PageMessageRoute.Fullscreen(false, 0, 0), routePageMessage(message("type" to "fullscreen", "active" to false), token))
-        // A size that makes no sense is read as none known.
+        assertEquals(PageMessageRoute.Fullscreen(false, false, false, 0, 0), routePageMessage(message("type" to "fullscreen", "active" to false), token))
+        // A size that makes no sense is read as none known; a video without its metadata yet is
+        // still a video (the exit hint's cue reads that, MED-03). A player's wrapper around one
+        // is not the kind that turns with the screen (MED-02).
         assertEquals(
-            PageMessageRoute.Fullscreen(true, 0, 0),
-            routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to -4, "videoHeight" to "wide"), token)
+            PageMessageRoute.Fullscreen(true, true, false, 0, 0),
+            routePageMessage(message("type" to "fullscreen", "active" to true, "video" to true, "videoWidth" to -4, "videoHeight" to "wide"), token)
         )
+        // A canvas, a slide deck: an element without a video.
+        assertEquals(
+            PageMessageRoute.Fullscreen(true, false, false, 0, 0),
+            routePageMessage(message("type" to "fullscreen", "active" to true, "video" to false), token)
+        )
+    }
+
+    @Test
+    fun rotateToFullscreensWordIsTheHostsOwn() {
+        assertEquals(
+            PageMessageRoute.RotateFullscreen(true, null),
+            routePageMessage(message("type" to "rotateFullscreen", "armed" to true), token)
+        )
+        assertEquals(
+            PageMessageRoute.RotateFullscreen(false, "entered"),
+            routePageMessage(message("type" to "rotateFullscreen", "result" to "entered"), token)
+        )
+        // A frame's video is not one the host turns the screen for on its own.
+        assertFalse(PageMessageRoute.RotateFullscreen(true, null).heardFrom(isMainFrame = false))
+        assertTrue(PageMessageRoute.RotateFullscreen(true, null).heardFrom(isMainFrame = true))
     }
 
     @Test

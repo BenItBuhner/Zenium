@@ -6,8 +6,11 @@ import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Rect
+import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -21,6 +24,8 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Choreographer
 import android.view.HapticFeedbackConstants
+import android.view.OrientationEventListener
+import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
@@ -244,8 +249,43 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private var fullscreenVideoTab: TabWebView? = null
     private var fullscreenVideoSize: Pair<Int, Int>? = null
     private var fullscreenVideoFromFrame = false
+    /**
+     * The page's word on what is fullscreen, for the tab that said it: whether the element shows
+     * a video at all (a frame's word that its embed does counts; the main document sees the
+     * `<iframe>` alone). The exit hint's cue waits for it ([fullscreenEnteredCue], MED-03: a
+     * video's hint shows once, any other element's toast every time), at most
+     * [FULLSCREEN_ENTERED_CAP_MS] past the layer going up. Dropped with the fullscreen.
+     */
+    private var fullscreenElementTab: TabWebView? = null
+    private var fullscreenElementVideo = false
+    /**
+     * The fullscreen element is a `<video>` itself (not a player's wrapper around one), without
+     * `controlslist="nofullscreen"`: the kind whose fullscreen Chrome's media controls manage,
+     * so a turn of the screen away from the video's orientation leaves it, and the lock on the
+     * screen gives way once the device has been turned to match (MED-02, [RotateToFullscreen]).
+     */
+    private var fullscreenElementRotate = false
+    private var fullscreenEnteredPending = false
+    private val fullscreenEnteredCue = Runnable { cueFullscreenEntered(force = true) }
     /** The activity's orientation is the fullscreen video's ([FullscreenOrientation]); given back on exit. */
     private var fullscreenOrientationHeld = false
+    /** The screen's orientation as last seen: a configuration change is a turn only when it differs. */
+    private var screenLandscape = activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    /**
+     * Rotate-to-fullscreen (MED-02): the lock's way to "any" while a fullscreen video holds the
+     * screen ([RotateUnlock]), fed by [deviceOrientation] – and by the demos, whose emulator has
+     * no hand to turn it ([onDeviceAngle]) – and the time of the host's last ask to the visible
+     * page for a playing video, in whose window alone the page's `armed` earns the key.
+     */
+    private val rotateUnlock = RotateUnlock()
+    private val rotateUnlockNow = Runnable { unlockToAny() }
+    private var rotateAskedAt = -1L
+    private val deviceOrientation = object : OrientationEventListener(activity, SensorManager.SENSOR_DELAY_NORMAL) {
+        override fun onOrientationChanged(orientation: Int) = onDeviceAngle(orientation)
+    }
+    /** Rotate-to-fullscreen's last word from the page (`entered` / `failed`), for the demos. */
+    var rotateFullscreenResult: String? = null
+        private set
     /**
      * The bars' way back after a fullscreen: the chrome holds its return fade while they settle
      * (MED-01, v2 §11.5). [MainActivity] carries its word on every `insets`.
@@ -998,9 +1038,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         reveal.begin(card, cardRadius)
         // The page's size report came ahead of the engine's view: the screen turns now.
         if (fullscreenVideoTab === tab) fullscreenVideoSize?.let { (width, height) -> turnForVideo(width, height) }
-        // The first-time exit hint's cue (GN-20): every fullscreen is left the same way, a
-        // canvas's or an embed's as much as a video's, so the cue is the layer's, not the size's.
-        chrome.hostEvent("fullscreen.entered", json("tabId" to tab.tabId))
+        // The exit hint's cue (GN-20, MED-03): the layer's, with the page's word on what is in it
+        // – a video's hint shows once, any other element's toast every time – once that word is
+        // in (its `fullscreenchange` trails the engine's view by a frame or so), or without it.
+        fullscreenEnteredPending = true
+        root.removeCallbacks(fullscreenEnteredCue)
+        cueFullscreenEntered(force = false)
+        if (fullscreenEnteredPending) root.postDelayed(fullscreenEnteredCue, FULLSCREEN_ENTERED_CAP_MS)
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
         back.refresh()
         media.onFullscreenChanged()
@@ -1021,6 +1065,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // without the page's `active: false`; a size kept past that would turn the tab's next
         // fullscreen before its own report and hold a destroyed view.
         if (fullscreenVideoTab === tab) clearFullscreenVideo()
+        if (fullscreenElementTab === tab) clearFullscreenElement()
+        fullscreenEnteredPending = false
+        root.removeCallbacks(fullscreenEnteredCue)
         if (!immersive) setSystemBarsHidden(false)
         // Out of fullscreen while the window is the small one: the tab's own view takes it over.
         if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
@@ -1046,12 +1093,99 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun onLandingSettled() = tabs.releaseFullscreenHold()
 
     /**
-     * The screen turned ([MainActivity.onConfigurationChanged]). A reveal under way spreads at
-     * once: the card it started from is a frame of the screen that is gone.
+     * The configuration changed ([MainActivity.onConfigurationChanged]); a turn of the screen
+     * when `landscape` differs from the last. A reveal under way spreads at once: the card it
+     * started from is a frame of the screen that is gone. Then rotate-to-fullscreen (MED-02),
+     * Chrome's for Android: a fullscreen `<video>` whose orientation the screen has left leaves
+     * fullscreen, paused or not; with nothing fullscreen, the visible page is asked whether a
+     * `<video>` with the browser's controls is playing in view for the screen's new orientation
+     * (`installRotateToFullscreen`), and answers `armed` for the key ([rotateFullscreen]) that
+     * gives its `requestFullscreen()` the activation the engine asks of a page. A 180° turn is
+     * no turn (portrait either way up is portrait), nor is any other configuration change.
+     *
+     * A user with rotation locked at the system level never sees the screen turn, so nothing
+     * here runs for them – the lock is the gate, as it is in Chrome; a landscape video already
+     * fullscreen holds the screen in landscape ([turnForVideo]) until the device has been turned
+     * to match it and the lock has given way ([onDeviceAngle]), never while auto-rotate is off.
      */
     fun onScreenOrientationChanged(landscape: Boolean) {
+        if (landscape == screenLandscape) return
+        screenLandscape = landscape
         reveal.snap()
+        val tab = fullscreenTab
+        if (tab != null) {
+            val size = fullscreenVideoSize?.takeIf { fullscreenVideoTab === tab } ?: return
+            val videoLandscape = RotateToFullscreen.videoLandscape(size.first, size.second) ?: return
+            if (fullscreenElementRotate && fullscreenElementTab === tab && RotateToFullscreen.exitsOnTurn(videoLandscape, landscape)) {
+                exitFullscreen(tab)
+            }
+            return
+        }
+        // Only a page on screen is asked (the turn reaches a stopped activity when it comes back;
+        // a window in picture-in-picture shows its video small), and only where the device can
+        // tell how it is held – the way back out again (Chrome asks the same of the sensors).
+        if (!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
+        if (activity.isInPictureInPictureMode) return
+        if (!deviceOrientation.canDetectOrientation()) return
+        rotateAskedAt = SystemClock.uptimeMillis()
+        val ask = json("type" to "rotateFullscreen", "landscape" to landscape).toString()
+        tabs.all().filter { it.visibility == View.VISIBLE }.forEach { it.postToPage(ask) }
     }
+
+    /**
+     * Rotate-to-fullscreen's word from the page (`installRotateToFullscreen`, MED-02). `armed`:
+     * the page has a `<video>` playing in view for the screen's new orientation and waits for the
+     * key – a press of no key, which the engine counts as the user's activation (as Chrome's own
+     * delegate grants one) and the page script takes before the page sees it, so the video's
+     * `requestFullscreen()` may run. It is the host's answer to its own ask alone, in the window
+     * after it, while nothing is fullscreen: a page's unasked word gets no activation from it.
+     * `result` says how the request went, for the demos.
+     */
+    override fun rotateFullscreen(tab: TabWebView, armed: Boolean, result: String?) {
+        if (result != null) rotateFullscreenResult = result
+        if (!armed) return
+        val asked = rotateAskedAt
+        rotateAskedAt = -1
+        if (asked < 0 || SystemClock.uptimeMillis() - asked > ROTATE_ARM_WINDOW_MS) return
+        if (fullscreenTab != null || tab.visibility != View.VISIBLE) return
+        tab.pressForActivation()
+    }
+
+    /**
+     * How the device is held, in degrees from its natural orientation ([OrientationEventListener],
+     * or -1 for flat), while a fullscreen video holds the screen: the first reading of the device
+     * turned to the video's orientation – with the system's auto-rotate on – has the lock give way
+     * to the sensor's word either way up, [RotateToFullscreen.UNLOCK_DELAY_MS] on, so that turning
+     * back exits (Chrome's lock-to-any). Public for the demos: the emulator's sensor cannot be
+     * turned from inside a test.
+     */
+    fun onDeviceAngle(angle: Int) {
+        if (!rotateUnlock.watching) return
+        val now = SystemClock.uptimeMillis()
+        val at = rotateUnlock.onDeviceAngle(angle, naturalPortrait(), autoRotateEnabled(), now)
+        if (at < 0) return
+        deviceOrientation.disable()
+        root.postDelayed(rotateUnlockNow, (at - now).coerceAtLeast(0))
+    }
+
+    private fun unlockToAny() {
+        if (!fullscreenOrientationHeld) return
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+    }
+
+    /** Whether the lock a fullscreen video put on the screen has given way to the sensor (the demos read it). */
+    val fullscreenUnlocked: Boolean get() = fullscreenOrientationHeld && rotateUnlock.unlockAt >= 0 && !rotateUnlock.watching
+
+    /** The device's natural orientation is portrait (a phone's) rather than landscape (some tablets'). */
+    private fun naturalPortrait(): Boolean {
+        @Suppress("DEPRECATION")
+        val rotation = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) activity.display else activity.windowManager.defaultDisplay)?.rotation ?: Surface.ROTATION_0
+        val turned = rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270
+        return turned != (activity.resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT)
+    }
+
+    private fun autoRotateEnabled(): Boolean =
+        Settings.System.getInt(activity.contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
 
     /**
      * The page's `fullscreenchange` with the fullscreen video's natural size, from the page
@@ -1068,11 +1202,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * already fullscreen on an element without one. Its `active: false` says nothing the main
      * document's `fullscreenchange` does not say too.
      */
-    override fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {
+    override fun fullscreenVideo(tab: TabWebView, active: Boolean, video: Boolean, rotate: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {
         if (!active) {
             if (mainFrame && fullscreenVideoTab === tab) clearFullscreenVideo()
+            if (mainFrame && fullscreenElementTab === tab) clearFullscreenElement()
             return
         }
+        // What is fullscreen, for the exit hint's cue (MED-03) and the turn's rules (MED-02): a
+        // video, a `<video>` of the browser's own, by any document's word.
+        if (fullscreenElementTab !== tab) {
+            fullscreenElementTab = tab
+            fullscreenElementVideo = video
+            fullscreenElementRotate = rotate
+        } else {
+            if (video) fullscreenElementVideo = true
+            if (rotate) fullscreenElementRotate = true
+        }
+        if (fullscreenTab === tab) cueFullscreenEntered(force = false)
         // No video, or a size not known yet (the script reports again at loadedmetadata).
         if (videoWidth <= 0 || videoHeight <= 0) return
         if (!mainFrame) {
@@ -1091,6 +1237,28 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         fullscreenVideoFromFrame = false
     }
 
+    private fun clearFullscreenElement() {
+        fullscreenElementTab = null
+        fullscreenElementVideo = false
+        fullscreenElementRotate = false
+    }
+
+    /**
+     * The exit hint's cue for the fullscreen under way (`fullscreen.entered`, GN-20 / MED-03),
+     * once the page has said what is fullscreen, or – `force`, the cap – with the word as it
+     * stands: no word is read as no video, the toast (Chrome shows its toast for every
+     * fullscreen; the once-only hint is the video's alone).
+     */
+    private fun cueFullscreenEntered(force: Boolean) {
+        if (!fullscreenEnteredPending) return
+        val tab = fullscreenTab ?: return
+        val known = fullscreenElementTab === tab
+        if (!known && !force) return
+        fullscreenEnteredPending = false
+        root.removeCallbacks(fullscreenEnteredCue)
+        chrome.hostEvent("fullscreen.entered", json("tabId" to tab.tabId, "video" to (known && fullscreenElementVideo)))
+    }
+
     private fun turnForVideo(videoWidth: Int, videoHeight: Int) {
         val orientation = FullscreenOrientation.forVideo(videoWidth, videoHeight)
         if (orientation == FullscreenOrientation.RELEASED) {
@@ -1098,10 +1266,26 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         } else {
             fullscreenOrientationHeld = true
             activity.requestedOrientation = orientation
+            watchForUnlock()
         }
     }
 
+    /**
+     * A `<video>` of the browser's own holds the screen in landscape (MED-01): the device is
+     * watched for the turn that lets the lock give way ([onDeviceAngle], MED-02). A player's
+     * wrapper in fullscreen keeps MED-01's hold to the end, as Chrome keeps a page's own lock.
+     */
+    private fun watchForUnlock() {
+        if (!fullscreenElementRotate || fullscreenElementTab !== fullscreenTab) return
+        if (rotateUnlock.watching || rotateUnlock.unlockAt >= 0) return
+        rotateUnlock.lock(landscape = true)
+        if (deviceOrientation.canDetectOrientation()) deviceOrientation.enable()
+    }
+
     private fun releaseFullscreenOrientation() {
+        rotateUnlock.release()
+        deviceOrientation.disable()
+        root.removeCallbacks(rotateUnlockNow)
         if (!fullscreenOrientationHeld) return
         fullscreenOrientationHeld = false
         activity.requestedOrientation = FullscreenOrientation.RELEASED
@@ -1916,6 +2100,18 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
         /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
         private const val DEFAULT_SCRIM = "#49484a47"
+        /**
+         * The longest the exit hint's cue waits past the fullscreen layer going up for the page's
+         * word on what is in it (its `fullscreenchange` follows the engine's view by a frame or
+         * so; a page without the script never says). Chrome's own bubble waits half a second.
+         */
+        const val FULLSCREEN_ENTERED_CAP_MS = 500L
+        /**
+         * How long after the host's ask a page's `armed` earns the key (MED-02): the page waits
+         * for its viewport to take the screen's new orientation before it judges the video
+         * (`ROTATE_LAYOUT_WAIT_MS` there, a second), so a little more.
+         */
+        const val ROTATE_ARM_WINDOW_MS = 1_500L
 
         fun parseColor(css: String): Int = runCatching {
             // #rrggbbaa (Electron style) → Android ARGB.
