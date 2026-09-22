@@ -172,7 +172,14 @@ function perFrameCell(record, key, decimals = 2) {
 function longTasksCell(record) {
   const t = record.trace
   if (!t || !t.found) return '–'
-  return t.longTasks ? `${t.longTasks} (longest ${fixed(t.longestTaskMs, 0)} ms)` : '0'
+  return t.longTasks ? `${t.longTasks} (longest ${fixed(t.longestTaskMs, 0)} ms${cpuNote(t)})` : '0'
+}
+
+/** The longest task's time on the CPU beside its wall time, when the trace carried thread times: the gap is time off the CPU, not the chrome's work. */
+function cpuNote(t) {
+  return typeof t.longestTaskCpuMs === 'number'
+    ? `, ${fixed(t.longestTaskCpuMs, 0)} on the CPU`
+    : ''
 }
 
 function baselineCell(record) {
@@ -206,9 +213,11 @@ function folded(record) {
   if (t?.found) {
     lines.push(
       `Trace (renderer main thread ${code(t.thread)}, ${t.events} events, ${fixed(t.windowMs, 0)} ms${t.whole ? ', the whole trace' : ''}): ` +
-        `${t.frames} frames; busy ${fixed(t.busyMs, 0)} ms (${fixed(t.busyPerFrameMs, 1)} ms/frame), script ${fixed(t.scriptMs, 0)} ms; ` +
+        `${t.frames} frames; busy ${fixed(t.busyMs, 0)} ms (${fixed(t.busyPerFrameMs, 1)} ms/frame), script ${fixed(t.scriptMs, 0)} ms` +
+        `${t.workMs?.compile >= 0.5 ? ` (compiling ${fixed(t.workMs.compile, 0)} ms)` : ''}` +
+        `${t.workMs ? ` (style ${fixed(t.workMs.styleRecalc, 0)}, layout ${fixed(t.workMs.layout, 0)}, paint ${fixed(t.workMs.paint, 0)} ms)` : ''}; ` +
         `layouts ${t.layoutCount}, paints ${t.paintCount}, style recalcs ${t.styleRecalcCount} (${fixed(t.perFrame?.styleRecalc, 2)}/frame), ` +
-        `layer updates ${t.layerChurn} (${fixed(t.perFrame?.layerChurn, 1)}/frame); long tasks ${t.longTasks}, longest ${fixed(t.longestTaskMs, 0)} ms.`,
+        `layer updates ${t.layerChurn} (${fixed(t.perFrame?.layerChurn, 1)}/frame); long tasks ${t.longTasks}, longest ${fixed(t.longestTaskMs, 0)} ms${t.longTasks ? cpuNote(t) : ''}.`,
       ''
     )
   } else if (t) {
