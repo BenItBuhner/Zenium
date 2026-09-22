@@ -104,7 +104,7 @@ import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '@shared/defaultBrowser
 import { clearPdfReport, isPdfViewerTab, pdfViewerStore } from '@renderer/lib/pdfViewer'
 import { dismissSiteInfo, openSiteInfo } from '@renderer/lib/siteInfo'
 import type { ReadAloudStatus } from '@shared/readAloud'
-import type { TranslateStatus, TranslateTabState } from '@shared/translate'
+import type { ReaderTranslateState, TranslateStatus, TranslateTabState } from '@shared/translate'
 import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import { PREVIEW_PDF_FILES, previewPdf } from './previewPdf'
@@ -219,7 +219,10 @@ const QR_EVENT_MARGIN_MS = 250
  * spec too (see `seedBlocking`; `&blocked=<n>` sets the count blocked on the page), as may
  * `sync=<variant>` for Settings › Sync (see `seedSync`), `translate=<status>` (the active page
  * `offered` for translation, `translated`, `translating` or `error`, or `idle` for none; the bar
- * stays down unless `&bar`; see `seedTranslate`),
+ * stays down unless `&bar`; see `seedTranslate`), `readerTranslate=<status>` (Reader View's
+ * article and the engine there, CT-36: `ready` for nothing asked yet, `detecting`,
+ * `downloading`, `translating`, `translated` – `&original` with the Show original switch on –
+ * or `error`; see `seedReaderTranslate`),
  * `favicon=<url>` (the active tab's icon, which this host cannot read off a cross-origin page),
  * `siteinfo` (the site-information sheet up on the active tab once the state is reached: the
  * shield row with its count and the translate row are in it, OMN-02) and `import=failed` (a
@@ -262,6 +265,7 @@ function apply(browser: Browser, spec: string): void {
     unseedSync()
     unseedImport()
     unseedTranslate()
+    unseedReaderTranslate()
     unseedFavicon()
     unseedMedia()
     unseedSiteData(browser)
@@ -842,6 +846,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const sync = params.get('sync')
   const lastImport = params.get('import')
   const translate = params.get('translate')
+  const readerTranslate = params.get('readerTranslate')
   const favicon = params.get('favicon')
   const seed = (): void => {
     if (blocking)
@@ -850,6 +855,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (sync) seedSync(sync, browser)
     if (lastImport) seedImport(lastImport)
     if (translate) seedTranslate(translate, params.has('bar'))
+    if (readerTranslate) seedReaderTranslate(readerTranslate, params.has('original'))
     if (favicon) seedFavicon(favicon)
   }
   const lock = parsePreviewSeed(spec).lock
@@ -1349,6 +1355,70 @@ export function translateFixture(state: UIState, status: TranslateStatus, bar: b
       tabs: { ...state.translate.tabs, [tab.id]: page }
     }
   }
+}
+
+/** The languages the stand-in registry names when the core's list is empty (no engine here). */
+const PREVIEW_TRANSLATE_LANGUAGES = ['de', 'en', 'es', 'fr', 'it', 'ja', 'pt', 'uk']
+
+const READER_TRANSLATE_STATUSES: ReadonlySet<string> = new Set([
+  'ready',
+  'detecting',
+  'downloading',
+  'translating',
+  'translated',
+  'error'
+])
+
+/**
+ * Reader View's Translate rows (CT-36) in states this stand-in host cannot reach on its own: the
+ * engine there (`translate.available`, a registry naming a few languages) and the active tab's
+ * article `ready` – nothing asked, the Translate row waiting – or `detecting`, `downloading`,
+ * `translating`, `translated` (with Show original on when `original`) or in `error`. Held over
+ * the core's pushes until the next spec, like the page translation.
+ */
+function seedReaderTranslate(status: string, original: boolean): void {
+  if (!READER_TRANSLATE_STATUSES.has(status)) {
+    unseedReaderTranslate()
+    return
+  }
+  holdFixture('reader-translate', (state) =>
+    readerTranslateFixture(state, status as ReaderTranslateState['status'] | 'ready', original)
+  )
+}
+
+function unseedReaderTranslate(): void {
+  holdFixture('reader-translate', null)
+}
+
+export function readerTranslateFixture(
+  state: UIState,
+  status: ReaderTranslateState['status'] | 'ready',
+  original: boolean
+): UIState {
+  const tab = activeTab(state)
+  if (!tab) return state
+  const languages =
+    state.translate.languages.length > 0 ? state.translate.languages : PREVIEW_TRANSLATE_LANGUAGES
+  const reader = { ...state.translate.reader }
+  if (status === 'ready') delete reader[tab.id]
+  else {
+    reader[tab.id] = {
+      tabId: tab.id,
+      status,
+      source: status === 'detecting' ? null : 'de',
+      target: 'en',
+      progress:
+        status === 'translating'
+          ? { done: 17, total: 42 }
+          : status === 'translated'
+            ? { done: 42, total: 42 }
+            : null,
+      download: status === 'downloading' ? { received: 9_437_184, total: 41_943_040 } : null,
+      error: status === 'error' ? 'The model could not be downloaded' : null,
+      showOriginal: status === 'translated' && original
+    }
+  }
+  return { ...state, translate: { ...state.translate, available: true, languages, reader } }
 }
 
 export function blockingFixture(
