@@ -31,6 +31,7 @@ import {
   openBookmarkChrome,
   openExtensionsSheet,
   openFindBar,
+  onboardingUp,
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   openInstallSheet,
@@ -93,7 +94,8 @@ export function useMainEvents(): void {
           closeUrlbar()
           return
         }
-        if (ui.overlay === 'onboarding') return
+        // Not under the first-run tour (lib/ui.ts `onboardingUp`).
+        if (onboardingUp()) return
         const state = browserStore.get().state
         // A popup's location bar is read-only and an app window has none (Chrome): Ctrl+L and
         // Ctrl+K have nothing to open.
