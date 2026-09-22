@@ -9,7 +9,10 @@ name: TEMPORARY - compat round 10 sweep and frame budget trigger
 #     same thing the dispatched sweep would;
 #   - `[budget]` in the commit message: the runtime demo's two jobs with the frame budget alone
 #     (ExtensionScrollBudget under SKIP_DEMO=1: the long fixture scrolled with 0, 2, 3 and 6
-#     extensions, the jank report in the job summary).
+#     extensions, the jank report in the job summary);
+#   - `[stills]` in the commit message: the two sheet stills for the design gate alone
+#     (ExtensionSheetStills through android-ext-sheet-stills.sh: the extension sheet hosting Dark
+#     Reader's popup and the install prompt on the fallback path, light and dark).
 on:
   push:
     branches:
@@ -61,6 +64,18 @@ jobs:
         unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
         ls -la artifacts/webview
       timeout-minutes: 210
+
+  stills-system-webview:
+    if: contains(github.event.head_commit.message, '[stills]')
+    name: Sheet stills - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-sheet-stills.sh
+      artifact-name: android-ext-sheet-stills
+      artifact-path: artifacts/android-ext-sheet-stills/
+      setup-script: |
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+      timeout-minutes: 45
 
   budget-system-webview:
     if: contains(github.event.head_commit.message, '[budget]')
