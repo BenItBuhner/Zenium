@@ -889,16 +889,16 @@ function fakeCapture(
 ): {
   image: Electron.NativeImage
   encoded: Array<{ width: number; height: number; quality: number }>
-  resized: Array<{ width?: number; height?: number }>
+  resized: Array<{ width?: number; height?: number; quality?: string }>
 } {
   const encoded: Array<{ width: number; height: number; quality: number }> = []
-  const resized: Array<{ width?: number; height?: number }> = []
+  const resized: Array<{ width?: number; height?: number; quality?: string }> = []
   const make = (w: number, h: number): Electron.NativeImage =>
     ({
       isEmpty: () => false,
       getSize: () => ({ width: w, height: h }),
       getScaleFactors: () => [1],
-      resize: (to: { width?: number; height?: number }) => {
+      resize: (to: { width?: number; height?: number; quality?: string }) => {
         resized.push(to)
         return make(to.width ?? w, to.height ?? Math.round((h * (to.width ?? w)) / w))
       },
@@ -913,9 +913,9 @@ function fakeCapture(
 
 /**
  * The stand-in behind overlays (`snapshot`): a JPEG at quality 90 of the capture at device
- * pixels, scaled down on both sides only past the 2.5 Mpx ceiling (v2 draft §9.5) – no width
- * clamp, so the frames the old 1400 clamp resampled encode 1:1 (the Android host's cover takes
- * its own path).
+ * pixels, 1:1 through the 6.2 Mpx trigger and past it scaled down on both sides to the 3.7 Mpx
+ * target with Hamming-1 (v2 draft §9.5) – no width clamp, so the frames the old 1400 clamp
+ * resampled encode 1:1 (the Android host's cover takes its own path).
  */
 describe('ElectronTabView.snapshot', () => {
   /** A tab view and its `webContents`, whose `capturePage` the tests replace per capture. */
@@ -929,12 +929,19 @@ describe('ElectronTabView.snapshot', () => {
     return { view, wc: (view as unknown as { webContents: Electron.WebContents }).webContents }
   }
 
-  it('encodes a capture under the ceiling as it is, JPEG 90 – the 1536 and 1856 wide pages the clamp used to resample included', async () => {
+  it('encodes a capture at or under the trigger as it is, JPEG 90 – the pages the clamp used to resample, a 2560 × 1440 page and a DPR-2 1600 × 1000 frame included', async () => {
     const { view, wc } = tabView()
     for (const [w, h] of [
       [1536, 944],
       [1856, 1184],
-      [1352, 944]
+      [1352, 944],
+      // A 2560 × 1440 monitor's page with the sidebar collapsed: 3.55 Mpx.
+      [2496, 1424],
+      // A 1600 × 1000 DIP window at DPR 2: `capturePage` hands over 3072 × 1968 device pixels as
+      // a 1x bitmap, 6.05 Mpx – the trigger's documented edge, still 1:1.
+      [3072, 1968],
+      // The trigger to the pixel counts as under it.
+      [3100, 2000]
     ]) {
       const capture = fakeCapture(w, h)
       Object.assign(wc, { capturePage: () => Promise.resolve(capture.image) })
@@ -946,27 +953,34 @@ describe('ElectronTabView.snapshot', () => {
     }
   })
 
-  it('scales a capture past the ceiling down to it on both sides before the encode: a 2560 × 1440 page and a DPR-2 frame', async () => {
+  it('scales a capture past the trigger down to the target on both sides with Hamming-1 before the encode: a 4K monitor at 200 %', async () => {
     const { view, wc } = tabView()
-    // A 2560 × 1440 monitor's page with the sidebar collapsed: 3.55 Mpx → 2093 × 1194.
-    const monitor = fakeCapture(2496, 1424)
-    Object.assign(wc, { capturePage: () => Promise.resolve(monitor.image) })
+    // A 1920 × 1080 DIP screen at DPR 2 with the sidebar collapsed: 3776 × 2096 device pixels as
+    // a 1x bitmap (7.9 Mpx) → sqrt(3.7 / 7.9) = .68 → 2581 × 1433, `quality: 'good'`.
+    const page = fakeCapture(3776, 2096)
+    Object.assign(wc, { capturePage: () => Promise.resolve(page.image) })
     await expect(view.snapshot()).resolves.toBe(
-      `data:image/jpeg;base64,${Buffer.from('jpeg-2093x1194-90').toString('base64')}`
+      `data:image/jpeg;base64,${Buffer.from('jpeg-2581x1433-90').toString('base64')}`
     )
-    expect(monitor.resized).toEqual([{ width: 2093, height: 1194 }])
-    expect(monitor.encoded).toEqual([{ width: 2093, height: 1194, quality: 90 }])
-    expect(2093 * 1194).toBeLessThanOrEqual(2_500_000)
-    // A 1600 × 1000 DIP window at DPR 2: `capturePage` hands over 3072 × 1968 device pixels as a
-    // 1x bitmap (6.05 Mpx) → 1975 × 1265.
-    const retina = fakeCapture(3072, 1968)
-    Object.assign(wc, { capturePage: () => Promise.resolve(retina.image) })
-    await expect(view.snapshot()).resolves.toBe(
-      `data:image/jpeg;base64,${Buffer.from('jpeg-1975x1265-90').toString('base64')}`
-    )
-    expect(retina.resized).toEqual([{ width: 1975, height: 1265 }])
-    expect(retina.encoded).toEqual([{ width: 1975, height: 1265, quality: 90 }])
-    expect(1975 * 1265).toBeLessThanOrEqual(2_500_000)
+    expect(page.resized).toEqual([{ width: 2581, height: 1433, quality: 'good' }])
+    expect(page.encoded).toEqual([{ width: 2581, height: 1433, quality: 90 }])
+    expect(2581 * 1433).toBeLessThanOrEqual(3_700_000)
+    expect(2581 * 1433).toBeGreaterThan(3_700_000 - (2581 + 1433))
+    // The whole 3840 × 2160 screen (8.3 Mpx) → 2564 × 1442; a frame just past the trigger drops
+    // to the target too, never to the trigger (3104 × 2000, 6.21 Mpx → 2396 × 1544, scale .77).
+    for (const [w, h, sw, sh] of [
+      [3840, 2160, 2564, 1442],
+      [3104, 2000, 2396, 1544]
+    ]) {
+      const capture = fakeCapture(w, h)
+      Object.assign(wc, { capturePage: () => Promise.resolve(capture.image) })
+      await expect(view.snapshot()).resolves.toBe(
+        `data:image/jpeg;base64,${Buffer.from(`jpeg-${sw}x${sh}-90`).toString('base64')}`
+      )
+      expect(capture.resized).toEqual([{ width: sw, height: sh, quality: 'good' }])
+      expect(capture.encoded).toEqual([{ width: sw, height: sh, quality: 90 }])
+      expect(sw * sh).toBeLessThanOrEqual(3_700_000)
+    }
   })
 })
 

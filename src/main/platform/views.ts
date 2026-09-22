@@ -85,18 +85,33 @@ const pagePreload = join(__dirname, '../preload/page.js')
 /** How long a page gets to hand over a frame before an overlay opens without its picture. */
 const SNAPSHOT_TIMEOUT_MS = 600
 /**
- * The stand-in's ceiling, in device pixels (design language v2 draft §9.5): a capture past this
- * area is scaled down to it on both sides before the encode (`snapshot`, `standinScale`); one
- * under it is encoded as captured, 1:1 – no CSS-pixel width clamp. 2.5 Mpx is the largest round
- * number whose native JPEG 90 encode stays inside a frame's 16.7 ms on the runner-class machine
- * (a 4-core Xeon, the packaged build): the encode runs at 5–8 ms per Mpx from 1.1 to 6 Mpx, a
- * frame scaled to the ceiling took 15.8–17.5 ms over two runs, one at 3.0 Mpx 18.5–23.4 – and the
- * smallest that leaves a 1920 × 1200 monitor's page (1856 × 1184, 2.20 Mpx) at 1:1, where
- * 2.0 Mpx would resample it. A 2560 × 1440 monitor's page (3.55 Mpx) scales to 2093 × 1194 and a
- * DPR-2 1600 × 1000 window's (3072 × 1968, 6.05 Mpx) to 1975 × 1265. The numbers behind it are in
- * `snapshot`'s JSDoc.
+ * The stand-in's TRIGGER, in device pixels (design language v2 draft §9.5): a capture whose area
+ * is at or under it is encoded as captured, 1:1 – no CSS-pixel width clamp; one past it is
+ * scaled down to `SNAPSHOT_TARGET_PIXELS` before the encode (`snapshot`, `standinScale`). Set
+ * where the two costs that matter reach their budgets on the runner-class machine (a 4-core
+ * Xeon, the packaged build): the JPEG 90 encode, which holds the main thread, two frames (33 ms
+ * at its 5–8 ms per Mpx), and the renderer's decode, which gates the swap, three (50 ms at its
+ * ~9 ms per Mpx). 6.2 Mpx serves every DPR-1 monitor through a 3440 × 1440 ultrawide and a DPR-2
+ * laptop's 1600 × 1000 window (3072 × 1968, 6.05 Mpx – the documented edge, crisp) at 1:1; a 4K
+ * monitor at 200 % (3840 × 2160, 8.3 Mpx) is past it. The trigger follows the decode alone
+ * should the encode ever leave the main thread. The numbers behind it are in `snapshot`'s JSDoc.
  */
-const SNAPSHOT_MAX_PIXELS = 2_500_000
+const SNAPSHOT_MAX_PIXELS = 6_200_000
+/**
+ * The TARGET a capture past the trigger is scaled down to, in device pixels, with Skia's
+ * Hamming-1 filter (`quality: 'good'`) rather than the default Lanczos-3 (`'best'`). Two numbers
+ * and not one because a resize pays for itself only when it removes more than about a fifth of
+ * the pixels on the swap (Hamming-1 costs ~3 ms per input Mpx against the ~9 per Mpx of decode
+ * and 5–8 of encode it saves) or nearly half on the held stall (against the encode alone;
+ * Lanczos-3, at ~6 ms per input Mpx, costs about the encode it saves and pays there never), so a
+ * single scale-to-the-ceiling policy hands the frames just past the ceiling a .8–1 scale that
+ * loses on every axis – time, bytes and edges (a 2560 × 1440 page taken to 2.5 Mpx measured
+ * 40 ms held against 19 unclamped, and softer) – hence trigger + target. 3.7 Mpx is a
+ * 2560 × 1440 monitor's own area, so the drop lands on a picture no softer than that monitor's
+ * 1:1 (a 4K-at-200 % frame comes down to about 2580 × 1430 at .68), and Hamming-1 on a picture
+ * already being softened costs a point of fidelity for half Lanczos-3's time.
+ */
+const SNAPSHOT_TARGET_PIXELS = 3_700_000
 /** The stand-in's JPEG quality (`snapshot`: the numbers behind it). */
 const SNAPSHOT_JPEG_QUALITY = 90
 
@@ -939,30 +954,31 @@ export class ElectronTabView implements TabView {
    * 9 % / 23 %, for 8.0 ms and 413 KB against 6.7 ms and 228 KB – PNG would be exact where the
    * page is not resampled, at 51 ms an encode, over the frame budget.
    *
-   * The size (v2 draft §9.5, the stand-in's rule): the frame's capture at device pixels, capped
-   * by a device-pixel area (`SNAPSHOT_MAX_PIXELS`, 2.5 Mpx) and not by a CSS-pixel width – under
-   * an undimmed popover the page must read as the page, and a resample softens every text edge
-   * where a lower quality only costs the gradients. The 1400 clamp this replaces resampled every
-   * frame wider than 1400 and, `capturePage` handing the device pixels over as a 1x bitmap, every
-   * DPR-2 frame to a fifth of its pixels. Measured on the packaged build (a 4-core Xeon under
-   * Xvfb, `--disable-gpu`; the #340 prose fixture; medians of 25 after 3 warm-ups; the text-edge
-   * crop is 420 × 144 CSS px of 16 px prose, its share of pixels more than 32 levels off the
-   * live page): at 1920 × 1200 the page (1856 × 1184, 2.20 Mpx) encodes unclamped in 13.9 ms at
-   * 595 KB with the crop at 13.5 % (the codec alone), where the clamp cost 12.2 ms of resize +
-   * 7.6 ms of encode for 24.3 %; at 2560 × 1440 (3.55 Mpx) the ceiling's 2093 × 1194 takes
-   * 22.7 ms of resize + 17.5 ms of encode at 492 KB for 21.6 %, against the clamp's 31.0 % and
-   * the unclamped frame's 13.5 % at 19.4 ms and 657 KB; at DPR 2 (1600 × 1000 DIP, 3072 × 1968,
-   * 6.05 Mpx) the ceiling's 1975 × 1265 takes 32.5 + 15.8 ms at 672 KB for 12.7 %, against the
-   * clamp's 19.7 % and the unclamped frame's 5.6 % at 35.1 ms and 1.2 MB (the renderer's decode
-   * 56 ms, against 22 at the ceiling). The capture itself is the frame's cost whatever the
-   * ceiling – 16 ms at 1920 and 2560, 39 ms at DPR 2 – and is awaited, not held. Skia's Lanczos-3
-   * resample (the default quality) costs about what the encode of the source would, so past the
-   * ceiling the main process pays more than it saves: the ceiling bounds the encode, the bytes
-   * and the renderer's decode, not the resize – a capture that came out scaled would (Hamming-1,
-   * `quality: 'good'`, would halve it: 12.8 / 15.0 ms; not taken here). The picture is drawn at
-   * the page's CSS size whatever its pixels (`CoverImage`, `object-cover`), so a 1:1 capture at
-   * DPR 2 does not double. The Android host's cover is its own copy and encode
-   * (`TabWebView.snapshot`).
+   * The size (v2 draft §9.5, the stand-in's rule): the frame's capture at device pixels, 1:1 up
+   * to a trigger area (`SNAPSHOT_MAX_PIXELS`, 6.2 Mpx) and past it scaled down, both sides
+   * alike, to a target (`SNAPSHOT_TARGET_PIXELS`, 3.7 Mpx) with Hamming-1 – never a CSS-pixel
+   * width clamp: under an undimmed popover the page must read as the page, and a resample
+   * softens every text edge where a lower quality only costs the gradients. The 1400 clamp this
+   * replaces resampled every frame wider than 1400 and, `capturePage` handing the device pixels
+   * over as a 1x bitmap, every DPR-2 frame to a fifth of its pixels. Measured on the packaged
+   * build (a 4-core Xeon under Xvfb, `--disable-gpu`; the #340 prose fixture; medians of 25
+   * after 3 warm-ups; the text-edge crop is 420 × 144 CSS px of 16 px prose, its share of pixels
+   * more than 32 levels off the live page): at 1920 × 1200 the page (1856 × 1184, 2.20 Mpx)
+   * encodes 1:1 in 13.9 ms at 595 KB with the crop at 13.5 % (the codec alone), where the clamp
+   * cost 12.2 ms of resize + 7.6 ms of encode for 24.3 %; at 2560 × 1440 (3.55 Mpx) 1:1 is
+   * 19.4 ms at 657 KB for 13.5 %, against the clamp's 31.0 %; at DPR 2 (1600 × 1000 DIP,
+   * 3072 × 1968, 6.05 Mpx – the trigger's edge) 1:1 is 35.1 ms at 1.2 MB for 5.6 % with the
+   * renderer's decode at 56 ms, against the clamp's 19.7 %; a 4K monitor at 200 % (1920 × 1080
+   * DIP, 3776 × 2096, 7.9 Mpx) is past the trigger and drops to 2581 × 1433 – the resize and
+   * encode together under the two-frame budget where the 1:1 encode alone is over it, the decode
+   * back inside three frames, the bytes near halved, the crop softer than 1:1 but sharper than
+   * the clamp's. The capture itself is the frame's cost whatever the ceiling – 16 ms at 1920 and
+   * 2560, 39 ms at DPR 2 – and is awaited, not held. Skia's Lanczos-3 resample (the default
+   * quality) costs about what the encode of the source would, so a frame scaled by it pays more
+   * than it saves on the main thread; Hamming-1 halves the resize and is what the target is
+   * reached with. The picture is drawn at the page's CSS size whatever its pixels (`CoverImage`,
+   * `object-cover`), so a 1:1 capture at DPR 2 does not double. The Android host's cover is its
+   * own copy and encode (`TabWebView.snapshot`).
    */
   async snapshot(): Promise<string | null> {
     try {
@@ -976,13 +992,16 @@ export class ElectronTabView implements TabView {
       // `getSize()` device pixels); the representation's scale is read all the same, so the
       // arithmetic stays in device pixels should a capture ever come with one of its own.
       const scales = image.getScaleFactors()
-      const fit = standinScale(
-        size.width,
-        size.height,
-        scales.length ? Math.max(...scales) : 1,
-        SNAPSHOT_MAX_PIXELS
-      )
-      const scaled = fit.scale < 1 ? image.resize({ width: fit.width, height: fit.height }) : image
+      const fit = standinScale(size.width, size.height, scales.length ? Math.max(...scales) : 1, {
+        trigger: SNAPSHOT_MAX_PIXELS,
+        target: SNAPSHOT_TARGET_PIXELS
+      })
+      // Past the trigger: Hamming-1 (`good`), not the default Lanczos-3 – half the time on a
+      // picture that is being softened anyway (`SNAPSHOT_TARGET_PIXELS`).
+      const scaled =
+        fit.scale < 1
+          ? image.resize({ width: fit.width, height: fit.height, quality: 'good' })
+          : image
       return `data:image/jpeg;base64,${scaled.toJPEG(SNAPSHOT_JPEG_QUALITY).toString('base64')}`
     } catch {
       return null
