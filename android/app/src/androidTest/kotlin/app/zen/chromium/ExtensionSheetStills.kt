@@ -118,9 +118,12 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
      */
     private fun promptStill(scheme: String, accept: Boolean): JSONObject {
         val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", packageFile)
+        // The quiet handover: the store's start() collects the package whatever the chrome's boot
+        // time, so the prompt is the fallback's (a debuggable build's flag; ExtensionStore.sideload).
         val intent = Intent(app, MainActivity::class.java)
             .setAction(Intent.ACTION_VIEW)
             .setDataAndType(uri, ExtensionStore.CRX_MIME_TYPE)
+            .putExtra(ExtensionStore.EXTRA_QUIET_HANDOVER, true)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
         val started = SystemClock.uptimeMillis()
         activity = instrumentation.startActivitySync(intent)

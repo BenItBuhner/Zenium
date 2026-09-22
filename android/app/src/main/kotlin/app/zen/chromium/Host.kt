@@ -902,7 +902,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "extStore.prune" -> extStore.prune(args.str("id"), args.str("keep"), reply)
             "extStore.sweep" -> extStore.sweep(reply)
             "extStore.pick" -> extStore.pick(reply)
-            "extStore.takeSideloads" -> reply(extStore.takeSideloads())
+            "extStore.takeSideloads" -> extStore.takeSideloads(reply)
             "extStore.prompt" -> extPrompt.show(args, reply)
             // --- end of the extension store block -------------------------------------------------------
 
