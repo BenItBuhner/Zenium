@@ -3,7 +3,8 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,scale,dark] [--extra-args=--no-sandbox]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark]
+//        [--extra-args=--no-sandbox]
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
@@ -28,11 +29,21 @@
 //                the next launch lists the tabs unloaded and offers "Restore pages?", Restore
 //                loads example.com, the run quits cleanly (Linux job; two launches: crash and
 //                crash-restore)
+//   clear-on-exit  clear browsing data on exit (#310), on the local fixture's cookie page. The
+//                quit run: a profile seeded with privacy.clearOnExit = cookies + cache sets the
+//                fixture's cookie, quits (the run happens once the quit is agreed, ahead of the
+//                final write) within the budget, cleanExit: true, no owed marker in sitedata.json;
+//                the relaunch restores the page and the cookie is gone (the wire, the page, the
+//                jar). The owed clear at launch: a profile without clear-on-exit sets the cookie
+//                and quits (the jar's file names it), the marker is written into sitedata.json by
+//                hand, the launch consumes it (the field null) and the cookie is gone (Linux job;
+//                four launches: clear-on-exit, clear-on-exit-relaunch, clear-on-exit-owed-seed,
+//                clear-on-exit-owed-launch)
 //   scale        --force-device-scale-factor=1.5 renders at devicePixelRatio 1.5
 //   dark         OS dark mode (or nativeTheme where the OS has no switch) reaches the chrome
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore); the walkthrough and the crash pair run on Linux under Xvfb only.
+// restore); the walkthrough, the crash pair and clear-on-exit run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -49,9 +60,22 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
-import { buttonScreenPoint, startPopupFixture } from './popup-fixture.mjs'
+import {
+  COOKIE_PATH,
+  FIXTURE_COOKIE,
+  buttonScreenPoint,
+  startPopupFixture
+} from './popup-fixture.mjs'
 import { retryDetail, waitForTabWithRetry } from './navigation.mjs'
 import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
+import {
+  SITE_DATA_FILE,
+  cookieRequests,
+  owedClear,
+  owedClearOf,
+  sessionClearsSince,
+  withOwedClear
+} from './site-data.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -305,7 +329,7 @@ async function shot(name, session = null) {
 // the process exiting mid-quit; the harness reads the file, never main-process memory.
 // ---------------------------------------------------------------------------------------------
 
-function hookMain({ app, webContents, BrowserWindow, Menu, dialog }, options) {
+function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, options) {
   const g = globalThis
   if (g.__smoke) return { hooked: false, reason: 'already hooked' }
   let fsModule = null
@@ -456,6 +480,49 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog }, options) {
     }
     proto.__smokeWrapped = true
   }
+  // The engine's clears, timed: "clear browsing data" ends in `session.clearStorageData`,
+  // `clearCache` and `clearCodeCaches` (src/main/platform/sessions.ts), so the clear-on-exit
+  // scenario reads from these whether a run happened, on which partition and how long the engine
+  // took. The methods sit on the Session prototype (gin's constructible classes fill it); the
+  // wrap is recorded in the hook result, so a build where they moved fails the step in words.
+  const sessionProto = safe(() => Object.getPrototypeOf(session.defaultSession), null)
+  const sessionClears = []
+  if (sessionProto && !sessionProto.__smokeWrapped) {
+    for (const name of ['clearStorageData', 'clearCache', 'clearCodeCaches']) {
+      const orig = sessionProto[name]
+      if (typeof orig !== 'function') continue
+      sessionProto[name] = function (...args) {
+        const t0 = Date.now()
+        const storagePath = safe(() => this.storagePath, null)
+        const opt = args[0] && typeof args[0] === 'object' ? args[0] : undefined
+        const outcome = orig.apply(this, args)
+        Promise.resolve(outcome).then(
+          () =>
+            emit({
+              type: 'session-clear',
+              method: name,
+              storagePath,
+              options: opt,
+              ok: true,
+              ms: Date.now() - t0
+            }),
+          (err) =>
+            emit({
+              type: 'session-clear',
+              method: name,
+              storagePath,
+              options: opt,
+              ok: false,
+              error: clip((err && err.message) || err),
+              ms: Date.now() - t0
+            })
+        )
+        return outcome
+      }
+      sessionClears.push(name)
+    }
+    sessionProto.__smokeWrapped = true
+  }
   app.on('browser-window-created', (_e, w) =>
     emit({ type: 'window-created', window: w.id, windows: BrowserWindow.getAllWindows().length })
   )
@@ -561,7 +628,7 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog }, options) {
   wrapDialog('showOpenDialogSync', 'file-sync')
   wrapDialog('showSaveDialog', 'file')
   wrapDialog('showSaveDialogSync', 'file-sync')
-  return { hooked: true, transport: smoke.transport }
+  return { hooked: true, transport: smoke.transport, sessionClears }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -998,6 +1065,33 @@ class Session {
   }
 
   /**
+   * The cookies named `name` in the jar of tab `tabId`'s session (its container's partition), and
+   * where that partition keeps its files: what the engine holds, read from the main process
+   * rather than from the page.
+   */
+  tabCookies(tabId, name) {
+    return this.app.evaluate(
+      async ({ webContents }, { tabId, name }) => {
+        const wc = webContents.fromId(tabId)
+        if (!wc || wc.isDestroyed()) throw new Error(`tab webContents ${tabId} is gone`)
+        const cookies = await wc.session.cookies.get({ name })
+        return {
+          storagePath: wc.session.storagePath,
+          cookies: cookies.map((c) => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path,
+            session: c.session,
+            expirationDate: c.expirationDate
+          }))
+        }
+      },
+      { tabId, name }
+    )
+  }
+
+  /**
    * The child frame of tab `tabId` whose document is on `origin`, as the main process sees it:
    * its URL and whether it runs in a process of its own (null while there is no such frame).
    */
@@ -1244,11 +1338,15 @@ const HARNESS_SETTINGS = {
   shortcutPreset: 'chrome'
 }
 
-function freshProfile(name, { onboardingDone = false } = {}) {
+/**
+ * A profile with the harness settings, past onboarding when asked, plus `settings` on top (a
+ * scenario's own, e.g. `privacy.clearOnExit`; the state's sanitisers fill in the rest).
+ */
+function freshProfile(name, { onboardingDone = false, settings: extra = {} } = {}) {
   const dir = path.join(profileRoot, name)
   fs.rmSync(dir, { recursive: true, force: true })
   fs.mkdirSync(path.join(dir, 'zen'), { recursive: true })
-  const settings = structuredClone(HARNESS_SETTINGS)
+  const settings = { ...structuredClone(HARNESS_SETTINGS), ...structuredClone(extra) }
   if (onboardingDone) settings.onboardingDone = true
   writeJson(path.join(dir, 'zen', 'state.json'), { version: 2, settings })
   return dir
@@ -1284,6 +1382,60 @@ function assertCleanState(userData, url) {
     throw new Error(`state.json has no ${url} tab: ${JSON.stringify(state)}`)
   }
   return state
+}
+
+/**
+ * The profile's site-data document (#310's `sitedata.json`, beside state.json) as the smoke reads
+ * it: `doc` parsed (undefined without a file), `owed` what it owes (site-data.mjs's
+ * `owedClearOf`: undefined for no file, null for a marker dropped or never written, else the
+ * marker), `error` for a file that is not JSON (a write mid-rename would be: reread).
+ */
+function readSiteData(userData) {
+  const file = path.join(userData, 'zen', SITE_DATA_FILE)
+  if (!fs.existsSync(file)) return { file, doc: undefined, owed: undefined }
+  try {
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return { file, doc, owed: owedClearOf(doc) }
+  } catch (e) {
+    return { file, error: String(e.message) }
+  }
+}
+
+/** Writes `marker` into the profile's sitedata.json as the clear its next launch owes. */
+function writeOwedClear(userData, marker) {
+  const { file, doc } = readSiteData(userData)
+  const written = withOwedClear(doc ?? null, marker)
+  writeJson(file, written)
+  return written
+}
+
+/** The document after a quit that owes nothing: present (when `expectFile`) and no marker. */
+function assertNoOwedClear(userData, { expectFile = true } = {}) {
+  const siteData = readSiteData(userData)
+  if (siteData.error) throw new Error(`${SITE_DATA_FILE} unreadable: ${siteData.error}`)
+  if (expectFile && siteData.doc === undefined) {
+    throw new Error(`${SITE_DATA_FILE} missing: the marker was never written before the run`)
+  }
+  if (siteData.owed) {
+    throw new Error(
+      `${SITE_DATA_FILE} still owes a clear (the run did not report done): ${JSON.stringify(siteData.doc)}`
+    )
+  }
+  return siteData.doc ?? null
+}
+
+/**
+ * Whether the partition's cookie store on disk names `name`: the SQLite `Cookies` file (and
+ * its journal, where a commit may still sit) keeps cookie names in clear text, so a persistent
+ * cookie that survived a quit shows there. The evidence a cookie was in the profile before the
+ * launch that clears it.
+ */
+function cookieStoreNames(storagePath, name) {
+  const files = fs.existsSync(storagePath)
+    ? fs.readdirSync(storagePath).filter((f) => f.startsWith('Cookies'))
+    : []
+  const named = files.filter((f) => fs.readFileSync(path.join(storagePath, f)).includes(name))
+  return { storagePath, files, named, found: named.length > 0 }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1335,8 +1487,9 @@ async function runScenario(name, userData, sessionOptions, body) {
 /**
  * Accel+T, the URL typed into the bar that comes up, Enter: a new tab row in the sidebar and the
  * page loaded. Returns the tab (as the main process sees it) and the sidebar row count.
+ * `landsOn` is where the tab ends up when `url` redirects (the fixture's cookie set page).
  */
-async function openUrlInNewTab(s, url) {
+async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
   const input = s.chrome.locator('[data-testid="urlbar-input"]')
   // A blank first tab already shows the URL bar; Accel+T would toggle it away. Close it first.
   if (
@@ -1360,7 +1513,7 @@ async function openUrlInNewTab(s, url) {
   // and says so in its detail. A second failure fails the step (navigation.mjs).
   const { tab, retried } = await waitForTabWithRetry({
     url,
-    loaded: async () => (await s.tabs()).find((t) => t.url.startsWith(url) && !t.loading),
+    loaded: async () => (await s.tabs()).find((t) => t.url.startsWith(landsOn) && !t.loading),
     events: async () => s.readEvents().slice(eventsBefore),
     retry: async (failure) => {
       log(`${url}: ${retryDetail(failure)}`)
@@ -2559,6 +2712,297 @@ async function scenarioCrash() {
   })
 }
 
+// ---------------------------------------------------------------------------------------------
+// Clear browsing data on exit (#310)
+// ---------------------------------------------------------------------------------------------
+
+/** What the quit run's profile clears on exit: the cookies (the jar and the site storage) and the cache. */
+const CLEAR_ON_EXIT_TYPES = ['cookies', 'cache']
+
+/**
+ * The fixture's cookie in tab `tab`, read three ways that have to agree: the page's
+ * (`window.__smoke.has`, what `document.cookie` held as the page loaded), the jar's (the tab's
+ * session, asked from the main process) and the wire's (the fixture's requests for the cookie
+ * page from watermark `from` on: did the browser send the Cookie header?).
+ */
+async function cookieReadings(s, fixture, tab, from) {
+  const page = await waitFor(
+    () => s.tabEval(tab.id, 'window.__smoke || null').catch(() => null),
+    10000,
+    `the cookie page's reading in tab ${tab.id}`
+  )
+  const jar = await s.tabCookies(tab.id, FIXTURE_COOKIE.name)
+  const wire = cookieRequests(fixture.requests, COOKIE_PATH, FIXTURE_COOKIE.name, from)
+  return { page, jar, wire }
+}
+
+/** The cookie is there, persistent, and went out on every request for the page. */
+function assertCookiePresent({ page, jar, wire }) {
+  const { name, value } = FIXTURE_COOKIE
+  if (page.has !== true) {
+    throw new Error(`the page reads no ${name} cookie: ${JSON.stringify(page)}`)
+  }
+  if (jar.cookies.length !== 1 || jar.cookies[0].value !== value) {
+    throw new Error(
+      `the jar holds ${JSON.stringify(jar.cookies)}, expected one ${name}=${value} (${jar.storagePath})`
+    )
+  }
+  if (jar.cookies[0].session !== false) {
+    throw new Error(
+      `${name} is a session cookie (the jar would not write it to disk): ${JSON.stringify(jar.cookies[0])}`
+    )
+  }
+  if (wire.total < 1 || wire.withCookie !== wire.total) {
+    throw new Error(
+      `the Cookie header went out on ${wire.withCookie} of ${wire.total} requests for ${COOKIE_PATH}: ${JSON.stringify(wire.cookies)}`
+    )
+  }
+}
+
+/** The cookie is gone from the page, the jar and every request for the page. */
+function assertCookieGone({ page, jar, wire }) {
+  const { name } = FIXTURE_COOKIE
+  if (page.has !== false) {
+    throw new Error(`the page still reads the ${name} cookie: ${JSON.stringify(page)}`)
+  }
+  if (jar.cookies.length) {
+    throw new Error(`the jar still holds ${JSON.stringify(jar.cookies)} (${jar.storagePath})`)
+  }
+  if (wire.total < 1) {
+    throw new Error(
+      `no request for ${COOKIE_PATH} reached the fixture: the tab did not load from it`
+    )
+  }
+  if (wire.withCookie) {
+    throw new Error(
+      `the Cookie header went out on ${wire.withCookie} of ${wire.total} requests for ${COOKIE_PATH}: ${JSON.stringify(wire.cookies)}`
+    )
+  }
+}
+
+/**
+ * `/cookie-set.html` through the URL bar (a persistent first-party cookie from a Set-Cookie
+ * header, the tab landing on `/cookie.html`, which reads it and sets nothing), then the three
+ * readings, which have to find the cookie. The step's detail.
+ */
+async function setFixtureCookie(s, fixture, shotName) {
+  const from = fixture.requests.length
+  const { tab, sidebarTabs } = await openUrlInNewTab(s, fixture.cookieSetUrl, {
+    landsOn: fixture.cookieUrl
+  })
+  const readings = await cookieReadings(s, fixture, tab, from)
+  await s.shot(shotName)
+  assertCookiePresent(readings)
+  return { tab: { id: tab.id, url: tab.url }, sidebarTabs, ...readings }
+}
+
+/**
+ * The tab restored on `/cookie.html` (loaded, no "Restore pages?" bar) and the three readings
+ * from the launch's watermark `from`, which have to find the cookie gone. The step's detail.
+ */
+async function restoredCookiePageWithoutCookie(s, fixture, from, shotName) {
+  let tab
+  try {
+    tab = await s.waitForTab(fixture.cookieUrl, 30000)
+  } catch (e) {
+    // What the restore did instead: the tabs, the main-frame load failures, the fixture's log.
+    e.detail = {
+      tabs: await s.tabs().catch(() => null),
+      failedLoads: s.readEvents().filter((ev) => ev.type === 'did-fail-load'),
+      requests: fixture.requests.slice(from)
+    }
+    throw e
+  }
+  await s.settle()
+  const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+  if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
+  const readings = await cookieReadings(s, fixture, tab, from)
+  await s.shot(shotName)
+  assertCookieGone(readings)
+  return { tab: { id: tab.id, url: tab.url }, sidebarTabs: await s.sidebarTabCount(), ...readings }
+}
+
+/**
+ * The Linux job's clear browsing data on exit (#310): two profiles, four launches, one fixture
+ * server for all of them (a tab restored on the cookie page needs its port back).
+ *
+ * The quit run. A profile seeded with `privacy.clearOnExit` = cookies + cache (through the
+ * harness's state.json write) sets the fixture's cookie and the three readings agree it is
+ * there. The quit chord (the preset's) and Quit: `Browser.requestQuit` runs
+ * `SiteDataService.runOnExit` once the quit is agreed, ahead of `shutdown`'s final write, with
+ * 3 s to spend – the marker written first, dropped on `done`. After the exit: within the 15 s
+ * budget, `cleanExit: true`, sitedata.json there and owing nothing (the outcome `done`, read from
+ * the file: the service is not reachable from the main process's globals), and the engine's
+ * clears on the events log from the chord on – `clearStorageData` on the tab's partition, the
+ * cache's – timed. The relaunch restores the tab on `/cookie.html` (a page that sets nothing):
+ * the request carries no Cookie header, the page reads none, the jar holds none; a clean quit.
+ *
+ * The owed clear at launch. A profile without clear-on-exit sets the cookie and quits: nothing
+ * cleared, no marker, and the partition's Cookies file names the cookie – it is in the profile.
+ * The marker `readPendingClear` takes back is written into sitedata.json by hand; the launch
+ * runs it from `start()` ahead of the windows: the field goes null (a debounced write, polled),
+ * the restored page loads without the cookie, the jar is empty; a clean quit owing nothing.
+ *
+ * The `deferred` outcome (an engine clear slower than the 3 s budget) is not deterministic
+ * under Xvfb and is left to the service's unit tests.
+ */
+async function scenarioClearOnExit() {
+  const fixture = await startPopupFixture()
+  const pages = { set: fixture.cookieSetUrl, read: fixture.cookieUrl, cookie: FIXTURE_COOKIE }
+  try {
+    // --- The quit run -------------------------------------------------------------------------
+    const userData = freshProfile('profile-clear-on-exit', {
+      onboardingDone: true,
+      settings: { privacy: { clearOnExit: { types: CLEAR_ON_EXIT_TYPES } } }
+    })
+    const quitRun = await runScenario('clear-on-exit', userData, {}, async (s, out) => {
+      out.fixture = pages
+      out.clearOnExit = CLEAR_ON_EXIT_TYPES
+      await s.step('cookie-set', async () => {
+        const detail = await setFixtureCookie(s, fixture, '01-cookie-set')
+        out.storagePath = detail.jar.storagePath
+        return detail
+      })
+      await s.step('quit-runs-the-clear', async () => {
+        const hooked = s.hookResult?.sessionClears ?? []
+        if (!hooked.includes('clearStorageData')) {
+          throw new Error(
+            `the hook did not wrap session.clearStorageData (wrapped: ${JSON.stringify(hooked)}): the engine's clears cannot be read`
+          )
+        }
+        const chordAt = Date.now()
+        const r = await s.quitGracefully()
+        const state = assertCleanState(userData, pages.read)
+        const siteData = assertNoOwedClear(userData)
+        const clears = sessionClearsSince(s.readEvents(), chordAt)
+        const detail = { ...r, state, siteData, clears }
+        const storage = clears.find(
+          (c) => c.method === 'clearStorageData' && c.ok && c.storagePath === out.storagePath
+        )
+        if (!storage) {
+          throw Object.assign(
+            new Error(
+              `no clearStorageData on ${out.storagePath} between the quit chord and the exit: ${JSON.stringify(clears)}`
+            ),
+            { detail }
+          )
+        }
+        if (!clears.some((c) => c.method === 'clearCache' && c.ok)) {
+          throw Object.assign(
+            new Error(
+              `no clearCache between the quit chord and the exit: ${JSON.stringify(clears)}`
+            ),
+            { detail }
+          )
+        }
+        return detail
+      })
+    })
+    if (quitRun.fatal) return quitRun
+
+    const stateBefore = readState(userData)
+    const relaunchFrom = fixture.requests.length
+    const relaunch = await runScenario('clear-on-exit-relaunch', userData, {}, async (s, out) => {
+      out.stateBefore = stateBefore
+      await s.step('cookie-gone', async () => {
+        if (stateBefore.cleanExit !== true) {
+          throw new Error(`profile not marked cleanly exited: ${JSON.stringify(stateBefore)}`)
+        }
+        return restoredCookiePageWithoutCookie(
+          s,
+          fixture,
+          relaunchFrom,
+          '02-cookie-gone-after-quit'
+        )
+      })
+      await s.step('quit', async () => {
+        const r = await s.quitGracefully()
+        return {
+          ...r,
+          state: assertCleanState(userData, pages.read),
+          siteData: assertNoOwedClear(userData)
+        }
+      })
+    })
+    if (relaunch.fatal) return relaunch
+
+    // --- The owed clear at launch -------------------------------------------------------------
+    const owedData = freshProfile('profile-owed-clear', { onboardingDone: true })
+    let storagePath = null
+    const seed = await runScenario('clear-on-exit-owed-seed', owedData, {}, async (s, out) => {
+      out.fixture = pages
+      await s.step('cookie-set', async () => {
+        const detail = await setFixtureCookie(s, fixture, '03-owed-seed-cookie-set')
+        storagePath = detail.jar.storagePath
+        out.storagePath = storagePath
+        return detail
+      })
+      await s.step('quit-keeps-the-cookie', async () => {
+        const chordAt = Date.now()
+        const r = await s.quitGracefully()
+        const state = assertCleanState(owedData, pages.read)
+        const siteData = assertNoOwedClear(owedData, { expectFile: false })
+        const clears = sessionClearsSince(s.readEvents(), chordAt)
+        if (clears.length) {
+          throw new Error(
+            `a quit without clear-on-exit cleared through the engine: ${JSON.stringify(clears)}`
+          )
+        }
+        // The jar's file names the cookie: it is in the profile for the launch that clears it.
+        const store = cookieStoreNames(storagePath, FIXTURE_COOKIE.name)
+        if (!store.found) {
+          throw new Error(
+            `no Cookies file under ${storagePath} names ${FIXTURE_COOKIE.name} after the quit: ${JSON.stringify(store)}`
+          )
+        }
+        return { ...r, state, siteData, clears, store }
+      })
+    })
+    if (seed.fatal) return seed
+
+    // By hand: the marker readPendingClear (src/core/siteData.ts) takes back, as the quit
+    // writes it (`noteExiting`): the types, the site lists as they stood (none), when.
+    const marker = owedClear({ types: CLEAR_ON_EXIT_TYPES })
+    const seeded = writeOwedClear(owedData, marker)
+    const launchFrom = fixture.requests.length
+    // Awaited here: a `return` of the bare promise would run the `finally` (the fixture's
+    // close) before the launch, and the restored tab would find the server gone.
+    return await runScenario('clear-on-exit-owed-launch', owedData, {}, async (s, out) => {
+      out.fixture = pages
+      out.seeded = seeded
+      await s.step('owed-clear-consumed', async () => {
+        // start() ran the clear ahead of the windows; the marker goes with the run's end (a
+        // debounced write, so the file is polled, never read once).
+        const siteData = await waitFor(
+          () => {
+            const sd = readSiteData(owedData)
+            return sd.owed === null ? sd : null
+          },
+          15000,
+          `${SITE_DATA_FILE} with pendingClear: null (the owed clear consumed)`,
+          250
+        )
+        // The engine's clears of the launch, when the hook was in place early enough to see them
+        // (the run starts before Playwright attaches; recorded, not required).
+        return { siteData: siteData.doc, clears: sessionClearsSince(s.readEvents(), 0) }
+      })
+      await s.step('cookie-gone', () =>
+        restoredCookiePageWithoutCookie(s, fixture, launchFrom, '04-owed-clear-at-launch')
+      )
+      await s.step('quit', async () => {
+        const r = await s.quitGracefully()
+        return {
+          ...r,
+          state: assertCleanState(owedData, pages.read),
+          siteData: assertNoOwedClear(owedData)
+        }
+      })
+    })
+  } finally {
+    await fixture.close()
+  }
+}
+
 async function scenarioScale() {
   const userData = freshProfile('profile-scale', { onboardingDone: true })
   return runScenario(
@@ -2767,6 +3211,7 @@ async function main() {
       restore: scenarioRestore,
       walkthrough: scenarioWalkthrough,
       crash: scenarioCrash,
+      'clear-on-exit': scenarioClearOnExit,
       scale: scenarioScale,
       dark: scenarioDark
     }[name]

@@ -2813,11 +2813,19 @@
       animation: zen-fade 120ms var(--zen-ease) !important;
     }
   }
-  /* Along the top of a grouped tab's card on the swipe track. */
+  /*
+   * Along the top of a grouped tab's card on the swipe track: an opaque band, the group's
+   * colour at 22% over the theme's solid tone – the tint the translucent band had over a plain
+   * page, with nothing of the picture through it. It was `backdrop-filter: blur(12px)` over a
+   * 22% tint, and a blur reads its backdrop back and filters it on every frame the card
+   * beneath it moves (the swipe between two grouped tabs on PERF-5's profile: 8.8 layer
+   * updates a frame against 5.2 for the same swipe without a group, and frames 2.2x as long on
+   * the recipe's software GPU); v2 §1 has no blur but where the platform composites it, and
+   * "otherwise opaque".
+   */
   .zen-group-ribbon {
     color: var(--zen-fg);
-    background: rgb(var(--zen-group-rgb) / 0.22);
-    backdrop-filter: blur(12px) saturate(1.2);
+    background: color-mix(in srgb, rgb(var(--zen-group-rgb)) 22%, var(--zen-bg-solid));
     will-change: opacity;
   }
   /*
