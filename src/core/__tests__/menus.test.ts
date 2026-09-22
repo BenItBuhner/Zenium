@@ -900,6 +900,7 @@ describe('the app menu', () => {
       'Page Info',
       'Reload',
       '-',
+      'Home',
       'New Tab',
       'New Private Tab',
       'Close Private Tabs',
