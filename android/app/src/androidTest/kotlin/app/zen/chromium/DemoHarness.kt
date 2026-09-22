@@ -410,34 +410,32 @@ abstract class DemoHarness(
             Rect().also { node.getBoundsInScreen(it) }
         }
 
-    /** [findByLabel] for the first node whose label or text satisfies `matches` (a [groupCard]). */
+    /** [findByLabel] for the first node whose label or text satisfies `matches` (a [groupCard], a [tabCard]). */
     protected fun findByLabel(matches: (String) -> Boolean): Rect? =
         findNode(matches)?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
 
     private fun findNode(label: String): AccessibilityNodeInfo? = findNode { it == label }
 
     /**
-     * The overview's card for the tab group named `name`, by the accessible name the chrome gives
-     * its header since #237 – "NAME, tab group, N tabs" (`groupCardLabel`, overviewLabels.ts) –
-     * matched on the name and the words "tab group" alone, never on the count: the count moves as
-     * tabs join and leave the group, and a driver that read the whole name broke the first time
-     * the name changed under it (three drivers read "Group Research", the name before #237, until
-     * #315's run 35711026068 found none). One matcher for both ways a driver reads the grid: the
-     * card is the predicate for the accessibility tree ([findByLabel], [reveal], [waitFor] and
-     * [waitForGone] take it where they take a label), [GroupCard.selector] the same match for the
-     * grid's DOM.
+     * A card of the overview's grid by the leading part of the accessible name the chrome gives
+     * it since #237 (overviewLabels.ts) and never by the rest, which moves: a group's card is
+     * "NAME, tab group, N tabs" (`groupCardLabel`; the count changes as tabs join and leave the
+     * group), a tab's "TITLE, tab N of M[, current][, sleeping]" (`tabCardLabel`; its place, the
+     * count and its state change with every card around it). A driver that read the whole name
+     * broke the first time it changed under it: three drivers read "Group Research" and every
+     * card by its bare title, the names before #237, until #315's run 35711026068 and #327's
+     * found none. [groupCard] and [tabCard] make one; it is the predicate for the accessibility
+     * tree ([findByLabel], [reveal], [waitFor] and [waitForGone] take it where they take a
+     * label) and [selector] the same match for a driver that reads the grid's DOM.
      */
-    class GroupCard internal constructor(name: String) : (String) -> Boolean {
-        /** What stands before the count in the card's accessible name: "Research, tab group". */
-        val head: String = name.trim().let { if (it.isEmpty()) "Tab group" else "$it, tab group" }
-
+    class Card internal constructor(private val name: String, private val heads: List<String>) : (String) -> Boolean {
         /** Whether an accessible name – the tree's, or a DOM `aria-label` – is this card's. */
-        override fun invoke(label: String): Boolean = label == head || label.startsWith("$head,")
+        override fun invoke(label: String): Boolean = heads.any(label::startsWith)
 
-        /** The card's header in the grid's DOM, for a driver that reads it with `document.querySelector`. */
-        val selector: String = "[aria-label^=\"$head\"]"
+        /** The card in the grid's DOM, for a driver that reads it with `document.querySelector`. */
+        val selector: String = heads.joinToString(", ") { "[aria-label^=\"$it\"]" }
 
-        override fun toString(): String = head
+        override fun toString(): String = name
     }
 
     /**
@@ -557,7 +555,7 @@ abstract class DemoHarness(
         return findByLabel(label)
     }
 
-    /** [reveal] for the first node whose label or text satisfies `matches` (a [groupCard]). */
+    /** [reveal] for the first node whose label or text satisfies `matches` (a [groupCard], a [tabCard]). */
     protected fun reveal(matches: (String) -> Boolean): Rect? {
         val node = findNode(matches) ?: return null
         node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
@@ -602,7 +600,7 @@ abstract class DemoHarness(
         return false
     }
 
-    /** [waitFor] for the first node whose label or text satisfies `matches` (a [groupCard]). */
+    /** [waitFor] for the first node whose label or text satisfies `matches` (a [groupCard], a [tabCard]). */
     protected fun waitFor(matches: (String) -> Boolean, timeoutMs: Long = 5_000): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
@@ -612,7 +610,7 @@ abstract class DemoHarness(
         return null
     }
 
-    /** [waitForGone] for every node whose label or text satisfies `matches` (a [groupCard]). */
+    /** [waitForGone] for every node whose label or text satisfies `matches` (a [groupCard], a [tabCard]). */
     protected fun waitForGone(matches: (String) -> Boolean, timeoutMs: Long = 5_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
@@ -1949,8 +1947,17 @@ abstract class DemoHarness(
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
 
-        /** The overview's card for the tab group named `name`, matched without its count: [GroupCard]. */
-        fun groupCard(name: String): GroupCard = GroupCard(name)
+        /** The overview's card for the tab group named `name` ("Research, tab group, …"), matched without its count: [Card]. */
+        fun groupCard(name: String): Card =
+            Card("${name.trim()} group card", listOf(name.trim().let { if (it.isEmpty()) "Tab group," else "$it, tab group," }))
+
+        /**
+         * The overview's card for the tab titled one of `titles` ("Tea - Wikipedia, tab 4 of 7, …"),
+         * matched without its place, the count or its state: [Card]. Several titles for a tab whose
+         * title changes once its page loads (the seeded one, then the page's own).
+         */
+        fun tabCard(vararg titles: String): Card =
+            Card("${titles.joinToString(" / ")} card", titles.map { "$it, tab " })
         /** The instrumentation argument the gate is read from (`-e jankGate hard`). */
         const val JANK_GATE_ARGUMENT = "jankGate"
         /**

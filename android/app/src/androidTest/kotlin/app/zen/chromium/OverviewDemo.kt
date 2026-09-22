@@ -75,7 +75,7 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
 
         // 4. Hold a card and let go: its actions. Make a group and name it. Tabs that were never
         //    visited keep their seeded titles, which is what the labels below rely on.
-        val hn = find("Hacker News", "news.ycombinator.com")
+        val hn = find(HN)
         f.press(hn.exactCenterX(), hn.exactCenterY())
         f.hold(600)
         shot("03-card-held")
@@ -90,8 +90,8 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         // 5. Drag a card onto another: the merge preview, then a group of the two. The loose
         //    cards sit below the fold now: bring the target (the lower row) into view first, the
         //    source is the row above it.
-        val tea = show("Tea - Wikipedia")
-        val example = show("Example Domain", "example.com")
+        val tea = show(TEA)
+        val example = show(EXAMPLE)
         f.press(example.exactCenterX(), example.exactCenterY())
         f.moveBy(0f, -n, 120)
         f.moveBy(tea.exactCenterX() - example.exactCenterX(), tea.exactCenterY() - example.exactCenterY() + n, 1_000)
@@ -102,7 +102,7 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
 
         // 6. Move a tab between groups: Tea out of the new group onto the News group above it.
         val news = show(groupCard("News"))
-        val teaAgain = show("Tea - Wikipedia")
+        val teaAgain = show(TEA)
         f.press(teaAgain.exactCenterX(), teaAgain.exactCenterY())
         f.moveBy(0f, -n, 120)
         f.moveBy(news.exactCenterX() - teaAgain.exactCenterX(), news.exactCenterY() - teaAgain.exactCenterY() + n, 1_000)
@@ -116,7 +116,7 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         shot("05-groups")
 
         // 8. Pick a grouped tab: the card grows back into the page.
-        val pick = find("Hacker News", "news.ycombinator.com")
+        val pick = find(HN)
         f.tap(pick.exactCenterX(), pick.exactCenterY())
         SystemClock.sleep(3_500)
 
@@ -132,28 +132,34 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(3_000)
     }
 
-    /** The bounds of the first of these labels on screen; the demo cannot go on without it. */
-    private fun find(vararg labels: String): Rect =
-        findAny(*labels) ?: error("none of ${labels.joinToString()} is on screen")
+    /**
+     * The bounds of a card on screen ([tabCard], [groupCard]: the chrome's names for the cards
+     * carry their place, count and state, so a card is matched on its title or name, not read
+     * whole); the demo cannot go on without it.
+     */
+    private fun find(card: Card): Rect = findByLabel(card) ?: error("no $card is on screen")
 
-    /** Like [find], after scrolling the element fully into the grid's viewport. */
-    private fun show(vararg labels: String): Rect =
-        reveal(*labels) ?: error("none of ${labels.joinToString()} exists")
-
-    /** [show] for a group's card ([groupCard]: its name carries the group's count, so it is matched, not read). */
-    private fun show(card: GroupCard): Rect = reveal(card) ?: error("no $card exists")
+    /** Like [find], after scrolling the card fully into the grid's viewport. */
+    private fun show(card: Card): Rect = reveal(card) ?: error("no $card exists")
 
     /** Tap the element with this label once it exists, scrolled into view if it is in the grid. */
     private fun tap(label: String) {
         waitFor(label) ?: error("no $label to tap")
-        val target = show(label)
+        val target = reveal(label) ?: error("no $label exists")
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 
     /** [tap] for a group's card: its header, which folds and unfolds the group. */
-    private fun tap(card: GroupCard) {
+    private fun tap(card: Card) {
         waitFor(card) ?: error("no $card to tap")
         val target = show(card)
         Finger().tap(target.exactCenterX(), target.exactCenterY())
+    }
+
+    private companion object {
+        /** The seeded cards the sequence handles, by the titles they carry before and after their pages load. */
+        val HN = tabCard("Hacker News", "news.ycombinator.com")
+        val TEA = tabCard("Tea - Wikipedia")
+        val EXAMPLE = tabCard("Example Domain", "example.com")
     }
 }
