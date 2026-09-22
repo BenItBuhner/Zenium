@@ -4,7 +4,9 @@ import {
   chromeExtensionUrl,
   extensionIdOfUrl,
   isExtensionPageUrl,
+  presentExtensionOrigin,
   presentExtensionUrl,
+  sameExtensionOrigin,
   sameExtensionUrl,
   toServedUrl
 } from '../extensionUrls'
@@ -65,10 +67,35 @@ describe('extension URL spellings', () => {
     expect(chromeExtensionUrl(ID, '//popup.html')).toBe(`chrome-extension://${ID}/popup.html`)
   })
 
+  it('compares an extension origin across the two spellings, and only an origin', () => {
+    // A page's `location.origin` (served) against the `chrome-extension://<id>` an extension
+    // writes out, either way round, a trailing slash allowed.
+    expect(presentExtensionOrigin(SERVED)).toBe(`chrome-extension://${ID}`)
+    expect(presentExtensionOrigin(`${SERVED}/`)).toBe(`chrome-extension://${ID}`)
+    expect(presentExtensionOrigin(`chrome-extension://${ID}/`)).toBe(`chrome-extension://${ID}`)
+    expect(presentExtensionOrigin(`CHROME-EXTENSION://${ID.toUpperCase()}`)).toBe(
+      `chrome-extension://${ID}`
+    )
+    expect(sameExtensionOrigin(SERVED, `chrome-extension://${ID}`)).toBe(true)
+    expect(sameExtensionOrigin(`chrome-extension://${ID}`, `${SERVED}/`)).toBe(true)
+    expect(
+      sameExtensionOrigin(SERVED, chromeExtensionOrigin('abcdefghijklmnopabcdefghijklmnop'))
+    ).toBe(false)
+    // A page URL is not an origin: it stays as written and matches nothing but itself.
+    expect(presentExtensionOrigin(`${SERVED}/popup.html`)).toBe(`${SERVED}/popup.html`)
+    expect(sameExtensionOrigin(`${SERVED}/popup.html`, `chrome-extension://${ID}`)).toBe(false)
+    // Any other origin compares by the string.
+    expect(sameExtensionOrigin('https://example.com', 'https://example.com')).toBe(true)
+    expect(sameExtensionOrigin('https://example.com', 'https://example.com/')).toBe(false)
+    expect(sameExtensionOrigin('null', SERVED)).toBe(false)
+  })
+
   it("resolves a manifest path's dot segments as the WebView's request spells them", () => {
     // WhatFont's `"service_worker": "./background/background.js"`: the host compares the request
     // it intercepts (already `/background/background.js`) with the URL it built, by the string.
-    expect(extensionUrl(ID, './background/background.js')).toBe(`${SERVED}/background/background.js`)
+    expect(extensionUrl(ID, './background/background.js')).toBe(
+      `${SERVED}/background/background.js`
+    )
     expect(extensionUrl(ID, 'a/./b/../c.html?x=./y#./z')).toBe(`${SERVED}/a/c.html?x=./y#./z`)
     expect(extensionUrl(ID, '../../popup.html')).toBe(`${SERVED}/popup.html`)
     expect(extensionUrl(ID, 'dir/.')).toBe(`${SERVED}/dir/`)

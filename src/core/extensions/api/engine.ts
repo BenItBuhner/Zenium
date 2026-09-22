@@ -27,7 +27,7 @@
  * { portId, accept, error? }, portMsg { portId, data }, portDisconnect { portId, error? }.
  */
 import { ENGINE_NOOPS, ENGINE_STUB_RESULTS, engineApiSpec, namespaceGranted } from './engineSpec'
-import { getMessage, normalizeSubstitutions, type LocaleMessages } from './i18n'
+import { getMessage, normalizeSubstitutions, predefinedMessages, type LocaleMessages } from './i18n'
 import { redirectUrl } from './identity'
 import {
   installExtensionApi,
@@ -373,9 +373,6 @@ export function createEmulatedEngine(
     return undefined
   }
 
-  const notImplemented = (qualified: string): Promise<never> =>
-    Promise.reject(new Error(`chrome.${qualified} is not implemented on Zenium for Android`))
-
   // --- messaging ---------------------------------------------------------------------------------
 
   type MessageTarget = { extensionId?: string | null; tabId?: unknown; options?: unknown }
@@ -555,8 +552,12 @@ export function createEmulatedEngine(
   const contentScript = config.context === 'content'
 
   if (!userScript) {
+    // The predefined messages answer as in Chrome: `@@extension_id` (the id, what a script
+    // builds its resource URLs from), `@@ui_locale`, the `@@bidi_*` four.
+    const predefined = predefinedMessages(config.uiLanguage, config.id)
     chrome.i18n = {
       getMessage: (name: unknown, substitutions?: unknown) =>
+        predefined[String(name).toLowerCase()] ??
         getMessage(config.messages, String(name), normalizeSubstitutions(substitutions)),
       getUILanguage: () => config.uiLanguage,
       getAcceptLanguages: (...args: unknown[]) =>
@@ -642,18 +643,8 @@ export function createEmulatedEngine(
         }
       }
     }
-    // `system.display` and `system.storage` are the table's, for the extensions that declared
-    // them (`engineSpec.ts`); the host answers from the phone's screen and its no devices.
-    chrome.system = {
-      cpu: {
-        getInfo: (...args: unknown[]) =>
-          settle(notImplemented('system.cpu.getInfo'), takeCallback(args))
-      },
-      memory: {
-        getInfo: (...args: unknown[]) =>
-          settle(notImplemented('system.memory.getInfo'), takeCallback(args))
-      }
-    }
+    // `system.display`, `system.storage`, `system.cpu` and `system.memory` are the table's, for
+    // the extensions that declared them (`engineSpec.ts`); the host answers each.
   }
 
   // --- the shim over the engine ------------------------------------------------------------------
