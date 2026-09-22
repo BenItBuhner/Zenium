@@ -12,10 +12,10 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.widget.ImageViewCompat
@@ -26,11 +26,29 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 /**
  * "This page isn't responding" (ERR-16 / OS-36): the v2 prompt sheet (§9.23) drawn natively,
  * because the chrome that would draw it runs in the very renderer that has stopped answering.
- * Grip strip, then the title block with the site as its identity – its favicon at 20 (a globe
- * for a page without one) on the title's start with the 8 gap, the host at 17/600 on 22, the
- * sentence as the 15 description at 69 % on 20, 4 under it – then 16 to the §9.11 footer: Wait
- * and Exit page splitting the width at 8, 40 tall, Exit page in the danger ink on the trailing
- * side. A dismissal by the scrim or back is Wait, the answer that changes nothing.
+ * It is the one chrome surface the app imitates with Android views (§9.23 closes the route:
+ * nothing else the chrome draws takes it), and the imitation is held to the sheet's numbers and
+ * the theme's inks exactly.
+ *
+ * The composition is the chassis's (`.zen-sheet` and `PhoneSheet`'s block pose in `main.css`),
+ * number for number: the panel (`--v2-panel`) edge to edge at the bottom with its 12 top radii
+ * and the 1 px hairline (`--v2-border`), under the navigation bar with the bar's inset as its
+ * padding (Material's edge-to-edge sheet, as the chassis pads `max(8, inset)`); the 20 grip strip
+ * – the 32 × 4 grabber 8 from the top in the text at 25 % (`.zen-sheet-handle`), its 96 × 44 hit
+ * overlapping the block by 24 as `.zen-sheet-handle-hit` does, a tap on it Wait (one detent,
+ * nothing to resize); the title block padded 16 with the site as its identity – its favicon at
+ * 20 (a globe for a page without one) on the title's start with the 8 gap, the host at 17/600 on
+ * 22, the sentence as the 15 description at 69 % on 20, 4 under it, 16 to the footer; the §9.11
+ * footer: Wait and Exit page splitting the width at 8 with 16 gutters, `--v2-control` (40) tall
+ * at radius 6 on the text's 10 % fill, the label 15/500, Exit page in the danger ink on the
+ * trailing side, no primary; the one scrim, black at `--v2-scrim`'s .4 / .55; the system font.
+ * Every ink is [V2Tokens]', generated from `main.css`'s token block and pinned to it by
+ * `V2TokensTest` – no colour is retyped here.
+ *
+ * Different by allowance, motion alone: the sheet fades 120 ms in and out (§11.3's reduced-motion
+ * form) in place of the chassis's spring, the page beneath does not recede (its WebView is the
+ * hung renderer's) and stands still under the scrim, and the sheet does not drag. A dismissal by
+ * the scrim or the system back is Wait, the answer that changes nothing.
  */
 class UnresponsivePrompt(
     private val context: Context,
@@ -41,10 +59,8 @@ class UnresponsivePrompt(
     private val onExit: () -> Unit
 ) {
     private val density = context.resources.displayMetrics.density
-    private val ink = ContextCompat.getColor(context, if (dark) R.color.v2_text_dark else R.color.v2_text_light)
-    private val inkFaint = ColorUtils.setAlphaComponent(ink, (0.69f * 255).toInt())
-    private val hairline = ContextCompat.getColor(context, if (dark) R.color.v2_border_dark else R.color.v2_border_light)
-    private val danger = ContextCompat.getColor(context, if (dark) R.color.v2_danger_dark else R.color.v2_danger_light)
+    /** The theme in force's inks, as the chrome's stylesheet declares them. */
+    private val tokens = V2Tokens.of(dark)
     private var dialog: BottomSheetDialog? = null
     private var answered = false
 
@@ -58,6 +74,17 @@ class UnresponsivePrompt(
         dialog.setTitle(site)
         dialog.behavior.skipCollapsed = true
         dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        // No drag: the sheet has one detent and its answers are its two buttons (and Wait by the scrim or back).
+        dialog.behavior.isDraggable = false
+        dialog.window?.let { window ->
+            // The scrim: black at the token block's alpha (.4 / .55), the one dim the window paints.
+            window.setDimAmount(tokens.scrimAlpha)
+            // The 120 ms fade in and out in place of the chassis's spring (§11.3's form).
+            window.setWindowAnimations(R.style.Animation_Zen_UnresponsivePrompt)
+        }
+        // The panel fill under the whole sheet, the navigation bar's inset included, from the table.
+        dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.backgroundTintList = ColorStateList.valueOf(tokens.panel)
         dialog.setOnDismissListener {
             if (this.dialog !== dialog) return@setOnDismissListener
             this.dialog = null
@@ -78,15 +105,25 @@ class UnresponsivePrompt(
         d.dismiss()
     }
 
+    /**
+     * The column: grip, block, footer; the footer's 8 under the buttons is the column's bottom
+     * padding, and the navigation bar's inset is the sheet's own (`paddingBottomSystemWindowInsets`
+     * in the sheet's style), the panel running under the bar as the chassis's does.
+     */
     private fun content(dialog: BottomSheetDialog): View {
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = edge()
-            setPadding(0, dp(8), 0, dp(16))
+            setPadding(0, 0, 0, dp(8))
         }
-        column.addView(grabber(), LinearLayout.LayoutParams(dp(32), dp(4)).apply {
+        column.addView(grip {
+            answered = true
+            dialog.dismiss()
+            onWait()
+        }, LinearLayout.LayoutParams(dp(96), dp(44)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            bottomMargin = dp(8)
+            // The hit's lower half lies over the block (`.zen-sheet-handle-hit`'s margin -24).
+            bottomMargin = -dp(24)
         })
         column.addView(titleBlock())
         column.addView(footer(dialog), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL_DP)).apply {
@@ -97,11 +134,11 @@ class UnresponsivePrompt(
         return column
     }
 
-    /** The title block (§9.23): identity row, then the description 4 under it; padding 16, no bottom of its own (the footer's 16 follows). */
+    /** The title block (§9.23): identity row, then the description 4 under it; padded 16 on every side (the footer's 16 follows its 16). */
     private fun titleBlock(): View {
         val block = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), 0)
+            setPadding(dp(16), dp(16), dp(16), dp(16))
         }
         val identity = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -110,14 +147,14 @@ class UnresponsivePrompt(
         val glyph = ImageView(context).apply {
             if (favicon != null) setImageBitmap(favicon) else {
                 setImageResource(R.drawable.ic_globe)
-                ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(ink))
+                ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(tokens.text))
             }
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         identity.addView(glyph, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) })
         val title = TextView(context).apply {
             text = site
-            setTextColor(ink)
+            setTextColor(tokens.text)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             typeface = weight(600)
             maxLines = 1
@@ -129,7 +166,7 @@ class UnresponsivePrompt(
         block.addView(identity, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         val description = TextView(context).apply {
             text = context.getString(R.string.unresponsive_description)
-            setTextColor(inkFaint)
+            setTextColor(tokens.textDeemphasized)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             TextViewCompat.setLineHeight(this, sp(20))
         }
@@ -142,12 +179,12 @@ class UnresponsivePrompt(
     /** The §9.11 footer: two peers splitting the width at 8, the destructive one trailing in the danger ink. */
     private fun footer(dialog: BottomSheetDialog): View {
         val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(button(context.getString(R.string.unresponsive_wait), ink) {
+        row.addView(button(context.getString(R.string.unresponsive_wait), tokens.text) {
             answered = true
             dialog.dismiss()
             onWait()
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = dp(4) })
-        row.addView(button(context.getString(R.string.unresponsive_exit), danger) {
+        row.addView(button(context.getString(R.string.unresponsive_exit), tokens.danger) {
             answered = true
             dialog.dismiss()
             onExit()
@@ -155,7 +192,7 @@ class UnresponsivePrompt(
         return row
     }
 
-    /** `.zen-v2-button` as a view: the 10 % ink fill at radius 6, the label 15/500 in `color`, the press as the hover fill. */
+    /** `.zen-v2-button` as a view: the 10 % ink fill at radius 6, `--v2-control` tall and 96 wide at least, padded 16, the label 15/500 in `color`, the press as the hover fill. */
     private fun button(label: String, color: Int, onClick: () -> Unit): View = TextView(context).apply {
         text = label
         setTextColor(color)
@@ -167,6 +204,7 @@ class UnresponsivePrompt(
         isClickable = true
         isFocusable = true
         minimumHeight = dp(CONTROL_DP)
+        minimumWidth = dp(96)
         setPadding(dp(16), 0, dp(16), 0)
         setOnClickListener { onClick() }
     }
@@ -176,33 +214,46 @@ class UnresponsivePrompt(
         val fill = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = radius
-            setColor(ColorUtils.setAlphaComponent(ink, (0.10f * 255).toInt()))
+            setColor(tokens.fill)
         }
         val mask = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = radius
             setColor(Color.WHITE)
         }
-        // The press lands the fill on the hover step (16 %): 6 % of ink over the 10 % at rest.
-        return RippleDrawable(ColorStateList.valueOf(ColorUtils.setAlphaComponent(ink, (0.06f * 255).toInt())), fill, mask)
+        // The press lands the fill on the hover step (`--v2-fill-hover`, 16 %): the step from the
+        // 10 % at rest is what the ripple adds over it.
+        val step = Color.alpha(tokens.fillHover) - Color.alpha(tokens.fill)
+        return RippleDrawable(ColorStateList.valueOf(ColorUtils.setAlphaComponent(tokens.text, step)), fill, mask)
     }
 
-    /** The 1 px border of the sheet, over the panel colour the sheet style paints. */
+    /** The chassis's 1 px (one CSS px: a dp) hairline of the sheet, over the panel fill the sheet paints under the whole column. */
     private fun edge(): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         val r = dp(12).toFloat()
         cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
         setColor(Color.TRANSPARENT)
-        setStroke(1, hairline)
+        setStroke(dp(1), tokens.border)
     }
 
-    private fun grabber(): View = View(context).apply {
-        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(2).toFloat()
-            setColor(ColorUtils.setAlphaComponent(ink, (0.3f * 255).toInt()))
-        }
+    /**
+     * The grip (`.zen-sheet-handle-hit` with its `.zen-sheet-handle`): the 96 × 44 target, its
+     * 32 × 4 handle 8 from the top in the text at the chassis's alpha, named for TalkBack; a tap
+     * is the one-detent sheet's dismissal, Wait.
+     */
+    private fun grip(onTap: () -> Unit): View = FrameLayout(context).apply {
+        contentDescription = context.getString(R.string.unresponsive_dismiss)
+        isClickable = true
+        isFocusable = true
+        setPadding(0, dp(8), 0, 0)
+        setOnClickListener { onTap() }
+        addView(View(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(2).toFloat()
+                setColor(ColorUtils.setAlphaComponent(tokens.text, (V2Tokens.HANDLE_ALPHA * 255).toInt()))
+            }
+        }, FrameLayout.LayoutParams(dp(32), dp(4), Gravity.CENTER_HORIZONTAL or Gravity.TOP))
     }
 
     /** The scale's weights (600 titles, 500 buttons); before API 28 the nearest named face. */

@@ -52,6 +52,14 @@
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
 
+    <!-- The page-unresponsive prompt's window: the sheet and its scrim fade 120 ms in and out
+         together, the one motion the v2 draft lets the native imitation take (§9.23) in place of
+         the chassis's spring; the system's Remove animations shortens it to nothing. -->
+    <style name="Animation.Zen.UnresponsivePrompt" parent="@android:style/Animation.Dialog">
+        <item name="android:windowEnterAnimation">@anim/prompt_fade_in</item>
+        <item name="android:windowExitAnimation">@anim/prompt_fade_out</item>
+    </style>
+
     <!-- The custom tab's menu: the same sheet under its own name. -->
     <style name="ThemeOverlay.Zen.CustomTabSheet" parent="ThemeOverlay.Zen.Sheet" />
     <style name="ThemeOverlay.Zen.CustomTabSheet.Dark" parent="ThemeOverlay.Zen.Sheet.Dark" />

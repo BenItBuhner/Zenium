@@ -54,4 +54,6 @@
     <string name="unresponsive_description">This page isn’t responding. You can wait for it to respond, or exit the page.</string>
     <string name="unresponsive_wait">Wait</string>
     <string name="unresponsive_exit">Exit page</string>
+    <!-- The prompt's grip (the sheet has one detent: a tap on it is Wait). -->
+    <string name="unresponsive_dismiss">Dismiss</string>
 </resources>
