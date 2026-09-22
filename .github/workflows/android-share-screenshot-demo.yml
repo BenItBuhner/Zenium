@@ -6,11 +6,16 @@ name: Android share and screenshot demo
 # into the long-screenshot editor with a real drag of a handle and Save, `navigator.share` from
 # a loopback page (the gate without a gesture, a URL, a file the page drew, the dismissal's
 # AbortError), Share from the selection toolbar with the link to the highlight and its Copy link,
-# and a link to a highlight followed. The driver writes `share-screenshot-findings.txt` with a
-# PASS / FAIL per check and fails when any did. The build, the emulator and the Gradle cache live
-# in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
+# a link to a highlight followed, and the editor once more under the dark chrome. The driver
+# writes `share-screenshot-findings.txt` with a PASS / FAIL per check and fails when any did. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks
+# the driver and the demo it runs.
 on:
   workflow_dispatch:
+  # TEMPORARY: the one authorised run on the long capture's fix (the last for #321; removed after).
+  push:
+    branches:
+      - cursor/android-share-screenshot-be8e
 
 permissions:
   contents: read

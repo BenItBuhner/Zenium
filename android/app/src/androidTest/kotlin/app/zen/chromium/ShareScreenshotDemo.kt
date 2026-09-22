@@ -43,7 +43,8 @@ import java.util.concurrent.TimeUnit
  *    editor opens EXPANDED with the whole page (about ten screens of it at most, and INKED, not
  *    white rows) in its frame and two handles; a real drag of the bottom handle shortens the
  *    crop; Save writes the crop – shorter than the first screen – to the gallery and shows the
- *    card again (no Capture more on it);
+ *    card again (no Capture more on it); at the run's end the editor once more under the dark
+ *    chrome, its picture's ink read again, for the design record's dark still;
  *  - `navigator.share` from a page: without a user gesture it rejects with `NotAllowedError`;
  *    `navigator.canShare` answers for a URL, for nothing, for a file; a real tap on the page's
  *    button brings the system sheet (the promise pending under it) and the back gesture rejects
@@ -204,6 +205,7 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         webShareFile()
         highlightLink()
         followHighlight()
+        editorInDark()
         finding("\nend: ${if (failures == 0) "every check PASS" else "$failures FAIL"}")
     }
 
@@ -368,6 +370,55 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
             check("the crop is shorter than the first screen", viewportRow != null && it.height < viewportRow.height)
         }
         dismissCard()
+    }
+
+    /**
+     * The editor once more under the dark chrome, for the design record's dark still
+     * (`editor-inked-dark`): the colour scheme switched as BarStarListenOnDemo switches it (the
+     * OS's night mode for the system's own windows, Zenium's `colorScheme` for the chrome and,
+     * through the app's night mode, the pages), Take Screenshot, Capture more, the picture's ink
+     * read again, the editor left by the system back (its dismissal drops the host's copy) and
+     * the scheme put back to light. Last in the run, so the scenes before it stand as the retry's.
+     */
+    private fun editorInDark() {
+        finding("\nSH-08 the editor under the dark chrome")
+        ensurePage()
+        tabJs("window.scrollTo(0,0)")
+        SystemClock.sleep(400)
+        check("the chrome took the dark theme (the root's data-theme)", scheme("dark"))
+        try {
+            takeScreenshotFromMenu() ?: return
+            awaitCard() ?: run {
+                check("a card to touch", false)
+                return
+            }
+            val touched = touchControl("Capture more", "document.querySelector('.zen-screenshot-card .zen-screenshot-trailing .zen-message-button')", treeMs = 1_200)
+            val sheet = touched && awaitChrome("document.querySelector('.zen-longshot-sheet')!=null", LONG_CAPTURE_WAIT_MS)
+            check("a real touch on Capture more opened the Long screenshot sheet under the dark chrome", sheet)
+            if (!sheet) return
+            val editor = awaitChrome("document.querySelector('[data-testid=longshot-editor] img')!=null", 10_000)
+            SystemClock.sleep(1_500)
+            shot("14-long-editor-dark")
+            val ink = chromeJson(PICTURE_INK_SCRIPT)
+            val theme = jsonString(chromeJs("document.documentElement.dataset.theme||''"))
+            finding("  the editor's picture: ${ink.optInt("w")}×${ink.optInt("h")}, ${ink.optInt("inked")}% of its pixels not white, ${ink.optInt("colours")} distinct colours in a coarse sample; the chrome's theme '$theme'")
+            check("the editor's picture holds the page (not blank) under the dark chrome", editor && ink.optInt("inked") >= 20 && ink.optInt("colours") >= 4)
+            back()
+            check("the system back closed the editor", awaitChrome("document.querySelector('.zen-longshot-sheet')==null", 8_000))
+            dismissCard()
+        } finally {
+            scheme("light")
+        }
+    }
+
+    /** The colour scheme switched (BarStarListenOnDemo's way); true once the chrome's root carries it. */
+    private fun scheme(scheme: String): Boolean {
+        shellCommand("cmd uimode night ${if (scheme == "dark") "yes" else "no"}")
+        coreInvoke("settings.update", "{\"colorScheme\":\"$scheme\"}")
+        val landed = awaitChrome("document.documentElement.dataset.theme==='$scheme'", 8_000)
+        SystemClock.sleep(2_500)
+        toZenium()
+        return landed
     }
 
     // --- SH-14: the Web Share API -------------------------------------------------------------------
