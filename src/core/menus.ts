@@ -2130,15 +2130,17 @@ export class Menus {
   /**
    * Chrome's "Recently closed" block of the History submenu: a header, then the closed tabs and
    * windows (Firefox's "Recently Closed Tabs / Windows" as one list) newest first, ten at most,
-   * then Restore All and Clear List. With nothing closed the header stands alone, greyed
-   * (design language v2 §9.17: a row whose count is zero is disabled, not gone, so the menu
-   * keeps its shape from one opening to the next).
+   * then Restore All and Clear List. With nothing closed the block is §9.17's empty state – one
+   * plain sentence in the deemphasised ink, not a command (Chrome's lone greyed header read as
+   * a dead one) – so the menu keeps its shape from one opening to the next without hiding
+   * the block.
    */
   private recentlyClosedItems(win: ZenWindow): Template {
     const { session } = this.browser
     const entries = session.summaries().slice(0, 10)
+    if (entries.length === 0)
+      return [{ label: 'No recently closed tabs', enabled: false, note: true }]
     const header: MenuItemTemplate = { label: 'Recently Closed', enabled: false }
-    if (entries.length === 0) return [header]
     const items: Template = entries.map((e, i) => ({
       label:
         e.kind === 'window'

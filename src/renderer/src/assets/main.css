@@ -2988,6 +2988,17 @@
   .zen-sheet-item-secondary {
     color: var(--v2-text-deemphasized);
   }
+  /* An empty state's sentence as a row of a group (§9.17): the row's metrics in the deemphasised ink, no press. */
+  .zen-sheet-note {
+    display: flex;
+    height: var(--v2-row);
+    align-items: center;
+    padding: 0 16px;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
+  }
   /* Groups of rows are told apart by a hairline in the gutter (§6 menus, phone). */
   .zen-sheet-sep {
     height: 1px;
@@ -7575,6 +7586,21 @@
 }
 .zen-v2-menu-item[data-danger] {
   color: var(--v2-danger);
+}
+/*
+ * An empty state's sentence in a menu (§9.17: "No recently closed tabs" – sentence case, no full
+ * stop, the deemphasised ink): a row at the rows' own height and inset, so it sits where a label
+ * would, with no fill, focus or press – it is not a command and is not a menuitem.
+ */
+.zen-v2-menu-note {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: var(--v2-menu-row);
+  padding: 0 8px;
+  color: var(--v2-text-deemphasized);
+  white-space: nowrap;
 }
 .zen-v2-menu-separator {
   flex-shrink: 0;

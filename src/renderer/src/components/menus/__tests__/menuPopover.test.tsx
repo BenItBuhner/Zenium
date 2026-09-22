@@ -267,6 +267,38 @@ describe('the popover menu', () => {
     expect(rowOf('more').querySelector('.zen-v2-menu-hint + .zen-v2-menu-chevron')).not.toBeNull()
   })
 
+  it('an empty state’s sentence is a note row, not a menuitem: the deemphasised ink, no focus, the arrows and Tab pass it by (§9.17)', () => {
+    // The History submenu with nothing closed: Show Full History | "No recently closed tabs".
+    show(
+      tabMenu({
+        keyboard: true,
+        items: [
+          item('full', 'Show Full History', { hint: 'Ctrl+H' }),
+          item('sep', '', { type: 'separator' }),
+          item('none', 'No recently closed tabs', { enabled: false, note: true }),
+          item('after', 'After')
+        ]
+      })
+    )
+    const [menu] = menus()
+    const note = menu.querySelector<HTMLElement>('.zen-v2-menu-note')
+    expect(note?.textContent).toBe('No recently closed tabs')
+    expect(note?.getAttribute('role')).toBeNull()
+    expect(note?.hasAttribute('disabled')).toBe(false)
+    expect(note?.tagName).toBe('DIV')
+    // Not one of the rows the keys walk.
+    expect(rows(menu).map((r) => r.textContent)).toEqual(['Show Full HistoryCtrl+H', 'After'])
+    expect(document.activeElement).toBe(rowOf('full'))
+    key('ArrowDown')
+    expect(document.activeElement).toBe(rowOf('after'))
+    key('Tab')
+    expect(document.activeElement).toBe(rowOf('full'))
+    // A click on it picks nothing: the menu stands as it was.
+    click(note!)
+    expect(uiStore.get().menu?.id).toBe('menu_1')
+    expect(menus()).toHaveLength(1)
+  })
+
   it('Tab and Shift+Tab walk the rows and wrap: nothing under the menu is reachable (§9.22)', () => {
     show(tabMenu({ keyboard: true }))
     expect(document.activeElement).toBe(rowOf('reload'))

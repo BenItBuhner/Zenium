@@ -165,39 +165,44 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
               {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
               {group.map((item) => (
                 <li key={item.id}>
-                  <button
-                    type="button"
-                    disabled={!item.enabled}
-                    className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
-                    // A checked row draws a check; the tree carries the state (A11Y-01), as the
-                    // extensions sheet's rows do.
-                    role={
-                      item.type === 'checkbox'
-                        ? 'menuitemcheckbox'
-                        : item.type === 'radio'
-                          ? 'menuitemradio'
-                          : undefined
-                    }
-                    aria-checked={
-                      item.type === 'checkbox' || item.type === 'radio' ? item.checked : undefined
-                    }
-                    onClick={() => {
-                      if (item.submenu) setNav((n) => ({ path: [...n.path, item], direction: 1 }))
-                      else sheet.current?.dismiss(() => pickMenuItem(item.id))
-                    }}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                      <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
-                    )}
-                    {item.submenu && (
-                      <ChevronRight
-                        className="zen-sheet-item-secondary h-5 w-5 shrink-0"
-                        strokeWidth={1.75}
-                        aria-hidden
-                      />
-                    )}
-                  </button>
+                  {item.note ? (
+                    // An empty state's sentence (§9.17): a row of the group, not a command.
+                    <p className="zen-sheet-note">{item.label}</p>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!item.enabled}
+                      className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
+                      // A checked row draws a check; the tree carries the state (A11Y-01), as the
+                      // extensions sheet's rows do.
+                      role={
+                        item.type === 'checkbox'
+                          ? 'menuitemcheckbox'
+                          : item.type === 'radio'
+                            ? 'menuitemradio'
+                            : undefined
+                      }
+                      aria-checked={
+                        item.type === 'checkbox' || item.type === 'radio' ? item.checked : undefined
+                      }
+                      onClick={() => {
+                        if (item.submenu) setNav((n) => ({ path: [...n.path, item], direction: 1 }))
+                        else sheet.current?.dismiss(() => pickMenuItem(item.id))
+                      }}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
+                        <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+                      )}
+                      {item.submenu && (
+                        <ChevronRight
+                          className="zen-sheet-item-secondary h-5 w-5 shrink-0"
+                          strokeWidth={1.75}
+                          aria-hidden
+                        />
+                      )}
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -577,7 +582,8 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   )
 }
 
-const isRow = (item: MenuItemDescriptor): boolean => item.type !== 'separator'
+/** The items drawn as menuitems, in the order `menuRows` finds them: no separator, no note. */
+const isRow = (item: MenuItemDescriptor): boolean => item.type !== 'separator' && !item.note
 
 /** A submenu level's name to the tree: the label of the row that opened it. */
 function levelTitle(levels: Level[], depth: number): string {
@@ -676,6 +682,15 @@ function MenuLevel({
       {items.map((item) => {
         if (item.type === 'separator')
           return <div key={item.id} className="zen-v2-menu-separator" role="separator" />
+        // An empty state's sentence (§9.17): a row in the deemphasised ink that is not a
+        // menuitem – the arrows, Tab and the pointer pass it by – keeping the labels' edge.
+        if (item.note)
+          return (
+            <div key={item.id} className="zen-v2-menu-note" data-menu-note>
+              {withGlyphs && <span className="zen-v2-menu-glyph" aria-hidden />}
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            </div>
+          )
         const checkable = item.type === 'checkbox' || item.type === 'radio'
         return (
           <button

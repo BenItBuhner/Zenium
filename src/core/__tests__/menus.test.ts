@@ -394,7 +394,7 @@ const DESKTOP_APP_MENU = [
   'History',
   'History > Show Full History',
   'History > -',
-  'History > Recently Closed',
+  'History > No recently closed tabs',
   'Downloads',
   'Passwords',
   'Add-ons and Themes',
@@ -516,19 +516,24 @@ describe('the app menu', () => {
     ]
     const h = harness(DESKTOP)
     appMenu(h)
-    const everywhere = allItems(h.shown()).map((i) => i.label)
-    for (const label of before) expect(everywhere).toContain(label)
-    // The History page is the submenu's first row and keeps its chord; the recently closed
-    // list follows under Chrome's header, greyed while nothing was closed (§9.17).
+    // The History page is the submenu's first row and keeps its chord; with nothing closed the
+    // recently closed block is §9.17's one sentence – a note in the deemphasised ink, not a
+    // greyed command – under the separator.
     const history = item(h.shown(), 'History').submenu!
     expect(history[0]).toMatchObject({ label: 'Show Full History', action: 'history.sidebar' })
-    expect(history.at(-1)).toMatchObject({ label: 'Recently Closed', enabled: false })
+    expect(labels(history)).toEqual(['Show Full History', '-', 'No recently closed tabs'])
+    expect(history.at(-1)).toMatchObject({ enabled: false, note: true })
+    expect(history.at(-1)!.click).toBeUndefined()
+    // With a tab closed the block is Chrome's: the header, the entries, Restore All, Clear List
+    // – and every one of the flat menu's rows is somewhere in the tree.
     const closed = h.browser.tabs.createTab(
       { url: 'https://closed.example/', active: false },
       h.win
     )
     h.browser.tabs.closeTab(closed.id, false, h.win)
     appMenu(h)
+    const everywhere = allItems(h.shown()).map((i) => i.label)
+    for (const label of before) expect(everywhere).toContain(label)
     expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
       'Show Full History',
       '-',
@@ -561,7 +566,7 @@ describe('the app menu', () => {
     // whose popovers they open – in the submenus Firefox's groups put them (§6).
     for (const label of [
       'Search Tabs…',
-      'History > Recently Closed',
+      'History > No recently closed tabs',
       'Help > Keyboard Shortcuts',
       'Save Page As…'
     ])

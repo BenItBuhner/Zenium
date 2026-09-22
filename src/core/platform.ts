@@ -986,6 +986,13 @@ export interface MenuItemTemplate {
    * native menu draws `accelerator` in the OS's own spelling and ignores this.
    */
   hint?: string
+  /**
+   * A plain sentence rather than a command – a menu's empty state (design language v2 §9.17:
+   * "No recently closed tabs", sentence case, no full stop). A renderer-drawn menu writes it in
+   * the deemphasised ink on a row of its own that takes no focus and answers no click; a native
+   * host has no such row and shows the disabled item `enabled: false` makes of it.
+   */
+  note?: boolean
 }
 
 export type MenuSource =
