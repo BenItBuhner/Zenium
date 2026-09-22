@@ -33,7 +33,10 @@ export const SITE_DATA_TEXT = {
     'What sites may keep on this device. The default applies to every site on no list; the lists below are the exceptions.',
   default: {
     label: 'Default behaviour',
-    sheetDescription: 'What a site on none of the lists below may do with cookies.'
+    // The rest of the block-all option's line lives here (§9.13: an option's description takes two
+    // lines, the remainder moves to the sheet's title block).
+    sheetDescription:
+      'What a site on none of the lists below may do with cookies. Blocking all cookies breaks many sites.'
   },
   lists: {
     empty: 'No sites added',

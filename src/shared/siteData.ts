@@ -311,9 +311,10 @@ export const SITE_DATA_DEFAULT_LABELS: Record<
     label: 'Block all cookies',
     // Browser-wide by construction: the container's cookie jar stops accepting cookies (Chrome's
     // semantics too); the per-site lists are the exceptions. Said so the row is never read as a
-    // per-site block.
+    // per-site block – and said in two lines, the most a §9.13 picker sheet's option may take at
+    // the phone's width (the consequence for sites is the picker's title block's, `siteDataUi`).
     description:
-      'Browser-wide, not per site: the container’s cookie jar accepts no cookies except from sites on the always-allow list. Many sites will not work.'
+      'Browser-wide, not per site: the container’s cookie jar accepts no cookies except from the always-allow list.'
   }
 }
 
