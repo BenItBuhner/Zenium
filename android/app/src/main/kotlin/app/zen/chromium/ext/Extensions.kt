@@ -1409,6 +1409,13 @@ class Extensions(private val host: Host) {
     /** The hidden background WebView of an attached extension (instrumentation reads its console). */
     fun backgroundView(id: String): ExtensionWebView? = backgrounds[id]
 
+    /**
+     * Ask the runtime to run an extension's stopped background (an MV3 worker idles out half a
+     * minute after its last traffic), as Chrome's management page starts an inactive worker when
+     * its view is inspected. Instrumentation: the driver probes a worker's APIs through its view.
+     */
+    fun wakeBackground(id: String) = chromeEvent("ext.wake", json("id" to id))
+
     /** The document-start script units currently installed in every tab, across extensions. */
     fun scriptUnits(): List<ScriptUnit> = units.values.flatten()
 

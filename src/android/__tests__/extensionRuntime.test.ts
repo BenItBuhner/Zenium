@@ -1393,10 +1393,34 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
       { url: 'offscreen.html', reasons: ['BLOBS'], justification: 'again' }
     ])
     expect(second.error).toBe('Only a single offscreen document may be created.')
+    // And runtime.getContexts lists it already, Chrome's spelling (OneNote Web Clipper asks
+    // for OFFSCREEN_DOCUMENT contexts before it decides to create one; told none, it created a
+    // second time into the refusal above).
+    const loading = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [
+        {
+          contextTypes: ['OFFSCREEN_DOCUMENT'],
+          documentUrls: [`chrome-extension://${ID}/offscreen.html`]
+        }
+      ])
+    ).result as Array<Record<string, unknown>>
+    expect(loading).toHaveLength(1)
+    expect(loading[0]).toMatchObject({
+      contextType: 'OFFSCREEN_DOCUMENT',
+      documentUrl: `chrome-extension://${ID}/offscreen.html`,
+      documentOrigin: `https://${ID}.ext.zenium.invalid`,
+      tabId: -1
+    })
     hello(h, 'off1', 'offscreen', { url: `https://${ID}.ext.zenium.invalid/offscreen.html` })
     await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
+    // Up, it is listed once, as the page's endpoint.
+    const up = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: ['OFFSCREEN_DOCUMENT'] }])
+    ).result as Array<Record<string, unknown>>
+    expect(up).toHaveLength(1)
+    expect(up[0].contextId).toBe('off1')
     // The page has the extension's chrome: its runtime.sendMessage reaches the background as a
     // popup's does, with no tab on the sender.
     message(h, 'off1', { t: 'msg', id: 3, target: {}, data: { blob: 'made' } })

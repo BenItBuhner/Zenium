@@ -139,7 +139,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.proxy.set { rules, bypass, bypassSimpleHostnames, removeImplicitRules } / clear   chrome.proxy.settings over ProxyController
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
- * ext.authView { viewId, event, url? }, ext.notification.
+ * ext.authView { viewId, event, url? }, ext.notification, ext.wake { id }.
  */
 
 /** The bridge calls the runtime makes (`Bridge` satisfies it; tests pass a fake). */
@@ -542,7 +542,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    */
   private readonly offscreenOpening = new Map<
     string,
-    { resolve: () => void; reject: (error: Error) => void; timer: unknown }
+    { url: string; resolve: () => void; reject: (error: Error) => void; timer: unknown }
   >()
   private observing = false
   private subscribed = false
@@ -1548,7 +1548,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         this.bridge.send('ext.offscreen.close', { id })
         reject(new Error(`The offscreen document ${url} did not load.`))
       }, OFFSCREEN_LOAD_MS)
-      this.offscreenOpening.set(id, { resolve, reject, timer })
+      this.offscreenOpening.set(id, { url, resolve, reject, timer })
       this.bridge.send('ext.offscreen.open', { id, url })
     })
   }
@@ -1560,6 +1560,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   hasOffscreen(id: string): boolean {
     return this.offscreenOpening.has(id) || this.router.of(id, 'offscreen').length > 0
+  }
+
+  offscreenLoading(id: string): string | null {
+    return this.offscreenOpening.get(id)?.url ?? null
   }
 
   /** The pending `createDocument` of an extension, if any, resolved (its page is up) or rejected. */
@@ -1897,6 +1901,18 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     const context = this.sheetContext
     this.sheetContext = null
     if (context === 'sidePanel') this.api.sidePanel.sheetGone()
+  }
+
+  /**
+   * `ext.wake`: the host asks for an extension's background to run, as Chrome's management page
+   * starts an inactive worker when its "service worker" view is inspected. A stopped worker or
+   * event page starts (and idles out again on its own clock); a running one, a persistent page
+   * or an extension without a background is left as it is.
+   */
+  wakeBackground(id: string): void {
+    const ext = this.attached(id)
+    if (!ext || !ext.manifest.background || !this.isEnabled(id)) return
+    this.background.ensureStarted(id)
   }
 
   /** An auth sheet's navigation (the way back ends the flow), load, failure or dismissal. */

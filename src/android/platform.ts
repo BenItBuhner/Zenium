@@ -537,6 +537,8 @@ export interface HostEventPayloads {
   'ext.gone': { eps: string[] }
   /** The popup / options sheet was dismissed (back gesture, a tap outside, `window.close()`). */
   'ext.popupClosed': { id: string }
+  /** The host asks for an extension's stopped background to run (instrumentation; `wakeBackground`). */
+  'ext.wake': { id: string }
   /** One intercepted request, while an extension listens for `webRequest` events. */
   'ext.request': ExtRequestEvent
   /**
@@ -1641,6 +1643,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'ext.popupClosed':
         this.extensionRuntime?.onPopupClosed()
+        return
+      case 'ext.wake':
+        this.extensionRuntime?.wakeBackground((payload as HostEventPayloads['ext.wake']).id)
         return
       case 'ext.request':
         this.extensionRuntime?.onRequest(payload as HostEventPayloads['ext.request'])

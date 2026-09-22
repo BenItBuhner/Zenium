@@ -197,6 +197,13 @@ export interface ApiHost {
   openOffscreen(id: string, url: string): Promise<void>
   closeOffscreen(id: string): void
   hasOffscreen(id: string): boolean
+  /**
+   * The served URL of an offscreen document whose `createDocument` began and whose page has not
+   * said hello yet, or null. Chrome's document exists from the call on, so `runtime.getContexts`
+   * lists it before it has loaded (OneNote Web Clipper asks between the two and, told there was
+   * none, called `createDocument` again into "Only a single offscreen document may be created").
+   */
+  offscreenLoading(id: string): string | null
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
   reload(id: string): Promise<void>
   uninstall(id: string): Promise<void>
@@ -1606,6 +1613,20 @@ export class ExtensionApi {
           tabId: e.tabId ? this.tabs.chromeIdFor(e.tabId) : -1,
           windowId: 1
         }))
+        // An offscreen document still loading is a context already, as Chrome's is.
+        const opening = this.host.offscreenLoading(id)
+        if (opening !== null && !contexts.some((c) => c.contextType === 'OFFSCREEN_DOCUMENT'))
+          contexts.push({
+            contextId: `${id}/offscreen`,
+            contextType: 'OFFSCREEN_DOCUMENT',
+            documentId: `${id}/offscreen`,
+            documentOrigin: safeOrigin(opening),
+            documentUrl: presentExtensionUrl(opening),
+            frameId: 0,
+            incognito: false,
+            tabId: -1,
+            windowId: 1
+          })
         return filterContexts(contexts, asRecord(args[0]))
       }
       // No native messaging hosts on the phone: Chrome's answer for a host that does not exist.
