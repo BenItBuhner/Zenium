@@ -90,7 +90,13 @@ export interface ViewEventPayloads {
   upgraded: { from: string; to: string }
   /** The Safe Browsing guard refused the navigation (a `failLoad` of the URL follows). */
   unsafe: { url: string; hit: SafeBrowsingHit }
-  crashed: { reason: string }
+  /**
+   * The renderer went away (`onRenderProcessGone`, `RendererExit.kt`): `reason` is `crashed`
+   * (`didCrash()`), `oom-kill` (the system took the memory back from a page in front) or
+   * `hung` (the user chose Exit page on an unresponsive page); `repeat` says the same tab's
+   * renderer went less than a minute ago too, which the host counts since it outlives the core.
+   */
+  crashed: { reason: string; repeat?: boolean }
   audio: { audible: boolean }
   /** The Kotlin request engine blocked `count` more requests of the page. */
   blocked: { count: number }
@@ -201,9 +207,11 @@ export class AndroidTabView implements TabView {
           ev.onUnsafeNavigation(p.url, p.hit)
         return
       }
-      case 'crashed':
-        ev.onCrashed((payload as ViewEventPayloads['crashed']).reason)
+      case 'crashed': {
+        const p = payload as ViewEventPayloads['crashed']
+        ev.onCrashed(p.reason, undefined, { repeat: p.repeat === true })
         return
+      }
       case 'audio': {
         const p = payload as ViewEventPayloads['audio']
         this.audible = p.audible

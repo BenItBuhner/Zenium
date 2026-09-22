@@ -296,6 +296,8 @@ class TabWebView(
         // it; the extension runtime infers the family from the client callbacks otherwise.
         if (host.extensions != null) navigationListener = NavigationReports.attach(this) { host.viewEvent(tabId, "navigation", it) }
         applyPrivacy()
+        // The renderer stopping to answer an input to this page (the unresponsive-page prompt).
+        host.watchRenderer(this)
     }
 
     override fun destroy() {
@@ -2021,13 +2023,17 @@ class TabWebView(
         }
 
         override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
-            val reason = if (detail.didCrash()) "crashed" else "killed"
-            Log.w("ZenTab", "renderer of $tabId gone ($reason, priority at exit ${detail.rendererPriorityAtExit()})")
-            // Every WebView shares the one renderer. When the chrome lost it too, the host drops
-            // this view – before or after this call – and the rebooted core recreates the tab
-            // itself; only a view that was really swapped tells the chrome its page crashed.
+            val didCrash = detail.didCrash()
+            val priority = detail.rendererPriorityAtExit()
+            Log.w("ZenTab", "renderer of $tabId gone (${if (didCrash) "crashed" else "killed"}, priority at exit $priority)")
+            // Every WebView shares the one renderer: the host classifies the exit for the pages
+            // on screen first (it outlives the chrome, which lost the renderer too and is
+            // rebuilt around a fresh one; the word reaches the rebooted core as it loads the
+            // page again). The host drops this view for that rebuild – before or after this
+            // call – and only a view that was really swapped tells the chrome its page crashed.
+            val word = host.rendererGone(this@TabWebView, didCrash, priority)
             if (host.tabs.replaceCrashed(this@TabWebView)) {
-                host.viewEvent(tabId, "crashed", json("reason" to reason))
+                host.viewEvent(tabId, "crashed", word ?: json("reason" to if (didCrash) "crashed" else "killed"))
             }
             return true
         }

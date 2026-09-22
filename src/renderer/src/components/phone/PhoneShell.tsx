@@ -10,6 +10,7 @@ import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
 import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
+import { useConnectivityMessages } from '@renderer/lib/connectivityMessages'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import {
   fakeboxAway,
@@ -147,6 +148,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     })
     return () => dismissBanner(id)
   }, [bannerDue])
+
+  // The device offline: "No internet connection" in the banner stack; back: a "Back online" toast (ERR-07).
+  useConnectivityMessages(state.network.online)
 
   // A hold on the Tabs button: its quick menu, anchored to the button; any other hold, the editor.
   const hold = useBarHold({

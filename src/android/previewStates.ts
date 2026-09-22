@@ -36,7 +36,7 @@ import { isInternalPageUrl } from '@shared/internalPages'
 import { isEmptyTabUrl } from '@shared/url'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
-import { BLANK_URL, EXTENSION_SCHEME } from '@shared/url'
+import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
@@ -83,6 +83,8 @@ import {
   PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
   PREVIEW_READ_ALOUD_EVENT,
+  PREVIEW_SETTLE_LOADS_EVENT,
+  PREVIEW_SLOW_LOAD_EVENT,
   PREVIEW_VOICE_EVENT,
   PREVIEW_WEB_APP,
   postPreviewManifest,
@@ -101,14 +103,17 @@ import { PREVIEW_PDF_FILES, previewPdf } from './previewPdf'
 import {
   parsePreviewSeed,
   parsePreviewSpec,
+  type PreviewCrashVariant,
   type PreviewDownloadSpec,
   type PreviewMediaVariant,
+  type PreviewNetworkVariant,
   type PreviewNtpPose,
   type PreviewPrivateSurface,
   type PreviewState,
   type PreviewStep,
   type PreviewWebAppSurface
 } from './previewSpec'
+import { hideUnresponsivePrompt, showUnresponsivePrompt } from './previewUnresponsive'
 import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
@@ -261,6 +266,8 @@ function apply(browser: Browser, spec: string): void {
     cancelVoiceSearch()
     cancelQrScan()
     resetBarHide()
+    // The unresponsive-page prompt's stand-in goes at once (no answer: nothing hangs here).
+    hideUnresponsivePrompt()
     // A read-aloud session a previous state scripted ends: its docked player goes with it.
     browser.readAloud.stop()
     const state = browserStore.get().state
@@ -290,13 +297,17 @@ function apply(browser: Browser, spec: string): void {
     // too (its session ends, as when the user closes the last one): the next state starts on
     // the regular tabs, and an "empty" pane is empty. A tab a `pdf=` state turned to the viewer
     // goes back to its page, unless the next state is another document for the same viewer. The
-    // new tab page an `ntp=` state opened goes the same way, and the bar is docked where the
-    // seed says before the state is reached.
+    // new tab page an `ntp=` state opened goes the same way, the device is back online if a
+    // `network=` state took it off, the active tab is back on its page if a state left it on an
+    // error page, and the bar is docked where the seed says before the state is reached.
     void clearAutofill(browser)
       .then(dissolveGroup)
       .then(closeExtensionPage)
       .then(() => (parsePreviewSpec(spec).kind === 'pdf' ? undefined : leavePdf()))
       .then(closeNewTabPage)
+      .then(restoreConnectivity)
+      .then(leaveHungPage)
+      .then(leaveErrorPage)
       .then(() =>
         dockBar(seed.bar, () =>
           closePrivateTabs(() => closeSheets(() => reach(browser, spec, securityAtRest)))
@@ -483,6 +494,24 @@ async function leavePdf(): Promise<void> {
   if (!isPdfViewerTab(state, made.tabId)) return
   await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
   await new Promise<void>((resolve) => untilState((s) => !isPdfViewerTab(s, made.tabId), resolve))
+}
+
+/**
+ * The tab a previous `unresponsive&url=` state took to the page it hung, and the page it was on
+ * before, put back before the next state (as the PDF viewer's tab is).
+ */
+let previewHungReturn: { tabId: string; url: string } | null = null
+
+/** The tab back on the page it was on before the unresponsive state took it elsewhere. */
+async function leaveHungPage(): Promise<void> {
+  const made = previewHungReturn
+  previewHungReturn = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state || !state.tabs[made.tabId] || state.tabs[made.tabId]?.url === made.url) return
+  await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
+  await new Promise<void>((resolve) =>
+    untilState((s) => s.tabs[made.tabId]?.url === made.url, resolve)
+  )
 }
 
 /**
@@ -1007,6 +1036,29 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'error' && tab) {
     failLoad(tab.id, target.code, target.url ?? tab.url)
     requestAnimationFrame(finish)
+  } else if (target.kind === 'network' && tab) {
+    playConnectivity(tab, target.variant, finish)
+  } else if (target.kind === 'crash' && tab) {
+    crashTab(tab, target.variant, finish)
+  } else if (target.kind === 'unresponsive' && tab) {
+    // The prompt is about the page in front: the one the spec names is loaded first (a page this
+    // host can picture stands behind the scrim; the reset has left the tab on its own page,
+    // loaded, otherwise). Then the sheet rises with its motion, and the state is reached once it
+    // has settled.
+    const url = target.url
+    const staged = (): void => {
+      const now = activeTab(browserStore.get().state!) ?? tab
+      showUnresponsivePrompt(safeHost(now.url) || now.url, now.favicon)
+      window.setTimeout(finish, STEP_SETTLE_MS)
+    }
+    if (url && tab.url !== url) {
+      previewHungReturn = { tabId: tab.id, url: tab.url }
+      run('tab.navigate', { tabId: tab.id, input: url })
+      whenActiveTabIs(
+        (t) => t.id === tab.id && t.url === url && !t.loading,
+        () => void untilPainted(tab.id).then(staged)
+      )
+    } else staged()
   } else if (target.kind === 'messages') {
     showMessages(target, tab?.id ?? null)
     finish()
@@ -2099,6 +2151,157 @@ function failLoad(tabId: string, code: number, url: string): void {
   const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
   const certificate = isCertificateError(code) ? PREVIEW_CERTIFICATE : undefined
   host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url, certificate }))
+}
+
+/** Chromium's `net::ERR_INTERNET_DISCONNECTED`: the failure that means offline by itself. */
+const ERR_INTERNET_DISCONNECTED = -106
+
+/** The host's word on the device's connectivity, as `Connectivity.kt` would send it. */
+function setConnectivity(online: boolean): void {
+  const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
+  host.hostEvent('connectivity', JSON.stringify({ online }))
+}
+
+/**
+ * The device's connectivity played over the active tab (ERR-06, ERR-07) through the core's own
+ * model (`ConnectivityService`, with its debounce): the device goes offline and, for `offline`,
+ * the state is reached once the chrome shows it (the banner up). For `back-online` the device
+ * comes back at once and the state is reached once the chrome agrees (the toast up). For
+ * `reloading` the tab's load fails as offline first – the error page, armed to reload itself –
+ * then the device comes back: the core puts the page in its own Reloading state and navigates
+ * it to the page again, a load the stand-in host makes take its time (PREVIEW_SLOW_LOAD_EVENT),
+ * so the still shows the error page reloading with the toast beside it.
+ */
+function playConnectivity(tab: Tab, variant: PreviewNetworkVariant, then: () => void): void {
+  setConnectivity(false)
+  untilState(
+    (s) => !s.network.online,
+    () => {
+      if (variant === 'offline') {
+        afterFrames(2, then)
+        return
+      }
+      const back = (): void => {
+        setConnectivity(true)
+        untilState(
+          (s) => s.network.online,
+          () => afterFrames(2, then)
+        )
+      }
+      if (variant === 'back-online') {
+        back()
+        return
+      }
+      failLoad(tab.id, ERR_INTERNET_DISCONNECTED, tab.url)
+      // The error page's document must be up before the device comes back: the core's busy
+      // state runs inside it, and the load it starts is the unhurried one.
+      whenActiveTabIs(
+        (t) => t.id === tab.id && t.url.startsWith(ERROR_URL_PREFIX) && !t.loading,
+        () => {
+          window.dispatchEvent(new CustomEvent(PREVIEW_SLOW_LOAD_EVENT, { detail: tab.id }))
+          window.setTimeout(back, STEP_SETTLE_MS)
+        }
+      )
+    }
+  )
+}
+
+/**
+ * The device back online before the next state, when a `network=` state took it off: the core
+ * hears the host's word and, once its debounce has passed, answers with the Back online toast,
+ * which the next state must not carry – so the return is waited for and the toast cleared
+ * before the state is reached.
+ */
+function restoreConnectivity(): Promise<void> {
+  const state = browserStore.get().state
+  if (!state || state.network.online) return Promise.resolve()
+  setConnectivity(true)
+  return new Promise<void>((resolve) =>
+    untilState(
+      (s) => s.network.online,
+      () =>
+        afterFrames(2, () => {
+          clearMessages(null)
+          resolve()
+        })
+    )
+  )
+}
+
+/**
+ * The active tab back on its page, loaded, before the next state: a previous state may have left
+ * it on an error page (`error=`, `crash=`, `network=reloading`) or with a load on its way (the
+ * reloading state's unhurried one). The next state starts on the page – a `network=reloading`
+ * fails the page's own URL, the prompt is about the page – and an error page the next state puts
+ * up is a fresh document, which matters for the scheme: the page reads it once, at load (on a
+ * device the host reloads pages on a theme switch; this host does not). Bounded by `untilState`.
+ */
+async function leaveErrorPage(): Promise<void> {
+  const state = browserStore.get().state
+  const tab = state ? activeTab(state) : null
+  if (!tab) return
+  if (tab.url.startsWith(ERROR_URL_PREFIX)) {
+    run('tab.reload', { tabId: tab.id })
+    await new Promise<void>((resolve) =>
+      untilState((s) => {
+        const t = activeTab(s)
+        return t === null || t.id !== tab.id || !t.url.startsWith(ERROR_URL_PREFIX)
+      }, resolve)
+    )
+  }
+  // The core's word on the load is not enough here: the reset above marked the tab as loaded
+  // for the messages, while the stand-in host may still be holding the page back. The held
+  // loads land, and the tab's frame is waited for until it shows what it was told to.
+  window.dispatchEvent(new CustomEvent(PREVIEW_SETTLE_LOADS_EVENT))
+  await untilPainted(tab.id)
+}
+
+/** How long a page load in the stand-in host is waited for before the next state goes ahead anyway. */
+const PAINT_TIMEOUT_MS = 6000
+
+/**
+ * Resolves once the stand-in host's frame for `tabId` shows the URL it was last told to load
+ * (`preview.ts` marks `data-painted` on the frame's load), or once waiting stops being worth it.
+ */
+function untilPainted(tabId: string): Promise<void> {
+  const deadline = performance.now() + PAINT_TIMEOUT_MS
+  return new Promise<void>((resolve) => {
+    const check = (): void => {
+      const frame = [
+        ...document.querySelectorAll<HTMLIFrameElement>('iframe.zen-preview-view')
+      ].find((f) => f.dataset.tabId === tabId)
+      if (!frame || frame.dataset.painted === frame.dataset.url || performance.now() > deadline) {
+        resolve()
+        return
+      }
+      window.setTimeout(check, 50)
+    }
+    check()
+  })
+}
+
+/**
+ * The active tab's renderer went (ERR-15), as the host reports it (`crashed` in `views.ts`,
+ * `RendererExits.kt` behind it): the core answers with the crash page for the way it went, in
+ * the tab's frame – for `repeat`, the page's second-time variant with Show tabs beside Reload.
+ * Reached once the tab shows that crash page and its document has had a moment to paint.
+ */
+function crashTab(tab: Tab, variant: PreviewCrashVariant, then: () => void): void {
+  const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
+  const reason = variant === 'memory' ? 'oom-kill' : variant === 'hung' ? 'hung' : 'crashed'
+  const repeat = variant === 'repeat'
+  host.viewEvent(tab.id, 'crashed', JSON.stringify({ reason, repeat }))
+  const expected = variant === 'repeat' ? 'crash' : variant
+  whenActiveTabIs(
+    (t) => {
+      if (t.id !== tab.id || t.loading || !t.url.startsWith(ERROR_URL_PREFIX)) return false
+      const params = new URL(t.url).searchParams
+      if (params.get('code') !== '-1') return false
+      const options = crashPageOptionsOf(params)
+      return options.variant === expected && options.repeat === repeat
+    },
+    () => window.setTimeout(then, STEP_SETTLE_MS)
+  )
 }
 
 /** Type `text` into the first element matching `selector` the way a keyboard would. */

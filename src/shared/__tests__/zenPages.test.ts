@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import chromeCss from '../../renderer/src/assets/main.css?raw'
 import { classifyViewport, type ViewportMetrics } from '../formFactor'
-import { errorPageUrl, httpsOnlyPageUrl, safeBrowsingPageUrl } from '../url'
+import {
+  crashPageUrl,
+  errorPageUrl,
+  httpsOnlyPageUrl,
+  safeBrowsingPageUrl,
+  type CrashPageOptions
+} from '../url'
 import { INTERSTITIAL_MESSAGE_KEY } from '../interstitial'
 import type { CertificateDetails } from '../types'
 import {
@@ -12,13 +18,18 @@ import {
   certificateInterstitial,
   crashCodeName,
   describeNetError,
+  errorPageAccentStyle,
   errorPageContent,
   errorPageHtml,
   errorPageStyle,
   inPlaceErrorPageScript,
   parseZenUrl,
-  zenPageHtml
+  zenPageHtml,
+  type ErrorPageContent
 } from '../zenPages'
+
+/** The Reload control's label span: the button carries the busy spinner beside it (ERR-06). */
+const RELOAD_LABEL = '<span class="zen-interstitial-label">Reload</span>'
 
 const DNS = errorPageUrl(-105, 'net::ERR_NAME_NOT_RESOLVED', 'http://nonexistent.invalid/')
 const REFUSED = errorPageUrl(-102, 'net::ERR_CONNECTION_REFUSED', 'http://localhost:1/')
@@ -81,6 +92,7 @@ describe('errorPageContent', () => {
       reason: "nonexistent.invalid's server IP address could not be found.",
       code: 'ERR_NAME_NOT_RESOLVED',
       target: 'http://nonexistent.invalid/',
+      showTabs: false,
       interstitial: null
     })
   })
@@ -225,9 +237,76 @@ describe('errorPageContent', () => {
     expect(html).toContain('<html class="zen-error-document">')
     expect(html).toContain('<h1>This page crashed</h1>')
     expect(html).toContain('<p class="zen-error-code">Error code: SIGSEGV</p>')
-    expect(html).toContain('>Reload</button>')
+    expect(html).toContain(RELOAD_LABEL)
     expect(html).toContain('location.replace(&quot;https://crashed.example/page&quot;)')
     expect(html).not.toContain('Aw, Snap')
+    // A first crash offers Reload alone: no action row, no way to the tab switcher.
+    expect(html).not.toContain('<div class="zen-error-actions">')
+    expect(html).not.toContain('Show tabs')
+  })
+
+  it('words the crash page per the way the renderer went (ERR-15): a crash, a memory kill, a page the user ended', () => {
+    const at = (options: CrashPageOptions): ErrorPageContent =>
+      errorPageContent(CRASH_ERROR_CODE, 'Out of Memory', 'https://a.example/', null, options)
+    expect(at({ variant: 'crash' }).title).toBe('This page crashed')
+    const memory = at({ variant: 'memory' })
+    expect(memory.title).toBe('This page was closed to free up memory')
+    expect(memory.reason).toBe(
+      'Android needed the memory this page was using. Reload to open it again.'
+    )
+    expect(memory.showTabs).toBe(false)
+    const hung = at({ variant: 'hung' })
+    expect(hung.title).toBe('This page crashed')
+    expect(hung.reason).toBe('The page stopped responding and was closed. Reload to try again.')
+    // The code line stays Chrome's name for the end, whatever the words above it.
+    expect(hung.code).toBe('Error code: Out of Memory')
+  })
+
+  it('suggests closing other tabs, with the way to them, when the same page went twice within the minute', () => {
+    const again = errorPageContent(CRASH_ERROR_CODE, 'SIGSEGV', 'https://a.example/', null, {
+      variant: 'crash',
+      repeat: true
+    })
+    expect(again.title).toBe('This page crashed again')
+    expect(again.reason).toBe(
+      'Something went wrong while displaying this page, again. Closing other tabs can free up memory.'
+    )
+    expect(again.showTabs).toBe(true)
+    const memory = errorPageContent(CRASH_ERROR_CODE, 'Out of Memory', 'https://a.example/', null, {
+      variant: 'memory',
+      repeat: true
+    })
+    // "closed to free up memory again" would read as a second closing of one page: the title holds.
+    expect(memory.title).toBe('This page was closed to free up memory')
+    expect(memory.reason).toMatch(/again\. Closing other tabs/)
+    expect(memory.showTabs).toBe(true)
+  })
+
+  it('lays the repeat crash page out as an action row: Show tabs before the primary Reload', () => {
+    const url = parseZenUrl(
+      crashPageUrl('SIGSEGV', 'https://crashed.example/page', { variant: 'crash', repeat: true })
+    )!
+    const html = errorPageHtml(url)
+    expect(html).toContain('<h1>This page crashed again</h1>')
+    const row = html.indexOf('<div class="zen-error-actions">')
+    const showTabs = html.indexOf('class="zen-v2-button zen-error-show-tabs"')
+    const reload = html.indexOf('id="zen-error-reload"')
+    expect(row).toBeGreaterThan(-1)
+    expect(showTabs).toBeGreaterThan(row)
+    expect(reload).toBeGreaterThan(showTabs)
+    // Reload is the row's primary; Show tabs posts the interstitial action to the core.
+    expect(html).toContain('zen-interstitial-action" data-primary onclick="zenReloading();')
+    expect(html).toContain(`postMessage({${INTERSTITIAL_MESSAGE_KEY}`)
+    expect(html).toContain('&quot;show-tabs&quot;')
+  })
+
+  it("carries the page's own Reloading state: Reload turns busy on press and when the core reloads it", () => {
+    const html = errorPageHtml(parseZenUrl(DNS)!)
+    expect(html).toContain('<script>function zenReloading(){')
+    expect(html).toContain('onclick="zenReloading();location.replace(')
+    expect(html).toContain('<span class="zen-interstitial-spinner">')
+    // The core's call (`ERROR_PAGE_RELOADING_SCRIPT`) finds the function under this name.
+    expect(html).toContain('function zenReloading()')
   })
 })
 
@@ -293,7 +372,7 @@ describe('errorPageHtml', () => {
     )
     expect(html).toContain('<p class="zen-error-code">ERR_NAME_NOT_RESOLVED</p>')
     expect(html).toContain(
-      '<button type="button" class="zen-v2-button" onclick="location.replace(&quot;http://nonexistent.invalid/&quot;)">Reload</button>'
+      `<button type="button" id="zen-error-reload" class="zen-v2-button zen-interstitial-action" onclick="zenReloading();location.replace(&quot;http://nonexistent.invalid/&quot;)">${RELOAD_LABEL}`
     )
     expect(html).not.toContain('New Tab')
   })
@@ -321,9 +400,64 @@ describe('errorPageHtml', () => {
     expect(html).toContain(`<script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>`)
     expect(html).toContain('<body class="zen-error-page">')
     expect(html).toContain('<p class="zen-error-code">ERR_CONNECTION_REFUSED</p>')
-    expect(html).toContain('<button type="button" class="zen-v2-button" onclick=')
+    expect(html).toContain(
+      '<button type="button" id="zen-error-reload" class="zen-v2-button zen-interstitial-action" onclick='
+    )
     const style = html.slice(html.indexOf('<style>') + '<style>'.length, html.indexOf('</style>'))
-    expect(style).toBe(errorPageStyle())
+    expect(style).toBe(`${errorPageStyle()}\n${errorPageAccentStyle(null)}`)
+  })
+
+  describe("the theme's accent beside the token block (§9.11)", () => {
+    it("sets the window's --zen-accent on the root per scheme, so --v2-accent resolves as in the window", () => {
+      const style = errorPageAccentStyle({ light: '#6264dc', dark: '#8284f0' })
+      expect(style).toBe(
+        ':root {\n  --zen-accent: #6264dc;\n  --zen-accent-rgb: 98 100 220;\n}\n' +
+          ":root[data-theme='dark'] {\n  --zen-accent: #8284f0;\n  --zen-accent-rgb: 130 132 240;\n}"
+      )
+      // The token block derives the primary's fill from it; the page cuts that block in whole.
+      expect(errorPageStyle()).toContain(
+        '--v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #000);'
+      )
+      expect(errorPageStyle()).toContain(
+        '--v2-accent: color-mix(in srgb, var(--zen-accent) 40%, #fff);'
+      )
+    })
+
+    it("reads the accent the core wrote into the page's URL, the theme's own", () => {
+      const themed = errorPageUrl(-1, 'CRASHED', 'https://a.example/', null, {
+        light: '#606eeb',
+        dark: '#606eeb'
+      })
+      const html = errorPageHtml(parseZenUrl(themed)!)
+      expect(html).toContain(
+        ':root {\n  --zen-accent: #606eeb;\n  --zen-accent-rgb: 96 110 235;\n}'
+      )
+      expect(html).toContain(":root[data-theme='dark'] {\n  --zen-accent: #606eeb;")
+      expect(html).not.toContain('--zen-accent: #6264dc')
+    })
+
+    it("falls back to the default theme's accent for a URL without one, never the unresolved variable", () => {
+      const html = errorPageHtml(parseZenUrl(REFUSED)!)
+      expect(html).toContain(
+        ':root {\n  --zen-accent: #6264dc;\n  --zen-accent-rgb: 98 100 220;\n}'
+      )
+      expect(html).toContain(
+        ":root[data-theme='dark'] {\n  --zen-accent: #8284f0;\n  --zen-accent-rgb: 130 132 240;\n}"
+      )
+      // A value that is not a colour is no accent.
+      const bad = errorPageHtml(parseZenUrl(`${REFUSED}&accent=red&accentDark=8284f0`)!)
+      expect(bad).toContain('--zen-accent: #6264dc;')
+    })
+
+    it('reaches the warning pages too, whose Back to safety is the primary', () => {
+      const url = safeBrowsingPageUrl('https://bad.example/', 'malware', {
+        light: '#4caf50',
+        dark: '#4caf50'
+      })
+      const html = errorPageHtml(parseZenUrl(url)!)
+      expect(html).toContain('--zen-accent: #4caf50;')
+      expect(html).toContain('data-primary')
+    })
   })
 
   it('renders the certificate interstitial: Advanced then Back to safety last in the action row, the details and Proceed hidden', () => {
@@ -331,7 +465,7 @@ describe('errorPageHtml', () => {
     expect(html).toContain('<title>expired.badssl.com</title>')
     expect(html).toContain('<h1>Your connection is not private</h1>')
     expect(html).toContain('<p class="zen-error-code">ERR_CERT_DATE_INVALID</p>')
-    expect(html).not.toContain('>Reload</button>')
+    expect(html).not.toContain(RELOAD_LABEL)
     // §9.11: the page's action row has its primary last, so it trails on both platforms.
     const actions = html.indexOf('<div class="zen-error-actions">')
     const advanced = html.indexOf('>Advanced</button>')
@@ -407,7 +541,9 @@ describe('errorPageHtml', () => {
         expect(html).toContain('<html class="zen-error-document">')
         expect(html).toContain('<body class="zen-error-page">')
         expect(html).toContain('<script>' + ERROR_PAGE_ATTRIBUTES_SCRIPT + '</script>')
-        expect(html).toContain('<style>' + errorPageStyle() + '</style>')
+        expect(html).toContain(
+          '<style>' + errorPageStyle() + '\n' + errorPageAccentStyle(null) + '</style>'
+        )
         expect(html).toContain('class="zen-interstitial-title"')
         expect(html).toContain('class="zen-interstitial-actions"')
       }
