@@ -16,6 +16,14 @@ import {
  * the parser adds it (and any it adds later), supplies one when the page has none, and re-applies
  * when the rules change – the slider in the zoom sheet is live.
  *
+ * The desktop layout alone is decided once, at document start, and kept for the document's
+ * life (Chrome's rule: the desktop-site default follows the large-screen class at the tab's
+ * load, not live resizes, and a loaded page never loses its scroll to one). The rules that
+ * arrive live can change what the NEXT load of this page gets – a window crossing 600 dp into
+ * or out of the large-screen class in split screen, another tab of the site switching it on –
+ * but a document laid out for a phone keeps its width until it is reloaded, as it keeps the
+ * user agent it was requested with (the host switches that at the next navigation too).
+ *
  * Pages that zoom themselves (CSS `zoom`) are untouched: nothing here scales any element.
  */
 
@@ -47,7 +55,10 @@ function screenWidth(): number {
 const OWN_ATTRIBUTE = 'data-zenium-viewport'
 
 export interface ViewportController {
-  /** New rules or a new view width: every viewport meta is rewritten from the page's original. */
+  /**
+   * New rules or a new view width: every viewport meta is rewritten from the page's original –
+   * except that the desktop layout stays what this document started with (see the module note).
+   */
   update(config: PageRulesConfig): void
   /** The options in force (tests). */
   current(): ViewportRewriteOptions
@@ -61,6 +72,8 @@ export function installViewportController(
 ): ViewportController {
   let config = initial
   let options = controlsFor(config, doc.URL)
+  /** The document's layout for its life: the desktop-site decision at its start (Chrome's rule). */
+  const desktop = options.desktop
   /** The content each page-authored meta had before this controller touched it. */
   const originals = new WeakMap<Element, string>()
   /** What this controller last wrote, so its own mutations are not taken for the page's. */
@@ -197,7 +210,7 @@ export function installViewportController(
   return {
     update(next) {
       config = next
-      options = controlsFor(config, doc.URL)
+      options = { ...controlsFor(config, doc.URL), desktop }
       applyAllAndLayOut()
     },
     current: () => options,
