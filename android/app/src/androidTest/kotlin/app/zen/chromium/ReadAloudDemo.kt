@@ -490,7 +490,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
                 all = false
                 break
             }
-            val took = touchTapLabelExpecting(label, "the rate reads $expected", timeoutMs = 5_000) { Math.abs(rate() - expected) < 0.001 }
+            val took = stepSpeed(label, expected)
             // The sentence the finger came down in (read as the touch registers, so a sentence
             // ending while the chip was looked up does not shift the count).
             val n = sentenceIndex()
@@ -533,6 +533,40 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         // Nothing the engine was handed after the change is at the old rate (the sentence after it is prepared at the new one).
         val afterRestart = handed.dropWhile { it !in restart }.drop(1)
         check("every utterance the engine is handed after the change is at ${rate}x (${afterRestart.size} since)", restart.isNotEmpty() && afterRestart.all { "at ${rate}x" in it })
+    }
+
+    /** How many injected fingers one gesture gets before it is a fault: one on a GPU, more on the emulator's software GL ([GESTURE_TRIES_SOFTWARE]). */
+    private fun gestureTries(): Int = if (renderer.hardware) 1 else GESTURE_TRIES_SOFTWARE
+
+    /**
+     * One rung of the speed ladder under a real finger: tap the chip reading [label] and wait for
+     * the rate to read [expected]. A single injected finger can be lost to a software-GL render
+     * stall (the nightly saw a tap land inside a 764 ms Davey and never become a click, the rate
+     * stuck on the rung before), so while the rate still reads exactly where it started – a dropped
+     * finger, not a slow one: a slow tap reaches [expected] well inside the 5 s wait – press again,
+     * up to [gestureTries]. The chip cycles, so a re-press only happens when the rate has not moved
+     * at all and never turns one rung into two; a rate that moved to something other than [expected]
+     * is a real mis-step and faults at once. On a GPU the first finger always takes.
+     */
+    private fun stepSpeed(label: String, expected: Double): Boolean {
+        val from = rate()
+        val tries = gestureTries()
+        for (attempt in 1..tries) {
+            if (!touchTapLabel(label)) break
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (Math.abs(rate() - expected) < 0.001) {
+                    Log.i(tag, "the touch on '$label' took: the rate reads $expected")
+                    return true
+                }
+                SystemClock.sleep(150)
+            }
+            // Neither the new rung nor still the old one: a real mis-step, not a dropped finger.
+            if (Math.abs(rate() - from) > 0.001) break
+            if (attempt < tries) noteLine("  the finger on '$label' was dropped by a render stall (rate still ${rate()}); pressing again (${attempt + 1}/$tries)")
+        }
+        touchFault("a touch on '$label' did not take: not the rate reads $expected within 5000 ms")
+        return false
     }
 
     /** The host's log lines about utterances (`ReadAloud.speakNow`, tag `ZenReadAloud`), oldest first. */
@@ -1033,23 +1067,32 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     }
 
     private fun longPress(selector: String, ready: (List<ToolbarItem>) -> Boolean): List<ToolbarItem>? {
-        val p = pagePoint(selector) ?: run {
-            finding("  no $selector on the page")
-            return null
-        }
-        Finger().apply {
-            down(p.x, p.y)
-            hold(1_200)
-            up()
-        }
-        val deadline = SystemClock.uptimeMillis() + 12_000
+        val tries = gestureTries()
         var last: List<ToolbarItem>? = null
-        while (SystemClock.uptimeMillis() < deadline) {
-            toolbarItems()?.let { items ->
-                last = items
-                if (ready(items)) return items
+        for (attempt in 1..tries) {
+            val p = pagePoint(selector) ?: run {
+                finding("  no $selector on the page")
+                return null
             }
-            SystemClock.sleep(250)
+            Finger().apply {
+                down(p.x, p.y)
+                hold(1_200)
+                up()
+            }
+            // The floating toolbar is a window of its own the WebView must lay out and paint; a
+            // software-GL render freeze (the nightly's no-engine long press fell inside a 10.7 s
+            // buffer swap) can hold it back past this wait. Nothing came up means the press was
+            // lost to the stall, not that there is no toolbar, so press again once the screen
+            // catches up ([gestureTries]); a toolbar that is up answers on the first press.
+            val deadline = SystemClock.uptimeMillis() + 12_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                toolbarItems()?.let { items ->
+                    last = items
+                    if (ready(items)) return items
+                }
+                SystemClock.sleep(250)
+            }
+            if (attempt < tries) noteLine("  no selection toolbar for the long press on $selector; pressing again (${attempt + 1}/$tries)")
         }
         return last
     }
@@ -1178,5 +1221,15 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         private const val SYSTEM_UI = "com.android.systemui"
         /** The host's log tag (`ReadAloud.kt`): one line per utterance the engine is handed. */
         private const val HOST_TAG = "ZenReadAloud"
+        /**
+         * How many times a real finger is injected for one gesture on a software renderer before
+         * the step is a fault. The API 34 emulator's SwiftShader render thread stalls for hundreds
+         * of ms to seconds under the read-aloud scene (the nightly logged `EGL_emulation` buffer
+         * swaps of 0.3–10.7 s and back-to-back Daveys over the frames that carry a tap or raise the
+         * selection toolbar), so a single injected finger can be swallowed whole; a user whose
+         * press did nothing presses again once the screen answers. A GPU renders in time and the
+         * first finger always takes, so this is 1 on hardware ([gestureTries]).
+         */
+        private const val GESTURE_TRIES_SOFTWARE = 4
     }
 }
