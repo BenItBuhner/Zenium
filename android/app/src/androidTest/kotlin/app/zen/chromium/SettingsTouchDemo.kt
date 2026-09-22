@@ -101,10 +101,12 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
             if (!landing) failures += "the Settings tab did not open from the menu"
         }
 
-        // 2. Look and Feel: a real touch on the landing's row drills in.
+        // 2. Look and Feel: a real touch on the landing's row drills in. The row is found and the
+        // section proven by the chrome document (the harness's Settings reads: the emulator's
+        // tree lists a Settings page seconds after it is on screen).
         step("Look and Feel under a finger") {
-            val touched = touchTapLabel("Look and Feel", prefix = true)
-            val up = touched && awaitSurface(up = true, timeoutMs = 6_000)
+            val touched = touchSettingsRow(LOOK_AND_FEEL_LABEL)
+            val up = touched && awaitSettingsSection(LOOK_SECTION, 6_000)
             SystemClock.sleep(1_200)
             finding("  row ${if (touched) "touched" else "not found"}; section over the landing $up ${verdict(up)}")
             if (!up) failures += "Look and Feel did not open under a finger"
@@ -114,13 +116,13 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
         val before = rowText(ROW_LABEL)
         val current = colorScheme()
         step("The Colour scheme picker under a finger") {
-            val touched = touchTapLabel(ROW_LABEL, prefix = true)
-            val option = if (touched) awaitNode(8_000) { it == OTHER_OPTION } else null
-            val rested = option != null && awaitSheetAtRest(6_000)
+            val touched = touchSettingsRow(ROW_LABEL)
+            val option = touched && awaitTrue(8_000) { domRect(OTHER_OPTION) != null || findNode { it == OTHER_OPTION } != null }
+            val rested = option && awaitSheetAtRest(6_000)
             shot("02-picker-open")
             finding(
                 "  row '$before' (core colorScheme $current) ${if (touched) "touched" else "not found"}; " +
-                    "option '$OTHER_OPTION' on screen ${option != null}; sheet at rest $rested ${verdict(rested)}"
+                    "option '$OTHER_OPTION' on screen $option; sheet at rest $rested ${verdict(rested)}"
             )
             if (!rested) failures += "the Colour scheme picker did not open under a finger"
         }
@@ -128,7 +130,10 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
 
         // 4. THE touch: on the option that is not the current one, where the tree says it is –
         // once the tree has caught up with the risen sheet (it reports the rows where they were
-        // a few frames ago, as the DOM shows), and inside the window a finger reaches.
+        // a few frames ago, as the DOM shows), and inside the window a finger reaches. The
+        // tree's word is this check's point (TalkBack's finger lands where the tree says), so it
+        // is given the long window; should the tree never list the option, the DOM's rect takes
+        // the finger and the finding says so.
         var landedOn = ""
         var after = ""
         var scheme = ""
@@ -139,7 +144,7 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
             var option: AccessibilityNodeInfo? = null
             val tree = Rect()
             var agreed = false
-            while (SystemClock.uptimeMillis() < started + 6_000) {
+            while (SystemClock.uptimeMillis() < started + TREE_WINDOW_MS) {
                 option = findNode { it == OTHER_OPTION }
                 if (option != null) {
                     option.getBoundsInScreen(tree)
@@ -148,9 +153,9 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
                 }
                 SystemClock.sleep(250)
             }
-            val node = option ?: error("the option went away")
+            val node = option
             finding(
-                "  option bounds: tree $tree, DOM ${dom.rect} (checked=${dom.checked}); " +
+                "  option bounds: tree ${if (node != null) "$tree" else "not listed within $TREE_WINDOW_MS ms"}, DOM ${dom.rect} (checked=${dom.checked}); " +
                     "agree within $TREE_TOLERANCE px: $agreed after ${SystemClock.uptimeMillis() - started} ms; touchable window $touchable"
             )
             // The chrome's own word on where the finger landed: the target of the next pointerdown.
@@ -161,8 +166,9 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
                     "window.__touch=(t.tagName||'').toLowerCase()+(c?'.'+c.trim().split(/\\s+/).join('.'):'')+(r?'[role='+r+']':'')" +
                     "+(radio?' in the option '+radio.textContent.trim():'')},{capture:true,once:true})"
             )
-            val point = touchTapPoint(node) ?: error("no part of the option is inside the touchable window")
-            finding("  finger at ${point.x},${point.y}")
+            val point = (if (node != null) touchTapPoint(node) else touchPoint(dom.rect)?.also { Finger().tap(it.x, it.y) })
+                ?: error("no part of the option is inside the touchable window")
+            finding("  finger at ${point.x},${point.y}${if (node == null) " (the DOM's rect: the tree never listed the option)" else ""}")
             SystemClock.sleep(600)
             landedOn = chromeValue("String(window.__touch)")
             // 5. The picker closes with the new value on the row and in the core.
@@ -208,7 +214,7 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
     private fun pickerFocusReturn(way: String, shotName: String, close: () -> Unit) {
         step("The Colour scheme picker closed by $way: focus back on its row (9.22)") {
             chromeJs("window.__zenFocusPath=[]")
-            if (!touchTapLabel(ROW_LABEL, prefix = true)) error("the row is not on screen")
+            if (!touchSettingsRow(ROW_LABEL)) error("the row is not on screen")
             if (!awaitSheetAtRest(8_000)) error("the picker did not come up")
             val inSheet = focusedElement()
             close()
@@ -423,9 +429,15 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
 
     // --- rows and sheets -------------------------------------------------------------------------
 
-    /** The accessible text of the first node reading `prefix`… (a Settings row runs label and value together); "" when none. */
+    /**
+     * What the row labelled `prefix` reads: the document's label and value ("Colour scheme,
+     * Dark", as #305 names the row) first, the accessible text of the first node reading
+     * `prefix`… second (a Settings row runs label and value together there); "" when neither
+     * has it.
+     */
     private fun rowText(prefix: String): String =
-        findNode { it.startsWith(prefix) }?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+        settingsRowValue(prefix)?.let { if (it.isEmpty()) prefix else "$prefix, $it" }
+            ?: findNode { it.startsWith(prefix) }?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
 
     /** Poll until the row reading `prefix`… ends with `value` (the tree trails the screen); the text it reads then. */
     private fun awaitRowText(prefix: String, value: String, timeoutMs: Long): String {
@@ -511,6 +523,8 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
         /** The option that is not the seeded `light`, and the setting it writes. */
         private const val OTHER_OPTION = "Dark"
         private const val OTHER_SCHEME = "dark"
+        /** How long the tree is given to list the risen sheet's option where the DOM has it (TalkBack's claim). */
+        private const val TREE_WINDOW_MS = 15_000L
         /** How far (px) the tree's rect may sit from the DOM's before the touch: a rounding, not a trailing frame. */
         private const val TREE_TOLERANCE = 6
         /** The vault seeded off camera: one login, and the passphrase its prompt asks for. */

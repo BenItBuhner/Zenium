@@ -1360,16 +1360,21 @@ abstract class DemoHarness(
 
     /**
      * The document's script for the Settings control whose label reads `label`: a row's label
-     * (a picker's option is a row; a sheet's rows count) or a landing category's, exactly before
+     * (a picker's option is a row; a sheet's rows count) or a landing category's, then a group's
+     * heading (its `section` the control; the heading's own words, not its aside – a group and
+     * its one row can share a name, Clear browsing data), a label reading exactly `label` before
      * one that starts with it; nothing under `[inert]`. `body` runs with `row` (the control's
      * element) and `e` (its label) and its result is the answer.
      */
     private fun settingsControlJs(label: String, body: String): String =
-        "(function(l){var sel='.zen-settings-row .zen-settings-label,.zen-settings-category-label';" +
+        "(function(l){var sel='.zen-settings-row .zen-settings-label,.zen-settings-category-label,.zen-settings-heading';" +
             "var all=Array.prototype.filter.call(document.querySelectorAll(sel),function(e){return !e.closest('[inert]')});" +
-            "var text=function(e){return (e.textContent||'').trim()};" +
-            "var e=all.find(function(e){return text(e)===l})||all.find(function(e){return text(e).indexOf(l)===0});if(!e)return null;" +
-            "var row=e.closest('.zen-settings-row,.zen-settings-category')||e;$body})(${JSONObject.quote(label)})"
+            "var isHead=function(e){return e.classList.contains('zen-settings-heading')};" +
+            "var rows=all.filter(function(e){return !isHead(e)}),heads=all.filter(isHead);" +
+            "var text=function(e){var c=e.firstChild;return (isHead(e)&&c&&c.nodeType===3?c.nodeValue:(e.textContent||'')).trim()};" +
+            "var exact=function(e){return text(e)===l},prefix=function(e){return text(e).indexOf(l)===0};" +
+            "var e=rows.find(exact)||heads.find(exact)||rows.find(prefix)||heads.find(prefix);if(!e)return null;" +
+            "var row=e.closest('.zen-settings-row,.zen-settings-category,.zen-settings-group')||e;$body})(${JSONObject.quote(label)})"
 
     /** Whether the document lists a Settings control labelled `label` (a row, an option, a category), scrolled or not. */
     protected fun settingsRowListed(label: String): Boolean =
@@ -1405,6 +1410,20 @@ abstract class DemoHarness(
         read() ?: return null
         SystemClock.sleep(600)
         return read()
+    }
+
+    /**
+     * Where the Settings control labelled `label` is on screen: the document's word
+     * ([settingsRowRect]) first, the tree's (`ACTION_SHOW_ON_SCREEN` on the node whose text
+     * starts with it: a row's label and value run together there) when the document has no such
+     * row; null when neither has one.
+     */
+    protected fun revealSettingsRow(label: String): Rect? {
+        settingsRowRect(label)?.let { return it }
+        val node = findNode { it.startsWith(label) } ?: return null
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+        return findNode { it.startsWith(label) }?.let { row -> Rect().also { row.getBoundsInScreen(it) } }
     }
 
     /**
@@ -2306,6 +2325,12 @@ abstract class DemoHarness(
         /** The Look and Feel section's id (`internalPages.ts`), the landing's first row. */
         const val LOOK_SECTION = "look"
         const val LOOK_AND_FEEL_LABEL = "Look and Feel"
+        /** Other section ids the drivers navigate to (`internalPages.ts`: `SETTINGS_SECTIONS`). */
+        const val SEARCH_SECTION = "search"
+        const val LANGUAGES_SECTION = "languages"
+        const val PRIVACY_SECTION = "privacy"
+        const val PASSWORDS_SECTION = "passwords"
+        const val SECURITY_SECTION = "security"
         /** Settings section ids to the labels of their landing rows (`internalPages.ts`), for [openSettingsSection]. */
         val SETTINGS_SECTIONS: Map<String, String> = mapOf(
             LOOK_SECTION to LOOK_AND_FEEL_LABEL,

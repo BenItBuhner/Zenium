@@ -189,7 +189,7 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
                 // The results group is rebuilt by the run; its rows come back into the tree one by
                 // one (the run at 8adeb628 read Updates and Site permissions while Passwords, on
                 // screen, was not in the tree yet): the last row of the group is the one waited for.
-                awaitRow("Extensions", 10_000)
+                if (!awaitSettingsRow("Extensions", 10_000)) awaitRow("Extensions", 10_000)
                 SystemClock.sleep(1_500)
                 note("  safety check rows: ${rowText("Updates")} | ${rowText("Passwords")} | ${rowText("Site permissions")}")
                 shot("13-safety-check-results")
@@ -198,27 +198,29 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
 
             // Clear browsing data: the row's form sheet, Basic; Advanced reveals its rows; the range
             // picker stacks over the form (§9.24); Cancel closes it.
-            if (touchRowExpecting("Clear browsing data", "the form sheet shows Clear data", 10_000) { findByLabel("Clear data") != null }) {
+            if (touchRowExpecting("Clear browsing data", "the form sheet shows Clear data", 10_000) { sheetPresented(CLEAR_SHEET) || findByLabel("Clear data") != null }) {
                 SystemClock.sleep(SHEET_SETTLE)
                 shot("11-clear-data-basic")
                 beat()
-                if (touchRowExpecting("Advanced", "the Advanced rows show (Download history)", 8_000) { rowNode("Download history") != null }) {
+                if (touchRowExpecting("Advanced", "the Advanced rows show (Download history)", 8_000) { rowListed("Download history") }) {
                     SystemClock.sleep(SHEET_SETTLE)
                     shot("12-clear-data-advanced")
                     beat()
                 }
-                if (touchRowExpecting("Time range", "the range picker shows All time", 8_000) { findByLabel("All time") != null }) {
+                if (touchRowExpecting("Time range", "the range picker shows All time", 8_000) { rowListed("All time") }) {
                     SystemClock.sleep(SHEET_SETTLE)
                     shot("12b-clear-data-range")
                     beat()
                     backUntil("the range picker is gone and the form's Time range row is back") {
-                        findByLabel("All time") == null && rowNode("Time range")?.isClickable == true
+                        !sheetPresented("Time range") && rowListed("Time range")
                     }
                 }
-                if (!touchRowExpecting("Cancel", "the form sheet closes", 8_000) { findByLabel("Clear data") == null }) {
-                    backUntil("the form sheet is gone") { findByLabel("Clear data") == null }
+                // The sheet's leave is the document's word (the tree kept 'Clear data' listed
+                // for 8 s after the sheet had gone in the nightly's run 35737412086).
+                if (!touchRowExpecting("Cancel", "the form sheet closes", 8_000) { !sheetPresented(CLEAR_SHEET) }) {
+                    backUntil("the form sheet is gone") { !sheetPresented(CLEAR_SHEET) }
                 }
-                awaitRow("Clear browsing data", 8_000)
+                if (!awaitSettingsRow("Clear browsing data", 8_000)) awaitRow("Clear browsing data", 8_000)
                 SystemClock.sleep(600)
             }
 
@@ -226,34 +228,34 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
             // value row and the demo host's answer under it (rows read the origin's host with its
             // port, `127.0.0.1:18124`), the default's picker over the sheet, then the sites with
             // settings of their own.
-            if (awaitRow("Camera", 8_000, show = true) != null) {
+            if ((if (awaitSettingsRow("Camera", 8_000)) revealSettingsRow("Camera") else awaitRow("Camera", 8_000, show = true)) != null) {
                 SystemClock.sleep(1_200)
                 shot("09-site-settings-catalogue")
                 beat()
-                if (touchRowExpecting("Camera", "the Camera sheet shows its Default behaviour row", 10_000) { rowNode("Default behaviour") != null }) {
+                if (touchRowExpecting("Camera", "the Camera sheet shows its Default behaviour row", 10_000) { rowListed("Default behaviour") }) {
                     SystemClock.sleep(SHEET_SETTLE)
-                    note("  Camera sheet: ${rowText("Default behaviour")}; $HOST ${if (rowNode(HOST) != null) "listed" else "NOT listed"} under Sites with their own answer")
+                    note("  Camera sheet: ${rowText("Default behaviour")}; $HOST ${if (rowListed(HOST)) "listed" else "NOT listed"} under Sites with their own answer")
                     shot("10b-site-settings-camera-sheet")
                     beat()
-                    if (touchRowExpecting("Default behaviour", "the picker shows the Block option", 8_000) { findByLabel("Block") != null }) {
+                    if (touchRowExpecting("Default behaviour", "the picker shows the Block option", 8_000) { rowListed("Block") }) {
                         SystemClock.sleep(SHEET_SETTLE)
                         shot("10c-site-settings-picker")
                         beat()
-                        // The Camera sheet's value row (clickable) is back in the tree once the
-                        // picker over it has gone; the picker's own header reads the same words
-                        // but is no control.
+                        // The picker (the sheet titled Default behaviour) gone by the document,
+                        // the Camera sheet's value row listed again under it.
                         backUntil("the picker is gone and the Camera sheet's Default behaviour row is back") {
-                            findByLabel("Block") == null && rowNode("Default behaviour")?.isClickable == true
+                            !sheetPresented("Default behaviour") && rowListed("Default behaviour")
                         }
                     }
-                    // The catalogue's Camera row (clickable) is back once the sheet has gone; the
-                    // sheet's title reads Camera too, as a plain node.
+                    // The Camera sheet gone by the document; the catalogue's Camera row listed again.
                     backUntil("the Camera sheet is gone and the catalogue is back") {
-                        rowNode("Default behaviour") == null && rowNode("Camera")?.isClickable == true
+                        !sheetPresented("Camera") && rowListed("Camera")
                     }
                 }
             }
-            if (reveal("Sites with their own settings") != null && awaitRow(HOST, 8_000, show = true) != null) {
+            if ((revealSettingsRow("Sites with their own settings") ?: reveal("Sites with their own settings")) != null &&
+                (if (awaitSettingsRow(HOST, 8_000)) revealSettingsRow(HOST) else awaitRow(HOST, 8_000, show = true)) != null
+            ) {
                 SystemClock.sleep(1_200)
                 shot("10-site-settings-sites")
                 beat()
@@ -285,8 +287,10 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
     private fun openPrivacySettings(): String? {
         val id = invoke("page.open", """{"id":"settings","section":"privacy"}""")
         note("  page.open settings/privacy -> $id")
-        if (waitFor("Safety check", 20_000) == null) {
-            note("  settings: the Privacy and Security category never showed")
+        // The section by the chrome document's `data-section` (the harness's Settings reads),
+        // its Safety check heading the tree's word for it.
+        if (!awaitSettingsSection(PRIVACY_SECTION, 20_000, treeSign = "Safety check")) {
+            note("  settings: the Privacy and Security category never showed (section '${settingsSection()}')")
             return null
         }
         SystemClock.sleep(2_000)
@@ -301,11 +305,12 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
      * tree): it is waited for, and a sheet still up after that is backed out of first.
      */
     private fun closeSettingsTab(id: String) {
-        if (waitFor("Safety check", 6_000) == null) {
-            backUntil("the sheet left over is gone and the section is back in the tree") { findByLabel("Safety check") != null }
+        if (sheetsPresented().isNotEmpty()) {
+            backUntil("the sheet left over is gone") { sheetsPresented().isEmpty() }
         }
-        if (findByLabel("Safety check") != null) {
+        if (settingsSectionIs(PRIVACY_SECTION, treeSign = "Safety check")) {
             back()
+            awaitSettingsSection(SETTINGS_LANDING, 4_000)
             SystemClock.sleep(1_500)
         }
         if (activeCoreTab()?.optString("id") != "tab_demo") {
@@ -333,9 +338,13 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         return findNodeWhere { node -> node.isClickable && reads(node) } ?: findNodeWhere(reads)
     }
 
-    /** What the row reading `label` says in full ("" when there is none). */
+    /** What the row reading `label` says in full: its label and description by the document first, the tree's text second ("" when there is none). */
     private fun rowText(label: String): String =
-        rowNode(label)?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+        settingsRowValue(label)?.let { if (it.isEmpty()) label else "$label $it" }
+            ?: rowNode(label)?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+
+    /** Whether the row (or picker option) reading `label` is listed: the document first ([settingsRowListed]), the tree second. */
+    private fun rowListed(label: String): Boolean = settingsRowListed(label) || rowNode(label) != null
 
     /**
      * Poll up to `timeoutMs` for the row reading `label`, with `show` scrolled onto the screen
@@ -387,11 +396,20 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
      * and nothing came of it; false and a note when there was no such row to touch.
      */
     private fun touchRowExpecting(label: String, effect: String, timeoutMs: Long, took: () -> Boolean): Boolean {
-        awaitRow(label, 8_000, show = true) ?: return false
-        val node = rowNode(label) ?: return false
-        if (!touchTap(node)) {
-            note("  the row '$label' is not inside the touchable window")
-            return false
+        val rect = settingsRowRect(label)
+        if (rect != null) {
+            val point = touchPoint(rect) ?: run {
+                note("  the row '$label' at $rect is not inside the touchable window")
+                return false
+            }
+            Finger().tap(point.x, point.y)
+        } else {
+            awaitRow(label, 8_000, show = true) ?: return false
+            val node = rowNode(label) ?: return false
+            if (!touchTap(node)) {
+                note("  the row '$label' is not inside the touchable window")
+                return false
+            }
         }
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
@@ -596,6 +614,8 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
     }
 
     companion object {
+        /** The Clear browsing data form sheet's title (siteControls/settingsRows.tsx). */
+        private const val CLEAR_SHEET = "Clear browsing data"
         private const val PORT = 18124
         /** What the Settings rows call the origin (`hostOf`: the URL's host, port included). */
         private const val HOST = "127.0.0.1:$PORT"
