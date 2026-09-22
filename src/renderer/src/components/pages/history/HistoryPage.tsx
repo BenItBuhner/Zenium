@@ -51,24 +51,24 @@ function matchesTerms(title: string, url: string, terms: readonly string[]): boo
  * closed and opened again, or a second window's, finds them folded still; a restart unfolds
  * them all (Chrome's synced-device cards start open too). The set is the core's
  * (`history.foldedDevices`) – each window's chrome is a renderer of its own, so a store here
- * alone would be the window's – mirrored into this document once (`asked`) and kept current by
- * `history.foldedDevicesChanged`; a toggle lands here first so the chevron turns on the click.
+ * alone would be the window's – mirrored into this document the first time a device group
+ * mounts (`asked`) and kept current for the document's life by `history.foldedDevicesChanged`
+ * (`startBrowserSync`'s pattern: the listener outlives the page, so a fold made in another
+ * window while this one shows no History tab is here when the tab comes back); a toggle lands
+ * here first so the chevron turns on the click.
  */
 const collapsedDevices = createStore<{ ids: ReadonlySet<string>; asked: boolean }>(
   { ids: new Set(), asked: false },
   'historyCollapsedDevices'
 )
 
-/** The folded devices, mirrored from the core while any device group is mounted. */
+/** The folded devices, mirrored from the core. */
 function useCollapsedDevices(): ReadonlySet<string> {
   useEffect(() => {
-    if (!collapsedDevices.get().asked) {
-      collapsedDevices.set({ asked: true })
-      void cmd('history.foldedDevices', undefined).then((ids) =>
-        collapsedDevices.set({ ids: new Set(ids) })
-      )
-    }
-    return onEvent('history.foldedDevicesChanged', (ids) =>
+    if (collapsedDevices.get().asked) return
+    collapsedDevices.set({ asked: true })
+    onEvent('history.foldedDevicesChanged', (ids) => collapsedDevices.set({ ids: new Set(ids) }))
+    void cmd('history.foldedDevices', undefined).then((ids) =>
       collapsedDevices.set({ ids: new Set(ids) })
     )
   }, [])
