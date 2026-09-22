@@ -1123,13 +1123,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         controller.isAppearanceLightNavigationBars = !dark
         // Pages see Zenium's colour scheme, not only the system's: the app's night mode drives
         // `prefers-color-scheme` and the algorithmic darkening in every page WebView (the manifest
-        // handles `uiMode` in place, so nothing reloads).
-        val night = when (scheme) {
-            "dark" -> AppCompatDelegate.MODE_NIGHT_YES
-            "light" -> AppCompatDelegate.MODE_NIGHT_NO
-            else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-        }
-        if (AppCompatDelegate.getDefaultNightMode() != night) AppCompatDelegate.setDefaultNightMode(night)
+        // handles `uiMode` in place, so nothing reloads). The chrome hands `scheme` over as its
+        // own paint crosses to that side (`boot.ts`, `pageScheme.ts`), so the pages flip with it.
+        val night = PageTheme.nightMode(scheme)
+        if (AppCompatDelegate.getDefaultNightMode() == night) return
+        val uiModeBefore = activity.resources.configuration.uiMode
+        AppCompatDelegate.setDefaultNightMode(night)
+        // AppCompat rewrote the activity's configuration in place; no view heard of it. The pages
+        // learn their colour scheme in WebView's own `onConfigurationChanged`, which only a real
+        // system `uiMode` change would send – so send it now, to every page and to the chrome
+        // (whose `prefers-color-scheme` under the `system` scheme is this same reading), and every
+        // open page flips with the chrome instead of at the next system flip (PageTheme).
+        val configuration = activity.resources.configuration
+        if (!PageTheme.nightFlipped(uiModeBefore, configuration.uiMode)) return
+        val pages = tabs.all()
+        for (tab in pages) tab.dispatchConfigurationChanged(configuration)
+        chrome.dispatchConfigurationChanged(configuration)
+        Log.i(TAG, "theme flip to $scheme: the configuration change dispatched to ${pages.size} page(s) and the chrome")
     }
 
     /** The core's page-controls policy: every tab re-registers its document-start script. */

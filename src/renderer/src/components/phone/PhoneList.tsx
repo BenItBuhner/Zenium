@@ -74,16 +74,30 @@ export function PhoneHeader({
   )
 }
 
-/** The header while rows are being picked: how many, a way out, and what can be done to them. */
+/**
+ * The header while rows are being picked: how many, a way out, and what can be done to them.
+ * With `total` (how many rows the list shows) the header also picks or unpicks them all: the
+ * mode's one bulk action, a trailing §9.18 secondary `zen-v2-button` after the list's own
+ * actions (§9.6's contextual bar, the overview's select-tabs header the same), reading "Select
+ * all" until every shown row is picked and "Deselect all" then. The list decides what each
+ * means for it (`multiSelect.selectAll` / `deselectAll`).
+ */
 export function PhoneSelectionHeader({
   count,
+  total,
+  onSelectAll,
   actions,
   onExit
 }: {
   count: number
+  /** The rows the list shows; with it the header offers Select all / Deselect all. */
+  total?: number
+  /** Select all (`true`) or deselect all (`false`) of the shown rows. */
+  onSelectAll?: (all: boolean) => void
   actions: ReactNode
   onExit: () => void
 }): JSX.Element {
+  const all = total !== undefined && total > 0 && count >= total
   return (
     <header className="zen-animate-fade flex h-14 shrink-0 items-center gap-1 px-1.5">
       <PhoneIconButton label="Stop selecting" onClick={onExit}>
@@ -93,6 +107,16 @@ export function PhoneSelectionHeader({
         {count} selected
       </h2>
       {actions}
+      {total !== undefined && onSelectAll && (
+        <button
+          type="button"
+          className="zen-v2-button ml-1 mr-0.5"
+          disabled={total === 0}
+          onClick={() => onSelectAll(!all)}
+        >
+          {all ? 'Deselect all' : 'Select all'}
+        </button>
+      )}
     </header>
   )
 }
