@@ -653,13 +653,16 @@ describe('the app menu', () => {
       h.browser.state.media = [media(h.tabId)]
       const menu = appMenuFolded(h)
       // Its name alone, the menu's Title Case (§9.1), the ellipsis of a popover opener: the
-      // content is the hub's on the pick, and a native menu row carrying it would widen the
-      // whole menu (§5).
+      // content is the hub's on the pick, and a menu row carrying it would widen the whole
+      // menu (§5).
       expect(menu.slice(0, 3)).toEqual([ROW, '-', 'New Tab'])
       // The rest of the menu is as it was: the row is added at the top, nothing else moves.
       expect(menu.slice(2)).toEqual(without)
-      // The card's artwork leads the row where the host's menus draw an icon.
-      expect(h.items()[0].icon).toBe('https://example.com/art.png')
+      // No picture (§9.29: a renderer-drawn menu's rows are all-or-nothing per menu, and the
+      // app menu's carry none – a glyph column reserved only while a session plays would move
+      // every label between one opening and the next); the artwork is the hub's on the pick.
+      expect(h.items()[0].icon).toBeUndefined()
+      expect(h.items().some((i) => i.icon)).toBe(false)
       h.browser.state.media = []
       expect(appMenuFolded(h)).toEqual(without)
     })
@@ -682,26 +685,28 @@ describe('the app menu', () => {
       expect(appMenuFolded(h)[0]).toBe(ROW)
     })
 
-    it('leads with the hub’s first card: the session’s artwork before a merely playing tab’s', () => {
+    it('is one row for the hub, whatever plays: a session and a merely playing tab together are the one row, its name alone', () => {
       const h = pageHarness(DESKTOP)
       const other = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, h.win)
       h.browser.state.media = [
         media(h.tabId, { session: false, artwork: 'https://example.com/background.png' }),
         media(other.id, { artwork: 'https://video.example.org/poster.jpg' })
       ]
-      expect(appMenuFolded(h)[0]).toBe(ROW)
-      expect(h.items()[0].icon).toBe('https://video.example.org/poster.jpg')
+      const menu = appMenuFolded(h)
+      expect(menu[0]).toBe(ROW)
+      expect(menu.filter((l) => l === ROW)).toHaveLength(1)
+      // Neither card's artwork is on the row: the hub shows its cards on the pick.
+      expect(h.items()[0].icon).toBeUndefined()
     })
 
-    it('has no icon without artwork – never the tab’s favicon, which is not the card’s picture', () => {
+    it('carries no picture with or without artwork – never the artwork, never the tab’s favicon (§9.29)', () => {
       const h = pageHarness(DESKTOP)
       h.browser.tabs.tab(h.tabId)!.favicon = 'https://example.com/favicon.ico'
-      h.browser.state.media = [media(h.tabId, { artwork: null })]
-      expect(appMenuFolded(h)[0]).toBe(ROW)
-      expect(h.items()[0].icon).toBeNull()
-      h.browser.state.media = [media(h.tabId, { artwork: '' })]
-      appMenuFolded(h)
-      expect(h.items()[0].icon).toBeNull()
+      for (const artwork of ['https://example.com/art.png', null, '']) {
+        h.browser.state.media = [media(h.tabId, { artwork })]
+        expect(appMenuFolded(h)[0]).toBe(ROW)
+        expect(h.items()[0].icon).toBeUndefined()
+      }
     })
 
     it('is not there for media whose tab is gone', () => {
@@ -721,7 +726,7 @@ describe('the app menu', () => {
       expect(appMenuFolded(h)).toEqual(without)
       // …while the private window's own menu leads with it.
       expect(appMenuFolded(h, priv)[0]).toBe(ROW)
-      expect(h.items()[0].icon).toBe('https://video.example.org/p.jpg')
+      expect(h.items()[0].icon).toBeUndefined()
       // A synced tab shows in every synced window and so does its row.
       h.browser.state.media = [media(h.tabId)]
       expect(appMenuFolded(h)[0]).toBe(ROW)

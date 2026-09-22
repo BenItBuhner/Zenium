@@ -2887,23 +2887,22 @@ export class Menus {
    * §9.32): the media hub's toolbar button is tiered by the sidebar's width like the pill's
    * chips, and where it has folded (the 240 sidebar) the menu carries the window's live media
    * instead – Firefox's badge on its menu button, with the row at the menu's top saying what
-   * the badge is about. The row is its name alone: a native menu row is one line beside an
-   * accelerator column, so any content in the label widens the whole menu past §5's 232–332,
-   * and the title, artist and site are the hub's to show on the pick. Title Case, as §9.1
-   * casts the menu's items (the phone's "Now playing" chip is a chip on a page surface, not a
-   * menu item), and the ellipsis because it opens a popover, as "Search Tabs…" does. Its icon
-   * is the hub's first card's artwork (`shared/mediaHub.ts`: the session first, then what
-   * plays) where the host's menus draw one – §9.29's written exception to the all-or-nothing
-   * leading glyph: a native menu is the one place a lone picture icon is allowed, since the
-   * toolkit reserves its icon column for every row and a content picture is not a glyph.
-   * Without artwork the row has no icon – the kind's glyph (`Music` / `Film` on the hub's
-   * tile) has no rasterised form for a native menu item, and the favicon is not the card's
-   * picture. Its pick opens the hub – every player and the whole transport – from the
-   * "⋯" button the menu hung from (`mediahub.open`), so the fold loses no control. There while
-   * anything is to be controlled (a tab that paused stays until its media goes, as the button
-   * does), gone otherwise, and no separate row per player: the hub is the list. The window's
-   * media only: the hub reads its cards from the tabs the window lists, and the row is that
-   * hub's first card, not another window's.
+   * the badge is about. The row is its name alone – no picture, no title: the app menu is
+   * renderer-drawn on every desktop, and §9.29's rule for a renderer-drawn menu is all or
+   * nothing per menu, a submenu counting as its own – Firefox's app menu has no icons, and a
+   * glyph column reserved only while a session plays would move every label between one
+   * opening and the next (History ▸ Recently Closed, where every row is a page with its
+   * favicon, is the all-glyph submenu). The card's artwork, title, artist and site are the
+   * hub's to show on the pick, and any content in the label would widen the whole menu past
+   * §5's 232–332. Title Case, as §9.1 casts the menu's items (the phone's "Now playing" chip
+   * is a chip on a page surface, not a menu item), and the ellipsis because it opens a popover,
+   * as "Search Tabs…" does. Its pick opens the hub – every player and the whole transport –
+   * from the "⋯" button the menu hung from (`mediahub.open`), so the fold loses no control.
+   * There while anything is to be controlled (a tab that paused stays until its media goes,
+   * as the button does), gone otherwise, and no separate row per player: the hub is the list.
+   * The window's media only: the hub reads its cards from the tabs the window lists
+   * (`shared/mediaHub.ts`'s order – the session first, then what plays – decides that there is
+   * a card, not what the row shows), and the row is that hub's, not another window's.
    */
   private nowPlayingRow(win: ZenWindow): Template {
     const { state, tabs } = this.browser
@@ -2913,12 +2912,10 @@ export class Menus {
         return tab !== undefined && this.listedIn(win, tab)
       })
     )
-    const first = entries[0]
-    if (!first) return []
+    if (entries.length === 0) return []
     return [
       {
         label: 'Now Playing…',
-        icon: first.artwork || null,
         click: () => this.browser.emit('mediahub.open', undefined, win)
       },
       { type: 'separator' }
