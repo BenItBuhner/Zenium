@@ -230,6 +230,18 @@ describe('the phone Send to your devices sheet', () => {
     expect(commands()).toEqual([])
   })
 
+  it('opens on its first row (§9.22, a list sheet), the dialog named by its title behind it', async () => {
+    await show([LAPTOP, DESK])
+    const first = rowMain(rows()[0])
+    expect(document.activeElement).toBe(first)
+    expect(first.getAttribute('aria-label')).toBe('Home desktop, Last active just now')
+    const dialog = first.closest<HTMLElement>('[role="dialog"]')!
+    expect(dialog).not.toBe(document.activeElement)
+    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe(
+      'Send to your devices'
+    )
+  })
+
   it('a tap sends the tab’s page to that device once the sheet has gone, and the sheet is down', async () => {
     await show([LAPTOP, DESK])
     act(() => rowMain(rows()[1]).click())

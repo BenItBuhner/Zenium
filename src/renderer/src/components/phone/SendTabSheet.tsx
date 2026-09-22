@@ -20,7 +20,9 @@ import { PhoneSheet } from './PhoneSheet'
  * device's name and not its kind, and a column whose every picture is the same tells nothing
  * (§9.3's leading glyph is the row's subject), so the rows are bare as the Settings › Sync
  * device rows are – the name from the gutter – until `devices[]` carries a kind (the interface
- * note's follow-up; then a laptop / phone / tablet per row, as Chrome's). With one other device
+ * note's follow-up; then a laptop / phone / tablet per row, as Chrome's). A list sheet, it opens
+ * on its first row (§9.22; the #314 lead's ruling: the container is for a title-and-notice sheet
+ * and the form-sheet exception only), the dialog's title read ahead of it. With one other device
  * the menu names it and sends outright, so this sheet is for two or more; should the list have
  * emptied meanwhile it says so (§9.17).
  */
@@ -52,7 +54,7 @@ function SendTabSheet({ state, tab }: { state: UIState; tab: Tab }): JSX.Element
       name="send-tab"
       // A list sheet: the centred 48 header (§9.16), Chrome's title in sentence case.
       title={{ pose: 'header', text: 'Send to your devices' }}
-      focus="dialog"
+      focus="first"
       onClose={closeSendTabSheet}
       sheetRef={sheet}
       contentKey={devices.map((device) => device.id).join('/')}
