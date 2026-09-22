@@ -1997,7 +1997,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      */
     private fun domMarker(label: String, fixture: String, expr: String, settleMs: Long = 25_000, prepare: ((WebView) -> Unit)? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
-        val tab = createTab("$BASE/$fixture")
+        val tab = createTab(fixtureUrl(fixture))
         val view = waitForView(tab)
         poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
         SystemClock.sleep(scaled(1_500, factor))
@@ -2009,9 +2009,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Grade(if (found.optBoolean("pass")) "P" else "F", "$label: ${found.toString().take(240)}", extra)
     }
 
+    /**
+     * A fixture's URL: a page name is served off [BASE]; an absolute URL is the row's own way to
+     * the same server (`http://localhost:8765/` through the port the sweep script reverses onto
+     * the device, for an extension whose content-script matches name `localhost` and no plain
+     * http host).
+     */
+    private fun fixtureUrl(page: String): String = if (page.startsWith("http://") || page.startsWith("https://")) page else "$BASE/$page"
+
     /** A fixture tab, its document complete; the view to read it through. */
     private fun fixture(page: String, factor: Double, settleMs: Long = 1_500): Pair<String, TabWebView> {
-        val tab = createTab("$BASE/$page")
+        val tab = createTab(fixtureUrl(page))
         val view = waitForView(tab)
         poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
         SystemClock.sleep(scaled(settleMs, factor))
@@ -4208,7 +4216,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("jbojhlhhggfmmkpefknmbdhlaghehini", "Privacy Extension For WhatsApp Web", "privacy-whatsapp-web", core = liveMarker("Privacy Extension For WhatsApp Web", "https://web.whatsapp.com/", "(function(){var links=document.querySelectorAll('link.pfwa, style.pfwa-variables, .pfwa').length;return JSON.stringify({pass:links>0,styles:links,title:document.title,host:location.host})})()")),
         Row("ekmeppjgajofkpiofbebgcbohbmfldaf", "OrangeMonkey", "orangemonkey", core = { row, entry -> userscripts(row, entry, Regex("/options/index\\.html", RegexOption.IGNORE_CASE)) }),
         Row("bkpenclhmiealbebdopglffmfdiilejc", "Tab Resize - split screen layouts", "tab-resize", core = windowLayout("Tab Resize", ".resize-container .resize-selector")),
-        Row("hnfanknocfeofbddgcijnmhnfnkdnaad", "Coinbase Wallet extension", "coinbase-wallet", core = domMarker("Coinbase Wallet's provider injected into the page world", "wallet.html?coinbase", "JSON.stringify({pass:!!(window.coinbaseWalletExtension||(window.ethereum&&(window.ethereum.isCoinbaseWallet||window.ethereum.isCoinbaseBrowser))||(window.__wallet&&window.__wallet.announced&&window.__wallet.announced.some(function(n){return /coinbase/i.test(n)}))),coinbaseWalletExtension:typeof window.coinbaseWalletExtension,ethereum:typeof window.ethereum,isCoinbaseWallet:!!(window.ethereum&&window.ethereum.isCoinbaseWallet),announced:window.__wallet?window.__wallet.announced:null})", settleMs = 30_000)),
+        Row("hnfanknocfeofbddgcijnmhnfnkdnaad", "Coinbase Wallet extension", "coinbase-wallet", core = domMarker("Coinbase Wallet's provider injected into the page world", "$LOCALHOST_BASE/wallet.html?coinbase", "JSON.stringify({pass:!!(window.coinbaseWalletExtension||(window.ethereum&&(window.ethereum.isCoinbaseWallet||window.ethereum.isCoinbaseBrowser))||(window.__wallet&&window.__wallet.announced&&window.__wallet.announced.some(function(n){return /coinbase/i.test(n)}))),coinbaseWalletExtension:typeof window.coinbaseWalletExtension,ethereum:typeof window.ethereum,isCoinbaseWallet:!!(window.ethereum&&window.ethereum.isCoinbaseWallet),announced:window.__wallet?window.__wallet.announced:null})", settleMs = 30_000)),
         Row("cfnpidifppmenkapgihekkeednfoenal", "TrafficLight", "trafficlight", core = siteVerdict("TrafficLight")),
         Row("fadndhdgpmmaapbmfcknlfgcflmmmieb", "FrankerFaceZ", "frankerfacez", core = liveMarker("FrankerFaceZ", "https://www.twitch.tv/directory", "(function(){var src=document.body&&document.body.dataset?document.body.dataset.ffzSource:null;var re=/ffz/i;var n=0,shown=0;var all=document.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var key=e.tagName+' '+(e.id||'')+' '+(typeof e.className==='string'?e.className:'');if(re.test(key)){n++;var r=e.getBoundingClientRect();if(r.width>0&&r.height>0)shown++}}return JSON.stringify({pass:!!src||n>0,ffzSource:src||null,n:n,visible:shown,ffz:typeof window.ffz,title:document.title})})()")),
         Row("njmehopjdpcckochcggncklnlmikcbnb", "Helium 10 for Amazon Sellers, Influencers & Brands", "helium-10", core = accountGate("Helium 10", Regex("helium10", RegexOption.IGNORE_CASE), gate = "a Helium 10 account (its popup signs in) and an Amazon product page to draw on")),
@@ -4942,6 +4950,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val TAG = "CompatSweep"
         /** The runner serves the fixture pages; the emulator reaches its host loopback as 10.0.2.2. */
         private const val BASE = "http://10.0.2.2:8765"
+        /**
+         * The same server on the device's own `localhost`, through the port the sweep script
+         * reverses (`adb reverse tcp:8765 tcp:8765`): for Coinbase Wallet, whose provider scripts
+         * are registered for every https host and for `http://localhost` alone (no plain http
+         * host), so a `10.0.2.2` fixture is a page Chrome would not inject into either.
+         */
+        private const val LOCALHOST_BASE = "http://localhost:8765"
         private const val YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
         private const val INSTALL_TIMEOUT_MS = 240_000L
         /** uBlock Origin (MV2) on Edge Add-ons: the heaviest row, run last by default. */

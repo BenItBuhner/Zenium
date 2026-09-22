@@ -85,6 +85,10 @@ memory_pid=$!
 # The fixture pages, served from the runner; the emulator's host loopback is 10.0.2.2.
 python3 -m http.server 8765 --bind 0.0.0.0 --directory "$pages" > "$out/http-server.txt" 2>&1 &
 http_pid=$!
+# The same server on the device's own localhost: Coinbase Wallet registers its provider scripts
+# for `https://*/*` and `http://localhost/*` alone, so its row reads the fixture as
+# http://localhost:8765/ (the driver's LOCALHOST_BASE).
+adb reverse tcp:8765 tcp:8765 || echo "adb reverse failed; the localhost fixture rows read nothing" >&2
 
 # The same 411 CSS px wide layout a Pixel 6 gets, at fewer pixels.
 adb shell wm size 720x1600
