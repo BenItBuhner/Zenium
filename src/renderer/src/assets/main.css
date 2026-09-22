@@ -1459,8 +1459,8 @@
    * foot that removes every other animation.
    */
   @media (prefers-reduced-motion: reduce) {
-    .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving],
-    .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving] {
+    .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving],
+    .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
       animation: zen-fade-out 120ms var(--zen-ease) forwards !important;
     }
   }

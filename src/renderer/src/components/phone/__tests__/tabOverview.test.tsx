@@ -2095,45 +2095,36 @@ describe('the chrome switch in the stylesheet', () => {
       .at(-1)
   /**
    * The transitions an element matching `selector` (and nothing else) ends up with: the property
-   * and its duration in ms. Under reduced motion the sheet's rules for the selector apply over
-   * its full-motion `transition`, and then the sheet's closing `* { transition-duration: 0.01ms
-   * !important }` over every element (not a pseudo-element), unless the selector's own reduced
-   * rule holds its durations `!important` – a more specific important declaration wins.
+   * and its duration in ms. Under reduced motion the sheet's closing rule – `*, ::before, ::after
+   * { transition-property: none !important }` – removes every transition, pseudo-elements'
+   * included (§11.3 as amended: removed, never shortened), and an element transitions only what
+   * its own reduced rule re-declares as a `transition` shorthand `!important` (a layered important
+   * declaration beats the unlayered one at the foot): that fade, and nothing else.
    */
   const transitions = (selector: string, reduced = false): Map<string, number> => {
     const list = commaList(declared(selector, 'transition') ?? '').filter(Boolean)
     const properties = list.map((entry) => entry.split(' ')[0])
     const durations = list.map((entry) => ms(entry.split(' ').find((t) => /m?s$/.test(t))!))
     if (reduced) {
-      let held = false
-      for (const rule of forSelector(selector, true)) {
-        const shorthand = rule.declarations.get('transition')
-        if (shorthand) {
-          const entries = commaList(shorthand.value)
-          properties.splice(0, properties.length, ...entries.map((e) => e.split(' ')[0]))
-          durations.splice(
-            0,
-            durations.length,
-            ...entries.map((e) => ms(e.split(' ').find((t) => /m?s$/.test(t))!))
-          )
-          held = shorthand.important
-        }
-        const longhand = rule.declarations.get('transition-duration')
-        if (longhand) {
-          const given = commaList(longhand.value).map(ms)
-          properties.forEach((_, i) => (durations[i] = given[i % given.length]))
-          held = longhand.important
-        }
-      }
-      const everything = rules.find(
-        (r) => r.reduced && r.selectors.includes('*') && r.declarations.has('transition-duration')
+      const remover = rules.find(
+        (r) => r.reduced && r.selectors.includes('*') && r.declarations.has('transition-property')
       )
-      if (
-        everything?.declarations.get('transition-duration')?.important &&
-        !held &&
-        !selector.includes('::')
+      expect(remover?.selectors).toEqual(['*', '::before', '::after'])
+      expect(remover?.declarations.get('transition-property')).toEqual({
+        value: 'none',
+        important: true
+      })
+      const kept = forSelector(selector, true)
+        .map((rule) => rule.declarations.get('transition'))
+        .filter((shorthand) => shorthand?.important)
+        .at(-1)
+      const entries = kept ? commaList(kept.value) : []
+      properties.splice(0, properties.length, ...entries.map((e) => e.split(' ')[0]))
+      durations.splice(
+        0,
+        durations.length,
+        ...entries.map((e) => ms(e.split(' ').find((t) => /m?s$/.test(t))!))
       )
-        durations.fill(ms(everything.declarations.get('transition-duration')!.value))
     }
     return new Map(properties.map((p, i) => [p, durations[i]]))
   }
@@ -2159,39 +2150,42 @@ describe('the chrome switch in the stylesheet', () => {
     expect(declared('.zen-group::before', 'border-radius')).toBe('inherit')
   })
 
-  it('under reduced motion the fade stays at 120 ms – an appearance in place – and every other transition is at most 1 ms (v2 §11.3)', () => {
-    const header = transitions('.zen-group-header', true)
-    expect(header.get('opacity')).toBe(120)
-    expect(header.get('background')).toBeLessThanOrEqual(1)
-    expect(transitions('.zen-group::before', true).get('opacity')).toBe(120)
-    for (const [property, duration] of transitions('.zen-group', true))
-      expect(duration, property).toBeLessThanOrEqual(1)
-    // The sheet's closing rule cuts every animation to 0.01 ms too: the grid's own appearance,
-    // a 120 ms fade at scale 1, is held past it the same way.
+  it('under reduced motion the fade stays at 120 ms – an appearance in place – and every other transition is removed, not shortened (v2 §11.3)', () => {
+    // The header's and the tint's opacity fades are re-declared where they live; the header's
+    // background tween, and everything the group card transitions, is gone: the change lands on
+    // the frame it is written, no frame of the old value.
+    expect([...transitions('.zen-group-header', true).entries()]).toEqual([['opacity', 120]])
+    expect([...transitions('.zen-group::before', true).entries()]).toEqual([['opacity', 120]])
+    expect(transitions('.zen-group', true).size).toBe(0)
+    // The sheet's closing rule removes every animation too (`animation: none !important`): the
+    // grid's own appearance, a 120 ms fade at scale 1, is written out in full and `!important`
+    // past it.
+    const remover = rules.find((r) => r.reduced && r.selectors.includes('*'))
+    expect(remover?.declarations.get('animation')).toEqual({ value: 'none', important: true })
     const overview = forSelector('.zen-overview', true)
-    expect(overview.map((r) => r.declarations.get('animation')?.value).find(Boolean)).toMatch(
-      /^zen-fade 120ms/
-    )
-    expect(overview.map((r) => r.declarations.get('animation-duration')).find(Boolean)).toEqual({
-      value: '120ms',
+    expect(overview.map((r) => r.declarations.get('animation')).find(Boolean)).toEqual({
+      value: 'zen-fade 120ms var(--zen-ease)',
       important: true
     })
   })
 
   it('the panes and the segment change in place on a 120 ms opacity fade with no movement, the same under reduced motion (v2 §11.4)', () => {
-    // A pane coming up: the 120 ms fade, held past the sheet's closing cut.
+    // A pane coming up: the 120 ms fade, written out again `!important` past the sheet's closing
+    // rule that removes every other animation.
     expect(declared('.zen-overview-pane', 'animation')).toMatch(/^zen-fade 120ms/)
     expect(
       forSelector('.zen-overview-pane', true)
-        .map((r) => r.declarations.get('animation-duration'))
+        .map((r) => r.declarations.get('animation'))
         .find(Boolean)
-    ).toEqual({ value: '120ms', important: true })
+    ).toEqual({ value: 'zen-fade 120ms var(--zen-ease)', important: true })
     // The segment primitive (§9.34): the label's ink and the line's opacity, nothing that moves.
+    // Under reduced motion the line's opacity fade stays (re-declared, opacity alone) and the
+    // ink's colour tween is removed: §11.3 keeps opacity fades, no other property's.
     const tab = ".zen-v2-segment > [role='tab']"
     expect([...transitions(tab).entries()]).toEqual([['color', 120]])
     expect([...transitions(`${tab}::after`).entries()]).toEqual([['opacity', 120]])
-    expect(transitions(tab, true).get('color')).toBe(120)
-    expect(transitions(`${tab}::after`, true).get('opacity')).toBe(120)
+    expect(transitions(tab, true).size).toBe(0)
+    expect([...transitions(`${tab}::after`, true).entries()]).toEqual([['opacity', 120]])
     // The line is 2 px of the family's accent at the label's width, no pill and no fill.
     expect(declared(`${tab}::after`, 'height')).toBe('2px')
     expect(declared(`${tab}::after`, 'background')).toContain('--v2-control-accent')
