@@ -156,4 +156,30 @@ describe('a disabled settings row dims once (§9.30)', () => {
     )
     expect(declarations(css, ['.zen-v2-check-row .zen-v2-checkbox:disabled'])).toBe('opacity: 1;')
   })
+
+  it('gives a disabled row’s deemphasised parts the label’s ink, so under the .4 nothing falls to .276 (§9.30 as amended on #299)', () => {
+    const css = stylesheet()
+    // A dependent row's description is the way out ("Turn on Open tabs in What you sync to see
+    // them."); at the 69 % ink under the row's .4 it read 1.9:1. The trailing summary is the
+    // same part.
+    expect(
+      declarations(css, [
+        '.zen-settings-row-disabled .zen-settings-description',
+        '.zen-settings-row-disabled .zen-settings-summary'
+      ])
+    ).toBe('color: var(--v2-text);')
+    // The parts' own inks, which the row's rule replaces underneath it: the description's own,
+    // the summary's inherited from the trailing slot.
+    expect(declarations(css, ['.zen-settings-description'])).toContain(
+      'color: var(--v2-text-deemphasized);'
+    )
+    expect(declarations(css, ['.zen-settings-trailing'])).toContain(
+      'color: var(--v2-text-deemphasized);'
+    )
+    // A toned description keeps its status ink: the row-tone rules are three simple selectors
+    // to the disabled rule's two, so they outrank it whatever the order.
+    expect(
+      declarations(css, [".zen-settings-row[data-tone='warn'] .zen-settings-description"])
+    ).toBe('color: var(--v2-warn);')
+  })
 })

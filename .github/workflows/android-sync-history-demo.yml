@@ -1,0 +1,56 @@
+name: Android sync history demo
+
+# Records the UI half of the sync-history package on a hardware-accelerated Android emulator
+# against the real engine and a real document tree: Settings › Sync set up as the sync demo does
+# (the folder through the system's picker with a finger, the passphrase sheet, Open tabs on), two
+# other devices' files and open-tabs documents seeded into the tree by the driver (SyncPeer),
+# the "Tabs from other devices" sheet (ID-28) opened as a frame scene and then a tab opened from
+# it, the "Send to your devices" picker (ID-27) as a frame scene and then a send whose inbox
+# document is read back under the shared key, a tab the laptop sent arriving as a card on the
+# app's Sharing channel and tapped from the FOREGROUND, the channel beside the Sites group in the
+# app's notification settings, and – the shell's half, once the instrumentation's exit has taken
+# the process – a second card tapped from a COLD START (android-sync-history-demo.sh). Dispatch-
+# only, like the other demos: it takes about fifteen minutes and says nothing about a change being
+# correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-sync-history-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Sync history demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-sync-history-demo.sh
+      # The shared driver chooses the demo from its environment (see android-gesture-demo.sh's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SyncHistoryDemo
+        DEMO_DIR=sync-history-demo
+        DEMO_OUT=artifacts/android-sync-history-demo
+        DEMO_VIDEO=services-sync-history-ui-android-demo.mp4
+      artifact-name: android-sync-history-demo
+      artifact-path: artifacts/android-sync-history-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Sync history demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-sync-history-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SyncHistoryDemo
+        DEMO_DIR=sync-history-demo
+        DEMO_OUT=artifacts/android-sync-history-demo
+        DEMO_VIDEO=services-sync-history-ui-android-demo.mp4
+      artifact-name: android-sync-history-demo-second-boot
+      artifact-path: artifacts/android-sync-history-demo/

@@ -3,6 +3,7 @@ import type { SplitGroup } from '@shared/types'
 import {
   SPLIT_GAP,
   SPLIT_HEADER,
+  SPLIT_OUTLINE,
   captionBandInMain,
   glanceRect,
   gutterRects,
@@ -23,11 +24,27 @@ const group = (layout: SplitGroup['layout'], n: number): SplitGroup => ({
 describe('split layout', () => {
   it('vertical = side by side columns with a gap and header strips', () => {
     const panes = splitPaneRects(area, group('vertical', 2))
-    expect(panes[0].rect.x).toBe(100)
-    expect(panes[0].rect.width).toBeCloseTo((1000 - SPLIT_GAP) / 2)
-    expect(panes[1].rect.x).toBeCloseTo(100 + (1000 - SPLIT_GAP) / 2 + SPLIT_GAP)
-    expect(panes[0].rect.y).toBe(50 + SPLIT_HEADER)
+    expect(panes[0].frame.x).toBe(100)
+    expect(panes[0].frame.width).toBeCloseTo((1000 - SPLIT_GAP) / 2)
+    expect(panes[1].frame.x).toBeCloseTo(100 + (1000 - SPLIT_GAP) / 2 + SPLIT_GAP)
+    expect(panes[0].frame.y).toBe(50 + SPLIT_HEADER)
     expect(panes[0].header.height).toBe(SPLIT_HEADER)
+  })
+
+  it('keeps every view the active outline’s band inside its frame (§9.35)', () => {
+    const [a, b] = splitPaneRects(area, group('vertical', 2))
+    for (const pane of [a, b]) {
+      expect(pane.rect).toEqual({
+        x: pane.frame.x + SPLIT_OUTLINE,
+        y: pane.frame.y + SPLIT_OUTLINE,
+        width: pane.frame.width - 2 * SPLIT_OUTLINE,
+        height: pane.frame.height - 2 * SPLIT_OUTLINE
+      })
+    }
+    // The placed views are those inset boxes, at the frame's radius less the band.
+    const placed = placementsFor(area, ['t0', 't1'], group('vertical', 2), 12)
+    expect(placed.map((p) => p.rect)).toEqual([a.rect, b.rect])
+    expect(placed.map((p) => p.radius)).toEqual([10, 10])
   })
 
   it('horizontal = stacked rows honouring custom sizes', () => {
@@ -35,7 +52,7 @@ describe('split layout', () => {
     g.sizes = [0.25, 0.75]
     const panes = splitPaneRects(area, g)
     const usable = 600 - SPLIT_GAP
-    expect(panes[0].header.height + panes[0].rect.height).toBeCloseTo(usable * 0.25)
+    expect(panes[0].header.height + panes[0].frame.height).toBeCloseTo(usable * 0.25)
     expect(panes[1].header.y).toBeCloseTo(50 + usable * 0.25 + SPLIT_GAP)
   })
 

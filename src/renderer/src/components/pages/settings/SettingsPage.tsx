@@ -20,6 +20,7 @@ import { extensionRevealStore } from '@renderer/lib/extensions/manage'
 import { useViewport } from '@renderer/lib/formFactor'
 import { privateLockStore } from '@renderer/lib/privateLock'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
+import { useRemoteTabs } from '@renderer/lib/remoteTabs'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
@@ -172,6 +173,8 @@ function PhoneSettings({
     current?.id === 'downloads',
     state.settings.downloads?.directory ?? null
   )
+  // Likewise the other devices' open tabs, asked of the core once per `remoteTabsVersion`.
+  useRemoteTabs(state.sync)
   const ctx: SectionContext = {
     state,
     tab,
