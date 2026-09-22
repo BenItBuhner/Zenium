@@ -103,7 +103,10 @@ jobs:
         # smoke-out/clear-on-exit. The cookie comes from the same local fixture server the
         # walkthrough's pop-up step uses; the engine's clears are read off the main-process event
         # log, the outcome off sitedata.json (no owed marker after the quit), the cookie's absence
-        # off the wire, the page and the jar.
+        # off the wire, the page and the jar. Runs after a red step above as well (its own
+        # profiles, its own harness run): the verdict then has both results instead of a missing
+        # one, and a first-launch failure up there is not this scenario's.
+        if: ${{ !cancelled() }}
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label clear-on-exit

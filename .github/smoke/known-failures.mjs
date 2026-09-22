@@ -119,11 +119,15 @@ export function classifyFailures(failures, entries, context) {
   return { known, unexpected, unused, ok: unexpected.length === 0 }
 }
 
-/** One-line description of a failure for logs and the step summary. */
+/**
+ * One-line description of a failure for logs and the step summary, naming the screenshot the
+ * harness grabbed as the step failed (`screen`) when there is one.
+ */
 export function formatFailure(failure, max = 200) {
   const where = [failure.scenario, failure.step].filter(Boolean).join('/')
   const message = String(failure.message ?? '')
     .split('\n')[0]
     .slice(0, max)
-  return `${failure.kind}${where ? ` [${where}]` : ''}: ${message}`
+  const screen = failure.screen ? ` (screen: ${failure.screen})` : ''
+  return `${failure.kind}${where ? ` [${where}]` : ''}: ${message}${screen}`
 }
