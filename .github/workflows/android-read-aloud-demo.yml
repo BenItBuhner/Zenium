@@ -18,8 +18,6 @@ name: Android read aloud demo
 # enabled.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/services-read-aloud-speed-jank-24d1]
 
 permissions:
   contents: read
