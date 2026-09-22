@@ -4,15 +4,20 @@ import { extensionOrigin } from '@core/extensions/runtime/plan'
 /**
  * `new URL('chrome-extension://<id>/...').origin` in an extension's realms.
  *
- * A WebView has no `chrome-extension:` scheme, so its URL parser treats the spelling as a
- * non-special scheme and `origin` answers the opaque `"null"`; Chrome answers the extension's
- * origin. The extension's pages live on the served origin here (`extensionUrls.ts`), and every
- * origin the runtime reports for them says so: `location.origin` inside the page,
- * `sender.origin`, `getContexts`'s `documentOrigin`, a `MessageEvent`'s `origin`. So the origin
- * of an extension URL in either spelling is the served one, and `URL.prototype.origin` answers
- * it for Chrome's spelling too: Keplr's background guards every internal message with
+ * A WebView has no `chrome-extension:` scheme, so its URL parser treats the spelling as a scheme
+ * it does not know and `origin` answers something that is no origin of anything: the scheme
+ * alone, `chrome-extension://` (WebView 113 reads the URL as a path URL, host empty, pathname
+ * `//<id>/popup.html`; 156 finds the host and still answers the bare scheme: compat round 9's
+ * probe from Keplr's worker on both), or the opaque `"null"` (a WHATWG parser's answer for a
+ * non-special scheme, Node's). Chrome answers the extension's origin. The extension's pages live
+ * on the served origin here (`extensionUrls.ts`), and every origin the runtime reports for them
+ * says so: `location.origin` inside the page, `sender.origin`, `getContexts`'s `documentOrigin`,
+ * a `MessageEvent`'s `origin`. So the origin of an extension URL in either spelling is the
+ * served one, and `URL.prototype.origin` answers it for Chrome's spelling whatever the parser
+ * made of it: Keplr's background guards every internal message with
  * `new URL(sender.url).origin !== message.origin` (its popup's `location.origin`) and rejected
- * its own popup with `Invalid origin` on the `"null"`. Every other URL keeps the native answer.
+ * its own popup with `Invalid origin` on the bare scheme. Every other URL keeps the native
+ * answer.
  *
  * Installed on an extension page's and the MV3 worker page's `URL.prototype` and on an isolated
  * world's (the world's own interface object); the `with` scope gets a subclass of the page's
@@ -21,7 +26,9 @@ import { extensionOrigin } from '@core/extensions/runtime/plan'
 
 /** The origin of `href` given what the native getter answered. */
 export function extensionUrlOrigin(href: string, native: string): string {
-  if (native !== 'null') return native
+  // Chrome's spelling, well-formed: the served origin, whatever the parser answered (`"null"`,
+  // the bare scheme). Anything else, the served spelling included, is the parser's business.
+  if (!href.startsWith('chrome-extension://')) return native
   const id = extensionIdOfUrl(href)
   return id === null ? native : extensionOrigin(id)
 }
@@ -45,8 +52,7 @@ export function installUrlOrigin(realm: UrlRealm): boolean {
   Object.defineProperty(proto, 'origin', {
     ...origin,
     get(this: URL) {
-      const native = String(nativeOrigin.call(this))
-      return native === 'null' ? extensionUrlOrigin(String(nativeHref.call(this)), native) : native
+      return extensionUrlOrigin(String(nativeHref.call(this)), String(nativeOrigin.call(this)))
     }
   })
   return true

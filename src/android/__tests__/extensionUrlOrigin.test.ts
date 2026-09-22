@@ -32,6 +32,16 @@ describe('extensionUrlOrigin', () => {
     expect(new URL(`chrome-extension://${ID}/popup.html`).origin).toBe('null')
     expect(extensionUrlOrigin(`chrome-extension://${ID}/popup.html`, 'null')).toBe(SERVED)
     expect(extensionUrlOrigin(`chrome-extension://${ID.toUpperCase()}`, 'null')).toBe(SERVED)
+    // The WebView's own answer, both jobs of compat round 9 (113 parses the URL as a path URL,
+    // host empty; 156 finds the host): the bare scheme, no origin of anything.
+    expect(extensionUrlOrigin(`chrome-extension://${ID}/popup.html`, 'chrome-extension://')).toBe(
+      SERVED
+    )
+    // A parser that knew the scheme would answer as Chrome does; the served origin still, so
+    // the compare with `location.origin` holds.
+    expect(
+      extensionUrlOrigin(`chrome-extension://${ID}/popup.html`, `chrome-extension://${ID}`)
+    ).toBe(SERVED)
     // The served spelling is a real origin already; any other URL keeps what the parser said.
     expect(extensionUrlOrigin(`${SERVED}/popup.html`, SERVED)).toBe(SERVED)
     expect(extensionUrlOrigin('https://example.com/x', 'https://example.com')).toBe(
@@ -39,7 +49,30 @@ describe('extensionUrlOrigin', () => {
     )
     expect(extensionUrlOrigin('blob:null/abc', 'null')).toBe('null')
     expect(extensionUrlOrigin('chrome-extension://not-an-id/x', 'null')).toBe('null')
+    expect(extensionUrlOrigin('chrome-extension://not-an-id/x', 'chrome-extension://')).toBe(
+      'chrome-extension://'
+    )
     expect(extensionUrlOrigin('data:text/plain,x', 'null')).toBe('null')
+  })
+
+  it("answers the served origin through the patched accessor when the realm's parser says the bare scheme", () => {
+    // A realm whose `URL` answers as the WebView does for Chrome's spelling.
+    class WebViewURL {
+      private readonly parsed: URL
+      constructor(href: string) {
+        this.parsed = new URL(href)
+      }
+      get href(): string {
+        return this.parsed.href
+      }
+      get origin(): string {
+        return this.parsed.protocol === 'chrome-extension:' ? 'chrome-extension://' : this.parsed.origin
+      }
+    }
+    expect(new WebViewURL(`chrome-extension://${ID}/popup.html`).origin).toBe('chrome-extension://')
+    expect(installUrlOrigin({ URL: WebViewURL })).toBe(true)
+    expect(new WebViewURL(`chrome-extension://${ID}/popup.html`).origin).toBe(SERVED)
+    expect(new WebViewURL('https://example.com/x').origin).toBe('https://example.com')
   })
 })
 
