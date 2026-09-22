@@ -19,6 +19,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
@@ -66,6 +68,8 @@ class ServicesHardeningDemo {
     private lateinit var activity: Activity
     private var width = 0
     private var height = 0
+    /** The navigation bar's band along the bottom edge in px – the larger of the bar's and the tappable inset – where a touch never reaches the app. */
+    private var bottomBand = 0
     private val log = StringBuilder()
 
     @Test
@@ -152,6 +156,10 @@ class ServicesHardeningDemo {
             val root = activity.window.decorView
             width = root.width
             height = root.height
+            val insets = ViewCompat.getRootWindowInsets(root)
+            val bars = insets?.getInsets(WindowInsetsCompat.Type.systemBars())?.bottom ?: 0
+            val tappable = insets?.getInsets(WindowInsetsCompat.Type.tappableElement())?.bottom ?: 0
+            bottomBand = max(bars, tappable)
         }
         if (width == 0 || height == 0) {
             val probe = ui.takeScreenshot() ?: error("could not measure the window")
@@ -159,7 +167,7 @@ class ServicesHardeningDemo {
             height = probe.height
             probe.recycle()
         }
-        step("window ${width}x$height")
+        step("window ${width}x$height, navigation bar band $bottomBand px")
     }
 
     private fun handshake() {
@@ -801,7 +809,7 @@ class ServicesHardeningDemo {
     /**
      * Tap the node labelled `label` once it has come to rest (a sheet still sliding in reports
      * bounds a frame behind), inside its bounds but clear of the system navigation bar along
-     * the bottom edge, which would take the tap instead.
+     * the bottom edge ([bottomBand], from the window's insets), which would take the tap instead.
      */
     private fun tapLabel(
         f: Finger,
@@ -822,7 +830,7 @@ class ServicesHardeningDemo {
             target = again
         }
         val x = target.exactCenterX()
-        val lowest = height - NAV_BAR_MARGIN
+        val lowest = height - bottomBand - (8 * app.resources.displayMetrics.density).toInt()
         val y = if (target.exactCenterY() > lowest) {
             max(target.top + 8f, lowest.toFloat())
         } else {
@@ -980,7 +988,5 @@ class ServicesHardeningDemo {
         private const val CERT_PASSWORD = "zenium"
         private const val INSTALLER = "com.android.certinstaller"
         private const val STEP_MS = 8L
-        /** The 3-button navigation bar's height on the runner's emulator, with room to spare. */
-        private const val NAV_BAR_MARGIN = 100
     }
 }

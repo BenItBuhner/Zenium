@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
@@ -278,22 +277,12 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
 
     // --- the menu --------------------------------------------------------------------------------
 
-    private fun openMenu() {
-        ensureForeground()
-        val button = findByLabel(MENU_LABEL) ?: computedMenuButton()
-        Finger().tap(button.exactCenterX(), button.exactCenterY())
-    }
-
-    /** Where the menu button is when the accessibility tree does not say: rightmost in the bar. */
-    private fun computedMenuButton(): Rect {
-        val centerY = height - 28 * density
-        val centerX = width - 30 * density
-        val half = 22 * density
-        return Rect(
-            (centerX - half).toInt(), (centerY - half).toInt(),
-            (centerX + half).toInt(), (centerY + half).toInt()
-        )
-    }
+    /**
+     * The harness's finger on the bar's Menu button: by label, else on the pill's line, which the
+     * harness measures from the window's insets. (The driver's own fallback put the button 28 dp
+     * above the window's bottom edge, inside a 48 dp navigation bar.)
+     */
+    private fun openMenu() = tapMenuButton()
 
     /**
      * Open the menu, expand it so the whole list is in reach, and touch the item labelled `label`
@@ -428,7 +417,6 @@ class ErrorPagesDemo : DemoHarness("share-demo-state.json", "errors", "errors-de
     }
 
     companion object {
-        private const val MENU_LABEL = "Menu"
         private const val HANDLE_LABEL = "Resize menu"
         /** The URL bar's clear button: there once the bar is open. */
         private const val CLEAR_LABEL = "Clear"

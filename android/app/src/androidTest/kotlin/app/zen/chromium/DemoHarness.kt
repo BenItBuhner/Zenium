@@ -88,9 +88,12 @@ abstract class DemoHarness(
     /**
      * The part of the window a finger's touch reaches the app in: below the status bar and above
      * the navigation bar's window. The system bars are windows of their own and take every touch
-     * inside them, and the 3-button navigation bar's window is 48 dp tall whatever inset it
-     * reports (the API 34 emulator reports 24 dp and the chrome lays its bar out to that, so a
-     * sheet's bottom row may run under the buttons: a touch there goes to SystemUI, not the app).
+     * inside them; the band is the larger of the `navigationBars` and `tappableElement` insets,
+     * the numbers the chrome lays itself out with. (Until the recipe enabled the three-button
+     * overlay EXCLUSIVELY, the gestural overlay stayed on beside it and SystemUI reported the
+     * gestural bar's insets – 24 dp, tappable 0 – under a 48 dp button window, so a sheet's
+     * bottom row ran under the buttons and this band was held to 48 dp by hand. The recipe now
+     * gives a 48 dp bar with a 48 dp inset, so the insets alone say where the app ends.)
      */
     protected lateinit var touchable: Rect
     /** Finger travel (px) that opens the overview completely, mirroring `overviewTravel()`. */
@@ -300,9 +303,9 @@ abstract class DemoHarness(
         return result
     }
 
-    /** [touchable] from the window's insets: see the field for why the bottom band is at least [NAV_BAR_WINDOW_DP]. */
+    /** [touchable] from the window's insets: the bottom band is the larger of the bar's and the tappable inset (see the field). */
     protected fun touchableBand(insets: Insets): Rect {
-        val bottomBand = max(max(insets.bottom, insets.tappableBottom), (NAV_BAR_WINDOW_DP * density).roundToInt())
+        val bottomBand = max(insets.bottom, insets.tappableBottom)
         return Rect(0, insets.top, insets.windowWidth, insets.windowHeight - bottomBand)
     }
 
@@ -2016,8 +2019,6 @@ abstract class DemoHarness(
          * six seconds), with a margin for its exit animation.
          */
         private const val CLIPBOARD_OVERLAY_MS = 7_000L
-        /** The 3-button navigation bar's window, in dp, whatever inset it reports (see [touchable]). */
-        private const val NAV_BAR_WINDOW_DP = 48
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */
         const val NUDGE = 30f
         const val STAGE_WAIT = 2_400L
