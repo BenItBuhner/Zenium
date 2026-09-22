@@ -14,7 +14,14 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defaultShortcuts } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
-import { mediaHubFolded, mediaHubFoldedAt, mediaHubUi, openMediaHub } from '@renderer/lib/mediaHub'
+import {
+  closeMediaHub,
+  mediaHubFolded,
+  mediaHubFoldedAt,
+  mediaHubUi,
+  openMediaHub
+} from '@renderer/lib/mediaHub'
+import { holdExpanded } from '@renderer/lib/popover'
 import { closeAllPopovers } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { MediaHubButton, MediaLiveDot } from '../MediaHubButton'
@@ -178,11 +185,14 @@ describe('MediaHubButton', () => {
     await settle()
     expect(hub()).not.toBeNull()
     expect(uiStore.get().floatingChrome).toBe(1)
+    // The anchor says what it has open and wears the toolbar's pressed fill off that for the
+    // popover's life (§9.20), and is the toolbar's own again at rest.
     expect(q('[data-zen-media-hub-button]')!.getAttribute('aria-expanded')).toBe('true')
     click(q('[data-zen-media-hub-button]'))
     expect(mediaHubUi.get().open).toBe(false)
     expect(hub()).toBeNull()
     expect(uiStore.get().floatingChrome).toBe(0)
+    expect(q('[data-zen-media-hub-button]')!.getAttribute('aria-expanded')).toBe('false')
   })
 })
 
@@ -798,5 +808,168 @@ describe('the hub from the app menu (§9.29)', () => {
       )
     })
     expect(document.activeElement).toBe(button)
+  })
+
+  /*
+   * The anchor pressed and saying what it has open for the popover's life (§9.20), whichever
+   * control that is: the "⋯" too, while it anchors the folded hub – the toolbar button's own
+   * `[aria-expanded='true']` rule is the fill, so the attribute is the whole of it.
+   */
+  it('the "⋯" says aria-expanded – and so wears the pressed fill – while it anchors the folded hub, and is bare again when the hub leaves (§9.20)', async () => {
+    const button = mountMenuButton()
+    expect(button.hasAttribute('aria-expanded')).toBe(false)
+    browserStore.set({ state: stateWith([track()]) })
+    render(<MediaHubLayer />)
+    act(() => openMediaHub())
+    await settle()
+    expect(hub()).not.toBeNull()
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    // The fill is the toolbar button's shared pressed rule, off the attribute alone.
+    expect(css).toMatch(
+      /\.zen-toolbar-button:active:not\(:disabled\),\s*\.zen-toolbar-button\[aria-expanded='true'\] \{[^}]*background: var\(--v2-window-fill-hover\)/
+    )
+    act(() => {
+      hub()!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(hub()).toBeNull()
+    // Given back what it said at rest: nothing – the "⋯" carries no `aria-expanded` of its own.
+    expect(button.hasAttribute('aria-expanded')).toBe(false)
+  })
+
+  it('one truth on the "⋯": expanded while either the app menu or the hub it anchors stands, whichever leaves first', async () => {
+    const button = mountMenuButton()
+    browserStore.set({ state: stateWith([track()]) })
+    render(<MediaHubLayer />)
+    // The app menu up (`MenuSheet`'s popover holds the button the same way), its "Now Playing…"
+    // row picked: the hub opens as the menu leaves, and the menu's leave must take nothing off
+    // the button that the hub still holds.
+    const releaseMenu = holdExpanded(button)
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    act(() => openMediaHub())
+    await settle()
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    releaseMenu()
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    act(() => closeMediaHub())
+    expect(hub()).toBeNull()
+    expect(button.hasAttribute('aria-expanded')).toBe(false)
+
+    // The other order: the menu opens over a standing hub and outlives it.
+    act(() => openMediaHub())
+    await settle()
+    const releaseLater = holdExpanded(button)
+    act(() => closeMediaHub())
+    expect(hub()).toBeNull()
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    releaseLater()
+    expect(button.hasAttribute('aria-expanded')).toBe(false)
+    // A release is one release: a second call from the same holder counts for nothing.
+    const once = holdExpanded(button)
+    holdExpanded(button)
+    once()
+    once()
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('the hold moves with the anchor: a push that takes the hub button off the row hands it to the "⋯", which lets go with the hub', async () => {
+    const button = mountMenuButton()
+    const state = stateWith([track()])
+    browserStore.set({ state })
+    render(
+      <>
+        <MediaHubButton state={state} />
+        <MediaHubLayer />
+      </>
+    )
+    act(() => openMediaHub())
+    await settle()
+    const hubButton = q('[data-zen-media-hub-button]')!
+    expect(hubButton.getAttribute('aria-expanded')).toBe('true')
+    expect(button.hasAttribute('aria-expanded')).toBe(false)
+    // The row remounts its buttons with the tab: the same push that folds the hub button moves
+    // the anchor, read after that commit as the placement is.
+    const next = stateWith([track({ positionAt: Date.now() + 1 })])
+    act(() => {
+      browserStore.set({ state: next })
+      root!.render(
+        <>
+          {null}
+          <MediaHubLayer />
+        </>
+      )
+    })
+    expect(q('[data-zen-media-hub-button]')).toBeNull()
+    expect(hub()).not.toBeNull()
+    expect(button.getAttribute('aria-expanded')).toBe('true')
+    // The button that left was given its rest state back, not left saying "true" for nothing.
+    expect(hubButton.getAttribute('aria-expanded')).toBe('false')
+    act(() => closeMediaHub())
+    expect(button.hasAttribute('aria-expanded')).toBe(false)
+  })
+
+  it('the hold follows the row’s fold with no push behind it: the sidebar dragged across 302 with the hub open hands aria-expanded ⋯ → button in the row’s observer pass, and back – never both, never neither (§9.20, §9.29)', async () => {
+    const Native = window.ResizeObserver
+    window.ResizeObserver = DeliverableResizeObserver as unknown as typeof ResizeObserver
+    // The row at the 240 sidebar (happy-dom lays nothing out: the row's first measure is set
+    // here, every other box 0 – the pill's unmeasured content box shows every chip).
+    const widths = { row: 240 - 16 }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-zen-nav-row') ? widths.row : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+    try {
+      const state = rowState([track()])
+      browserStore.set({ state })
+      render(
+        <>
+          <NavRow state={state} tab={music} compact={false} />
+          <MediaHubLayer />
+        </>
+      )
+      const menu = q<HTMLButtonElement>('[data-zen-app-menu-button]')!
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(mediaHubUi.get().buttonUp).toBe(false)
+      act(() => openMediaHub())
+      await settle()
+      expect(hub()).not.toBeNull()
+      // Folded: the "⋯" anchors the hub and says so.
+      expect(menu.getAttribute('aria-expanded')).toBe('true')
+      // Dragged out to 302: the row's observer pass mounts the button, and the row's word on
+      // it (`mediaHubUi.buttonUp`, from that commit's layout phase) has the popover read its
+      // anchor again in the same act – the button takes the hold, the "⋯" is bare, no push.
+      widths.row = 302 - 16
+      sidebarDraggedTo(302)
+      const hubButton = q<HTMLButtonElement>('[data-zen-media-hub-button]')!
+      expect(hubButton).not.toBeNull()
+      expect(mediaHubUi.get().buttonUp).toBe(true)
+      expect(hubButton.getAttribute('aria-expanded')).toBe('true')
+      expect(menu.hasAttribute('aria-expanded')).toBe(false)
+      expect(hub()).not.toBeNull()
+      // A step wider: nothing folds, so the hold stays where it is.
+      widths.row = 320 - 16
+      sidebarDraggedTo(320)
+      expect(hubButton.getAttribute('aria-expanded')).toBe('true')
+      expect(menu.hasAttribute('aria-expanded')).toBe(false)
+      // And back under 302: the button leaves with its rest state given back, and the "⋯" takes
+      // the hold in the pass that unmounts it.
+      widths.row = 301 - 16
+      sidebarDraggedTo(301)
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(mediaHubUi.get().buttonUp).toBe(false)
+      expect(hubButton.getAttribute('aria-expanded')).toBe('false')
+      expect(menu.getAttribute('aria-expanded')).toBe('true')
+      expect(hub()).not.toBeNull()
+      // The hub leaving lets go of the "⋯".
+      act(() => closeMediaHub())
+      expect(menu.hasAttribute('aria-expanded')).toBe(false)
+    } finally {
+      rects.mockRestore()
+      window.ResizeObserver = Native
+      DeliverableResizeObserver.instances.length = 0
+    }
   })
 })
