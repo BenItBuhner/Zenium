@@ -490,7 +490,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
                 all = false
                 break
             }
-            val took = touchTapLabelExpecting(label, "the rate reads $expected", timeoutMs = 5_000) { Math.abs(rate() - expected) < 0.001 }
+            val took = stepSpeed(label, expected)
             // The sentence the finger came down in (read as the touch registers, so a sentence
             // ending while the chip was looked up does not shift the count).
             val n = sentenceIndex()
@@ -535,6 +535,40 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         check("every utterance the engine is handed after the change is at ${rate}x (${afterRestart.size} since)", restart.isNotEmpty() && afterRestart.all { "at ${rate}x" in it })
     }
 
+    /** How many injected fingers one gesture gets before it is a fault: one on a GPU, more on the emulator's software GL ([GESTURE_TRIES_SOFTWARE]). */
+    private fun gestureTries(): Int = if (renderer.hardware) 1 else GESTURE_TRIES_SOFTWARE
+
+    /**
+     * One rung of the speed ladder under a real finger: tap the chip reading [label] and wait for
+     * the rate to read [expected]. A single injected finger can be lost to a software-GL render
+     * stall (the nightly saw a tap land inside a 764 ms Davey and never become a click, the rate
+     * stuck on the rung before), so while the rate still reads exactly where it started – a dropped
+     * finger, not a slow one: a slow tap reaches [expected] well inside the 5 s wait – press again,
+     * up to [gestureTries]. The chip cycles, so a re-press only happens when the rate has not moved
+     * at all and never turns one rung into two; a rate that moved to something other than [expected]
+     * is a real mis-step and faults at once. On a GPU the first finger always takes.
+     */
+    private fun stepSpeed(label: String, expected: Double): Boolean {
+        val from = rate()
+        val tries = gestureTries()
+        for (attempt in 1..tries) {
+            if (!touchTapLabel(label)) break
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (Math.abs(rate() - expected) < 0.001) {
+                    Log.i(tag, "the touch on '$label' took: the rate reads $expected")
+                    return true
+                }
+                SystemClock.sleep(150)
+            }
+            // Neither the new rung nor still the old one: a real mis-step, not a dropped finger.
+            if (Math.abs(rate() - from) > 0.001) break
+            if (attempt < tries) noteLine("  the finger on '$label' was dropped by a render stall (rate still ${rate()}); pressing again (${attempt + 1}/$tries)")
+        }
+        touchFault("a touch on '$label' did not take: not the rate reads $expected within 5000 ms")
+        return false
+    }
+
     /** The host's log lines about utterances (`ReadAloud.speakNow`, tag `ZenReadAloud`), oldest first. */
     private fun hostLog(): List<String> = shell("logcat -d -s $HOST_TAG:*").lines().filter { "speak " in it }
 
@@ -551,19 +585,14 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             check("without a voice the sentence steps are disabled with the error state", previous != null && !previous.isEnabled && next != null && !next.isEnabled)
             return
         }
-        // The walk put at the first sentence first, so the steps read the same on every run (the
-        // reading has gone on through the steps before this one); a seek speaks that sentence.
-        // Then a real touch on Pause holds the walk still: the first sentence is the article's
-        // heading, two seconds of speech, and run 4 tapped Next after the model had walked on by
-        // itself (the tap moved 1 -> 2, read against 0 -> 1). Each step is read against the
-        // sentence the walk stood at just before the finger came down; a step speaks (playing).
-        coreInvoke("readAloud.seek", "{\"sentenceIndex\":0}")
-        val atFirst = poll(6_000) { readAloud()?.optInt("sentenceIndex") == 0 && status() == "playing" }
-        val held = holdTheWalk()
+        // The walk parked at the first sentence, held, so the steps read the same on every run (the
+        // reading has gone on through the steps before this one). Each step is then read against
+        // the sentence the walk stood at just before the finger came down; a step speaks (playing).
+        val parked = parkAtFirst()
         val count = readAloud()?.optInt("sentenceCount") ?: 0
         val previous = awaitNode(4_000) { it == "Previous sentence" }
         val next = awaitNode(4_000) { it == "Next sentence" }
-        finding("  at the first sentence (seek: $atFirst, held: $held, status ${status()}, index ${sentenceIndex()}): Previous ${previous?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; Next ${next?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; $count sentences")
+        finding("  at the first sentence (parked: $parked, status ${status()}, index ${sentenceIndex()}): Previous ${previous?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; Next ${next?.let { "enabled=${it.isEnabled}" } ?: "MISSING"}; $count sentences")
         check("Previous is disabled at the first sentence", previous != null && !previous.isEnabled)
         check("Next is enabled before the last sentence", next != null && next.isEnabled)
         val before = sentenceIndex()
@@ -591,6 +620,29 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     }
 
     private fun sentenceIndex(): Int = readAloud()?.optInt("sentenceIndex") ?: -1
+
+    /**
+     * The walk parked at the first sentence and held there (index 0, paused), so the scene's
+     * first steps read against a known sentence. The core's `seek` always speaks the sentence it
+     * lands on, so the hold has to land inside it – and the first sentence is the article's
+     * heading, under two seconds of speech. Run 4 tapped Next after the model had walked on by
+     * itself; run 5 held the walk with a real finger on Pause and lost the race by 45 ms (the
+     * finger took 1.9 s to be found in the tree and land on the emulator's software GL: the
+     * heading ended, the walk moved to sentence 1, and Previous read enabled there). So the park
+     * holds through the core itself – `readAloud.pause`, one bridge call behind the seek, and
+     * `speak` sets the index and `playing` synchronously, so the pause always meets the walk at
+     * 0 – and the real finger on Pause is proved in its own scene ("02-paused"). Bounded
+     * re-parks in case the walk still moved on.
+     */
+    private fun parkAtFirst(): Boolean {
+        for (attempt in 1..PARK_TRIES) {
+            coreInvoke("readAloud.seek", "{\"sentenceIndex\":0}")
+            coreInvoke("readAloud.pause")
+            if (poll(4_000) { sentenceIndex() == 0 && status() == "paused" }) return true
+            if (attempt < PARK_TRIES) noteLine("  the walk moved on before the hold (index ${sentenceIndex()}, status ${status()}); parking again (${attempt + 1}/$PARK_TRIES)")
+        }
+        return false
+    }
 
     /**
      * A real touch on Pause (the walk holds at its sentence; the engine stops), so a step is
@@ -1033,23 +1085,32 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     }
 
     private fun longPress(selector: String, ready: (List<ToolbarItem>) -> Boolean): List<ToolbarItem>? {
-        val p = pagePoint(selector) ?: run {
-            finding("  no $selector on the page")
-            return null
-        }
-        Finger().apply {
-            down(p.x, p.y)
-            hold(1_200)
-            up()
-        }
-        val deadline = SystemClock.uptimeMillis() + 12_000
+        val tries = gestureTries()
         var last: List<ToolbarItem>? = null
-        while (SystemClock.uptimeMillis() < deadline) {
-            toolbarItems()?.let { items ->
-                last = items
-                if (ready(items)) return items
+        for (attempt in 1..tries) {
+            val p = pagePoint(selector) ?: run {
+                finding("  no $selector on the page")
+                return null
             }
-            SystemClock.sleep(250)
+            Finger().apply {
+                down(p.x, p.y)
+                hold(1_200)
+                up()
+            }
+            // The floating toolbar is a window of its own the WebView must lay out and paint; a
+            // software-GL render freeze (the nightly's no-engine long press fell inside a 10.7 s
+            // buffer swap) can hold it back past this wait. Nothing came up means the press was
+            // lost to the stall, not that there is no toolbar, so press again once the screen
+            // catches up ([gestureTries]); a toolbar that is up answers on the first press.
+            val deadline = SystemClock.uptimeMillis() + 12_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                toolbarItems()?.let { items ->
+                    last = items
+                    if (ready(items)) return items
+                }
+                SystemClock.sleep(250)
+            }
+            if (attempt < tries) noteLine("  no selection toolbar for the long press on $selector; pressing again (${attempt + 1}/$tries)")
         }
         return last
     }
@@ -1178,5 +1239,17 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         private const val SYSTEM_UI = "com.android.systemui"
         /** The host's log tag (`ReadAloud.kt`): one line per utterance the engine is handed. */
         private const val HOST_TAG = "ZenReadAloud"
+        /**
+         * How many times a real finger is injected for one gesture on a software renderer before
+         * the step is a fault. The API 34 emulator's SwiftShader render thread stalls for hundreds
+         * of ms to seconds under the read-aloud scene (the nightly logged `EGL_emulation` buffer
+         * swaps of 0.3–10.7 s and back-to-back Daveys over the frames that carry a tap or raise the
+         * selection toolbar), so a single injected finger can be swallowed whole; a user whose
+         * press did nothing presses again once the screen answers. A GPU renders in time and the
+         * first finger always takes, so this is 1 on hardware ([gestureTries]).
+         */
+        private const val GESTURE_TRIES_SOFTWARE = 4
+        /** How many seek-and-hold rounds [parkAtFirst] gets to leave the walk paused at the first sentence. */
+        private const val PARK_TRIES = 3
     }
 }
