@@ -9,10 +9,13 @@
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
 //
-// Scenarios (each one launch of the executable, on profiles under one temporary root):
-//   boot         first launch: onboarding, one visible window titled Zenium, a tab on example.com
-//                opened through the URL bar, a graceful quit (the preset's chord, "Quit Zenium?"
-//                answered when several tabs are open) that leaves `cleanExit: true` in the profile
+// Scenarios (each one launch of the executable, on profiles under one temporary root; the pages
+// they load come from boot-fixture.mjs's server on 127.0.0.1, started once per run, so a run
+// needs no internet):
+//   boot         first launch: onboarding, one visible window titled Zenium, a tab on the
+//                fixture's first page opened through the URL bar, a graceful quit (the preset's
+//                chord, "Quit Zenium?" answered when several tabs are open) that leaves
+//                `cleanExit: true` in the profile
 //   restore      the profile from `boot` comes back with its tab loaded, no onboarding and no
 //                "Restore pages?" bar
 //   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
@@ -27,7 +30,7 @@
 //                then "Quit Zenium?" (#129); Escape between steps (Linux job)
 //   crash        the profile from `boot`, killed while it runs (`cleanExit: false` stays behind);
 //                the next launch lists the tabs unloaded and offers "Restore pages?", Restore
-//                loads example.com, the run quits cleanly (Linux job; two launches: crash and
+//                loads the page again, the run quits cleanly (Linux job; two launches: crash and
 //                crash-restore)
 //   clear-on-exit  clear browsing data on exit (#310), on the local fixture's cookie page. The
 //                quit run: a profile seeded with privacy.clearOnExit = cookies + cache sets the
@@ -49,7 +52,7 @@
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
 // failed step is a "failure". Failures matching .github/smoke/known-failures.json are reported by
 // their bug id and tolerated; anything else makes the run exit 1. Console errors logged by the web
-// pages themselves (https://…) are recorded but never gate.
+// pages themselves (http(s)://…, the fixture's included) are recorded but never gate.
 //
 // Exit codes: 0 pass (only known failures, if any), 1 unexpected failures, 2 usage, 3 watchdog.
 
@@ -59,6 +62,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fixture.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import {
   COOKIE_PATH,
@@ -1835,10 +1839,12 @@ function xdotoolClick(x, y) {
 // Scenarios
 // ---------------------------------------------------------------------------------------------
 
-const EXAMPLE_TITLE = 'Example Domain'
-const EXAMPLE_URL = 'https://example.com'
-// A second page for the multi-tab steps (IANA's, like example.com; also titled "Example Domain").
-const SECOND_URL = 'https://example.net'
+// The pages the scenarios load (boot-fixture.mjs): `first` (the boot tab, restored by the later
+// scenarios; the walkthrough's active tab), `second` (the walkthrough's other tab), `handoff`
+// (the second instance's URL), each `{ url, title }` on the run's 127.0.0.1 origin. Started once
+// per run by main(), ahead of the first scenario, so the URL `boot` persists – port included – is
+// the one `restore` and `crash-restore` load again.
+let bootSite = null
 
 /** The window a user sees: one of them, titled with the product name, its chrome on screen. */
 async function assertMainWindow(s) {
@@ -1858,12 +1864,15 @@ async function assertMainWindow(s) {
 }
 
 /**
- * Every platform's first launch: onboarding, one window titled Zenium, a tab on example.com and
- * a graceful quit that marks the profile cleanly exited (JS errors and dialogs gate on their own).
+ * Every platform's first launch: onboarding, one window titled Zenium, a tab on the fixture's
+ * first page and a graceful quit that marks the profile cleanly exited (JS errors and dialogs
+ * gate on their own).
  */
 async function scenarioBoot() {
   const userData = freshProfile('profile')
+  const page = bootSite.first
   return runScenario('boot', userData, {}, async (s, out) => {
+    out.fixture = { origin: bootSite.origin, page: page.url }
     await s.step('onboarding', async () => {
       const onboarding = s.chrome.locator('[data-testid="onboarding"]')
       await onboarding.waitFor({ state: 'visible', timeout: 10000 })
@@ -1881,28 +1890,29 @@ async function scenarioBoot() {
 
     await s.step('window', () => assertMainWindow(s))
 
-    await s.step('new-tab-example-com', async () => {
-      const { tab, sidebarTabs, retried } = await openUrlInNewTab(s, EXAMPLE_URL)
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
-      out.exampleTab = tab
-      await s.shot('03-example-com')
+    await s.step('new-tab-fixture', async () => {
+      const { tab, sidebarTabs, retried } = await openUrlInNewTab(s, page.url)
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
+      out.fixtureTab = tab
+      await s.shot('03-fixture-page')
       return { url: tab.url, title: tab.title, sidebarTabs, ...(retried ? { retried } : {}) }
     })
 
     await s.step('quit', async () => {
       const r = await s.quitGracefully()
-      out.stateAfterQuit = assertCleanState(userData, EXAMPLE_URL)
+      out.stateAfterQuit = assertCleanState(userData, page.url)
       return { ...r, state: out.stateAfterQuit }
     })
   })
 }
 
 /**
- * The profile from `boot` comes back after its graceful quit: the example.com tab, no onboarding
+ * The profile from `boot` comes back after its graceful quit: the fixture's tab, no onboarding
  * and no "Restore pages?" bar (the clean-exit marker was written, #129).
  */
 async function scenarioRestore() {
   const userData = path.join(profileRoot, 'profile')
+  const page = bootSite.first
   // Read before the launch: the app's first (debounced) write of the new run flips the marker
   // back to false, and how soon it lands after the chrome renders differs per platform.
   const stateBefore = readState(userData)
@@ -1912,18 +1922,18 @@ async function scenarioRestore() {
       if (stateBefore.cleanExit !== true) {
         throw new Error(`profile not marked cleanly exited: ${JSON.stringify(stateBefore)}`)
       }
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       const onboarding = await s.chrome.locator('[data-testid="onboarding"]').count()
       if (onboarding) throw new Error('onboarding shown again on the second launch')
       // The page is loaded, not merely listed (after a crash it would be held back).
-      const tab = await s.waitForTab(EXAMPLE_URL, 30000)
+      const tab = await s.waitForTab(page.url, 30000)
       await s.settle()
       const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
       if (restoreBar) throw new Error('"Restore pages?" offered after a graceful quit')
       await s.shot('01-restored')
       return {
         sidebarTabs: await s.sidebarTabCount(),
-        exampleTitles: await s.sidebarTab(EXAMPLE_TITLE).count(),
+        fixtureTitles: await s.sidebarTab(page.title).count(),
         liveTabs: (await s.tabs()).map((t) => t.url),
         loaded: tab.url,
         persisted: out.stateBefore.tabs
@@ -1932,7 +1942,7 @@ async function scenarioRestore() {
     await s.step('window', () => assertMainWindow(s))
     await s.step('quit', async () => {
       const r = await s.quitGracefully()
-      return { ...r, state: assertCleanState(userData, EXAMPLE_URL) }
+      return { ...r, state: assertCleanState(userData, page.url) }
     })
   })
 }
@@ -1944,19 +1954,24 @@ async function scenarioRestore() {
  */
 async function scenarioWalkthrough() {
   const userData = freshProfile('profile-walkthrough', { onboardingDone: true })
+  const page = bootSite.first
   return runScenario('walkthrough', userData, {}, async (s, out) => {
+    out.fixture = {
+      origin: bootSite.origin,
+      pages: { first: page.url, second: bootSite.second.url, handoff: bootSite.handoff.url }
+    }
     await s.step('new-tab', async () => {
       // The fresh window's blank tab takes the first URL; the second Ctrl+T must add a row. The
-      // example.com tab comes last so it is the active one the following steps act on.
-      const first = await openUrlInNewTab(s, SECOND_URL)
-      const second = await openUrlInNewTab(s, EXAMPLE_URL)
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      // fixture's first page comes last so it is the active tab the following steps act on.
+      const first = await openUrlInNewTab(s, bootSite.second.url)
+      const second = await openUrlInNewTab(s, page.url)
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       if (second.sidebarTabs !== first.sidebarTabs + 1) {
         throw new Error(
           `${second.sidebarTabs} sidebar rows after the second Ctrl+T, ${first.sidebarTabs} after the first`
         )
       }
-      out.exampleTab = second.tab
+      out.fixtureTab = second.tab
       await s.shot('01-two-tabs')
       return {
         first: { url: first.tab.url, title: first.tab.title, sidebarTabs: first.sidebarTabs },
@@ -1966,8 +1981,8 @@ async function scenarioWalkthrough() {
 
     await s.step('find-bar', async () => {
       await s.reset()
-      const tab = out.exampleTab
-      if (!tab) throw new Error('no example.com tab to find in')
+      const tab = out.fixtureTab
+      if (!tab) throw new Error('no fixture tab to find in')
       await s.press(`${ACCEL}+f`)
       const bar = s.chrome.locator('[data-testid="find-bar"]')
       await bar.first().waitFor({ state: 'visible', timeout: 8000 })
@@ -1981,7 +1996,18 @@ async function scenarioWalkthrough() {
         5000,
         'keyboard in the find field'
       )
-      await input.first().fill('Example')
+      // The fixture's first page has the word a known number of times: the count says the page
+      // was searched, not just that the bar opened.
+      await input.first().fill(FIND_WORD)
+      const counter = s.chrome.locator('[data-testid="find-count"]').first()
+      const count = await waitFor(
+        async () => {
+          const text = ((await counter.textContent().catch(() => null)) ?? '').trim()
+          return text === `1/${FIND_MATCHES}` ? text : null
+        },
+        8000,
+        `the find count reading 1/${FIND_MATCHES} for "${FIND_WORD}"`
+      )
       await s.shot('02-find-bar')
       await s.press('Escape')
       await bar.first().waitFor({ state: 'hidden', timeout: 8000 })
@@ -1994,13 +2020,12 @@ async function scenarioWalkthrough() {
         5000,
         `keyboard back on the page (tab ${tab.id})`
       )
-      return { opened, closed }
+      return { opened, count, closed }
     })
 
     await s.step('zoom', async () => {
       await s.reset()
-      const zoom = async () =>
-        (await s.tabs()).find((t) => t.url.startsWith(EXAMPLE_URL))?.zoomFactor
+      const zoom = async () => (await s.tabs()).find((t) => t.url.startsWith(page.url))?.zoomFactor
       const bubble = s.chrome.locator('[data-zoom-bubble]')
       const level = bubble.locator('#zen-zoom-level')
       /** The bubble is up and says `percent`; the page's factor agrees. */
@@ -2438,8 +2463,8 @@ async function scenarioWalkthrough() {
 
     await s.step('context-menu', async () => {
       await s.reset()
-      const tab = (await s.tabs()).find((t) => t.url.startsWith(EXAMPLE_URL))
-      if (!tab) throw new Error('example.com tab missing')
+      const tab = (await s.tabs()).find((t) => t.url.startsWith(page.url))
+      if (!tab) throw new Error('the fixture tab is missing')
       const menusBefore = await s.app.evaluate(() => globalThis.__smoke.menus.length)
       await s.app.evaluate(() => {
         globalThis.__smoke.autoCloseMenuMs = 1200
@@ -2476,7 +2501,8 @@ async function scenarioWalkthrough() {
       await s.reset()
       const rowsBefore = await s.sidebarTabCount()
       const t = Date.now()
-      const child = spawn(opts.exe, [...s.launchArgs(), 'https://example.org'], {
+      const handoff = bootSite.handoff
+      const child = spawn(opts.exe, [...s.launchArgs(), handoff.url], {
         stdio: 'ignore',
         env: s.launchEnv()
       })
@@ -2484,7 +2510,8 @@ async function scenarioWalkthrough() {
         child.on('exit', (code, signal) => resolve({ code, signal, ms: Date.now() - t }))
       )
       child.on('error', (e) => log(`second instance spawn error: ${e.message}`))
-      const tab = await s.waitForTab('https://example.org', 30000)
+      const tab = await s.waitForTab(handoff.url, 30000)
+      await s.sidebarTab(handoff.title).first().waitFor({ state: 'visible', timeout: 15000 })
       await waitFor(
         async () => (await s.sidebarTabCount()) === rowsBefore + 1,
         15000,
@@ -2757,7 +2784,7 @@ async function scenarioWalkthrough() {
     await s.step('quit', async () => {
       await s.reset()
       const r = await s.quitGracefully()
-      out.stateAfterQuit = assertCleanState(userData, EXAMPLE_URL)
+      out.stateAfterQuit = assertCleanState(userData, page.url)
       return { ...r, state: out.stateAfterQuit }
     })
   })
@@ -2766,17 +2793,18 @@ async function scenarioWalkthrough() {
 /**
  * The run that does not end well (#129): the profile from `boot` is killed while it runs, which
  * leaves the state file with `cleanExit: false`. The next launch lists the tabs but loads no
- * page, offers "Restore pages?", Restore brings example.com back, and a graceful quit marks the
- * profile clean again.
+ * page, offers "Restore pages?", Restore brings the fixture's page back, and a graceful quit
+ * marks the profile clean again.
  */
 async function scenarioCrash() {
   const userData = path.join(profileRoot, 'profile')
+  const page = bootSite.first
   const stateBeforeCrash = readState(userData)
   const killed = await runScenario('crash', userData, {}, async (s, out) => {
     out.stateBefore = stateBeforeCrash
     await s.step('running-marker', async () => {
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
-      await s.waitForTab(EXAMPLE_URL, 30000)
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
+      await s.waitForTab(page.url, 30000)
       // The first write of the run carries the marker (the startup commit is debounced).
       const state = await waitFor(
         () => {
@@ -2809,7 +2837,7 @@ async function scenarioCrash() {
       }
       const bar = s.chrome.locator('[data-crash-restore]').first()
       await bar.waitFor({ state: 'visible', timeout: 15000 })
-      await s.sidebarTab(EXAMPLE_TITLE).first().waitFor({ state: 'visible', timeout: 15000 })
+      await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       await s.settle()
       const text = ((await bar.textContent()) ?? '').replace(/\s+/g, ' ').trim()
       const m = /Restore (\d+) pages?/.exec(text)
@@ -2822,7 +2850,7 @@ async function scenarioCrash() {
         )
       }
       // Held back: the tabs are listed, no page of theirs is loaded yet.
-      const loaded = (await s.tabs()).filter((t) => t.url.startsWith('https://'))
+      const loaded = (await s.tabs()).filter((t) => isWebPage(t.url))
       if (loaded.length) {
         throw new Error(`pages loaded before the answer: ${loaded.map((t) => t.url).join(', ')}`)
       }
@@ -2834,14 +2862,14 @@ async function scenarioCrash() {
       await bar
         .getByRole('button', { name: 'Restore', exact: true })
         .click({ timeout: FIRST_PAINT_CLICK_MS })
-      const tab = await s.waitForTab(EXAMPLE_URL, 45000)
+      const tab = await s.waitForTab(page.url, 45000)
       await bar.waitFor({ state: 'hidden', timeout: 8000 })
       await s.shot('02-restored-after-crash')
       return { url: tab.url, title: tab.title, sidebarTabs: await s.sidebarTabCount() }
     })
     await s.step('quit', async () => {
       const r = await s.quitGracefully()
-      return { ...r, state: assertCleanState(userData, EXAMPLE_URL) }
+      return { ...r, state: assertCleanState(userData, page.url) }
     })
   })
 }
@@ -3283,6 +3311,9 @@ function finish(exitCode) {
     informational: info,
     allowlist: entries.map((e) => e.id)
   }
+  // What the fixture served: the pages the run loaded came from 127.0.0.1, or the log says which
+  // did not arrive.
+  if (bootSite) result.fixture = { origin: bootSite.origin, requests: bootSite.requests }
   result.finishedAt = new Date().toISOString()
   writeJson(path.join(outDir, 'result.json'), result)
 
@@ -3339,6 +3370,14 @@ async function main() {
     }
     return finish()
   }
+  // The pages every scenario loads, from this process on 127.0.0.1 for the whole run: `boot`
+  // persists their URL, so the port has to hold until `restore` and `crash-restore` have loaded
+  // it again (a server that cannot bind fails the run as a harness error).
+  bootSite = await startBootFixture()
+  result.fixture = { origin: bootSite.origin }
+  log(
+    `fixture on ${bootSite.origin}: ${[bootSite.first, bootSite.second, bootSite.handoff].map((p) => p.url).join(' ')}`
+  )
   for (const name of scenarios) {
     const run = {
       boot: scenarioBoot,
@@ -3363,6 +3402,7 @@ async function main() {
     if (currentSession && !currentSession.exit) killAppProcesses()
   }
   clearTimeout(watchdog)
+  await bootSite.close()
   finish()
 }
 
