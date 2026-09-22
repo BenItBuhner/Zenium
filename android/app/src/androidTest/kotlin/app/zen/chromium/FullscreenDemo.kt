@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityService
+import android.app.UiAutomation
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -25,8 +26,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Records fullscreen video and the file chooser's camera (MED-01, GN-20, OS-22) on the phone,
- * on the media demos' base ([MediaDemoBase]: the loopback page server, real fingers on a page's
+ * Records fullscreen video and the file chooser's camera (MED-01, GN-20, OS-22; the exit toast
+ * MED-03 and rotate-to-fullscreen MED-02; the enter and exit's motion measured, MOT-32) on the
+ * phone, on the media demos' base ([MediaDemoBase]: the loopback page server, real fingers on a page's
  * button and on any window's node, picture-in-picture, the notes) with a page of its own
  * (`fullscreen-demo-page.html`): a landscape WebM clip (#223's), a portrait one, a same-origin
  * `<iframe>` with the landscape clip in its own document (`fullscreen-demo-embed.html`, an
@@ -61,8 +63,19 @@ import org.junit.runner.RunWith
  * 10. The embed: a finger on the iframe's clip takes it fullscreen from the frame's document (the
  *     main document's fullscreen element is the `<iframe>`, with no video in its subtree): the
  *     frame's own size report turns the screen, and the hint (its key reset) stands.
- * 11. The canvas: fullscreen with no video in it: the hint (its key reset) stands all the same,
- *     the screen does not turn.
+ * 11. The canvas: fullscreen with no video in it: the exit toast (its key reset) stands all the
+ *     same, in the light palette (the design still), the screen does not turn, and the toast
+ *     goes on its own after its stand.
+ * 12. The canvas again with the key left set, under the dark scheme: the toast stands every time
+ *     for an element that is not a video (MED-03, the design still in dark), and a real finger
+ *     on the page takes it down at once; Back exits.
+ * 13. Rotate-to-fullscreen (MED-02): the landscape clip given the browser's controls and playing
+ *     inline goes fullscreen when the screen is turned to landscape (`setRotation`; the page's
+ *     `requestFullscreen()` on the host's press of no key); with auto-rotate on and the device
+ *     turned to match (`Host.onDeviceAngle`, the emulator's sensor cannot be turned) the lock
+ *     gives way to the sensor a second on and the screen turning back exits. A paused clip is
+ *     left alone by the turn; the portrait clip goes fullscreen on the turn to portrait, with no
+ *     lock, and leaves on the turn to landscape. The rotation is given back as it was found.
  *
  * The emulator's camera is `-camera-back emulated` (the workflow), so the camera app has one; the
  * permission flow is real (CAMERA revoked after the install, `DEMO_REVOKE`). Every touch a step
@@ -156,6 +169,8 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         hintInTheDarkScheme()
         embedFullscreenTurnsAndHints()
         canvasFullscreenHints()
+        canvasToastEveryTimeAndAtTheTouch()
+        rotateToFullscreen()
         note("\nend: fullscreenTab=${host.fullscreenTab?.tabId} rotation ${rotation()} requested ${requested()} capture directory ${captureFiles()}")
     }
 
@@ -616,30 +631,205 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         shot("21-after-embed")
     }
 
-    /** 11. The canvas (B3): fullscreen with no video in it – the hint all the same, no turn. */
+    /**
+     * 11. The canvas (B3, MED-03): fullscreen with no video in it – the exit toast all the same,
+     * no turn; the toast goes on its own after its stand (the design still, light).
+     */
     private fun canvasFullscreenHints() {
-        note("\n11. the canvas into fullscreen (no video: the hint is the layer's cue)")
+        note("\n11. the canvas into fullscreen (no video: the exit toast is the layer's cue)")
         coreInvoke("settings.update", """{"fullscreenHintDone":false}""")
         check("the once-key is reset for the canvas", poll(4_000) { !hintDone() })
         SystemClock.sleep(800)
+        val touchedAt = SystemClock.uptimeMillis()
         check("the canvas is touched", tapPageButton("stage", "Canvas", "the canvas goes fullscreen", 15_000) {
             host.fullscreenTab?.tabId == TAB && field("el") == "stage"
         })
         val seen = awaitHint(6_000, present = true)
+        val seenAt = SystemClock.uptimeMillis() - touchedAt
         val hint = if (seen == null) null else awaitHintAtRest(2_500) ?: seen
         shot("22-canvas-fullscreen-hint")
-        note("  host fullscreenTab=${host.fullscreenTab?.tabId}; page fs=${field("fs")} el=${field("el")}; hint: $hint")
-        check("the hint stands for a fullscreen with no video in it", seen != null)
+        shot("design-exit-toast-light")
+        note("  host fullscreenTab=${host.fullscreenTab?.tabId}; page fs=${field("fs")} el=${field("el")}; toast $seenAt ms after the touch: $hint")
+        check("the exit toast stands for a fullscreen with no video in it", seen != null)
+        check("the exit toast wears the light palette", hint != null && paletteOf(hint) == "light")
         check("the once-key is set again", poll(4_000) { hintDone() })
         val turned = poll(3_000) { landscape() }
         note("  rotation ${rotation()} requested ${requested()} held=${host.fullscreenLandscape}")
         check("the screen stays portrait for a fullscreen without a video", !turned)
         check("the activity asks for nothing (UNSPECIFIED)", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
-        awaitHint(6_000, present = false)
+        val gone = awaitHint(6_000, present = false) == null
+        note("  toast gone on its own ${SystemClock.uptimeMillis() - touchedAt} ms after the touch: $gone")
+        check("the exit toast fades on its own after its stand", gone)
         back()
         check("back leaves the canvas's fullscreen", poll(10_000) { host.fullscreenTab == null })
         SystemClock.sleep(1_500)
-        shot("23-end")
+        shot("23-after-the-canvas")
+    }
+
+    /**
+     * 12. The canvas again, the once-key left set and the colour scheme dark (MED-03): an
+     * element that is not a video shows the exit toast every time, not once – Chrome's toast –
+     * and the page's first touch takes it down before its stand is over (the design still, dark).
+     * A real finger on the fullscreen page, high and clear of the toast.
+     */
+    private fun canvasToastEveryTimeAndAtTheTouch() {
+        note("\n12. the canvas into fullscreen again (the key set, the dark scheme): the toast every time, down at the first touch")
+        check("the once-key is still set from step 11", hintDone())
+        coreInvoke("settings.update", """{"colorScheme":"dark"}""")
+        SystemClock.sleep(1_500)
+        val touchedAt = SystemClock.uptimeMillis()
+        check("the canvas is touched again", tapPageButton("stage", "Canvas", "the canvas goes fullscreen again", 15_000) {
+            host.fullscreenTab?.tabId == TAB && field("el") == "stage"
+        })
+        val seen = awaitHint(6_000, present = true)
+        val seenAt = SystemClock.uptimeMillis()
+        val hint = if (seen == null) null else awaitHintAtRest(2_500) ?: seen
+        shot("design-exit-toast-dark")
+        note("  toast ${seenAt - touchedAt} ms after the touch, its key set: $hint")
+        check("the exit toast stands again for an element that is not a video (every time, key or no key)", seen != null)
+        check("the exit toast wears the dark palette", hint != null && paletteOf(hint) == "dark")
+        // The finger: on the fullscreen canvas (it fills the screen), well above the toast's row.
+        val x = width / 2f
+        val y = height * 0.3f
+        val fingerAt = SystemClock.uptimeMillis() - seenAt
+        Finger().tap(x, y)
+        val down = awaitHint(1_500, present = false) == null
+        val downAt = SystemClock.uptimeMillis() - seenAt
+        note("  finger on the page at ${x.toInt()},${y.toInt()} $fingerAt ms after the toast was first seen (its stand is $TOAST_STAND_MS ms); toast gone $downAt ms after: $down")
+        // The stand could have run out on a slow emulator between the sight and the finger: then
+        // the fall says nothing about the touch, and the check is noted, not failed.
+        if (fingerAt <= TOAST_STAND_MS - TOAST_TOUCH_MARGIN_MS) check("the page's first touch takes the exit toast down at once (MED-03)", down)
+        else note("  ${if (down) "PASS " else "SOFT MISS"}  the first touch takes the toast down – the finger came $fingerAt ms after the sight, inside the stand's last $TOAST_TOUCH_MARGIN_MS ms: noted, not enforced")
+        check("the canvas stays fullscreen under the touch", host.fullscreenTab?.tabId == TAB && field("el") == "stage")
+        shot("24-toast-down-at-the-touch")
+        back()
+        check("back leaves the canvas's fullscreen again", poll(10_000) { host.fullscreenTab == null })
+        coreInvoke("settings.update", """{"colorScheme":"light"}""")
+        SystemClock.sleep(1_500)
+        shot("25-light-again")
+    }
+
+    /**
+     * 13. Rotate-to-fullscreen (MED-02), Chrome's rule: the landscape clip given the browser's
+     * controls and playing inline; the screen turned to landscape (`UiAutomation.setRotation`,
+     * the emulator's sensor cannot be turned from a test) takes it fullscreen, the page's
+     * `requestFullscreen()` on the host's press of no key; with auto-rotate on, the device turned
+     * to match (`Host.onDeviceAngle`, the sensor's stand-in) has MED-01's landscape lock give
+     * way to the sensor a second on, and the screen turning back exits. Then the edge cases: a
+     * paused clip is left alone by the turn; the portrait clip goes fullscreen on the turn to
+     * portrait, with no lock, and leaves on the turn to landscape. The clip is narrowed for the
+     * scene so that three quarters of it stay in the landscape's shorter viewport (Chrome's
+     * visibility threshold), and the screen's rotation is given back as it was found.
+     */
+    private fun rotateToFullscreen() {
+        note("\n13. rotate-to-fullscreen: the playing clip and the screen's turn (MED-02)")
+        val autoRotateBefore = shell("settings get system accelerometer_rotation").trim()
+        val userRotationBefore = shell("settings get system user_rotation").trim()
+        note("  before: accelerometer_rotation=$autoRotateBefore user_rotation=$userRotationBefore rotation ${rotation()} requested ${requested()}")
+        pageJs("window.scrollTo(0,0)")
+        pageJs("(function(){var v=document.getElementById('land');v.setAttribute('controls','');v.style.width='40%';v.play()})()")
+        check("the landscape clip plays inline with the browser's controls", poll(5_000) { field("state") == "playing" && field("fs") == "0" } &&
+            pageJs("document.getElementById('land').controls") == "true")
+        note("  the clip's box in portrait: ${landBox()}")
+        shot("26-clip-playing-inline-with-controls")
+        // 13a. The turn to landscape takes the playing clip fullscreen.
+        val turnedAt = SystemClock.uptimeMillis()
+        val turned = turnScreen(UiAutomation.ROTATION_FREEZE_90, toLandscape = true)
+        val entered = poll(10_000) { host.fullscreenTab?.tabId == TAB && field("el") == "land" }
+        note("  the turn to landscape: $turned; fullscreen ${SystemClock.uptimeMillis() - turnedAt} ms after it: $entered; the page's word on its request: ${host.rotateFullscreenResult}; " +
+            "el=${field("el")} state=${field("state")} rotation ${rotation()} requested ${requested()}")
+        check("the screen turned to landscape", turned)
+        check("the playing clip went fullscreen on the turn to landscape (rotate-to-fullscreen)", entered)
+        check("the page's requestFullscreen() ran on the host's key and was granted", host.rotateFullscreenResult == "entered")
+        check("the clip keeps playing", field("state") == "playing")
+        check("the fullscreen holds the screen in landscape (MED-01's lock, SENSOR_LANDSCAPE)", requested() == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE && host.fullscreenLandscape)
+        check("no hint for a video with its once-key set", awaitHint(2_500, present = true) == null)
+        shot("27-turned-into-fullscreen")
+        // 13b. Auto-rotate on, the device turned to match: the lock gives way, and the screen
+        // turning back exits.
+        ui.setRotation(UiAutomation.ROTATION_UNFREEZE)
+        val autoRotateOn = poll(5_000) { shell("settings get system accelerometer_rotation").trim() == "1" }
+        SystemClock.sleep(1_000)
+        note("  auto-rotate on: $autoRotateOn; still landscape: ${landscape()}; requested ${requested()}; unlocked=${host.fullscreenUnlocked}")
+        check("the screen stays landscape under the lock with auto-rotate on", landscape() && requested() == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
+        check("the lock has not given way before the device is turned", !host.fullscreenUnlocked)
+        val matchedAt = SystemClock.uptimeMillis()
+        instrumentation.runOnMainSync { host.onDeviceAngle(90) }
+        val unlocked = poll(5_000) { requested() == ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR }
+        val unlockedAt = SystemClock.uptimeMillis() - matchedAt
+        note("  the device turned to landscape (onDeviceAngle 90): the lock gave way to the sensor (FULL_SENSOR) $unlockedAt ms on: $unlocked; unlocked=${host.fullscreenUnlocked}")
+        check("the lock gives way to the sensor once the device is turned to match (Chrome's lock-to-any)", unlocked && host.fullscreenUnlocked)
+        check("the lock gives way about a second on (${RotateToFullscreen.UNLOCK_DELAY_MS} ms), not at once", unlockedAt >= RotateToFullscreen.UNLOCK_DELAY_MS - CLOCK_TOLERANCE_MS)
+        // The emulator's sensor holds the device upright: with the sensor's word taken the
+        // screen turns back on its own; where it does not, the turn is driven.
+        var left = poll(6_000) { host.fullscreenTab == null }
+        if (!left) {
+            note("  the sensor did not turn the screen back within 6 s; turning it")
+            turnScreen(UiAutomation.ROTATION_FREEZE_0, toLandscape = false)
+            left = poll(10_000) { host.fullscreenTab == null }
+        } else {
+            note("  the screen turned back on the sensor's word")
+        }
+        val portrait = poll(10_000) { !landscape() }
+        note("  left fullscreen: $left; portrait: $portrait; rotation ${rotation()} requested ${requested()} state=${field("state")} fs=${field("fs")}")
+        check("the screen turning back exits the fullscreen (rotate-to-fullscreen's way back)", left && portrait)
+        check("the orientation is given back (UNSPECIFIED)", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+        SystemClock.sleep(1_000)
+        shot("28-turned-back-out-of-fullscreen")
+        // 13c. A paused clip is left alone by the turn.
+        pageJs("document.getElementById('land').pause()")
+        check("the clip is paused", poll(3_000) { field("state") == "paused" })
+        turnScreen(UiAutomation.ROTATION_FREEZE_90, toLandscape = true)
+        val pausedEntered = poll(4_000) { host.fullscreenTab != null }
+        note("  paused, turned to landscape: fullscreen=$pausedEntered fs=${field("fs")} rotation ${rotation()}; the clip's box in the landscape viewport (what the turn judged): ${landBox()}")
+        check("a paused clip never goes fullscreen on a turn", !pausedEntered)
+        shot("29-paused-clip-stays-inline-in-landscape")
+        turnScreen(UiAutomation.ROTATION_FREEZE_0, toLandscape = false)
+        // 13d. The portrait clip: the turn to landscape leaves it, the turn to portrait takes it
+        // (no lock: a portrait video asks nothing of the orientation), the next turn exits.
+        pageJs("(function(){document.getElementById('land').removeAttribute('controls');var p=document.getElementById('port');p.setAttribute('controls','');p.play()})()")
+        check("the portrait clip plays inline with the browser's controls", poll(5_000) { field("state") == "playing" && field("fs") == "0" })
+        turnScreen(UiAutomation.ROTATION_FREEZE_90, toLandscape = true)
+        val portraitOnLandscape = poll(4_000) { host.fullscreenTab != null }
+        note("  the portrait clip playing, turned to landscape: fullscreen=$portraitOnLandscape el=${field("el")}")
+        check("the turn to landscape leaves a playing portrait clip alone", !portraitOnLandscape)
+        val backAt = SystemClock.uptimeMillis()
+        turnScreen(UiAutomation.ROTATION_FREEZE_0, toLandscape = false)
+        val portraitEntered = poll(10_000) { host.fullscreenTab?.tabId == TAB && field("el") == "port" }
+        note("  turned to portrait: fullscreen ${SystemClock.uptimeMillis() - backAt} ms after: $portraitEntered; el=${field("el")}; the page's word: ${host.rotateFullscreenResult}; requested ${requested()} held=${host.fullscreenLandscape}")
+        check("the turn to portrait takes the playing portrait clip fullscreen", portraitEntered)
+        check("a portrait clip's fullscreen asks nothing of the orientation (UNSPECIFIED, no lock)", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED && !host.fullscreenLandscape)
+        shot("30-portrait-clip-fullscreen-on-the-turn-to-portrait")
+        turnScreen(UiAutomation.ROTATION_FREEZE_90, toLandscape = true)
+        val portraitLeft = poll(10_000) { host.fullscreenTab == null }
+        note("  turned to landscape again: left fullscreen: $portraitLeft fs=${field("fs")}")
+        check("the turn to landscape exits the portrait clip's fullscreen", portraitLeft)
+        turnScreen(UiAutomation.ROTATION_FREEZE_0, toLandscape = false)
+        // The page and the screen as they were.
+        pageJs("(function(){var p=document.getElementById('port');p.pause();p.removeAttribute('controls');document.getElementById('land').style.width=''})()")
+        if (autoRotateBefore == "1") ui.setRotation(UiAutomation.ROTATION_UNFREEZE)
+        SystemClock.sleep(1_500)
+        note("  after: accelerometer_rotation=${shell("settings get system accelerometer_rotation").trim()} user_rotation=${shell("settings get system user_rotation").trim()} rotation ${rotation()} requested ${requested()} state=${field("state")}")
+        check("the screen is portrait at the end", !landscape())
+        shot("31-end")
+    }
+
+    /**
+     * The screen turned through the automation (`setRotation`, which also locks the system's
+     * rotation to it) and waited for, `landscape` or portrait, within 10 s; the time noted.
+     */
+    private fun turnScreen(to: Int, toLandscape: Boolean): Boolean {
+        val at = SystemClock.uptimeMillis()
+        ui.setRotation(to)
+        val turned = poll(10_000) { landscape() == toLandscape }
+        note("  the screen turned to ${if (toLandscape) "landscape" else "portrait"} (setRotation $to) ${SystemClock.uptimeMillis() - at} ms on: $turned; rotation ${rotation()}")
+        return turned
+    }
+
+    /** The landscape clip's box against the page's viewport, as `rotateEligible` measures it. */
+    private fun landBox(): String {
+        val raw = pageJs("(function(){var v=document.getElementById('land'),r=v.getBoundingClientRect();return JSON.stringify({top:Math.round(r.top),left:Math.round(r.left),w:Math.round(r.width),h:Math.round(r.height),vw:innerWidth,vh:innerHeight})})()")
+        return (JSONTokener(raw).nextValue() as? String) ?: raw
     }
 
     /** What the embed's document sees (`__embedState` through the top document; same origin). */
@@ -970,6 +1160,9 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         private const val CLOCK_TOLERANCE_MS = 60
         /** A measured scene's rest after its motion, for the last frames to land in the record. */
         private const val SCENE_REST_MS = 1_000L
+        /** The exit toast's stand (`TOAST_SHOW_MS`, @shared/toastCard), and how close to its end a finger's dismissal is still told from the stand's own. */
+        private const val TOAST_STAND_MS = 2_800L
+        private const val TOAST_TOUCH_MARGIN_MS = 500L
         /** The chooser's entry for `ACTION_IMAGE_CAPTURE`: the camera app's label. */
         private const val CAMERA_ENTRY = "Camera"
         private val FILES_ENTRIES = listOf("Files", "Documents", "Gallery", "Photos", "Media")

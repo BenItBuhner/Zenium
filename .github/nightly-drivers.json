@@ -991,8 +991,8 @@
         "DEMO_REVOKE": "android.permission.CAMERA"
       },
       "timeout": 900,
-      "estimate": 5,
-      "note": "CAMERA revoked before the driver, granted back after."
+      "estimate": 6.5,
+      "note": "CAMERA revoked before the driver, granted back after. Turns the screen (setRotation) for rotate-to-fullscreen and gives the rotation back."
     },
     {
       "id": "a11y-chrome-private",
