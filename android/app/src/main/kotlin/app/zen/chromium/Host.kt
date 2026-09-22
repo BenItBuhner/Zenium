@@ -139,6 +139,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // Spilled bodies the last chrome document never released (it, or the process, went away).
         io.execute(handoff::sweep)
     }
+    /**
+     * The device's online / offline word for the chrome's banner, toast and self-reloading
+     * error pages (ERR-06 / ERR-07): the `connectivity` host event, and `online` in the boot payload.
+     */
+    val connectivity = Connectivity(activity, main) { online -> chrome.hostEvent("connectivity", json("online" to online)) }
+
+    init {
+        connectivity.start()
+    }
     /** The share sheet, in both directions (after `io`: it fetches on it). */
     val share = Share(this, io)
     /** The pages' media on the OS controls: the media notification, the lock screen, picture-in-picture (`media.*`). */
@@ -316,6 +325,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "readAloud" to readAloud.available,
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
                 "touchExploration" to touchExploration,
+                // The device's connectivity at boot; changes follow as `connectivity` host events.
+                "online" to connectivity.online,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).
                 "deviceModel" to Build.MODEL,
                 // A screen lock (or biometric) the device can verify the user with: the "Lock
@@ -1656,6 +1667,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     fun destroy() {
         accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
+        connectivity.stop()
         extensions.destroy()
         cancelProbe()
         media.destroy()
