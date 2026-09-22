@@ -4370,7 +4370,7 @@ describe('ID-08’s Sync category on a phone', () => {
       if (off.kind !== 'item') throw new Error('not an item row')
       expect(off).toMatchObject({
         label: 'Tabs from other devices',
-        description: 'Turn on Open tabs in What you sync to see them',
+        description: 'Turn on Open tabs in What you sync to see them.',
         disabled: true
       })
       expect(off.sheet.groups).toEqual([])
@@ -4382,7 +4382,7 @@ describe('ID-08’s Sync category on a phone', () => {
         'sync-remote-tabs'
       )
       expect(none).toMatchObject({
-        description: 'No open tabs on your other devices yet',
+        description: 'No open tabs on your other devices yet.',
         disabled: true
       })
 
@@ -4412,8 +4412,8 @@ describe('ID-08’s Sync category on a phone', () => {
         expect(r.leading).toBeTruthy()
         expect(r.closesSheet).toBe(true)
         expect(r.leaves).toBeUndefined()
-        // The title is the page's, any length: two lines, then an ellipsis (§9.2).
-        expect(r.clamp).toBe(true)
+        // The title is the page's, any length: one line, truncating from the end (§6).
+        expect(r.truncate).toBe(true)
       }
       const first = rows[0]
       if (first?.kind !== 'action') throw new Error('not an action')

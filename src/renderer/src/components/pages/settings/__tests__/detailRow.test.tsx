@@ -109,7 +109,7 @@ describe('the detail row (§10.4)', () => {
     expect(line?.classList.contains('zen-settings-row-clamp')).toBe(true)
   })
 
-  it('a clamped action row carries the two-line class too (a page title from another device)', () => {
+  it('a truncating action row carries the one-line class (a page title from another device), not the clamp', () => {
     const open = vi.fn<(request: SheetRequest) => void>()
     const groups: RowGroup[] = [
       {
@@ -121,7 +121,7 @@ describe('the detail row (§10.4)', () => {
             id: 'sync-remote-tab:dev:t1',
             label: 'Software Library : Free Software : Internet Archive',
             description: 'archive.org · 50 min ago',
-            clamp: true,
+            truncate: true,
             closesSheet: true,
             onPress: () => undefined
           },
@@ -131,12 +131,14 @@ describe('the detail row (§10.4)', () => {
       }
     ]
     const h = render(<GroupList groups={groups} ctx={{ open }} />)
-    const clamped = h.querySelector('[data-row="sync-remote-tab:dev:t1"]')
-    expect(clamped?.classList.contains('zen-settings-row-pressable')).toBe(true)
-    expect(clamped?.classList.contains('zen-settings-row-clamp')).toBe(true)
+    const title = h.querySelector('[data-row="sync-remote-tab:dev:t1"]')
+    expect(title?.classList.contains('zen-settings-row-pressable')).toBe(true)
+    expect(title?.classList.contains('zen-settings-row-truncate')).toBe(true)
+    // One line, never two: the info rows' two-line clamp is not this row's.
+    expect(title?.classList.contains('zen-settings-row-clamp')).toBe(false)
     // Opt-in only: an action row without the flag keeps its free-wrapping label.
     expect(
-      h.querySelector('[data-row="plain"]')?.classList.contains('zen-settings-row-clamp')
+      h.querySelector('[data-row="plain"]')?.classList.contains('zen-settings-row-truncate')
     ).toBe(false)
   })
 

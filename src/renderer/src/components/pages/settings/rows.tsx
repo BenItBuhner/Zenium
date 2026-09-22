@@ -187,7 +187,7 @@ export function RowView({
           leading={row.leading}
           destructive={row.destructive}
           busy={row.busy}
-          clamp={row.clamp}
+          truncate={row.truncate}
           haspopup={row.confirm || row.form ? 'dialog' : undefined}
           trailing={actionGlyph(row)}
           onPress={() => {
@@ -371,7 +371,7 @@ function DesktopRowView({
           leading={row.leading}
           destructive={row.destructive}
           busy={row.busy}
-          clamp={row.clamp}
+          truncate={row.truncate}
           haspopup={row.confirm || row.form ? 'dialog' : undefined}
           trailing={actionGlyph(row)}
           onPress={() => pressAction(row, ctx, dismissSheet)}
@@ -639,7 +639,7 @@ function PressableRow({
   haspopup,
   destructive = false,
   busy = false,
-  clamp = false,
+  truncate = false,
   onPress
 }: {
   row: SettingsRow
@@ -653,7 +653,7 @@ function PressableRow({
   haspopup?: 'dialog'
   destructive?: boolean
   busy?: boolean
-  clamp?: boolean
+  truncate?: boolean
   onPress: () => void
 }): JSX.Element {
   const disabled = row.disabled === true
@@ -674,7 +674,7 @@ function PressableRow({
         'zen-settings-row zen-settings-row-pressable zen-v2-row',
         destructive && 'zen-settings-row-danger',
         disabled && 'zen-settings-row-disabled',
-        clamp && 'zen-settings-row-clamp'
+        truncate && 'zen-settings-row-truncate'
       )}
       onClick={() => {
         if (!disabled && !busy) onPress()

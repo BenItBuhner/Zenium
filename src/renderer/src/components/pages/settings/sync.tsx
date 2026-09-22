@@ -325,8 +325,9 @@ function remoteTabRow(device: SyncDeviceTabs, tab: SyncRemoteTab, held: boolean)
     label: tab.title.trim() || displayUrl(tab.url),
     description: host ? `${host} · ${when}` : when,
     leading: <FaviconGlyph src={tab.favicon} />,
-    // The title is the page's, any length: two lines, then an ellipsis (§9.2).
-    clamp: true,
+    // The title is the page's, any length: one line, truncating from the end, as the History
+    // rows (§6; the #314 ruling) – the host under it says which page a cut title is.
+    truncate: true,
     closesSheet: true,
     onPress: () =>
       held

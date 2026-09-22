@@ -1,6 +1,5 @@
 import type { JSX } from 'react'
 import { useRef, useState } from 'react'
-import { MonitorSmartphone } from 'lucide-react'
 import type { SyncStatus, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { SYNC_COPY } from '@renderer/lib/syncSetup'
@@ -17,11 +16,13 @@ import { PhoneSheet } from './PhoneSheet'
  * most recently seen first: the device's name over when it was last active (the same age the
  * Settings › Sync device rows trail). A tap sends the tab's page to that device once the sheet
  * has gone (`sync.sendTab`; the engine's toast, "Sent to Laptop", confirms the hand-over, and the
- * target opens it as a tab when it next syncs). Every row leads with the chrome's device glyph
- * (`MonitorSmartphone`, the one the sidebar and the content area draw for a device): the folder
- * records a device's name and not its kind, so the rows share the one glyph and the list keeps
- * its one glyph column (§10.4). With one other device the menu names it and sends outright, so
- * this sheet is for two or more; should the list have emptied meanwhile it says so (§9.17).
+ * target opens it as a tab when it next syncs). The rows draw no glyph: the folder records a
+ * device's name and not its kind, and a column whose every picture is the same tells nothing
+ * (§9.3's leading glyph is the row's subject), so the rows are bare as the Settings › Sync
+ * device rows are – the name from the gutter – until `devices[]` carries a kind (the interface
+ * note's follow-up; then a laptop / phone / tablet per row, as Chrome's). With one other device
+ * the menu names it and sends outright, so this sheet is for two or more; should the list have
+ * emptied meanwhile it says so (§9.17).
  */
 export function SendTabSheetLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.sendTabSheet)
@@ -65,7 +66,6 @@ function SendTabSheet({ state, tab }: { state: UIState; tab: Tab }): JSX.Element
             return (
               <PhoneListRow
                 key={device.id}
-                icon={<MonitorSmartphone className="h-5 w-5 opacity-70" strokeWidth={1.75} />}
                 title={device.name}
                 subtitle={when}
                 ariaLabel={`${device.name}, ${when}`}

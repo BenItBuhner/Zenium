@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -125,5 +127,41 @@ describe('a desktop item dialog and its rows (§9.24)', () => {
     })
     expect(closeTop).toHaveBeenCalledTimes(1)
     expect(onPress).not.toHaveBeenCalled()
+  })
+
+  it('the first group’s heading drops its 20 under the title block, which carries its own 16 (§9.23, §10.3 as ruled on #239)', () => {
+    const row = itemRow(
+      () => undefined,
+      () => undefined
+    )
+    const groups: RowGroup[] = [{ id: 'sync-devices', heading: 'Other devices', rows: [row] }]
+    const h = render(
+      <FrameDialogHost>
+        <DialogStack
+          requests={[{ kind: 'item', rowId: row.id }]}
+          groups={groups}
+          ctx={ctx}
+          closeTop={() => undefined}
+        />
+      </FrameDialogHost>
+    )
+    // The shape the stylesheet's rule keys on: the row list is the body's direct child, the
+    // first group its first child, the heading the group's first – no wrapper between.
+    const body = h.querySelector('.zen-settings-dialog-body')!
+    const list = body.firstElementChild!
+    expect(list.classList.contains('zen-settings-sheet-rows')).toBe(true)
+    const group = list.firstElementChild!
+    expect(group.classList.contains('zen-settings-group')).toBe(true)
+    expect(group.firstElementChild!.classList.contains('zen-settings-heading')).toBe(true)
+    expect(group.firstElementChild!.textContent).toBe('Work laptop')
+    const css = readFileSync(resolve(__dirname, '../../../../assets/main.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\s+/g, ' ')
+    expect(css).toContain(
+      '.zen-settings-sheet-body > .zen-settings-sheet-rows > .zen-settings-group:first-child > .zen-settings-heading, ' +
+        '.zen-settings-dialog-body > .zen-settings-sheet-rows > .zen-settings-group:first-child > .zen-settings-heading { margin-top: 0; }'
+    )
+    // The primitive's 20 above stays for every heading after the first.
+    expect(css).toContain('.zen-v2-heading { margin: 20px 0 4px;')
   })
 })

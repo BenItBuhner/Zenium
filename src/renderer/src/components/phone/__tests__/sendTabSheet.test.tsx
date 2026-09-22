@@ -207,7 +207,7 @@ const rowText = (row: HTMLElement): { title: string; subtitle: string } => ({
 // --- the sheet ---------------------------------------------------------------------------------
 
 describe('the phone Send to your devices sheet', () => {
-  it('lists the other devices most recently seen first – name over when last active – under Chrome’s title, one glyph column', async () => {
+  it('lists the other devices most recently seen first – name over when last active – under Chrome’s title, no glyph column', async () => {
     await show([LAPTOP, DESK])
     expect(titles()).toEqual(['Send to your devices'])
     expect(uiStore.get().sendTabSheet).toEqual({ tabId: 't' })
@@ -219,9 +219,12 @@ describe('the phone Send to your devices sheet', () => {
       'Home desktop, Last active just now',
       'Work laptop, Last active 2 h ago'
     ])
-    // Every row leads with the device glyph (§10.4: all or none); two-line rows.
+    // No row draws a glyph – the record has no device kind, and one picture on every row tells
+    // nothing (the #314 ruling; as the Settings › Sync device rows) – and no empty box stands
+    // where one would go: the text starts at the gutter. Two-line rows.
     for (const row of rows()) {
-      expect(row.querySelector('.zen-list-lead svg')).not.toBeNull()
+      expect(row.querySelector('.zen-list-lead')).toBeNull()
+      expect(row.querySelector('svg')).toBeNull()
       expect(row.getAttribute('data-two-line')).toBe('true')
     }
     expect(commands()).toEqual([])
