@@ -17,9 +17,11 @@ export const TWO_PANE_MIN_WIDTH = 720
  * trailing slot, §9.23) and, under it, the §9.12 search field; §9.7's hairline draws along the
  * header's bottom edge once the column has scrolled under it and goes again at the top. The
  * body is the Settings content column's geometry (§10.5, §5): the text column at most 664 wide
- * inside 32 side margins – the page's 16 plus the rows' own 16 gutter – left-aligned as Zen's,
- * so a row's hover fill runs 16 past its text on both sides and the title, the field, the group
- * headings and the rows' labels share one left edge at 32. Groups are §9.27 sub-headings (the
+ * inside 32 side margins – the page's 16 plus the rows' own 16 gutter, a 728 box – left-aligned
+ * as Zen's, so a row's hover fill runs 16 past its text on both sides and the title, the field,
+ * the group headings and the rows' labels share one left edge at 32 while the title's actions,
+ * the field's end and the rows' trailing controls share the column's other edge at 696 (§10.1:
+ * one column for every desktop page tab). Groups are §9.27 sub-headings (the
  * shared `.zen-v2-heading`, 15/600) over `.zen-v2-row` rows (§9.21), the first 8 under the
  * pinned header (§10.3) – in the body itself or in the page's one `.zen-page-list` div (the
  * keyboard walk's root); the empty state is §9.17's one sentence. Every class here is layout:

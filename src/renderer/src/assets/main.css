@@ -9672,11 +9672,17 @@
  * bottom edge once the column has scrolled under it. The body is the Settings content column's
  * geometry (§10.5, §5): the text column at most 664 inside 32 side margins (the page's 16 plus
  * the rows' 16 gutter), left-aligned as Zen's; groups are §9.27 sub-headings over §9.21 rows.
+ * The three boxes that carry the column – the title block, the search field's wrapper and the
+ * body – are therefore 728 wide at most (`--v2-page-column`): the 664 plus both margins. At
+ * 664 + 2 × 16 the rows' gutter came out of the text column instead – a 632 field on a 632 text
+ * column, the trailing controls 32 short of where §10.1 puts them – the count #324 corrected on
+ * the Settings pane; §10.1 names 632 as that correction, not a column of its own.
  * Nothing here states a row's or a control's size – those are the primitives' tokens – only
  * what the pages add: the header's beat, the column, the two-line row's slots and the reveal.
  * Unlayered like the Settings tab's rules, after them.
  * ------------------------------------------------------------------------- */
 .zen-page {
+  --v2-page-column: calc(var(--v2-content-max) + 2 * (16px + 16px));
   display: flex;
   height: 100%;
   min-height: 0;
@@ -9721,10 +9727,11 @@
  * The title block (§9.26, §10.2): "History" 22/600 on its 28 line, padding 16 16 12, the title's
  * text at the column's 32 (the block's 16 plus a 16 inset that is the rows' gutter); its
  * actions – 32 px `zen-v2-button` secondaries – on the title's line at the column's trailing
- * edge, their 2 px over the line taken from their own margins so the line stays 28.
+ * edge (the 664's end, where the field ends and the rows' controls end), their 2 px over the
+ * line taken from their own margins so the line stays 28.
  */
 .zen-page-title-block {
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: var(--v2-page-column);
   padding: 16px 16px 12px;
 }
 .zen-page-title-row {
@@ -9770,13 +9777,14 @@
 }
 /*
  * The search field (§9.12, as Find in Settings draws it): the shared 32 px field at the text
- * column's width, its 16 px glyph 12 in from its start (the text after the glyph's 16 and a 8),
- * the clear icon button inside its trailing end; 12 under it to the header's edge, so the first
- * heading's 8 above makes §9.27's 20 from the field's box.
+ * column's width – 664 between the 32 margins, its edges the column's two edges – its 16 px
+ * glyph 12 in from its start (the text after the glyph's 16 and a 8), the clear icon button
+ * inside its trailing end; 12 under it to the header's edge, so the first heading's 8 above
+ * makes §9.27's 20 from the field's box.
  */
 .zen-page-search {
   position: relative;
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: var(--v2-page-column);
   padding: 0 32px 12px;
 }
 .zen-page-search-glyph {
@@ -9798,9 +9806,13 @@
   top: calc((var(--v2-control) - var(--v2-icon-button)) / 2);
   right: calc(32px + 2px);
 }
-/* The body: the text column, its rows edge to edge inside it (their text at 32). */
+/*
+ * The body: the 728 box less its own 16 padding is the rows' 696 – the 664 text column with the
+ * rows' 16 gutter on each side, so a row's text runs 32 to 696 and its hover fill 16 past both,
+ * its trailing control ending on the field's end.
+ */
 .zen-page-body {
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: var(--v2-page-column);
   padding: 0 16px 40px;
 }
 .zen-page-group {
