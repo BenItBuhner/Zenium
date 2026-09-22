@@ -421,8 +421,10 @@ function FieldSheet({
 
 /**
  * A prompt (§9.23): the question as a title block over its one paragraph (the confirmation's
- * own, else the row's description), the destructive action trailing (§9.11); Cancel, the first
- * button, is where the chassis puts the focus as the sheet opens. A confirmation with no
+ * own, else the row's description), the destructive action trailing (§9.11). A
+ * title-and-notice sheet holds the focus on its container as it opens (§9.22: named by its
+ * title, described by its paragraph, as `SiteDataPrompt` does); landing on Cancel, the first
+ * button, is the failure the section names – the way out read first. A confirmation with no
  * paragraph anywhere would open on the 48 header (§9.23: the block is for a sheet that carries a
  * description), so every one in the model brings its own.
  */
@@ -443,6 +445,7 @@ function ConfirmSheet({
       title={confirm.title}
       description={confirm.description ?? row.description}
       under={under}
+      focus="dialog"
       onClose={close}
       sheetRef={sheet}
     >

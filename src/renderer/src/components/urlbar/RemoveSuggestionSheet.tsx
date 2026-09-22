@@ -13,8 +13,10 @@ import { PhoneSheet } from '../phone/PhoneSheet'
  * is the suggestion's text, so what goes is named; Cancel | Remove are peers in the footer,
  * Remove in the danger ink (§10.4). Escape, the scrim, the back gesture and Cancel keep the
  * row; Remove forgets the entry once the sheet has gone, so the row's collapse (§11.4) runs in
- * the open. Focus starts on Cancel so a stray Enter removes nothing, and returns to the field
- * once the sheet is gone (§9.24), whichever way it was answered.
+ * the open. The focus starts on the sheet itself (§9.22: a title-and-notice sheet holds its
+ * container, named by the question and described by the entry; landing on Cancel is the
+ * failure the section names), so a stray Enter removes nothing, and returns to the field once
+ * the sheet is gone (§9.24), whichever way it was answered.
  */
 export function RemoveSuggestionSheet({
   item,
@@ -38,7 +40,7 @@ export function RemoveSuggestionSheet({
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: suggestionText(item)
       }}
-      focus="first"
+      focus="dialog"
       onClose={onClose}
       // One detent: a drag on the grip only sends the prompt away.
       handleLabel="Dismiss"

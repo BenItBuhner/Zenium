@@ -104,7 +104,8 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
       <PhoneSheet
         name="extensions"
         title={{ pose: 'header', text: 'Extensions' }}
-        focus="dialog"
+        // A list sheet opens on its first row (§9.22).
+        focus="first"
         onClose={closeExtensionsSheet}
         sheetRef={sheet}
         contentKey={rows.map((row) => `${row.id}:${row.badge}`).join('/')}
@@ -374,7 +375,8 @@ function RemoveSheet({
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: confirm.description
       }}
-      focus="first"
+      // A title-and-notice sheet holds the focus on its container (§9.22), never on Cancel.
+      focus="dialog"
       onClose={onClose}
       handleLabel="Dismiss"
       sheetRef={sheet}

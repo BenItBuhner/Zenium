@@ -362,7 +362,9 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
  * page's question (`HistoryPage`'s `ClearAllDialog`) as a prompt sheet (v2 draft §9.23 – grip
  * strip, title block with the glyph, the one paragraph, the §9.11 footer) in the frame's dialog
  * host. Escape, the scrim, the back gesture and Cancel keep the history; Clear all clears it
- * once the sheet is gone. Focus starts on Cancel so a stray Enter does no harm.
+ * once the sheet is gone. The focus starts on the sheet itself (§9.22: a title-and-notice sheet
+ * holds its container; Cancel first is the failure the section names), so a stray Enter does
+ * no harm.
  */
 function ClearHistorySheet({
   count,
@@ -385,7 +387,7 @@ function ClearHistorySheet({
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: `${visits} will be removed from Zenium's history. Recently closed tabs and windows stay.`
       }}
-      focus="first"
+      focus="dialog"
       onClose={onClose}
       handleLabel="Resize prompt"
       sheetRef={sheet}
