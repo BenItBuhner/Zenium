@@ -1659,8 +1659,20 @@
     place-items: center;
     pointer-events: none;
   }
+  /*
+   * Every hosted dialog root is a stacking context of its own, ranked by its place in the slot
+   * (§9.24: later on top). Two stacked dialogs – a form and its prompt – are siblings in the one
+   * grid cell, and a root was a stacking context only while its pop's transform ran: after it
+   * the lower dialog's positioned children (a footer, a field's ring) painted over the upper
+   * one, interleaved. `isolation` closes each root; `z-index: sibling-index()` (Chromium 138+)
+   * ranks the roots by slot index, so the order is the slot's to give and no dialog carries the
+   * rule itself. Where the function is not understood, the roots still paint in tree order as
+   * closed contexts.
+   */
   .zen-frame-dialogs-slot > * {
     grid-area: 1 / 1;
+    isolation: isolate;
+    z-index: sibling-index();
   }
   .zen-frame-dialogs[data-open] .zen-frame-dialogs-slot > * {
     pointer-events: auto;
@@ -1915,6 +1927,19 @@
     .zen-animate-in,
     .zen-animate-fade {
       animation: zen-fade 120ms var(--zen-ease) !important;
+    }
+  }
+  /*
+   * The desktop popover's way out when it collapses into its anchor (§9.22; `DesktopPopover`
+   * in siteControls/primitives.tsx draws the reversed pop as an inline 180 ms transition on
+   * opacity and transform): under reduced motion the same 120 ms opacity fade in place as the
+   * frame dialogs' `zen-fade-out`, nothing travels. The component writes opacity alone for it,
+   * but an inline transition is removed by the global rule at the foot like any other, so the
+   * fade is declared here, `!important`, and the popover unmounts on its `transitionend`.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-desktop-popover[data-collapsing] {
+      transition: opacity 120ms var(--zen-ease) !important;
     }
   }
   /*
@@ -5593,6 +5618,15 @@
    * the pane wide. The footer is §9.11's: hugging, right-aligned, the 8 gap; the system-audio
    * checkbox leads it, its box centred on the line rather than on a row's first text line.
    */
+  /*
+   * A host in the title block's description (the site asking, or the one an extension shares
+   * with): an identity the user is asked to trust is never elided (§9.23). The description wraps
+   * as every description does; the picker puts a `<wbr>` after each of the host's dots, so a host
+   * too long for the line breaks there, and this takes a lone label longer than the whole line.
+   */
+  .zen-scpick-origin {
+    overflow-wrap: anywhere;
+  }
   .zen-scpick-panes {
     border-bottom: 1px solid transparent;
     transition: border-color 120ms var(--zen-ease);
@@ -5607,6 +5641,13 @@
     flex-direction: column;
     padding: 16px;
     overflow-y: auto;
+  }
+  /*
+   * One pane alone (an extension asked for one kind): no segment over it, so the title block's
+   * own 16 is the gap to the cards and its hairline is the one that shows on scroll.
+   */
+  .zen-scpick-list[data-alone] {
+    padding-top: 0;
   }
   .zen-scpick-state {
     display: flex;
@@ -8169,7 +8210,9 @@
 /*
  * The shared checkbox (§9.34, §6; #93 owns the rule, the values are the ones the extensions
  * surfaces drew it with): 16 on a mouse, 20 on a phone, radius 2, the accent fill with an
- * on-accent check when on, the hover fill on a mouse. As a row's leading box it sits
+ * on-accent check when on, the hover fill on a mouse while off only – the hover rule at 0,3,0
+ * outranks `:checked` at 0,2,0, so it must step aside from every checked form itself (a checked
+ * box under the pointer had lost its accent to `--v2-fill`). As a row's leading box it sits
  * (line − box) / 2 below the first text line's top (§9.2) and never grows the line. Disabled is
  * the one number (§9.30). A check row disabled as a dependent row puts the .4 on its content –
  * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
@@ -8196,7 +8239,12 @@
     border-color 120ms var(--zen-ease);
 }
 @media (hover: hover) {
-  .zen-v2-checkbox:hover:not(:disabled) {
+  .zen-v2-checkbox:hover:not(
+      :disabled,
+      :checked,
+      [aria-checked='true'],
+      [aria-checked='true'] > *
+    ) {
     background: var(--v2-fill);
   }
 }
@@ -9446,7 +9494,10 @@
  * The content column (§10.5, §5): scrolls on its own; its text column is 664 at most inside 32
  * side margins – the pane's 16 plus the rows' own 16 gutter, so a row's hover fill runs 16
  * past its text on both sides, as Zen's do, and the section title, the sub-headings and the
- * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred.
+ * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred. The find field
+ * spans that same 664 from the same 32 (its 16 padding plus the search wrapper's 16 margin),
+ * so §10.3's one edge holds on both sides: text on the field's leading edge, every row's
+ * trailing control ending on its trailing edge.
  */
 .zen-settings-content {
   position: relative;
@@ -9487,8 +9538,14 @@
 .zen-settings-content[data-scrolled] > .zen-settings-find::after {
   opacity: 1;
 }
+/*
+ * The pane's box is the text column plus both margins: its own 16 padding and the rows' 16
+ * gutter on each side, 728 for the 664. At 664 + 2 × 16 the rows' gutter came out of the text
+ * column instead, and every trailing control stopped 32 short of the find field's end (1138
+ * against 1170 at 1600 wide) while the labels sat on its start.
+ */
 .zen-settings-pane {
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 8px 16px 40px;
 }
 /*

@@ -1,4 +1,7 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -514,6 +517,35 @@ describe('Find in Settings (§10.5)', () => {
     // No clear button and no results without a query.
     expect(column).not.toContain('Clear search')
     expect(column).not.toContain('zen-settings-find-results')
+  })
+
+  it('spans the same 664 column the rows do, so their trailing controls end on its trailing edge (§10.3, §10.5)', () => {
+    // The field sits 32 in from the column's edge (the find's 16 padding plus the search
+    // wrapper's 16 margin) at the 664 content width; the pane gives its rows 664 between the
+    // labels' edge and the controls' edge only when its box adds both margins – its own 16
+    // padding and the rows' 16 gutter – per side. At 664 + 2 × 16 the controls stopped 32 short
+    // of the field's end while the labels sat on its start.
+    const css = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../../assets/main.css'),
+      'utf8'
+    )
+    const rule = (selector: string): string => {
+      const start = css.indexOf(`\n${selector} {`)
+      expect(start, selector).toBeGreaterThan(-1)
+      return css.slice(start, css.indexOf('\n}', start))
+    }
+    expect(rule('.zen-settings-find')).toMatch(/^ {2}padding: 16px 16px 8px;$/m)
+    expect(rule('.zen-settings-search')).toMatch(/^ {2}margin: 0 16px 8px;$/m)
+    expect(rule('.zen-settings-find > .zen-settings-search')).toMatch(
+      /^ {2}max-width: var\(--v2-content-max\);$/m
+    )
+    const pane = rule('.zen-settings-pane')
+    expect(pane).toMatch(/^ {2}padding: 8px 16px 40px;$/m)
+    expect(pane).toMatch(
+      /^ {2}max-width: calc\(var\(--v2-content-max\) \+ 2 \* \(16px \+ 16px\)\);$/m
+    )
+    // The row primitive's gutter is the 16 the pane adds for it.
+    expect(rule('.zen-v2-row')).toMatch(/^ {2}padding: var\(--v2-row-pad\) 16px;$/m)
   })
 
   it('takes Ctrl+F / "Find in Page" for the tab and focuses the field', async () => {

@@ -21,10 +21,19 @@ export interface MediaHubUi {
   open: boolean
   /** It was opened with the keyboard on the button: the page had no focus to get back (§9.22). */
   fromKeyboard: boolean
+  /**
+   * The row's tier has the hub's toolbar button up, published by the row from the commit that
+   * mounts or unmounts it (SidebarTop's `NavRow`). The popover keys its anchor reads on it: the
+   * button returns and folds in the row's own width-observer pass – a sidebar drag, no state
+   * push – and the hold on `aria-expanded` and the placement move with the button in that same
+   * commit's layout phase, before the frame paints (§9.20, §9.29). The anchor itself is still
+   * read from the document (`mediaHubAnchor`): a stylesheet's fold counts too.
+   */
+  buttonUp: boolean
 }
 
 export const mediaHubUi = createStore<MediaHubUi>(
-  { open: false, fromKeyboard: false },
+  { open: false, fromKeyboard: false, buttonUp: false },
   'media-hub-ui'
 )
 

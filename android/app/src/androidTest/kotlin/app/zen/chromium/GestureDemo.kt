@@ -298,10 +298,14 @@ class GestureDemo {
         SystemClock.sleep(1_800)
         shot("04-overview-open")
         SystemClock.sleep(700)
-        val card = findByLabel("Damping - Wikipedia")
+        // The card by the leading part of its name (DemoHarness.tabCard): the bare title found
+        // nothing once #237 named the cards "TITLE, tab N of M…", and the Back fallback closed
+        // the overview in its place on every run, the miss unlogged.
+        val card = findByLabel(DemoHarness.tabCard("Damping - Wikipedia"))
         if (card != null) {
             f.tap(card.exactCenterX(), card.exactCenterY())
         } else {
+            Log.w(TAG, "no Damping card in the tree; leaving the overview with Back")
             ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         }
         SystemClock.sleep(2_500)
@@ -509,7 +513,10 @@ class GestureDemo {
     }
 
     /** Breadth-first search of the active window for a node labelled `label` (aria-label or text). */
-    private fun findByLabel(label: String): Rect? {
+    private fun findByLabel(label: String): Rect? = findByLabel { it == label }
+
+    /** Breadth-first search of the active window for a node whose label or text satisfies `matches` (a [DemoHarness.Card]). */
+    private fun findByLabel(matches: (String) -> Boolean): Rect? {
         val root = ui.rootInActiveWindow ?: return null
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
@@ -517,7 +524,8 @@ class GestureDemo {
         while (queue.isNotEmpty() && visited < 6_000) {
             val node = queue.removeFirst()
             visited++
-            if (node.contentDescription?.toString() == label || node.text?.toString() == label) {
+            val reads = node.contentDescription?.toString()?.let(matches) == true || node.text?.toString()?.let(matches) == true
+            if (reads) {
                 return Rect().also { node.getBoundsInScreen(it) }
             }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)

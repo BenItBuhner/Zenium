@@ -2831,15 +2831,32 @@ export interface ScreenCaptureSource {
   icon: string | null
 }
 
+/** The picker's panes, in its order (Chrome's tab pane leads). */
+export type ScreenCaptureKind = ScreenCaptureSource['kind']
+
 /**
- * A page's `getDisplayMedia` call waiting on the picker (Chrome's "Choose what to share"): the
- * chrome shows the sources by kind and answers with `screenCapture.respond`. One per tab.
+ * A page's `getDisplayMedia` call, or an extension's `chrome.desktopCapture` call, waiting on
+ * the picker (Chrome's "Choose what to share"): the chrome shows the sources by kind and
+ * answers with `screenCapture.respond`. One per tab.
  */
 export interface ScreenCaptureRequest {
   id: string
   tabId: string
-  /** The site asking, as a display origin. */
+  /**
+   * The site asking, as a display origin. For an extension's call, the site of the tab it
+   * captures for (`targetTab`), or empty when the extension's own page consumes the stream.
+   */
   origin: string
+  /**
+   * An extension asking (`chrome.desktopCapture.chooseDesktopMedia`): named in the site's place
+   * with its icon, as Chrome's picker names it. Null for a page's own call.
+   */
+  extension: { name: string; icon: string | null } | null
+  /**
+   * The panes on offer, in the picker's order: an extension asks for some kinds (Chrome hides
+   * the others); a page's call has all three.
+   */
+  kinds: ScreenCaptureKind[]
   /** The page asked for audio as well. */
   audio: boolean
   /** The OS can hand a screen's sound along with its picture (the "Also share system audio" box). */
