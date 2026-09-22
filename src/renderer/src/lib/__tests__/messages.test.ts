@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Banner, Toast } from '../ui'
+import type { Banner, ScreenshotCard, Toast } from '../ui'
 
 vi.stubGlobal('window', { zen: { invoke: async () => null, on: () => () => undefined } })
 
@@ -9,15 +9,18 @@ const {
   TOAST_DURATION,
   claimMessageCards,
   dismissBanner,
+  dismissScreenshotCard,
   dismissToast,
   forgetBanner,
   forgetToast,
   holdBanner,
+  holdScreenshotCard,
   holdToast,
   pickBannerAction,
   pickToastAction,
   pushToast,
   showBanner,
+  showScreenshotCard,
   uiStore
 } = await import('../ui')
 const { MESSAGE_INSET, STACK_GAP, bannerSlots, coverFor } =
@@ -26,6 +29,7 @@ const { viewCover } = await import('../layout')
 
 const toasts = (): Toast[] => uiStore.get().toasts
 const banners = (): Banner[] => uiStore.get().banners
+const cards = (): ScreenshotCard[] => uiStore.get().screenshotCards
 const live = <T extends { leaving?: boolean }>(items: T[]): T[] => items.filter((m) => !m.leaving)
 
 /** The phone shell (or the Android sidebar) is up: messages are on the cards. */
@@ -33,7 +37,7 @@ let releaseCards: (() => void) | null = null
 
 beforeEach(() => {
   vi.useFakeTimers()
-  uiStore.set({ toasts: [], banners: [] })
+  uiStore.set({ toasts: [], banners: [], screenshotCards: [] })
   releaseCards = claimMessageCards()
 })
 afterEach(() => {
@@ -155,6 +159,74 @@ describe('toasts', () => {
     forgetToast(id)
     forgetToast(id)
     expect(toasts()).toHaveLength(0)
+  })
+})
+
+describe("the screenshot card in the toast's slot (SH-07, v2 §9.33)", () => {
+  const saved = {
+    uri: 'content://media/external/images/media/1',
+    thumbnail: 'data:image/jpeg;base64,',
+    width: 1080,
+    height: 2340,
+    bytes: 312_000,
+    tabId: 't1'
+  }
+  /** Everything live in the slot: the card and the toast share it, one at a time. */
+  const liveInSlot = (): number => live(cards()).length + live(toasts()).length
+
+  it('a card up gives way to a toast as a toast would: one live message, the two passing', () => {
+    showScreenshotCard(saved)
+    expect(live(cards())).toHaveLength(1)
+    pushToast('Link copied')
+    // The card is on its way out while the toast comes in – both in the store for the pass...
+    expect(cards().map((c) => Boolean(c.leaving))).toEqual([true])
+    expect(toasts().map((t) => [t.message, Boolean(t.leaving)])).toEqual([['Link copied', false]])
+    expect(liveInSlot()).toBe(1)
+    // ...and the leaving card is forgotten once off screen (the sweep, with no card mounted).
+    vi.advanceTimersByTime(1000)
+    expect(cards()).toHaveLength(0)
+    expect(live(toasts()).map((t) => t.message)).toEqual(['Link copied'])
+  })
+
+  it('a toast up gives way to a card the same way', () => {
+    pushToast('Bookmark added')
+    showScreenshotCard(saved)
+    expect(toasts().map((t) => Boolean(t.leaving))).toEqual([true])
+    expect(cards().map((c) => Boolean(c.leaving))).toEqual([false])
+    expect(liveInSlot()).toBe(1)
+    vi.advanceTimersByTime(1000)
+    expect(toasts()).toHaveLength(0)
+    expect(live(cards())).toHaveLength(1)
+  })
+
+  it('a second card sends the first off; a card lives the with-action time, paused under a finger', () => {
+    showScreenshotCard(saved)
+    const first = cards()[0].id
+    showScreenshotCard({ ...saved, uri: 'content://media/external/images/media/2' })
+    expect(cards().map((c) => [c.id === first, Boolean(c.leaving)])).toEqual([
+      [true, true],
+      [false, false]
+    ])
+    expect(liveInSlot()).toBe(1)
+    const second = live(cards())[0].id
+    vi.advanceTimersByTime(TOAST_ACTION_DURATION - 50)
+    holdScreenshotCard(second, true)
+    vi.advanceTimersByTime(10_000)
+    expect(live(cards())).toHaveLength(1)
+    holdScreenshotCard(second, false)
+    vi.advanceTimersByTime(1100)
+    expect(live(cards())).toHaveLength(0)
+  })
+
+  it('dismissing the card is idempotent, and the slot is free for the next message at once', () => {
+    showScreenshotCard(saved)
+    const id = cards()[0].id
+    dismissScreenshotCard(id)
+    dismissScreenshotCard(id)
+    expect(cards().filter((c) => c.id === id)).toHaveLength(1)
+    pushToast('Screenshot deleted')
+    expect(liveInSlot()).toBe(1)
+    expect(live(toasts()).map((t) => t.message)).toEqual(['Screenshot deleted'])
   })
 })
 

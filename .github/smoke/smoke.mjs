@@ -8,15 +8,18 @@
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
+//        [--force-urlbar-blur]   (the URL bar's field let go of the keyboard before the harness
+//                                 acts on the bar: the state main's boot smoke failed in)
 //
 // Scenarios (each one launch of the executable, on profiles under one temporary root; the pages
 // they load come from boot-fixture.mjs's server on 127.0.0.1, started once per run, so a run
 // needs no internet):
 //   boot         first launch: onboarding (on screen – in the DOM and painted – within the
 //                first-launch render budget, then clicked through with the same budget), one
-//                visible window titled Zenium, a tab on the fixture's first page opened through
-//                the URL bar, a graceful quit (the preset's chord, "Quit Zenium?" answered when
-//                several tabs are open) that leaves `cleanExit: true` in the profile
+//                visible window titled Zenium, the fixture's first page typed into the URL bar
+//                the new tab left by the onboarding has up (that tab loads it in place), a
+//                graceful quit (the preset's chord, "Quit Zenium?" answered when several tabs
+//                are open) that leaves `cleanExit: true` in the profile
 //   restore      the profile from `boot` comes back with its tab loaded, no onboarding and no
 //                "Restore pages?" bar (skipped, like `crash`, when boot's launch or onboarding
 //                failed: that profile is not past onboarding; scenario-deps.mjs)
@@ -73,7 +76,7 @@ import {
   buttonScreenPoint,
   startPopupFixture
 } from './popup-fixture.mjs'
-import { retryDetail, waitForTabWithRetry } from './navigation.mjs'
+import { newTabPlan, retryDetail, rowsExpected, waitForTabWithRetry } from './navigation.mjs'
 import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
 import { skipReason, skippedEntries } from './scenario-deps.mjs'
 import {
@@ -131,6 +134,11 @@ const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
 // run's cold launch, first wait for the frames and then click within the launch's render budget.
 const FIRST_PAINT_CLICK_MS = Number(opts['first-paint-click-ms'] ?? 15000)
 const WATCHDOG_MS = Number(opts['watchdog-min'] ?? 15) * 60 * 1000
+// The forced failure path of the URL bar steps: before the harness acts on a bar that is up, the
+// chrome's focused control is blurred, as the chrome itself does when a page's view takes the
+// keyboard (`focus.page` → releaseChromeFocus). Main's boot smoke was in that state three times
+// on 2026-09-22 (see Session.closeUrlbar); the steps have to get through it.
+const FORCE_URLBAR_BLUR = opts['force-urlbar-blur'] === true
 const allowlistFile = path.resolve(opts.allowlist ?? path.join(here, 'known-failures.json'))
 
 // Every scenario gets a profile under one temporary root; nothing touches the runner's real
@@ -1085,6 +1093,98 @@ class Session {
     return page.locator('[data-testid="tab"]').count()
   }
 
+  /** The URL bar's field in `page` (a window's chrome page). */
+  urlbarInput(page = this.chrome) {
+    return page.locator('[data-testid="urlbar-input"]').first()
+  }
+
+  /**
+   * What the URL bar in `page` shows, for navigation.mjs's newTabPlan: `barVisible`, and
+   * `submitTabUrl` – the URL of the tab a submit acts on in place (the field's
+   * `data-zen-menu-tab`, looked up in the app state), null when a submit opens a new tab
+   * instead, '' for a tab id the state does not list.
+   */
+  async urlbarState(page = this.chrome) {
+    const input = this.urlbarInput(page)
+    const barVisible = await input.isVisible().catch(() => false)
+    if (!barVisible) return { barVisible, submitTabId: null, submitTabUrl: null }
+    const submitTabId = await input.getAttribute('data-zen-menu-tab').catch(() => null)
+    if (!submitTabId) return { barVisible, submitTabId: null, submitTabUrl: null }
+    const submitTabUrl = await page
+      .evaluate(
+        async (id) => (await window.zen.invoke('app.getState')).tabs?.[id]?.url ?? '',
+        submitTabId
+      )
+      .catch(() => '')
+    return { barVisible, submitTabId, submitTabUrl }
+  }
+
+  /**
+   * The chrome's focused control let go, as the chrome does on `focus.page` (lib/panes.ts
+   * releaseChromeFocus): --force-urlbar-blur's way into the state main's boot smoke failed in.
+   */
+  blurChromeFocus(page = this.chrome) {
+    return page.evaluate(() => {
+      const el = document.activeElement
+      if (el && el !== document.body) el.blur()
+    })
+  }
+
+  /**
+   * `url` into the URL bar that is up in `page`, submitted: the field focused first – a field
+   * that has lost the keyboard while its bar stayed up (closeUrlbar) takes text this way all the
+   * same – then filled, then Enter through the window's chrome (press).
+   */
+  async submitUrl(url, { page = this.chrome, windowId = this.mainWindowId } = {}) {
+    const input = this.urlbarInput(page)
+    await input.waitFor({ state: 'visible', timeout: 8000 })
+    await input.focus()
+    await input.fill(url)
+    await this.press('Enter', windowId)
+  }
+
+  /**
+   * One Escape at the URL bar in `page`: its field focused first, when the bar is up, then the
+   * key through the window's chrome. The bar's Escape is its field's own key handler – the
+   * chrome's document-level Escape stands back while the bar is open (App.tsx useGlobalKeys) –
+   * so an Escape the field does not hold the keyboard for closes nothing.
+   */
+  async escapeUrlbar({ page = this.chrome, windowId = this.mainWindowId } = {}) {
+    const input = this.urlbarInput(page)
+    if (await input.isVisible().catch(() => false)) {
+      await input.focus({ timeout: 1000 }).catch(() => undefined)
+    }
+    await this.press('Escape', windowId)
+  }
+
+  /**
+   * Closes the URL bar in `page` when it is up: Escape at its field (escapeUrlbar), up to a
+   * second for the bar to go, again while it stays – a bar with rows up takes two (the first
+   * Escape puts the rows away). Resolves `{ closed, tries }`, `closed: false` once `timeoutMs`
+   * is spent.
+   *
+   * Field first because the field can have lost the keyboard while the bar stayed up: the chrome
+   * blurs its focused control when a page's view takes the keyboard (`focus.page` →
+   * releaseChromeFocus), and the new tab page the onboarding's end adopts does that a moment
+   * after the new-tab bar focused its field – on the runner, after; on a fast machine, before,
+   * where the field's later focus() wins. Main's boot smoke had the bar up with no caret in
+   * `02-after-onboarding.png` three times on 2026-09-22 (9bdc1c30, 630b7dd7, 7669e6b4); one
+   * Escape then did nothing and the 5 s wait for the bar to hide ran out.
+   */
+  async closeUrlbar({ page = this.chrome, windowId = this.mainWindowId, timeoutMs = 8000 } = {}) {
+    const input = this.urlbarInput(page)
+    if (FORCE_URLBAR_BLUR) await this.blurChromeFocus(page).catch(() => undefined)
+    const deadline = Date.now() + timeoutMs
+    let tries = 0
+    while (await input.isVisible().catch(() => false)) {
+      if (Date.now() >= deadline) return { closed: false, tries }
+      tries++
+      await this.escapeUrlbar({ page, windowId })
+      await input.waitFor({ state: 'hidden', timeout: 1000 }).catch(() => undefined)
+    }
+    return { closed: true, tries }
+  }
+
   /** The ids of every window but the main one. */
   otherWindowIds() {
     return this.app.evaluate(
@@ -1224,10 +1324,18 @@ class Session {
     }
   }
 
-  /** Nothing chrome-side may stay open between steps: Escape, then two frames. */
+  /**
+   * Nothing chrome-side may stay open between steps: Escape (a menu, a bubble, the find bar, the
+   * URL bar from its field), two frames, then a URL bar still up is closed from its field
+   * (closeUrlbar) – a bar whose field let go of the keyboard does not hear the first one.
+   */
   async reset() {
     await this.press('Escape')
     await this.settle()
+    const bar = await this.closeUrlbar()
+    if (!bar.closed) {
+      throw new Error(`the URL bar stayed up through ${bar.tries} Escapes at its field (reset)`)
+    }
   }
 
   /**
@@ -1536,29 +1644,45 @@ async function runScenario(name, userData, sessionOptions, body) {
 }
 
 /**
- * Accel+T, the URL typed into the bar that comes up, Enter: a new tab row in the sidebar and the
- * page loaded. Returns the tab (as the main process sees it) and the sidebar row count.
- * `landsOn` is where the tab ends up when `url` redirects (the fixture's cookie set page).
+ * `url` into a tab of its own – typed into the URL bar that is up, or into the one Accel+T
+ * brings up – and Enter: the page loaded, and the sidebar rows the way in says (navigation.mjs
+ * newTabPlan: unchanged when the blank tab the bar was over took the URL in place, one more when
+ * a tab was opened). Returns the tab (as the main process sees it), the sidebar row count and
+ * the `way`. `landsOn` is where the tab ends up when `url` redirects (the fixture's cookie set
+ * page).
+ *
+ * A bar that is already up is used, not closed first. After the onboarding the core opens a new
+ * tab with its bar up in new-tab mode, and that bar's field can have let go of the keyboard by
+ * the time this runs (Session.closeUrlbar says how); the one Escape this used to send then
+ * closed nothing and its 5 s wait for the bar to hide ran out (main red on 9bdc1c30, 630b7dd7
+ * and 7669e6b4). Focusing the field and typing into it needs no key the field must already own.
  */
 async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
-  const input = s.chrome.locator('[data-testid="urlbar-input"]')
-  // A blank first tab already shows the URL bar; Accel+T would toggle it away. Close it first.
-  if (
-    await input
-      .first()
-      .isVisible()
-      .catch(() => false)
-  ) {
-    await s.press('Escape')
-    await input.first().waitFor({ state: 'hidden', timeout: 5000 })
+  const input = s.urlbarInput()
+  await s.settle()
+  if (FORCE_URLBAR_BLUR) {
+    await s.blurChromeFocus()
+    log(`${url}: --force-urlbar-blur let the chrome's focused control go`)
   }
+  const shown = await s.urlbarState()
+  const plan = newTabPlan(shown)
   const rowsBefore = await s.sidebarTabCount()
   // Main-process events recorded before this navigation are not its failures.
   const eventsBefore = s.readEvents().length
-  await s.press(`${ACCEL}+t`)
-  await input.first().waitFor({ state: 'visible', timeout: 8000 })
-  await input.first().fill(url)
-  await s.press('Enter')
+  if (plan.way === 'close-then-new') {
+    // Over a page's own address: a submit would replace that page. Closed, then Accel+T.
+    const bar = await s.closeUrlbar()
+    if (!bar.closed) {
+      throw new Error(
+        `the URL bar over ${shown.submitTabUrl} stayed up through ${bar.tries} Escapes at its field`
+      )
+    }
+  }
+  if (plan.way !== 'use') {
+    await s.press(`${ACCEL}+t`)
+    await input.waitFor({ state: 'visible', timeout: 8000 })
+  }
+  await s.submitUrl(url)
   // One network hiccup on the runner (a TLS reset, `ERR_CONNECTION_RESET`) lands the tab on the
   // error page; the step retries the navigation once in that tab (Accel+L, the address again)
   // and says so in its detail. A second failure fails the step (navigation.mjs).
@@ -1569,21 +1693,30 @@ async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
     retry: async (failure) => {
       log(`${url}: ${retryDetail(failure)}`)
       await s.press(`${ACCEL}+l`)
-      await input.first().waitFor({ state: 'visible', timeout: 8000 })
-      await input.first().fill(url)
-      await s.press('Enter')
+      await s.submitUrl(url)
     },
     timeoutMs: 45000
   })
-  const rows = await waitFor(
+  const expected = rowsExpected(rowsBefore, plan)
+  let rows = null
+  await waitFor(
     async () => {
-      const n = await s.sidebarTabCount()
-      return n > rowsBefore ? n : null
+      rows = await s.sidebarTabCount()
+      return rows === expected ? { rows } : null
     },
     10000,
-    `a new sidebar row for ${url} (${rowsBefore} before)`
-  )
-  return { tab, sidebarTabs: rows, retried: retried ? retryDetail(retried) : null }
+    `${expected} sidebar row(s) with ${url} in (${rowsBefore} before; the URL went in by way of ${plan.way}${
+      shown.submitTabUrl ? ` over ${shown.submitTabUrl}` : ''
+    })`
+  ).catch((err) => {
+    throw new Error(`${err.message}; ${rows} row(s) on screen`)
+  })
+  return {
+    tab,
+    sidebarTabs: rows,
+    way: plan.way,
+    retried: retried ? retryDetail(retried) : null
+  }
 }
 
 async function closeExtraWindows(s) {
@@ -1610,6 +1743,8 @@ async function privateCookiesSwitch(s, privateWindowId) {
   // the view existing and the view being shown, and a view that stays hidden gets the chrome
   // nudged into a fresh report: the window raised again and resized by a pixel and back.
   await s.bringToFront(privateWindowId)
+  // The window's chrome page: the Escapes below go to its URL bar's field (Session.escapeUrlbar).
+  const privateChrome = await chromePageWithRoot(s, 'data-window-kind', 'private', 10000)
   const nudged = []
   const windowViews = () =>
     s.app.evaluate(({ BrowserWindow }, wid) => {
@@ -1666,8 +1801,10 @@ async function privateCookiesSwitch(s, privateWindowId) {
   // the content (`overlayCoversContent`), so the chrome reports `contentHidden` and shows the
   // page's picture instead of the live view. Whether the first look lands before or after that
   // 150 ms decided the outcome (main red three times on `visible: false`). So while the view is
-  // hidden, Escape closes the bar every second (the later click needs it closed anyway), and
-  // every 4 s the chrome is nudged into another layout report as a fallback.
+  // hidden, Escape closes the bar every second (the later click needs it closed anyway) – at
+  // the bar's field, which may have let go of the keyboard while the bar stayed up
+  // (Session.closeUrlbar) – and every 4 s the chrome is nudged into another layout report as a
+  // fallback.
   let lastNudge = Date.now()
   let lastEscape = 0
   const escaped = []
@@ -1679,7 +1816,7 @@ async function privateCookiesSwitch(s, privateWindowId) {
       if (Date.now() - lastEscape >= 1000) {
         lastEscape = Date.now()
         escaped.push(new Date().toISOString())
-        await s.press('Escape', privateWindowId)
+        await s.escapeUrlbar({ page: privateChrome, windowId: privateWindowId })
       }
       if (Date.now() - lastNudge >= 4000) {
         lastNudge = Date.now()
@@ -1733,8 +1870,9 @@ async function privateCookiesSwitch(s, privateWindowId) {
   // (2) A real click at the switch flips the setting the way the switch reads: on -> block,
   // off -> allow, never default. The window opened behind the main one (a synthetic shortcut
   // gives it no focus from the window manager): raise it and wait until it is the focused
-  // window, then Escape takes its URL bar out of the new-tab mode so the page is what sits
-  // under the pointer; the view's place is read after that, once the window has settled.
+  // window, then its URL bar is closed (Escape at its field, until the bar is gone) so the page
+  // is what sits under the pointer; the view's place is read after that, once the window has
+  // settled.
   await s.bringToFront(privateWindowId)
   await waitFor(
     () =>
@@ -1745,7 +1883,13 @@ async function privateCookiesSwitch(s, privateWindowId) {
     8000,
     'the private window focused'
   )
-  await s.press('Escape', privateWindowId)
+  const bar = await s.closeUrlbar({ page: privateChrome, windowId: privateWindowId })
+  if (!bar.closed) {
+    throw new Error(
+      `the private window's URL bar stayed up through ${bar.tries} Escapes at its field`
+    )
+  }
+  detail.barClosedAfter = bar.tries
   await s.settle()
   await delay(500)
   const view = await s.tabViewScreenRect(ntpId, privateWindowId)
@@ -1832,21 +1976,24 @@ async function privateCookiesSwitch(s, privateWindowId) {
   return detail
 }
 
-/** The chrome page of the window whose chrome is `chrome` (`full`, `popup`), once it renders. */
-function chromePageWithChrome(s, chrome, timeoutMs) {
+/**
+ * The chrome page whose root carries `attribute`=`value`, once it renders: `data-window-chrome`
+ * (`full`, `popup`) for a window's chrome, `data-window-kind` (`synced`, `private`) for its kind.
+ */
+function chromePageWithRoot(s, attribute, value, timeoutMs) {
   return waitFor(
     async () => {
       for (const p of s.chromePages()) {
-        const value = await p
+        const found = await p
           .locator('[data-testid="chrome-root"]')
-          .getAttribute('data-window-chrome', { timeout: 1000 })
+          .getAttribute(attribute, { timeout: 1000 })
           .catch(() => null)
-        if (value === chrome) return p
+        if (found === value) return p
       }
       return null
     },
     timeoutMs,
-    `a chrome page with data-window-chrome=${chrome}`
+    `a chrome page with ${attribute}=${value}`
   )
 }
 
@@ -1979,11 +2126,19 @@ async function scenarioBoot() {
     await s.step('window', () => assertMainWindow(s))
 
     await s.step('new-tab-fixture', async () => {
-      const { tab, sidebarTabs, retried } = await openUrlInNewTab(s, page.url)
+      // The onboarding's end opened a new tab with its URL bar up in new-tab mode: that bar
+      // takes the fixture's address and the tab loads it in place (one sidebar row).
+      const { tab, sidebarTabs, way, retried } = await openUrlInNewTab(s, page.url)
       await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       out.fixtureTab = tab
       await s.shot('03-fixture-page')
-      return { url: tab.url, title: tab.title, sidebarTabs, ...(retried ? { retried } : {}) }
+      return {
+        url: tab.url,
+        title: tab.title,
+        sidebarTabs,
+        way,
+        ...(retried ? { retried } : {})
+      }
     })
 
     await s.step('quit', async () => {
@@ -2049,8 +2204,9 @@ async function scenarioWalkthrough() {
       pages: { first: page.url, second: bootSite.second.url, handoff: bootSite.handoff.url }
     }
     await s.step('new-tab', async () => {
-      // The fresh window's blank tab takes the first URL; the second Ctrl+T must add a row. The
-      // fixture's first page comes last so it is the active tab the following steps act on.
+      // The fresh window past onboarding opens with no tab and no bar: the first Ctrl+T makes
+      // the tab that takes the first URL, the second Ctrl+T must add a row. The fixture's first
+      // page comes last so it is the active tab the following steps act on.
       const first = await openUrlInNewTab(s, bootSite.second.url)
       const second = await openUrlInNewTab(s, page.url)
       await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
@@ -2061,10 +2217,13 @@ async function scenarioWalkthrough() {
       }
       out.fixtureTab = second.tab
       await s.shot('01-two-tabs')
-      return {
-        first: { url: first.tab.url, title: first.tab.title, sidebarTabs: first.sidebarTabs },
-        second: { url: second.tab.url, title: second.tab.title, sidebarTabs: second.sidebarTabs }
-      }
+      const detail = (r) => ({
+        url: r.tab.url,
+        title: r.tab.title,
+        sidebarTabs: r.sidebarTabs,
+        way: r.way
+      })
+      return { first: detail(first), second: detail(second) }
     })
 
     await s.step('find-bar', async () => {
@@ -2743,7 +2902,7 @@ async function scenarioWalkthrough() {
           10000,
           'the pop-up window'
         )
-        const popupPage = await chromePageWithChrome(s, 'popup', 10000)
+        const popupPage = await chromePageWithRoot(s, 'data-window-chrome', 'popup', 10000)
         const [popupWindowId] = await s.otherWindowIds()
         const popupWindow = await s.window(popupWindowId)
         await popupPage

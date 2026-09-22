@@ -89,10 +89,14 @@ function initialFolder(tree: BookmarkTree, platform: Platform): string {
  * (`usePageSearch`: replaced, not pushed), so a restored tab comes back where it was.
  *
  * Chrome's manager otherwise: search across the whole tree, drag and drop with §9.4's caret and
- * outlines (`useBookmarkDrag`), the manual order and the sorts, multi-select (click, Ctrl, Shift,
- * Ctrl+A; the selected on `--v2-selected`, §9.6), the row and empty-space context menus, the
- * row's ⋮, cut / copy / paste, F2 and the inline rename (§9.12), Delete, Enter and double-click
- * to open (Ctrl for a new tab), and the keyboard model of a file list (§9.22). The Edit dialog
+ * outlines (`useBookmarkDrag`), the manual order and the sorts, multi-select (click, Shift for
+ * a run, Ctrl+A, Ctrl+arrow to move the focus alone and Space to toggle the focused row; the
+ * selected on `--v2-selected`, §9.6), the row and empty-space context menus, the row's ⋮, cut /
+ * copy / paste, F2 and the inline rename (§9.12), Delete, Enter and double-click to open
+ * (Ctrl+Enter for a new tab), and the keyboard model of a file list. Ctrl-click is not the
+ * selection's here as it is in Chrome's manager: on every page row it means one thing (§10.1
+ * as amended) – open it behind this tab, as a middle click does – and picks nothing. The Edit
+ * dialog
  * (#271) is the frame's (`TabDialogs`): a URL edit asked for here opens it over this page; a
  * folder rename asked for by the menus is done in place when the folder is in view.
  */
@@ -205,7 +209,8 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
     if (!next.size) setSelectMode(false)
   }
 
-  const selectRange = (id: string, additive: boolean): void => {
+  /** Shift-click or Shift+arrow: the run from the anchor to this row is the selection. */
+  const selectRange = (id: string): void => {
     const from = rowIds.indexOf(anchorId ?? focusId ?? id)
     const to = rowIds.indexOf(id)
     if (from === -1 || to === -1) {
@@ -213,8 +218,7 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
       return
     }
     const [a, b] = from < to ? [from, to] : [to, from]
-    const range = rowIds.slice(a, b + 1)
-    setSelection((prev) => new Set(additive ? [...prev, ...range] : range))
+    setSelection(new Set(rowIds.slice(a, b + 1)))
     setFocusId(id)
   }
 
@@ -286,6 +290,11 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
       return
     }
     run('bookmark.open', { id: node.id, newTab, tabId: tab.id })
+  }
+
+  /** A middle or Ctrl click on a bookmark's row: a new tab behind this one (§10.1). */
+  const openBehind = (node: BookmarkNode): void => {
+    run('bookmark.open', { id: node.id, newTab: true, tabId: tab.id, background: true })
   }
 
   const openAll = (ids: string[]): void => {
@@ -437,21 +446,30 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
       else open(node, false)
       return
     }
-    if (e.shiftKey) selectRange(node.id, e.ctrlKey || e.metaKey)
-    else if (e.ctrlKey || e.metaKey) toggleSelected(node.id)
-    else selectOnly(node.id)
+    if (e.shiftKey) selectRange(node.id)
+    else if (e.ctrlKey || e.metaKey) {
+      // §10.1's one meaning on every page row: Ctrl-click opens the bookmark behind this tab
+      // and picks nothing – the selection stays as it was. A Ctrl-double-click's second click
+      // (`detail` 2) opens nothing more; a folder, which cannot open behind, is selected as a
+      // plain click selects it.
+      if (e.detail > 1) return
+      if (node.type === 'url') openBehind(node)
+      else selectOnly(node.id)
+    } else selectOnly(node.id)
   }
 
   const onRowDoubleClick = (e: MouseEvent<HTMLLIElement>, node: BookmarkNode): void => {
     if (coarse || renamingId === node.id) return
     if ((e.target as HTMLElement).closest('input, button')) return
-    open(node, e.ctrlKey || e.metaKey)
+    // A Ctrl-double-click's first click opened the bookmark behind already.
+    if (e.ctrlKey || e.metaKey) return
+    open(node, false)
   }
 
   const onRowAuxClick = (e: MouseEvent<HTMLLIElement>, node: BookmarkNode): void => {
     if (e.button !== 1) return
     e.preventDefault()
-    if (node.type === 'url') run('bookmark.open', { id: node.id, newTab: true, tabId: null })
+    if (node.type === 'url') openBehind(node)
   }
 
   const onRowContextMenu = (e: MouseEvent<HTMLLIElement>, node: BookmarkNode): void => {
@@ -477,13 +495,17 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
     if ((e.target as HTMLElement).closest('input, textarea')) return
     const mod = e.ctrlKey || e.metaKey
     const at = focusId ? rowIds.indexOf(focusId) : -1
+    // An arrow selects the row it lands on; with Shift the run from the anchor; with Ctrl it
+    // moves the focus alone, the selection untouched, so Space can then add a row that is not
+    // the run's – the file list's way to a discontiguous pick now that Ctrl-click is not it.
     const focusRow = (index: number): void => {
       const id = rowIds[Math.max(0, Math.min(rowIds.length - 1, index))]
       if (!id) return
       if (e.shiftKey) {
         setFocusId(id)
-        selectRange(id, false)
-      } else selectOnly(id)
+        selectRange(id)
+      } else if (mod) setFocusId(id)
+      else selectOnly(id)
       document.getElementById(`bm-row-${id}`)?.scrollIntoView({ block: 'nearest' })
     }
     const focused = focusId ? tree.get(focusId) : null

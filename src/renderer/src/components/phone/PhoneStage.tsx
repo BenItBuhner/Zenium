@@ -1,9 +1,33 @@
 import type { JSX } from 'react'
 import type { PhoneBarPosition, UIState } from '@shared/types'
-import { stageStore } from '@renderer/lib/gestures/stage'
+import { stageStore, type OverviewState, type StageState } from '@renderer/lib/gestures/stage'
 import { contentAreaStore } from '@renderer/lib/ui'
 import { TabOverview } from './TabOverview'
 import { TabSwitchStage } from './TabSwitchStage'
+
+/**
+ * The overview's state as the tree reads it: its phase, its hero, where it is heading, and
+ * whether the morph is still short of open (the hero stands in for its card until then). Its
+ * `progress` moves on every frame of a pull and of the spring, and the grid follows it from the
+ * store without a render up here (`TabOverview`'s morph effect writes the frame), so the
+ * selector answers the same object for as long as those four read the same – the progress in
+ * it is the one they last changed at.
+ */
+let overviewShape: OverviewState | null = null
+function selectOverview(s: StageState): OverviewState {
+  const o = s.overview
+  const c = overviewShape
+  if (
+    c &&
+    c.phase === o.phase &&
+    c.heroTabId === o.heroTabId &&
+    c.target === o.target &&
+    c.progress < 1 === o.progress < 1
+  )
+    return c
+  overviewShape = o
+  return o
+}
 
 /**
  * Hosts the gesture stage of the touch layouts over the window: the tab track while a sideways
@@ -27,9 +51,10 @@ export function PhoneStage({
   edge?: PhoneBarPosition
 }): JSX.Element | null {
   // The track's phase alone: its position moves every frame of a swipe and is the track's own
-  // business (`TabSwitchStage` follows it from the store without a render up here).
+  // business (`TabSwitchStage` follows it from the store without a render up here); the
+  // overview's shape alone, its progress the overview's own the same way.
   const tabsPhase = stageStore.use((s) => s.tabs.phase)
-  const overview = stageStore.use((s) => s.overview)
+  const overview = stageStore.use(selectOverview)
   const area = contentAreaStore.use((s) => s.area)
 
   if (!area || (tabsPhase === 'idle' && overview.phase === 'closed')) return null

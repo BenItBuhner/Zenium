@@ -4,8 +4,10 @@ import type {
   Events,
   HapticKind,
   HostCapabilities,
+  LongCapture,
   PageEnvironment,
   Platform as PlatformOs,
+  ScreenshotSaved,
   ShareAction,
   ThumbnailPicture
 } from '@shared/types'
@@ -36,6 +38,7 @@ import type {
   BlockingHost,
   BundledFilterList,
   ClipboardHost,
+  ConnectivityHost,
   DialogHost,
   DownloadHost,
   EngineDataCounts,
@@ -55,6 +58,7 @@ import type {
   PlatformInfo,
   PrivacyHost,
   QrScanHost,
+  ScreenshotHost,
   PrivateSessionHost,
   ReauthHost,
   SessionHost,
@@ -372,6 +376,13 @@ export interface BootInfo {
    * (never held) in old hosts, in production and in the preview host.
    */
   holdBackgroundWork?: boolean
+  /**
+   * The device can reach the internet right now (`Connectivity.kt`: the default network carries
+   * internet and the system has validated it). Changes come as the `connectivity` host event;
+   * the core debounces them (`core/connectivity.ts`). Absent in old hosts and in the preview
+   * host, which are online for good.
+   */
+  online?: boolean
 }
 
 /**
@@ -460,6 +471,11 @@ export interface HostEventPayloads {
    * be killed.
    */
   memoryPressure: { level: 'low' | 'critical' }
+  /**
+   * The device's connectivity changed (`Connectivity.kt`, raw: a network switch reports a loss
+   * and a gain within a second; the core's debounce settles it, ERR-06 / ERR-07).
+   */
+  connectivity: { online: boolean }
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
   /**
@@ -1047,6 +1063,37 @@ function spawnBackgroundWorker(): BackgroundWorkerHandle | null {
 }
 
 /**
+ * The device's connectivity as Kotlin reports it (`Connectivity.kt`): the boot payload's word,
+ * then every `connectivity` host event, raw. The core's `ConnectivityService` debounces the
+ * transitions and turns them into the banner, the toast and the error pages' reloads; a host
+ * without the word (an older APK, the preview host) starts online and is never contradicted –
+ * except by the preview host's own `connectivity` event, which is how the design stills are made.
+ */
+export class AndroidConnectivity implements ConnectivityHost {
+  private listeners: Array<(online: boolean) => void> = []
+
+  constructor(private online: boolean) {}
+
+  isOnline(): boolean {
+    return this.online
+  }
+
+  onChange(listener: (online: boolean) => void): () => void {
+    this.listeners.push(listener)
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener)
+    }
+  }
+
+  /** The host's word changed. */
+  set(online: boolean): void {
+    if (online === this.online) return
+    this.online = online
+    for (const listener of [...this.listeners]) listener(online)
+  }
+}
+
+/**
  * Zen's browser core running inside the chrome WebView on Android. Kotlin owns the tab
  * WebViews, downloads, permissions and dialogs; this class turns the `Platform` contract into
  * bridge calls and routes Kotlin's events back into the core.
@@ -1104,6 +1151,8 @@ export class AndroidPlatform implements Platform {
    */
   readonly thumbnails: ThumbnailHost
   readonly qrScan: QrScanHost
+  /** Screenshots to the gallery (`Screenshots.kt`): the flash, the card's picture, the long capture (SH-07, SH-08). */
+  readonly screenshots: ScreenshotHost
   readonly mediaSession: MediaSessionHost
   readonly webNotifications: WebNotificationHost
   readonly privateSession: PrivateSessionHost
@@ -1111,6 +1160,8 @@ export class AndroidPlatform implements Platform {
   readonly newTabBackground: AndroidNewTabBackground
   /** Cross-device sync over a Storage Access Framework folder (`sync.ts`; the engine is the core's). */
   readonly sync: AndroidSyncHost
+  /** The device's connectivity, from the boot payload and the `connectivity` host event (ERR-06, ERR-07). */
+  readonly connectivity: AndroidConnectivity
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -1154,6 +1205,7 @@ export class AndroidPlatform implements Platform {
     this.io = io
     this.newTabBackground = new AndroidNewTabBackground(this.io)
     this.sync = new AndroidSyncHost(bridge, boot.deviceModel ?? '')
+    this.connectivity = new AndroidConnectivity(boot.online !== false)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
@@ -1388,6 +1440,20 @@ export class AndroidPlatform implements Platform {
       setTorch: (on) => bridge.send('qr.setTorch', { on }),
       openSettings: () => bridge.send('qr.openSettings')
     }
+    // Take Screenshot as Chrome's flow (`Screenshots.kt`): Kotlin flashes the page, copies the
+    // view's pixels into `MediaStore.Images` under Pictures/Zenium and answers with the card's
+    // thumbnail; the long capture is `PageCapture`'s stitched page, held as a bitmap until the
+    // editor's Save crops it. Share and the viewer are the system's; Delete is the gallery row's.
+    this.screenshots = {
+      capture: (tabId) => bridge.call<ScreenshotSaved | null>('screenshot.capture', { tabId }),
+      captureLong: (tabId) => bridge.call<LongCapture | null>('screenshot.captureLong', { tabId }),
+      saveLong: (id, crop, share) =>
+        bridge.call<ScreenshotSaved | null>('screenshot.saveLong', { id, ...crop, share }),
+      discardLong: (id) => bridge.send('screenshot.discardLong', { id }),
+      share: (uri) => bridge.call('screenshot.share', { uri }),
+      delete: (uri) => bridge.call<boolean>('screenshot.delete', { uri }),
+      open: (uri) => bridge.call('screenshot.open', { uri })
+    }
     // The OS media controls (`MediaSessions.kt`): a MediaSessionCompat behind the media-style
     // notification, the lock screen and the headset buttons, fed with the session the core
     // resolves; the window's picture-in-picture for a video (`PictureInPicture.kt`).
@@ -1598,6 +1664,11 @@ export class AndroidPlatform implements Platform {
       case 'memoryPressure': {
         const p = payload as HostEventPayloads['memoryPressure']
         browser.tabs.unloadForMemoryPressure(p.level === 'critical' ? 'critical' : 'low')
+        return
+      }
+      case 'connectivity': {
+        const p = payload as Partial<HostEventPayloads['connectivity']> | null
+        if (typeof p?.online === 'boolean') this.connectivity.set(p.online)
         return
       }
       case 'background.release':

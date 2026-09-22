@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.view.View
 import android.webkit.WebChromeClient
+import android.webkit.WebView
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.privacy.Privacy
@@ -73,6 +74,30 @@ interface PageHost {
 
     /** Something happened to one page: `navigated`, `title`, `startLoading`, … (see [TabWebView]). */
     fun viewEvent(tabId: String, name: String, payload: Any?)
+
+    /**
+     * A page's message on its way to the core, for a host that keeps part of it for itself: the
+     * browser window writes a share call's files to its cache and forwards their addresses
+     * (`Share.spillPageShare`, SH-14). The default forwards as is. Main thread, `then` once.
+     */
+    fun preparePageMessage(message: JSONObject, then: (JSONObject) -> Unit) = then(message)
+
+    /**
+     * `tab`'s renderer went (`onRenderProcessGone`). Every WebView of the app shares the one
+     * renderer, so the browser window classifies the exit once for every page on screen and
+     * remembers it across the chrome's rebuild ([RendererExits]); the answer is the `crashed`
+     * event's payload for this page – `{ reason, repeat }` – or null for an exit the page is
+     * not told of (it comes back on its own). A host without a chrome names the way it went.
+     */
+    fun rendererGone(tab: TabWebView, didCrash: Boolean, priorityAtExit: Int): JSONObject? =
+        json("reason" to if (didCrash) "crashed" else "killed")
+
+    /**
+     * Hear the renderer behind `view` stop and start answering again
+     * (`WebViewRenderProcessClient`; the unresponsive-page prompt, ERR-16). A host without a
+     * chrome leaves the platform to it.
+     */
+    fun watchRenderer(view: WebView) {}
 
     /**
      * The state a fresh WebView rebuilds `tabId`'s back/forward list from changed: `hostState`

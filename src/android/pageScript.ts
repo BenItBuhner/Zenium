@@ -8,6 +8,8 @@ import type { MediaSessionHostMessage } from '@shared/mediaSession'
 import type { NotificationHostMessage } from '@shared/notifications'
 import type { ReadAloudHostMessage } from '@shared/readAloud'
 import { installNotificationPolyfill } from '@shared/notificationScript'
+import { installShareBridge, installShareShim, type ShareOutcome } from '@shared/share'
+import { installTextFragmentScript, type TextFragmentHostMessage } from '@shared/textFragmentScript'
 import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
 import { rememberClearedSelection } from './selectionMemory'
 import { installViewportController, type PageRulesConfig } from './viewport'
@@ -107,6 +109,8 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   let onNotification: ((message: NotificationHostMessage) => void) | null = null
   let onReadAloud: ((message: ReadAloudHostMessage) => void) | null = null
   let onHint: ((hint: PageHint | null) => void) | null = null
+  let onShareResult: ((id: string, result: ShareOutcome) => void) | null = null
+  let onTextFragment: ((message: TextFragmentHostMessage) => void) | null = null
   const selectionMemory = rememberClearedSelection(document)
   const onMessage = (event: { data: string }): void => {
     try {
@@ -124,6 +128,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         status?: NotificationHostMessage['status']
         id?: string
         hint?: PageHint | null
+        result?: string
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
@@ -163,6 +168,22 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         } else {
           onReadAloud?.(message)
         }
+      } else if (data.type === 'share' && typeof data.id === 'string') {
+        // A `navigator.share` call's outcome from the system sheet (SH-14): the promise settles.
+        onShareResult?.(data.id, data.result === 'shared' ? 'shared' : 'aborted')
+      } else if (
+        data.type === 'textFragment' &&
+        data.action === 'generate' &&
+        typeof data.id === 'string'
+      ) {
+        // The core wants a link to the highlight (SH-11): the toolbar's finish has collapsed the
+        // selection by now, so the one it cleared stands in, as for Read Aloud above.
+        const message: TextFragmentHostMessage = {
+          type: 'textFragment',
+          action: 'generate',
+          id: data.id
+        }
+        onTextFragment?.(message)
       } else if (data.type === 'pageRules' && data.rules && topFrame) {
         const config: PageRulesConfig = {
           rules: data.rules,
@@ -259,6 +280,38 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
       })
     } catch {
       /* a page that sealed `window` keeps going without notifications */
+    }
+    // `navigator.share` / `canShare` (SH-14): the WebView has neither. The shim and its bridge
+    // share this one world (no isolated world here), so the shim installs directly; the call
+    // goes up with its files as base64 (Kotlin writes them to its cache on the way, the core
+    // hands the OS's sheet the addresses) and the sheet's outcome comes back through `onmessage`
+    // above. The shim keeps Chrome's rules: a secure top-level document, a user gesture, one
+    // share at a time, Chrome's file limits.
+    try {
+      installShareBridge({
+        send: (call) =>
+          bridge.postMessage(JSON.stringify({ token: TOKEN, type: 'share', share: call })),
+        onResult: (listener) => {
+          onShareResult = listener
+        },
+        installShim: (events) => installShareShim(events)
+      })
+    } catch {
+      /* a page that sealed `navigator` keeps the engine's absence of the API */
+    }
+    // Links to a highlight (SH-11): the core's request for the selection's `text=` directive,
+    // answered from the selection – or the one the action mode just cleared – and, on this
+    // WebView, which leaves text fragments off, the URL's own directive scrolled to and painted.
+    try {
+      installTextFragmentScript({
+        send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
+        onCommand: (listener) => {
+          onTextFragment = listener
+        },
+        withSelection: (work) => selectionMemory.withCleared(work)
+      })
+    } catch {
+      /* a page without a body yet, or one that sealed `document`: no link to its text */
     }
   }
 })()

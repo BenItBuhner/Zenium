@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Share and screenshots</title>
+<style>
+  body { margin: 0; font-family: sans-serif; color: #15141a; background: #fbfbfe; }
+  section { display: flex; align-items: center; justify-content: center; font-size: 22px; text-align: center; padding: 0 16px; }
+  #intro { height: 64px; background: #edf2fb; font-size: 18px; }
+  #text { height: 96px; background: #fff3b0; }
+  /* The share buttons: tall, one per row, so a real finger lands on one and nothing else. */
+  #share { flex-direction: column; gap: 12px; padding: 14px 16px; background: #e0fbfc; }
+  #share button { width: 100%; height: 60px; border: 0; border-radius: 14px; background: #1b4332; color: #fff; font: 600 18px sans-serif; }
+  #result { height: 56px; background: #f4f4f7; font: 16px monospace; white-space: pre; }
+  #tail { height: 56px; background: #f4f4f7; font-size: 18px; }
+  /* The long screenshot's body: numbered bands, several screens of them, so a crop shows. */
+  .band { height: 240px; font: 700 64px sans-serif; color: rgba(0, 0, 0, .55); }
+  #deep { height: 200px; background: #d8f3dc; font-size: 20px; }
+  #end { height: 120px; background: #edf2fb; font-size: 18px; }
+</style>
+</head>
+<body>
+<section id="intro">Sharing and screenshots</section>
+<section id="text">Some <span id="word">quantum</span> text to long press and share.</section>
+<section id="share">
+  <button id="share-url" type="button">Share this page (navigator.share)</button>
+  <button id="share-file" type="button">Share a picture (navigator.share with a file)</button>
+</section>
+<section id="result">waiting</section>
+<section id="tail">Nothing to select on this line.</section>
+<section class="band" style="background:#ffd6a5">1</section>
+<section class="band" style="background:#fdffb6">2</section>
+<section class="band" style="background:#caffbf">3</section>
+<section class="band" style="background:#9bf6ff">4</section>
+<section class="band" style="background:#a0c4ff">5</section>
+<section class="band" style="background:#bdb2ff">6</section>
+<section class="band" style="background:#ffc6ff">7</section>
+<section class="band" style="background:#ffadad">8</section>
+<section id="deep">A link to a highlight lands here: <b>serendipity</b> is the word it names.</section>
+<section id="end">The end of the page.</section>
+<script>
+  (function () {
+    var result = document.getElementById('result');
+    function say(text) { result.textContent = text; }
+    function outcome(kind, promise) {
+      say(kind + ': pending');
+      promise.then(function () { say(kind + ': shared'); }, function (e) { say(kind + ': ' + (e && e.name ? e.name : String(e))); });
+    }
+    // A small PNG drawn here, so the file's bytes are the page's own and nothing is fetched.
+    function picture() {
+      var canvas = document.createElement('canvas');
+      canvas.width = 160; canvas.height = 120;
+      var g = canvas.getContext('2d');
+      g.fillStyle = '#1b4332'; g.fillRect(0, 0, 160, 120);
+      g.fillStyle = '#ffd6a5'; g.beginPath(); g.arc(80, 60, 40, 0, Math.PI * 2); g.fill();
+      return new Promise(function (resolve) {
+        canvas.toBlob(function (blob) { resolve(new File([blob], 'zenium-demo.png', { type: 'image/png' })); }, 'image/png');
+      });
+    }
+    document.getElementById('share-url').addEventListener('click', function () {
+      if (!navigator.share) return say('url: no navigator.share');
+      outcome('url', navigator.share({ title: document.title, text: 'A page shared from the page', url: location.href }));
+    });
+    document.getElementById('share-file').addEventListener('click', function () {
+      if (!navigator.share) return say('file: no navigator.share');
+      say('file: pending');
+      // The gesture's activation survives the blob's encoding (transient activation lasts seconds).
+      picture().then(function (file) {
+        var can = navigator.canShare ? navigator.canShare({ files: [file] }) : 'no canShare';
+        outcome('file (canShare ' + can + ')', navigator.share({ files: [file], title: 'A picture from the page' }));
+      });
+    });
+    // What a script may ask without a touch: read by the driver.
+    window.__demoProbe = function () {
+      var picked = document.createElement('canvas');
+      return {
+        share: typeof navigator.share,
+        canShare: typeof navigator.canShare,
+        canUrl: navigator.canShare ? navigator.canShare({ url: location.href }) : null,
+        canEmpty: navigator.canShare ? navigator.canShare({}) : null,
+        canFile: navigator.canShare ? navigator.canShare({ files: [new File(['x'], 'x.txt', { type: 'text/plain' })] }) : null,
+        fragmentDirective: 'fragmentDirective' in document
+      };
+    };
+    // A share asked for without a user gesture: the promise must reject with NotAllowedError.
+    window.__demoShareWithoutGesture = function () {
+      return navigator.share({ title: 'no gesture', url: location.href }).then(
+        function () { return 'shared'; },
+        function (e) { return e && e.name ? e.name : String(e); }
+      );
+    };
+  })();
+</script>
+</body>
+</html>
