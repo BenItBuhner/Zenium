@@ -34,6 +34,8 @@ object SyncPeer {
     private const val IV_BYTES = 12
     private const val TAG_BYTES = 16
     private const val FILE_EXT = ".zensync"
+    /** The documents' extension (`DOCUMENT_EXT`): a build that knows only `.zensync` files never reads them. */
+    const val DOCUMENT_EXT = ".zenpage"
 
     /** The directory every device's file sits in under the chosen folder (`SYNC_DIR_NAME` in `transport.ts`). */
     const val DIR_NAME = "zenium-sync"
@@ -62,6 +64,45 @@ object SyncPeer {
 
     /** The salt a device file's envelope carries (the folder's, shared by every device through the first file). */
     fun saltOf(deviceFileText: String): String = JSONObject(deviceFileText).getJSONObject("envelope").getString("salt")
+
+    // --- the documents (W4-3, `src/core/sync/documents.ts`) -------------------------------------
+
+    /** A document's id as its file name carries it (`safeId`): the characters every file system accepts. */
+    fun safeId(id: String): String = id.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+
+    /** `<deviceId>.tabs.zenpage`: the device's open tabs, rewritten as they change (`openTabsName`). */
+    fun openTabsName(deviceId: String): String = "${safeId(deviceId)}.tabs$DOCUMENT_EXT"
+
+    /** `<targetId>.inbox.<sendId>.zenpage`: a tab sent TO `targetId`, which opens it once and removes the file (`inboxName`). */
+    fun inboxName(targetId: String, sendId: String): String = "${safeId(targetId)}.inbox.${safeId(sendId)}$DOCUMENT_EXT"
+
+    /**
+     * The text of a document (`SyncDocument`): the kind and the writer's identity in the clear,
+     * the payload under the shared key. `kind` is `history`, `open-tabs` or `send-tab`; the
+     * envelope seals the payload's JSON as `encryptJson` does (`OpenTabsDocument`: `{ v: 1, tabs }`;
+     * `SendTabDocument`: `{ v: 1, id, url, title, at, from: { id, name } }`).
+     */
+    fun document(kind: String, deviceId: String, deviceName: String, updatedAt: Long, envelope: JSONObject): String =
+        JSONObject()
+            .put("kind", kind)
+            .put("deviceId", deviceId)
+            .put("deviceName", deviceName)
+            .put("updatedAt", updatedAt)
+            .put("envelope", envelope)
+            .toString()
+
+    /** One tab of an `open-tabs` document (`SyncRemoteTab`), most recently active first in the list. */
+    fun remoteTab(tabId: String, url: String, title: String, lastActive: Long, favicon: String? = null, windowId: String? = null): JSONObject =
+        JSONObject().put("tabId", tabId).put("url", url).put("title", title)
+            .put("favicon", favicon ?: JSONObject.NULL).put("lastActive", lastActive).put("windowId", windowId ?: JSONObject.NULL)
+
+    /** The plaintext of an `open-tabs` document: `{ v: 1, tabs }`. */
+    fun openTabsPayload(tabs: List<JSONObject>): String = JSONObject().put("v", 1).put("tabs", JSONArray(tabs)).toString()
+
+    /** The plaintext of a `send-tab` document: the page one device sends another, `from` the sender. */
+    fun sendTabPayload(sendId: String, url: String, title: String, at: Long, fromId: String, fromName: String): String =
+        JSONObject().put("v", 1).put("id", sendId).put("url", url).put("title", title).put("at", at)
+            .put("from", JSONObject().put("id", fromId).put("name", fromName)).toString()
 
     // --- the key ---------------------------------------------------------------------------------
 
