@@ -88,24 +88,28 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
 
     override fun demo() {
         // 1. Light: the package at the activity's VIEW intent before the chrome is up; the prompt
-        //    is the chassis's sheet, answered with Add extension.
+        //    is the chassis's sheet, answered with Add extension. The install lands under the id
+        //    the store gives an unsigned zip (`packageFromZip`: derived from the manifest's name,
+        //    not the store's id the folder was pushed under), so the record is found by name.
         val lightPrompt = promptStill("light", accept = true)
         results.put("promptLight", lightPrompt)
-        awaitExtension(SIDELOAD_ID, 120_000)
+        val installed = awaitExtension(SIDELOAD_NAME, 120_000)
+        val id = installed.getString("id")
+        results.put("installedAs", installed)
 
         // 2. Dark Reader's popup in the extension sheet, light.
-        results.put("popupLight", popupStill("light"))
+        results.put("popupLight", popupStill(id, "light"))
 
         // 3. The dark scheme: the chrome's setting and the system's night mode together.
         coreInvoke("settings.update", """{"colorScheme":"dark"}""")
         shellCommand("cmd uimode night yes")
         SystemClock.sleep(4_000)
         ensureForeground()
-        results.put("popupDark", popupStill("dark"))
+        results.put("popupDark", popupStill(id, "dark"))
 
         // 4. The install removed, the same handover again in the dark: the prompt, then Cancel.
-        coreInvoke("extension.remove", """{"id":${JSONObject.quote(SIDELOAD_ID)}}""")
-        waitUntil(15_000) { extensions().none { it.optString("id") == SIDELOAD_ID } }
+        coreInvoke("extension.remove", """{"id":${JSONObject.quote(id)}}""")
+        waitUntil(15_000) { extensions().none { it.optString("id") == id } }
         results.put("promptDark", promptStill("dark", accept = false))
         SystemClock.sleep(1_500)
     }
@@ -161,8 +165,8 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
 
     // --- the popup in the extension sheet --------------------------------------------------------
 
-    private fun popupStill(scheme: String): JSONObject {
-        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(SIDELOAD_ID)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+    private fun popupStill(id: String, scheme: String): JSONObject {
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         val ready = waitUntil(45_000) {
             val view = popupView() ?: return@waitUntil false
             eval(view, "String(!!(document.body && document.body.innerText.length > 40))") == "true"
@@ -196,10 +200,18 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
         return (0 until list.length()).map { list.getJSONObject(it) }
     }
 
-    private fun awaitExtension(id: String, timeoutMs: Long) {
-        check(waitUntil(timeoutMs) { extensions().any { it.optString("id") == id && it.optBoolean("enabled") } }) {
-            "$id was not listed as installed and enabled within $timeoutMs ms"
+    /** The installed, enabled record whose name is `name` (the id is the store's to give); its `id` and `name`. */
+    private fun awaitExtension(name: String, timeoutMs: Long): JSONObject {
+        var found: JSONObject? = null
+        check(
+            waitUntil(timeoutMs) {
+                found = extensions().firstOrNull { it.optString("name") == name && it.optBoolean("enabled") }
+                found != null
+            }
+        ) {
+            "$name was not listed as installed and enabled within $timeoutMs ms (listed: ${extensions().map { it.optString("name") + " " + it.optString("id") }})"
         }
+        return JSONObject().put("id", found!!.getString("id")).put("name", name)
     }
 
     /** A visible, clickable node reading one of `labels`, in any window on screen; the smallest when several. */
@@ -275,7 +287,10 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
 
     companion object {
         private const val TAG = "ExtensionSheetStills"
+        /** The store id the script pushes Dark Reader's folder under; the sideloaded zip installs under the store's own id for an unsigned package. */
         const val SIDELOAD_ID = "eimadpbcbfnmbkopoojfekhnkhdbieeh"
+        /** Dark Reader's name as the record lists it (the manifest's `__MSG_extension_name__` resolved). */
+        const val SIDELOAD_NAME = "Dark Reader"
         /** The prompt's verbs (`promptCopy.ts`). */
         private val ACCEPT_LABELS = setOf("Add extension", "Update extension", "Allow")
         private const val CANCEL_LABEL = "Cancel"
