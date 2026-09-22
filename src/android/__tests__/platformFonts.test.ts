@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Platform } from '../../core/platform'
 import type { Bridge } from '../bridge'
 import { AndroidPlatform, type BootInfo } from '../platform'
 
@@ -56,7 +57,7 @@ describe('AndroidPlatform.pageFonts', () => {
   })
 
   it('has no languages host: WebView sends the system languages (the recorded CT-41 limit)', () => {
-    const platform = new AndroidPlatform(fakeBridge().bridge, BOOT)
+    const platform: Platform = new AndroidPlatform(fakeBridge().bridge, BOOT)
     expect(platform.languages).toBeUndefined()
     expect(platform.capabilities.pageLanguages).toBe(false)
     // The OS's languages still seed a fresh profile's list, read off the chrome document.

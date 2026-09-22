@@ -5,7 +5,6 @@ import { Browser } from '../browser'
 import type {
   AppHost,
   Platform,
-  SpellcheckDictionaryStatus,
   SpellcheckHost,
   StoreIO,
   TabView,
@@ -66,7 +65,7 @@ function fakePlatform(
     locales,
     availableLanguages: () => options.dictionaries ?? ['en-US', 'de-DE', 'fr'],
     apply: (enabled, languages) => void recorded.spellcheck.push({ enabled, languages: [...languages] }),
-    onDictionaryStatus: (_listener: (code: string, status: SpellcheckDictionaryStatus) => void) => {},
+    onDictionaryStatus: () => {},
     words: () => [],
     addWord: () => {},
     removeWord: () => {}
