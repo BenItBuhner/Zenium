@@ -372,9 +372,10 @@ function appMenuFolded(h: Harness, win = h.win): string[] {
 
 /**
  * The desktop app menu: Firefox's groups (design language v2 §6 "Menus") – the tabs and windows;
- * the library; the page's actions; the app's – with the rest in submenus, so it stands on an
- * 800 px window. Submenus flattened one level (`labels`); the More Tools and Help submenus are
- * asserted whole below.
+ * the library; the page's actions; the app's in Firefox's order (Settings, More Tools, Help,
+ * Quit: "settings, tools, help, quit") – with the rest in submenus, so it stands on an 800 px
+ * window. Submenus flattened one level (`labels`); the More Tools and Help submenus are asserted
+ * whole below.
  */
 const DESKTOP_APP_MENU = [
   'New Tab',
@@ -409,6 +410,8 @@ const DESKTOP_APP_MENU = [
   'Print…',
   'Save Page As…',
   'Reader View',
+  '-',
+  'Settings',
   'More Tools',
   'More Tools > New Space…',
   'More Tools > New Blank Window',
@@ -422,8 +425,6 @@ const DESKTOP_APP_MENU = [
   'More Tools > -',
   'More Tools > Resources',
   'More Tools > Developer Tools',
-  '-',
-  'Settings',
   'Help',
   'Help > Zenium Help',
   'Help > Keyboard Shortcuts',
@@ -455,7 +456,12 @@ function deepItem(items: MenuItemTemplate[], label: string): MenuItemTemplate {
 
 describe('the app menu', () => {
   it("on the desktop has Firefox's groups: the tabs and windows, the library, the page's actions, the app's (§6)", () => {
-    expect(appMenu(harness(DESKTOP))).toEqual(DESKTOP_APP_MENU)
+    const h = harness(DESKTOP)
+    expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
+    // The app group closes the menu in Firefox's order and §6's – settings, tools, help, quit –
+    // under the last separator: More Tools is the app's long tail, not the page's.
+    const top = topLabels(h.shown())
+    expect(top.slice(top.lastIndexOf('-') + 1)).toEqual(['Settings', 'More Tools', 'Help', 'Quit'])
   })
 
   it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {

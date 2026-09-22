@@ -2411,7 +2411,8 @@ export class Menus {
    * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One set of items for
    * every layout, in two orders. The sidebar layouts (desktop and tablet) take Firefox's groups
    * (design language v2 §6 "Menus"): the tabs and windows; the library – bookmarks, history,
-   * downloads, passwords, add-ons; the page's actions; the app's – Settings, Help, Quit – about
+   * downloads, passwords, add-ons; the page's actions; the app's – Settings, More Tools, Help,
+   * Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
    * eighteen rows and three separators (a fourth under the "Now Playing…" row while the media
    * hub's button has folded), so the menu stands on an 800 px window without scrolling (§6: a
    * menu is exempt from §9.20's 60% cap and takes the room to the window's bottom margin). What
@@ -2813,7 +2814,7 @@ export class Menus {
         ...addons,
         separator,
         // The page's actions, in the brief's order: find, zoom, print, save, share and
-        // translate, the reader's, then the rest behind More Tools.
+        // translate, then the reader's; the long tail is the app group's More Tools.
         findInPage,
         ...zoomSheet,
         ...zoom,
@@ -2825,10 +2826,14 @@ export class Menus {
         ...textPreferences,
         ...listen,
         ...pageControls,
+        separator,
+        // The app's, in Firefox's order and §6's: settings, tools, help, quit.
+        settings,
         {
           label: 'More Tools',
-          // Chrome's More tools, which carried "Create shortcut…" first and carries its window
-          // rows (Name window…), Task manager and Developer tools the same way: the install row
+          // Firefox's "More tools" row of its app group; Chrome's More tools, which carried
+          // "Create shortcut…" first and carries its window rows (Name window…), Task manager
+          // and Developer tools the same way, gives the submenu its contents: the install row
           // (Create Shortcut…, or Open in <app>), Zenium's space and window actions, the
           // window's layout toggles, the captures, then the developer's and the resources.
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
@@ -2851,9 +2856,6 @@ export class Menus {
             ...devtools
           ])
         },
-        separator,
-        // The app's.
-        settings,
         {
           label: 'Help',
           // The menu bar's Help menu (macOS), with the About row that closed the menu before.
