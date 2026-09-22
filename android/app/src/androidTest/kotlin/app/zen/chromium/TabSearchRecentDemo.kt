@@ -114,8 +114,10 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("no field under the header", !inDom(FIELD))
         expect("the magnifier stands in the header, collapsed: ${headerLabels()}", headerLabels() == listOf("Search tabs", "Spaces", "More"))
         expect("nothing has the focus and the keyboard is down (active element: '${activeElement()}')", activeElement() == "BODY" && !imeShown())
+        // The Private segment draws only where the WebView has multi-profile (`capabilities.privateTabs`);
+        // the Google APIs image's WebView has not, so the recipe reads Tabs | Recent.
         val segments = segmentLabels()
-        expect("the segment reads Tabs | Recent (no private tabs in this profile): $segments", segments == listOf("Tabs", "Recent"))
+        expect("the segment reads Tabs | Recent (| Private where the WebView has profiles): $segments", segments == listOf("Tabs", "Recent") || segments == listOf("Tabs", "Recent", "Private"))
     }
 
     /** 2. The magnifier opens the field, focused, the keyboard with it. */
@@ -295,7 +297,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("each heading says when the device was last active: $asides", asides.size == 2 && asides.all { it.startsWith("Last active ") })
         val rows = remoteRowTitles()
         expect("the rows are the devices' tabs, newest activity first: $rows", rows == listOf("Web browser - Wikipedia", "Software Library : Free Software : Internet Archive", "Pull requests · BenItBuhner/Zenium", "Web Share API - Web APIs | MDN", "Recents – Figma", "Hacker News"))
-        val hosts = jsList("Array.prototype.map.call(document.querterAll?[]:document.querySelectorAll('[data-testid=\"overview-recent-device\"] .zen-list-subtitle'),function(e){return e.textContent.trim()})")
+        val hosts = jsList("Array.prototype.map.call(document.querySelectorAll('[data-testid=\"overview-recent-device\"] .zen-list-subtitle'),function(e){return e.textContent.trim()})")
         expect("each row shows its host: $hosts", hosts.firstOrNull() == "en.wikipedia.org" && hosts.size == 6)
         expect("a row without a favicon draws the globe", jsString("(function(){var r=document.querySelectorAll('[data-testid=\"overview-recent-device\"] .zen-v2-row')[1];return r&&r.querySelector('svg')?'yes':''})()") == "yes")
         expect("Recently closed still lists Coffee", closedTitles().any { it.startsWith("Coffee") })
@@ -587,9 +589,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     private fun headerLabels(): List<String> =
         jsList("Array.prototype.map.call(document.querySelectorAll('.zen-overview > header button'),function(b){return b.getAttribute('aria-label')||b.textContent.trim()})")
 
-    private fun headerTitle(): String = textOf(".zen-overview > header [data-testid=\"overview-title\"]").ifEmpty {
-        jsString("(function(){var h=document.querySelector('.zen-overview > header');if(!h)return '';var s=h.querySelector('span');return s?s.textContent.trim():''})()")
-    }
+    private fun headerTitle(): String = textOf(".zen-overview > header .zen-title")
 
     private fun segmentLabels(): List<String> =
         jsList("Array.prototype.map.call(document.querySelectorAll('.zen-v2-segment [role=\"tab\"]'),function(b){return b.textContent.trim()})")
