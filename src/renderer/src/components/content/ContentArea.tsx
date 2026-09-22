@@ -546,7 +546,7 @@ function SplitDropZones({
             left: p.header.x + PANE_INSET,
             top: p.header.y + PANE_INSET,
             width: Math.max(0, p.header.width - PANE_INSET * 2),
-            height: Math.max(0, p.header.height + p.rect.height - PANE_INSET * 2)
+            height: Math.max(0, p.header.height + p.frame.height - PANE_INSET * 2)
           }}
         >
           {swap ? 'Swap panes' : 'Replace this pane'}

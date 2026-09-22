@@ -1543,6 +1543,22 @@
     border-radius: var(--zen-content-radius);
     box-shadow: var(--zen-frame-shadow);
   }
+  /*
+   * The active pane of a split (content/SplitChrome.tsx; design language v2 §9.35, Zen's
+   * `--zen-active-split-outline-color`): a 2 px outline in the window's accent inside the pane's
+   * frame's radius – the frame's 12 outside, the view's 10 inside, concentric (§2) – on the
+   * band every pane's view keeps inside its frame (`SPLIT_OUTLINE`, lib/layout.ts). With the
+   * §9.35 group row in the sidebar it is the whole indicator: no underline under the pane's
+   * header, no glyph on the rows, no chip in the pill. `--zen-accent`, never `--v2-accent`: the
+   * frame is the window's, and a private window's accent follows.
+   */
+  .zen-split-pane-outline {
+    position: absolute;
+    pointer-events: none;
+    border-radius: var(--zen-content-radius);
+    outline: 2px solid var(--zen-accent);
+    outline-offset: -2px;
+  }
 
   /*
    * Where dialogs and popovers render (lib/portals.tsx). The frame dialog host lies over the
