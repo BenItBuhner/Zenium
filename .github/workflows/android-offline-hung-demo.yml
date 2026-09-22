@@ -1,0 +1,102 @@
+name: Android offline and hung page demo
+
+# Records wave 4's offline and hung-page rows (W4-5: ERR-07 the "No internet connection" banner
+# and "Back online", ERR-06 the offline error page reloading itself when the network returns,
+# ERR-16 / OS-36 the unresponsive-page prompt, ERR-15 the crash page's variants) on a
+# hardware-accelerated Android emulator under REAL fingers, and uploads the video, the stills
+# and the findings. OfflineHungDemo reads each claim off the host (its connectivity judge, its
+# unresponsive policy, the tabs' URLs), the chrome's DOM or the accessibility tree, never off the
+# still alone, and the run FAILS when one does not hold: the radios off (`svc wifi disable`,
+# `svc data disable`) put the §9.33 banner up; a page asked for offline lands on the error page
+# with the offline words; the radios back show the toast and the page reloads itself, no finger
+# on Reload; the debug hook (Host.debugEndRenderer, debuggable builds alone) ends the shared
+# renderer as a crash, again within the minute, and as the system's kill, for the crash page's
+# three words with Reload and Show tabs under a finger; a page of the driver's own hangs its
+# renderer and a finger's tap on it brings the native §9.23 prompt after the platform's ~5 s,
+# the page answering again takes it down, and on a page hung for good Wait keeps it, the prompt
+# returns after the policy's grace and Exit page ends the renderer into the crash page's hung
+# variant. The site is the driver's own on the loopback; the offline scenes use example.com /
+# example.org, the pages the error-pages demo (#98) loads.
+#
+# Two acts, in parallel, each on its own emulator: the light and the dark colour scheme (the
+# same claims; each act's `10-unresponsive-prompt` still is the native sheet's design record,
+# `media/android-offline-hung-native-prompt-{light,dark}.png`). Dispatch-only, like the other
+# demos: about twelve minutes an act, and it says nothing about a change being correct. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the
+# driver and the theme. One more boot per act when the emulator itself went away under the
+# driver, never when the driver failed.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W4-5, #319): the branch's pushes run the demo while the PR is in progress; removed
+  # in the final head, as the brief asks.
+  push:
+    branches: [cursor/android-offline-hung-67ce]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-offline-hung-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  light:
+    name: Offline and hung page demo, light
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OfflineHungDemo
+        DEMO_DIR=offline-hung-demo
+        DEMO_OUT=artifacts/android-offline-hung-demo
+        DEMO_VIDEO=android-offline-hung-demo-light.mp4
+        DEMO_THEME=light
+      artifact-name: android-offline-hung-demo-light
+      artifact-path: artifacts/android-offline-hung-demo/
+
+  light-again:
+    name: Offline and hung page demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OfflineHungDemo
+        DEMO_DIR=offline-hung-demo
+        DEMO_OUT=artifacts/android-offline-hung-demo
+        DEMO_VIDEO=android-offline-hung-demo-light.mp4
+        DEMO_THEME=light
+      artifact-name: android-offline-hung-demo-light-second-boot
+      artifact-path: artifacts/android-offline-hung-demo/
+
+  dark:
+    name: Offline and hung page demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OfflineHungDemo
+        DEMO_DIR=offline-hung-demo
+        DEMO_OUT=artifacts/android-offline-hung-demo
+        DEMO_VIDEO=android-offline-hung-demo-dark.mp4
+        DEMO_THEME=dark
+      artifact-name: android-offline-hung-demo-dark
+      artifact-path: artifacts/android-offline-hung-demo/
+
+  dark-again:
+    name: Offline and hung page demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.OfflineHungDemo
+        DEMO_DIR=offline-hung-demo
+        DEMO_OUT=artifacts/android-offline-hung-demo
+        DEMO_VIDEO=android-offline-hung-demo-dark.mp4
+        DEMO_THEME=dark
+      artifact-name: android-offline-hung-demo-dark-second-boot
+      artifact-path: artifacts/android-offline-hung-demo/
