@@ -18,38 +18,50 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Records the phone overview's tab search (matrix TAB-21; v2 §9.3, §9.12, §11.4) and its Recent
- * pane (TAB-02; §9.17, §9.27, §10.3), every press a real touch and every outcome read off the
+ * Records the phone overview's tab search (matrix TAB-21; v2 §9.3, §9.12, §9.34, §11.4) with its
+ * reach into History's two groups, and those groups on the phone History page (TAB-02; §9.17,
+ * §10.1, §10.3, §10.4; the #316 gate: no Recent pane – the recently closed tabs and the other
+ * devices' tabs are History's groups, and the search lists what it finds of them as rows under
+ * headings beneath the matching cards), every press a real touch and every outcome read off the
  * chrome's DOM or the core's state, never off the chrome's word alone:
  *
- *  1. the overview opens with the search closed: no field, no keyboard, no field focused;
+ *  1. the overview opens with the search closed: no field, no keyboard, no field focused; the
+ *     segment holds no Recent;
  *  2. the header's magnifier opens the §9.12 field pinned under the header, focused, the
  *     keyboard up with it (the tap is the user's ask; nothing else ever focuses it);
  *  3. typing narrows the pane's cards by TITLE ("wiki": Damping, Tea, Coffee stay; the
  *     Research group's card stays, narrowed to Damping), the dropped cards departing in place
  *     (counted as they mount) and the survivors gliding (traced: `search-filter-overview`), the
- *     status region told "3 tabs found";
- *  4. a query nothing matches leaves "No tabs found" over the New Tab card, the group's card
- *     dissolved with its last match, the region told;
- *  5. the field's X clears the query: every card back, the field and the keyboard staying, the
- *     X now reading Close search;
+ *     New Tab card leaving with the dropped cards (§9.34: it is no match), the status region
+ *     told "3 tabs found";
+ *  4. a query nothing matches leaves "No tabs found" where the grid was, no New Tab card under
+ *     it, the group's card dissolved with its last match, the region told;
+ *  5. the field's X clears the query: every card back, the New Tab card last, the field and
+ *     the keyboard staying, the X now reading Close search;
  *  6. typing narrows by ADDRESS ("cern": World Wide Web alone, in its group's card, its title
  *     saying nothing of it);
  *  7. the system back: with the keyboard up it is the keyboard's (Android's rule, Chrome's
  *     omnibox the same), then it clears the query, then closes the field, the overview staying;
  *  8. Escape (a hardware keyboard's) clears then closes the same way, the soft keyboard put
  *     away first;
- *  9. a card closed by touch, then the Recent segment: Recently closed lists it; From your other
- *     devices, with sync off, reads §9.17's sentence and the row to Settings › Sync;
- * 10. the row leaves the overview for Settings › Sync;
- * 11. sync set up (the engine's own, over a plain directory: [FileTree] on the host's debug hook)
+ *  9. a card closed by touch, then the search reaches it: "coffee" keeps the RFC 2324 card
+ *     (its title) and lists the closed Coffee under a Recently closed heading beneath the grid,
+ *     the region told "2 tabs found";
+ * 10. the History page (the app menu's row) with sync off: Recently closed lists Coffee; the
+ *     "From your other devices" heading stands over §9.17's sentence and the Turn on sync row;
+ * 11. the row leaves the page for Settings › Sync;
+ * 12. sync set up (the engine's own, over a plain directory: [FileTree] on the host's debug hook)
  *     and two other devices' `open-tabs` documents seeded into the folder; Sync now reads them;
- * 12. the Recent pane lists both devices, most recently published first, each heading the
- *     device's name with "Last active …", each tab a row with favicon, title and host;
- * 13. a remote row opens its page in a new active tab and the overview leaves;
- * 14. a device heading held: the Hide device sheet; Hide device takes the device off the list
- *     and Show 1 hidden device brings it back;
- * 15. a Recently closed row restores the tab and the overview leaves.
+ * 13. the History page lists each device as its own group, most recently published first, the
+ *     heading its name with "Last active …" as the aside and no heading over them (§10.1), each
+ *     tab a row with favicon, title and host;
+ * 14. a device's row opens its page in a new active tab and the page leaves;
+ * 15. a device heading held: the device's sheet; Hide Device takes the device off the page and
+ *     Show 1 hidden device brings it back;
+ * 16. the search reaches the other devices: "figma" (the laptop's alone) empties the grid – the
+ *     §9.17 sentence "No open tabs found" over the From your other devices rows – and the row
+ *     opens the page in a new tab, the overview leaving;
+ * 17. the search's Recently closed row restores Coffee and the overview leaves on it.
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
  * accessibility bounds of the overview's Spaces button), because the WebView's accessibility
@@ -80,7 +92,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     override fun warmUp() {
         findings = File(out, "tab-search-recent-findings.txt")
         findings.writeText(
-            "Zenium Android tab search and Recent pane checks (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n\n"
+            "Zenium Android tab search and History groups checks (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n\n"
         )
         flingLeft(); settle()
         touchWithoutGesture(); settle()
@@ -100,13 +112,15 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         typingNarrowsByAddress()
         backClearsThenCloses()
         escapeClearsThenCloses()
-        recentWithSyncOff()
+        closedTabReachedBySearch()
+        historyWithSyncOff()
         rowToSyncSettings()
         setUpSyncWithTwoDevices()
-        recentWithDevices()
+        historyWithDevices()
         openRemoteTab()
         hideAndShowDevice()
-        restoreClosedTab()
+        devicesReachedBySearch()
+        restoreClosedFromSearch()
 
         finding(if (failures == 0) "\nALL CHECKS PASSED" else "\n$failures CHECK(S) FAILED")
     }
@@ -121,9 +135,9 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         // The Tabs button that was touched may hold the focus; what matters is that no field does.
         expect("no field has the focus and the keyboard is down (active element: '${activeElement()}')", activeElement() != "INPUT" && !imeShown())
         // The Private segment draws only where the WebView has multi-profile (`capabilities.privateTabs`);
-        // the Google APIs image's WebView has not, so the recipe reads Tabs | Recent.
+        // the Google APIs image's WebView has not. No Recent segment on either (§9.34: History's groups).
         val segments = segmentLabels()
-        expect("the segment reads Tabs | Recent (| Private where the WebView has profiles): $segments", segments == listOf("Tabs", "Recent") || segments == listOf("Tabs", "Recent", "Private"))
+        expect("the segment starts at Tabs and holds no Recent: $segments", segments.firstOrNull() == "Tabs" && "Recent" !in segments)
     }
 
     /** 2. The magnifier opens the field, focused, the keyboard with it. */
@@ -161,7 +175,8 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("the group stays a group card, narrowed to its one match: ${groupCards()}", inDom(GROUP) && groupCards() == listOf(DAMPING))
         expect("the essentials narrowed too (none match)", essentialCount() == 0)
         val exits = exitsSeen()
-        expect("the dropped cards departed in place over the grid (§11.4): $exits exit(s) drawn", exits >= 1)
+        expect("the dropped cards departed in place over the grid (§11.4): ${exits.cards} exit(s) drawn", exits.cards >= 1)
+        expect("the New Tab card left with them (§9.34): off the grid, its exit drawn where it stood (${exits.newTab})", !inDom(NEW_TAB) && exits.newTab >= 1)
         expect("the survivors glided from where they stood (Tea moved ${moved(before, after)} of 3)", moved(before, after) >= 1)
         expect("the status region told '3 tabs found'", awaitAnnouncement("3 tabs found"))
         expect("the X reads Clear search on a query", jsString(clearLabelJs()) == "Clear search")
@@ -169,15 +184,16 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         still("search-wiki")
     }
 
-    /** 4. A query nothing matches: "No tabs found" over the New Tab card. */
+    /** 4. A query nothing matches: "No tabs found" where the grid was, no New Tab card. */
     private fun nothingFound() {
         finding("\n4. Nothing found: 'wikiz'")
         watchAnnouncements()
         keys("z")
         expect("no card stands", awaitUntil(4_000) { cardBoxes().isEmpty() })
         expect("the group dissolved with its last match (no group card)", awaitDom("!document.querySelector('$GROUP')"))
-        expect("'No tabs found' reads over the grid", awaitDom("document.querySelector('$EMPTY')&&document.querySelector('$EMPTY').textContent.trim()==='No tabs found'"))
-        expect("the New Tab card stays", inDom(NEW_TAB))
+        expect("'No tabs found' reads where the grid was (§9.17)", awaitDom("document.querySelector('$EMPTY')&&document.querySelector('$EMPTY').textContent.trim()==='No tabs found'"))
+        expect("the New Tab card is off the grid with the rest (§9.34)", !inDom(NEW_TAB))
+        expect("nothing closed and sync off: no lists under the sentence", !inDom(REACH))
         expect("the status region told 'No tabs found'", awaitAnnouncement("No tabs found"))
         still("search-none")
     }
@@ -190,6 +206,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         val cards = awaitCards((0 until CARDS).map { REGULAR[it] }.toSet())
         expect("every card is back: ${cards.size} regular, ${essentialCount()} essentials", cards.size == CARDS && essentialCount() == ESSENTIALS)
         expect("the group is a group card again", awaitDom("!!document.querySelector('$GROUP')"))
+        expect("the New Tab card is back, the grid's last cell", awaitDom("!!document.querySelector('$NEW_TAB')") && lastCellIsNewTab())
         expect("the field stays, focused, the keyboard up", inDom(FIELD) && activeElement() == "INPUT" && imeShown())
         expect("the X reads Close search again", jsString(clearLabelJs()) == "Close search")
         still("search-cleared")
@@ -221,7 +238,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("with the keyboard up the back is the keyboard's: it goes, the query ('${value()}') and the field stay", keyboardFirst && !imeShown() && inDom(FIELD))
         if (keyboardFirst) back()
         expect("the next back clears the query, the field stays", awaitUntil(4_000) { value().isEmpty() } && inDom(FIELD))
-        expect("every card is back", awaitCards(REGULAR.toSet()).size == CARDS)
+        expect("every card is back, the New Tab card with them", awaitCards(REGULAR.toSet()).size == CARDS && inDom(NEW_TAB))
         back()
         expect("the next back closes the field", awaitUntil(4_000) { !inDom(FIELD) })
         expect("the overview stays up", overviewOpen() || inDom(".zen-overview"))
@@ -261,36 +278,56 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         awaitIme(false, 6_000)
     }
 
-    /** 9. Coffee closed by touch; the Recent segment: the closed tab listed, sync off in the second group. */
-    private fun recentWithSyncOff() {
-        finding("\n9. A tab closed, then the Recent pane with sync off")
+    /** 9. Coffee closed by touch; the search reaches it under a Recently closed heading beneath the cards. */
+    private fun closedTabReachedBySearch() {
+        finding("\n9. A tab closed, then the search reaches it: 'coffee'")
         val closed = touchUntil("Coffee's close", { show(card(COFFEE)); domRect("${card(COFFEE)} .zen-overview-card-close") }, { !tabExists(COFFEE) }, waitMs = 4_000)
         expect("Coffee's card closes the tab by touch", closed)
         awaitToastGone()
-        toRecent()
-        expect("the header reads Recent, without a count or a magnifier: ${headerLabels()}", headerTitle() == "Recent" && !inDom("[data-testid=\"overview-count\"]") && headerLabels() == listOf("Spaces"))
-        expect("Recently closed lists Coffee", awaitUntil(6_000) { closedTitles().any { it.startsWith("Coffee") } })
-        expect("the second group reads §9.17's sentence: '${textOf(SYNC_OFF)}'", textOf(SYNC_OFF) == "Turn on sync to see tabs from your other devices")
-        expect("with the row to Settings › Sync: 'Turn on sync'", textRect(ACTION, "Turn on sync") != null)
-        expect("the headings read Recently closed, From your other devices: ${headings()}", headings() == listOf("Recently closed", "From your other devices"))
-        still("recent-sync-off")
+        openSearch()
+        watchAnnouncements()
+        keys("coffee")
+        val after = awaitCards(setOf(RFC))
+        expect("RFC 2324 alone stays a card (Coffee in its title): ${after.keys}", after.keys == setOf(RFC))
+        expect("the New Tab card is off the grid under the query", !inDom(NEW_TAB))
+        expect("the closed Coffee is listed beneath the cards", awaitUntil(8_000) { reachClosedTitles().any { it.startsWith("Coffee") } })
+        expect("under one heading, Recently closed: ${reachHeadings()}", reachHeadings() == listOf("Recently closed"))
+        expect("the row reads its host: '${reachSubtitles().firstOrNull()}'", reachSubtitles().firstOrNull()?.startsWith("en.wikipedia.org") == true)
+        expect("the lists stand below the grid's cards", (domRect(REACH)?.top ?: 0) > (after[RFC]?.bottom ?: Int.MAX_VALUE))
+        expect("no empty sentence with a card standing", !inDom(EMPTY))
+        expect("the status region counted the row with the card: '2 tabs found'", awaitAnnouncement("2 tabs found"))
+        still("search-reach-closed")
+        leaveOverview()
     }
 
-    /** 10. The Turn on sync row leaves the overview for Settings › Sync. */
+    /** 10. The History page with sync off: Coffee under Recently closed; the umbrella heading over §9.17's sentence and the row. */
+    private fun historyWithSyncOff() {
+        finding("\n10. The History page with sync off")
+        openHistory()
+        expect("Recently closed lists Coffee", awaitUntil(8_000) { historyClosedTitles().any { it.startsWith("Coffee") } })
+        expect("the From your other devices group reads §9.17's sentence: '${textOf(SYNC_OFF)}'", textOf(SYNC_OFF) == "Turn on sync to see tabs from your other devices")
+        expect("with the row to Settings › Sync: 'Turn on sync'", textRect(ACTION, "Turn on sync") != null)
+        val headings = listHeadings()
+        expect("the headings read Recently closed, From your other devices, then the days: $headings", headings.take(2) == listOf("Recently closed", "From your other devices"))
+        expect("no device group with sync off", !inDom(DEVICE))
+        still("history-sync-off")
+    }
+
+    /** 11. The Turn on sync row leaves the page for Settings › Sync. */
     private fun rowToSyncSettings() {
-        finding("\n10. The row to Settings › Sync")
+        finding("\n11. The row to Settings › Sync")
         val left = touchUntil("the Turn on sync row", { textRect(ACTION, "Turn on sync") }, { activeCoreTab()?.optString("url") == SYNC_SETTINGS_URL }, waitMs = 8_000)
         expect("the row opens Settings › Sync in the active tab: ${activeCoreTab()?.optString("url")}", left)
-        expect("the overview left", awaitUntil(6_000) { !inDom(".zen-overview") })
+        expect("the History page left", awaitUntil(6_000) { !inDom(DEVICES) })
         still("sync-settings")
     }
 
     /**
-     * 11. Sync on, over a plain directory (the host's debug hook), and two other devices' open
+     * 12. Sync on, over a plain directory (the host's debug hook), and two other devices' open
      * tabs in the folder, read by Sync now.
      */
     private fun setUpSyncWithTwoDevices() {
-        finding("\n11. Sync set up and two devices' open tabs seeded")
+        finding("\n12. Sync set up and two devices' open tabs seeded")
         val folder = File(app.filesDir, SYNC_DIR).apply { deleteRecursively(); mkdirs() }
         instrumentation.runOnMainSync { (activity as MainActivity).host.syncTreeOverride = { FileTree(folder) } }
         chromeJs(
@@ -318,75 +355,107 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("the desktop, published last, comes first", lists.firstOrNull()?.optString("deviceName") == DESKTOP)
     }
 
-    /** 12. The Recent pane with both groups: the devices as headings, their tabs as rows. */
-    private fun recentWithDevices() {
-        finding("\n12. The Recent pane with both devices")
-        openOverview()
-        toRecent()
+    /** 13. The History page with both devices: each its own group headed by its name, no heading over them. */
+    private fun historyWithDevices() {
+        finding("\n13. The History page with both devices")
+        openHistory()
         expect("both devices are listed", awaitUntil(8_000) { deviceNames().size == 2 })
         val names = deviceNames()
         expect("most recently published first: $names", names == listOf(DESKTOP, LAPTOP))
-        val asides = jsList("Array.prototype.map.call(document.querySelectorAll('.zen-recent-device-aside'),function(e){return e.textContent.trim()})")
+        val asides = jsList("Array.prototype.map.call(document.querySelectorAll('.zen-device-heading-aside'),function(e){return e.textContent.trim()})")
         expect("each heading says when the device was last active: $asides", asides.size == 2 && asides.all { it.startsWith("Last active ") })
+        val headings = listHeadings()
+        expect("no umbrella heading: the devices are the page's groups after Recently closed (§10.1): $headings", "From your other devices" !in headings && headings.size >= 3 && headings[0] == "Recently closed" && headings[1].startsWith(DESKTOP) && headings[2].startsWith(LAPTOP))
         val rows = remoteRowTitles()
         expect("the rows are the devices' tabs, newest activity first: $rows", rows == listOf("Web browser - Wikipedia", "Software Library : Free Software : Internet Archive", "Pull requests · BenItBuhner/Zenium", "Web Share API - Web APIs | MDN", "Recents – Figma", "Hacker News"))
-        val hosts = jsList("Array.prototype.map.call(document.querySelectorAll('[data-testid=\"overview-recent-device\"] .zen-list-subtitle'),function(e){return e.textContent.trim()})")
+        val hosts = jsList("Array.prototype.map.call(document.querySelectorAll('$DEVICE .zen-list-subtitle'),function(e){return e.textContent.trim()})")
         expect("each row shows its host: $hosts", hosts.firstOrNull() == "en.wikipedia.org" && hosts.size == 6)
-        expect("a row without a favicon draws the globe", jsString("(function(){var r=document.querySelectorAll('[data-testid=\"overview-recent-device\"] .zen-v2-row')[1];return r&&r.querySelector('svg')?'yes':''})()") == "yes")
-        expect("Recently closed still lists Coffee", closedTitles().any { it.startsWith("Coffee") })
-        val heading = jsString("(function(){var b=document.querySelector('.zen-recent-device-button');return b?b.getAttribute('aria-label'):''})()")
+        expect("a row without a favicon draws the globe", jsString("(function(){var r=document.querySelectorAll('$DEVICE .zen-v2-row')[1];return r&&r.querySelector('svg')?'yes':''})()") == "yes")
+        expect("Recently closed still lists Coffee", historyClosedTitles().any { it.startsWith("Coffee") })
+        val heading = jsString("(function(){var b=document.querySelector('$DEVICE_HEADING');return b?b.getAttribute('aria-label'):''})()")
         expect("TalkBack reads a device heading with both lines: '$heading'", heading.startsWith("$DESKTOP, Last active "))
-        val height = domRect(".zen-recent-device-button")?.height()?.let { it / density }
+        val height = domRect(DEVICE_HEADING)?.height()?.let { it / density }
         expect("the heading's touch target is 44 dp tall (${height?.roundToInt()})", height != null && abs(height - 44f) <= 2f)
-        still("recent-devices")
+        still("history-devices")
     }
 
-    /** 13. A remote row opens the page in a new tab; the overview leaves. */
+    /** 14. A device's row opens the page in a new tab; the History page leaves. */
     private fun openRemoteTab() {
-        finding("\n13. A remote tab's row")
+        finding("\n14. A remote tab's row on the History page")
         val tabsBefore = coreState().getJSONObject("tabs").length()
         val opened = touchUntil("the Hacker News row of the laptop", { textRect(REMOTE_TITLE, "Hacker News") }, { coreState().getJSONObject("tabs").length() == tabsBefore + 1 }, waitMs = 6_000)
         val tab = activeCoreTab()
         expect("the row opened one new tab: ${tabsBefore} -> ${coreState().getJSONObject("tabs").length()}", opened)
         expect("the new tab is active with the row's address: ${tab?.optString("url")}", tab?.optString("url") == LAPTOP_HN_URL)
-        expect("the overview left", awaitUntil(8_000) { !inDom(".zen-overview") })
+        expect("the History page left", awaitUntil(8_000) { !inDom(DEVICES) })
         still("remote-opened")
     }
 
-    /** 14. A device heading held: Hide device, then Show hidden devices. */
+    /** 15. A device heading held: Hide Device, then Show hidden devices. */
     private fun hideAndShowDevice() {
-        finding("\n14. Hide device from the heading's hold")
-        openOverview()
-        toRecent()
+        finding("\n15. Hide Device from the heading's hold")
+        openHistory()
         awaitUntil(8_000) { deviceNames().size == 2 }
-        val heading = steadyRect { textRect(".zen-recent-device-button", LAPTOP) } ?: error("no heading for $LAPTOP")
+        val heading = steadyRect { textRect(DEVICE_HEADING, LAPTOP) } ?: error("no heading for $LAPTOP")
         val point = touchPoint(heading) ?: error("the heading is off the touchable window")
         finding("  hold at ${point.x.roundToInt()},${point.y.roundToInt()} on the laptop's heading")
         val f = Finger()
         f.down(point.x, point.y)
         f.hold(HOLD_MS)
         f.up()
-        val sheet = awaitUntil(SHEET_WAIT) { menuRow("Hide device") != null }
-        expect("the hold opens the device's sheet with Hide device: ${sheetRows()}", sheet && sheetRows() == listOf("Hide device"))
+        val sheet = awaitUntil(SHEET_WAIT) { menuRow("Hide Device") != null }
+        expect("the hold opens the device's sheet with Hide Device: ${sheetRows()}", sheet && sheetRows() == listOf("Hide Device"))
         expect("the sheet is titled with the device: '${sheetTitle()}'", sheetTitle().startsWith(LAPTOP))
         still("hide-device-sheet")
-        touchUntil("Hide device", { steadyRect { menuRow("Hide device") } }, { deviceNames() == listOf(DESKTOP) }, waitMs = SHEET_WAIT)
-        expect("the laptop is off the list: ${deviceNames()}", deviceNames() == listOf(DESKTOP))
+        touchUntil("Hide Device", { steadyRect { menuRow("Hide Device") } }, { deviceNames() == listOf(DESKTOP) }, waitMs = SHEET_WAIT)
+        expect("the laptop is off the page: ${deviceNames()}", deviceNames() == listOf(DESKTOP))
         expect("the way back is a row: 'Show 1 hidden device'", awaitUntil(4_000) { textOf(SHOW_HIDDEN) == "Show 1 hidden device" })
+        expect("the desktop keeps its own group, still with no heading over it: ${listHeadings()}", "From your other devices" !in listHeadings())
         still("device-hidden")
         touchUntil("Show 1 hidden device", { domRect(SHOW_HIDDEN) }, { deviceNames().size == 2 })
         expect("the laptop is back, in its place: ${deviceNames()}", deviceNames() == listOf(DESKTOP, LAPTOP))
         expect("the row is gone with nothing hidden", !inDom(SHOW_HIDDEN))
+        leaveHistory()
     }
 
-    /** 15. A Recently closed row restores the tab; the overview leaves. */
-    private fun restoreClosedTab() {
-        finding("\n15. Restore from Recently closed")
-        val restored = touchUntil("Coffee's closed row", { textRect(CLOSED_TITLE, "Coffee") }, { tabExists(COFFEE) || coreTabWithUrl(COFFEE_URL) != null }, waitMs = 8_000)
+    /** 16. The search reaches the other devices: a query only the laptop answers, the sentence over the rows, the row opening the page. */
+    private fun devicesReachedBySearch() {
+        finding("\n16. The search reaches the other devices: 'figma'")
+        openOverview()
+        openSearch()
+        watchAnnouncements()
+        keys("figma")
+        expect("no card stands", awaitUntil(4_000) { cardBoxes().isEmpty() })
+        expect("the New Tab card is off the grid", !inDom(NEW_TAB))
+        expect("the laptop's Figma tab is listed", awaitUntil(8_000) { reachRemoteTitles() == listOf("Recents – Figma") })
+        expect("under one heading, From your other devices: ${reachHeadings()}", reachHeadings() == listOf("From your other devices"))
+        expect("the row reads its host and the device: '${reachSubtitles().firstOrNull()}'", reachSubtitles().firstOrNull() == "figma.com · $LAPTOP")
+        expect("the grid's sentence names the open tabs (§9.34): '${textOf(EMPTY)}'", textOf(EMPTY) == "No open tabs found")
+        expect("the sentence stands over the lists", (domRect(EMPTY)?.bottom ?: Int.MAX_VALUE) <= (domRect(REACH)?.top ?: 0))
+        expect("the status region told '1 tab found'", awaitAnnouncement("1 tab found"))
+        still("search-reach-devices")
+        val tabsBefore = coreState().getJSONObject("tabs").length()
+        val opened = touchUntil("the Figma row", { textRect(REACH_REMOTE_TITLE, "Recents") }, { coreState().getJSONObject("tabs").length() == tabsBefore + 1 }, waitMs = 6_000)
+        expect("the row opened one new tab: ${tabsBefore} -> ${coreState().getJSONObject("tabs").length()}", opened)
+        expect("the new tab is active with the row's address: ${activeCoreTab()?.optString("url")}", activeCoreTab()?.optString("url") == LAPTOP_FIGMA_URL)
+        expect("the overview left", awaitUntil(8_000) { !inDom(".zen-overview") })
+        awaitIme(false, 6_000)
+        still("search-remote-opened")
+    }
+
+    /** 17. The search's Recently closed row restores the tab; the overview leaves. */
+    private fun restoreClosedFromSearch() {
+        finding("\n17. Restore from the search's Recently closed row")
+        openOverview()
+        openSearch()
+        keys("coffee")
+        expect("Coffee is listed under Recently closed", awaitUntil(8_000) { reachClosedTitles().any { it.startsWith("Coffee") } })
+        val restored = touchUntil("Coffee's closed row", { textRect(REACH_CLOSED_TITLE, "Coffee") }, { tabExists(COFFEE) || coreTabWithUrl(COFFEE_URL) != null }, waitMs = 8_000)
         expect("the row brings the tab back", restored)
         expect("the restored tab is the active one: ${activeCoreTab()?.optString("url")}", awaitUntil(6_000) { activeCoreTab()?.optString("url") == COFFEE_URL })
         expect("the overview left", awaitUntil(8_000) { !inDom(".zen-overview") })
         expect("Recently closed is empty again", awaitUntil(6_000) { JSONArray(coreInvoke("session.recentlyClosed")).length() == 0 })
+        awaitIme(false, 6_000)
         still("restored")
     }
 
@@ -400,12 +469,44 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         SystemClock.sleep(600)
     }
 
-    /** Touch the segment's Recent until the Recent pane is there. */
-    private fun toRecent() {
-        if (inDom(RECENT)) return
-        val came = touchUntil("the segment's Recent", { textRect(".zen-v2-segment [role=\"tab\"]", "Recent") }, { inDom(RECENT) }, waitMs = SHEET_WAIT)
-        if (!came) error("the Recent pane never came from the segment")
-        SystemClock.sleep(900)
+    /** The app menu's History row (real touches, [openMenuItem]) until the History page is up. */
+    private fun openHistory() {
+        if (inDom(DEVICES)) return
+        for (attempt in 1..OPEN_ATTEMPTS) {
+            if (openMenuItem(MENU_HISTORY) && awaitUntil(8_000) { inDom(DEVICES) && textOf(".zen-phone-title") == "History" }) {
+                SystemClock.sleep(1_500)
+                return
+            }
+            finding("  (the History page did not come from the menu, attempt $attempt)")
+            back()
+            SystemClock.sleep(1_000)
+        }
+        error("the History page never opened from the menu")
+    }
+
+    /** The system back until the overview is gone: the keyboard's, the query's, the field's, then the overview's. */
+    private fun leaveOverview() {
+        for (attempt in 1..6) {
+            if (!inDom(".zen-overview")) break
+            back()
+            awaitUntil(3_000) { !inDom(".zen-overview") }
+            SystemClock.sleep(700)
+        }
+        if (inDom(".zen-overview")) error("the overview never left")
+        awaitIme(false, 6_000)
+        SystemClock.sleep(600)
+    }
+
+    /** The system back until the History page is gone. */
+    private fun leaveHistory() {
+        for (attempt in 1..3) {
+            if (!inDom(DEVICES)) break
+            back()
+            awaitUntil(3_000) { !inDom(DEVICES) }
+            SystemClock.sleep(700)
+        }
+        if (inDom(DEVICES)) error("the History page never left")
+        SystemClock.sleep(600)
     }
 
     /**
@@ -573,7 +674,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     /** The on-screen box of the first element `selector` matches, null when nothing does; scrolled into its list's viewport first when asked. */
     private fun domRect(selector: String, scrollIntoView: Boolean = false): Rect? {
         val scroll = if (!scrollIntoView) "" else
-            "var g=e.closest('.zen-overview-grid, .zen-overview-recent');" +
+            "var g=e.closest('.zen-overview-grid, .zen-phone-panel .zen-phone-list');" +
                 "if(g){var gr=g.getBoundingClientRect(),er=e.getBoundingClientRect();" +
                 "if(er.top<gr.top||er.bottom>gr.bottom)e.scrollIntoView({block:'nearest'});}"
         return rectFrom(jsString("(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';$scroll$RECT_JS})()"))
@@ -585,7 +686,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
             jsString(
                 "(function(){var p=${JSONObject.quote(prefix)};var e=Array.prototype.find.call(document.querySelectorAll(${JSONObject.quote(selector)})," +
                     "function(n){return n.textContent.trim().indexOf(p)===0});if(!e)return '';" +
-                    "var g=e.closest('.zen-overview-grid, .zen-overview-recent');if(g){var gr=g.getBoundingClientRect(),er=e.getBoundingClientRect();" +
+                    "var g=e.closest('.zen-overview-grid, .zen-phone-panel .zen-phone-list');if(g){var gr=g.getBoundingClientRect(),er=e.getBoundingClientRect();" +
                     "if(er.top<gr.top||er.bottom>gr.bottom)e.scrollIntoView({block:'nearest'});}$RECT_JS})()"
             )
         )
@@ -660,37 +761,57 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
 
     /**
      * Start counting the cards drawn on their way out (`Departures`: rendered apart from the
-     * grid, fixed, over it) as they mount, through an observer in the page: an exit lasts a few
-     * frames, too few for a poll over the bridge to be sure of catching one.
+     * grid, fixed, over it) as they mount – the page cards and, apart, the New Tab card's own
+     * exit – through an observer in the page: an exit lasts a few frames, too few for a poll
+     * over the bridge to be sure of catching one.
      */
     private fun watchExits() {
         chromeJs(
-            "(function(){var s='$EXIT';window.__zenExits=0;if(window.__zenExitWatch)window.__zenExitWatch.disconnect();" +
+            "(function(){var s='$EXIT',t='$NEW_TAB_EXIT';window.__zenExits=0;window.__zenNewTabExits=0;if(window.__zenExitWatch)window.__zenExitWatch.disconnect();" +
                 "var o=new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeType!==1)return;" +
-                "window.__zenExits+=(n.matches(s)?1:0)+n.querySelectorAll(s).length})})});" +
+                "window.__zenExits+=(n.matches(s)?1:0)+n.querySelectorAll(s).length;" +
+                "window.__zenNewTabExits+=(n.matches(t)?1:0)+n.querySelectorAll(t).length})})});" +
                 "o.observe(document.body,{childList:true,subtree:true});window.__zenExitWatch=o;return 'ok'})()"
         )
     }
 
-    /** How many exits mounted since [watchExits]; the observer is taken down. */
-    private fun exitsSeen(): Int =
-        jsString("(function(){if(window.__zenExitWatch)window.__zenExitWatch.disconnect();return String(window.__zenExits||0)})()").toIntOrNull() ?: 0
+    private class Exits(val cards: Int, val newTab: Int)
+
+    /** How many exits mounted since [watchExits], the cards' and the New Tab card's; the observer is taken down. */
+    private fun exitsSeen(): Exits {
+        val raw = jsString("(function(){if(window.__zenExitWatch)window.__zenExitWatch.disconnect();return String(window.__zenExits||0)+','+String(window.__zenNewTabExits||0)})()")
+        val parts = raw.split(',')
+        return Exits(parts.getOrNull(0)?.toIntOrNull() ?: 0, parts.getOrNull(1)?.toIntOrNull() ?: 0)
+    }
+
+    /** Whether the grid's last `data-cell` is the New Tab card (its place when it is back). */
+    private fun lastCellIsNewTab(): Boolean =
+        jsString("(function(){var c=document.querySelectorAll('.zen-overview-grid [data-cell]');var l=c[c.length-1];return l&&l.getAttribute('data-cell')==='new-tab'?'yes':''})()") == "yes"
 
     /** How many cards of `before` stand elsewhere in `after` (a pixel of tolerance for rounding). */
     private fun moved(before: Map<String, Rect>, after: Map<String, Rect>): Int =
         before.count { (id, b) -> after[id]?.let { a -> abs(a.left - b.left) > 1 || abs(a.top - b.top) > 1 } ?: false }
 
-    private fun closedTitles(): List<String> =
-        jsList("Array.prototype.map.call(document.querySelectorAll('$CLOSED_TITLE'),function(e){return e.textContent.trim()})")
+    private fun texts(selector: String): List<String> =
+        jsList("Array.prototype.map.call(document.querySelectorAll(${JSONObject.quote(selector)}),function(e){return e.textContent.trim()})")
 
-    private fun remoteRowTitles(): List<String> =
-        jsList("Array.prototype.map.call(document.querySelectorAll('$REMOTE_TITLE'),function(e){return e.textContent.trim()})")
+    /** The History page's Recently closed rows, by title. */
+    private fun historyClosedTitles(): List<String> = texts(HISTORY_CLOSED_TITLE)
 
-    private fun deviceNames(): List<String> =
-        jsList("Array.prototype.map.call(document.querySelectorAll('.zen-recent-device-button > span:first-child'),function(e){return e.textContent.trim()})")
+    /** The History page's device rows, by title, in page order. */
+    private fun remoteRowTitles(): List<String> = texts(REMOTE_TITLE)
 
-    private fun headings(): List<String> =
-        jsList("Array.prototype.map.call(document.querySelectorAll('$RECENT .zen-list-heading:not(.zen-recent-device)'),function(e){return e.textContent.trim()})")
+    /** The History page's device headings' names, in page order. */
+    private fun deviceNames(): List<String> = texts("$DEVICE_HEADING > span:first-child")
+
+    /** The History page's group headings, in page order (a device's with its aside run on). */
+    private fun listHeadings(): List<String> = texts(".zen-phone-panel .zen-phone-list .zen-list-heading")
+
+    /** The search's reach: its headings, its rows' titles and second lines. */
+    private fun reachHeadings(): List<String> = texts("$REACH .zen-list-heading")
+    private fun reachClosedTitles(): List<String> = texts(REACH_CLOSED_TITLE)
+    private fun reachRemoteTitles(): List<String> = texts(REACH_REMOTE_TITLE)
+    private fun reachSubtitles(): List<String> = texts("$REACH .zen-list-subtitle")
 
     /** A row of the sheet that is up by the start of its label. */
     private fun menuRow(row: String): Rect? = textRect(".zen-sheet-item", row)
@@ -830,7 +951,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     private fun laptopTabs(now: Long): List<JSONObject> = listOf(
         remoteTab("l-1", "https://github.com/BenItBuhner/Zenium/pulls", "Pull requests · BenItBuhner/Zenium", now - 2 * HOUR, disc("#24292f")),
         remoteTab("l-2", "https://developer.mozilla.org/en-US/docs/Web/API/Web_Share_API", "Web Share API - Web APIs | MDN", now - 3 * HOUR, disc("#000000")),
-        remoteTab("l-3", "https://www.figma.com/files/recent", "Recents – Figma", now - 5 * HOUR, disc("#a259ff")),
+        remoteTab("l-3", LAPTOP_FIGMA_URL, "Recents – Figma", now - 5 * HOUR, disc("#a259ff")),
         remoteTab("l-4", LAPTOP_HN_URL, "Hacker News", now - 26 * HOUR, disc("#ff6600"))
     )
 
@@ -882,12 +1003,21 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         private const val NEW_TAB = "[data-testid=\"overview-new-tab\"]"
         private const val GROUP = ".zen-overview-grid [data-cell^=\"group:\"]"
         private const val EXIT = ".zen-overview-card.fixed.pointer-events-none"
-        private const val RECENT = "[data-testid=\"overview-recent\"]"
-        private const val SYNC_OFF = "[data-testid=\"overview-recent-sync-off\"]"
-        private const val SHOW_HIDDEN = "[data-testid=\"overview-recent-show-hidden\"]"
-        private const val ACTION = "$RECENT .zen-recent-action"
-        private const val CLOSED_TITLE = "$RECENT section:first-of-type .zen-list-title"
-        private const val REMOTE_TITLE = "[data-testid=\"overview-recent-device\"] .zen-list-title"
+        private const val NEW_TAB_EXIT = ".zen-overview-new.fixed.pointer-events-none"
+        /** The search's reach under the grid: its two sections by their headings. */
+        private const val REACH = "[data-testid=\"overview-search-reach\"]"
+        private const val REACH_CLOSED_TITLE = "$REACH section[aria-label=\"Recently closed\"] .zen-list-title"
+        private const val REACH_REMOTE_TITLE = "$REACH section[aria-label=\"From your other devices\"] .zen-list-title"
+        /** The History page (the app menu's row) and its groups. */
+        private const val MENU_HISTORY = "History"
+        private const val HISTORY_CLOSED_TITLE = ".zen-phone-panel section[aria-label=\"Recently closed\"] .zen-list-title"
+        private const val DEVICES = "[data-testid=\"history-other-devices\"]"
+        private const val DEVICE = "[data-testid=\"history-device\"]"
+        private const val DEVICE_HEADING = ".zen-device-heading-button"
+        private const val SYNC_OFF = "[data-testid=\"history-devices-sync-off\"]"
+        private const val SHOW_HIDDEN = "[data-testid=\"history-devices-show-hidden\"]"
+        private const val ACTION = "$DEVICES .zen-list-action-row"
+        private const val REMOTE_TITLE = "$DEVICE .zen-list-title"
         private const val SYNC_SETTINGS_URL = "zen://settings/sync"
 
         // The seeded profile's ids.
@@ -910,5 +1040,6 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         private const val LAPTOP_ID = "device_worklaptop"
         private const val LAPTOP = "Work laptop"
         private const val LAPTOP_HN_URL = "https://news.ycombinator.com/"
+        private const val LAPTOP_FIGMA_URL = "https://www.figma.com/files/recent"
     }
 }

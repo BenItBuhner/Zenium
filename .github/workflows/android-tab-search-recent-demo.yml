@@ -1,20 +1,24 @@
-name: Android tab search and Recent pane demo
+name: Android tab search and History groups demo
 
-# Records the phone overview's tab search (matrix TAB-21; design language v2 §9.3, §9.12, §11.4)
-# and its Recent pane (TAB-02; §9.17, §9.27, §10.3): the header's magnifier opening the field
-# pinned under the header (focused, the keyboard with it, and never before the tap), typing
-# narrowing the pane's cards by title and by address with the dropped cards departing in place
-# and the survivors gliding (traced), the count told to the status region, the X, the system
-# back and Escape clearing then closing; a tab closed by touch and the Recent segment listing it
-# under Recently closed with, sync off, §9.17's sentence and the row to Settings › Sync; then sync
-# set up by the engine itself over a plain directory (the host's debug-only tree hook) with two
-# other devices' open-tabs documents seeded, the devices and their tabs listed by publish and by
-# activity, a remote row opening its page, a device heading held for Hide device and the way
-# back, a Recently closed row restoring its tab. Every press is a real touch and the driver
-# reads each outcome off the chrome's DOM or the core's state (findings text in the artifact;
-# the run fails on a FAIL). Dispatch-only, like the select-tabs demo: it takes about ten minutes
-# and says nothing about a change being correct. The build, the emulator and the Gradle cache
-# live in android-emulator-demo.yml; this file only picks the driver.
+# Records the phone overview's tab search (matrix TAB-21; design language v2 §9.3, §9.12, §9.34,
+# §11.4) with its reach into History's two groups, and those groups on the phone History page
+# (TAB-02; §9.17, §10.1, §10.3, §10.4 – the #316 gate: no Recent pane): the header's magnifier
+# opening the field pinned under the header (focused, the keyboard with it, and never before the
+# tap), typing narrowing the pane's cards by title and by address with the dropped cards and the
+# New Tab card departing in place and the survivors gliding (traced), the count told to the
+# status region, the X, the system back and Escape clearing then closing; a tab closed by touch
+# and the search listing it under a Recently closed heading beneath the cards; the History page
+# with sync off (Recently closed, the From your other devices heading over §9.17's sentence and
+# the row to Settings › Sync); then sync set up by the engine itself over a plain directory (the
+# host's debug-only tree hook) with two other devices' open-tabs documents seeded, each device
+# its own History group by publish with its tabs by activity, a device's row opening its page, a
+# device heading held for Hide Device and the way back, the search reaching the devices' tabs
+# with the §9.17 sentence over the rows, a search row opening its page and another restoring the
+# closed tab. Every press is a real touch and the driver reads each outcome off the chrome's DOM
+# or the core's state (findings text in the artifact; the run fails on a FAIL). Dispatch-only,
+# like the select-tabs demo: it takes about ten minutes and says nothing about a change being
+# correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file only picks the driver.
 on:
   workflow_dispatch:
 
@@ -27,7 +31,7 @@ concurrency:
 
 jobs:
   record:
-    name: Tab search and Recent pane demo
+    name: Tab search and History groups demo
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
@@ -45,7 +49,7 @@ jobs:
   # One more boot when the emulator itself went away under the driver (adb lost the device), and
   # never when the driver failed: a run is then spent on the demo rather than on the runner.
   record-again:
-    name: Tab search and Recent pane demo, second boot
+    name: Tab search and History groups demo, second boot
     needs: record
     if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
     uses: ./.github/workflows/android-emulator-demo.yml
