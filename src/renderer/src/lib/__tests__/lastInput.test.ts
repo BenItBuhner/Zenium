@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { inputKindOf, noteInput, watchLastInput } from '../lastInput'
 
@@ -92,5 +94,15 @@ describe('the root’s data-input', () => {
     expect(root.dataset.input).toBe('touch')
     noteInput('keyboard', root)
     expect(root.dataset.input).toBe('keyboard')
+  })
+
+  // The module watches from its import: an entry that leaves it out has no `data-input`, and the
+  // phone's suppressor never stands down (the first emulator run of the fix: the Android entry
+  // is `src/android/main.tsx`, not the desktop's, and only the desktop's imported it).
+  it('is imported by both chrome entries, the desktop’s and the Android WebView’s', () => {
+    for (const entry of ['../../main.tsx', '../../../../android/main.tsx']) {
+      const source = readFileSync(fileURLToPath(new URL(entry, import.meta.url)), 'utf8')
+      expect(source, entry).toMatch(/^import '(\.\/lib|@renderer\/lib)\/lastInput'$/m)
+    }
   })
 })
