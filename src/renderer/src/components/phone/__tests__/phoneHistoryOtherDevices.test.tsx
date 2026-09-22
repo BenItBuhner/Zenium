@@ -19,10 +19,12 @@ import { dayKeyOf } from '@shared/dayKey'
  * §10.1, §10.3, §10.4): under the recently closed tabs and over the days, one group PER DEVICE
  * headed by its name with when it last published as the aside – no umbrella heading over them –
  * the tabs as rows; a row opens the tab here (or brings it to the front, ID-10) and the page
- * leaves; a device's heading held offers Hide Device, the last row brings a hidden device back;
- * with sync off, Open tabs out of its scope or no device publishing, the "From your other
- * devices" heading stands alone over the sentence and the row to Settings › Sync. Rendered for
- * real in happy-dom, the core stubbed.
+ * leaves; a device's heading held offers Hide Device, the last row brings a hidden device back.
+ * Two empty states stand under the "From your other devices" heading, each with its §10.4 row as
+ * the way out – sync off (Turn on sync, to Settings › Sync) and Open tabs out of what syncs (Open
+ * sync settings, to the page's Open tabs switch) – and a third the user made (every device
+ * hidden: Show hidden devices); with sync on and nothing published the group is absent, as
+ * Recently closed is when empty. Rendered for real in happy-dom, the core stubbed.
  */
 
 const SPACE = 'space'
@@ -402,7 +404,7 @@ describe("the History page's other devices' groups (TAB-02)", () => {
     expect(groupTexts()).toEqual([
       '# Home desktopLast active 3 min ago',
       'Internet Archive',
-      'Show 1 hidden device'
+      'Show hidden devices'
     ])
     act(() => byTestId('history-devices-show-hidden')!.click())
     expect(hiddenDevicesStore.get().hidden.size).toBe(0)
@@ -419,40 +421,65 @@ describe("the History page's other devices' groups (TAB-02)", () => {
     await pick('Hide Device')
     expect(groupTexts()).toEqual([
       '# From your other devices',
-      'No open tabs on your other devices yet',
-      'Show 2 hidden devices'
+      "You've hidden every device",
+      'Show hidden devices'
+    ])
+    expect(byTestId('history-devices-hidden')?.hasAttribute('data-static')).toBe(true)
+    act(() => byTestId('history-devices-show-hidden')!.click())
+    expect(groupTexts()).toEqual([
+      '# Home desktopLast active 3 min ago',
+      'Internet Archive',
+      '# Work laptopLast active 2 h ago',
+      'Zenium',
+      'Web | MDN'
     ])
   })
 
-  it('with sync off the group says so and its row leaves for Settings › Sync; with Open tabs off it says that instead', async () => {
+  it('with sync off the group is the sentence and the Turn on sync row, which leaves for Settings › Sync', async () => {
     await show(stateOf(pages(), { sync: sync(false) }))
-    expect(byTestId('history-devices-sync-off')?.textContent).toBe(
-      'Turn on sync to see tabs from your other devices'
-    )
+    expect(groupTexts()).toEqual([
+      '# From your other devices',
+      'Turn on sync to see tabs from your other devices',
+      'Turn on sync'
+    ])
+    expect(byTestId('history-devices-sync-off')?.hasAttribute('data-static')).toBe(true)
     expect(of('sync.tabsFromDevices')).toEqual([])
     act(() => buttonByText('Turn on sync')!.click())
     expect(of('page.open')).toEqual([{ id: 'settings', section: 'sync' }])
     expect(uiStore.get().overlay).toBe('none')
-
-    act(() => uiStore.set({ overlay: 'history' }))
-    await show(stateOf(pages(), { sync: sync(true, false) }))
-    expect(byTestId('history-devices-tabs-off')?.textContent).toBe(
-      'Turn on Open tabs in What you sync to see them'
-    )
-    expect(buttonByText('Sync settings')).toBeDefined()
-    expect(of('sync.tabsFromDevices')).toEqual([])
   })
 
-  it('with sync on and no other device publishing, the group has its own sentence and no row', async () => {
-    remote = []
-    await show(stateOf(pages(), { sync: sync(true) }))
-    expect(byTestId('history-devices-none')?.textContent).toBe(
-      'No open tabs on your other devices yet'
-    )
+  it("with Open tabs out of what syncs the group is that sentence and the Open sync settings row, which leaves for Settings › Sync's Open tabs switch", async () => {
+    remote = devices()
+    await show(stateOf(pages(), { sync: sync(true, false) }))
     expect(groupTexts()).toEqual([
       '# From your other devices',
-      'No open tabs on your other devices yet'
+      'Turn on Open tabs in What you sync to see them',
+      'Open sync settings'
     ])
+    // The lists are not read while they are out of the scope.
+    expect(of('sync.tabsFromDevices')).toEqual([])
+    act(() => buttonByText('Open sync settings')!.click())
+    expect(of('page.open')).toEqual([
+      { id: 'settings', section: 'sync', query: { row: 'sync-scope:openTabs' } }
+    ])
+    expect(uiStore.get().overlay).toBe('none')
+  })
+
+  it('with sync on and no other device publishing, the group is absent – Recently closed and the days meet', async () => {
+    closed = [entry('c1', 'Damping - Wikipedia', 'https://en.wikipedia.org/wiki/Damping', NOW)]
+    remote = []
+    await show(stateOf(pages(), { sync: sync(true) }))
+    expect(of('sync.tabsFromDevices')).toHaveLength(1)
+    expect(byTestId('history-other-devices')).toBeNull()
+    expect(listTexts()).toEqual([
+      'Clear history',
+      '# Recently closed',
+      'Damping - Wikipedia',
+      '# Today',
+      'Example Domain'
+    ])
+    expect(document.body.textContent).not.toContain('From your other devices')
   })
 
   it('leaves the list while the history is searched, and comes back with the query cleared', async () => {

@@ -53,8 +53,9 @@ export function groupRemoteTabs(
 }
 
 /**
- * How many of the devices with tabs the list is holding back – the "Show hidden devices" row's
- * count. A hidden id no device carries any more counts for nothing: there is nothing to show.
+ * How many of the devices with tabs the list is holding back – whether the "Show hidden devices"
+ * row stands, and whether a group with no device to list is `hidden` or `none`. A hidden id no
+ * device carries any more counts for nothing: there is nothing to show.
  */
 export function hiddenDeviceCount(
   lists: readonly SyncDeviceTabs[],
@@ -74,15 +75,22 @@ export function lastActiveLabel(updatedAt: number, now: number): string {
 }
 
 /**
- * What the "From your other devices" group shows and why there is nothing when there is not:
- * sync off (the group is a prompt to turn it on, with the row to Settings › Sync); sync on but
- * open tabs out of its scope (the row leads to the same page, where the toggle is); sync on
- * with no device publishing tabs (an empty group, nothing to do); or the devices.
+ * What the "From your other devices" group shows and why there is nothing when there is not
+ * (v2 §10.1 as the #326 ruling amended it, the phone carrying the desktop page's answers). Two
+ * empty states stand, each with a §10.4 row as the way out: `sync-off` (the sentence and the
+ * row to Settings › Sync, where sync is turned on) and `tabs-off` (Open tabs out of what syncs:
+ * the sentence and the row to the same page's What you sync, where the switch is). A third the
+ * user made – `hidden`, sync on with tabs published and every device hidden – keeps the group
+ * too, its way back the row that shows the devices again. `none` – sync on, Open tabs on, and
+ * NOTHING published by any device – steps aside as Recently closed does when it is empty: no
+ * heading, no sentence, the group absent until a device publishes; a sentence with no way out
+ * would be a permanent two lines of nothing for a single-device user.
  */
 export type RemoteTabsSection =
   | { kind: 'sync-off' }
   | { kind: 'tabs-off' }
-  | { kind: 'empty' }
+  | { kind: 'none' }
+  | { kind: 'hidden' }
   | { kind: 'devices'; devices: RemoteDevice[] }
 
 export function remoteTabsSection(
@@ -93,8 +101,8 @@ export function remoteTabsSection(
   if (!sync.enabled) return { kind: 'sync-off' }
   if (!sync.scope.openTabs) return { kind: 'tabs-off' }
   const devices = groupRemoteTabs(lists, hidden)
-  if (devices.length === 0) return { kind: 'empty' }
-  return { kind: 'devices', devices }
+  if (devices.length > 0) return { kind: 'devices', devices }
+  return { kind: hiddenDeviceCount(lists, hidden) > 0 ? 'hidden' : 'none' }
 }
 
 /**
@@ -125,10 +133,11 @@ export function remoteTabsListed(section: RemoteTabsSection): RemoteTabMatch[] {
 
 /**
  * The group's words: the headings (§9.27, the desktop History page's names), the empty
- * sentences (v2 §9.17, the group form: one plain row, sentence case, no full stop – the two sync
- * sentences are Settings › Sync's, `SYNC_COPY.remoteTabsOff` and `remoteTabsNone`, without the
- * row description's full stop, so the two surfaces say the same thing), the follow-up rows'
- * labels, and the device sheet's one item (Title Case, a menu's, §9.1).
+ * sentences (v2 §9.17, the group form: one plain row, sentence case, no full stop – the Open
+ * tabs sentence is Settings › Sync's, `SYNC_COPY.remoteTabsOff`, without the row description's
+ * full stop, so the two surfaces say the same thing; the hidden one is §10.1's), the follow-up
+ * rows' labels (§10.1's: Turn on sync, Open sync settings, Show hidden devices – plain action
+ * labels, no quoted group name), and the device sheet's one item (Title Case, a menu's, §9.1).
  */
 export const OTHER_DEVICES_COPY = {
   closedHeading: 'Recently closed',
@@ -136,11 +145,10 @@ export const OTHER_DEVICES_COPY = {
   syncOff: 'Turn on sync to see tabs from your other devices',
   syncOffAction: 'Turn on sync',
   tabsOff: 'Turn on Open tabs in What you sync to see them',
-  tabsOffAction: 'Sync settings',
-  noDevices: 'No open tabs on your other devices yet',
-  hideDevice: 'Hide Device',
-  showHidden: (count: number): string =>
-    count === 1 ? 'Show 1 hidden device' : `Show ${count} hidden devices`
+  tabsOffAction: 'Open sync settings',
+  allHidden: "You've hidden every device",
+  showHidden: 'Show hidden devices',
+  hideDevice: 'Hide Device'
 } as const
 
 /*

@@ -152,9 +152,11 @@ const QR_EVENT_MARGIN_MS = 250
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent, `then=hold:<row>;tap:<row>` takes steps on it once it is up;
- * History's From your other devices group lists the `sync=tabs` fixture's devices, and
- * `hold:<device name>` opens a device's sheet – with `sync=off` the group is the prompt to turn
- * sync on; the seed's `recentlyClosed` fills the Recently closed group over it),
+ * History's other devices are the `sync=tabs` fixture's, each its own group, and
+ * `hold:<device name>` opens a device's sheet – with `sync=off` the From your other devices
+ * group is the prompt to turn sync on, with `sync=on` (the core's scope, Open tabs off) the
+ * prompt to put Open tabs in it; the seed's `recentlyClosed` fills the Recently closed group
+ * over them),
  * `menu=app` (the app menu sheet; `show=<text>` scrolls an item
  * into view), `menu=tabs` (the Tabs button's quick menu), `sheet=extensions` (the Extensions
  * sheet the app menu's row opens, over the active page; `then=tap:<row>;hold:<row>` taps a row

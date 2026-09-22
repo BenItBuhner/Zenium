@@ -64,10 +64,11 @@ interface Loaded {
  * row. The top row clears the whole history behind the same question the desktop page asks
  * (`ClearHistorySheet`, the count of what goes, Cancel or Clear all). Recently closed tabs sit
  * above the days (`historyAdapter.recentlyClosed`), and under them the other devices' open tabs
- * as "From your other devices" (`OtherDevicesGroup`, TAB-02 / history-07: the desktop History
- * page's two groups on the phone's; a tap opens a device's tab here, a device's heading held
- * hides the device, and with sync off the group is the prompt to turn it on), both while nothing
- * is searched. The list loads again whenever the core says the history or the recently closed
+ * as one group per device (`OtherDevicesGroup`, TAB-02 / history-07: the desktop History page's
+ * groups on the phone's; a tap opens a device's tab here, a device's heading held hides the
+ * device, and with sync off or Open tabs out of what syncs the "From your other devices" group
+ * is the prompt with its row to Settings › Sync; with nothing published it is absent), both
+ * while nothing is searched. The list loads again whenever the core says the history or the recently closed
  * list changed. The search field does not take the focus as the panel opens: the keyboard would
  * come up with it (as `HistoryPage` on a phone).
  */
@@ -207,9 +208,13 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
     closeOverlay()
   }
 
-  /** The group's row to Settings › Sync, where sync is turned on or Open tabs put in its scope. */
-  const openSync = (): void => {
-    openSettings('sync')
+  /**
+   * The group's rows to Settings › Sync: where sync is turned on, or – Open tabs out of what
+   * syncs – the page opened with its What you sync group on screen, the Open tabs switch the
+   * row's subject (`?row=`, as Privacy's `?site=` brings a site's group up).
+   */
+  const openSync = (row?: string): void => {
+    openSettings('sync', row ? { row } : undefined)
     closeOverlay()
   }
 

@@ -13,6 +13,7 @@ import {
   type RemoteDevice
 } from '@renderer/lib/otherDevices'
 import { remoteTabsStore, useRemoteTabs } from '@renderer/lib/remoteTabs'
+import { syncScopeRowId } from '@renderer/lib/syncSetup'
 import { PhoneGroupHeading, PhoneListRow, RowFavicon } from './PhoneList'
 import { useRowGestures } from './useRowGestures'
 
@@ -29,10 +30,13 @@ import { useRowGestures } from './useRowGestures'
  * line, host under it. A tap opens the tab's address in a new tab (or brings the tab to the
  * front when this device already holds it under that id, ID-10) and the page leaves. A device's
  * heading is held (or tapped) for its menu – Hide Device – the page's own sheet. With no device
- * group to show – sync off, Open tabs out of its scope, no device publishing, every device
- * hidden – the "From your other devices" heading stands alone over §9.17's group form: one plain
- * 44 row in the heading's gutter with the sentence, and the follow-up (Turn on sync, the sync
- * settings, Show hidden devices) as the group's next row, an action row.
+ * group to show, the "From your other devices" heading stands alone over §9.17's group form –
+ * one plain 44 row in the heading's gutter with the sentence, and the way out as the group's
+ * next row, a §10.4 action row – in the two empty states §10.1 names (sync off: Turn on sync, to
+ * Settings › Sync; Open tabs out of what syncs: Open sync settings, to the same page with its
+ * What you sync group on screen) and the one the user makes (every device hidden: Show hidden
+ * devices). Sync on with nothing published by any device is no group at all: it steps aside as
+ * Recently closed does when empty, until a device publishes (`remoteTabsSection`).
  */
 export function OtherDevicesGroup({
   state,
@@ -43,11 +47,11 @@ export function OtherDevicesGroup({
   state: UIState
   /** Another device's tab picked: it opens here (or comes to the front) and the page leaves on it. */
   onOpenTab: (tab: SyncRemoteTab) => void
-  /** The row to Settings › Sync. */
-  onOpenSync: () => void
+  /** The rows to Settings › Sync – with the Settings row to land on, for the Open tabs switch. */
+  onOpenSync: (row?: string) => void
   /** A device's heading held: its menu. */
   onDeviceMenu: (device: RemoteDevice) => void
-}): JSX.Element {
+}): JSX.Element | null {
   useRemoteTabs(state.sync)
   const lists = remoteTabsStore.use((s) => s.devices)
   const hidden = hiddenDevicesStore.use((s) => s.hidden)
@@ -55,6 +59,7 @@ export function OtherDevicesGroup({
   const hiddenCount = hiddenDeviceCount(lists, hidden)
   // "Last active …" is judged as the group comes up, as the page's day groups judge "Today".
   const [now] = useState(() => Date.now())
+  if (section.kind === 'none') return null
   return (
     <section aria-label={OTHER_DEVICES_COPY.devicesHeading} data-testid="history-other-devices">
       {section.kind !== 'devices' && (
@@ -63,17 +68,27 @@ export function OtherDevicesGroup({
       {section.kind === 'sync-off' && (
         <>
           <EmptyRow testId="history-devices-sync-off">{OTHER_DEVICES_COPY.syncOff}</EmptyRow>
-          <ActionRow label={OTHER_DEVICES_COPY.syncOffAction} leaves onPick={onOpenSync} />
+          <ActionRow
+            label={OTHER_DEVICES_COPY.syncOffAction}
+            leaves
+            testId="history-devices-turn-on-sync"
+            onPick={() => onOpenSync()}
+          />
         </>
       )}
       {section.kind === 'tabs-off' && (
         <>
           <EmptyRow testId="history-devices-tabs-off">{OTHER_DEVICES_COPY.tabsOff}</EmptyRow>
-          <ActionRow label={OTHER_DEVICES_COPY.tabsOffAction} leaves onPick={onOpenSync} />
+          <ActionRow
+            label={OTHER_DEVICES_COPY.tabsOffAction}
+            leaves
+            testId="history-devices-sync-settings"
+            onPick={() => onOpenSync(syncScopeRowId('openTabs'))}
+          />
         </>
       )}
-      {section.kind === 'empty' && (
-        <EmptyRow testId="history-devices-none">{OTHER_DEVICES_COPY.noDevices}</EmptyRow>
+      {section.kind === 'hidden' && (
+        <EmptyRow testId="history-devices-hidden">{OTHER_DEVICES_COPY.allHidden}</EmptyRow>
       )}
       {section.kind === 'devices' &&
         section.devices.map((device) => (
@@ -87,7 +102,7 @@ export function OtherDevicesGroup({
         ))}
       {hiddenCount > 0 && (
         <ActionRow
-          label={OTHER_DEVICES_COPY.showHidden(hiddenCount)}
+          label={OTHER_DEVICES_COPY.showHidden}
           testId="history-devices-show-hidden"
           onPick={showHiddenDevices}
         />

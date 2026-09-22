@@ -51,17 +51,23 @@ import kotlin.math.roundToInt
  *     "From your other devices" heading stands over §9.17's sentence and the Turn on sync row;
  * 11. the row leaves the page for Settings › Sync;
  * 12. sync set up (the engine's own, over a plain directory: [FileTree] on the host's debug hook)
- *     and two other devices' `open-tabs` documents seeded into the folder; Sync now reads them;
- * 13. the History page lists each device as its own group, most recently published first, the
+ *     with Open tabs among what syncs and no other device publishing: the group STEPS ASIDE –
+ *     no heading, no sentence, Recently closed meeting the days (§10.1's `none`);
+ * 13. Open tabs taken out of what syncs: the heading over the scope sentence and the Open sync
+ *     settings row, which opens Settings › Sync with its What you sync group on screen (the
+ *     Open tabs switch the row's subject); the scope put back;
+ * 14. two other devices' `open-tabs` documents seeded into the folder; Sync now reads them;
+ * 15. the History page lists each device as its own group, most recently published first, the
  *     heading its name with "Last active …" as the aside and no heading over them (§10.1), each
  *     tab a row with favicon, title and host;
- * 14. a device's row opens its page in a new active tab and the page leaves;
- * 15. a device heading held: the device's sheet; Hide Device takes the device off the page and
- *     Show 1 hidden device brings it back;
- * 16. the search reaches the other devices: "figma" (the laptop's alone) empties the grid – the
+ * 16. a device's row opens its page in a new active tab and the page leaves;
+ * 17. a device heading held: the device's sheet; Hide Device takes the device off the page and
+ *     Show hidden devices brings it back; with every device hidden the heading stands over
+ *     "You've hidden every device" and the same row;
+ * 18. the search reaches the other devices: "figma" (the laptop's alone) empties the grid – the
  *     §9.17 sentence "No open tabs found" over the From your other devices rows – and the row
  *     opens the page in a new tab, the overview leaving;
- * 17. the search's Recently closed row restores Coffee and the overview leaves on it.
+ * 19. the search's Recently closed row restores Coffee and the overview leaves on it.
  *
  * Positions come from the chrome's DOM (`getBoundingClientRect`, checked once against the
  * accessibility bounds of the overview's Spaces button), because the WebView's accessibility
@@ -115,7 +121,9 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         closedTabReachedBySearch()
         historyWithSyncOff()
         rowToSyncSettings()
-        setUpSyncWithTwoDevices()
+        syncOnWithNothingPublished()
+        openTabsOutOfScope()
+        seedTwoDevices()
         historyWithDevices()
         openRemoteTab()
         hideAndShowDevice()
@@ -318,17 +326,20 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         finding("\n11. The row to Settings › Sync")
         val left = touchUntil("the Turn on sync row", { textRect(ACTION, "Turn on sync") }, { activeCoreTab()?.optString("url") == SYNC_SETTINGS_URL }, waitMs = 8_000)
         expect("the row opens Settings › Sync in the active tab: ${activeCoreTab()?.optString("url")}", left)
-        expect("the History page left", awaitUntil(6_000) { !inDom(DEVICES) })
+        expect("the History page left", awaitUntil(6_000) { !inDom(HISTORY) })
         still("sync-settings")
     }
 
+    /** The folder sync runs over: the app's own files, the host's debug hook standing it in for a picked tree. */
+    private val syncFolder: File get() = File(app.filesDir, SYNC_DIR)
+
     /**
-     * 12. Sync on, over a plain directory (the host's debug hook), and two other devices' open
-     * tabs in the folder, read by Sync now.
+     * 12. Sync on, over a plain directory (the host's debug hook), Open tabs among what syncs and
+     * no other device publishing: the History page's group steps aside (§10.1's `none`).
      */
-    private fun setUpSyncWithTwoDevices() {
-        finding("\n12. Sync set up and two devices' open tabs seeded")
-        val folder = File(app.filesDir, SYNC_DIR).apply { deleteRecursively(); mkdirs() }
+    private fun syncOnWithNothingPublished() {
+        finding("\n12. Sync set up, nothing published by another device: the group steps aside")
+        val folder = syncFolder.apply { deleteRecursively(); mkdirs() }
         instrumentation.runOnMainSync { (activity as MainActivity).host.syncTreeOverride = { FileTree(folder) } }
         chromeJs(
             "window.zen.invoke('sync.setup',{folder:${JSONObject.quote(folder.absolutePath)},passphrase:${JSONObject.quote(PASSPHRASE)}," +
@@ -336,8 +347,53 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         )
         val on = awaitUntil(90_000) { syncStatus().optBoolean("enabled") && !syncStatus().optBoolean("busy") }
         val status = syncStatus()
-        expect("sync is on (device '${status.optString("deviceName")}', ${status.optString("deviceId")})", on)
-        val dir = File(folder, SyncPeer.DIR_NAME)
+        expect("sync is on (device '${status.optString("deviceName")}', ${status.optString("deviceId")}) with Open tabs among what syncs", on && status.optJSONObject("scope")?.optBoolean("openTabs") == true)
+        expect("no other device has published: ${remoteLists().size} list(s)", remoteLists().isEmpty())
+        openHistory()
+        SystemClock.sleep(1_500)
+        expect("Recently closed lists Coffee", awaitUntil(8_000) { historyClosedTitles().any { it.startsWith("Coffee") } })
+        expect("no From your other devices group: no heading, no sentence, no row", !inDom(DEVICES) && !inDom(DEVICE) && !inDom(ACTION))
+        val headings = listHeadings()
+        expect("Recently closed meets the days: $headings", "From your other devices" !in headings && headings.firstOrNull() == "Recently closed" && headings.size >= 2)
+        still("history-none")
+        leaveHistory()
+    }
+
+    /**
+     * 13. Open tabs taken out of what syncs: the heading over the scope sentence and the Open
+     * sync settings row, which lands on Settings › Sync's What you sync group; the scope put back.
+     */
+    private fun openTabsOutOfScope() {
+        finding("\n13. Open tabs out of what syncs: the sentence and the Open sync settings row")
+        coreInvoke("sync.setScope", "{\"openTabs\":false}")
+        expect("Open tabs is out of the scope", awaitUntil(8_000) { syncStatus().optJSONObject("scope")?.optBoolean("openTabs") == false })
+        openHistory()
+        expect("the group reads the scope sentence: '${textOf(TABS_OFF)}'", awaitUntil(6_000) { textOf(TABS_OFF) == "Turn on Open tabs in What you sync to see them" })
+        expect("with the row to the setting: 'Open sync settings'", textRect(ACTION, "Open sync settings") != null)
+        val headings = listHeadings()
+        expect("the heading stands over it, after Recently closed: $headings", headings.take(2) == listOf("Recently closed", "From your other devices"))
+        expect("no device group while the scope is off", !inDom(DEVICE))
+        still("history-scope-off")
+        val left = touchUntil("the Open sync settings row", { textRect(ACTION, "Open sync settings") }, { activeCoreTab()?.optString("url") == SYNC_SCOPE_URL }, waitMs = 8_000)
+        expect("the row opens Settings › Sync asking for the Open tabs switch: ${activeCoreTab()?.optString("url")}", left)
+        expect("the History page left", awaitUntil(6_000) { !inDom(HISTORY) })
+        val onScreen = awaitUntil(8_000) {
+            val row = domRect(SCOPE_ROW)
+            row != null && row.top >= 0 && row.bottom <= height
+        }
+        val row = domRect(SCOPE_ROW)
+        expect("the Open tabs switch is on screen with its group (top ${row?.top}, bottom ${row?.bottom} of $height)", onScreen)
+        expect("the switch reads off", jsString("(function(){var r=document.querySelector('$SCOPE_ROW');return r?String(r.getAttribute('aria-checked')):''})()") == "false")
+        still("sync-settings-scope")
+        coreInvoke("sync.setScope", "{\"openTabs\":true}")
+        expect("Open tabs is back in the scope", awaitUntil(8_000) { syncStatus().optJSONObject("scope")?.optBoolean("openTabs") == true })
+    }
+
+    /** 14. Two other devices' open tabs in the folder, read by Sync now. */
+    private fun seedTwoDevices() {
+        finding("\n14. Two devices' open tabs seeded")
+        val status = syncStatus()
+        val dir = File(syncFolder, SyncPeer.DIR_NAME)
         val mine = File(dir, SyncPeer.deviceFileName(status.optString("deviceId")))
         expect("the engine wrote this device's file into the folder: ${dir.list()?.sorted()}", awaitUntil(15_000) { mine.isFile })
         if (!mine.isFile) return
@@ -355,9 +411,9 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("the desktop, published last, comes first", lists.firstOrNull()?.optString("deviceName") == DESKTOP)
     }
 
-    /** 13. The History page with both devices: each its own group headed by its name, no heading over them. */
+    /** 15. The History page with both devices: each its own group headed by its name, no heading over them. */
     private fun historyWithDevices() {
-        finding("\n13. The History page with both devices")
+        finding("\n15. The History page with both devices")
         openHistory()
         expect("both devices are listed", awaitUntil(8_000) { deviceNames().size == 2 })
         val names = deviceNames()
@@ -379,48 +435,63 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         still("history-devices")
     }
 
-    /** 14. A device's row opens the page in a new tab; the History page leaves. */
+    /** 16. A device's row opens the page in a new tab; the History page leaves. */
     private fun openRemoteTab() {
-        finding("\n14. A remote tab's row on the History page")
+        finding("\n16. A remote tab's row on the History page")
         val tabsBefore = coreState().getJSONObject("tabs").length()
         val opened = touchUntil("the Hacker News row of the laptop", { textRect(REMOTE_TITLE, "Hacker News") }, { coreState().getJSONObject("tabs").length() == tabsBefore + 1 }, waitMs = 6_000)
         val tab = activeCoreTab()
         expect("the row opened one new tab: ${tabsBefore} -> ${coreState().getJSONObject("tabs").length()}", opened)
         expect("the new tab is active with the row's address: ${tab?.optString("url")}", tab?.optString("url") == LAPTOP_HN_URL)
-        expect("the History page left", awaitUntil(8_000) { !inDom(DEVICES) })
+        expect("the History page left", awaitUntil(8_000) { !inDom(HISTORY) })
         still("remote-opened")
     }
 
-    /** 15. A device heading held: Hide Device, then Show hidden devices. */
-    private fun hideAndShowDevice() {
-        finding("\n15. Hide Device from the heading's hold")
-        openHistory()
-        awaitUntil(8_000) { deviceNames().size == 2 }
-        val heading = steadyRect { textRect(DEVICE_HEADING, LAPTOP) } ?: error("no heading for $LAPTOP")
+    /** Hold `device`'s heading until its sheet is up with Hide Device. */
+    private fun holdDeviceHeading(device: String): Boolean {
+        val heading = steadyRect { textRect(DEVICE_HEADING, device) } ?: error("no heading for $device")
         val point = touchPoint(heading) ?: error("the heading is off the touchable window")
-        finding("  hold at ${point.x.roundToInt()},${point.y.roundToInt()} on the laptop's heading")
+        finding("  hold at ${point.x.roundToInt()},${point.y.roundToInt()} on the heading of $device")
         val f = Finger()
         f.down(point.x, point.y)
         f.hold(HOLD_MS)
         f.up()
-        val sheet = awaitUntil(SHEET_WAIT) { menuRow("Hide Device") != null }
+        return awaitUntil(SHEET_WAIT) { menuRow("Hide Device") != null }
+    }
+
+    /** 17. A device heading held: Hide Device, then Show hidden devices; every device hidden keeps the heading, its sentence and the row. */
+    private fun hideAndShowDevice() {
+        finding("\n17. Hide Device from the heading's hold")
+        openHistory()
+        awaitUntil(8_000) { deviceNames().size == 2 }
+        val sheet = holdDeviceHeading(LAPTOP)
         expect("the hold opens the device's sheet with Hide Device: ${sheetRows()}", sheet && sheetRows() == listOf("Hide Device"))
         expect("the sheet is titled with the device: '${sheetTitle()}'", sheetTitle().startsWith(LAPTOP))
         still("hide-device-sheet")
         touchUntil("Hide Device", { steadyRect { menuRow("Hide Device") } }, { deviceNames() == listOf(DESKTOP) }, waitMs = SHEET_WAIT)
         expect("the laptop is off the page: ${deviceNames()}", deviceNames() == listOf(DESKTOP))
-        expect("the way back is a row: 'Show 1 hidden device'", awaitUntil(4_000) { textOf(SHOW_HIDDEN) == "Show 1 hidden device" })
+        expect("the way back is a row: 'Show hidden devices'", awaitUntil(4_000) { textOf(SHOW_HIDDEN) == "Show hidden devices" })
         expect("the desktop keeps its own group, still with no heading over it: ${listHeadings()}", "From your other devices" !in listHeadings())
         still("device-hidden")
-        touchUntil("Show 1 hidden device", { domRect(SHOW_HIDDEN) }, { deviceNames().size == 2 })
-        expect("the laptop is back, in its place: ${deviceNames()}", deviceNames() == listOf(DESKTOP, LAPTOP))
-        expect("the row is gone with nothing hidden", !inDom(SHOW_HIDDEN))
+        // The desktop hidden too: the state the user made keeps the group, with its way back.
+        val second = holdDeviceHeading(DESKTOP)
+        expect("the desktop's heading held opens its sheet too: '${sheetTitle()}'", second && sheetTitle().startsWith(DESKTOP))
+        touchUntil("Hide Device", { steadyRect { menuRow("Hide Device") } }, { deviceNames().isEmpty() }, waitMs = SHEET_WAIT)
+        expect("no device group is left: ${deviceNames()}", deviceNames().isEmpty())
+        expect("the heading stands over the sentence: '${textOf(ALL_HIDDEN)}'", awaitUntil(4_000) { textOf(ALL_HIDDEN) == "You've hidden every device" })
+        val headings = listHeadings()
+        expect("From your other devices stands after Recently closed, before the days: $headings", headings.take(2) == listOf("Recently closed", "From your other devices"))
+        expect("the row that shows them again stands under it", textOf(SHOW_HIDDEN) == "Show hidden devices")
+        still("devices-all-hidden")
+        touchUntil("Show hidden devices", { domRect(SHOW_HIDDEN) }, { deviceNames().size == 2 })
+        expect("both devices are back, in their order: ${deviceNames()}", deviceNames() == listOf(DESKTOP, LAPTOP))
+        expect("the row is gone with nothing hidden, the heading with it", !inDom(SHOW_HIDDEN) && "From your other devices" !in listHeadings())
         leaveHistory()
     }
 
-    /** 16. The search reaches the other devices: a query only the laptop answers, the sentence over the rows, the row opening the page. */
+    /** 18. The search reaches the other devices: a query only the laptop answers, the sentence over the rows, the row opening the page. */
     private fun devicesReachedBySearch() {
-        finding("\n16. The search reaches the other devices: 'figma'")
+        finding("\n18. The search reaches the other devices: 'figma'")
         openOverview()
         openSearch()
         watchAnnouncements()
@@ -443,9 +514,9 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         still("search-remote-opened")
     }
 
-    /** 17. The search's Recently closed row restores the tab; the overview leaves. */
+    /** 19. The search's Recently closed row restores the tab; the overview leaves. */
     private fun restoreClosedFromSearch() {
-        finding("\n17. Restore from the search's Recently closed row")
+        finding("\n19. Restore from the search's Recently closed row")
         openOverview()
         openSearch()
         keys("coffee")
@@ -471,9 +542,9 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
 
     /** The app menu's History row (real touches, [openMenuItem]) until the History page is up. */
     private fun openHistory() {
-        if (inDom(DEVICES)) return
+        if (inDom(HISTORY)) return
         for (attempt in 1..OPEN_ATTEMPTS) {
-            if (openMenuItem(MENU_HISTORY) && awaitUntil(8_000) { inDom(DEVICES) && textOf(".zen-phone-title") == "History" }) {
+            if (openMenuItem(MENU_HISTORY) && awaitUntil(8_000) { inDom(HISTORY) && textOf(".zen-phone-title") == "History" }) {
                 SystemClock.sleep(1_500)
                 return
             }
@@ -500,12 +571,12 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     /** The system back until the History page is gone. */
     private fun leaveHistory() {
         for (attempt in 1..3) {
-            if (!inDom(DEVICES)) break
+            if (!inDom(HISTORY)) break
             back()
-            awaitUntil(3_000) { !inDom(DEVICES) }
+            awaitUntil(3_000) { !inDom(HISTORY) }
             SystemClock.sleep(700)
         }
-        if (inDom(DEVICES)) error("the History page never left")
+        if (inDom(HISTORY)) error("the History page never left")
         SystemClock.sleep(600)
     }
 
@@ -1010,15 +1081,22 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         private const val REACH_REMOTE_TITLE = "$REACH section[aria-label=\"From your other devices\"] .zen-list-title"
         /** The History page (the app menu's row) and its groups. */
         private const val MENU_HISTORY = "History"
+        /** The page itself: its group may be absent (§10.1's `none`), so the page is not read off the group. */
+        private const val HISTORY = ".zen-phone-panel"
         private const val HISTORY_CLOSED_TITLE = ".zen-phone-panel section[aria-label=\"Recently closed\"] .zen-list-title"
         private const val DEVICES = "[data-testid=\"history-other-devices\"]"
         private const val DEVICE = "[data-testid=\"history-device\"]"
         private const val DEVICE_HEADING = ".zen-device-heading-button"
         private const val SYNC_OFF = "[data-testid=\"history-devices-sync-off\"]"
+        private const val TABS_OFF = "[data-testid=\"history-devices-tabs-off\"]"
+        private const val ALL_HIDDEN = "[data-testid=\"history-devices-hidden\"]"
         private const val SHOW_HIDDEN = "[data-testid=\"history-devices-show-hidden\"]"
         private const val ACTION = "$DEVICES .zen-list-action-row"
         private const val REMOTE_TITLE = "$DEVICE .zen-list-title"
         private const val SYNC_SETTINGS_URL = "zen://settings/sync"
+        /** Settings › Sync asked for its Open tabs switch (`?row=`, the id `URLSearchParams` encodes). */
+        private const val SYNC_SCOPE_URL = "zen://settings/sync?row=sync-scope%3AopenTabs"
+        private const val SCOPE_ROW = "[data-row=\"sync-scope:openTabs\"]"
 
         // The seeded profile's ids.
         private const val WWW = "tab_www"

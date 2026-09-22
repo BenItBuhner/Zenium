@@ -115,10 +115,18 @@ describe('remoteTabsSection', () => {
     })
   })
 
-  it('is empty with no device publishing tabs, or every one of them hidden', () => {
-    expect(remoteTabsSection(syncOn, [], none)).toEqual({ kind: 'empty' })
-    expect(remoteTabsSection(syncOn, [idle], none)).toEqual({ kind: 'empty' })
-    expect(remoteTabsSection(syncOn, [desk], new Set(['desk']))).toEqual({ kind: 'empty' })
+  it('steps aside with no device publishing tabs (none: sync on, Open tabs on, nothing to list and no way out)', () => {
+    expect(remoteTabsSection(syncOn, [], none)).toEqual({ kind: 'none' })
+    expect(remoteTabsSection(syncOn, [idle], none)).toEqual({ kind: 'none' })
+    // A hidden id no device carries any more is nothing hidden: still none.
+    expect(remoteTabsSection(syncOn, [idle], new Set(['gone']))).toEqual({ kind: 'none' })
+  })
+
+  it('stands with every publishing device hidden (the way back is the row that shows them)', () => {
+    expect(remoteTabsSection(syncOn, [desk], new Set(['desk']))).toEqual({ kind: 'hidden' })
+    expect(remoteTabsSection(syncOn, [desk, pixel, idle], new Set(['desk', 'pixel']))).toEqual({
+      kind: 'hidden'
+    })
   })
 
   it('lists the devices otherwise', () => {
@@ -174,8 +182,16 @@ describe('hiddenDevicesStore', () => {
     expect(hiddenDevicesStore.get().hidden.size).toBe(0)
   })
 
-  it('the show-hidden row counts what it brings back', () => {
-    expect(OTHER_DEVICES_COPY.showHidden(1)).toBe('Show 1 hidden device')
-    expect(OTHER_DEVICES_COPY.showHidden(2)).toBe('Show 2 hidden devices')
+  it("the group's words are §10.1's: plain action labels, the sentences without a full stop", () => {
+    expect(OTHER_DEVICES_COPY.syncOffAction).toBe('Turn on sync')
+    expect(OTHER_DEVICES_COPY.tabsOffAction).toBe('Open sync settings')
+    expect(OTHER_DEVICES_COPY.showHidden).toBe('Show hidden devices')
+    expect(OTHER_DEVICES_COPY.allHidden).toBe("You've hidden every device")
+    for (const sentence of [
+      OTHER_DEVICES_COPY.syncOff,
+      OTHER_DEVICES_COPY.tabsOff,
+      OTHER_DEVICES_COPY.allHidden
+    ])
+      expect(sentence.endsWith('.')).toBe(false)
   })
 })
