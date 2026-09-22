@@ -332,7 +332,12 @@ export function HistoryPage({ state, tab }: { state: UIState; tab: Tab }): JSX.E
         </>
       }
     >
-      <div ref={list} data-selecting={selecting || undefined} onKeyDown={(e) => walkRows(e, list)}>
+      <div
+        ref={list}
+        className="zen-page-list"
+        data-selecting={selecting || undefined}
+        onKeyDown={(e) => walkRows(e, list)}
+      >
         {closed.length > 0 && !text && <RecentlyClosed entries={closed} selecting={selecting} />}
         {state.capabilities.sync && (
           <RemoteTabs

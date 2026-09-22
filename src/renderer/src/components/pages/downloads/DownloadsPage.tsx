@@ -142,7 +142,7 @@ export function DownloadsPage({ state, tab }: { state: UIState; tab: Tab }): JSX
           </>
         }
       >
-        <div ref={list} onKeyDown={(e) => walkRows(e, list)}>
+        <div ref={list} className="zen-page-list" onKeyDown={(e) => walkRows(e, list)}>
           {groups.length === 0 ? (
             <PageEmpty testId="downloads-empty">
               {text ? `No downloads match “${text}”` : 'Files you download appear here'}

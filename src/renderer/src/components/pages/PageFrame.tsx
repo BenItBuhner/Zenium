@@ -20,8 +20,10 @@ export const TWO_PANE_MIN_WIDTH = 720
  * inside 32 side margins – the page's 16 plus the rows' own 16 gutter – left-aligned as Zen's,
  * so a row's hover fill runs 16 past its text on both sides and the title, the field, the group
  * headings and the rows' labels share one left edge at 32. Groups are §9.27 sub-headings (the
- * shared `.zen-v2-heading`, 15/600) over `.zen-v2-row` rows (§9.21); the empty state is §9.17's
- * one sentence. Every class here is layout: the controls are the `zen-v2-*` primitives.
+ * shared `.zen-v2-heading`, 15/600) over `.zen-v2-row` rows (§9.21), the first 8 under the
+ * pinned header (§10.3) – in the body itself or in the page's one `.zen-page-list` div (the
+ * keyboard walk's root); the empty state is §9.17's one sentence. Every class here is layout:
+ * the controls are the `zen-v2-*` primitives.
  */
 
 /**
