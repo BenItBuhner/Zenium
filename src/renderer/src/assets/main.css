@@ -10236,12 +10236,10 @@
 }
 /*
  * Its `aria-expanded` says which way the rows are, not that a popover is up: the shared icon
- * button's lit fill for an open anchor (§9.20, `extensions.css`) does not reach the disclosure
- * at rest – the chevron's turn is the state – while the hover and press fills stay its own.
+ * button's lit fill is the popover anchor's alone (`[aria-haspopup][aria-expanded]`, §9.20,
+ * `extensions.css`), so a disclosure – which carries no `aria-haspopup` – takes none at rest
+ * without a rule of its own; the chevron's turn is the state, the hover and press fills its own.
  */
-.zen-page-heading > .zen-page-heading-twisty[aria-expanded='true']:not(:hover, :active) {
-  background: none;
-}
 /* The heading's 8 is to its rows; folded, there are none, and the next group's 20 beat is from the heading's line. */
 .zen-page-group[data-collapsed] > .zen-page-heading {
   margin-bottom: 0;

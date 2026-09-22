@@ -71,6 +71,8 @@ export function EmptyPane({ state, ui, tabId, groupId, rect, viewport }: Props):
           type="button"
           className="zen-v2-button"
           data-pick-tab={tabId}
+          // The picker is a popover (`role="dialog"`): the button is its anchor (§9.20).
+          aria-haspopup="dialog"
           onClick={() =>
             openTabPicker({
               paneTabId: tabId,
