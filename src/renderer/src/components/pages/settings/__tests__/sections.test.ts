@@ -54,6 +54,7 @@ const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 const { idleDictionaryWords } = await import('@renderer/lib/spellcheckWords')
 const { SYNC_SCOPES, syncSetupStore } = await import('@renderer/lib/syncSetup')
+const remoteTabs = await import('@renderer/lib/remoteTabs')
 
 type Model = ReturnType<typeof buildSection>
 type Row = ReturnType<typeof allRows>[number]
@@ -4312,12 +4313,14 @@ describe('ID-08’s Sync category on a phone', () => {
     const devices = model.groups.find((g) => g.id === 'sync-devices')
     expect(devices?.heading).toBe('Other devices')
     expect(devices?.aside).toBe('2')
+    // The devices, then the row that opens their tabs (ID-28, pinned below).
     expect(devices?.rows.map((r) => [r.kind, r.label])).toEqual([
       ['info', 'Home desktop'],
-      ['info', 'Work laptop']
+      ['info', 'Work laptop'],
+      ['item', 'Tabs from other devices']
     ])
     for (const r of devices?.rows ?? []) {
-      if (r.kind !== 'info') throw new Error('not an info row')
+      if (r.kind !== 'info') continue
       expect(r.trailing).toBeTruthy()
     }
 
@@ -4327,6 +4330,142 @@ describe('ID-08’s Sync category on a phone', () => {
     if (turnOff.kind !== 'action') throw new Error('not an action')
     expect(turnOff).toMatchObject({ label: 'Turn off sync', destructive: true })
     expect(turnOff.form?.title).toBe('Turn off sync?')
+  })
+
+  it('Tabs from other devices (ID-28): an item row after the devices with the list’s summary, a dependent of the Open tabs switch and disabled with nothing to open; its sheet lists each device’s tabs as rows a tap opens', () => {
+    const { remoteTabsStore } = remoteTabs
+    const openTabs = { ...defaultScope(), openTabs: true }
+    const laptop = {
+      deviceId: 'dev-2',
+      deviceName: 'Work laptop',
+      updatedAt: Date.now() - 60_000,
+      tabs: [
+        {
+          tabId: 't1',
+          url: 'https://example.com/docs/page',
+          title: 'Example docs',
+          favicon: 'https://example.com/favicon.ico',
+          lastActive: Date.now() - 2 * 60_000,
+          windowId: null
+        },
+        {
+          tabId: 't2',
+          url: 'https://news.example.org/',
+          title: '',
+          favicon: null,
+          lastActive: Date.now() - 3 * 3_600_000,
+          windowId: 'w1'
+        }
+      ]
+    }
+    const desktop = {
+      deviceId: 'dev-3',
+      deviceName: 'Home desktop',
+      updatedAt: Date.now() - 10_000,
+      tabs: []
+    }
+    try {
+      // Open tabs off in What you sync: the row stays laid out at 40 % and says which switch (§10.4).
+      const off = row(section('sync', syncState(connected())), 'sync-remote-tabs')
+      if (off.kind !== 'item') throw new Error('not an item row')
+      expect(off).toMatchObject({
+        label: 'Tabs from other devices',
+        description: 'Turn on Open tabs in What you sync to see them.',
+        disabled: true
+      })
+      expect(off.sheet.groups).toEqual([])
+
+      // On, with nothing published yet: the empty sentence, and no empty sheet to open (§9.17).
+      remoteTabsStore.set({ version: 0, devices: [] })
+      const none = row(
+        section('sync', syncState(connected({ scope: openTabs }))),
+        'sync-remote-tabs'
+      )
+      expect(none).toMatchObject({
+        description: 'No open tabs on your other devices yet.',
+        disabled: true
+      })
+
+      // The list: the summary counts the tabs and the devices that have any.
+      remoteTabsStore.set({ version: 1, devices: [laptop, desktop] })
+      const model = section('sync', syncState(connected({ scope: openTabs })))
+      const on = row(model, 'sync-remote-tabs')
+      if (on.kind !== 'item') throw new Error('not an item row')
+      expect(on).toMatchObject({ description: '2 tabs on 1 device', disabled: false })
+      expect(on.sheet.title).toBe('Tabs from other devices')
+      // One §10.3 group per device, the most recently published first, its count as the aside;
+      // a device with no web tab open keeps its heading over the group's empty line.
+      expect(on.sheet.groups.map((g) => [g.heading, g.aside, g.rows.length])).toEqual([
+        ['Home desktop', '0', 0],
+        ['Work laptop', '2', 2]
+      ])
+      expect(on.sheet.groups[0]?.empty).toBe('No open tabs on this device')
+      // A tab: its title (the address when it has none) over "host · when it was last in front",
+      // the favicon leading every row; a press opens the tab here once the sheet has gone.
+      const rows = on.sheet.groups[1]?.rows ?? []
+      expect(rows.map((r) => [r.kind, r.label, r.description])).toEqual([
+        ['action', 'Example docs', 'example.com · 2 min ago'],
+        ['action', 'news.example.org', 'news.example.org · 3 h ago']
+      ])
+      for (const r of rows) {
+        if (r.kind !== 'action') throw new Error('not an action')
+        expect(r.leading).toBeTruthy()
+        expect(r.closesSheet).toBe(true)
+        expect(r.leaves).toBeUndefined()
+        // The title is the page's, any length: one line, truncating from the end (§6).
+        expect(r.truncate).toBe(true)
+      }
+      const first = rows[0]
+      if (first?.kind !== 'action') throw new Error('not an action')
+      invoke.mockClear()
+      first.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('tab.create', {
+        url: 'https://example.com/docs/page',
+        active: true
+      })
+      // A tab this device already holds under the same id (the Open tabs scope carried its
+      // record, ID-10): its row brings that tab to the front rather than opening a second one.
+      remoteTabsStore.set({
+        version: 2,
+        devices: [{ ...laptop, tabs: [{ ...laptop.tabs[0]!, tabId: 'site' }] }]
+      })
+      const heldRow = row(
+        section('sync', syncState(connected({ scope: openTabs }))),
+        'sync-remote-tabs'
+      )
+      if (heldRow.kind !== 'item') throw new Error('not an item row')
+      const held = heldRow.sheet.groups[0]?.rows[0]
+      if (held?.kind !== 'action') throw new Error('not an action')
+      invoke.mockClear()
+      held.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('tab.activate', { tabId: 'site' })
+      expect(invoke).not.toHaveBeenCalledWith('tab.create', expect.anything())
+      remoteTabsStore.set({ version: 1, devices: [laptop, desktop] })
+      // The sheet's rows are the item's, reachable by id as any item sheet's rows are; the
+      // landing's search does not walk them (hundreds of tabs would flood it), the row itself is found.
+      expect(findRow(model.groups, 'sync-remote-tab:dev-2:t1')).toBe(first)
+      const hits = searchRows(
+        phoneSections(syncState(connected({ scope: openTabs }))),
+        'other devices'
+      )
+      expect(hits.map((h) => h.row.id)).toContain('sync-remote-tabs')
+      expect(hits.map((h) => h.row.id)).not.toContain('sync-remote-tab:dev-2:t1')
+      // The summary's grammar: one tab, one device.
+      remoteTabsStore.set({ version: 2, devices: [{ ...laptop, tabs: laptop.tabs.slice(0, 1) }] })
+      expect(
+        row(section('sync', syncState(connected({ scope: openTabs }))), 'sync-remote-tabs')
+          .description
+      ).toBe('1 tab on 1 device')
+      // No other device: nothing to list, so the row is not drawn disabled on the first screen (§10.4).
+      expect(
+        findRow(
+          section('sync', syncState(connected({ devices: [], scope: openTabs }))).groups,
+          'sync-remote-tabs'
+        )
+      ).toBeNull()
+    } finally {
+      remoteTabsStore.set({ version: -1, devices: [] })
+    }
   })
 
   it('says so where the device list is empty, says Syncing… and is busy while a sync runs, and shows the engine’s error in the danger ink', () => {

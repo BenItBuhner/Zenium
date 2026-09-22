@@ -14,6 +14,7 @@ import { useDownloadDirectory } from '@renderer/lib/downloadDirectory'
 import { useImportSources } from '@renderer/lib/importSources'
 import { privateLockStore } from '@renderer/lib/privateLock'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
+import { useRemoteTabs } from '@renderer/lib/remoteTabs'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
@@ -93,6 +94,8 @@ export function DesktopSettings({
   // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
   // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
   syncSetupStore.use((s) => s.folder)
+  // Likewise the other devices' open tabs, asked of the core once per `remoteTabsVersion`.
+  useRemoteTabs(state.sync)
   // Whether the device has a screen lock, for Privacy and Security's private-tab lock switch: a
   // phone in landscape draws that row through these panes (the phone host's word; a desktop
   // host never shows the row).
