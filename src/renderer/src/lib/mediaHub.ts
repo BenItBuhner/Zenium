@@ -4,7 +4,7 @@ import { displayHost } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { TOOLBAR_BUTTON, TOOLBAR_GAP } from '@renderer/lib/extensions/toolbar'
 import { createStore } from '@renderer/lib/store'
-import { PILL_PADDING } from '@renderer/components/urlbar/pillChipTiers'
+import { PILL_PADDING, PILL_TOOLS_TIER } from '@renderer/components/urlbar/pillChipTiers'
 
 /**
  * What the desktop's media hub (MW-16: Chrome's global media controls, a toolbar button with a
@@ -43,26 +43,44 @@ export function mediaHubVisible(state: UIState): boolean {
 }
 
 /**
- * The pill under which the hub's toolbar button folds (design language v2 §9.29): the button is
- * tiered by the row's width exactly as the pill's chips are, never by the active tab – at the
- * 240 sidebar it folds into the app menu's "Now Playing…" row with the accent dot on ⋯, and it
- * returns as a button at 270, where the star and the tools return. That is the pill whose
- * content box is 110 (`pillChipTiers.ts`'s "130 px pill"), in the row's `PILL_PADDING`: 126.
+ * The pill the hub's toolbar button must leave standing (design language v2 §9.29): the button
+ * is tiered by the row's width exactly as the pill's chips are, never by the active tab – at
+ * the 240 sidebar it folds into the app menu's "Now Playing…" row with the accent dot on ⋯ –
+ * and a folding button returns where the pill, with the button's own slot back in the row,
+ * still holds the box the star and the tools return at: the tier's `PILL_TOOLS_TIER` content
+ * box (110, the stylesheet's `@container (width < 110px)`; §9.29's "130 px pill"), 126 in the
+ * row's `PILL_PADDING`. Never where the pill first reaches that box without the button: a
+ * button returning there took the pill straight back under the tier it had just met (270 gave
+ * 125 → 94, and the address gave way to the title) and flipped its reading.
  */
-export const MEDIA_HUB_PILL = PILL_PADDING + 110
+export const MEDIA_HUB_PILL = PILL_PADDING + PILL_TOOLS_TIER
+
+/** A toolbar button's pitch in the row: its box and the gap before it (§5, 28 + 4). */
+const TOOLBAR_SLOT = TOOLBAR_BUTTON + TOOLBAR_GAP
+
+/**
+ * The row width at which the hub's button returns, given the count of the row's other buttons:
+ * the pill's tier box, the other buttons' slots and the hub's own. With the four always-there
+ * buttons (back, forward, reload, ⋯) that is 286 – the 302 sidebar, its 8 px gutters aside –
+ * where the pill with the button is 126 and the star is up with it; at 301 it would be 125.
+ */
+export function mediaHubReturnRow(otherButtons: number): number {
+  return MEDIA_HUB_PILL + (otherButtons + 1) * TOOLBAR_SLOT
+}
 
 /**
  * Whether the row is wide enough for the hub's button: the pill the row would give its other
  * buttons – back, forward, reload, ⋯, the puzzle piece and the downloads button while they are
- * up; not the pinned actions, which fold by the pill's own floor – reaches the 270 sidebar's.
- * The hub's own box is not in the sum, so the answer never depends on itself: at 270 with the
- * four always-there buttons the pill is 126 (254 − 4 × 32) and the button is up; at 240 it is
- * 96 and the button folds. An unmeasured row (0) shows the button, as the pinned actions show
- * before the row has a width. Pure, for the unit tests; the row measures itself and asks.
+ * up; not the pinned actions, which fold by the pill's own floor – and the hub's own slot still
+ * holds `MEDIA_HUB_PILL`. The hub's slot is in the sum, so the pill reads the same on either
+ * side of the return: at 302 the button arrives over a 126 pill, the star up; at 270, where the
+ * star returned over the same 126, the button leaves it so. An unmeasured row (0) shows the
+ * button, as the pinned actions show before the row has a width. Pure, for the unit tests; the
+ * row measures itself and asks.
  */
 export function mediaHubButtonFits(rowWidth: number, otherButtons: number): boolean {
   if (rowWidth <= 0) return true
-  return rowWidth - otherButtons * (TOOLBAR_BUTTON + TOOLBAR_GAP) >= MEDIA_HUB_PILL
+  return rowWidth >= mediaHubReturnRow(otherButtons)
 }
 
 /**
@@ -94,9 +112,11 @@ export const APP_MENU_BUTTON = '[data-zen-app-menu-button]'
  * Whether the hub has folded into the app menu, for the row that decides it (the ⋯ button's dot
  * and name): there is media to control and the row has not put the button up. The fold is the
  * toolbar's width tier's to make – at the 240 sidebar the hub "folds into the app menu as a Now
- * playing row with an accent dot on ⋯", and "returns as a button at 270" (§9.29) – and the row
- * makes it from its own measured width (`useElementWidth` on the row: the ResizeObserver that
- * follows a sidebar drag) with `mediaHubButtonFits`, in the render that mounts or unmounts the
+ * playing row with an accent dot on ⋯", and returns as a button where the pill, with the
+ * button's slot back, still holds the star's box (§9.29; the 302 sidebar with the always-there
+ * buttons) – and the row makes it from its own measured width (`useElementWidth` on the row:
+ * the ResizeObserver that follows a sidebar drag) with `mediaHubButtonFits`, in the render that
+ * mounts or unmounts the
  * button. Read from the same render, the dot moves button ↔ ⋯ in the commit that moves the
  * button: no frame shows both or neither, at no width, by construction – where a read of the
  * DOM after the commit (`mediaHubFolded`) is a commit behind, and a `ResizeObserver` on the

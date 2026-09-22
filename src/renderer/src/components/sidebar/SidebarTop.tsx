@@ -194,7 +194,9 @@ export function NavRow({
   // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
   // `mediaHubButtonFits`): at the 240 sidebar it is unmounted – never hidden with an opacity or
   // a `visibility` that would keep its box laid out – and the hub folds into the app menu's
-  // "Now Playing…" row; it returns at 270 with the star and the tools. The buttons it makes
+  // "Now Playing…" row; it returns where the pill, with the button's own slot back in the row,
+  // still holds the box the star returned at (126 / 110: the 302 sidebar with the always-there
+  // buttons), so the pill reads the same on either side of the return. The buttons it makes
   // room against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece
   // while there are extensions and the downloads button while it is up; the compact column has
   // no pill to keep, so there the button stays whenever there is media.

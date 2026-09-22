@@ -49,6 +49,14 @@ export const CHIP_GAP = 6
 export const PILL_PADDING = 16
 
 /**
+ * The content box at which the star and the tools return (§9.29's "130 px pill", the 270
+ * sidebar's 126 / 110): the stylesheet's `@container (width < 110px)` on `.zen-pill` drops every
+ * `zen-pill-chip` under it. The hub's toolbar button folds by the same tier (`lib/mediaHub.ts`):
+ * it returns where the pill, with the button's own slot back in the row, still holds this box.
+ */
+export const PILL_TOOLS_TIER = 110
+
+/**
  * Nominal boxes, the chips' negative margins folded in (§9.3): the site icon's 24 less its 4 px
  * lead-in, the star's 28 less its 8 px trail, the 20 px chips (zoom, translate, Reader View),
  * the 28 px icon buttons (blocked pop-ups, the shield, the autofill key) and what a count badge

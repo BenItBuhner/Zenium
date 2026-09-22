@@ -16,13 +16,14 @@ import {
   mediaHubButtonFits,
   mediaHubEntries,
   mediaHubLabel,
+  mediaHubReturnRow,
   mediaHubUi,
   mediaHubVisible,
   mediaTitle,
   openMediaHub,
   toggleMediaHub
 } from '@renderer/lib/mediaHub'
-import { PILL_PADDING } from '@renderer/components/urlbar/pillChipTiers'
+import { PILL_PADDING, PILL_TOOLS_TIER } from '@renderer/components/urlbar/pillChipTiers'
 
 /*
  * What the desktop's media hub (MW-16, Chrome's global media controls) reads from the state's
@@ -81,9 +82,11 @@ describe('mediaHubEntries', () => {
 
 /*
  * The hub button's width tier (design language v2 §9.29): tiered exactly as the pill's chips
- * are, never by the active tab – folded into the app menu at the 240 sidebar, back at 270 with
- * the star and the tools. The row asks with its own width and the count of the other buttons in
- * it; the answer never includes the hub's own box, so it cannot flip on itself.
+ * are, never by the active tab – folded into the app menu at the 240 sidebar, back where the
+ * pill, with the button's own slot in the row, still holds the box the star returned at (the
+ * 302 sidebar with today's buttons), never where the pill first reaches that box without it
+ * (270, where a returning button took the pill straight back under the tier). The row asks with
+ * its own width and the count of the other buttons in it; the hub's own slot is in the sum.
  */
 describe('mediaHubButtonFits (the §9.29 tier)', () => {
   const slot = TOOLBAR_BUTTON + TOOLBAR_GAP
@@ -92,20 +95,31 @@ describe('mediaHubButtonFits (the §9.29 tier)', () => {
   /** Back, forward, reload and ⋯: the buttons the row always has. */
   const always = 4
 
-  it('folds at the 240 sidebar and returns at 270, where the pill is the one the star returns at', () => {
+  it('folds at the 240 sidebar, stays folded at 270 where the star returns, and returns at 302 with the star', () => {
     expect(mediaHubButtonFits(row(240), always)).toBe(false)
     expect(mediaHubButtonFits(row(269), always)).toBe(false)
-    expect(mediaHubButtonFits(row(270), always)).toBe(true)
-    // 254 − 4 × 32 = 126: the 270 sidebar's pill, whose content box is the tier's 110.
-    expect(row(270) - always * slot).toBe(MEDIA_HUB_PILL)
+    // 270: the pill reaches the star's 126 / 110 without the button; the button leaves it so.
+    expect(mediaHubButtonFits(row(270), always)).toBe(false)
+    expect(mediaHubButtonFits(row(301), always)).toBe(false)
+    expect(mediaHubButtonFits(row(302), always)).toBe(true)
+    expect(mediaHubButtonFits(row(520), always)).toBe(true)
+    // The threshold is the tokens' sum, not a literal: the tier's pill (16 + 110) and five
+    // 32 px slots – the four other buttons' and the hub's own – is the 286 row, the 302 sidebar.
+    expect(mediaHubReturnRow(always)).toBe(MEDIA_HUB_PILL + (always + 1) * slot)
+    expect(mediaHubReturnRow(always) + 16).toBe(302)
+    expect(MEDIA_HUB_PILL).toBe(PILL_PADDING + PILL_TOOLS_TIER)
     expect(MEDIA_HUB_PILL - PILL_PADDING).toBe(110)
+    // The pill with the button at 302 is the 270 pill without it: 286 − 5 × 32 = 254 − 4 × 32.
+    expect(row(302) - (always + 1) * slot).toBe(row(270) - always * slot)
+    expect(row(302) - (always + 1) * slot).toBe(MEDIA_HUB_PILL)
   })
 
   it('makes room against the puzzle piece and the downloads button too, one slot each', () => {
-    expect(mediaHubButtonFits(row(270), always + 1)).toBe(false)
-    expect(mediaHubButtonFits(row(270 + slot), always + 1)).toBe(true)
-    expect(mediaHubButtonFits(row(270 + slot), always + 2)).toBe(false)
-    expect(mediaHubButtonFits(row(270 + 2 * slot), always + 2)).toBe(true)
+    expect(mediaHubButtonFits(row(302), always + 1)).toBe(false)
+    expect(mediaHubButtonFits(row(302 + slot), always + 1)).toBe(true)
+    expect(mediaHubButtonFits(row(302 + slot), always + 2)).toBe(false)
+    expect(mediaHubButtonFits(row(302 + 2 * slot), always + 2)).toBe(true)
+    expect(mediaHubReturnRow(always + 1) - mediaHubReturnRow(always)).toBe(slot)
   })
 
   it('shows the button before the row has a width, and is monotonic in the width', () => {

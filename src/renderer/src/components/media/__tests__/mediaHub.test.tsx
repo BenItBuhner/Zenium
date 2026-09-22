@@ -548,18 +548,21 @@ describe('the hub from the app menu (§9.29)', () => {
       expect(dots()).toEqual(['hub'])
       expect(menu.getAttribute('aria-label')).toBeNull()
       expect(menu.getAttribute('title')).toMatch(/^Menu \(.+\)$/)
-      sidebarDraggedTo(270)
+      sidebarDraggedTo(302)
       expect(dots()).toEqual(['hub'])
-      // The sidebar dragged under 270: the tier folds the button in the row's observer pass,
+      // The sidebar dragged under 302: the tier folds the button in the row's observer pass,
       // and in that same commit ⋯ takes the disc and its name keeps the chord.
-      sidebarDraggedTo(269)
+      sidebarDraggedTo(301)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
       expect(dots()).toEqual(['menu'])
       expect(menu.getAttribute('aria-label')).toBe(`${menu.getAttribute('title')}, media playing`)
+      // 270, where the star returns without the button, is still the folded side.
+      sidebarDraggedTo(270)
+      expect(dots()).toEqual(['menu'])
       sidebarDraggedTo(240)
       expect(dots()).toEqual(['menu'])
-      // And back at 270: the button returns with its disc, ⋯ says nothing twice.
-      sidebarDraggedTo(270)
+      // And back at 302: the button returns with its disc, ⋯ says nothing twice.
+      sidebarDraggedTo(302)
       expect(q('[data-zen-media-hub-button]')).not.toBeNull()
       expect(dots()).toEqual(['hub'])
       expect(menu.getAttribute('aria-label')).toBeNull()
@@ -601,7 +604,7 @@ describe('the hub from the app menu (§9.29)', () => {
     expect(mediaHubFolded()).toBe(true)
   })
 
-  it('the tier: the row unmounts the hub button at the 240 sidebar – ⋯ takes the dot and the menu request says folded – and mounts it again at 270 (§9.29)', () => {
+  it('the tier: the row unmounts the hub button at the 240 sidebar – ⋯ takes the dot and the menu request says folded – keeps it folded at 269, 270 and 301, and mounts it again at 302 (§9.29)', () => {
     // The row is the sidebar less its 8 px gutters each side; happy-dom lays nothing out, so the
     // width the row measures before its first paint is set here (the nav row alone – every
     // other box stays 0, as the pill's unmeasured content box shows every chip).
@@ -628,13 +631,24 @@ describe('the hub from the app menu (§9.29)', () => {
         'app.menu',
         expect.objectContaining({ mediaHubFolded: true })
       ])
-      // One pixel under 270 the row still has no room for it.
+      // At 269 the row still has no room for it.
       widths.row = 269 - 16
       render(<NavRow key="at-269" state={state} tab={music} compact={false} />)
       expect(q('[data-zen-media-hub-button]')).toBeNull()
-      // At 270 the button returns with its own disc, and ⋯ says nothing twice.
+      // At 270 the pill first reaches the star's 126 without the button; a button returning
+      // here would take it straight back to 94, so the row keeps it folded and ⋯ keeps the dot.
       widths.row = 270 - 16
       render(<NavRow key="at-270" state={state} tab={music} compact={false} />)
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(q('[data-zen-app-menu-button] .zen-mhub-dot')).not.toBeNull()
+      // One pixel under 302 the pill with the button would be 125.
+      widths.row = 301 - 16
+      render(<NavRow key="at-301" state={state} tab={music} compact={false} />)
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      // At 302 the button returns over a 126 pill – the star up with it – with its own disc,
+      // and ⋯ says nothing twice.
+      widths.row = 302 - 16
+      render(<NavRow key="at-302" state={state} tab={music} compact={false} />)
       const hubButton = q('[data-zen-media-hub-button]')!
       expect(hubButton).not.toBeNull()
       expect(hubButton.querySelector('.zen-mhub-dot')).not.toBeNull()
@@ -652,7 +666,7 @@ describe('the hub from the app menu (§9.29)', () => {
 
   /*
    * The row's width observer (`useElementWidth`) unmounts the hub button inside its own delivery
-   * pass when the sidebar crosses 270 → 240; an observer on the button would then fire for the
+   * pass when the sidebar crosses 302 → 240; an observer on the button would then fire for the
    * detached node at depth 0, shallower than the pass, and Chromium would report "ResizeObserver
    * loop completed with undelivered notifications" on every crossing with media. The fold is
    * decided from the row's width in the render that moves the button (`mediaHubFoldedAt`).
