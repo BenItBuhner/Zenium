@@ -28,6 +28,9 @@ name: Android reduced motion demo
 # driver, never when the driver failed.
 on:
   workflow_dispatch:
+  # TEMPORARY: the branch's own run; removed before the head is final.
+  push:
+    branches: [cursor/android-reduced-motion-no-transition-1ab4]
 
 permissions:
   contents: read
