@@ -11,10 +11,6 @@ name: Android share and screenshot demo
 # in android-emulator-demo.yml; this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY: the one authorised run for #321 (removed before the PR is marked ready).
-  push:
-    branches:
-      - cursor/android-share-screenshot-be8e
 
 permissions:
   contents: read
@@ -26,10 +22,6 @@ concurrency:
 jobs:
   record:
     name: Share and screenshot demo
-    # TEMPORARY with the push trigger above: this run is queued only to cancel the one a push
-    # with the trigger still on started beyond the authorised run and retry (the concurrency
-    # group above cancels the run in progress); its own job is skipped.
-    if: false
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
