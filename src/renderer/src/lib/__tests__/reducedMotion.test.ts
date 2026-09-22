@@ -198,7 +198,9 @@ describe('the walk over the reduced-motion blocks', () => {
     expect(rules.map((r) => r.layered)).toEqual([false, false, false, false, false, true])
     // The guard's first check would refuse each of the shortened ones.
     const shortened = rules.flatMap((r) =>
-      r.decls.filter(isMotion).flatMap((d) => times(d.value).filter((t) => t !== `${REDUCED_FADE_MS}ms`))
+      r.decls
+        .filter(isMotion)
+        .flatMap((d) => times(d.value).filter((t) => t !== `${REDUCED_FADE_MS}ms`))
     )
     expect(shortened).toEqual(['1ms', '0.01ms', '1ms', '1ms'])
   })
@@ -266,7 +268,9 @@ describe('reduced motion removes, never shortens (v2 §11.3)', () => {
               const tokens = d.value.split(/\s+/)
               const named = tokens.find((t) => keyframes.has(t))
               expect(named, `a keyframes rule of this sheet: ${at}`).toBeDefined()
-              expect([...keyframes.get(named!)!], `an opacity-only fade: ${at}`).toEqual(['opacity'])
+              expect([...keyframes.get(named!)!], `an opacity-only fade: ${at}`).toEqual([
+                'opacity'
+              ])
               expect(times(d.value), `at the fade length: ${at}`).toEqual([`${REDUCED_FADE_MS}ms`])
               break
             }
@@ -319,10 +323,12 @@ describe('reduced motion removes, never shortens (v2 §11.3)', () => {
       ":root[data-fakebox='closing'] .zen-phone-bar",
       ":root[data-fakebox='opening'] .zen-ntp-fades",
       ":root[data-fakebox='closing'] .zen-ntp-fades",
-      // The desktop program's: the panels' pop, the frame dialogs' way out, the sidebar's toast.
+      // The desktop program's: the panels' pop, the popover's collapse into its anchor (§9.22,
+      // siteControls/primitives.tsx), the frame dialogs' way out, the sidebar's toast.
       '.zen-animate-pop',
       '.zen-animate-in',
       '.zen-animate-fade',
+      '.zen-desktop-popover[data-collapsing]',
       '.zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving]',
       '.zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving]',
       '.zen-toast'

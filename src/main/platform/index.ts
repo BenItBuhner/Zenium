@@ -641,12 +641,15 @@ export class ElectronPlatform implements Platform {
   }
 
   /**
-   * `tabCaptureAllows`: whether an extension's `chrome.tabCapture` request stands behind a media
-   * request the engine makes on a tab for a consuming document of `securityOrigin`.
+   * `captureAllows`: whether an extension's capture stands behind a media request the engine
+   * makes on `target` for a consuming document of `securityOrigin` – a `chrome.tabCapture`
+   * request on the captured tab, or a `chrome.desktopCapture` pick the consuming document is
+   * redeeming (`getUserMedia` with `chromeMediaSource: "desktop"`, which Electron parses natively
+   * once this handler allows it).
    */
   private attachPermissions(
     ses: Session,
-    tabCaptureAllows: (target: WebContents, securityOrigin: string | undefined) => boolean
+    captureAllows: (target: WebContents, securityOrigin: string | undefined) => boolean
   ): void {
     const { permissions, external } = this.browser
     ses.setPermissionRequestHandler((webContents, rawPermission, callback, details) => {
@@ -661,14 +664,12 @@ export class ElectronPlatform implements Platform {
       // An extension's tab capture arrives the same way, on the captured tab, from the
       // consuming document's origin: the user's gesture on the extension was the consent
       // (Chrome's `tabCaptureForTab`), and the engine's stream registry already tied the id to
-      // that one document and moment.
+      // that one document and moment. So does a `chooseDesktopMedia` pick's `getUserMedia`, on
+      // the consuming document itself: the picker was the consent.
       if (
         permission === 'display-capture' &&
         webContents &&
-        tabCaptureAllows(
-          webContents,
-          'securityOrigin' in details ? details.securityOrigin : undefined
-        )
+        captureAllows(webContents, 'securityOrigin' in details ? details.securityOrigin : undefined)
       ) {
         callback(true)
         return

@@ -876,6 +876,33 @@ describe('the v2 primitives (§9.34)', () => {
     )
   })
 
+  it('keep a checked checkbox’s accent under the pointer: the one hover rule steps aside from :checked and both aria-checked forms', () => {
+    // `.zen-v2-checkbox:hover:not(:disabled)` (0,3,0) outranked `.zen-v2-checkbox:checked`
+    // (0,2,0), so a checked desktop box under the mouse lost its accent to `--v2-fill`. The
+    // hover rule excludes every checked form the checked rule knows – the `<input>`'s
+    // `:checked`, the span's own `[aria-checked='true']` and the row-as-checkbox parent form.
+    const hovers = [...bare.matchAll(/^ *(\.zen-v2-checkbox:hover[^{]*)\{/gm)].map((m) =>
+      m[1].replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim()
+    )
+    expect(hovers).toEqual([
+      ".zen-v2-checkbox:hover:not(:disabled, :checked, [aria-checked='true'], [aria-checked='true'] > *)"
+    ])
+    // The checked rule still names the same three forms, in that order, filling with the accent.
+    const checked = block(
+      ".zen-v2-checkbox:checked,\n.zen-v2-checkbox[aria-checked='true'],\n[aria-checked='true'] > .zen-v2-checkbox"
+    )
+    expect(checked).toMatch(/^ {2}background: var\(--v2-accent\);$/m)
+    expect(checked).toMatch(/^ {2}border-color: var\(--v2-accent\);$/m)
+    // No other stylesheet hovers the checkbox on its own.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => f.endsWith('.css') && f !== 'assets/main.css'))
+      expect(readFileSync(join(root, file), 'utf8'), `${file} hovers the checkbox`).not.toMatch(
+        /\.zen-v2-checkbox:hover/
+      )
+  })
+
   it('let a field’s invalid state win over its focus ring (§9.12): the ring in the danger ink, on the shared field and the phone field alike', () => {
     // Dark's inset ring (−2, §1) lay over the 1 px danger border and hid it: focused and invalid,
     // the ring is `--v2-danger` – its 2 px, offset and shape the shared ring's – so the field

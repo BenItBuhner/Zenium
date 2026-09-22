@@ -4,7 +4,7 @@
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
 //        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark]
-//        [--extra-args=--no-sandbox]
+//        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
@@ -12,12 +12,14 @@
 // Scenarios (each one launch of the executable, on profiles under one temporary root; the pages
 // they load come from boot-fixture.mjs's server on 127.0.0.1, started once per run, so a run
 // needs no internet):
-//   boot         first launch: onboarding, one visible window titled Zenium, a tab on the
-//                fixture's first page opened through the URL bar, a graceful quit (the preset's
-//                chord, "Quit Zenium?" answered when several tabs are open) that leaves
-//                `cleanExit: true` in the profile
+//   boot         first launch: onboarding (on screen – in the DOM and painted – within the
+//                first-launch render budget, then clicked through with the same budget), one
+//                visible window titled Zenium, a tab on the fixture's first page opened through
+//                the URL bar, a graceful quit (the preset's chord, "Quit Zenium?" answered when
+//                several tabs are open) that leaves `cleanExit: true` in the profile
 //   restore      the profile from `boot` comes back with its tab loaded, no onboarding and no
-//                "Restore pages?" bar
+//                "Restore pages?" bar (skipped, like `crash`, when boot's launch or onboarding
+//                failed: that profile is not past onboarding; scenario-deps.mjs)
 //   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
 //                Ctrl+F (the field takes the keyboard, Escape closes the bar and hands it back to
 //                the page), Ctrl+plus/minus/0 with the zoom bubble, F11, Ctrl+N, Ctrl+Shift+N,
@@ -52,7 +54,8 @@
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
 // failed step is a "failure". Failures matching .github/smoke/known-failures.json are reported by
 // their bug id and tolerated; anything else makes the run exit 1. Console errors logged by the web
-// pages themselves (http(s)://…, the fixture's included) are recorded but never gate.
+// pages themselves (http(s)://…, the fixture's included) are recorded but never gate. A failed
+// step also grabs the screen as it was (<scenario>-<step>-failed.png, named in the failure).
 //
 // Exit codes: 0 pass (only known failures, if any), 1 unexpected failures, 2 usage, 3 watchdog.
 
@@ -72,6 +75,7 @@ import {
 } from './popup-fixture.mjs'
 import { retryDetail, waitForTabWithRetry } from './navigation.mjs'
 import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
+import { skipReason, skippedEntries } from './scenario-deps.mjs'
 import {
   SITE_DATA_FILE,
   cookieRequests,
@@ -119,9 +123,12 @@ const RENDER_WAIT_MS = Math.max(RENDER_BUDGET_MS, FIRST_LAUNCH_RENDER_BUDGET_MS)
 const QUIT_BUDGET_MS = Number(opts['quit-budget-ms'] ?? 15000)
 const STEP_TIMEOUT_MS = Number(opts['step-timeout-ms'] ?? 60000)
 const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
-// Budget for a click on a button the chrome has just painted for the first time (onboarding,
-// the crash-restore bar). Playwright waits for the button to be actionable; on a busy runner
-// that took 5.1 s on one green run and 8 s on a red one, so 5 s is a margin, not a check.
+// Budget for a click on a button the chrome has just painted for the first time (the
+// crash-restore bar). Playwright waits for the button to be actionable; on a busy runner that
+// took 5.1 s on one green run and 8 s on a red one, so 5 s is a margin, not a check. What the
+// wait is for: the button has to hold still across two animation frames, and a chrome page whose
+// window has no frames yet runs none (see Session.waitForFrames). The onboarding's clicks, on the
+// run's cold launch, first wait for the frames and then click within the launch's render budget.
 const FIRST_PAINT_CLICK_MS = Number(opts['first-paint-click-ms'] ?? 15000)
 const WATCHDOG_MS = Number(opts['watchdog-min'] ?? 15) * 60 * 1000
 const allowlistFile = path.resolve(opts.allowlist ?? path.join(here, 'known-failures.json'))
@@ -211,6 +218,10 @@ function withTimeout(promise, ms, label) {
 }
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** Evaluated in a page: resolves once two animation frames have run, i.e. the page is painting. */
+const twoAnimationFrames = () =>
+  new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))
 
 /** Poll `fn` until it returns a truthy value; throws with `what` when the deadline passes. */
 async function waitFor(fn, timeoutMs, what, intervalMs = 150) {
@@ -313,17 +324,22 @@ function osScreenshot(file) {
   return { status: 1, stderr: 'unsupported platform' }
 }
 
-async function shot(name, session = null) {
+/** The screen as it is right now: no bring-to-front, no settle (the app may be gone or stuck). */
+function grabScreen(name) {
   const file = path.join(outDir, `${String(++shotIndex).padStart(2, '0')}-${name}.png`)
-  if (session) {
-    await session.bringToFront().catch(() => undefined)
-    await session.settle().catch(() => undefined)
-  }
   const r = osScreenshot(file)
   const ok = fs.existsSync(file) && fs.statSync(file).size > 0
   if (!ok) log(`screenshot ${name} failed: ${r.stderr || r.stdout || r.error || 'no file'}`)
   result.screenshots.push({ name, file: path.basename(file), ok })
-  return path.basename(file)
+  return { file: path.basename(file), ok }
+}
+
+async function shot(name, session = null) {
+  if (session) {
+    await session.bringToFront().catch(() => undefined)
+    await session.settle().catch(() => undefined)
+  }
+  return grabScreen(name).file
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -831,7 +847,10 @@ class Session {
     throw new Error(`no chrome page (file://…/index.html) within ${timeoutMs} ms; pages: ${urls}`)
   }
 
-  /** Runs one fenced step; a failure is recorded and the scenario carries on. */
+  /**
+   * Runs one fenced step; a failure is recorded, with the screen as it was at that moment
+   * (`screen`, the file's name), and the scenario carries on.
+   */
   async step(name, fn, { timeoutMs = STEP_TIMEOUT_MS, fatal = false } = {}) {
     const t = Date.now()
     const entry = { name, ok: false, ms: 0 }
@@ -844,7 +863,11 @@ class Session {
       entry.error = String(e && (e.stack || e.message || e)).slice(0, 4000)
       // What the step had gathered before it failed (an error thrown with a `detail`).
       if (e && typeof e === 'object' && e.detail !== undefined) entry.detail = e.detail
-      log(`step ${name} FAILED: ${entry.error.split('\n')[0]}`)
+      const screen = grabScreen(`${this.scenario}-${name}-failed`)
+      if (screen.ok) entry.screen = screen.file
+      log(
+        `step ${name} FAILED: ${entry.error.split('\n')[0]}${screen.ok ? ` (screen: ${screen.file})` : ''}`
+      )
     }
     entry.ms = Date.now() - t
     this.steps.push(entry)
@@ -988,16 +1011,33 @@ class Session {
 
   /** Two animation frames in the chrome page: the last DOM change has been committed and painted. */
   settle(page = this.chrome) {
-    return withTimeout(
-      page.evaluate(
-        () =>
-          new Promise((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))
-          )
-      ),
-      3000,
-      'settle'
-    ).catch(() => false)
+    return withTimeout(page.evaluate(twoAnimationFrames), 3000, 'settle').catch(() => false)
+  }
+
+  /**
+   * Waits for the chrome page to run two animation frames; resolves with how long they took, or
+   * null when none ran within `timeoutMs`. A page whose DOM is complete but whose window has no
+   * frames yet – the GPU process still coming up on a cold launch (the compositor's frames are
+   * what drive animation-frame callbacks), the window not shown or occluded – runs no callback at
+   * all, so a single evaluate would hang for the whole wait: each attempt is fenced at a second
+   * and asked again until the deadline (a stale attempt resolving later goes nowhere).
+   */
+  async waitForFrames(timeoutMs, page = this.chrome) {
+    const t0 = Date.now()
+    const deadline = t0 + timeoutMs
+    for (;;) {
+      const slice = Math.min(1000, deadline - Date.now())
+      if (slice <= 0) return null
+      const attempt = Date.now()
+      const ticked = await withTimeout(page.evaluate(twoAnimationFrames), slice, 'frames').then(
+        () => true,
+        () => false
+      )
+      if (ticked) return Date.now() - t0
+      // An evaluate that failed outright (the page gone) rather than timing out: not a busy loop.
+      if (Date.now() - attempt < slice)
+        await delay(Math.min(250, Math.max(0, deadline - Date.now())))
+    }
   }
 
   shot(name) {
@@ -1298,8 +1338,15 @@ class Session {
   failures() {
     const out = []
     for (const st of this.steps) {
-      if (!st.ok)
-        out.push({ kind: 'step', scenario: this.scenario, step: st.name, message: st.error })
+      if (!st.ok) {
+        out.push({
+          kind: 'step',
+          scenario: this.scenario,
+          step: st.name,
+          message: st.error,
+          ...(st.screen ? { screen: st.screen } : {})
+        })
+      }
     }
     for (const e of this.readEvents()) {
       const f = failureFromEvent(e, this.scenario)
@@ -1874,18 +1921,59 @@ async function scenarioBoot() {
   return runScenario('boot', userData, {}, async (s, out) => {
     out.fixture = { origin: bootSite.origin, page: page.url }
     await s.step('onboarding', async () => {
+      // The onboarding has the launch's render budget (the run's first launch is the cold one:
+      // FIRST_LAUNCH_RENDER_BUDGET_MS) to be on screen, which is two things: in the DOM
+      // (`visible`: laid out, nothing hiding it – a wait Playwright polls on timers) and painted
+      // (the page runs animation frames, which the compositor's frames drive). The clicks then
+      // get the same budget. Kept apart because they come apart: on 2026-09-22 (#327's merge
+      // ref, ubuntu-latest) the onboarding was in the DOM 2 s after a cold launch that took 4 s
+      // to its chrome, and the window stayed blank for the 25 s after it – no frame, because
+      // the GPU process was still probing GL through Mesa (some 190 MB of libgallium/libLLVM
+      // paged in from a cold disk, under an Xvfb that has no GPU to find) before settling on
+      // the software compositor; the Linux job now launches with --disable-gpu, which skips
+      // that probe (ci.yml). Playwright's click, which needs the button to hold still across
+      // two animation frames, waited its FIRST_PAINT_CLICK_MS out with nothing to measure and
+      // the failure read "locator.click: Timeout 15000ms exceeded". Now it reads what was
+      // missing, with the screen at that moment and what the main process knew of the GPU
+      // (`gpu`: Electron's getGPUFeatureStatus – gpu_compositing "disabled_software" is the
+      // Xvfb norm, with or without the flag).
+      const budget = s.renderBudgetMs
       const onboarding = s.chrome.locator('[data-testid="onboarding"]')
-      await onboarding.waitFor({ state: 'visible', timeout: 10000 })
+      const gpuStatus = () =>
+        s.app.evaluate(({ app }) => app.getGPUFeatureStatus()).catch((e) => String(e.message || e))
+      const t0 = Date.now()
+      await onboarding.waitFor({ state: 'visible', timeout: budget })
+      const visibleMs = Date.now() - t0
+      await s.bringToFront().catch(() => undefined)
+      const paintedMs = await s.waitForFrames(Math.max(1, budget - visibleMs))
+      if (paintedMs === null) {
+        const win = await s.window().catch(() => null)
+        const gpu = await gpuStatus()
+        const where = win
+          ? `window ${win.visible ? 'visible' : 'not visible'}, ${win.bounds.width}x${win.bounds.height}, title "${win.title}"`
+          : 'no window'
+        const compositing =
+          gpu && typeof gpu === 'object'
+            ? `gpu_compositing ${gpu.gpu_compositing}`
+            : `gpu status: ${gpu}`
+        const error = new Error(
+          `onboarding in the DOM after ${visibleMs} ms but not painted: no animation frame in the chrome page within the ${budget} ms render budget (${where}; ${compositing})`
+        )
+        error.detail = { visibleMs, paintedMs: null, renderBudgetMs: budget, window: win, gpu }
+        throw error
+      }
       await s.shot('01-first-launch')
-      await s.chrome
-        .getByRole('button', { name: 'Continue' })
-        .click({ timeout: FIRST_PAINT_CLICK_MS })
-      await s.chrome
-        .getByRole('button', { name: 'Skip tour' })
-        .click({ timeout: FIRST_PAINT_CLICK_MS })
+      await s.chrome.getByRole('button', { name: 'Continue' }).click({ timeout: budget })
+      await s.chrome.getByRole('button', { name: 'Skip tour' }).click({ timeout: budget })
       await onboarding.waitFor({ state: 'detached', timeout: 10000 })
       await s.shot('02-after-onboarding')
-      return 'completed'
+      return {
+        completed: true,
+        visibleMs,
+        paintedMs,
+        renderBudgetMs: budget,
+        gpu: await gpuStatus()
+      }
     })
 
     await s.step('window', () => assertMainWindow(s))
@@ -2325,6 +2413,140 @@ async function scenarioWalkthrough() {
         `the Settings row gone (${rowsBefore} rows before)`
       )
       return { address, reads, tooltip, owner, after, rows: rowsBefore }
+    })
+
+    await s.step('settings-stacked-dialogs', async () => {
+      await s.reset()
+      // Two stacked desktop dialogs – a Settings item dialog and the Remove prompt over it – each
+      // paint in a stacking context of their own, ranked by slot index (design language v2 §9.24;
+      // the chassis rule `.zen-frame-dialogs-slot > * { isolation: isolate; z-index:
+      // sibling-index() }`). `sibling-index()` is Chromium 138+'s, so the unit test can only pin
+      // the rule's text; here the computed values are read – z-index 1 and 2, never `auto` – and
+      // a hit test in the overlap has to land in the upper dialog, never in the lower one's
+      // positioned children (the live bug the rule closes).
+      const page = s.chrome.locator('[data-testid="settings-page"]')
+      const rowsBefore = await s.sidebarTabCount()
+      if (IS_MAC) {
+        await s.press('Meta+,')
+      } else {
+        const button = s.chrome.locator('[data-zen-app-menu-button]').first()
+        await button.click({ timeout: 5000 })
+        const menu = s.chrome.locator('.zen-v2-menu[role="menu"]').first()
+        await menu.waitFor({ state: 'visible', timeout: 5000 })
+        await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click({ timeout: 5000 })
+        await menu.waitFor({ state: 'hidden', timeout: 5000 })
+      }
+      await page.first().waitFor({ state: 'visible', timeout: 10000 })
+      await s.settle()
+      await s.chrome.locator('.zen-settings-nav-item', { hasText: 'Search' }).first().click()
+      // An engine to open a dialog on: the "Add search engine" form dialog adds one.
+      await s.chrome.locator('[data-row="add-search-engine"] button').first().click()
+      const form = s.chrome.locator('[data-dialog="form:add-search-engine"]')
+      await form.waitFor({ state: 'visible', timeout: 5000 })
+      const name = 'Smoke Search'
+      await form.locator('#search-engine-name').fill(name)
+      await form.locator('#search-engine-url').fill('https://example.com/search?q=%s')
+      await form.getByRole('button', { name: 'Add', exact: true }).click()
+      await form.waitFor({ state: 'hidden', timeout: 5000 })
+      // The form's root leaves the slot with its fade; the ranks below count live roots only.
+      await waitFor(
+        () =>
+          s.chrome.evaluate(
+            () => !document.querySelector('.zen-frame-dialogs-slot > [data-leaving]')
+          ),
+        5000,
+        'the form dialog’s root gone from the slot'
+      )
+      const item = s.chrome.locator('[data-row^="search-engine:"]', { hasText: name }).first()
+      await item.waitFor({ state: 'visible', timeout: 5000 })
+      const itemId = await item.getAttribute('data-row')
+      await item.click()
+      const dialog = s.chrome.locator(`[data-dialog="item:${itemId}"]`)
+      await dialog.waitFor({ state: 'visible', timeout: 5000 })
+      await s.settle()
+      await dialog.locator(`[data-row="${itemId}:remove"]`).first().click()
+      const prompt = s.chrome.locator(`[data-dialog="confirm:${itemId}:remove"]`)
+      await prompt.waitFor({ state: 'visible', timeout: 5000 })
+      // Past the prompt's pop (its transform would be a stacking context of its own making).
+      await delay(400)
+      await s.settle()
+      const stack = await s.chrome.evaluate((id) => {
+        const slot = document.querySelector('.zen-frame-dialogs[data-open] .zen-frame-dialogs-slot')
+        if (!slot) return { error: 'no open dialog slot' }
+        const roots = [...slot.children].map((root) => {
+          const style = getComputedStyle(root)
+          return {
+            dialog: root.getAttribute('data-dialog'),
+            zIndex: style.zIndex,
+            isolation: style.isolation,
+            leaving: root.hasAttribute('data-leaving'),
+            inert: root.hasAttribute('inert')
+          }
+        })
+        const upper = slot.lastElementChild
+        const box = upper.getBoundingClientRect()
+        // The overlap: the prompt is centred over the item dialog, so its centre and its title
+        // corner both lie over the lower dialog's body.
+        const probe = (x, y) => {
+          const hit = document.elementFromPoint(x, y)
+          return {
+            x: Math.round(x),
+            y: Math.round(y),
+            inUpper: upper.contains(hit),
+            inLower: [...slot.children].some((root) => root !== upper && root.contains(hit)),
+            hit: hit
+              ? `${hit.tagName.toLowerCase()}.${[...hit.classList].slice(0, 2).join('.')}`
+              : null
+          }
+        }
+        return {
+          roots,
+          probes: [
+            probe(box.left + box.width / 2, box.top + box.height / 2),
+            probe(box.left + 24, box.top + 24)
+          ],
+          expected: [`item:${id}`, `confirm:${id}:remove`]
+        }
+      }, itemId)
+      if (stack.error) throw new Error(stack.error)
+      const live = stack.roots.filter((root) => !root.leaving)
+      const detail = { itemId, ...stack }
+      const fail = (why) => {
+        const err = new Error(`${why}: ${JSON.stringify(stack)}`)
+        err.detail = detail
+        throw err
+      }
+      if (live.map((root) => root.dialog).join(',') !== stack.expected.join(',')) {
+        fail('the slot does not hold the item dialog and its prompt, in that order')
+      }
+      if (live[0].zIndex !== '1' || live[1].zIndex !== '2') {
+        fail(
+          'the stacked dialog roots’ computed z-index is not 1 and 2 (sibling-index() unresolved?)'
+        )
+      }
+      if (!live.every((root) => root.isolation === 'isolate')) {
+        fail('a stacked dialog root is not a stacking context of its own (isolation)')
+      }
+      if (!live[0].inert || live[1].inert) {
+        fail('the lower dialog is not inert under the prompt (or the prompt is)')
+      }
+      if (!stack.probes.every((p) => p.inUpper && !p.inLower)) {
+        fail('a hit test in the overlap did not land in the upper dialog')
+      }
+      await s.shot('08b-settings-stacked-dialogs')
+      // The prompt's Remove takes the engine with it; both dialogs leave.
+      await prompt.getByRole('button', { name: 'Remove', exact: true }).click({ timeout: 5000 })
+      await prompt.waitFor({ state: 'hidden', timeout: 5000 })
+      await dialog.waitFor({ state: 'hidden', timeout: 5000 })
+      await item.waitFor({ state: 'hidden', timeout: 5000 })
+      await s.press(`${ACCEL}+w`)
+      await page.first().waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore,
+        8000,
+        `the Settings row gone (${rowsBefore} rows before)`
+      )
+      return detail
     })
 
     await s.step('context-menu', async () => {
@@ -3185,6 +3407,10 @@ function finish(exitCode) {
 
   log(`== ${opts.label} (${process.platform} ${process.arch}) ==`)
   for (const [name, sc] of Object.entries(result.scenarios)) {
+    if (sc.skipped) {
+      log(`${name.padEnd(8)} skipped: ${sc.skipped} (${sc.note})`)
+      continue
+    }
     const steps = sc.session?.steps ?? []
     const failed = steps.filter((st) => !st.ok).map((st) => st.name)
     const t = sc.session?.timings ?? {}
@@ -3256,6 +3482,17 @@ async function main() {
     }[name]
     if (!run) {
       result.scenarios[name] = { fatal: `unknown scenario ${name}` }
+      continue
+    }
+    // A scenario whose profile `boot` failed to leave past onboarding would only meet the
+    // onboarding again and time out behind it: reported as skipped, the boot failure gates.
+    const reason = skipReason(name, result.scenarios)
+    if (reason) {
+      for (const [session, entry] of skippedEntries(name, reason)) {
+        result.scenarios[session] = entry
+        log(`${session}: skipped: ${reason} (${entry.note})`)
+      }
+      writeJson(path.join(outDir, 'result.json'), result)
       continue
     }
     try {

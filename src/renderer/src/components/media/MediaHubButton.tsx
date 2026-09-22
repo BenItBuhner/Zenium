@@ -4,7 +4,6 @@ import type { UIState } from '@shared/types'
 import {
   mediaHubEntries,
   mediaHubLabel,
-  mediaHubUi,
   mediaPlaying,
   toggleMediaHub
 } from '@renderer/lib/mediaHub'
@@ -31,7 +30,6 @@ export function MediaLiveDot({ state }: { state: UIState }): JSX.Element | null 
  * up; the keyboard's press gets here). The tooltip is Chrome's line for the button.
  */
 export function MediaHubButton({ state }: { state: UIState }): JSX.Element | null {
-  const open = mediaHubUi.use((s) => s.open)
   const entries = mediaHubEntries(state)
   if (entries.length === 0) return null
   const label = mediaHubLabel(entries)
@@ -39,11 +37,14 @@ export function MediaHubButton({ state }: { state: UIState }): JSX.Element | nul
     <button
       type="button"
       data-zen-media-hub-button
-      // The pressed fill while the popover is up is the toolbar button's own, off `aria-expanded`.
+      // The pressed fill while the popover is up is the toolbar button's own, off `aria-expanded`
+      // – which the popover holds `true` on whichever control is its anchor for its life
+      // (`holdExpanded`: this button, or the "⋯" it has folded into) and gives back to the rest
+      // value written here, so one writer says what the anchor has open.
       className="zen-toolbar-button relative"
       title="Control your music, videos and more"
       aria-label={label}
-      aria-expanded={open}
+      aria-expanded={false}
       aria-haspopup="dialog"
       onClick={() => toggleMediaHub({ fromKeyboard: openedFromKeyboard() })}
     >
