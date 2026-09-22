@@ -26,8 +26,14 @@ describe('the frame strips (§9.29)', () => {
     expect(strip).not.toMatch(/background/)
     expect(strip).toContain('color: var(--v2-control-text)')
     expect(strip).toContain('min-height: calc(var(--v2-control) + 8px)')
-    expect(rule('.zen-frame-strip::after')).toContain('background: var(--v2-border)')
     expect(rule('.zen-content-frame')).toContain('background: var(--zen-bg-solid)')
+  })
+
+  it('draw their one hairline in the window hairline, --zen-border, never the page’s --v2-border (§9.29)', () => {
+    const hairline = rule('.zen-frame-strip::after')
+    expect(hairline).toContain('height: 1px')
+    expect(hairline).toContain('background: var(--zen-border)')
+    expect(hairline).not.toContain('--v2-border')
   })
 
   it('keep the secondary on the window roles with the window hover fill', () => {

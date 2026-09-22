@@ -10287,13 +10287,17 @@
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
   }
-  /* The hairline is the bottom pixel of the 40, as a sticky title block draws its own (§9.7). */
+  /*
+   * The hairline is the bottom pixel of the 40, as a sticky title block draws its own (§9.7) –
+   * the window hairline `--zen-border` (§9.29's `--v2-window-border`, fg .12 light / .2 dark),
+   * as the strip sits on the frame and a hairline on the window never draws `--v2-border`.
+   */
   .zen-frame-strip::after {
     content: '';
     position: absolute;
     inset: auto 0 0 0;
     height: 1px;
-    background: var(--v2-border);
+    background: var(--zen-border);
   }
   .zen-frame-strip-text {
     flex: 1;
