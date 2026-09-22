@@ -86,6 +86,31 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
     )
   })
 
+  it('draws none round a dialog container that holds the focus by design: one shared rule on [role=dialog][tabindex=-1], over the v2 ring at every pointer (§9.22)', () => {
+    // The one rule, unlayered, `:root`-weighted to (0,4,0) so it also beats the v2 ring's
+    // coarse-pointer form on a phone, where it wins the tie by standing after it.
+    const rule = css.match(
+      /:root \[role='dialog'\]\[tabindex='-1'\]:focus-visible,\n:root \[role='alertdialog'\]\[tabindex='-1'\]:focus-visible \{\n {2}outline: none;\n\}/
+    )
+    expect(rule).not.toBeNull()
+    const at = rule!.index!
+    expect(at).toBeGreaterThan(
+      css.indexOf(":root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible")
+    )
+    expect(at).toBeLessThan(css.indexOf('@layer components {'))
+    // The rule reaches the container alone: no `[tabindex='-1']` exclusion widens onto the
+    // controls (a roving list's options carry it too), and no stylesheet keeps a per-dialog
+    // `outline: none` for a sheet root the shared rule now covers.
+    expect(ringRules(css).filter((r) => r.selector.includes("[tabindex='-1']"))).toEqual([
+      {
+        selector:
+          ":root [role='dialog'][tabindex='-1']:focus-visible, :root [role='alertdialog'][tabindex='-1']:focus-visible",
+        value: 'none'
+      }
+    ])
+    expect(css).not.toMatch(/\.zen-sheet:focus\b/)
+  })
+
   it('keeps the phone’s keyboard ring: the coarse-pointer suppressor stands down while the keyboard is the last input, and the phone pill rings as the desktop’s (A11Y-09)', () => {
     // The suppressor hides the legacy buttons' rings under a finger (a script-moved focus
     // matches `:focus-visible` before any pointer has been used); a hardware keyboard's Tab

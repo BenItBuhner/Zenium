@@ -1,4 +1,4 @@
-import type { HostCapabilities } from '@shared/types'
+import type { HostCapabilities, UIState } from '@shared/types'
 import type { ViewportInfo } from './formFactor'
 
 /**
@@ -26,6 +26,21 @@ export type TourCapabilities = Pick<HostCapabilities, 'sync'>
  */
 export function isTouchOnly(viewport: Pick<ViewportInfo, 'coarse' | 'hover'>): boolean {
   return viewport.coarse && !viewport.hover
+}
+
+/**
+ * Whether the tour is over this window's chrome – the terms `App.tsx` and `TabletShell.tsx`
+ * mount it on: the profile's synced window before the tour is done; never a blank or private
+ * window, a page's popup or a web app's window. Chrome that would open under it (the URL bar,
+ * the new tab shortcut dialog) reads this and waits: the tour's last click ends in a new tab,
+ * whose `newtab.opened` arrives after the state that puts the tour away (the core broadcasts
+ * the state first). The phone's first run is its shell's own flow and is not asked about here.
+ */
+export function onboardingCovers(state: Pick<UIState, 'settings' | 'window'>): boolean {
+  const { chrome, kind } = state.window
+  return (
+    !state.settings.onboardingDone && kind === 'synced' && chrome !== 'popup' && chrome !== 'app'
+  )
 }
 
 /**
