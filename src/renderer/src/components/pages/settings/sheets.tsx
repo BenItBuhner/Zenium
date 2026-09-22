@@ -1,7 +1,7 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '@renderer/lib/utils'
-import { PhoneSheet, type SheetTitle } from '../../phone/PhoneSheet'
+import { PhoneSheet, type SheetFocus, type SheetTitle } from '../../phone/PhoneSheet'
 import type { BottomSheetHandle } from '../../sheet/BottomSheet'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
 import type {
@@ -154,6 +154,13 @@ interface SheetProps {
   children: ReactNode
   /** Change it when the body is swapped, so the detents are measured again. */
   contentKey?: string
+  /**
+   * What takes the focus as the sheet opens (§9.22); omitted, the chassis's own order – the
+   * checked option, else the first row or button. A title-and-notice sheet (a confirmation)
+   * passes `dialog`: the sheet itself, named by its title and described by its paragraph, since
+   * landing on Cancel would announce the way out first.
+   */
+  focus?: SheetFocus
   sheetRef?: RefObject<BottomSheetHandle | null>
 }
 
@@ -163,7 +170,11 @@ interface SheetProps {
  * row's 16 gutter is 16 from the outer edge) and its body, which gives the rows and forms
  * inside it the sheet's dismiss, a way to ask for the detents again and the footer slot
  * (§9.11) – the chassis's `.zen-sheet-footer` under the body, drawn while a form claims it
- * through `SheetFooter`, and part of the content the detents are measured on.
+ * through `SheetFooter`, and part of the content the detents are measured on. The footer is
+ * measured once it has content: the chassis draws the footer element on the claim and
+ * `SheetFooter`'s portal fills it a render later, so the detents taken on the claim are short
+ * by the buttons; the element is watched (`ResizeObserver`, else one frame after it mounts)
+ * and the detents asked for again when it has grown.
  */
 export function SettingsSheet({
   name,
@@ -174,6 +185,7 @@ export function SettingsSheet({
   onClose,
   children,
   contentKey,
+  focus,
   sheetRef
 }: SheetProps): JSX.Element {
   const own = useRef<BottomSheetHandle>(null)
@@ -188,6 +200,15 @@ export function SettingsSheet({
     claimed: footerClaimed,
     setElement: setFooterElement
   } = useSheetFooterSlot()
+  const footerWatch = useRef<(() => void) | null>(null)
+  const footerRef = useCallback(
+    (element: HTMLElement | null): void => {
+      footerWatch.current?.()
+      footerWatch.current = element ? watchFooter(element, relayout) : null
+      setFooterElement(element)
+    },
+    [relayout, setFooterElement]
+  )
   const pose: SheetTitle =
     description === undefined
       ? { pose: 'header', text: title }
@@ -196,6 +217,7 @@ export function SettingsSheet({
     <PhoneSheet
       name={name}
       title={pose}
+      focus={focus}
       under={under}
       onClose={onClose}
       contentKey={`${contentKey ?? ''}|${relayouts}|${footerClaimed ? 'footer' : ''}`}
@@ -204,7 +226,7 @@ export function SettingsSheet({
       footer={
         footerClaimed ? (
           <div
-            ref={setFooterElement}
+            ref={footerRef}
             className="zen-settings-sheet-actions zen-settings-sheet-footer"
             data-testid="settings-sheet-footer"
           />
@@ -220,6 +242,30 @@ export function SettingsSheet({
       </div>
     </PhoneSheet>
   )
+}
+
+/**
+ * Ask for the detents again whenever the footer element changes height – its first fill by
+ * `SheetFooter`'s portal above all, which lands a render after the element is drawn – so the
+ * sheet stands tall enough for its buttons (the #322 review's Required 3: measured over the
+ * empty footer, the viewer's sheet clipped its empty line to a sliver). A `ResizeObserver`
+ * where the engine has one; else one frame after the element mounts, by when the portal has
+ * filled it. Returns the function that stops watching.
+ */
+function watchFooter(element: HTMLElement, relayout: () => void): () => void {
+  if (typeof ResizeObserver === 'function') {
+    let last = element.offsetHeight
+    const observer = new ResizeObserver(() => {
+      const height = element.offsetHeight
+      if (height === last) return
+      last = height
+      relayout()
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }
+  const frame = requestAnimationFrame(relayout)
+  return () => cancelAnimationFrame(frame)
 }
 
 // ---------------------------------------------------------------------------
