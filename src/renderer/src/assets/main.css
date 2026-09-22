@@ -2404,22 +2404,6 @@
     color: var(--v2-text-deemphasized);
     font-variant-numeric: tabular-nums;
   }
-  .zen-longshot-wait {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    min-height: 100vh;
-    padding-bottom: 30vh;
-    color: var(--v2-text-deemphasized);
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body-box);
-  }
-  .zen-longshot-wait svg {
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-  }
 
   /* The sidebar of Android's wide layouts: the toast's row, clipped so the card slides in from below it. */
   .zen-message-well {

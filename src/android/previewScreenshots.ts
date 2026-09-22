@@ -20,7 +20,6 @@ export const FLASH_HOLD_OPACITY = 0.65
 
 interface PreviewHolds {
   __zenPreviewFlashHold?: number
-  __zenPreviewLongHold?: boolean
 }
 
 /**
@@ -33,25 +32,19 @@ export function previewFlashHold(): number | null {
 }
 
 /**
- * What a preview state asks of the stand-in: hold the flash part-way (`flash`), or never answer
- * the long capture (`long`: the editor's wait). Both off between states (`resetPreviewScreenshots`).
+ * What a preview state asks of the stand-in: hold the flash part-way (`flash`). Off between
+ * states (`resetPreviewScreenshots`).
  */
-export function holdPreviewScreenshots(holds: { flash?: boolean; long?: boolean }): void {
+export function holdPreviewScreenshots(holds: { flash?: boolean }): void {
   const w = window as unknown as PreviewHolds
   if (holds.flash) w.__zenPreviewFlashHold = FLASH_HOLD_OPACITY
   else delete w.__zenPreviewFlashHold
-  if (holds.long) w.__zenPreviewLongHold = true
-  else delete w.__zenPreviewLongHold
 }
 
 /** Every flash sheet off the page and every hold released: the next state starts clean. */
 export function resetPreviewScreenshots(): void {
   holdPreviewScreenshots({})
   for (const sheet of document.querySelectorAll('.zen-preview-flash')) sheet.remove()
-}
-
-function longHeld(): boolean {
-  return (window as unknown as PreviewHolds).__zenPreviewLongHold === true
 }
 
 /**
@@ -159,8 +152,6 @@ export function createPreviewScreenshots(
     'screenshot.captureLong': async ({ tabId }): Promise<LongCapture | null> => {
       const frame = frameOf(String(tabId))
       if (!frame) return null
-      // A `screenshot=editor&wait` still: the page never arrives, the editor keeps waiting.
-      if (longHeld()) return new Promise<LongCapture | null>(() => undefined)
       const shot = await picture(frame, LONG_CAPTURE_SCREENS)
       const id = `long-${++seq}`
       held.set(id, shot)

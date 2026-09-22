@@ -1646,7 +1646,13 @@ class TabWebView(
 
     /**
      * The long screenshot's capture (SH-08): the page from the viewport's top down to Chrome's
-     * ~10 screens, stitched by [PageCapture] as a bitmap the caller crops and writes.
+     * ~10 screens, stitched by [PageCapture] as a bitmap the caller crops and writes. The strips
+     * are copies of the window where the page is, so the page must be on screen and alone in its
+     * frame throughout: the chrome mounts the editor only once the picture is in its hands (the
+     * chrome lies under the pages; a sheet over the page would hide it), and the card whose
+     * Capture more asked is on its way out as this is called – its strip along the frame's
+     * bottom edge is the chrome's, not the page's ([cover]), and the copies wait for the strip
+     * to close over the page again (bounded: a strip that never closes is not waited on for ever).
      */
     fun captureLong(callback: (PageCapture.Capture?) -> Unit) {
         val radius = radiusPx
@@ -1654,7 +1660,16 @@ class TabWebView(
             radiusPx = if (on) 0f else radius
             invalidateOutline()
         }
-        PageCapture(this, host.activity.window, encoder, square, ::evaluate).runBitmap(CapturePlan.MODE_LONG, null, callback)
+        val capture = PageCapture(this, host.activity.window, encoder, square, ::evaluate)
+        val deadline = SystemClock.uptimeMillis() + COVER_CLEAR_WAIT_MS
+        fun whenUncovered() {
+            if (!cover.active || SystemClock.uptimeMillis() >= deadline) {
+                capture.runBitmap(CapturePlan.MODE_LONG, null, callback)
+            } else {
+                postOnAnimation { whenUncovered() }
+            }
+        }
+        whenUncovered()
     }
 
     /**
@@ -2197,6 +2212,12 @@ class TabWebView(
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
         private const val EVAL_TIMEOUT_MS = 45_000L
+
+        /**
+         * The most [captureLong] waits for the message strip at the frame's edge to close over
+         * the page (the card's exit and the strip's spring take a fraction of it).
+         */
+        private const val COVER_CLEAR_WAIT_MS = 1_500L
 
         /** A redirect chain or a burst of pushStates must not copy the window once per hop. */
         private const val REMEMBER_THROTTLE_MS = 300L

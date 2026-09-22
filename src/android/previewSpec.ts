@@ -363,12 +363,11 @@ export type PreviewState =
       /**
        * Take Screenshot's gallery flow (SH-07, SH-08): `flash` holds the page's flash part-way,
        * `card` leaves the preview card up, `editor` opens the long-screenshot editor from the
-       * card's Capture more – with `wait`, before the page's picture has arrived; with `drag`,
-       * one handle held mid-drag `by` CSS px from where it started.
+       * card's Capture more – with `drag`, one handle held mid-drag `by` CSS px from where it
+       * started.
        */
       kind: 'screenshot'
       surface: PreviewScreenshotSurface
-      wait: boolean
       drag: { edge: 'top' | 'bottom'; by: number } | null
     }
   | {
@@ -545,8 +544,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * failed, else the tab's own), which puts up the zen://error page, `screenshot=<surface>` for
  * Take Screenshot's gallery flow on the active tab as one of PREVIEW_SCREENSHOT_SURFACES (`flash`
  * holds the page's flash part-way, `card` leaves the preview card up, `editor` opens the
- * long-screenshot editor from the card's Capture more; `&wait` catches the editor before the
- * page has arrived, `&drag=<top|bottom>:<px>` holds one handle mid-drag that far down), any of `toast=<text>` (with
+ * long-screenshot editor from the card's Capture more; `&drag=<top|bottom>:<px>` holds one
+ * handle mid-drag that far down), any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
  * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
  * Home screen"), `download=<file>` for a transfer the stand-in downloader plays back
@@ -721,7 +720,6 @@ export function parsePreviewSpec(spec: string): PreviewState {
     return {
       kind: 'screenshot',
       surface: screenshot as PreviewScreenshotSurface,
-      wait: params.has('wait'),
       drag:
         (edge === 'top' || edge === 'bottom') && Number.isFinite(distance)
           ? { edge, by: distance }

@@ -2636,17 +2636,17 @@ function showMessages(
  * the stand-in host flashes the page and answers with the picture, the core's `screenshot.saved`
  * puts the preview card up. `flash` holds the flash sheet part-way (`holdPreviewScreenshots`) so
  * the still shows the frame mid-flash; `card` holds the card off its clock (a finger's hold) so
- * it stays for the still; `editor` presses the card's Capture more and waits for the page's
- * picture in the editor (`wait` keeps the picture from ever arriving instead), then, with `drag`,
- * presses one handle and moves the pointer `by` px down without letting go – the handle's own
- * drag, held mid-way.
+ * it stays for the still; `editor` presses the card's Capture more and waits for the editor to
+ * come up with the page's picture (the sheet mounts once the stand-in host has answered the
+ * long capture, as the real one does), then, with `drag`, presses one handle and moves the
+ * pointer `by` px down without letting go – the handle's own drag, held mid-way.
  */
 function applyScreenshot(
   target: Extract<ReturnType<typeof parsePreviewSpec>, { kind: 'screenshot' }>,
   tabId: string,
   finish: () => void
 ): void {
-  holdPreviewScreenshots({ flash: target.surface === 'flash', long: target.wait })
+  holdPreviewScreenshots({ flash: target.surface === 'flash' })
   run('page.screenshot', { tabId })
   if (target.surface === 'flash') {
     afterFrames(3, finish)
@@ -2668,7 +2668,7 @@ function applyScreenshot(
       }
       pickScreenshotAction(card.id, 'more')
       untilUi(
-        (ui) => ui.longScreenshot !== null && (target.wait || ui.longScreenshot.capture !== null),
+        (ui) => ui.longScreenshot !== null,
         () => {
           const drag = target.drag
           // The sheet's entrance and the picture's layout settle before a handle is taken.

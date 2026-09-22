@@ -115,14 +115,14 @@ export interface ScreenshotCard extends ScreenshotSaved {
 }
 
 /**
- * The long-screenshot editor (SH-08): the sheet is up for `tabId`'s page, drawing it while
- * `capture` is null, then the page in its frame with the two handles; `busy` while Save or
- * Share writes the crop.
+ * The long-screenshot editor (SH-08): the sheet is up for `tabId`'s page with `capture`, the
+ * page in its frame with the two handles; `busy` while Save or Share writes the crop. The sheet
+ * mounts with the picture in hand (`openLongScreenshot` waits for the host's stitch first).
  */
 export interface LongScreenshotEditor {
   id: number
   tabId: string
-  capture: LongCapture | null
+  capture: LongCapture
   busy: boolean
 }
 
@@ -815,38 +815,51 @@ export function pickScreenshotAction(
 }
 
 let longScreenshotSeq = 0
+/** The capture on its way for the editor, if one is (`openLongScreenshot`); the newest wins. */
+let longScreenshotPending: number | null = null
 
 /**
- * Open the long-screenshot editor on `tabId`'s page (SH-08): the sheet comes up at once, drawing
- * the page while the host stitches it (Chrome's ~10 screens at most); a page that could not be
- * captured closes it again with the toast.
+ * Open the long-screenshot editor on `tabId`'s page (SH-08): the host stitches the page first
+ * (Chrome's ~10 screens at most) and the sheet comes up with the picture. The order is the
+ * chassis's: the host copies the page from the window, and on Android the chrome lies under the
+ * pages, so a sheet over the page has the page hidden – a sheet up while the page was being
+ * stitched would have the host copy the sheet, or nothing (`PageCapture.kt`). Until the picture
+ * is in, the page is what shows (it scrolls through its screens as the host copies them); a page
+ * that could not be captured says so in a toast and no editor opens.
  */
 export function openLongScreenshot(tabId: string): void {
   const id = ++longScreenshotSeq
-  uiStore.set({ longScreenshot: { id, tabId, capture: null, busy: false } })
+  longScreenshotPending = id
   void cmd('screenshot.captureLong', { tabId })
     .catch(() => null)
     .then((capture) => {
-      const editor = uiStore.get().longScreenshot
-      if (!editor || editor.id !== id) {
-        // The editor went while the page was being stitched: the host's copy is not wanted.
+      if (longScreenshotPending !== id) {
+        // A newer request took over while the page was being stitched: the host's copy is not wanted.
         if (capture) run('screenshot.discardLong', { id: capture.id })
         return
       }
+      longScreenshotPending = null
       if (!capture) {
         pushToast('Could not capture the page', 'error')
-        uiStore.set({ longScreenshot: null })
         return
       }
-      uiStore.set({ longScreenshot: { ...editor, capture } })
+      const editor = uiStore.get().longScreenshot
+      if (editor) run('screenshot.discardLong', { id: editor.capture.id })
+      uiStore.set({ longScreenshot: { id, tabId, capture, busy: false } })
     })
 }
 
-/** The editor went without a save: the host drops the page it holds. */
+/** Whether a long capture is on its way to the editor (tests and the preview host). */
+export function longScreenshotCapturing(): boolean {
+  return longScreenshotPending !== null
+}
+
+/** The editor went without a save: the host drops the page it holds. A capture still on its way is not wanted either. */
 export function closeLongScreenshot(): void {
+  longScreenshotPending = null
   const editor = uiStore.get().longScreenshot
   if (!editor) return
-  if (editor.capture) run('screenshot.discardLong', { id: editor.capture.id })
+  run('screenshot.discardLong', { id: editor.capture.id })
   uiStore.set({ longScreenshot: null })
 }
 
@@ -856,7 +869,7 @@ export function closeLongScreenshot(): void {
  */
 export async function saveLongScreenshot(crop: LongCaptureCrop, share: boolean): Promise<void> {
   const editor = uiStore.get().longScreenshot
-  if (!editor?.capture || editor.busy) return
+  if (!editor || editor.busy) return
   uiStore.set({ longScreenshot: { ...editor, busy: true } })
   const saved = await cmd('screenshot.saveLong', { id: editor.capture.id, crop, share }).catch(
     () => null

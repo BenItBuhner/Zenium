@@ -29,7 +29,9 @@ import kotlin.math.roundToInt
  *
  * Everything runs on the main thread except the final encoding. `callback` is invoked exactly
  * once, with `{ data, mimeType, width, height }` or null when the view cannot be captured (not on
- * screen, nothing painted yet).
+ * screen, nothing painted yet) or stops being capturable part-way (hidden under a sheet while
+ * the strips were being taken: the copies are of the window, so a page that is not on screen
+ * cannot be read from it, and a picture with white rows for it is not returned).
  */
 class PageCapture(
     private val view: WebView,
@@ -187,18 +189,28 @@ class PageCapture(
                     bitmap?.recycle()
                     return@copyView
                 }
+                if (bitmap == null) {
+                    // The window refused, or the view left the screen while the page was being
+                    // stitched (a sheet came over it: on Android the chrome lies under the pages,
+                    // so the host hides a page a sheet covers). The strip's rows would stay white,
+                    // and a picture with white where the page is would pass for the page.
+                    Log.w(TAG, "capture strip $index/${cells.size} could not be copied (view shown: ${view.isShown})")
+                    finish(failed = true)
+                    return@copyView
+                }
                 val t = target
-                if (bitmap != null && t != null) {
+                if (t != null) {
                     CapturePlan.blit(strip, t, deviceScale, outputScale)?.let { b ->
                         canvas?.drawBitmap(bitmap, rect(b.src), rectF(b.dst), paint)
                     }
-                    bitmap.recycle()
                 }
+                bitmap.recycle()
                 step()
             }
         }
 
-        private fun finish() {
+        /** The end of the chain: the page put back as it was, the picture (or null when `failed`) to the caller. */
+        private fun finish(failed: Boolean = false) {
             if (done) return
             done = true
             main.removeCallbacks(watchdog)
@@ -211,8 +223,14 @@ class PageCapture(
             val bitmap = output
             output = null
             canvas = null
-            if (bitmap == null) callback(null)
-            else callback(Capture(bitmap, (metrics.viewportHeight * outputScale).roundToInt().coerceIn(1, bitmap.height)))
+            if (bitmap == null) {
+                callback(null)
+            } else if (failed) {
+                bitmap.recycle()
+                callback(null)
+            } else {
+                callback(Capture(bitmap, (metrics.viewportHeight * outputScale).roundToInt().coerceIn(1, bitmap.height)))
+            }
         }
     }
 

@@ -37,17 +37,22 @@ import java.util.concurrent.TimeUnit
  *  - a real touch on the card's thumbnail opens the picture in the system's viewer; Share on the
  *    card brings the system sheet with the picture; Delete takes the row out of the gallery and
  *    the card goes;
- *  - Capture more opens the long-screenshot editor EXPANDED with the whole page (about ten
- *    screens of it at most) in its frame and two handles; a real drag of the bottom handle
- *    shortens the crop; Save writes the crop – shorter than the first screen – to the gallery
- *    and shows the card again (no Capture more on it);
+ *  - Capture more sends the card away, the page is stitched while it is on screen (the chrome
+ *    lies under the pages, so the editor waits for the picture: run 35724075218 had the sheet
+ *    up first and the host copied white where the hidden page was), and the long-screenshot
+ *    editor opens EXPANDED with the whole page (about ten screens of it at most, and INKED, not
+ *    white rows) in its frame and two handles; a real drag of the bottom handle shortens the
+ *    crop; Save writes the crop – shorter than the first screen – to the gallery and shows the
+ *    card again (no Capture more on it);
  *  - `navigator.share` from a page: without a user gesture it rejects with `NotAllowedError`;
  *    `navigator.canShare` answers for a URL, for nothing, for a file; a real tap on the page's
  *    button brings the system sheet (the promise pending under it) and the back gesture rejects
- *    it with `AbortError`; the same with a FILE the page drew (the sheet with the picture, the
- *    design record's still); a target taken, when the sheet lists one the demo knows, resolves it;
+ *    it with `AbortError`; the same with a FILE the page drew (the sheet with the picture – the
+ *    design record's still waits for the chooser to draw the preview it reads through the
+ *    FileProvider); a target taken, when the sheet lists one the demo knows, resolves it;
  *  - Share from the selection toolbar carries the link to the highlight (`#:~:text=`): the sheet's
- *    Copy link action puts it on the clipboard (the `Link copied` toast; the clipboard read);
+ *    Copy link action puts it on the clipboard (the clipboard read; the `Link copied` toast
+ *    before Android 13, the OS's own clipboard chip and no toast of Zenium's from 13 on);
  *  - a link to a highlight opened in the browser scrolls the page to the text and marks it (the
  *    engine's own text fragments, or the page script's fallback where the engine has none).
  *
@@ -298,13 +303,23 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         }
         val viewportRow = awaitGalleryGrowth(before).firstOrNull()
         val touched = touchControl("Capture more", "document.querySelector('.zen-screenshot-card .zen-screenshot-trailing .zen-message-button')", treeMs = 1_200)
-        val sheet = touched && awaitChrome("document.querySelector('.zen-longshot-sheet')!=null", 8_000)
-        check("a real touch on Capture more opened the Long screenshot sheet", sheet)
+        // The card goes and the page is stitched first – the host copies it out of the window
+        // while it is on screen, scrolling through its screens – and the sheet mounts with the
+        // picture in hand (the chrome lies under the pages: a sheet up would hide the page).
+        val cardGone = touched && awaitChrome("document.querySelector('.zen-screenshot-card')==null", 4_000)
+        val sheet = touched && awaitChrome("document.querySelector('.zen-longshot-sheet')!=null", LONG_CAPTURE_WAIT_MS)
+        check("a real touch on Capture more sent the card away", cardGone)
+        check("a real touch on Capture more opened the Long screenshot sheet (once the page was stitched)", sheet)
         if (!sheet) return
-        val editor = awaitChrome("document.querySelector('[data-testid=longshot-editor]')!=null", 25_000)
+        val editor = awaitChrome("document.querySelector('[data-testid=longshot-editor] img')!=null", 10_000)
         check("the whole page was captured into the editor's frame", editor)
         SystemClock.sleep(1_500)
         shot("05-long-editor")
+        // The picture is the page, not white rows: a strip the host could not copy (the page
+        // hidden under the sheet, as before this driver caught it) would leave the frame blank.
+        val ink = chromeJson(PICTURE_INK_SCRIPT)
+        finding("  the editor's picture: ${ink.optInt("w")}×${ink.optInt("h")}, ${ink.optInt("inked")}% of its pixels not white, ${ink.optInt("colours")} distinct colours in a coarse sample")
+        check("the editor's picture holds the page (not blank)", ink.optInt("inked") >= 20 && ink.optInt("colours") >= 4)
         val pose = chromeJson(
             "(function(){var s=document.querySelector('.zen-longshot-sheet');var sc=s&&s.querySelector('.zen-sheet-scroll');" +
                 "var f=document.querySelector('.zen-longshot-frame');var b=document.querySelector('[aria-label=\"Bottom edge\"]');" +
@@ -416,7 +431,12 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         }
         Finger().tap(p.x, p.y)
         val sheet = awaitSystemWindow(12_000)
-        SystemClock.sleep(3_000)
+        // The chooser draws the picture's preview a while after it comes up (it reads the file
+        // through the FileProvider and decodes it; 2-3 s on the emulator): the still waits for
+        // the preview's colours to show in the sheet's upper part, so the record shows the file.
+        val preview = if (sheet) awaitChooserPreview(8_000) else null
+        finding("  the sheet's preview area: ${preview?.let { "${it.first}% of its pixels off the sheet's colour after ${it.second} ms" } ?: "not measured"}")
+        SystemClock.sleep(700)
         shot("10-web-share-file-sheet")
         val pending = pageResult()
         check("the tap brought the system share sheet with the file (${topPackage()})", sheet)
@@ -448,15 +468,24 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
         val copy = if (sheet) findInWindows { it == COPY_LINK } else null
         if (copy != null && touchTapPoint(copy) != null) {
             finding("  a real touch on '$COPY_LINK' in the sheet's action row")
-            val toast = awaitToastSeen("Link copied", 10_000)
+            // From Android 13 the OS shows its own clipboard chip for the copy and Zenium says
+            // nothing more (`copyConfirmation`); before it, Zenium's toast is the confirmation.
+            val chip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            val toast = if (chip) false else awaitToastSeen("Link copied", 10_000)
+            if (chip) SystemClock.sleep(1_500)
             toZenium()
             SystemClock.sleep(800)
             shot("12-link-copied")
-            check("the sheet's Copy link copied it (the 'Link copied' toast)", toast)
             val clip = clipboardText()
             finding("  clipboard: ${clip ?: "(not readable here)"}")
-            check("the clipboard holds the page's URL with the text directive for 'quantum'", clip == null || clip == "$ORIGIN/#:~:text=quantum")
-            if (clip == null) finding("  (the clipboard could not be read by the test; the toast is the evidence)")
+            if (chip) {
+                finding("  (API ${Build.VERSION.SDK_INT}: the OS's clipboard chip confirms the copy; Zenium's toast stays away by design)")
+                check("no 'Link copied' toast of Zenium's doubles the OS's clipboard chip", !toastSeen("Link copied"))
+            } else {
+                check("the sheet's Copy link copied it (the 'Link copied' toast)", toast)
+            }
+            check("the clipboard holds the page's URL with the text directive for 'quantum'", clip == "$ORIGIN/#:~:text=quantum" || (clip == null && (toast || chip)))
+            if (clip == null) finding("  (the clipboard could not be read by the test; the ${if (chip) "chip" else "toast"} is the evidence)")
         } else {
             finding("  no '$COPY_LINK' action listed on the sheet (Android 14's action row wants the browser's own link): dismissed")
             check("Copy link on the sheet", false)
@@ -619,6 +648,59 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
     }
 
     private fun topPackage(): String? = ui.rootInActiveWindow?.packageName?.toString()
+
+    /**
+     * Wait for the system chooser's content preview to show a picture: the share of pixels in
+     * the sheet's upper part (under its title row) that are off the sheet's own colour, read
+     * from a screenshot every half second, until it is a picture's worth ([PREVIEW_INK_PERCENT])
+     * or `timeoutMs` is up. The pair is the last share measured and the time it took; null when
+     * no chooser window is on screen. The preview comes late on the emulator: the chooser reads
+     * the file through the FileProvider and decodes it after the sheet has come up.
+     */
+    private fun awaitChooserPreview(timeoutMs: Long): Pair<Int, Long>? {
+        val start = SystemClock.uptimeMillis()
+        var last = -1
+        while (true) {
+            val root = ui.rootInActiveWindow?.takeIf { it.packageName?.toString() != app.packageName } ?: return null
+            val bounds = Rect().also { root.getBoundsInScreen(it) }
+            if (bounds.height() > 0 && bounds.width() > 0) {
+                val bitmap = ui.takeScreenshot()
+                if (bitmap != null) {
+                    val top = (bounds.top + 56 * density).toInt().coerceIn(0, bitmap.height - 1)
+                    val bottom = (bounds.top + bounds.height() * 0.4f).toInt().coerceIn(top + 1, bitmap.height)
+                    val left = (bounds.left + bounds.width() * 0.08f).toInt().coerceIn(0, bitmap.width - 1)
+                    val right = (bounds.right - bounds.width() * 0.08f).toInt().coerceIn(left + 1, bitmap.width)
+                    val step = 4
+                    val counts = HashMap<Int, Int>()
+                    val pixels = ArrayList<Int>()
+                    var y = top
+                    while (y < bottom) {
+                        var x = left
+                        while (x < right) {
+                            val c = bitmap.getPixel(x, y)
+                            pixels += c
+                            val key = (((c shr 20) and 0xF) shl 8) or (((c shr 12) and 0xF) shl 4) or ((c shr 4) and 0xF)
+                            counts[key] = (counts[key] ?: 0) + 1
+                            x += step
+                        }
+                        y += step
+                    }
+                    bitmap.recycle()
+                    val dominant = counts.maxByOrNull { it.value }?.key ?: 0
+                    val dr = (dominant shr 8 and 0xF) shl 4
+                    val dg = (dominant shr 4 and 0xF) shl 4
+                    val db = (dominant and 0xF) shl 4
+                    val off = pixels.count { c ->
+                        Math.abs(Color.red(c) - dr) + Math.abs(Color.green(c) - dg) + Math.abs(Color.blue(c) - db) > 72
+                    }
+                    last = if (pixels.isEmpty()) 0 else 100 * off / pixels.size
+                    if (last >= PREVIEW_INK_PERCENT) return last to SystemClock.uptimeMillis() - start
+                }
+            }
+            if (SystemClock.uptimeMillis() - start >= timeoutMs) return last.coerceAtLeast(0) to SystemClock.uptimeMillis() - start
+            SystemClock.sleep(500)
+        }
+    }
 
     // --- the gallery -----------------------------------------------------------------------------
 
@@ -831,8 +913,33 @@ class ShareScreenshotDemo : DemoHarness("share-screenshot-demo-state.json", "sha
          * recipe's software GPU.
          */
         private const val FLASH_WAIT_MS = 20_000L
+        /**
+         * How long the editor is waited for after the tap on Capture more: the page is stitched
+         * first (ten screens, each a frame wait and a window copy; `PageCapture`'s own watchdog
+         * gives up at 20 s), the preview encoded, then the sheet mounts and slides up.
+         */
+        private const val LONG_CAPTURE_WAIT_MS = 40_000L
         /** Android 14's action row on the sheet: the browser's own Copy link (`Share.browserActions`). */
         private const val COPY_LINK = "Copy link"
+        /**
+         * The share of the chooser's preview area that is off the sheet's colour once a picture
+         * is in it (`awaitChooserPreview`): the title row's text alone is a few percent.
+         */
+        private const val PREVIEW_INK_PERCENT = 10
+
+        /**
+         * The editor's picture read back through a canvas (a `data:` image is same-origin): the
+         * share of sampled pixels that are not white (or near it) and the distinct colours in a
+         * coarse (4 bits a channel) sample. A stitched page of the demo's coloured bands has most
+         * of its pixels inked; a capture of white rows has none.
+         */
+        private const val PICTURE_INK_SCRIPT =
+            "(function(){var img=document.querySelector('[data-testid=longshot-editor] img');if(!img||!img.naturalWidth)return JSON.stringify({w:0,h:0,inked:0,colours:0});" +
+                "var w=img.naturalWidth,h=img.naturalHeight,c=document.createElement('canvas');var s=Math.max(1,Math.floor(Math.max(w,h)/160));" +
+                "c.width=Math.max(1,Math.floor(w/s));c.height=Math.max(1,Math.floor(h/s));var g=c.getContext('2d');g.drawImage(img,0,0,c.width,c.height);" +
+                "var d=g.getImageData(0,0,c.width,c.height).data,inked=0,seen={},n=0;for(var i=0;i<d.length;i+=4){n++;var r=d[i],gg=d[i+1],b=d[i+2];" +
+                "if(r<240||gg<240||b<240)inked++;seen[(r>>4)+','+(gg>>4)+','+(b>>4)]=1}" +
+                "return JSON.stringify({w:w,h:h,inked:Math.round(100*inked/Math.max(1,n)),colours:Object.keys(seen).length})})()"
         /** A share target every Google APIs image lists and that opens nothing but a picker. */
         private const val BLUETOOTH = "Bluetooth"
 

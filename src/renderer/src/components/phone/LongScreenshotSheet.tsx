@@ -14,7 +14,7 @@ import { PhoneSheet } from './PhoneSheet'
 /**
  * The long-screenshot editor while its request stands, in the frame dialog host `TabDialogs`
  * mounts. The leave outlives the request (`SheetPresence`, §11.1): the store's `null` – the
- * save took, the page could not be captured – runs the sheet down on its own motion.
+ * save took, the sheet was closed – runs the sheet down on its own motion.
  */
 export function LongScreenshotLayer(): JSX.Element | null {
   const editor = uiStore.use((s) => s.longScreenshot)
@@ -48,8 +48,9 @@ const HANDLE_BAND_PX = 44
  * sliders to the keyboard and TalkBack (the arrows move them a step). Share | Save are §9.11
  * peers in the footer, Save the primary: the host crops the full-resolution picture it holds,
  * saves it to the gallery and the picture's own card follows; Share puts it on the OS's sheet
- * as well. While the host stitches the page the body shows the wait; a page that cannot be
- * captured closes the sheet with a toast.
+ * as well. The sheet mounts with the picture in hand: the host stitches the page from the
+ * window while the page is on screen and alone in its frame, which a sheet over it would end
+ * (`openLongScreenshot`); a page that cannot be captured is a toast, and no sheet.
  */
 function LongScreenshotSheet({ editor }: { editor: LongScreenshotEditor }): JSX.Element {
   const capture = editor.capture
@@ -62,7 +63,7 @@ function LongScreenshotSheet({ editor }: { editor: LongScreenshotEditor }): JSX.
   // The save takes the request with it and the sheet leaves on that (`SheetPresence`).
   const submit = (share: boolean): void => {
     const crop = cropRef.current
-    if (capture && crop) void saveLongScreenshot(crop, share)
+    if (crop) void saveLongScreenshot(crop, share)
   }
   return (
     <PhoneSheet
@@ -70,7 +71,7 @@ function LongScreenshotSheet({ editor }: { editor: LongScreenshotEditor }): JSX.
       title={{ pose: 'header', text: 'Long screenshot' }}
       className="zen-longshot-sheet"
       onClose={closeLongScreenshot}
-      contentKey={capture ? capture.id : 'wait'}
+      contentKey={capture.id}
       openExpanded
       footer={
         <>
@@ -78,7 +79,7 @@ function LongScreenshotSheet({ editor }: { editor: LongScreenshotEditor }): JSX.
             type="button"
             className="zen-v2-button"
             data-testid="longshot-share"
-            disabled={!capture || editor.busy}
+            disabled={editor.busy}
             onClick={() => submit(true)}
           >
             Share
@@ -90,7 +91,6 @@ function LongScreenshotSheet({ editor }: { editor: LongScreenshotEditor }): JSX.
             data-testid="longshot-save"
             aria-label="Save"
             aria-busy={editor.busy || undefined}
-            disabled={!capture}
             onClick={() => submit(false)}
           >
             {editor.busy ? (
@@ -102,14 +102,7 @@ function LongScreenshotSheet({ editor }: { editor: LongScreenshotEditor }): JSX.
         </>
       }
     >
-      {capture ? (
-        <CropEditor capture={capture} onCrop={onCrop} />
-      ) : (
-        <div className="zen-longshot-wait" role="status" data-testid="longshot-wait">
-          <Loader2 className="zen-spin" strokeWidth={2} aria-hidden />
-          <span>Capturing the page…</span>
-        </div>
-      )}
+      <CropEditor capture={capture} onCrop={onCrop} />
     </PhoneSheet>
   )
 }
