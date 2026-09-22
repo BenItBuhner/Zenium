@@ -1113,6 +1113,84 @@ describe('AndroidExtensionRuntime: scripting into frames', () => {
     ])
     expect(String(gone.error)).toContain('No frame with id 1')
   })
+
+  it("awaits an injection whose value is a promise: the frame's execSettled settles the ticket the host answered", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'docA.1', 'content')
+    hello(h, 'docB.1', 'content', { top: false, url: 'https://frame.example/inner' })
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    // An async func (Image Downloader's `findImages`): the bootstrap answers a ticket and the
+    // frame's endpoint settles it when the promise does; the caller sees the settled value.
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.1', ep: 'docA.1' })
+    const id = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'scripting',
+      method: 'executeScript',
+      args: [{ target: { tabId }, funcSource: 'async () => findImages()' }]
+    })
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    // A settle from another endpoint of the extension is not this ticket's.
+    message(h, 'docB.1', { t: 'execSettled', ticket: 'n.1', ok: true, result: 'wrong frame' })
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    message(h, 'docA.1', {
+      t: 'execSettled',
+      ticket: 'n.1',
+      ok: true,
+      result: { allImages: ['https://example.com/a.png'], linkedImages: [] }
+    })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    const reply = h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)
+    expect(reply?.ok).toBe(true)
+    expect(reply?.result).toEqual([
+      {
+        frameId: 0,
+        documentId: '',
+        result: { allImages: ['https://example.com/a.png'], linkedImages: [] }
+      }
+    ])
+    // A rejection settles as the call's error.
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.2', ep: 'docA.1' })
+    const failing = call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: 'async () => { throw new Error("no images") }' }
+    ])
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    message(h, 'docA.1', { t: 'execSettled', ticket: 'n.2', ok: false, error: 'no images' })
+    expect(String((await failing).error)).toBe('no images')
+    // The settle can cross the host ahead of the exec reply: it waits for its ticket.
+    message(h, 'docA.1', { t: 'execSettled', ticket: 'n.3', ok: true, result: 3 })
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.3', ep: 'docA.1' })
+    const early = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: 'async () => 3' }
+    ])
+    expect(early.result).toEqual([{ frameId: 0, documentId: '', result: 3 }])
+    // The frame goes while its promise is pending: Chrome's rejection, and nothing waits on.
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.4', ep: 'docA.1' })
+    const orphaned = call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: 'async () => new Promise(() => {})' }
+    ])
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    h.runtime.onGone(['docA.1'])
+    expect(String((await orphaned).error)).toBe('The frame was removed.')
+    // A ticket naming an endpoint that is not the extension's in that tab is refused.
+    hello(h, 'docA.2', 'content')
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.5', ep: 'bg1' })
+    const forged = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: 'async () => 5' }
+    ])
+    expect(String(forged.error)).toBe('The frame was removed.')
+    // A plain value is answered as before.
+    h.kt.execAnswer = () => ({ title: 'plain' })
+    const plain = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, files: ['scraper.js'] }
+    ])
+    expect(plain.result).toEqual([{ frameId: 0, documentId: '', result: { title: 'plain' } }])
+  })
 })
 
 describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
@@ -1416,6 +1494,29 @@ describe('tabUrlFrom: the URL a tabs.create / tabs.update / windows.create names
     expect(tabUrlFrom(ID, `${origin}/served.html`)).toBe(`${origin}/served.html`)
     // Chrome's own reading of a host without a scheme: a path of the extension's.
     expect(tabUrlFrom(ID, 'www.example.com')).toBe(`chrome-extension://${ID}/www.example.com`)
+  })
+})
+
+describe('AndroidExtensionRuntime: a file:// navigation from the API', () => {
+  it("is refused with Chrome's message until the extension's file-access switch is on", async () => {
+    const h = harness()
+    const rec = record(h, { allowFileAccess: false })
+    await h.runtime.attach(rec)
+    backgroundUp(h, 'bg1')
+    const refused = await call(h, 'bg1', 'tabs', 'create', [{ url: 'file:///sdcard/page.html' }])
+    expect(refused.ok).toBe(false)
+    expect(refused.error).toBe('Cannot navigate to a file URL without local file access.')
+    const window = await call(h, 'bg1', 'windows', 'create', [{ url: 'file:///sdcard/page.html' }])
+    expect(window.error).toBe('Cannot navigate to a file URL without local file access.')
+    expect(h.created).toHaveLength(0)
+    // Other schemes and the extension's own pages are untouched by the gate.
+    const page = await call(h, 'bg1', 'tabs', 'create', [{ url: 'options.html' }])
+    expect(page.ok).toBe(true)
+    expect(h.created).toHaveLength(1)
+    await h.runtime.reconfigure({ ...rec, allowFileAccess: true })
+    const allowed = await call(h, 'bg1', 'tabs', 'create', [{ url: 'file:///sdcard/page.html' }])
+    expect(allowed.ok).toBe(true)
+    expect(h.created).toHaveLength(2)
   })
 })
 
@@ -1834,7 +1935,7 @@ describe('AndroidExtensionRuntime: chrome.system.display', () => {
 })
 
 describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
-  it('reads as the system\u2019s settings that no extension controls, and takes only that value', async () => {
+  it('routes the ChromeSetting calls to the proxy module: system by default, fixed servers applied, a PAC script refused', async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ permissions: ['proxy', 'storage'] })))
     backgroundUp(h, 'bg1')
@@ -1843,17 +1944,27 @@ describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
       (await call(h, 'bg1', 'proxy', 'get', ['settings', { incognito: false }])).result
     ).toEqual({
       value: { mode: 'system' },
-      levelOfControl: 'not_controllable'
+      levelOfControl: 'controllable_by_this_extension'
     })
     expect(
       await call(h, 'bg1', 'proxy', 'set', [
         'settings',
-        { value: { mode: 'system' }, scope: 'regular' }
+        {
+          value: {
+            mode: 'fixed_servers',
+            rules: { singleProxy: { host: 'p.example', port: 3128 } }
+          },
+          scope: 'regular'
+        }
       ])
     ).toMatchObject({ ok: true })
+    expect(h.kt.proxyOverride).toMatchObject({
+      rules: [{ url: 'http://p.example:3128', scheme: '*' }]
+    })
     expect((await call(h, 'bg1', 'proxy', 'clear', ['settings', { scope: 'regular' }])).ok).toBe(
       true
     )
+    expect(h.kt.proxyOverride).toBeNull()
     // A PAC script (what VeePN, NordVPN and Browsec set) has no application on the WebView: the
     // call fails, so the extension shows its error instead of believing it is connected.
     expect(
@@ -1863,19 +1974,8 @@ describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
       ])
     ).toMatchObject({
       ok: false,
-      error: expect.stringContaining('not controllable on Zenium for Android')
+      error: expect.stringContaining('no PAC script or auto-detect proxy configuration')
     })
-    expect(
-      await call(h, 'bg1', 'proxy', 'set', [
-        'settings',
-        {
-          value: {
-            mode: 'fixed_servers',
-            rules: { singleProxy: { host: 'p.example', port: 3128 } }
-          }
-        }
-      ])
-    ).toMatchObject({ ok: false, error: expect.stringContaining('not controllable') })
     // Chrome's own checks come first: a config Chrome refuses is refused with Chrome's message.
     expect(
       await call(h, 'bg1', 'proxy', 'set', ['settings', { value: { mode: 'nonsense' } }])

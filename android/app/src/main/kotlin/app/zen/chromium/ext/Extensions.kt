@@ -77,7 +77,8 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Protocol (the core → here), keyed by extension id where it applies: `ext.env`, `ext.open`,
  * `ext.configure`, `ext.detach`, `ext.background.start` / `stop`, `ext.popup.open` / `close`,
- * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.observeRequests`.
+ * `ext.send`, `ext.exec`, `ext.readFile`, `ext.cookies.get` / `set`, `ext.observeRequests`,
+ * `ext.proxy.set` / `clear` (`chrome.proxy.settings` over the WebView's proxy override, [ExtensionProxy]).
  * Here → the core (host events): `ext.message`, `ext.gone`, `ext.popupClosed`, `ext.request`.
  */
 class Extensions(private val host: Host) {
@@ -364,6 +365,12 @@ class Extensions(private val host: Host) {
             "ext.notifications.hide" -> { notifications.hide(args.str("id"), args.str("notificationId")); reply(null) }
             "ext.notifications.forget" -> { notifications.forget(args.str("id")); reply(null) }
             "ext.notifications.allowed" -> reply(notifications.allowed())
+            "ext.proxy.set" -> ExtensionProxy.apply(ExtensionProxy.Plan.of(args), { r -> main.post(r) }) { error ->
+                reply(if (error == null) null else Host.Rejection(error))
+            }
+            "ext.proxy.clear" -> ExtensionProxy.clear({ r -> main.post(r) }) { error ->
+                reply(if (error == null) null else Host.Rejection(error))
+            }
             "ext.readFile" -> {
                 val id = args.str("id")
                 val path = args.str("path")

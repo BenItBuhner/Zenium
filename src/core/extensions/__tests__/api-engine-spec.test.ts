@@ -145,17 +145,18 @@ describe('engineApiSpec', () => {
     }
   })
 
-  it('answers the omnibox and side-panel setters quietly', () => {
-    // The phone has neither; Raindrop.io, OneTab and Bitwarden call them while starting.
-    for (const key of [
-      'omnibox.setDefaultSuggestion',
-      'sidePanel.setOptions',
-      'sidePanel.setPanelBehavior'
-    ])
-      expect(ENGINE_NOOPS.has(key), key).toBe(true)
-    // The getters keep rejecting: a quiet nothing would be a lie the caller acts on.
-    for (const key of ['sidePanel.getOptions', 'sidePanel.getPanelBehavior', 'sidePanel.open'])
+  it('answers the omnibox setter quietly and lets every sidePanel member reach the host', () => {
+    // The phone has no omnibox keyword; Raindrop.io, OneTab and Bitwarden call the setter while
+    // starting. The side panel is hosted in the runtime's sheet (`android/extensionSidePanel.ts`):
+    // a context-side no-op for `setPanelBehavior` would leave the toolbar tap opening the popup
+    // (Tag Assistant's action click opens its panel).
+    expect(ENGINE_NOOPS.has('omnibox.setDefaultSuggestion')).toBe(true)
+    for (const method of Object.keys(ENGINE_SPEC.sidePanel.methods)) {
+      const key = `sidePanel.${method}`
       expect(ENGINE_NOOPS.has(key), key).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(ENGINE_STUB_RESULTS, key), key).toBe(false)
+    }
+    expect(Object.keys(ENGINE_SPEC.sidePanel.events)).toEqual(['onOpened', 'onClosed'])
   })
 
   it('lets every declarativeNetRequest member reach the host', () => {

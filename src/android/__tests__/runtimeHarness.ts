@@ -65,6 +65,10 @@ export class FakeKotlin implements RuntimeBridge {
   detailedCookies = true
   /** Whether the fake app may post notifications (`ext.notifications.allowed`). */
   notificationsAllowed = true
+  /** The proxy override the fake WebView holds (`ext.proxy.set` / `clear`), null for the system's settings. */
+  proxyOverride: Record<string, unknown> | null = null
+  /** When set, the message the fake WebView refuses an override with. */
+  failProxy: string | null = null
   /** The notifications Kotlin shows right now: `<extension id>/<notification id>` → what it was given. */
   readonly notifications = new Map<string, Record<string, unknown>>()
   /** The auth sheets Kotlin holds (`ext.auth.*`), by view id; `closed` ones stay for inspection. */
@@ -213,6 +217,13 @@ export class FakeKotlin implements RuntimeBridge {
         for (const key of [...this.notifications.keys()])
           if (key.startsWith(`${args.id}/`)) this.notifications.delete(key)
         return undefined
+      case 'ext.proxy.set':
+        if (this.failProxy !== null) throw new Error(this.failProxy)
+        this.proxyOverride = args
+        return null
+      case 'ext.proxy.clear':
+        this.proxyOverride = null
+        return null
       case 'ext.notifications.allowed':
         return this.notificationsAllowed
       default:
@@ -649,7 +660,7 @@ export function record(
 export function hello(
   h: Harness,
   ep: string,
-  ctx: 'content' | 'background' | 'popup' | 'offscreen' | 'page',
+  ctx: 'content' | 'background' | 'popup' | 'options' | 'sidePanel' | 'offscreen' | 'page',
   extra: { tabId?: string | null; top?: boolean; url?: string } = {}
 ): void {
   const url =

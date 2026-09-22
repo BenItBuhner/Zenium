@@ -10,7 +10,8 @@ import {
   onClickData,
   type MenuClickContext,
   type MenuEntry,
-  type MenuItemId
+  type MenuItemId,
+  type PersistedMenuItem
 } from '@core/extensions/api/contextMenus'
 import type { AttachedExtension } from './extensionApi'
 
@@ -35,6 +36,10 @@ export interface ContextMenusHost {
   icon(extensionId: string): string | null
   /** The user picked an item of the extension on `tab`: an `activeTab` grant. */
   grantActiveTab(extensionId: string, tab: Tab): void
+  /** The items written for the extension at an earlier run, unvalidated (`MenuRegistry.restore` validates). */
+  persistedItems(extensionId: string): unknown
+  /** Write the extension's whole tree (an empty list drops the record). */
+  persistItems(extensionId: string, items: PersistedMenuItem[]): void
 }
 
 /**
@@ -45,6 +50,15 @@ export interface ContextMenusHost {
  * gets a submenu titled with its name, both with the extension's icon – and in the toolbar
  * button's own menu. A pick becomes `onClicked(info, tab)`, grants `activeTab` like a toolbar
  * click, and toggles checkbox and radio state as Chrome's `MenuManager` does.
+ *
+ * The items of an extension with a lazy background (MV3 worker, MV2 event page) are persisted
+ * as Chrome's `MenuManager` persists them and as the desktop does: written after every
+ * `create` / `update` / `remove` / `removeAll` and after a checkbox or radio click, restored when
+ * the extension attaches (before its worker runs, so an `update` of an `onInstalled` item at a
+ * later start finds it – DeepL updates its items from `onStartup` and failed with "Cannot find
+ * menu item with id" on every start but the first – and a `create` of the same id fails with
+ * the duplicate-id error, as in Chrome), kept while the extension is detached or disabled,
+ * dropped with the rest of its runtime state when it is uninstalled.
  */
 export class AndroidContextMenus {
   private readonly registries = new Map<string, MenuRegistry>()
@@ -53,9 +67,25 @@ export class AndroidContextMenus {
 
   constructor(private readonly host: ContextMenusHost) {}
 
+  /** The extension attached: its persisted items are back before its background runs. */
+  load(ext: AttachedExtension): void {
+    if (!hasLazyBackground(ext)) return
+    const persisted = this.host.persistedItems(ext.record.id)
+    if (!Array.isArray(persisted) || persisted.length === 0) return
+    this.registry(ext.record.id).restore(persisted)
+  }
+
+  /** The extension detached: the in-memory items go, the persisted ones stay for the next attach. */
   forget(extensionId: string): void {
     this.registries.delete(extensionId)
     this.clickHandlers.delete(extensionId)
+  }
+
+  /** `MenuManager::WriteToStorage`: the whole tree, for lazy-background extensions only. */
+  private persist(ext: AttachedExtension): void {
+    if (!hasLazyBackground(ext)) return
+    const registry = this.registries.get(ext.record.id)
+    this.host.persistItems(ext.record.id, registry ? registry.toPersisted() : [])
   }
 
   /** The context that created `onclick` items went away: its handlers with it. */
@@ -111,12 +141,14 @@ export class AndroidContextMenus {
             }
             handlers.set(keyOf(item.id), endpointId)
           }
+          this.persist(ext)
           return item.id
         }
         case 'update': {
           const menuId = args[0]
           if (!isMenuItemId(menuId)) throw new Error('Invalid menu item id')
           this.registry(id).update(menuId, normalizeUpdateProperties(args[1]))
+          this.persist(ext)
           return undefined
         }
         case 'remove': {
@@ -124,11 +156,13 @@ export class AndroidContextMenus {
           if (!isMenuItemId(menuId)) throw new Error('Invalid menu item id')
           for (const removed of this.registry(id).remove(menuId))
             this.clickHandlers.get(id)?.delete(keyOf(removed))
+          this.persist(ext)
           return undefined
         }
         case 'removeAll':
           this.registry(id).removeAll()
           this.clickHandlers.delete(id)
+          this.persist(ext)
           return undefined
       }
     } catch (error) {
@@ -223,6 +257,11 @@ export class AndroidContextMenus {
     const item = registry?.get(id)
     if (!registry || !item) return
     const checkState = registry.clicked(id)
+    // A checkbox toggled or a radio picked is state Chrome writes (`MenuManager::ExecuteCommand`).
+    if (item.type === 'checkbox' || item.type === 'radio') {
+      const ext = this.host.attached(extensionId)
+      if (ext) this.persist(ext)
+    }
     const info = onClickData(item, click, checkState)
     if (tab) this.host.grantActiveTab(extensionId, tab)
     const args: unknown[] = tab ? [info, this.host.chromeTab(tab)] : [info]
@@ -256,6 +295,17 @@ export function clickContext(tab: Tab, params: PageContextParams): MenuClickCont
     selectionText: params.selectionText,
     editable: params.isEditable
   }
+}
+
+/**
+ * Chrome's `BackgroundInfo::HasLazyContext` over the parsed manifest: an MV3 service worker or
+ * an MV2 event page. Only these extensions' menus are written (`MenuManager::WriteToStorage`):
+ * a persistent background page recreates its items every start, a lazy one is not running to.
+ */
+function hasLazyBackground(ext: AttachedExtension): boolean {
+  const background = ext.manifest.background
+  if (!background) return false
+  return background.kind === 'service_worker' || !background.persistent
 }
 
 function keyOf(id: MenuItemId): string {
