@@ -1,16 +1,27 @@
 name: Android page dialogs demo
 
-# Records a page's dialogs on the phone (matrix PUI-27, PUI-28): alert / confirm / prompt as the
-# core's tab-modal PageDialog in the phone's prompt sheet – the site as the title block, OK and
-# Cancel returning to the page, the prompt's field with the keyboard and its typed value, Chrome's
-# "Don't let this page create more dialogs" checkbox and its suppression until the next
-# navigation, a background tab's dialog waiting for its tab, a tab switch hiding a pending one –
-# and a page's beforeunload as the core's "Leave site?" on a link and on the overview card's X,
-# with Cancel and with Leave. Every press is a real touch and the driver reads each outcome off
+# Records a page's dialogs on the phone (matrix PUI-27, PUI-28): alert / confirm / prompt as
+# Zenium's own sheet – the v2 §9.23 chassis (NativePromptSheet) drawn natively over the page,
+# since the WebView's one renderer waits inside the page's call and nothing the chrome's own
+# JavaScript draws can come up meanwhile – the site as the title, the page's message as body
+# copy, OK and Cancel returning to the page, the prompt's message as its field's label with the
+# default selected and the typed value returned under the keyboard, a long message scrolling
+# under the pinned title block, an embedded frame's dialog titled after its origin, Chrome's
+# "Don't let this page create more dialogs" check row and its suppression until the next
+# navigation, a background tab's dialog dismissed unseen, the chrome waiting with the page while
+# the sheet is up – and a page's beforeunload as "Leave site?" / "Reload site?" on a link, on a
+# reload and on the overview card's X, with Cancel and with Leave. Every press is a real touch
+# and the driver reads each outcome off the sheet's own window in the accessibility tree, off
 # the core's state and off what the page's call returned (findings text in the artifact; the run
-# fails on a FAIL). Dispatch-only, like the tab close demo: it says nothing about a change being
-# correct beyond what `page-dialogs-findings.txt` records. The build, the emulator and the Gradle
-# cache live in android-emulator-demo.yml; this file only picks the driver.
+# fails on a FAIL).
+#
+# Two acts, in parallel, each on its own emulator: the light and the dark colour scheme (the
+# same claims; the stills are the design record's). Dispatch-only, like the tab close demo: it
+# says nothing about a change being correct beyond what `page-dialogs-findings.txt` records. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the
+# driver and the theme. One more boot per act when the emulator itself went away under the driver
+# (adb lost the device), and never when the driver failed: a run is then spent on the demo
+# rather than on the runner.
 on:
   workflow_dispatch:
 
@@ -22,8 +33,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  record:
-    name: Page dialogs demo
+  light:
+    name: Page dialogs demo, light
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
@@ -32,18 +43,17 @@ jobs:
         DEMO_CLASS=app.zen.chromium.PageDialogsDemo
         DEMO_DIR=page-dialogs-demo
         DEMO_OUT=artifacts/android-page-dialogs-demo
-        DEMO_VIDEO=android-page-dialogs-demo.mp4
+        DEMO_VIDEO=android-page-dialogs-demo-light.mp4
+        DEMO_THEME=light
       # The guest kernel's console in the log, should the emulator go away mid-demo.
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
-      artifact-name: android-page-dialogs-demo
+      artifact-name: android-page-dialogs-demo-light
       artifact-path: artifacts/android-page-dialogs-demo/
 
-  # One more boot when the emulator itself went away under the driver (adb lost the device), and
-  # never when the driver failed: a run is then spent on the demo rather than on the runner.
-  record-again:
-    name: Page dialogs demo, second boot
-    needs: record
-    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+  light-again:
+    name: Page dialogs demo, light, second boot
+    needs: light
+    if: ${{ failure() && needs.light.outputs.emulator-died == 'true' }}
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
@@ -51,7 +61,40 @@ jobs:
         DEMO_CLASS=app.zen.chromium.PageDialogsDemo
         DEMO_DIR=page-dialogs-demo
         DEMO_OUT=artifacts/android-page-dialogs-demo
-        DEMO_VIDEO=android-page-dialogs-demo.mp4
+        DEMO_VIDEO=android-page-dialogs-demo-light.mp4
+        DEMO_THEME=light
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
-      artifact-name: android-page-dialogs-demo-second-boot
+      artifact-name: android-page-dialogs-demo-light-second-boot
+      artifact-path: artifacts/android-page-dialogs-demo/
+
+  dark:
+    name: Page dialogs demo, dark
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PageDialogsDemo
+        DEMO_DIR=page-dialogs-demo
+        DEMO_OUT=artifacts/android-page-dialogs-demo
+        DEMO_VIDEO=android-page-dialogs-demo-dark.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-page-dialogs-demo-dark
+      artifact-path: artifacts/android-page-dialogs-demo/
+
+  dark-again:
+    name: Page dialogs demo, dark, second boot
+    needs: dark
+    if: ${{ failure() && needs.dark.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PageDialogsDemo
+        DEMO_DIR=page-dialogs-demo
+        DEMO_OUT=artifacts/android-page-dialogs-demo
+        DEMO_VIDEO=android-page-dialogs-demo-dark.mp4
+        DEMO_THEME=dark
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-page-dialogs-demo-dark-second-boot
       artifact-path: artifacts/android-page-dialogs-demo/
