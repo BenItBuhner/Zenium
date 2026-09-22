@@ -674,7 +674,7 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     expect(el.querySelector('[data-testid="history-remote-device"]')).toBeNull()
   })
 
-  it('with sync on but Open tabs off in What you sync, the line names the scope and the row manages it', async () => {
+  it('with sync on but Open tabs off in What you sync, the line names the scope and the row chooses it', async () => {
     const el = await mountPage(tab(), state(sync(true, false)))
     const group = el.querySelector('[data-testid="history-remote-tabs"]')!
     expect(group.getAttribute('data-state')).toBe('scope-off')
@@ -684,7 +684,7 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     const row = group.querySelector<HTMLButtonElement>(
       '[data-testid="history-remote-tabs-settings"]'
     )!
-    expect(text(row)).toBe('Manage what you sync')
+    expect(text(row)).toBe('Choose what to sync')
     await act(async () => row.click())
     expect(calls('page.open')).toEqual([{ id: 'settings', section: 'sync' }])
     expect(calls('sync.tabsFromDevices')).toEqual([])

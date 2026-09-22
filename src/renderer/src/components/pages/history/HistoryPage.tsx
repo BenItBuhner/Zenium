@@ -61,7 +61,11 @@ const REMOTE_COPY = {
   heading: SYNC_COPY.remoteTabs,
   syncOff: 'Turn on sync to see tabs from your other devices',
   scopeOff: 'Turn on Open tabs in What you sync to see them',
-  manageScope: 'Manage what you sync',
+  /**
+   * The row under that line names the action, not the group (§9.1: "Manage what you sync" two
+   * lines under "…in What you sync…" cast the group's name two ways) – Firefox's label.
+   */
+  chooseScope: 'Choose what to sync',
   none: 'No tabs from other devices',
   /** The aside of a device's heading: "Last active 5 min ago", "Last active just now". */
   lastActive: (updatedAt: number): string => {
@@ -783,7 +787,7 @@ function RecentlyClosed({
  * Only with nothing to list does one group headed "Tabs from other devices" stand there: its
  * §9.17 line where its rows would be, and – while a setting is the way out – the row to
  * Settings › Sync as §10.4's action row (the chevron, since it leaves the page): sync off, the
- * "Turn on sync" row; sync on with Open tabs off in What you sync, "Manage what you sync"; sync
+ * "Turn on sync" row; sync on with Open tabs off in What you sync, "Choose what to sync"; sync
  * on with nothing published, the line alone. While anything is searched the empty group steps
  * aside with Recently closed – a search shows matches, not the state of a setting.
  */
@@ -825,7 +829,7 @@ function RemoteTabs({
     : !wanted
       ? REMOTE_COPY.scopeOff
       : REMOTE_COPY.none
-  const action = !sync.enabled ? SYNC_COPY.turnOn : !wanted ? REMOTE_COPY.manageScope : null
+  const action = !sync.enabled ? SYNC_COPY.turnOn : !wanted ? REMOTE_COPY.chooseScope : null
   return (
     <PageGroup
       heading={REMOTE_COPY.heading}
