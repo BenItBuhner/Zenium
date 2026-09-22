@@ -72,6 +72,12 @@ function initialHistory(url: string, pages: InternalPageRegistry): PageHistory {
 
 export class PageService {
   private readonly histories = new Map<string, PageHistory>()
+  /**
+   * The History page's folded device groups (ID-28), by device id: a chrome page's memory that
+   * is the session's rather than a tab's or a window's – each window's chrome is a renderer of
+   * its own, so the core holds the set and tells every window when it moves. Gone at quit.
+   */
+  private readonly foldedDevices = new Set<string>()
 
   constructor(
     private readonly browser: Browser,
@@ -410,6 +416,23 @@ export class PageService {
   /** The tab is gone: forget its section history. */
   onTabRemoved(tabId: string): void {
     this.histories.delete(tabId)
+  }
+
+  /** The devices whose groups the History page keeps folded, in the order they were folded. */
+  foldedDeviceIds(): string[] {
+    return [...this.foldedDevices]
+  }
+
+  /**
+   * Fold or unfold one device's group on the History page. Every window's chrome hears the new
+   * set (a second window's History tab folds with the first's); nothing is sent for no change.
+   */
+  foldDevice(deviceId: string, folded: boolean): void {
+    if (folded === this.foldedDevices.has(deviceId)) return
+    if (folded) this.foldedDevices.add(deviceId)
+    else this.foldedDevices.delete(deviceId)
+    const ids = this.foldedDeviceIds()
+    for (const w of this.browser.allWindows()) w.send('history.foldedDevicesChanged', ids)
   }
 
   /**

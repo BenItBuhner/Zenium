@@ -1,0 +1,39 @@
+name: Android share and screenshot demo
+
+# Records screenshots to the gallery and the Web Share API on a hardware-accelerated Android
+# emulator (parity rows SH-07, SH-08, SH-14, SH-11): Take Screenshot from the app menu with its
+# flash, the preview card (the thumbnail into the system viewer, Share, Delete), Capture more
+# into the long-screenshot editor with a real drag of a handle and Save, `navigator.share` from
+# a loopback page (the gate without a gesture, a URL, a file the page drew, the dismissal's
+# AbortError), Share from the selection toolbar with the link to the highlight and its Copy link,
+# a link to a highlight followed, and the editor once more under the dark chrome. The driver
+# writes `share-screenshot-findings.txt` with a PASS / FAIL per check and fails when any did. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks
+# the driver and the demo it runs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-share-screenshot-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Share and screenshot demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header). The
+      # image's Photos and Files apps stay enabled: the card's thumbnail opens the picture in
+      # whichever of them handles it.
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ShareScreenshotDemo
+        DEMO_DIR=share-screenshot-demo
+        DEMO_OUT=artifacts/android-share-screenshot-demo
+        DEMO_VIDEO=android-share-screenshot-demo.mp4
+        DEMO_KEEP=com.google.android.apps.photos com.google.android.apps.nbu.files
+      artifact-name: android-share-screenshot-demo
+      artifact-path: artifacts/android-share-screenshot-demo/

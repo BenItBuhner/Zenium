@@ -4,7 +4,8 @@ import type { Browser } from '../browser'
 import type { PageHostMessage, ShareSheetHost } from '../platform'
 import type { ZenWindow } from '../window'
 import type { Tab } from '../../shared/types'
-import type { ShareFile } from '../../shared/share'
+import type { ShareFile, ShareOutcome } from '../../shared/share'
+import type { SharePayload } from '../../shared/types'
 
 const FILE: ShareFile = { name: 'photo.png', type: 'image/png', size: 3, data: 'AAAA' }
 
@@ -19,9 +20,14 @@ interface Harness {
   saved: ShareFile[][]
   system: Array<{ url: string; files: number }>
   downloads: string[]
+  /** The OS sheet's calls (`shell.share`, Android) and the settlers of their pending answers. */
+  shell: SharePayload[]
+  settle: Array<(outcome: ShareOutcome | Error) => void>
 }
 
-function harness(options: { host?: 'none' | 'files' | 'system'; sheet?: boolean } = {}): Harness {
+function harness(
+  options: { host?: 'none' | 'files' | 'system'; sheet?: boolean; osSheet?: boolean } = {}
+): Harness {
   const posted: PageHostMessage[] = []
   const copied: Harness['copied'] = []
   const opened: string[] = []
@@ -29,6 +35,8 @@ function harness(options: { host?: 'none' | 'files' | 'system'; sheet?: boolean 
   const saved: ShareFile[][] = []
   const system: Harness['system'] = []
   const downloads: string[] = []
+  const shell: SharePayload[] = []
+  const settle: Harness['settle'] = []
   // The window's chrome has the share sheet up unless a test says otherwise (`ui.surface`).
   const win = {
     id: 'w1',
@@ -55,9 +63,23 @@ function harness(options: { host?: 'none' | 'files' | 'system'; sheet?: boolean 
   const browser = {
     platform: {
       shareSheet: host,
-      shell: { openExternal: (url: string) => opened.push(url) }
+      shell: {
+        openExternal: (url: string) => opened.push(url),
+        ...(options.osSheet
+          ? {
+              share: (payload: SharePayload) => {
+                shell.push(payload)
+                return new Promise<ShareOutcome | void>((resolve, reject) => {
+                  settle.push((outcome) =>
+                    outcome instanceof Error ? reject(outcome) : resolve(outcome)
+                  )
+                })
+              }
+            }
+          : {})
+      }
     },
-    state: { commitVolatile: vi.fn() },
+    state: { commitVolatile: vi.fn(), capabilities: { share: options.osSheet === true } },
     tabs: {
       tab: (id: string) => (id === 't1' ? tab : undefined),
       view: (id: string) =>
@@ -85,7 +107,9 @@ function harness(options: { host?: 'none' | 'files' | 'system'; sheet?: boolean 
     toasts,
     saved,
     system,
-    downloads
+    downloads,
+    shell,
+    settle
   }
 }
 
@@ -216,6 +240,56 @@ describe('ShareService', () => {
     h.service.handleMessage('t1', { ...CALL, id: 'c2' })
     expect(h.service.listFor(h.win)).toHaveLength(1)
     expect(h.posted).toHaveLength(1)
+  })
+
+  it('hands a page call to the OS sheet where the chrome has none and settles on its word', async () => {
+    const h = harness({ sheet: false, osSheet: true })
+    h.service.handleMessage('t1', { ...CALL, files: [FILE] })
+    // Nothing is put up in the chrome; the host shows the OS sheet with the files' bytes.
+    expect(h.service.listFor(h.win)).toEqual([])
+    expect(h.posted).toEqual([])
+    expect(h.shell).toHaveLength(1)
+    expect(h.shell[0]).toMatchObject({
+      title: 'A story',
+      text: 'Read this',
+      url: 'https://news.example/story',
+      files: [FILE],
+      tabId: 't1',
+      awaitOutcome: true
+    })
+    h.settle[0]('shared')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.posted).toEqual([{ type: 'share', id: 'c1', result: 'shared' }])
+
+    // A dismissed sheet, and a host that failed to say, both end as Chrome's AbortError.
+    h.service.handleMessage('t1', { ...CALL, id: 'c2' })
+    h.settle[1]('aborted')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.posted.at(-1)).toEqual({ type: 'share', id: 'c2', result: 'aborted' })
+    h.service.handleMessage('t1', { ...CALL, id: 'c3' })
+    h.settle[2](new Error('no activity'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.posted.at(-1)).toEqual({ type: 'share', id: 'c3', result: 'aborted' })
+  })
+
+  it('aborts a pending OS-sheet share when the tab navigates, and once only', async () => {
+    const h = harness({ sheet: false, osSheet: true })
+    h.service.handleMessage('t1', CALL)
+    h.service.cancelForTab('t1')
+    expect(h.posted).toEqual([{ type: 'share', id: 'c1', result: 'aborted' }])
+    // The host's late answer finds nothing waiting.
+    h.settle[0]('shared')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.posted).toHaveLength(1)
+    // A second call while the first is up replaces it (one share at a time).
+    h.service.handleMessage('t1', { ...CALL, id: 'c2' })
+    h.service.handleMessage('t1', { ...CALL, id: 'c3' })
+    expect(h.posted.at(-1)).toEqual({ type: 'share', id: 'c2', result: 'aborted' })
+    expect(h.shell).toHaveLength(3)
   })
 })
 

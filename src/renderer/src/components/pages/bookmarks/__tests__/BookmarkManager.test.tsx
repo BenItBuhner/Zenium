@@ -330,28 +330,90 @@ describe('the bookmarks manager page tab (§10.1, §10.5)', () => {
     })
   })
 
-  it('selects per §9.6: click, Ctrl adds, Shift ranges, Ctrl+A all, Escape clears; Delete removes the selection', async () => {
+  it('selects per §9.6: click, Shift ranges, Ctrl+A all, Space toggles, Escape clears; Delete removes the selection', async () => {
     const el = await mountPage()
+    const selected = (): string[] =>
+      rowIds(el).filter((id) => row(el, id).hasAttribute('data-selected'))
     await act(async () => click(row(el, 'docs')))
     expect(row(el, 'docs').getAttribute('aria-selected')).toBe('true')
     expect(row(el, 'docs').hasAttribute('data-selected')).toBe(true)
     expect(listbox(el).getAttribute('aria-activedescendant')).toBe('bm-row-docs')
-    await act(async () => click(row(el, 'news'), { ctrlKey: true }))
-    expect(rowIds(el).filter((id) => row(el, id).hasAttribute('data-selected'))).toEqual([
-      'docs',
-      'news'
-    ])
+    await act(async () => click(row(el, 'news'), { shiftKey: true }))
+    expect(selected()).toEqual(['docs', 'zen', 'news'])
     await act(async () => click(row(el, 'zen'), { shiftKey: true }))
-    expect(rowIds(el).filter((id) => row(el, id).hasAttribute('data-selected'))).toEqual([
-      'zen',
-      'news'
-    ])
+    expect(selected()).toEqual(['docs', 'zen'])
+    // Ctrl+arrow moves the focus alone and Space toggles the focused row: the way to a pick
+    // that is not one run, now that Ctrl-click is not the selection's.
+    await act(async () => click(row(el, 'news')))
+    expect(selected()).toEqual(['news'])
+    await act(async () => key(listbox(el), 'ArrowUp', { ctrlKey: true }))
+    await act(async () => key(listbox(el), 'ArrowUp', { ctrlKey: true }))
+    expect(selected()).toEqual(['news'])
+    expect(listbox(el).getAttribute('aria-activedescendant')).toBe('bm-row-docs')
+    await act(async () => key(listbox(el), ' '))
+    expect(selected()).toEqual(['docs', 'news'])
+    await act(async () => key(listbox(el), ' '))
+    expect(selected()).toEqual(['news'])
     await act(async () => key(listbox(el), 'Escape'))
     expect(el.querySelector('[data-selected]')).toBeNull()
     await act(async () => key(listbox(el), 'a', { ctrlKey: true }))
     expect(el.querySelectorAll('[data-selected]')).toHaveLength(3)
     await act(async () => key(listbox(el), 'Delete'))
     expect(calls('bookmark.remove')).toEqual([{ ids: ['docs', 'zen', 'news'] }])
+  })
+
+  it('Ctrl-click has one meaning on every page row (§10.1): a bookmark opens behind this tab and nothing is picked; a middle click is the same; a folder is selected', async () => {
+    const el = await mountPage()
+    const selected = (): string[] =>
+      rowIds(el).filter((id) => row(el, id).hasAttribute('data-selected'))
+    await act(async () => click(row(el, 'docs')))
+    expect(selected()).toEqual(['docs'])
+    await act(async () => click(row(el, 'news'), { ctrlKey: true }))
+    expect(calls('bookmark.open')).toEqual([
+      { id: 'news', newTab: true, tabId: 'bm', background: true }
+    ])
+    // The selection is as it was: not added to, not moved.
+    expect(selected()).toEqual(['docs'])
+    expect(listbox(el).getAttribute('aria-activedescendant')).toBe('bm-row-docs')
+    await act(async () => click(row(el, 'zen'), { metaKey: true }))
+    expect(calls('bookmark.open').at(-1)).toEqual({
+      id: 'zen',
+      newTab: true,
+      tabId: 'bm',
+      background: true
+    })
+    expect(selected()).toEqual(['docs'])
+    // A Ctrl-double-click's second click and the double-click itself open nothing more.
+    await act(async () =>
+      row(el, 'zen').dispatchEvent(
+        new MouseEvent('click', { bubbles: true, ctrlKey: true, detail: 2 })
+      )
+    )
+    await act(async () =>
+      row(el, 'zen').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, ctrlKey: true }))
+    )
+    expect(calls('bookmark.open')).toHaveLength(2)
+    // A middle click is the same tab behind.
+    await act(async () =>
+      row(el, 'news').dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
+    )
+    expect(calls('bookmark.open').at(-1)).toEqual({
+      id: 'news',
+      newTab: true,
+      tabId: 'bm',
+      background: true
+    })
+    expect(calls('bookmark.open')).toHaveLength(3)
+    // A folder cannot open behind: Ctrl-click selects it as a plain click does.
+    await act(async () => click(row(el, 'zen')))
+    await act(async () => click(row(el, 'docs'), { ctrlKey: true }))
+    expect(selected()).toEqual(['docs'])
+    expect(calls('bookmark.open')).toHaveLength(3)
+    // A plain double click still opens in this tab.
+    await act(async () =>
+      row(el, 'zen').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    )
+    expect(calls('bookmark.open').at(-1)).toEqual({ id: 'zen', newTab: false, tabId: 'bm' })
   })
 
   it('Enter opens the focused bookmark in the tab, Ctrl+Enter in a new one; the arrows walk the rows (§9.22)', async () => {

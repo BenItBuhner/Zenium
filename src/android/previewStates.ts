@@ -37,7 +37,7 @@ import { isInternalPageUrl } from '@shared/internalPages'
 import { isEmptyTabUrl } from '@shared/url'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
-import { BLANK_URL, EXTENSION_SCHEME } from '@shared/url'
+import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
@@ -48,11 +48,15 @@ import {
   closeReaderPreferences,
   closeTabsMenu,
   closeUrlbar,
+  closeLongScreenshot,
   dismissBanner,
   dismissToast,
   forgetBanner,
+  forgetScreenshotCard,
   forgetToast,
+  holdScreenshotCard,
   openExtensionsSheet,
+  pickScreenshotAction,
   openSendTabSheet,
   openMediaSheet,
   openOverlay,
@@ -62,7 +66,8 @@ import {
   openZoom,
   pushToast,
   showBanner,
-  uiStore
+  uiStore,
+  type UiState
 } from '@renderer/lib/ui'
 import {
   customListId,
@@ -84,6 +89,8 @@ import {
   PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
   PREVIEW_READ_ALOUD_EVENT,
+  PREVIEW_SETTLE_LOADS_EVENT,
+  PREVIEW_SLOW_LOAD_EVENT,
   PREVIEW_VOICE_EVENT,
   PREVIEW_WEB_APP,
   postPreviewManifest,
@@ -104,15 +111,19 @@ import {
   parsePreviewSeed,
   parsePreviewSpec,
   parsePreviewSteps,
+  type PreviewCrashVariant,
   type PreviewDownloadSpec,
   type PreviewSiteDataSeed,
   type PreviewMediaVariant,
+  type PreviewNetworkVariant,
   type PreviewNtpPose,
   type PreviewPrivateSurface,
   type PreviewState,
   type PreviewStep,
   type PreviewWebAppSurface
 } from './previewSpec'
+import { holdPreviewScreenshots, resetPreviewScreenshots } from './previewScreenshots'
+import { hideUnresponsivePrompt, showUnresponsivePrompt } from './previewUnresponsive'
 import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
@@ -131,7 +142,7 @@ const PRESS_SETTLE_MS = PRESS_HOLD_MS + 250 + STEP_SETTLE_MS
  * promo's (`default-browser`, the sheet `sheet=promo` raises; its back is a "Not now").
  */
 const SHEET_SURFACE =
-  /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-|default-browser$)/
+  /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-|default-browser$|long-screenshot$)/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
@@ -267,6 +278,11 @@ function apply(browser: Browser, spec: string): void {
     cancelVoiceSearch()
     cancelQrScan()
     resetBarHide()
+    // A flash a `screenshot=` state held, and the long-screenshot editor it opened, go too.
+    resetPreviewScreenshots()
+    closeLongScreenshot()
+    // The unresponsive-page prompt's stand-in goes at once (no answer: nothing hangs here).
+    hideUnresponsivePrompt()
     // A read-aloud session a previous state scripted ends: its docked player goes with it.
     browser.readAloud.stop()
     const state = browserStore.get().state
@@ -297,13 +313,17 @@ function apply(browser: Browser, spec: string): void {
     // too (its session ends, as when the user closes the last one): the next state starts on
     // the regular tabs, and an "empty" pane is empty. A tab a `pdf=` state turned to the viewer
     // goes back to its page, unless the next state is another document for the same viewer. The
-    // new tab page an `ntp=` state opened goes the same way, and the bar is docked where the
-    // seed says before the state is reached.
+    // new tab page an `ntp=` state opened goes the same way, the device is back online if a
+    // `network=` state took it off, the active tab is back on its page if a state left it on an
+    // error page, and the bar is docked where the seed says before the state is reached.
     void clearAutofill(browser)
       .then(dissolveGroup)
       .then(closeExtensionPage)
       .then(() => (parsePreviewSpec(spec).kind === 'pdf' ? undefined : leavePdf()))
       .then(closeNewTabPage)
+      .then(restoreConnectivity)
+      .then(leaveHungPage)
+      .then(leaveErrorPage)
       .then(() =>
         dockBar(seed.bar, () =>
           closePrivateTabs(() => closeSheets(() => reach(browser, spec, securityAtRest)))
@@ -490,6 +510,24 @@ async function leavePdf(): Promise<void> {
   if (!isPdfViewerTab(state, made.tabId)) return
   await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
   await new Promise<void>((resolve) => untilState((s) => !isPdfViewerTab(s, made.tabId), resolve))
+}
+
+/**
+ * The tab a previous `unresponsive&url=` state took to the page it hung, and the page it was on
+ * before, put back before the next state (as the PDF viewer's tab is).
+ */
+let previewHungReturn: { tabId: string; url: string } | null = null
+
+/** The tab back on the page it was on before the unresponsive state took it elsewhere. */
+async function leaveHungPage(): Promise<void> {
+  const made = previewHungReturn
+  previewHungReturn = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state || !state.tabs[made.tabId] || state.tabs[made.tabId]?.url === made.url) return
+  await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
+  await new Promise<void>((resolve) =>
+    untilState((s) => s.tabs[made.tabId]?.url === made.url, resolve)
+  )
 }
 
 /**
@@ -1014,6 +1052,31 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'error' && tab) {
     failLoad(tab.id, target.code, target.url ?? tab.url)
     requestAnimationFrame(finish)
+  } else if (target.kind === 'screenshot' && tab) {
+    applyScreenshot(target, tab.id, finish)
+  } else if (target.kind === 'network' && tab) {
+    playConnectivity(tab, target.variant, finish)
+  } else if (target.kind === 'crash' && tab) {
+    crashTab(tab, target.variant, finish)
+  } else if (target.kind === 'unresponsive' && tab) {
+    // The prompt is about the page in front: the one the spec names is loaded first (a page this
+    // host can picture stands behind the scrim; the reset has left the tab on its own page,
+    // loaded, otherwise). Then the sheet rises with its motion, and the state is reached once it
+    // has settled.
+    const url = target.url
+    const staged = (): void => {
+      const now = activeTab(browserStore.get().state!) ?? tab
+      showUnresponsivePrompt(safeHost(now.url) || now.url, now.favicon)
+      window.setTimeout(finish, STEP_SETTLE_MS)
+    }
+    if (url && tab.url !== url) {
+      previewHungReturn = { tabId: tab.id, url: tab.url }
+      run('tab.navigate', { tabId: tab.id, input: url })
+      whenActiveTabIs(
+        (t) => t.id === tab.id && t.url === url && !t.loading,
+        () => void untilPainted(tab.id).then(staged)
+      )
+    } else staged()
   } else if (target.kind === 'messages') {
     showMessages(target, tab?.id ?? null)
     finish()
@@ -2108,6 +2171,157 @@ function failLoad(tabId: string, code: number, url: string): void {
   host.viewEvent(tabId, 'failLoad', JSON.stringify({ code, description: '', url, certificate }))
 }
 
+/** Chromium's `net::ERR_INTERNET_DISCONNECTED`: the failure that means offline by itself. */
+const ERR_INTERNET_DISCONNECTED = -106
+
+/** The host's word on the device's connectivity, as `Connectivity.kt` would send it. */
+function setConnectivity(online: boolean): void {
+  const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
+  host.hostEvent('connectivity', JSON.stringify({ online }))
+}
+
+/**
+ * The device's connectivity played over the active tab (ERR-06, ERR-07) through the core's own
+ * model (`ConnectivityService`, with its debounce): the device goes offline and, for `offline`,
+ * the state is reached once the chrome shows it (the banner up). For `back-online` the device
+ * comes back at once and the state is reached once the chrome agrees (the toast up). For
+ * `reloading` the tab's load fails as offline first – the error page, armed to reload itself –
+ * then the device comes back: the core puts the page in its own Reloading state and navigates
+ * it to the page again, a load the stand-in host makes take its time (PREVIEW_SLOW_LOAD_EVENT),
+ * so the still shows the error page reloading with the toast beside it.
+ */
+function playConnectivity(tab: Tab, variant: PreviewNetworkVariant, then: () => void): void {
+  setConnectivity(false)
+  untilState(
+    (s) => !s.network.online,
+    () => {
+      if (variant === 'offline') {
+        afterFrames(2, then)
+        return
+      }
+      const back = (): void => {
+        setConnectivity(true)
+        untilState(
+          (s) => s.network.online,
+          () => afterFrames(2, then)
+        )
+      }
+      if (variant === 'back-online') {
+        back()
+        return
+      }
+      failLoad(tab.id, ERR_INTERNET_DISCONNECTED, tab.url)
+      // The error page's document must be up before the device comes back: the core's busy
+      // state runs inside it, and the load it starts is the unhurried one.
+      whenActiveTabIs(
+        (t) => t.id === tab.id && t.url.startsWith(ERROR_URL_PREFIX) && !t.loading,
+        () => {
+          window.dispatchEvent(new CustomEvent(PREVIEW_SLOW_LOAD_EVENT, { detail: tab.id }))
+          window.setTimeout(back, STEP_SETTLE_MS)
+        }
+      )
+    }
+  )
+}
+
+/**
+ * The device back online before the next state, when a `network=` state took it off: the core
+ * hears the host's word and, once its debounce has passed, answers with the Back online toast,
+ * which the next state must not carry – so the return is waited for and the toast cleared
+ * before the state is reached.
+ */
+function restoreConnectivity(): Promise<void> {
+  const state = browserStore.get().state
+  if (!state || state.network.online) return Promise.resolve()
+  setConnectivity(true)
+  return new Promise<void>((resolve) =>
+    untilState(
+      (s) => s.network.online,
+      () =>
+        afterFrames(2, () => {
+          clearMessages(null)
+          resolve()
+        })
+    )
+  )
+}
+
+/**
+ * The active tab back on its page, loaded, before the next state: a previous state may have left
+ * it on an error page (`error=`, `crash=`, `network=reloading`) or with a load on its way (the
+ * reloading state's unhurried one). The next state starts on the page – a `network=reloading`
+ * fails the page's own URL, the prompt is about the page – and an error page the next state puts
+ * up is a fresh document, which matters for the scheme: the page reads it once, at load (on a
+ * device the host reloads pages on a theme switch; this host does not). Bounded by `untilState`.
+ */
+async function leaveErrorPage(): Promise<void> {
+  const state = browserStore.get().state
+  const tab = state ? activeTab(state) : null
+  if (!tab) return
+  if (tab.url.startsWith(ERROR_URL_PREFIX)) {
+    run('tab.reload', { tabId: tab.id })
+    await new Promise<void>((resolve) =>
+      untilState((s) => {
+        const t = activeTab(s)
+        return t === null || t.id !== tab.id || !t.url.startsWith(ERROR_URL_PREFIX)
+      }, resolve)
+    )
+  }
+  // The core's word on the load is not enough here: the reset above marked the tab as loaded
+  // for the messages, while the stand-in host may still be holding the page back. The held
+  // loads land, and the tab's frame is waited for until it shows what it was told to.
+  window.dispatchEvent(new CustomEvent(PREVIEW_SETTLE_LOADS_EVENT))
+  await untilPainted(tab.id)
+}
+
+/** How long a page load in the stand-in host is waited for before the next state goes ahead anyway. */
+const PAINT_TIMEOUT_MS = 6000
+
+/**
+ * Resolves once the stand-in host's frame for `tabId` shows the URL it was last told to load
+ * (`preview.ts` marks `data-painted` on the frame's load), or once waiting stops being worth it.
+ */
+function untilPainted(tabId: string): Promise<void> {
+  const deadline = performance.now() + PAINT_TIMEOUT_MS
+  return new Promise<void>((resolve) => {
+    const check = (): void => {
+      const frame = [
+        ...document.querySelectorAll<HTMLIFrameElement>('iframe.zen-preview-view')
+      ].find((f) => f.dataset.tabId === tabId)
+      if (!frame || frame.dataset.painted === frame.dataset.url || performance.now() > deadline) {
+        resolve()
+        return
+      }
+      window.setTimeout(check, 50)
+    }
+    check()
+  })
+}
+
+/**
+ * The active tab's renderer went (ERR-15), as the host reports it (`crashed` in `views.ts`,
+ * `RendererExits.kt` behind it): the core answers with the crash page for the way it went, in
+ * the tab's frame – for `repeat`, the page's second-time variant with Show tabs beside Reload.
+ * Reached once the tab shows that crash page and its document has had a moment to paint.
+ */
+function crashTab(tab: Tab, variant: PreviewCrashVariant, then: () => void): void {
+  const host = (window as unknown as { __zenHost: HostGlobal }).__zenHost
+  const reason = variant === 'memory' ? 'oom-kill' : variant === 'hung' ? 'hung' : 'crashed'
+  const repeat = variant === 'repeat'
+  host.viewEvent(tab.id, 'crashed', JSON.stringify({ reason, repeat }))
+  const expected = variant === 'repeat' ? 'crash' : variant
+  whenActiveTabIs(
+    (t) => {
+      if (t.id !== tab.id || t.loading || !t.url.startsWith(ERROR_URL_PREFIX)) return false
+      const params = new URL(t.url).searchParams
+      if (params.get('code') !== '-1') return false
+      const options = crashPageOptionsOf(params)
+      return options.variant === expected && options.repeat === repeat
+    },
+    () => window.setTimeout(then, STEP_SETTLE_MS)
+  )
+}
+
 /** Type `text` into the first element matching `selector` the way a keyboard would. */
 function type(selector: string, text: string): void {
   const input = document.querySelector<HTMLInputElement>(selector)
@@ -2708,6 +2922,111 @@ function showMessages(
 }
 
 /**
+ * Take Screenshot's gallery flow (SH-07, SH-08) on the active tab, the way the menu item runs it:
+ * the stand-in host flashes the page and answers with the picture, the core's `screenshot.saved`
+ * puts the preview card up. `flash` holds the flash sheet part-way (`holdPreviewScreenshots`) so
+ * the still shows the frame mid-flash; `card` holds the card off its clock (a finger's hold) so
+ * it stays for the still; `editor` presses the card's Capture more and waits for the editor to
+ * come up with the page's picture (the sheet mounts once the stand-in host has answered the
+ * long capture, as the real one does), then, with `drag`, presses one handle and moves the
+ * pointer `by` px down without letting go – the handle's own drag, held mid-way.
+ */
+function applyScreenshot(
+  target: Extract<ReturnType<typeof parsePreviewSpec>, { kind: 'screenshot' }>,
+  tabId: string,
+  finish: () => void
+): void {
+  holdPreviewScreenshots({ flash: target.surface === 'flash' })
+  run('page.screenshot', { tabId })
+  if (target.surface === 'flash') {
+    afterFrames(3, finish)
+    return
+  }
+  untilUi(
+    (ui) => ui.screenshotCards.some((c) => !c.leaving),
+    () => {
+      const card = uiStore.get().screenshotCards.find((c) => !c.leaving)
+      if (!card) {
+        finish()
+        return
+      }
+      if (target.surface === 'card') {
+        holdScreenshotCard(card.id, true)
+        // The flash's fade has cleared by then (its 120 ms and the sheet's removal).
+        setTimeout(finish, 200)
+        return
+      }
+      pickScreenshotAction(card.id, 'more')
+      untilUi(
+        (ui) => ui.longScreenshot !== null,
+        () => {
+          const drag = target.drag
+          // The sheet's entrance and the picture's layout settle before a handle is taken.
+          setTimeout(() => {
+            if (!drag) {
+              finish()
+              return
+            }
+            const handle = document.querySelector<HTMLElement>(
+              `[data-testid="longshot-handle-${drag.edge}"]`
+            )
+            if (!handle) {
+              finish()
+              return
+            }
+            const box = handle.getBoundingClientRect()
+            const x = box.left + box.width / 2
+            const y = box.top + box.height / 2
+            const pointer = (type: string, clientY: number): void => {
+              handle.dispatchEvent(
+                new PointerEvent(type, {
+                  bubbles: true,
+                  cancelable: true,
+                  pointerId: 7,
+                  pointerType: 'touch',
+                  isPrimary: true,
+                  button: 0,
+                  buttons: 1,
+                  clientX: x,
+                  clientY
+                })
+              )
+            }
+            pointer('pointerdown', y)
+            const steps = 6
+            for (let i = 1; i <= steps; i++) pointer('pointermove', y + (drag.by * i) / steps)
+            afterFrames(2, finish)
+          }, STEP_SETTLE_MS)
+        }
+      )
+    }
+  )
+}
+
+/** Runs `fn` once the ui store satisfies `test`, or once waiting stops being worth it. */
+function untilUi(test: (ui: UiState) => boolean, fn: () => void): void {
+  if (test(uiStore.get())) {
+    fn()
+    return
+  }
+  let settled = false
+  const settle = (): void => {
+    if (settled) return
+    settled = true
+    unsubscribe()
+    window.clearTimeout(timer)
+    fn()
+  }
+  const unsubscribe = uiStore.subscribe(() => {
+    if (test(uiStore.get())) settle()
+  })
+  const timer = window.setTimeout(() => {
+    console.warn('[zen preview] the ui state did not arrive; reporting the spec reached anyway')
+    settle()
+  }, SETTLE_TIMEOUT_MS)
+}
+
+/**
  * Every message off at once, and the load a previous `progress` state left running on
  * `loadingTabId` finished, so the next state starts clean.
  */
@@ -2717,6 +3036,7 @@ function clearMessages(loadingTabId: string | null): void {
     dismissToast(t.id)
     forgetToast(t.id)
   }
+  for (const c of ui.screenshotCards) forgetScreenshotCard(c.id)
   for (const b of ui.banners) {
     dismissBanner(b.id)
     forgetBanner(b.id)

@@ -29,7 +29,9 @@ import kotlin.math.roundToInt
  *
  * Everything runs on the main thread except the final encoding. `callback` is invoked exactly
  * once, with `{ data, mimeType, width, height }` or null when the view cannot be captured (not on
- * screen, nothing painted yet).
+ * screen, nothing painted yet) or stops being capturable part-way (hidden under a sheet while
+ * the strips were being taken: the copies are of the window, so a page that is not on screen
+ * cannot be read from it, and a picture with white rows for it is not returned).
  */
 class PageCapture(
     private val view: WebView,
@@ -42,35 +44,49 @@ class PageCapture(
 ) {
     private val main = Handler(Looper.getMainLooper())
 
+    /** The capture's pixels (the caller's to recycle) and the viewport's height in them. */
+    class Capture(val bitmap: Bitmap, val viewportHeightPx: Int)
+
     /** `quality`: the JPEG quality 0..100; anything outside is the agent's default ([JPEG_QUALITY]). */
     fun run(mode: String, region: Box?, format: String, quality: Int = -1, callback: (JSONObject?) -> Unit) {
+        val jpegQuality = if (quality in 0..100) quality else JPEG_QUALITY
+        runBitmap(mode, region) { capture ->
+            if (capture == null) callback(null) else encode(capture.bitmap, format, jpegQuality, callback)
+        }
+    }
+
+    /**
+     * The capture as a bitmap, for a caller that crops or writes it itself (the long screenshot,
+     * SH-08), or null when the view cannot be captured. Main thread; `callback` once.
+     */
+    fun runBitmap(mode: String, region: Box?, callback: (Capture?) -> Unit) {
         if (view.width <= 0 || view.height <= 0 || !view.isShown) {
             callback(null)
             return
         }
-        val jpegQuality = if (quality in 0..100) quality else JPEG_QUALITY
         // The rounded corners of the tab view would otherwise be cut out of every copy (and show
         // up once per strip in a stitched image). The same settle lets the page paint whatever the
         // core hid just before asking (the agent's cursor overlay), which a copy of the window
         // buffer would otherwise still show.
         squareCorners(true)
-        val finish: (JSONObject?) -> Unit = { result ->
+        val finish: (Capture?) -> Unit = { result ->
             squareCorners(false)
             callback(result)
         }
+        val viewportOnly = { copyView { bitmap -> finish(bitmap?.let { Capture(it, it.height) }) } }
         settle {
             if (mode == CapturePlan.MODE_VIEWPORT) {
-                copyView { bitmap -> if (bitmap == null) finish(null) else encode(bitmap, format, jpegQuality, finish) }
+                viewportOnly()
                 return@settle
             }
             readMetrics { metrics ->
                 if (metrics == null) {
                     // No page script access (about:blank before anything ran, a crashed renderer):
                     // the viewport is still worth returning.
-                    copyView { bitmap -> if (bitmap == null) finish(null) else encode(bitmap, format, jpegQuality, finish) }
+                    viewportOnly()
                     return@readMetrics
                 }
-                Stitch(mode, region, format, jpegQuality, metrics, finish).start()
+                Stitch(mode, region, metrics, finish).start()
             }
         }
     }
@@ -79,10 +95,8 @@ class PageCapture(
     private inner class Stitch(
         mode: String,
         region: Box?,
-        private val format: String,
-        private val jpegQuality: Int,
         private val metrics: PageMetrics,
-        private val callback: (JSONObject?) -> Unit
+        private val callback: (Capture?) -> Unit
     ) {
         private val density = view.resources.displayMetrics.density.toDouble()
         private val deviceScale = CapturePlan.deviceScale(view.width, metrics, density)
@@ -175,18 +189,28 @@ class PageCapture(
                     bitmap?.recycle()
                     return@copyView
                 }
+                if (bitmap == null) {
+                    // The window refused, or the view left the screen while the page was being
+                    // stitched (a sheet came over it: on Android the chrome lies under the pages,
+                    // so the host hides a page a sheet covers). The strip's rows would stay white,
+                    // and a picture with white where the page is would pass for the page.
+                    Log.w(TAG, "capture strip $index/${cells.size} could not be copied (view shown: ${view.isShown})")
+                    finish(failed = true)
+                    return@copyView
+                }
                 val t = target
-                if (bitmap != null && t != null) {
+                if (t != null) {
                     CapturePlan.blit(strip, t, deviceScale, outputScale)?.let { b ->
                         canvas?.drawBitmap(bitmap, rect(b.src), rectF(b.dst), paint)
                     }
-                    bitmap.recycle()
                 }
+                bitmap.recycle()
                 step()
             }
         }
 
-        private fun finish() {
+        /** The end of the chain: the page put back as it was, the picture (or null when `failed`) to the caller. */
+        private fun finish(failed: Boolean = false) {
             if (done) return
             done = true
             main.removeCallbacks(watchdog)
@@ -199,7 +223,14 @@ class PageCapture(
             val bitmap = output
             output = null
             canvas = null
-            if (bitmap == null) callback(null) else encode(bitmap, format, jpegQuality, callback)
+            if (bitmap == null) {
+                callback(null)
+            } else if (failed) {
+                bitmap.recycle()
+                callback(null)
+            } else {
+                callback(Capture(bitmap, (metrics.viewportHeight * outputScale).roundToInt().coerceIn(1, bitmap.height)))
+            }
         }
     }
 

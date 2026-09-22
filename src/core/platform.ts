@@ -22,6 +22,8 @@ import type {
   HapticKind,
   HostCapabilities,
   KeyBinding,
+  LongCapture,
+  LongCaptureCrop,
   MenuGlyph,
   NavigationSnapshot,
   NewTabPageAction,
@@ -35,6 +37,7 @@ import type {
   Rect,
   ResourceSnapshot,
   ScreenCaptureSource,
+  ScreenshotSaved,
   SharePayload,
   ShortcutAction,
   SidePanelInfo,
@@ -74,12 +77,13 @@ import type {
 } from '../shared/mediaSession'
 import type { NotificationHostMessage, NotificationPageRequest } from '../shared/notifications'
 import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
+import type { TextFragmentHostMessage } from '../shared/textFragmentScript'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
 import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
-import type { ShareFile } from '../shared/share'
+import type { ShareFile, ShareOutcome } from '../shared/share'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -200,7 +204,12 @@ export interface PageMessage {
      * (`shared/captureState`); the tab's alert indicator is folded from every frame's (tabs-43).
      */
     | 'capture-state'
+    /** The page script answers a `textFragment` / `generate` request with the selection's directive (`shared/textFragmentScript`). */
+    | 'textFragment'
   url?: string
+  /** `textFragment`: the request's id, and the encoded `text=` directive – null when the selection cannot be linked to. */
+  id?: string
+  directive?: string | null
   /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
   title?: string
   x?: number
@@ -280,7 +289,8 @@ export interface DisplayModeHostMessage {
  * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
  * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
  * the notification polyfill's answers and events, a share call's outcome, a position, the
- * page's display mode, read aloud's extraction request and highlight.
+ * page's display mode, read aloud's extraction request and highlight, the request for the
+ * selection's text directive (a link to the highlight, SH-11).
  */
 export type PageHostMessage =
   | WebAppHostMessage
@@ -290,6 +300,7 @@ export type PageHostMessage =
   | GeolocationHostMessage
   | DisplayModeHostMessage
   | ReadAloudHostMessage
+  | TextFragmentHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {
@@ -424,17 +435,34 @@ export interface KeyEventInput extends KeyInput {
   isAutoRepeat: boolean
 }
 
-/** Why a page's renderer went away. */
+/**
+ * Why a page's renderer went away: Electron's `render-process-gone` reasons, and two the Android
+ * host adds for a renderer the OS or the user ended (`RenderProcessGoneDetail`, `RendererExit.kt`):
+ * `oom-kill`, the system killed the renderer for memory while the page was in front (the page's
+ * fault or not; `oom` is a page's own heap running out), and `hung`, the user chose Exit page on
+ * an unresponsive page and the browser ended its renderer.
+ */
 export type CrashReason =
   | 'clean-exit'
   | 'abnormal-exit'
   | 'killed'
   | 'crashed'
   | 'oom'
+  | 'oom-kill'
+  | 'hung'
   | 'launch-failed'
   | 'integrity-failure'
   | 'memory-eviction'
   | string
+
+/** What a host knows about a crash besides its reason. */
+export interface CrashDetails {
+  /**
+   * The same tab's renderer went away less than a minute ago (the Android host counts, since
+   * it outlives the core's renderer): the crash page suggests closing other tabs (ERR-15).
+   */
+  repeat?: boolean
+}
 
 export type InputModifier = 'Shift' | 'Control' | 'Alt' | 'Meta'
 
@@ -538,9 +566,10 @@ export interface TabViewEvents {
   onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
   /**
    * The page's renderer went away; `exitCode` is the process's where the host has it (Electron's
-   * `render-process-gone` details), for the sad tab's code line.
+   * `render-process-gone` details), for the sad tab's code line; `details` what else the host
+   * knows (a repeat within the minute).
    */
-  onCrashed(reason: CrashReason, exitCode?: number): void
+  onCrashed(reason: CrashReason, exitCode?: number, details?: CrashDetails): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
   /** The host's own request engine blocked `count` more requests of this page (Android). */
@@ -1154,10 +1183,12 @@ export interface ShellHost {
   openPath(path: string): Promise<void>
   showItemInFolder(path: string): void
   /**
-   * The system share sheet (`capabilities.share`). Resolves once the sheet is up; hosts without
-   * one leave it out and the core copies the link instead.
+   * The system share sheet (`capabilities.share`). Resolves once the sheet is up – or, with
+   * `payload.awaitOutcome`, once it has closed, with how it ended (`shared`: a target took the
+   * share; `aborted`: the sheet was dismissed), for a page's `navigator.share` promise. Hosts
+   * without one leave it out and the core copies the link instead.
    */
-  share?(payload: SharePayload): Promise<void>
+  share?(payload: SharePayload): Promise<ShareOutcome | void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
   /**
@@ -1239,6 +1270,20 @@ export interface PrivacyHost {
    * bypasses – the hit, or null for nothing listed (or tables not loaded yet).
    */
   lookupSafeBrowsing?(url: string): Promise<SafeBrowsingHit | null>
+}
+
+/**
+ * The device's connectivity as the host sees it (`core/connectivity.ts`): Android's
+ * `ConnectivityManager` reports a network with internet access that has been validated
+ * (`ConnectivityMonitor.kt`). The host's word is raw – a Wi-Fi to mobile switch reports lost
+ * then available within a second – and the core debounces it before the chrome shows anything.
+ * Hosts without it are online for good: no banner, no self-reloading error pages.
+ */
+export interface ConnectivityHost {
+  /** The host's current verdict. */
+  isOnline(): boolean
+  /** Hear every change of the verdict as the host reports it; returns the unsubscribe. */
+  onChange(listener: (online: boolean) => void): () => void
 }
 
 /**
@@ -2256,6 +2301,32 @@ export interface ShareSheetHost {
 }
 
 /**
+ * Screenshots to the device's gallery (Android; SH-07, SH-08): Take Screenshot flashes the page
+ * and puts the visible area in `MediaStore.Images` under Pictures/Zenium, the card's Capture
+ * more takes the whole page for the editor to crop. Hosts without a gallery leave it out and
+ * Take Screenshot saves a PNG to Downloads, as it always did.
+ */
+export interface ScreenshotHost {
+  /**
+   * Flash the page (120 ms white to clear over the content frame) and save the visible area to
+   * the gallery; null when the page could not be drawn or the write failed.
+   */
+  capture(tabId: string): Promise<ScreenshotSaved | null>
+  /** The whole page from the top, cut at about ten screens, held for `saveLong`; null when it could not be drawn. */
+  captureLong(tabId: string): Promise<LongCapture | null>
+  /** Crop the held capture, save it to the gallery and – with `share` – offer it on the system share sheet. */
+  saveLong(id: string, crop: LongCaptureCrop, share: boolean): Promise<ScreenshotSaved | null>
+  /** Let a held capture go. */
+  discardLong(id: string): void
+  /** The system share sheet with the picture. */
+  share(uri: string): Promise<void>
+  /** Take the picture out of the gallery; false when it could not be. */
+  delete(uri: string): Promise<boolean>
+  /** The picture in the system's viewer. */
+  open(uri: string): Promise<void>
+}
+
+/**
  * What a network location provider needs from the host (MW-04, Linux): the Wi-Fi networks in
  * range. Hosts whose engine locates on its own (Windows, macOS, Android) leave the whole host out.
  */
@@ -2382,6 +2453,8 @@ export interface Platform {
   readonly screenCapture?: ScreenCaptureHost
   /** Extras of the chrome's share sheet: saving shared files, the OS's own sheet where there is one. */
   readonly shareSheet?: ShareSheetHost
+  /** Screenshots to the device's gallery (Android); hosts without one save to Downloads. */
+  readonly screenshots?: ScreenshotHost
   /** A network location source's inputs (the Wi-Fi networks in range) for hosts whose engine has no location provider. */
   readonly geolocation?: GeolocationHost
   /** The folder picker, device name and folder transport behind cross-device sync (`capabilities.sync`). */
@@ -2390,6 +2463,8 @@ export interface Platform {
   readonly importHost?: ImportHost
   /** The background worker and the demo harness's hold on the startup sweeps; omit for neither. */
   readonly performance?: PerformanceHost
+  /** The device's connectivity (Android); hosts without it are online for good. */
+  readonly connectivity?: ConnectivityHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost
