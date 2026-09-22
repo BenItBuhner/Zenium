@@ -1454,7 +1454,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
     // --- the overview, through the chrome's DOM --------------------------------------------------
 
     private fun card(tabId: String) = "[data-tab-id=\"$tabId\"]"
-    private fun closeButton(tabId: String) = "${card(tabId)} [aria-label=\"Close tab\"]"
+    private fun closeButton(tabId: String) = closeButtonOf(card(tabId))
 
     /**
      * Open the overview from the bar's Tabs button. The emulator's input pipeline can hand the
