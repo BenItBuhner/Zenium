@@ -98,12 +98,19 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         File(zen, "history.json").writeText(history)
     }
 
+    /**
+     * The system's colour scheme before the app starts, so the app is born in it: switched once
+     * the app is up and measured (the dark act of run 2), the change relaunches the activity and
+     * recreates the launcher under it, and the window's height flickered a nav bar's 24 dp while
+     * the pill's first tap was aimed off the tree – the tap landed on the home button, the home
+     * screen came to the front and no act after it saw the page.
+     */
+    override fun beforeLaunch() {
+        shell("cmd uimode night ${if (THEME == "dark") "yes" else "no"}")
+        SystemClock.sleep(1_500)
+    }
+
     override fun warmUp() {
-        if (THEME == "dark") {
-            shell("cmd uimode night yes")
-            SystemClock.sleep(2_000)
-            ensureForeground()
-        }
         findings = File(out, "android-omnibox-polish-findings.txt")
         findings.writeText(
             "Zenium Android omnibox polish check (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density, $THEME)\n" +
@@ -822,9 +829,22 @@ class OmniboxPolishDemo : DemoHarness("omnibox-polish-demo-state.json", "android
         Finger().tap(p.x, p.y)
     }
 
+    /**
+     * The tree's pill when its centre is in the window's touchable band, the measured pill when
+     * the tree has it in a system bar (a stale tree mid-relaunch put run 2's dark warm-up tap on
+     * the home button); a finger never goes where the system takes the touch.
+     */
     private fun pillPoint(): PointF {
         ensureForeground()
-        val target = findByLabelPrefix(PILL_LABEL) ?: pill
+        val found = findByLabelPrefix(PILL_LABEL)
+        val target = when {
+            found == null -> pill
+            touchable.contains(found.centerX(), found.centerY()) -> found
+            else -> {
+                Log.w(tag, "the tree's pill $found is outside the touchable band $touchable; the measured pill $pill instead")
+                pill
+            }
+        }
         return PointF(target.exactCenterX(), target.exactCenterY())
     }
 
