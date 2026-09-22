@@ -64,6 +64,15 @@ const PREVIEW_FETCH_ROUTE = '/__zen/fetch'
 export const PREVIEW_CLIP_EVENT = 'zen-preview-clip'
 
 /**
+ * A `CustomEvent` on `window` whose detail is a tab id: that tab's next load is deliberately
+ * unhurried, as `view.reload` always is – the page it is leaving stays on screen for
+ * `RELOAD_DELAY_MS` before the new one arrives, like a load over a connection that has only just
+ * come back. The `network=reloading` preview state sends it so a still can catch the offline
+ * error page in its own Reloading state (ERR-06) instead of the page that replaces it at once.
+ */
+export const PREVIEW_SLOW_LOAD_EVENT = 'zen-preview-slow-load'
+
+/**
  * The web app the preview's pages can "declare": a cross-origin iframe cannot post its own
  * manifest, so the preview states post this one for the active tab the way a page script would
  * (`postPreviewManifest`). Written against `https://example.com/`, the tab the default profile
@@ -555,6 +564,11 @@ export function createPreviewBridge(): NativeBridge {
   window.addEventListener(PREVIEW_CLIP_EVENT, (e) => {
     previewClip = String((e as CustomEvent<unknown>).detail ?? '')
   })
+  /** Tabs whose next load takes `RELOAD_DELAY_MS` to arrive (PREVIEW_SLOW_LOAD_EVENT). */
+  const slowLoads = new Set<string>()
+  window.addEventListener(PREVIEW_SLOW_LOAD_EVENT, (e) => {
+    slowLoads.add(String((e as CustomEvent<unknown>).detail ?? ''))
+  })
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>> = {
     boot: (): BootInfo => ({
@@ -689,22 +703,37 @@ export function createPreviewBridge(): NativeBridge {
       cardTakenAt.delete(String(tabId))
       viewEvent(String(tabId), 'startLoading', null)
       const entry = commitEntry(String(tabId), String(url))
-      const extensionPage = extensionPageOf(String(url))
-      if (extensionPage) {
-        // What the runtime would serve; the frame reports the page loaded like any other.
-        const page = extensionPages.get(extensionPage.url) ?? {
-          url: extensionPage.url,
-          name: extensionPage.id,
-          title: ''
+      const show = (): void => {
+        const extensionPage = extensionPageOf(String(url))
+        if (extensionPage) {
+          // What the runtime would serve; the frame reports the page loaded like any other.
+          const page = extensionPages.get(extensionPage.url) ?? {
+            url: extensionPage.url,
+            name: extensionPage.id,
+            title: ''
+          }
+          void showDocument(frame, extensionPageDocument(page), entry)
+        } else if (String(url).startsWith(PREVIEW_SAMPLE_ORIGIN)) {
+          // A page this host can picture (same-origin): the frame reports it loaded like any other.
+          void showDocument(frame, samplePageDocument(), entry)
+        } else {
+          frame.src = String(url)
+          entry.src = String(url)
         }
-        void showDocument(frame, extensionPageDocument(page), entry)
-      } else if (String(url).startsWith(PREVIEW_SAMPLE_ORIGIN)) {
-        // A page this host can picture (same-origin): the frame reports it loaded like any other.
-        void showDocument(frame, samplePageDocument(), entry)
-      } else {
-        frame.src = String(url)
-        entry.src = String(url)
       }
+      const pendingReload = reloads.get(String(tabId))
+      if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      reloads.delete(String(tabId))
+      if (slowLoads.delete(String(tabId))) {
+        // Unhurried, as a reload is: the page on screen stays until the new one arrives.
+        reloads.set(
+          String(tabId),
+          window.setTimeout(() => {
+            reloads.delete(String(tabId))
+            show()
+          }, RELOAD_DELAY_MS)
+        )
+      } else show()
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
     // Back and Forward step the stand-in list (`view.back` / `view.forward` on the host) and
@@ -752,6 +781,10 @@ export function createPreviewBridge(): NativeBridge {
       if (!frame) return
       frame.dataset.url = String(url)
       cardTakenAt.delete(String(tabId))
+      // A slow load or reload still on its way is superseded by this document.
+      const pendingReload = reloads.get(String(tabId))
+      if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      reloads.delete(String(tabId))
       // A PDF viewer page names the download's file (`views.ts` sends the document along for
       // Kotlin to serve); here that picks the sample document the dev server answers with.
       const pdf = document as { path?: unknown } | undefined
