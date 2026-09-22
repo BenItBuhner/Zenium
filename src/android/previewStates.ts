@@ -14,6 +14,7 @@ import type {
 import type { Browser } from '@core/browser'
 import { fileSources } from '@core/import/sources'
 import { READER_URL_PREFIX } from '@core/reader'
+import type { ClearOnExitType, SiteDataList } from '@shared/siteData'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
@@ -96,10 +97,13 @@ import type { TranslateStatus, TranslateTabState } from '@shared/translate'
 import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import { PREVIEW_PDF_FILES, previewPdf } from './previewPdf'
+import { PREVIEW_SITE_DATA_EVENT } from './previewSiteData'
 import {
   parsePreviewSeed,
   parsePreviewSpec,
+  parsePreviewSteps,
   type PreviewDownloadSpec,
+  type PreviewSiteDataSeed,
   type PreviewMediaVariant,
   type PreviewNtpPose,
   type PreviewPrivateSurface,
@@ -238,6 +242,8 @@ function apply(browser: Browser, spec: string): void {
     unseedTranslate()
     unseedFavicon()
     unseedMedia()
+    unseedSiteData(browser)
+    siteInfoSteps = null
     dismissSiteInfo()
     closeOverlay()
     closeMenu()
@@ -269,6 +275,7 @@ function apply(browser: Browser, spec: string): void {
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
+    if (seed.siteData) seedSiteData(browser, seed.siteData, tab)
     // The private tabs' lock a previous spec put on comes off at once (no lift: the cover goes
     // with the private tab, below), and the device's screen lock is as the spec says or as the
     // stand-in host reported it at boot.
@@ -2779,6 +2786,51 @@ function seedRules(browser: Browser, count: number): void {
   }
 }
 
+/**
+ * The three lists of Cookies and site data (Chrome's grammar: a host, `[*.]host`, a scheme, a
+ * port) as a Settings still shows them, most specific first once the core has sorted them.
+ */
+const DEMO_SITE_DATA: Record<SiteDataList, readonly string[]> = {
+  allow: ['[*.]mail.example', 'https://bank.example', 'docs.example'],
+  clearOnExit: ['[*.]news.example', 'shop.example:8443'],
+  block: ['[*.]tracker.example', 'ads.example', 'http://legacy.example']
+}
+
+/** The on-exit types an `exit` seed turns on: cookies and the cache, as a cautious profile might. */
+const DEMO_CLEAR_ON_EXIT: ClearOnExitType[] = ['cookies', 'cache']
+
+/**
+ * Cookies and site data as a spec seeds it: the sample patterns on their lists (through the
+ * core, as Settings adds them), the active tab's site on the list named, the default and the
+ * on-exit types, and the stand-in profile told which sample of stored origins to answer with.
+ */
+function seedSiteData(browser: Browser, seed: PreviewSiteDataSeed, tab: Tab | null): void {
+  for (const list of ['allow', 'clearOnExit', 'block'] as const)
+    for (const pattern of DEMO_SITE_DATA[list]) browser.siteData.add(list, pattern)
+  if (seed.site && tab) browser.siteData.addSite(seed.site, tab.url)
+  if (seed.blockAll) browser.siteData.setDefault('block-all')
+  if (seed.exit) {
+    const privacy = browserStore.get().state?.settings.privacy
+    if (privacy)
+      run('settings.update', {
+        privacy: { ...privacy, clearOnExit: { types: DEMO_CLEAR_ON_EXIT } }
+      })
+  }
+  window.dispatchEvent(new CustomEvent(PREVIEW_SITE_DATA_EVENT, { detail: seed.origins }))
+}
+
+/** The policy back to nothing on any list and Chrome's default, the stand-in profile back to empty. */
+function unseedSiteData(browser: Browser): void {
+  const status = browser.siteData.status()
+  for (const list of ['allow', 'clearOnExit', 'block'] as const)
+    for (const pattern of status[list]) browser.siteData.remove(pattern)
+  if (status.default !== 'block-third-party') browser.siteData.setDefault('block-third-party')
+  const privacy = browserStore.get().state?.settings.privacy
+  if (privacy && status.clearOnExitTypes.length > 0)
+    run('settings.update', { privacy: { ...privacy, clearOnExit: { types: [] } } })
+  window.dispatchEvent(new CustomEvent(PREVIEW_SITE_DATA_EVENT, { detail: 'none' }))
+}
+
 /** Pages (and, for the third and every sixth entry, app launches) the blocker refused. */
 function seedPopups(
   browser: Browser,
@@ -2884,17 +2936,31 @@ function safeHost(url: string): string {
   }
 }
 
+/** The spec whose `siteinfo=` steps have been taken (once per applied spec). */
+let siteInfoSteps: string | null = null
+
 function done(spec: string): void {
   // `siteinfo` on any spec: the state named is reached, then the site-information sheet goes up
   // on the active tab (the pill's folded chips are listed in it), and the spec is reported
   // reached once the sheet is – a still after the settle catches it risen.
+  // `siteinfo=<steps>` takes steps on the sheet (or the desktop's popover) once it is up: `tap:Cookies
+  // and site data` drills into a level, a second tap opens the row's picker over it.
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
-  if (params.has('siteinfo') && !uiStore.get().siteInfoOpen) {
-    const state = browserStore.get().state
-    const tab = state ? activeTab(state) : null
-    if (tab) {
-      void openSiteInfo(tab).then(() => whenStore(() => uiStore.get().siteInfoOpen, spec))
-      return
+  if (params.has('siteinfo')) {
+    if (!uiStore.get().siteInfoOpen) {
+      const state = browserStore.get().state
+      const tab = state ? activeTab(state) : null
+      if (tab) {
+        void openSiteInfo(tab).then(() => whenStore(() => uiStore.get().siteInfoOpen, spec))
+        return
+      }
+    } else if (siteInfoSteps !== spec) {
+      siteInfoSteps = spec
+      const then = parsePreviewSteps(params.get('siteinfo'))
+      if (then.length > 0) {
+        afterFrames(2, () => steps(then, () => done(spec)))
+        return
+      }
     }
   }
   document.documentElement.dataset.previewState = spec

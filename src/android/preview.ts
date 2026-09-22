@@ -17,6 +17,12 @@ import { extensionPageOf } from '@shared/url'
 import { previewRangeAnswer } from './previewRange'
 import { createPreviewDownloads } from './previewDownloads'
 import { previewPdfVariantOf } from './previewPdf'
+import {
+  PREVIEW_SITE_DATA_EVENT,
+  previewCookies,
+  previewOrigins,
+  type PreviewSiteDataOrigins
+} from './previewSiteData'
 import { emulateTextZoom } from './previewTextZoom'
 import { CHUNK_CHARS } from './storeIo'
 import { isProbablyUrl } from '@shared/url'
@@ -398,6 +404,14 @@ export function createPreviewBridge(): NativeBridge {
   let voiceScript = params.get('voice') ?? 'heard'
   window.addEventListener(PREVIEW_VOICE_EVENT, (e) => {
     voiceScript = (e as CustomEvent<string>).detail
+  })
+  // `sitedata=` (previewStates.ts) names the sample the site-data stand-ins answer from; the
+  // origins a state's Clear took out stay out until the next sample is named.
+  let siteDataSample: PreviewSiteDataOrigins = 'none'
+  const clearedOrigins = new Set<string>()
+  window.addEventListener(PREVIEW_SITE_DATA_EVENT, (e) => {
+    siteDataSample = (e as CustomEvent<PreviewSiteDataOrigins>).detail
+    clearedOrigins.clear()
   })
   let voiceRun = 0
   const voice = {
@@ -909,11 +923,29 @@ export function createPreviewBridge(): NativeBridge {
     'view.savePage': () => null,
     'view.screenshot': () => null,
     'view.certificate': () => null,
-    // The preview has no cookie jar of its own to look into; the sheet shows the connection only.
-    'site.cookies': () => [],
+    // The preview has no cookie jar of its own to look into: without a `sitedata=` state the
+    // sheet shows the connection only; with one, the sample it names (previewSiteData.ts) stands
+    // for the profile – the viewer's origins and the active site's cookies – and a clear takes
+    // the origin out of the sample, so a Clear in a still leaves the row gone.
+    'site.cookies': ({ url }) => previewCookies(siteDataSample, String(url)),
     'site.storage': () => ({ usageBytes: null, quotaBytes: null, origins: [] }),
-    'site.clearCookies': () => ({ removed: 0, remaining: 0 }),
-    'site.clearStorage': () => ({ ok: true, scope: 'origins' }),
+    'site.listOrigins': ({ containerId }) =>
+      previewOrigins(siteDataSample, String(containerId)).filter(
+        (row) => !clearedOrigins.has(row.origin)
+      ),
+    'site.clearCookies': ({ url }) => {
+      const removed = previewCookies(siteDataSample, String(url)).length
+      try {
+        clearedOrigins.add(new URL(String(url)).origin)
+      } catch {
+        // Not an origin: nothing to take out of the sample.
+      }
+      return { removed, remaining: 0 }
+    },
+    'site.clearStorage': ({ origins }) => {
+      for (const origin of Array.isArray(origins) ? origins : []) clearedOrigins.add(String(origin))
+      return { ok: true, scope: 'origins' }
+    },
     'dialog.confirm': ({ message, detail }) => window.confirm(`${message}\n\n${detail ?? ''}`),
     'dialog.openText': ({ extensions }) =>
       new Promise<Array<{ name: string; text: string }>>((resolve) => {
