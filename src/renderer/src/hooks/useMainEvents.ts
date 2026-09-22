@@ -9,7 +9,8 @@ import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone, isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
-import { noteInsetsSettling, noteViewSized } from '@renderer/lib/fullscreenLanding'
+import { noteViewSized } from '@renderer/lib/fullscreenLanding'
+import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
@@ -40,7 +41,6 @@ import {
   openUrlbar,
   openZoom,
   overlayAvailable,
-  contentAreaStore,
   pushToast,
   showExternalProtocol,
   showMenu,
@@ -385,18 +385,8 @@ export function useMainEvents(): void {
         closeUrlbar()
         openTranslateSelection({ tabId, text, x, y })
       }),
-      onEvent('insets', (insets) => {
-        uiStore.set({ insets })
-        const root = document.documentElement.style
-        root.setProperty('--zen-inset-top', `${insets.top}px`)
-        root.setProperty('--zen-inset-right', `${insets.right}px`)
-        root.setProperty('--zen-inset-bottom', `${insets.bottom}px`)
-        root.setProperty('--zen-inset-left', `${insets.left}px`)
-        // The bars' way back from a page's fullscreen (lib/fullscreenLanding.ts): the content
-        // area's rect, set as it is measured, is the layout's mark; the chrome's return fade
-        // waits for the settled insets to have had their layout.
-        noteInsetsSettling(insets.settling, () => contentAreaStore.get().area)
-      }),
+      // The root's `--zen-inset-*` and the store, when the numbers changed (lib/insets.ts).
+      onEvent('insets', (insets) => applyHostInsets(insets)),
       // Where the chrome lies under the pages, the swap between a live page and its cover is
       // timed from these (lib/pageView.ts); the desktop hosts swap the moment they are asked.
       onEvent('layout.applied', (applied) => {
