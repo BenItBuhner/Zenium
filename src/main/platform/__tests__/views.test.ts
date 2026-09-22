@@ -955,17 +955,18 @@ describe('ElectronTabView.snapshot', () => {
 
   it('scales a capture past the trigger down to the target on both sides with Hamming-1 before the encode: a 4K monitor at 200 %', async () => {
     const { view, wc } = tabView()
-    // A 1920 × 1080 DIP screen at DPR 2 with the sidebar collapsed: 3776 × 2096 device pixels as
-    // a 1x bitmap (7.9 Mpx) → sqrt(3.7 / 7.9) = .68 → 2581 × 1433, `quality: 'good'`.
-    const page = fakeCapture(3776, 2096)
+    // A 1920 × 1080 DIP screen at DPR 2 with the sidebar collapsed: the page 1856 × 1064 CSS px,
+    // 3712 × 2128 device pixels as a 1x bitmap (7.9 Mpx) → sqrt(3.7 / 7.9) = .684 → 2540 × 1456,
+    // `quality: 'good'`.
+    const page = fakeCapture(3712, 2128)
     Object.assign(wc, { capturePage: () => Promise.resolve(page.image) })
     await expect(view.snapshot()).resolves.toBe(
-      `data:image/jpeg;base64,${Buffer.from('jpeg-2581x1433-90').toString('base64')}`
+      `data:image/jpeg;base64,${Buffer.from('jpeg-2540x1456-90').toString('base64')}`
     )
-    expect(page.resized).toEqual([{ width: 2581, height: 1433, quality: 'good' }])
-    expect(page.encoded).toEqual([{ width: 2581, height: 1433, quality: 90 }])
-    expect(2581 * 1433).toBeLessThanOrEqual(3_700_000)
-    expect(2581 * 1433).toBeGreaterThan(3_700_000 - (2581 + 1433))
+    expect(page.resized).toEqual([{ width: 2540, height: 1456, quality: 'good' }])
+    expect(page.encoded).toEqual([{ width: 2540, height: 1456, quality: 90 }])
+    expect(2540 * 1456).toBeLessThanOrEqual(3_700_000)
+    expect(2540 * 1456).toBeGreaterThan(3_700_000 - (2540 + 1456))
     // The whole 3840 × 2160 screen (8.3 Mpx) → 2564 × 1442; a frame just past the trigger drops
     // to the target too, never to the trigger (3104 × 2000, 6.21 Mpx → 2396 × 1544, scale .77).
     for (const [w, h, sw, sh] of [
