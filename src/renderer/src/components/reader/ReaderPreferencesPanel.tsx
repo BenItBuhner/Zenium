@@ -25,8 +25,12 @@ import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
-import { errorCaption, languageOptions, pairLabel } from '@renderer/lib/translate'
-import { formatBytes } from '@renderer/lib/utils'
+import {
+  readerTranslateProgress,
+  readerTranslateTarget,
+  readerTranslateWorking
+} from '@renderer/lib/readerTranslate'
+import { errorCaption, languageOptions } from '@renderer/lib/translate'
 import {
   closeReaderPreferences,
   readerPreferencesChanged,
@@ -272,58 +276,6 @@ interface TranslateRowsProps {
   translation: ReaderTranslateState | null
 }
 
-/** The translation is at work: the row is busy (§9.30) and a press does nothing. */
-export function readerTranslateWorking(t: ReaderTranslateState | null): boolean {
-  return (
-    t !== null &&
-    (t.status === 'detecting' || t.status === 'downloading' || t.status === 'translating')
-  )
-}
-
-/**
- * The language the Translate into row shows: what the user picked in this panel (the row is
- * theirs the moment they pick, the translation following), else the translation's own once
- * there is one, else the first preferred language the models reach – English, the pivot every
- * model reaches, when none does – or null when the registry names no language at all (the rows
- * are then disabled).
- */
-export function readerTranslateTarget(
-  translation: ReaderTranslateState | null,
-  chosen: string | null,
-  translate: Pick<TranslateUIState, 'languages' | 'preferences'>
-): string | null {
-  if (chosen && translate.languages.includes(chosen)) return chosen
-  if (translation?.target) return translation.target
-  const preferred = translate.preferences.preferred.find((code) =>
-    translate.languages.includes(code)
-  )
-  if (preferred) return preferred
-  if (translate.languages.includes('en')) return 'en'
-  return translate.languages[0] ?? null
-}
-
-/** The Translate row's second line while the translation is at work. */
-export function readerTranslateProgress(t: ReaderTranslateState): string {
-  switch (t.status) {
-    case 'detecting':
-      return 'Working out the article’s language…'
-    case 'downloading': {
-      const model = pairLabel(t.source, t.target)
-      const bytes =
-        t.download && t.download.total > 0
-          ? ` (${formatBytes(t.download.received)} of ${formatBytes(t.download.total)})`
-          : ''
-      return `Getting the ${model} model${bytes}…`
-    }
-    default: {
-      const pair = pairLabel(t.source, t.target)
-      const count =
-        t.progress && t.progress.total > 0 ? ` ${t.progress.done} of ${t.progress.total}` : ''
-      return pair ? `Translating from ${pair}…${count}` : `Translating…${count}`
-    }
-  }
-}
-
 /**
  * Translate (CT-36; Chrome's translate bubble folded into the reader's one panel, v2 §10.1): two
  * rows in the group under Listen. "Translate into" is a menulist row (§9.13) over every language
@@ -355,7 +307,7 @@ export function TranslateRows({ tabId, translate, translation }: TranslateRowsPr
   if (translation && working) description = readerTranslateProgress(translation)
   else if (translation?.status === 'error') {
     const caption = errorCaption(translation.error) ?? 'Translation failed.'
-    description = <span className="text-[var(--v2-danger)]">{caption}</span>
+    description = <span className="zen-settings-danger">{caption}</span>
   }
   return (
     <>

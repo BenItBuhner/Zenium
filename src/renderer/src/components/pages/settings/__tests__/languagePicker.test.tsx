@@ -9,7 +9,8 @@ import {
   nativeLanguageName
 } from '@renderer/lib/languageCatalogue'
 import { familiesOf } from '@renderer/lib/localFonts'
-import { LanguagePickList, moveLanguage } from '../languages'
+import { LanguagePickList } from '../LanguagePickList'
+import { moveLanguage } from '../languages'
 
 /*
  * CT-41's Add language picker and the pure rules under it: the catalogue is Chrome's
@@ -127,11 +128,15 @@ describe('the Add language picker', () => {
     const el = render(
       <LanguagePickList label="Add language" choices={choices} onPick={onPick} close={close} />
     )
-    const group = el.querySelector('[role="group"][aria-label="Add language"]')!
-    expect(group.firstElementChild?.classList.contains('zen-settings-pick-filter')).toBe(true)
-    const field = group.querySelector<HTMLInputElement>('input[role="searchbox"]')!
+    const body = el.firstElementChild!
+    expect(body.firstElementChild?.classList.contains('zen-settings-pick-filter')).toBe(true)
+    const field =
+      body.firstElementChild!.querySelector<HTMLInputElement>('input[role="searchbox"]')!
     expect(field.getAttribute('aria-label')).toBe('Find a language')
     expect(field.getAttribute('inputmode')).toBe('search')
+    // The rows are the translate pickers' `PickList` (one inset-row carrier, not a new one).
+    const group = body.querySelector('[role="group"][aria-label="Add language"]')!
+    expect(group.previousElementSibling).toBe(body.firstElementChild)
     const rows = [...group.querySelectorAll<HTMLButtonElement>('button.zen-settings-row')]
     expect(rows.length).toBe(choices.length)
     expect(rows[0].querySelector('.zen-settings-label')?.textContent).toBe(choices[0].label)

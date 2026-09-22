@@ -1,14 +1,8 @@
-import type { JSX } from 'react'
-import { useState } from 'react'
 import { LANGUAGES_MAX } from '@shared/languages'
 import { languageName } from '@shared/languageNames'
-import {
-  filterLanguageChoices,
-  languageChoices,
-  type LanguageChoice
-} from '@renderer/lib/languageCatalogue'
+import { languageChoices } from '@renderer/lib/languageCatalogue'
+import { LanguagePickList } from './LanguagePickList'
 import type { RowGroup, SettingsRow } from './model'
-import { RowText } from './rows'
 import type { SectionContext } from './sections'
 
 /**
@@ -17,12 +11,13 @@ import type { SectionContext } from './sections'
  * order – the language's name, one line, a trailing ⋯ whose menu is Move Up / Move Down /
  * Remove, the item that does not apply listed at .4 (Move Up on the first row, Remove on the
  * last language: Chrome keeps one) – then Add language, an action row opening the §9.13 picker
- * (a sheet on a phone, the builder's form dialog on a mouse) with a filter field pinned under
- * its header (§10.3) over the catalogue's names in the UI's language and their own. The group's
- * description says what the order does; where the host cannot hand the list to its pages
- * (`capabilities.pageLanguages` false: Android's WebView sends the system's languages, the
- * interface note §3.4) the copy says so. The list is short by construction (Chrome's 32 at most,
- * a handful in practice), so it stays rows on the section rather than a drill-in page (§10.2).
+ * (`LanguagePickList`: a sheet on a phone, the builder's form dialog on a mouse) with a filter
+ * field pinned under its header (§10.3) over the catalogue's names in the UI's language and
+ * their own. The group's description says what the order does; where the host cannot hand the
+ * list to its pages (`capabilities.pageLanguages` false: Android's WebView sends the system's
+ * languages, the interface note §3.4) the copy says so. The list is short by construction
+ * (Chrome's 32 at most, a handful in practice), so it stays rows on the section rather than a
+ * drill-in page (§10.2).
  */
 
 /** The list with the entry at `index` moved by `by` places (−1 up, +1 down); the same list when it cannot move. */
@@ -33,82 +28,6 @@ export function moveLanguage(list: readonly string[], index: number, by: -1 | 1)
   const [moved] = out.splice(index, 1)
   out.splice(target, 0, moved)
   return out
-}
-
-/**
- * The picker (§9.13's sheet of pressable rows – every pick adds, so no radio; the chassis
- * focuses the first row as the sheet opens, the dialog its field): the filter field first,
- * pinned to the top of the scrolling body, then the matching languages as §10.4 rows, the
- * language's own name as the description; a pick adds it and closes. Nothing left to add or
- * nothing matching is §9.17's one line.
- */
-export function LanguagePickList({
-  label,
-  choices,
-  onPick,
-  close
-}: {
-  label: string
-  choices: readonly LanguageChoice[]
-  onPick: (tag: string) => void
-  close: () => void
-}): JSX.Element {
-  const [query, setQuery] = useState('')
-  const shown = filterLanguageChoices(choices, query)
-  const term = query.trim()
-  return (
-    <div role="group" aria-label={label} className="zen-settings-sheet-rows">
-      <div className="zen-settings-pick-filter">
-        <input
-          type="text"
-          role="searchbox"
-          className="zen-v2-field"
-          placeholder="Find a language"
-          aria-label="Find a language"
-          inputMode="search"
-          enterKeyHint="search"
-          autoCapitalize="off"
-          autoCorrect="off"
-          autoComplete="off"
-          spellCheck={false}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && query) {
-              e.preventDefault()
-              e.stopPropagation()
-              setQuery('')
-            }
-          }}
-        />
-      </div>
-      {shown.length === 0 ? (
-        <div data-static="" role="status" className="zen-settings-row zen-v2-row">
-          <RowText
-            label={
-              choices.length === 0
-                ? 'Every language is on the list'
-                : `No language matches “${term}”`
-            }
-          />
-        </div>
-      ) : (
-        shown.map((choice) => (
-          <button
-            key={choice.value}
-            type="button"
-            className="zen-settings-row zen-settings-row-pressable zen-v2-row"
-            onClick={() => {
-              onPick(choice.value)
-              close()
-            }}
-          >
-            <RowText label={choice.label} description={choice.description} />
-          </button>
-        ))
-      )}
-    </div>
-  )
 }
 
 /** The group: the list's rows with their menus, then the Add language row. */

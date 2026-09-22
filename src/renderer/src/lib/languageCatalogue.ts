@@ -239,9 +239,7 @@ export function filterLanguageChoices(
   const terms = foldForSearch(query).split(/\s+/).filter(Boolean)
   if (terms.length === 0) return [...choices]
   return choices.filter((choice) => {
-    const haystack = foldForSearch(
-      [choice.label, choice.description ?? '', choice.value].join(' ')
-    )
+    const haystack = foldForSearch([choice.label, choice.description ?? '', choice.value].join(' '))
     return terms.every((term) => haystack.includes(term))
   })
 }

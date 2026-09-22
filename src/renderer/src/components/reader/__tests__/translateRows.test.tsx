@@ -13,11 +13,11 @@ vi.mock('@renderer/lib/api', () => ({
 import { run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
 import {
-  TranslateRows,
   readerTranslateProgress,
   readerTranslateTarget,
   readerTranslateWorking
-} from '../ReaderPreferencesPanel'
+} from '@renderer/lib/readerTranslate'
+import { TranslateRows } from '../ReaderPreferencesPanel'
 
 /*
  * Translate inside Reader View's text preferences (CT-36): a "Translate into" menulist row over
@@ -173,7 +173,7 @@ describe('the Translate rows', () => {
     )
     const translate = row(el, 'translate')
     expect(translate.hasAttribute('aria-busy')).toBe(false)
-    const reason = translate.querySelector('.text-\\[var\\(--v2-danger\\)\\]')
+    const reason = translate.querySelector('.zen-settings-danger')
     expect(reason?.textContent).toBe('This article is already in French.')
     act(() => translate.click())
     expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'fr' })

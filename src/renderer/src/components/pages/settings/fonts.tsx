@@ -1,18 +1,23 @@
-import type { CSSProperties, JSX } from 'react'
 import {
-  ANDROID_FONT_FAMILIES,
   DEFAULT_FONT_SETTINGS,
   FONT_SIZE_STEPS,
-  GENERIC_FONT_FAMILIES,
   MINIMUM_FONT_SIZE_STEPS,
-  electronFontDefaults,
   isDefaultFontSettings,
-  monospaceFontSize,
   type FontFamilySlot,
   type PageFontSettings
 } from '@shared/fonts'
-import type { Platform } from '@shared/types'
-import type { RowGroup, RowOption, SettingsRow } from './model'
+import { FontPickList, FontPreview } from './fontBlocks'
+import {
+  DEFAULT_FAMILY,
+  FONT_SIZE_ENDS,
+  MINIMUM_FONT_SIZE_ENDS,
+  SLOT_HINTS,
+  SLOT_LABELS,
+  familyOptions,
+  formatFontSize,
+  stepIndex
+} from './fontsModel'
+import type { RowGroup, SettingsRow } from './model'
 import type { SectionContext } from './sections'
 
 /**
@@ -30,194 +35,6 @@ import type { SectionContext } from './sections'
  * the standard family and the two sizes are rows – the honest list, as the interface note
  * records – and the standard family's options are the aliases WebView resolves by name.
  */
-
-const SLOT_LABELS: Record<FontFamilySlot, string> = {
-  standard: 'Standard font',
-  serif: 'Serif font',
-  sansSerif: 'Sans-serif font',
-  fixed: 'Fixed-width font'
-}
-
-const SLOT_HINTS: Record<FontFamilySlot, string> = {
-  standard: 'Text a page leaves to the browser.',
-  serif: 'Where a page asks for a serif face.',
-  sansSerif: 'Where a page asks for a sans-serif face.',
-  fixed: 'Code and other fixed-width text.'
-}
-
-/** The picker's value for "no family of your own": the platform's face for the slot. */
-const DEFAULT_FAMILY = ''
-const DEFAULT_FAMILY_LABEL = 'System default'
-
-const GENERIC_LABELS: Record<string, string> = {
-  serif: 'Serif',
-  'sans-serif': 'Sans-serif',
-  monospace: 'Monospace',
-  'serif-monospace': 'Serif monospace',
-  casual: 'Casual',
-  cursive: 'Cursive',
-  'sans-serif-condensed': 'Sans-serif condensed'
-}
-
-/** Chrome's end labels for the two sliders (its fonts page's `label-min` / `label-max`). */
-export const FONT_SIZE_ENDS: readonly [string, string] = ['Very small', 'Very large']
-export const MINIMUM_FONT_SIZE_ENDS: readonly [string, string] = ['Tiny', 'Huge']
-
-/** The index of the stop `value` sits on, or of the nearest stop for a value between them (a synced 19). */
-export function stepIndex(steps: readonly number[], value: number): number {
-  let best = 0
-  for (let i = 1; i < steps.length; i++) {
-    if (Math.abs(steps[i] - value) < Math.abs(steps[best] - value)) best = i
-  }
-  return best
-}
-
-/** "16 px"; the minimum size's 0 is "None" (Chrome's slider stops at 0 or 6 and up). */
-export function formatFontSize(px: number): string {
-  return px === 0 ? 'None' : `${px} px`
-}
-
-/**
- * The families a picker offers for a slot: the platform's default first, then the generic
- * names every host resolves, then – on a host that lists them – the installed families, each
- * option drawn in its own face. The current family is kept on the list even when the computer
- * no longer has it (a synced choice), so the row never shows a value its picker lacks.
- */
-export function familyOptions(
-  current: string | null,
-  installed: readonly string[] | null,
-  generic: boolean
-): RowOption[] {
-  const names = generic ? GENERIC_FONT_FAMILIES : ANDROID_FONT_FAMILIES
-  const options: RowOption[] = [
-    { value: DEFAULT_FAMILY, label: DEFAULT_FAMILY_LABEL },
-    ...names.map((name) => ({ value: name, label: GENERIC_LABELS[name] ?? name, font: name }))
-  ]
-  if (installed) {
-    const seen = new Set(names)
-    for (const family of installed) {
-      if (seen.has(family)) continue
-      seen.add(family)
-      options.push({ value: family, label: family, font: family, group: 'Installed' })
-    }
-  }
-  if (current && !options.some((o) => o.value === current)) {
-    options.push({ value: current, label: current, font: current })
-  }
-  return options
-}
-
-/** The faces the preview draws for a slot the setting leaves to the platform (what a page gets). */
-export function previewFamilies(
-  fonts: PageFontSettings,
-  platform: Platform
-): { standard: string; fixed: string } {
-  if (platform === 'android') {
-    // Android's WebView: Zenium's standard family is `serif` (Chrome's typographic default) and
-    // its fixed one `monospace` (the interface note, §2.3).
-    return { standard: fonts.standard ?? 'serif', fixed: fonts.fixed ?? 'monospace' }
-  }
-  const defaults = electronFontDefaults(platform)
-  return { standard: fonts.standard ?? defaults.standard, fixed: fonts.fixed ?? defaults.fixed }
-}
-
-/** A family as a CSS `font-family` value: quoted unless it is a generic name. */
-function cssFamily(family: string): string {
-  return /^[a-z-]+$/.test(family) ? family : `"${family.replace(/"/g, '')}"`
-}
-
-/**
- * The preview paragraph (§10.3's content row): the standard family at the chosen size, then
- * the fixed-width family at Chrome's ratio of it, both floored by the minimum size as a page's
- * text would be – so the row shows what a page gets, in the page's own type, not the chrome's.
- */
-export function FontPreview({
-  fonts,
-  platform
-}: {
-  fonts: PageFontSettings
-  platform: Platform
-}): JSX.Element {
-  const faces = previewFamilies(fonts, platform)
-  const size = Math.max(fonts.size, fonts.minimumSize)
-  const fixed = Math.max(monospaceFontSize(fonts.size), fonts.minimumSize)
-  return (
-    <div
-      className="zen-settings-fonts-preview"
-      data-row="fonts-preview"
-      data-static=""
-      style={
-        {
-          '--zen-settings-preview-family': cssFamily(faces.standard),
-          '--zen-settings-preview-size': `${size}px`,
-          '--zen-settings-preview-fixed-family': cssFamily(faces.fixed),
-          '--zen-settings-preview-fixed-size': `${fixed}px`
-        } as CSSProperties
-      }
-    >
-      <p data-face="standard" lang="en">
-        The quick brown fox jumps over the lazy dog. 0123456789
-      </p>
-      <p data-face="fixed" lang="en">
-        for (const page of tabs) page.render(fonts);
-      </p>
-      <span className="zen-settings-description">
-        How a page’s text and its fixed-width text look with these settings.
-      </span>
-    </div>
-  )
-}
-
-/**
- * The phone's family picker (§9.13's sheet of radio rows, drawn here rather than by the
- * chassis's option sheet so that each row is in its own face): the current family checked and
- * focused as the sheet opens (§9.22 – the chassis focuses the checked radio), a pick sets the
- * family and closes the sheet.
- */
-export function FontPickList({
-  label,
-  options,
-  value,
-  onPick,
-  close
-}: {
-  label: string
-  options: readonly RowOption[]
-  value: string
-  onPick: (value: string) => void
-  close: () => void
-}): JSX.Element {
-  return (
-    <div role="radiogroup" aria-label={label} className="zen-settings-sheet-rows">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          role="radio"
-          aria-checked={option.value === value}
-          className="zen-settings-row zen-settings-radio-row zen-settings-font-option zen-v2-row"
-          style={
-            option.font
-              ? ({ '--zen-settings-option-font': cssFamily(option.font) } as CSSProperties)
-              : undefined
-          }
-          onClick={() => {
-            if (option.value !== value) onPick(option.value)
-            close()
-          }}
-        >
-          <span className="zen-v2-radio" aria-hidden="true" />
-          <span className="zen-settings-row-text">
-            <span className="zen-settings-label">{option.label}</span>
-            {option.description && (
-              <span className="zen-settings-description">{option.description}</span>
-            )}
-          </span>
-        </button>
-      ))}
-    </div>
-  )
-}
 
 /**
  * The group: sizes, families, preview, Reset. The family rows come in two forms by chrome

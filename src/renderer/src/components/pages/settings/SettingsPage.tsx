@@ -206,9 +206,7 @@ function PhoneSettings({
   )
   // The computer's font families while Look and Feel is the section shown, on a host whose
   // engine takes the family rows (Customise fonts' pickers; a phone host lists the generic names).
-  const localFonts = useLocalFonts(
-    current?.id === 'look' && state.capabilities.genericFontFamilies
-  )
+  const localFonts = useLocalFonts(current?.id === 'look' && state.capabilities.genericFontFamilies)
   // Likewise the other devices' open tabs, asked of the core once per `remoteTabsVersion`.
   useRemoteTabs(state.sync)
   const ctx: SectionContext = {

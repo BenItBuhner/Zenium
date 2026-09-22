@@ -10549,15 +10549,16 @@
   display: block;
 }
 /*
- * The phone's font picker (`FontPickList`, fonts.tsx): §9.13's radio rows in a sheet, each
- * label in its own face at the row's body size (the face is the choice), the current one
- * marked; the desktop's menulist popover draws the same through `MenulistOption.font`.
+ * The phone's font picker (`FontPickList`, fontBlocks.tsx, on `RadioOption`'s `font`): §9.13's
+ * radio rows in a sheet, each label in its own face at the row's body size (the face is the
+ * choice), the current one marked; the desktop's menulist popover draws the same through
+ * `MenulistOption.font`.
  */
 .zen-settings-font-option .zen-settings-label {
   font-family: var(--zen-settings-option-font, inherit);
 }
 /*
- * A picker sheet or dialog with a filter (`LanguagePickList`, languages.tsx; §10.3: a field
+ * A picker sheet or dialog with a filter (`LanguagePickList.tsx`; §10.3: a field
  * pinned under a header): the field in the 16 gutter, 8 under the header, stuck to the top of
  * the scrolling body on the panel's own surface so the rows scroll under it; the rows follow
  * edge to edge; no match is §9.17's one line.
