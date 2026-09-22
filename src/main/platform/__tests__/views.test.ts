@@ -879,6 +879,59 @@ describe('ElectronTabViewHost.openTicket', () => {
 })
 
 /**
+ * A NativeImage as `capturePage` resolves it: its size, a `resize` that keeps the ratio and
+ * hands back another of these, and encoders that record what they were asked for.
+ */
+function fakeCapture(
+  width: number,
+  height: number
+): { image: Electron.NativeImage; encoded: Array<{ width: number; quality: number }> } {
+  const encoded: Array<{ width: number; quality: number }> = []
+  const make = (w: number, h: number): Electron.NativeImage =>
+    ({
+      isEmpty: () => false,
+      getSize: () => ({ width: w, height: h }),
+      resize: ({ width: to }: { width: number }) => make(to, Math.round((h * to) / w)),
+      toJPEG: (quality: number) => {
+        encoded.push({ width: w, quality })
+        return Buffer.from(`jpeg-${w}-${quality}`)
+      },
+      toPNG: () => Buffer.from(`png-${w}`)
+    }) as unknown as Electron.NativeImage
+  return { image: make(width, height), encoded }
+}
+
+/**
+ * The stand-in behind overlays (`snapshot`): a JPEG at quality 90, the capture resized to 1400
+ * wide first when it is wider – the encoder's stage is the clamp, and the clamp is not the
+ * encoder's to move (the Android host's cover takes its own path).
+ */
+describe('ElectronTabView.snapshot', () => {
+  it('encodes the page as JPEG 90 – a capture wider than 1400 resized to 1400 first, a narrower one as it is', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const view = host.createView(
+      { id: 'tab_1', containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    )
+    const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
+    const wide = fakeCapture(1536, 944)
+    Object.assign(wc, { capturePage: () => Promise.resolve(wide.image) })
+    await expect(view.snapshot()).resolves.toBe(
+      `data:image/jpeg;base64,${Buffer.from('jpeg-1400-90').toString('base64')}`
+    )
+    expect(wide.encoded).toEqual([{ width: 1400, quality: 90 }])
+
+    const narrow = fakeCapture(1352, 944)
+    Object.assign(wc, { capturePage: () => Promise.resolve(narrow.image) })
+    await expect(view.snapshot()).resolves.toBe(
+      `data:image/jpeg;base64,${Buffer.from('jpeg-1352-90').toString('base64')}`
+    )
+    expect(narrow.encoded).toEqual([{ width: 1352, quality: 90 }])
+  })
+})
+
+/**
  * Capture Full Page paints the document at the page's zoom, as Take Screenshot's `capturePage`
  * does, and cuts it so the painted picture stays under Chromium's texture height whatever the
  * zoom and the display's scale (the protocol multiplies the clip by the latter on its own).

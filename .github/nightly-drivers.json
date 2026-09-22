@@ -258,6 +258,16 @@
       "estimate": 4.5
     },
     {
+      "id": "site-data-ui",
+      "classes": ["SiteDataUiDemo", "SiteDataRestoreDemo"],
+      "shard": "phone-a",
+      "mirrors": "android-site-data-ui-demo.yml",
+      "script": ".github/scripts/android-site-data-ui-demo.sh",
+      "timeout": 1200,
+      "estimate": 9,
+      "note": "Two acts on the one boot (the Cookies and site data section, the site-information sheet's cookies level, the viewer page, the on-exit clear armed; then the cold start with the pending clear and the restored session after a process death), under act-1/ and act-2/; about 6.5 and 2 minutes on the dispatch workflow's boot. On phone-a for the room: phone-d filled to its budget with #318's, #319's and #321's drivers."
+    },
+    {
       "id": "ext-runtime",
       "class": "ExtensionDemo",
       "shard": "phone-a",

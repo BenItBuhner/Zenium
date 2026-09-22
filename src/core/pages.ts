@@ -63,7 +63,11 @@ interface PageHistory {
 function initialHistory(url: string, pages: InternalPageRegistry): PageHistory {
   const ref = parseInternalPageUrl(url, pages)
   if (!ref || ref.section === null) return { entries: [url], index: 0 }
-  return { entries: [internalPageUrl({ id: ref.id, section: null }), url], index: 1 }
+  const entries = [internalPageUrl({ id: ref.id, section: null })]
+  // A section's drill-in page (v2 §10.2) has its section beneath it too, so back lands there.
+  if (ref.subpage) entries.push(internalPageUrl({ id: ref.id, section: ref.section }))
+  entries.push(url)
+  return { entries, index: entries.length - 1 }
 }
 
 export class PageService {
@@ -344,19 +348,27 @@ export class PageService {
    * without a query drops the one shown: the address is the section's). A chrome page records a
    * new history entry, or with `replace` rewrites the current one (the two-pane layout's nav, v2
    * §10.5); a move to the address already shown records nothing. A document page loads the
-   * section's address in its view, whose own history takes it from there.
+   * section's address in its view, whose own history takes it from there. `subpage` names one
+   * of the section's own drill-in pages (v2 §10.2, `zen://settings/privacy/site-data`): a page
+   * the section's rows open, with the section beneath it in history so back lands there.
    */
   navigate(
     tabId: string,
     section: string | null,
     replace = false,
-    query?: InternalPageQuery
+    query?: InternalPageQuery,
+    subpage?: string | null
   ): void {
     const tab = this.browser.tabs.tab(tabId)
     const page = this.pageOf(tab)
     const ref = tab ? this.parse(tab.url) : null
     if (!tab || !page || !ref) return
-    const url = internalPageUrl({ id: ref.id, section, query })
+    const url = internalPageUrl({
+      id: ref.id,
+      section,
+      subpage: section && subpage ? subpage : undefined,
+      query
+    })
     if (page.render === 'document') {
       if (url !== tab.url) this.browser.tabs.navigate(tabId, url)
       return
