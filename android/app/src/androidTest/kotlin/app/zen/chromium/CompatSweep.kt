@@ -3853,11 +3853,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (opened != null) {
             val page = waitForView(opened.key)
             showTab(opened.key)
-            found = pollExpr(
-                page,
-                """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();return JSON.stringify({pass:/m3u8|stream|completed|segment|record/i.test(t)&&t.length>40,text:t.slice(0,240),els:document.body?document.body.querySelectorAll('*').length:0})})()""",
-                scaled(45_000, factor)
-            )
+            // The WebView's own error page ("Webpage not available ... could not be loaded
+            // because: net::ERR_...") quotes the URL, `record.html` in it: the pass reads the
+            // recorder's words alone, and the error page is the F with its `net::` code.
+            val report = """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();var err=/could not be loaded because|Webpage not available|net::ERR_/i.test(t);return JSON.stringify({pass:!err&&/m3u8|stream recorder|completed|segment|capture|index file/i.test(t)&&t.length>40,errorPage:err,text:t.slice(0,240),els:document.body?document.body.querySelectorAll('*').length:0})})()"""
+            var last = JSONObject()
+            poll(scaled(45_000, factor), 700) {
+                last = json(tabEval(page, report))
+                if (last.optBoolean("pass") || last.optBoolean("errorPage")) true else null
+            }
+            found = last
             found.put("url", opened.value.take(200)).put("console", JSONArray(consoleOf(page).takeLast(10)))
         } else {
             extra.put("tabs", JSONArray(tabUrls().values.toList()))
@@ -3869,9 +3874,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(800)
         snap("${entry.optString("slug")}-core")
         runCatching { coreInvoke("extension.closePopup", "null") }
+        // The recorder listens to `webRequest.onHeadersReceived` on every URL, so a document
+        // reaches its tab through the phone's header relay: the fixture's gzip-encoded page
+        // says whether the relay's body decodes (its own `__encoding` read, or the WebView's
+        // error page), the instrument for the live page's `ERR_CONTENT_DECODING_FAILED`.
+        val (gzTab, gzView) = fixture("echo-headers?gzip=1&rec", factor, 1_500)
+        val gz = pollExpr(
+            gzView,
+            """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();var err=/could not be loaded because|Webpage not available|net::ERR_/i.test(t);return JSON.stringify({pass:!!window.__encoding,errorPage:err,encoding:window.__encoding||null,text:t.slice(0,160)})})()""",
+            scaled(15_000, factor)
+        )
+        extra.put("gzipFixture", gz)
+        runCatching { closeTab(gzTab) }
+        val gzNote = when {
+            gz.optBoolean("errorPage") -> "; the fixture's gzip-encoded page through the relay: the WebView's error page (${gz.optString("text").take(120)})"
+            gz.optBoolean("pass") -> "; the fixture's gzip-encoded page through the relay rendered (sent ${gz.optString("encoding")})"
+            else -> "; the fixture's gzip-encoded page through the relay: no reading (${gz.toString().take(120)})"
+        }
         return Grade(
             if (found.optBoolean("pass")) "P" else "F",
-            "Stream Recorder: ${if (opened == null) "the action click opened no recorder page within ${scaled(30_000, factor) / 1000} s" else "${opened.value.take(70)}: ${found.toString().take(220)}"}",
+            "Stream Recorder: ${if (opened == null) "the action click opened no recorder page within ${scaled(30_000, factor) / 1000} s" else "${opened.value.take(70)}: ${found.toString().take(220)}"}$gzNote",
             extra
         )
     }
