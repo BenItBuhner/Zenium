@@ -306,7 +306,9 @@ describe('the popover menu', () => {
     // under `:disabled` the hint and the chevron inherit the label's ink.
     const css = stylesheet()
     expect(declarations(css, ['.zen-v2-menu-item:disabled'])).toBe('opacity: 0.4;')
-    expect(declarations(css, ['.zen-v2-menu-hint'])).toContain('color: var(--v2-text-deemphasized);')
+    expect(declarations(css, ['.zen-v2-menu-hint'])).toContain(
+      'color: var(--v2-text-deemphasized);'
+    )
     expect(declarations(css, ['.zen-v2-menu-chevron'])).toContain(
       'color: var(--v2-text-deemphasized);'
     )
