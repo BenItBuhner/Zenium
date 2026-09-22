@@ -27,6 +27,7 @@ class V2TokensPinTest {
         "page" to "--v2-page",
         "panel" to "--v2-panel",
         "border" to "--v2-border",
+        "card_border" to "--v2-card-border",
         "text" to "--v2-text",
         "scrim" to "--v2-scrim",
         "accent" to "--v2-accent",
@@ -99,6 +100,10 @@ class V2TokensPinTest {
         assertEquals(css.px("--v2-line-body"), PromptSheetSpec.BODY_LINE_SP)
         assertEquals(css.weight("--v2-weight-body"), PromptSheetSpec.BODY_WEIGHT)
         assertEquals(css.weight("--v2-weight-button"), PromptSheetSpec.BUTTON_WEIGHT)
+        // The caption over a list of rows (`.zen-v2-caption`) and a phone row's leading glyph (`--v2-icon`).
+        assertEquals(css.px("--v2-font-small"), PromptSheetSpec.SMALL_SP)
+        assertEquals(css.px("--v2-line-small"), PromptSheetSpec.SMALL_LINE_SP)
+        assertEquals(css.px("--v2-icon", css.phone), PromptSheetSpec.ROW_GLYPH_DP)
         // The inks a token derives from the text, in both blocks (the dark block restates them): the
         // alpha each states, and the colour it comes to – `--v2-text` at that alpha, as V2Ink derives it.
         for (dark in listOf(false, true)) {

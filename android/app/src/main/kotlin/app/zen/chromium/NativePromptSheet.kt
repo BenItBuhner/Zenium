@@ -91,6 +91,13 @@ object PromptSheetSpec {
     const val BODY_SP = 15
     const val BODY_LINE_SP = 20
     const val BODY_WEIGHT = 400
+    /** `--v2-font-small` / `--v2-line-small`: a caption over a list of rows (`.zen-v2-caption`, "It can:"). */
+    const val SMALL_SP = 13
+    const val SMALL_LINE_SP = 20
+    /** `.zen-ext-dialog-body`'s gap: the caption's 8 to the rows under it. */
+    const val CAPTION_GAP_DP = 8
+    /** `--v2-icon` on a phone: a row's leading glyph (`.zen-v2-row-lead`), in the deemphasised ink. */
+    const val ROW_GLYPH_DP = 20
     /** `--v2-text-deemphasized`: the description's ink is the text at 69 %. */
     const val DEEMPHASIZED_ALPHA = 0.69f
     /** `.zen-sheet-title-block`'s gap: the description 4 under the title. */
@@ -215,6 +222,10 @@ class NativePromptSheet(
         val description: CharSequence? = null,
         /** The PAGE's words as body copy, 15/400 in the text ink, in the scrolling body: an alert's or confirm's message. Line breaks kept. */
         val body: CharSequence? = null,
+        /** A `.zen-v2-caption` over the rows, 13 at 69 % on 20, in the gutter ("It can:"); shown only with rows. */
+        val caption: CharSequence? = null,
+        /** §9.21 rows after the body copy: a permission warning with its kind's glyph, a hairline between rows. */
+        val rows: List<Row> = emptyList(),
         /** A 20 glyph on the title's start (a favicon, a globe in the ink: [V2Ink.glyph]); none for a dialog without an identity. */
         val glyph: Drawable? = null,
         /** The title on one line, truncated from the end (a host name); false: it wraps. */
@@ -239,6 +250,14 @@ class NativePromptSheet(
         val hint: CharSequence? = null,
         val inputType: Int = InputType.TYPE_CLASS_TEXT
     )
+
+    /**
+     * A static row of the body (§9.21, `.zen-v2-row[data-static]`): the phone's 44 row with 12
+     * above and below its line, the 20 glyph leading in the deemphasised ink at the 12 gap, the
+     * label 15/400 – in the text ink, or deemphasised for a line that says there is nothing to
+     * list ("This extension requires no special permissions").
+     */
+    class Row(val label: CharSequence, val glyph: Drawable? = null, val deemphasized: Boolean = false)
 
     /** A footer button: its label and how it is drawn. */
     class Peer(val label: CharSequence, val tone: Tone = Tone.ACCENT)
@@ -431,6 +450,20 @@ class NativePromptSheet(
                 marginEnd = gutter
             })
         }
+        if (content.rows.isNotEmpty()) {
+            // The caption in the gutter, 8 over the rows (`.zen-ext-dialog-body`'s gap); the rows
+            // run edge to edge, their own 16 putting the glyph on the gutter (`.zen-v2-rows`).
+            content.caption?.takeIf { it.isNotEmpty() }?.let { caption ->
+                body.addView(caption(caption), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginStart = gutter
+                    marginEnd = gutter
+                    if (gap()) topMargin = dp(PromptSheetSpec.BODY_GAP_DP)
+                })
+            }
+            body.addView(rows(content.rows), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                if (gap()) topMargin = dp(if (content.caption.isNullOrEmpty()) PromptSheetSpec.BODY_GAP_DP else PromptSheetSpec.CAPTION_GAP_DP)
+            })
+        }
         content.field?.let { spec ->
             body.addView(labelledField(spec), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginStart = gutter
@@ -484,6 +517,58 @@ class NativePromptSheet(
         setTextSize(TypedValue.COMPLEX_UNIT_SP, PromptSheetSpec.BODY_SP.toFloat())
         typeface = weight(PromptSheetSpec.BODY_WEIGHT)
         TextViewCompat.setLineHeight(this, sp(PromptSheetSpec.BODY_LINE_SP))
+    }
+
+    /** `.zen-v2-caption`: 13 on 20 in the deemphasised ink, over a list of rows. */
+    private fun caption(text: CharSequence): TextView = TextView(context).apply {
+        this.text = text
+        setTextColor(ink.textDeemphasized)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, PromptSheetSpec.SMALL_SP.toFloat())
+        typeface = weight(PromptSheetSpec.BODY_WEIGHT)
+        TextViewCompat.setLineHeight(this, sp(PromptSheetSpec.SMALL_LINE_SP))
+    }
+
+    /**
+     * §9.21's static rows (`.zen-v2-rows > .zen-v2-row[data-static]`): each at least 44 tall with
+     * 12 above and below its line in the 16 gutter, the 20 glyph leading on the first line in the
+     * deemphasised ink, the label 12 after it at 15/400; a hairline in the card-border ink between
+     * rows (`.zen-v2-rows > .zen-v2-row + .zen-v2-row`), none above the first or under the last.
+     * A row is not a target: no fill, no press, read as one line by TalkBack.
+     */
+    private fun rows(rows: List<Row>): View {
+        val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val gutter = dp(PromptSheetSpec.GUTTER_DP)
+        val pad = dp(PromptSheetSpec.ROW_PAD_DP)
+        for ((index, spec) in rows.withIndex()) {
+            if (index > 0) list.addView(View(context).apply {
+                setBackgroundColor(ink.cardBorder)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline))
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.TOP
+                minimumHeight = dp(PromptSheetSpec.ROW_MIN_DP)
+                setPadding(gutter, pad, gutter, pad)
+                // One node for TalkBack: the glyph says nothing the label does not.
+                isFocusable = true
+                contentDescription = spec.label
+            }
+            spec.glyph?.let { glyph ->
+                // The glyph sits on the first line, (line − glyph) / 2 under its top (`.zen-v2-row-lead`'s margin).
+                row.addView(ImageView(context).apply {
+                    setImageDrawable(glyph)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, LinearLayout.LayoutParams(dp(PromptSheetSpec.ROW_GLYPH_DP), dp(PromptSheetSpec.ROW_GLYPH_DP)).apply {
+                    topMargin = (sp(PromptSheetSpec.BODY_LINE_SP) - dp(PromptSheetSpec.ROW_GLYPH_DP)).coerceAtLeast(0) / 2
+                    marginEnd = dp(PromptSheetSpec.ROW_GAP_DP)
+                })
+            }
+            row.addView(paragraph(spec.label, if (spec.deemphasized) ink.textDeemphasized else ink.text).apply {
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        return list
     }
 
     /** §9.12: the label 15/400 in the text ink, 4 above its 40 field, read with it (`labelFor`); the field alone without one. */
