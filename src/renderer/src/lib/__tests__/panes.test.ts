@@ -6,10 +6,12 @@ vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () =
 import { run } from '../api'
 import {
   PANE_ORDER,
+  URLBAR_KEYBOARD_EVENT,
   URLBAR_LEAVE_EVENT,
   currentPane,
   focusPane,
   nextPane,
+  pageTookKeyboard,
   paneFirstControl,
   paneOf,
   paneTarget,
@@ -87,7 +89,7 @@ beforeEach(() => {
 
 afterEach(() => {
   document.body.innerHTML = ''
-  uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
+  uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false, pane: false, tabId: null } }))
   vi.mocked(run).mockClear()
   vi.restoreAllMocks()
 })
@@ -215,6 +217,67 @@ describe('the document side', () => {
     expect(releaseChromeFocus()).toBe(true)
     expect(document.activeElement).toBe(document.body)
     expect(releaseChromeFocus()).toBe(false)
+  })
+
+  describe('a page view that takes the keyboard (focus.page)', () => {
+    const OMNIBOX = '<div data-pane="toolbar" class="zen-omnibox"><input id="omnibox" /></div>'
+    let keyboardAsked: string[]
+    const onKeyboard = (): void => {
+      keyboardAsked.push(document.activeElement?.id ?? 'body')
+    }
+    beforeEach(() => {
+      keyboardAsked = []
+      window.addEventListener(URLBAR_KEYBOARD_EVENT, onKeyboard)
+    })
+    afterEach(() => window.removeEventListener(URLBAR_KEYBOARD_EVENT, onKeyboard))
+
+    it('still blurs a toolbar button whose focus ring would be stale – the bar closed', () => {
+      mount(CHROME + OMNIBOX)
+      byId('reload').focus()
+      expect(pageTookKeyboard('t2')).toBe('released')
+      expect(document.activeElement).toBe(document.body)
+      expect(pageTookKeyboard('t2')).toBe('none')
+      // The keyboard is the page's: nothing asks the chrome's back, no bar is told anything.
+      expect(keyboardAsked).toEqual([])
+      expect(run).not.toHaveBeenCalled()
+    })
+
+    it("never blurs the open URL bar's field: the bar is told to take the keyboard back", () => {
+      mount(CHROME + OMNIBOX)
+      uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true, mode: 'new-tab', tabId: 't2' } }))
+      byId('omnibox').focus()
+      // The new tab's own view, shown under the bar, took the keyboard as it came up.
+      expect(pageTookKeyboard('t2')).toBe('kept')
+      expect(document.activeElement?.id).toBe('omnibox')
+      expect(keyboardAsked).toEqual(['omnibox'])
+    })
+
+    it('keeps the bar over the page whichever view took the keyboard – the page beneath cannot be pressed', () => {
+      mount(CHROME + OMNIBOX)
+      uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true, mode: 'edit', tabId: 't2' } }))
+      byId('omnibox').focus()
+      expect(pageTookKeyboard('t1')).toBe('kept')
+      expect(document.activeElement?.id).toBe('omnibox')
+      // The bar without a tab of its own (new-tab mode with the page turned off) the same.
+      uiStore.set((s) => ({ urlbar: { ...s.urlbar, mode: 'new-tab', tabId: null } }))
+      expect(pageTookKeyboard('t2')).toBe('kept')
+      expect(document.activeElement?.id).toBe('omnibox')
+      expect(keyboardAsked).toEqual(['omnibox', 'omnibox'])
+    })
+
+    it("the empty split pane's bar keeps its field from its own blank page and lets it go to a sibling pane's", () => {
+      mount(CHROME + OMNIBOX)
+      uiStore.set((s) => ({
+        urlbar: { ...s.urlbar, open: true, mode: 'edit', tabId: 'empty', pane: true }
+      }))
+      byId('omnibox').focus()
+      expect(pageTookKeyboard('empty')).toBe('kept')
+      expect(document.activeElement?.id).toBe('omnibox')
+      // The user pressed in the pane beside it: the field is let go like any control.
+      expect(pageTookKeyboard('t1')).toBe('released')
+      expect(document.activeElement).toBe(document.body)
+      expect(keyboardAsked).toEqual(['omnibox'])
+    })
   })
 
   it('puts the open URL bar away when the keyboard leaves the toolbar, keeping the keyboard on the target', () => {

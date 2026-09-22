@@ -10,9 +10,9 @@ import {
   useState
 } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
+import { returnFocusTo, wrapTab } from '@renderer/lib/popover'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
-import { wrapTab } from '../../bookmarks/popover'
 import { V2TitleBlock } from '../../extensions/v2'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
 import type {
@@ -50,10 +50,13 @@ import {
  * site-data viewer's Clear all prompt) covers its host the same way: `SheetCoveredContext`.
  *
  * Keyboard (§9.22): focus moves into a dialog as it opens – the checked option of a picker, the
- * field of a form, else its first control (a prompt's Cancel) – Tab wraps inside it, Escape and
- * the scrim close it, and when it leaves the focus returns to the control that opened it: the
- * page's row, or the lower dialog's control for one that opened over a dialog (§9.24). Titles
- * are the rows' own and sentence case (§9.1).
+ * field of a form, the first row of an item's rows, and for a prompt the container itself (a
+ * title-and-notice panel holds the focus; landing on Cancel, the way out, is the failure §9.22
+ * names) – Tab wraps inside it, from the container too, Escape and the scrim close it, and when
+ * it leaves the focus returns to the control that opened it: the page's row, or the lower
+ * dialog's control for one that opened over a dialog (§9.24) – one hop down the stack at a
+ * time, and a return the lower dialog's `inert` still refuses waits for that `inert` to go.
+ * Titles are the rows' own and sentence case (§9.1).
  */
 
 /** Every open dialog, lowest first; each resolves its row in `groups`. */
@@ -257,21 +260,22 @@ function HostedDialog({
   useEffect(() => {
     const root = ref.current
     if (!root) return
+    // The opener is whatever held the focus as this dialog came: a row of the page, or – for a
+    // prompt over an item dialog – the item dialog's control, so the return goes one hop down
+    // the stack (the prompt to that control, the item dialog in its turn to its row), never
+    // past the lower dialog to the page.
     const active = document.activeElement
     const opener = active instanceof HTMLElement && !root.contains(active) ? active : null
     const target = initialRef.current?.(root) ?? root.querySelector<HTMLElement>(TABBABLE) ?? root
     target.focus({ preventScroll: true })
     return () => {
-      const restore = (): void => {
-        const now = document.activeElement
-        const lost = !now || now === document.body || now.closest('.zen-frame-dialogs') !== null
-        if (lost && opener?.isConnected) opener.focus({ preventScroll: true })
-      }
-      // An opener in the dialog this one covered (a form's Clear all under its prompt) is still
-      // `inert` as this cleanup runs – its host drops the cover on its next render – and a focus
-      // on an inert subtree is a no-op: the return waits for that frame.
-      if (opener?.closest('[inert]')) requestAnimationFrame(restore)
-      else restore()
+      const now = document.activeElement
+      const lost = !now || now === document.body || now.closest('.zen-frame-dialogs') !== null
+      // The stack drops the lower dialog's `inert` in the commit that removes this one, so the
+      // control takes the focus at once; a control still under an `inert` as this runs (an
+      // opener in the dialog this one covered – a form's Clear all under its prompt – whose host
+      // drops the cover on its next render) takes it as that `inert` goes (`returnFocusTo`).
+      if (lost && opener?.isConnected) returnFocusTo(opener)
     }
   }, [])
   return (
@@ -288,7 +292,14 @@ function HostedDialog({
       tabIndex={-1}
       className={cn('zen-v2-dialog zen-settings-dialog zen-animate-pop', className)}
       style={{ width: width === 'notice' ? POPOVER_WIDTH.list : POPOVER_WIDTH.form }}
-      onKeyDown={(e) => wrapTab(e, ref.current)}
+      // The shared wrap (§9.22, lib/popover): Tab at the last control goes to the first,
+      // Shift+Tab at the first to the last – and from the container itself, which holds the
+      // focus in a prompt (and in any dialog with nothing tabbable), Tab enters at the first
+      // control and Shift+Tab at the last, never leaving for whatever stands before the host in
+      // the document.
+      onKeyDown={(e) => {
+        if (ref.current) wrapTab(ref.current, e.nativeEvent)
+      }}
     >
       <V2TitleBlock
         id={titleId}
@@ -475,9 +486,11 @@ function FieldDialog({
  * A prompt (§9.23) at §9.20's notice width: the question as the title block over its line, the
  * destructive action trailing (§9.11) and nothing else – 320, never the width of the dialog it
  * covers, so a Remove prompt over an item's 400 dialog reads as a prompt and not a band across
- * it (§9.5; the #324 lead check). It passes no `initial`, so the focus lands on the first
- * tabbable – Cancel – where §9.22 wants the container (`SiteDataPrompt` returns the root for
- * its own prompts): the chassis owners' queued follow-up, not a rule of this prompt.
+ * it (§9.5; the #324 lead check). A title-and-notice panel, so the container itself holds the
+ * focus as the dialog opens (§9.22: the title is announced, then the description; `initial`
+ * returns the root, as `SiteDataPrompt` does for its own prompts) and the verb – the primary or
+ * destructive action – is reached by Tab (Cancel, then it; Shift+Tab reaches it first); Cancel
+ * pre-focused, the way out announced first, is the failure §9.22 names.
  */
 function ConfirmDialog({
   row,
@@ -497,6 +510,7 @@ function ConfirmDialog({
       under={under}
       onClose={close}
       width="notice"
+      initial={(root) => root}
       className="zen-settings-dialog-prompt"
     >
       <SheetActions

@@ -26,8 +26,9 @@ import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, run } from './api'
 import { browserStore } from './browserStore'
-import { viewportStore } from './formFactor'
+import { isPhone, viewportStore } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
+import { onboardingCovers } from './onboarding'
 import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
 import { activeTab } from './selectors'
 import { createStore } from './store'
@@ -1387,6 +1388,19 @@ export function closeMediaSheet(): void {
   returnFocusToPage()
 }
 
+/**
+ * The first-run tour covers this window's chrome (lib/onboarding.ts `onboardingCovers`): the
+ * URL bar and the new tab shortcut dialog do not open under it. The bar opened under the tour
+ * used to focus its field once, on mount, and the tour's buttons took the keyboard from it: the
+ * bar stood there after the tour with no caret. The tour's last click ends in a new tab whose
+ * `newtab.opened` arrives after the state that puts the tour away, and that one opens the bar.
+ * The phone's tour is its shell's own flow over its own bar, and is left as it is.
+ */
+export function onboardingUp(): boolean {
+  const state = browserStore.get().state
+  return state !== null && !isPhone() && onboardingCovers(state)
+}
+
 export async function openUrlbar(
   mode: UrlbarOpenMode,
   activeTabId: string | null,
@@ -1425,8 +1439,8 @@ export function openNewTabPageUrlbar(
   text: string | undefined,
   attached: boolean
 ): void {
+  if (onboardingUp()) return
   const ui = uiStore.get()
-  if (ui.overlay === 'onboarding') return
   if (ui.urlbar.open && ui.urlbar.mode === 'new-tab' && ui.urlbar.tabId === tabId) {
     if (text) window.dispatchEvent(new CustomEvent<string>('zen-urlbar-type', { detail: text }))
     return
@@ -1910,7 +1924,7 @@ export function holdFloatingChrome(
 export async function openNewTabShortcutDialog(
   request: NonNullable<UiState['newTabShortcutDialog']>
 ): Promise<void> {
-  if (uiStore.get().overlay === 'onboarding') return
+  if (onboardingUp()) return
   await captureActiveTab(request.tabId)
   run('focus.chrome', undefined)
   uiStore.set({ newTabShortcutDialog: request })
