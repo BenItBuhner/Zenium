@@ -7,8 +7,6 @@ import { usePopover } from '@renderer/hooks/usePopover'
 import { run } from '@renderer/lib/api'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import {
-  INITIAL_PANE,
-  PICKER_PANES,
   PICKER_TITLE,
   type PickerPane,
   closeScreenPicker,
@@ -16,13 +14,16 @@ import {
   effectiveSelection,
   emptyPaneText,
   gridMove,
+  initialPane,
   openScreenPicker,
   paneColumns,
+  panesOf,
   pickerDescription,
   sourcesIn
 } from '@renderer/lib/screenPicker'
 import { useThumbnail } from '@renderer/lib/thumbnails'
 import { cn } from '@renderer/lib/utils'
+import { ExtensionIcon } from '../extensions/ExtensionIcon'
 import { V2Button, V2TitleBlock } from '../extensions/v2'
 
 const TITLE_ID = 'zen-scpick-title'
@@ -57,12 +58,18 @@ export function ScreenPickerLayer({ state }: { state: UIState }): JSX.Element | 
  * audio" leads the footer when the page asked for audio. Arrow keys move the pick in a pane and
  * switch panes on the segment; focus starts on the calling tab's card, Tab wraps (§9.22), Escape
  * is Cancel. Cancel is the page's refusal (NotAllowedError), as Chrome's.
+ *
+ * An extension's request (`chrome.desktopCapture.chooseDesktopMedia`) is the same dialog with
+ * the extension's icon at the title's start and its name where the site's goes – "with
+ * <site>" when it captures for a site's tab – and only the panes it asked for: one pane stands
+ * alone, with no segment over it, as Chrome's does.
  */
 function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const answered = useRef(false)
   const [busy, setBusy] = useState(false)
-  const [pane, setPane] = useState<PickerPane>(INITIAL_PANE)
+  const panes = panesOf(request)
+  const [pane, setPane] = useState<PickerPane>(() => initialPane(request))
   const [chosen, setChosen] = useState<Record<PickerPane, string | null>>({
     tab: null,
     window: null,
@@ -141,11 +148,11 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
   }
 
   const onSegmentKey = (e: ReactKeyboardEvent<HTMLElement>): void => {
-    const index = PICKER_PANES.findIndex((p) => p.id === pane)
-    const next = gridMove(e.key, index, PICKER_PANES.length, 1)
+    const index = panes.findIndex((p) => p.id === pane)
+    const next = gridMove(e.key, index, panes.length, 1)
     if (next === null) return
     e.preventDefault()
-    const id = PICKER_PANES[next]!.id
+    const id = panes[next]!.id
     switchPane(id)
     ref.current?.querySelector<HTMLElement>(`[role="tab"][data-pane="${id}"]`)?.focus()
   }
@@ -178,37 +185,47 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
       <V2TitleBlock
         id={TITLE_ID}
         title={PICKER_TITLE}
+        scrolled={panes.length === 1 && scrolled}
+        glyph={
+          request.extension ? (
+            <ExtensionIcon icon={request.extension.icon} size={16} box={16} />
+          ) : undefined
+        }
         description={<span id={DESCRIPTION_ID}>{pickerDescription(request)}</span>}
       />
-      <div
-        role="tablist"
-        aria-label="What to share"
-        className="zen-v2-segment zen-scpick-panes"
-        data-scrolled={scrolled || undefined}
-        onKeyDown={onSegmentKey}
-      >
-        {PICKER_PANES.map((p) => (
-          <button
-            key={p.id}
-            id={`zen-scpick-tab-${p.id}`}
-            type="button"
-            role="tab"
-            aria-selected={pane === p.id}
-            aria-controls={`zen-scpick-pane-${p.id}`}
-            tabIndex={pane === p.id ? 0 : -1}
-            data-pane={p.id}
-            onClick={() => switchPane(p.id)}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
+      {panes.length > 1 && (
+        <div
+          role="tablist"
+          aria-label="What to share"
+          className="zen-v2-segment zen-scpick-panes"
+          data-scrolled={scrolled || undefined}
+          onKeyDown={onSegmentKey}
+        >
+          {panes.map((p) => (
+            <button
+              key={p.id}
+              id={`zen-scpick-tab-${p.id}`}
+              type="button"
+              role="tab"
+              aria-selected={pane === p.id}
+              aria-controls={`zen-scpick-pane-${p.id}`}
+              tabIndex={pane === p.id ? 0 : -1}
+              data-pane={p.id}
+              onClick={() => switchPane(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div
         ref={list}
         id={`zen-scpick-pane-${pane}`}
-        role="tabpanel"
-        aria-labelledby={`zen-scpick-tab-${pane}`}
+        role={panes.length > 1 ? 'tabpanel' : undefined}
+        aria-labelledby={panes.length > 1 ? `zen-scpick-tab-${pane}` : undefined}
+        aria-label={panes.length > 1 ? undefined : panes[0]?.label}
         className="zen-scpick-list"
+        data-alone={panes.length > 1 ? undefined : ''}
         aria-busy={loading || undefined}
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
       >
@@ -221,7 +238,7 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
         ) : (
           <div
             role="radiogroup"
-            aria-label={PICKER_PANES.find((p) => p.id === pane)!.label}
+            aria-label={panes.find((p) => p.id === pane)?.label}
             className="zen-scpick-grid"
             data-columns={columns}
           >
@@ -229,7 +246,7 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
               <SourceTile
                 key={source.id}
                 source={source}
-                current={pane === 'tab' && index === 0}
+                current={source.id === `tab:${request.tabId}`}
                 checked={source.id === selected}
                 tabStop={source.id === stop}
                 onPick={() => pick(source.id)}

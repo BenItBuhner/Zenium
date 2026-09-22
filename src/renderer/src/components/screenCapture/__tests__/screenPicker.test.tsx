@@ -65,11 +65,21 @@ const REQUEST: ScreenCaptureRequest = {
   id: 'capture-1',
   tabId: 't1',
   origin: 'meet.example',
+  extension: null,
+  kinds: ['tab', 'window', 'screen'],
   audio: false,
   systemAudio: false,
   loading: false,
   sources: [SCREEN, WINDOW, TAB_SOURCE, OTHER_TAB],
   requestedAt: 1
+}
+
+/** An extension's `chooseDesktopMedia(['screen', 'window', 'tab'])` for its own page. */
+const EXTENSION_REQUEST: ScreenCaptureRequest = {
+  ...REQUEST,
+  id: 'capture-2',
+  origin: '',
+  extension: { name: 'Screen Recorder', icon: 'data:image/png;base64,EEEE' }
 }
 
 function stateWith(
@@ -442,6 +452,124 @@ describe('ScreenPicker', () => {
     rerender(layer(stateWith([])))
     expect(uiStore.get().screenPickerOpen).toBe(false)
     expect(run).not.toHaveBeenCalledWith('screenCapture.respond', expect.anything())
+  })
+})
+
+describe('ScreenPicker for an extension (chrome.desktopCapture)', () => {
+  it('names the extension where the site goes, with its icon at the title’s start, and keeps Chrome’s three panes', () => {
+    const el = render(layer(stateWith([EXTENSION_REQUEST])))
+    const dialog = el.querySelector<HTMLElement>('[data-screen-picker="tab"]')!
+    expect(dialog.querySelector('h2')!.textContent).toBe('Choose what to share')
+    expect(dialog.querySelector('#zen-scpick-description')!.textContent).toBe(
+      'Screen Recorder wants to share the contents of your screen'
+    )
+    const glyph = dialog.querySelector<HTMLImageElement>('h2 img')!
+    expect(glyph.src).toContain('EEEE')
+    expect(glyph.getAttribute('width')).toBe('16')
+    expect([...dialog.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual([
+      'Zenium tab',
+      'Window',
+      'Entire screen'
+    ])
+    // The calling tab still leads the tab pane and is the one marked current.
+    expect(tiles(el).map((c) => c.dataset.sourceId)).toEqual(['tab:t1', 'tab:t2'])
+    expect(tiles(el)[0]!.hasAttribute('data-current')).toBe(true)
+  })
+
+  it('says whom the extension shares with when it captures for a site’s tab (targetTab)', () => {
+    const el = render(layer(stateWith([{ ...EXTENSION_REQUEST, origin: 'docs.example' }])))
+    expect(el.querySelector('#zen-scpick-description')!.textContent).toBe(
+      'Screen Recorder wants to share the contents of your screen with docs.example'
+    )
+  })
+
+  it('an extension without an icon gets the puzzle glyph, a site none', () => {
+    const el = render(
+      layer(stateWith([{ ...EXTENSION_REQUEST, extension: { name: 'Recorder', icon: null } }]))
+    )
+    expect(el.querySelector('h2 img')).toBeNull()
+    expect(el.querySelector('h2 svg')).not.toBeNull()
+    rerender(layer(stateWith([REQUEST])))
+    expect(el.querySelector('h2 img')).toBeNull()
+    expect(el.querySelector('h2 svg')).toBeNull()
+  })
+
+  it('shows only the panes the extension asked for, opening on the first; one pane stands alone without the segment', () => {
+    const el = render(
+      layer(
+        stateWith([
+          { ...EXTENSION_REQUEST, kinds: ['window', 'screen'], sources: [SCREEN, WINDOW] }
+        ])
+      )
+    )
+    expect([...el.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual([
+      'Window',
+      'Entire screen'
+    ])
+    expect(el.querySelector('[data-screen-picker="window"]')).not.toBeNull()
+    expect(paneTab(el, 'window')!.getAttribute('aria-selected')).toBe('true')
+    // The arrow keys stay within the panes on offer.
+    keydown(paneTab(el, 'window'), 'ArrowRight')
+    expect(el.querySelector('[data-screen-picker="screen"]')).not.toBeNull()
+    keydown(paneTab(el, 'screen'), 'ArrowRight')
+    expect(el.querySelector('[data-screen-picker="screen"]')).not.toBeNull()
+    act(() => root!.unmount())
+    root = null
+
+    const alone = render(
+      layer(stateWith([{ ...EXTENSION_REQUEST, kinds: ['screen'], sources: [SCREEN] }]))
+    )
+    expect(alone.querySelector('[role="tablist"]')).toBeNull()
+    expect(alone.querySelector('[role="tabpanel"]')).toBeNull()
+    const list = alone.querySelector<HTMLElement>('.zen-scpick-list')!
+    expect(list.hasAttribute('data-alone')).toBe(true)
+    expect(list.getAttribute('aria-label')).toBe('Entire screen')
+    expect(alone.querySelector('[data-screen-picker="screen"]')).not.toBeNull()
+    // The only screen comes picked; Share is a press away and answers the core.
+    expect(tile(alone, 'screen:1')!.getAttribute('aria-checked')).toBe('true')
+    click(share(alone))
+    expect(run).toHaveBeenCalledWith('screenCapture.respond', {
+      id: 'capture-2',
+      sourceId: 'screen:1',
+      audio: false
+    })
+  })
+
+  it('with one pane the title block carries the scroll hairline the segment would', () => {
+    const el = render(
+      layer(stateWith([{ ...EXTENSION_REQUEST, kinds: ['window'], sources: [WINDOW] }]))
+    )
+    const block = el.querySelector<HTMLElement>('.zen-v2-title-block')!
+    const list = el.querySelector<HTMLElement>('.zen-scpick-list')!
+    expect(block.getAttribute('data-scrolled')).toBeNull()
+    act(() => {
+      list.scrollTop = 40
+      list.dispatchEvent(new Event('scroll'))
+    })
+    expect(block.getAttribute('data-scrolled')).toBe('true')
+  })
+
+  it('offers the system-audio box on the screen pane when the extension asked for audio and the OS can', () => {
+    const el = render(
+      layer(
+        stateWith([
+          {
+            ...EXTENSION_REQUEST,
+            kinds: ['screen'],
+            sources: [SCREEN],
+            audio: true,
+            systemAudio: true
+          }
+        ])
+      )
+    )
+    expect(el.querySelector('.zen-scpick-audio')!.textContent).toBe('Also share system audio')
+    click(share(el))
+    expect(run).toHaveBeenCalledWith('screenCapture.respond', {
+      id: 'capture-2',
+      sourceId: 'screen:1',
+      audio: true
+    })
   })
 })
 

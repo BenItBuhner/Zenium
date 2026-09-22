@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DESKTOP_CAPTURE_CANCELLED,
+  DESKTOP_CAPTURE_INVALID_ORIGIN_ERROR,
+  DESKTOP_CAPTURE_INVALID_STATE_ERROR,
   DESKTOP_CAPTURE_INVALID_TAB_ERROR,
   DESKTOP_CAPTURE_NO_SOURCES_ERROR,
+  DESKTOP_CAPTURE_NO_TAB_ID_ERROR,
+  DESKTOP_CAPTURE_NO_TAB_URL_ERROR,
   DESKTOP_CAPTURE_SOURCE_TYPES,
+  DESKTOP_CAPTURE_TAB_URL_NOT_SECURE_ERROR,
+  DESKTOP_CAPTURE_TARGET_NOT_FOUND_ERROR,
+  DESKTOP_CAPTURE_WORKER_NEEDS_TAB_ERROR,
   TAB_CAPTURE_FINDING_TAB_ERROR,
   TAB_CAPTURE_GRANT_ERROR,
   TAB_CAPTURE_INVALID_TAB_ERROR,
@@ -12,18 +19,26 @@ import {
   TAB_CAPTURE_SAME_TAB_ERROR,
   TAB_CAPTURE_STATES,
   TAB_CAPTURE_TAB_URL_NOT_SECURE_ERROR,
+  desktopSourceKinds,
   isCapturableUrl,
   isPotentiallyTrustworthyUrl,
   normalizeCaptureOptions,
+  normalizeDesktopOptions,
   normalizeDesktopSources,
+  normalizeDesktopTarget,
   normalizeStreamIdOptions,
   withTabSourceConstraints
 } from '../api/tabCapture'
 import { installExtensionApi, type InvokeResult, type ShimHost } from '../api/shim'
-import { API_SPEC, TAB_CAPTURE_INTERNAL_METHODS } from '../api/spec'
+import {
+  API_SPEC,
+  DESKTOP_CAPTURE_INTERNAL_METHODS,
+  TAB_CAPTURE_INTERNAL_METHODS
+} from '../api/spec'
 import { TabCaptureApi, type StreamRegistrar } from '../../../main/platform/extensionApi/tabCapture'
 import type { ActiveTabGrants } from '../../../main/platform/extensionApi/activeTab'
 import type { ApiContext, ApiHost } from '../../../main/platform/extensionApi/types'
+import type { ScreenCaptureRequestInit } from '../../screenCapture'
 import type { Tab } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
 
@@ -123,6 +138,58 @@ describe('tabCapture parameters', () => {
     expect(() => normalizeDesktopSources([])).toThrow(DESKTOP_CAPTURE_NO_SOURCES_ERROR)
   })
 
+  it("desktopCapture's panes: the kinds among the sources, in the picker's order, audio being the toggle", () => {
+    expect(desktopSourceKinds(['screen', 'audio'])).toEqual(['screen'])
+    expect(desktopSourceKinds(['screen', 'window', 'tab', 'audio'])).toEqual([
+      'tab',
+      'window',
+      'screen'
+    ])
+    expect(desktopSourceKinds(['audio'])).toEqual([])
+  })
+
+  it("desktopCapture's targetTab, checked in Chrome's order: a URL, a valid one, a secure one, an id", () => {
+    expect(normalizeDesktopTarget(undefined)).toBeNull()
+    expect(normalizeDesktopTarget(null)).toBeNull()
+    expect(normalizeDesktopTarget({ id: 5, url: 'https://docs.example/a' })).toEqual({
+      id: 5,
+      url: 'https://docs.example/a'
+    })
+    expect(normalizeDesktopTarget({ id: 5, url: `chrome-extension://${EXT}/rec.html` })).toEqual({
+      id: 5,
+      url: `chrome-extension://${EXT}/rec.html`
+    })
+    expect(() => normalizeDesktopTarget({ id: 5 })).toThrow(DESKTOP_CAPTURE_NO_TAB_URL_ERROR)
+    expect(() => normalizeDesktopTarget({ id: 5, url: 'nonsense' })).toThrow(
+      DESKTOP_CAPTURE_INVALID_ORIGIN_ERROR
+    )
+    expect(() => normalizeDesktopTarget({ id: 5, url: 'http://example.com/' })).toThrow(
+      DESKTOP_CAPTURE_TAB_URL_NOT_SECURE_ERROR
+    )
+    expect(() => normalizeDesktopTarget({ url: 'https://docs.example/' })).toThrow(
+      DESKTOP_CAPTURE_NO_TAB_ID_ERROR
+    )
+    expect(() => normalizeDesktopTarget({ id: -1, url: 'https://docs.example/' })).toThrow(
+      DESKTOP_CAPTURE_NO_TAB_ID_ERROR
+    )
+    expect(() => normalizeDesktopTarget('tab')).toThrow(/No matching signature/)
+  })
+
+  it("desktopCapture's options: the two preferences the picker honours", () => {
+    expect(normalizeDesktopOptions(undefined)).toEqual({
+      excludeSystemAudio: false,
+      excludeSelf: false
+    })
+    expect(
+      normalizeDesktopOptions({ systemAudio: 'exclude', selfBrowserSurface: 'exclude' })
+    ).toEqual({ excludeSystemAudio: true, excludeSelf: true })
+    expect(normalizeDesktopOptions({ systemAudio: 'include' })).toEqual({
+      excludeSystemAudio: false,
+      excludeSelf: false
+    })
+    expect(() => normalizeDesktopOptions('exclude')).toThrow(/No matching signature/)
+  })
+
   it('is in the desktop spec, gated on the permissions, with Chrome’s enums', () => {
     expect(API_SPEC.tabCapture.permissions).toEqual(['tabCapture'])
     expect(Object.keys(API_SPEC.tabCapture.methods).sort()).toEqual([
@@ -144,6 +211,12 @@ describe('tabCapture parameters', () => {
       )
     ).toEqual([...DESKTOP_CAPTURE_SOURCE_TYPES])
     expect(TAB_CAPTURE_INTERNAL_METHODS).toEqual(['resolveStreamId', 'streamState'])
+    expect(DESKTOP_CAPTURE_INTERNAL_METHODS).toEqual(['resolveStreamId'])
+    expect(API_SPEC.desktopCapture.methods.chooseDesktopMedia.params.map((p) => p.name)).toEqual([
+      'sources',
+      'targetTab',
+      'options'
+    ])
   })
 })
 
@@ -166,6 +239,7 @@ interface FakeWebContents {
   crash(): void
   /** Set on the page of a popup window, which the router reads the consumer's URL from. */
   getURL?(): string
+  isDestroyed(): boolean
 }
 
 function fakeWebContents(id: number): FakeWebContents {
@@ -179,6 +253,7 @@ function fakeWebContents(id: number): FakeWebContents {
   const wc: FakeWebContents = {
     id,
     destroyed: false,
+    isDestroyed: () => wc.destroyed,
     on: (event, fn) => {
       listeners.set(event, [...(listeners.get(event) ?? []), { fn, once: false }])
     },
@@ -202,10 +277,20 @@ function fakeWebContents(id: number): FakeWebContents {
   return wc
 }
 
+/** The core's picker as the router sees it: requests put up, each answered by a test. */
+interface FakePicker {
+  requests: Array<{ id: string; init: ScreenCaptureRequestInit }>
+  /** The picker's answer to the request last put up (or the one named). */
+  pick(sourceId: string | null, audio?: boolean, id?: string): void
+  /** The chrome has no picker surface: `open` refuses at once. */
+  down: boolean
+}
+
 interface World {
   api: TabCaptureApi
   dispatched: Array<{ extensionId: string; event: string; args: unknown[] }>
   registered: Array<{ target: number; consumer: number; id: string }>
+  picker: FakePicker
   grant(extensionId: string, chromeTabId: number): void
   addTab(zenId: string, chromeId: number, url: string): { tab: Tab; wc: FakeWebContents }
   /** An extension popup window (`windows.create({type: "popup"})`): its one tab is its page. */
@@ -230,11 +315,45 @@ function world(): World {
   const clock = { now: 1_000 }
   let engineIds = 0
   const popups = new Map<number, { wc: FakeWebContents; url: string }>()
+  const pending = new Map<string, (answer: { sourceId: string | null; audio: boolean }) => void>()
+  let pickerIds = 0
+  const picker: FakePicker = {
+    requests: [],
+    down: false,
+    pick: (sourceId, audio = false, id) => {
+      const target = id ?? picker.requests.at(-1)?.id
+      const resolve = target ? pending.get(target) : undefined
+      if (!target || !resolve) throw new Error('no picker up')
+      pending.delete(target)
+      resolve({ sourceId, audio })
+    }
+  }
+  const screenCapture = {
+    open: (init: ScreenCaptureRequestInit) => {
+      if (picker.down || !tabs.has(init.tabId))
+        return { id: null, answer: Promise.resolve({ sourceId: null, audio: false }) }
+      pickerIds += 1
+      const id = `capture-${pickerIds}`
+      picker.requests.push({ id, init })
+      return {
+        id,
+        answer: new Promise<{ sourceId: string | null; audio: boolean }>((resolve) => {
+          pending.set(id, resolve)
+        })
+      }
+    },
+    respond: (id: string, sourceId: string | null, audio = false) => {
+      if (pending.has(id)) picker.pick(sourceId, audio, id)
+    }
+  }
   const model = {
     tab: (zenId: string) => tabs.get(zenId),
     zenTab: (chromeId: number) => [...tabs.values()].find((t) => chromeIds.get(t.id) === chromeId),
     chromeTabId: (tab: Tab) => chromeIds.get(tab.id) ?? -1,
-    webContentsOf: (tab: Tab) => contents.get(tab.id) as unknown as WebContents | undefined,
+    webContentsOf: (tab: Tab) => {
+      const wc = contents.get(tab.id)
+      return wc && !wc.destroyed ? (wc as unknown as WebContents) : undefined
+    },
     windowOfTab: () => win,
     lastFocusedWindow: () => win,
     popupForTabId: (chromeId: number) => {
@@ -245,7 +364,13 @@ function world(): World {
   }
   const host = {
     model,
-    browser: { tabs: { activeTabFor: () => active } },
+    browser: {
+      tabs: { activeTabFor: () => active },
+      screenCapture,
+      extensions: {
+        list: () => [{ id: EXT, name: 'Screen Recorder', icon: 'data:image/png;base64,ICON' }]
+      }
+    },
     dispatch: (extensionId: string, _namespace: string, event: string, args: unknown[]) => {
       dispatched.push({ extensionId, event, args })
     }
@@ -271,6 +396,7 @@ function world(): World {
     api,
     dispatched,
     registered,
+    picker,
     clock,
     win,
     grant: (extensionId, chromeTabId) => grants.add(`${extensionId}:${chromeTabId}`),
@@ -297,11 +423,20 @@ function world(): World {
       return wc
     },
     workerCtx: (extensionId = EXT) =>
-      ({ extensionId, sender: { kind: 'worker' }, window: undefined }) as unknown as ApiContext,
+      ({
+        extensionId,
+        extension: { manifest: { name: 'Probe' } },
+        sender: { kind: 'worker', worker: { versionId: 7 } },
+        tabId: null,
+        window: undefined
+      }) as unknown as ApiContext,
     frameCtx: (wc, extensionId = EXT, parent = null) =>
       ({
         extensionId,
-        sender: { kind: 'frame', webContents: wc, frame: { parent } },
+        extension: { manifest: { name: 'Probe' } },
+        sender: { kind: 'frame', webContents: wc, frame: { parent, routingId: wc.id * 10 } },
+        // An extension page opened as a tab is that tab's page.
+        tabId: [...tabs.entries()].find(([, tab]) => contents.get(tab.id) === wc)?.[0] ?? null,
         window: win
       }) as unknown as ApiContext
   }
@@ -599,24 +734,352 @@ describe('TabCaptureApi', () => {
     expect(w.api.handlers.resolveStreamId(w.frameCtx(w.page(72)), late)).toBe(late)
     expect(w.registered).toEqual([])
   })
+})
 
-  it("desktopCapture.chooseDesktopMedia answers Chrome's cancel until Zenium has a picker", () => {
+// ---------------------------------------------------------------------------
+// Router: chrome.desktopCapture over the core's picker
+// ---------------------------------------------------------------------------
+
+describe('TabCaptureApi for chrome.desktopCapture', () => {
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
+
+  it("puts the picker up for the extension's own page with its name and icon, the panes asked for, and hands back an id its getUserMedia redeems natively", async () => {
     const w = world()
     w.addTab('t1', 5, 'https://example.com/')
-    const ctx = w.frameCtx(w.page(31))
-    expect(w.api.desktopHandlers.chooseDesktopMedia(ctx, ['screen', 'window'], undefined)).toEqual(
-      DESKTOP_CAPTURE_CANCELLED
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    const ctx = w.frameCtx(recorder)
+    const work = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      1,
+      ['screen', 'window', 'audio'],
+      undefined,
+      undefined
+    ) as Promise<unknown>
+    expect(w.picker.requests).toHaveLength(1)
+    expect(w.picker.requests[0]!.init).toEqual({
+      tabId: 'rec',
+      url: '',
+      audio: true,
+      extension: { name: 'Screen Recorder', icon: 'data:image/png;base64,ICON' },
+      kinds: ['window', 'screen'],
+      excludeSystemAudio: false,
+      excludeSelf: false
+    })
+    w.picker.pick('screen:0:0', true)
+    const result = (await work) as { streamId: string; options: { canRequestAudioTrack: boolean } }
+    expect(result.streamId).toMatch(/^zen-desktop-capture-/)
+    expect(result.options).toEqual({ canRequestAudioTrack: true })
+    // Not before the consumer's call: the engine's request has nothing standing for it yet.
+    expect(
+      w.api.allowsMediaRequest(recorder as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(false)
+    // The shim resolves the id: the engine's own source id, under `desktop`.
+    expect(w.api.desktopHandlers.resolveStreamId(ctx, result.streamId)).toEqual({
+      source: 'desktop',
+      id: 'screen:0:0'
+    })
+    expect(w.registered).toEqual([])
+    // The engine asks the consuming document's permission handler, once; the pick is spent by it.
+    expect(
+      w.api.allowsMediaRequest(recorder as unknown as WebContents, `chrome-extension://${OTHER}`)
+    ).toBe(false)
+    expect(
+      w.api.allowsMediaRequest(recorder as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(true)
+    expect(
+      w.api.allowsMediaRequest(recorder as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(false)
+    expect(() => w.api.desktopHandlers.resolveStreamId(ctx, result.streamId)).toThrow(
+      DESKTOP_CAPTURE_INVALID_STATE_ERROR
     )
-    expect(w.api.desktopHandlers.chooseDesktopMedia(ctx, ['tab'], { id: 5 })).toEqual(
-      DESKTOP_CAPTURE_CANCELLED
+  })
+
+  it('a picked tab goes the tabCapture way: the engine’s tab stream registered for the consumer at getUserMedia, under `tab`, its audio on offer', async () => {
+    const w = world()
+    const { wc: target } = w.addTab('t1', 5, 'https://example.com/')
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    const ctx = w.frameCtx(recorder)
+    const work = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      1,
+      ['tab', 'audio'],
+      null,
+      null
+    ) as Promise<unknown>
+    expect(w.picker.requests[0]!.init.kinds).toEqual(['tab'])
+    w.picker.pick('tab:t1')
+    const result = (await work) as { streamId: string; options: { canRequestAudioTrack: boolean } }
+    expect(result.options).toEqual({ canRequestAudioTrack: true })
+    expect(w.api.desktopHandlers.resolveStreamId(ctx, result.streamId)).toEqual({
+      source: 'tab',
+      id: 'engine-1'
+    })
+    expect(w.registered).toEqual([{ target: 5, consumer: 31, id: 'engine-1' }])
+    // The engine's request arrives on the captured tab from the consumer's origin.
+    expect(
+      w.api.allowsMediaRequest(target as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(true)
+    // No audio asked: none on offer with the tab either.
+    const silent = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      2,
+      ['tab'],
+      undefined,
+      undefined
+    ) as Promise<unknown>
+    w.picker.pick('tab:t1')
+    expect(await silent).toMatchObject({ options: { canRequestAudioTrack: false } })
+  })
+
+  it('a window carries no audio; a screen’s audio is the box the user ticked', async () => {
+    const w = world()
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    const ctx = w.frameCtx(recorder)
+    const a = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      1,
+      ['window', 'audio'],
+      undefined,
+      undefined
+    ) as Promise<unknown>
+    w.picker.pick('window:12:0', false)
+    expect(await a).toMatchObject({ options: { canRequestAudioTrack: false } })
+    const b = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      2,
+      ['screen', 'audio'],
+      undefined,
+      undefined
+    ) as Promise<unknown>
+    w.picker.pick('screen:0:0', false)
+    expect(await b).toMatchObject({ options: { canRequestAudioTrack: false } })
+  })
+
+  it('a cancelled picker answers Chrome’s cancel; cancelChooseDesktopMedia takes the picker down and answers the same', async () => {
+    const w = world()
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    const ctx = w.frameCtx(recorder)
+    const cancelled = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      1,
+      ['screen'],
+      undefined,
+      undefined
+    ) as Promise<unknown>
+    w.picker.pick(null)
+    expect(await cancelled).toEqual(DESKTOP_CAPTURE_CANCELLED)
+
+    const withdrawn = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      2,
+      ['screen'],
+      undefined,
+      undefined
+    ) as Promise<unknown>
+    // Another context's id 2, and an unknown id, take nothing down.
+    w.api.desktopHandlers.cancelChooseDesktopMedia(w.frameCtx(w.page(32)), 2)
+    w.api.desktopHandlers.cancelChooseDesktopMedia(ctx, 9)
+    expect(w.picker.requests).toHaveLength(2)
+    let settled = false
+    void withdrawn.then(() => {
+      settled = true
+    })
+    await settle()
+    expect(settled).toBe(false)
+    w.api.desktopHandlers.cancelChooseDesktopMedia(ctx, 2)
+    expect(await withdrawn).toEqual(DESKTOP_CAPTURE_CANCELLED)
+    // Nothing to redeem after a cancel.
+    expect(w.api.desktopHandlers.resolveStreamId(ctx, 'zen-desktop-capture-x-1')).toBeNull()
+  })
+
+  it('a targetTab of a site makes its page the consumer: the engine’s own source id, the site named, no tab pane, the engine’s request on that tab allowed once', async () => {
+    const w = world()
+    const { wc: target } = w.addTab('t1', 5, 'https://docs.example/a')
+    const work = w.api.desktopHandlers.chooseDesktopMedia(
+      w.workerCtx(),
+      1,
+      ['screen', 'window', 'tab', 'audio'],
+      { id: 5, url: 'https://docs.example/a' },
+      { systemAudio: 'exclude', selfBrowserSurface: 'exclude' }
+    ) as Promise<unknown>
+    expect(w.picker.requests[0]!.init).toMatchObject({
+      tabId: 't1',
+      url: 'https://docs.example/a',
+      audio: true,
+      kinds: ['window', 'screen'],
+      excludeSystemAudio: true,
+      excludeSelf: true
+    })
+    w.picker.pick('window:12:0')
+    expect(await work).toEqual({
+      streamId: 'window:12:0',
+      options: { canRequestAudioTrack: false }
+    })
+    // The page's getUserMedia: the engine asks the tab's permission handler from the page's origin.
+    expect(
+      w.api.allowsMediaRequest(target as unknown as WebContents, 'https://other.example')
+    ).toBe(false)
+    expect(w.api.allowsMediaRequest(target as unknown as WebContents, 'https://docs.example')).toBe(
+      true
     )
-    expect(() => w.api.desktopHandlers.chooseDesktopMedia(ctx, [], undefined)).toThrow(
-      DESKTOP_CAPTURE_NO_SOURCES_ERROR
+    expect(w.api.allowsMediaRequest(target as unknown as WebContents, 'https://docs.example')).toBe(
+      false
     )
-    expect(() => w.api.desktopHandlers.chooseDesktopMedia(ctx, ['screen'], { id: 99 })).toThrow(
+  })
+
+  it('a targetTab that is the extension’s own page keeps the shim’s way: an id of this layer, the tab pane, no site named', async () => {
+    const w = world()
+    w.addTab('t1', 5, 'https://example.com/')
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    const work = w.api.desktopHandlers.chooseDesktopMedia(
+      w.workerCtx(),
+      1,
+      ['screen', 'tab'],
+      { id: 31, url: `chrome-extension://${EXT}/record.html` },
+      undefined
+    ) as Promise<unknown>
+    expect(w.picker.requests[0]!.init).toMatchObject({
+      tabId: 'rec',
+      url: '',
+      kinds: ['tab', 'screen']
+    })
+    w.picker.pick('screen:0:0')
+    const result = (await work) as { streamId: string }
+    expect(result.streamId).toMatch(/^zen-desktop-capture-/)
+    expect(w.api.desktopHandlers.resolveStreamId(w.frameCtx(recorder), result.streamId)).toEqual({
+      source: 'desktop',
+      id: 'screen:0:0'
+    })
+  })
+
+  it('a document without a tab (a popup, the side panel) anchors the picker to the focused window’s active tab; excludeSelf then leaves that tab alone', async () => {
+    const w = world()
+    w.addTab('t1', 5, 'https://example.com/')
+    const popup = w.page(40)
+    const work = w.api.desktopHandlers.chooseDesktopMedia(
+      w.frameCtx(popup),
+      1,
+      ['tab'],
+      undefined,
+      { selfBrowserSurface: 'exclude' }
+    ) as Promise<unknown>
+    expect(w.picker.requests[0]!.init).toMatchObject({ tabId: 't1', excludeSelf: false })
+    w.picker.pick(null)
+    expect(await work).toEqual(DESKTOP_CAPTURE_CANCELLED)
+  })
+
+  it("keeps Chrome's errors: no sources, a worker without a target tab, a tab that is not there or has no page", async () => {
+    const w = world()
+    w.addTab('t1', 5, 'https://example.com/')
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    const ctx = w.frameCtx(recorder)
+    const call = (c: ApiContext, sources: unknown, target?: unknown): Promise<unknown> =>
+      w.api.desktopHandlers.chooseDesktopMedia(c, 1, sources, target, undefined) as Promise<unknown>
+    await expect(call(ctx, [])).rejects.toThrow(DESKTOP_CAPTURE_NO_SOURCES_ERROR)
+    await expect(call(w.workerCtx(), ['screen'])).rejects.toThrow(
+      DESKTOP_CAPTURE_WORKER_NEEDS_TAB_ERROR
+    )
+    await expect(call(ctx, ['screen'], { id: 99, url: 'https://example.com/' })).rejects.toThrow(
       DESKTOP_CAPTURE_INVALID_TAB_ERROR
     )
-    expect(w.api.desktopHandlers.cancelChooseDesktopMedia(ctx, 1)).toBe(undefined)
+    await expect(call(ctx, ['screen'], { id: 5 })).rejects.toThrow(DESKTOP_CAPTURE_NO_TAB_URL_ERROR)
+    await expect(call(ctx, ['screen'], { id: 5, url: 'http://example.com/' })).rejects.toThrow(
+      DESKTOP_CAPTURE_TAB_URL_NOT_SECURE_ERROR
+    )
+    // A tab whose page is unloaded has nothing to consume the stream.
+    const { wc: sleeping } = w.addTab('t2', 6, 'https://example.org/')
+    sleeping.destroy()
+    await expect(call(ctx, ['screen'], { id: 6, url: 'https://example.org/' })).rejects.toThrow(
+      DESKTOP_CAPTURE_TARGET_NOT_FOUND_ERROR
+    )
+    expect(w.picker.requests).toEqual([])
+  })
+
+  it('a chrome without the picker surface answers the cancel at once, as a page’s call gets', async () => {
+    const w = world()
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    w.picker.down = true
+    expect(
+      await w.api.desktopHandlers.chooseDesktopMedia(
+        w.frameCtx(recorder),
+        1,
+        ['screen'],
+        undefined,
+        undefined
+      )
+    ).toEqual(DESKTOP_CAPTURE_CANCELLED)
+    expect(w.picker.requests).toEqual([])
+  })
+
+  it('binds the id to the one consuming main frame and to the moment: another document, a sub-frame, a late call and a gone tab are refused', async () => {
+    const w = world()
+    const { wc: target } = w.addTab('t1', 5, 'https://example.com/')
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    const ctx = w.frameCtx(recorder)
+    const pick = async (sources: string[], sourceId: string): Promise<string> => {
+      const work = w.api.desktopHandlers.chooseDesktopMedia(
+        ctx,
+        1,
+        sources,
+        undefined,
+        undefined
+      ) as Promise<{ streamId: string }>
+      w.picker.pick(sourceId)
+      return (await work).streamId
+    }
+    const id = await pick(['screen'], 'screen:0:0')
+    expect(() => w.api.desktopHandlers.resolveStreamId(w.frameCtx(w.page(32)), id)).toThrow(
+      DESKTOP_CAPTURE_INVALID_STATE_ERROR
+    )
+    expect(() => w.api.desktopHandlers.resolveStreamId(w.frameCtx(recorder, OTHER), id)).toThrow(
+      DESKTOP_CAPTURE_INVALID_STATE_ERROR
+    )
+    expect(() => w.api.desktopHandlers.resolveStreamId(w.frameCtx(recorder, EXT, {}), id)).toThrow(
+      DESKTOP_CAPTURE_INVALID_STATE_ERROR
+    )
+    // An id nobody redeemed lapses; the worker has no document to redeem with.
+    w.clock.now += 61_000
+    expect(w.api.desktopHandlers.resolveStreamId(ctx, id)).toBeNull()
+    expect(w.api.desktopHandlers.resolveStreamId(w.workerCtx(), id)).toBeNull()
+    // A picked tab that closed before the consumer's call.
+    const tabId = await pick(['tab'], 'tab:t1')
+    target.destroy()
+    w.api.tabRemoved(5)
+    expect(() => w.api.desktopHandlers.resolveStreamId(ctx, tabId)).toThrow(
+      DESKTOP_CAPTURE_INVALID_STATE_ERROR
+    )
+    // The engine's request must follow the consumer's call closely.
+    const late = await pick(['screen'], 'screen:0:0')
+    w.api.desktopHandlers.resolveStreamId(ctx, late)
+    w.clock.now += 11_000
+    expect(
+      w.api.allowsMediaRequest(recorder as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(false)
+  })
+
+  it('the unload of the extension drops its picks and takes its picker down', async () => {
+    const w = world()
+    const { wc: recorder } = w.addTab('rec', 31, `chrome-extension://${EXT}/record.html`)
+    const ctx = w.frameCtx(recorder)
+    const done = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      1,
+      ['screen'],
+      undefined,
+      undefined
+    ) as Promise<{ streamId: string }>
+    w.picker.pick('screen:0:0')
+    const { streamId } = await done
+    const open = w.api.desktopHandlers.chooseDesktopMedia(
+      ctx,
+      2,
+      ['screen'],
+      undefined,
+      undefined
+    ) as Promise<unknown>
+    w.api.unload(EXT)
+    expect(await open).toEqual(DESKTOP_CAPTURE_CANCELLED)
+    expect(w.api.desktopHandlers.resolveStreamId(ctx, streamId)).toBeNull()
   })
 })
 
@@ -879,48 +1342,150 @@ describe('chrome.tabCapture and chrome.desktopCapture in the shim', () => {
     expect(chrome.desktopCapture).toBe(undefined)
   })
 
-  it("desktopCapture.chooseDesktopMedia: a request id at once, Chrome's cancel through the callback; cancelChooseDesktopMedia withdraws it", async () => {
+  it("desktopCapture.chooseDesktopMedia: a request id at once, leading the host's arguments; the pick through the callback with canRequestAudioTrack", async () => {
     const { chrome, host } = install('frame')
     host.respond = (_ns, method) =>
       method === 'chooseDesktopMedia'
-        ? { ok: true, value: DESKTOP_CAPTURE_CANCELLED }
+        ? {
+            ok: true,
+            value: { streamId: 'zen-desktop-capture-x-1', options: { canRequestAudioTrack: true } }
+          }
         : { ok: true, value: undefined }
     const callback = vi.fn()
-    const id = chrome.desktopCapture.chooseDesktopMedia(['screen', 'window'], callback)
+    const id = chrome.desktopCapture.chooseDesktopMedia(['screen', 'window', 'audio'], callback)
     expect(typeof id).toBe('number')
     expect(host.calls.at(-1)).toEqual({
       namespace: 'desktopCapture',
       method: 'chooseDesktopMedia',
-      args: [['screen', 'window'], undefined]
+      args: [id, ['screen', 'window', 'audio'], undefined, undefined]
     })
     await flush()
-    expect(callback).toHaveBeenCalledWith('', { canRequestAudioTrack: false })
+    expect(callback).toHaveBeenCalledWith('zen-desktop-capture-x-1', { canRequestAudioTrack: true })
     expect(chrome.desktopCapture.DesktopCaptureSourceType.SCREEN).toBe('screen')
     // Without a callback the binding refuses, as Chrome's does.
     expect(() => chrome.desktopCapture.chooseDesktopMedia(['screen'])).toThrow(
       /No matching signature/
     )
-    // A withdrawn request never calls back.
-    const withdrawn = vi.fn()
-    const second = chrome.desktopCapture.chooseDesktopMedia(['tab'], { id: 4 }, withdrawn)
-    expect(second).not.toBe(id)
-    chrome.desktopCapture.cancelChooseDesktopMedia(second)
-    await flush()
-    expect(withdrawn).not.toHaveBeenCalled()
-    expect(host.calls.at(-1)).toEqual({
-      namespace: 'desktopCapture',
-      method: 'cancelChooseDesktopMedia',
-      args: [second]
-    })
+    // The target tab and the options go along; an options object in the tab's place is the options.
+    const tab = { id: 4, url: 'https://docs.example/', index: 0 }
+    chrome.desktopCapture.chooseDesktopMedia(['tab'], tab, { systemAudio: 'exclude' }, vi.fn())
+    expect(host.calls.at(-1)!.args.slice(1)).toEqual([['tab'], tab, { systemAudio: 'exclude' }])
+    chrome.desktopCapture.chooseDesktopMedia(['tab'], { selfBrowserSurface: 'exclude' }, vi.fn())
+    expect(host.calls.at(-1)!.args.slice(1)).toEqual([
+      ['tab'],
+      undefined,
+      { selfBrowserSurface: 'exclude' }
+    ])
     // A refused request: an empty answer with lastError set.
     host.respond = () => ({ ok: false, error: DESKTOP_CAPTURE_INVALID_TAB_ERROR })
     let seen: string | undefined
     const refused = vi.fn(() => {
       seen = chrome.runtime.lastError?.message
     })
-    chrome.desktopCapture.chooseDesktopMedia(['screen'], { id: 99 }, refused)
+    chrome.desktopCapture.chooseDesktopMedia(
+      ['screen'],
+      { id: 99, url: 'https://x.example/' },
+      refused
+    )
     await flush()
     expect(refused).toHaveBeenCalled()
     expect(seen).toBe(DESKTOP_CAPTURE_INVALID_TAB_ERROR)
+  })
+
+  it("cancelChooseDesktopMedia names the call to the host, whose empty answer reaches the callback – Chrome's cancel", async () => {
+    const { chrome, host } = install('frame')
+    let answerChoose: ((result: InvokeResult) => void) | null = null
+    host.invoke = (namespace, method, args) => {
+      host.calls.push({ namespace, method, args })
+      if (method === 'chooseDesktopMedia') {
+        return new Promise<InvokeResult>((resolve) => {
+          answerChoose = resolve
+        })
+      }
+      // The host takes the picker down and answers the pending call with the cancel.
+      if (method === 'cancelChooseDesktopMedia') {
+        answerChoose?.({ ok: true, value: DESKTOP_CAPTURE_CANCELLED })
+      }
+      return Promise.resolve({ ok: true, value: undefined })
+    }
+    const callback = vi.fn()
+    const id = chrome.desktopCapture.chooseDesktopMedia(['tab'], callback)
+    chrome.desktopCapture.cancelChooseDesktopMedia(id)
+    expect(host.calls.at(-1)).toEqual({
+      namespace: 'desktopCapture',
+      method: 'cancelChooseDesktopMedia',
+      args: [id]
+    })
+    await flush()
+    expect(callback).toHaveBeenCalledWith('', { canRequestAudioTrack: false })
+    // An unknown or spent id is nothing to the host.
+    chrome.desktopCapture.cancelChooseDesktopMedia(id)
+    chrome.desktopCapture.cancelChooseDesktopMedia(999)
+    expect(host.calls.filter((c) => c.method === 'cancelChooseDesktopMedia')).toHaveLength(1)
+  })
+
+  it("a desktopCapture id in getUserMedia goes to the host for the engine's terms: a screen's id under `desktop`, a tab's stream under `tab`, an unknown id untouched", async () => {
+    const { chrome, host, getUserMedia } = install('frame', ['desktopCapture'])
+    const stream = fakeStream(2)
+    getUserMedia.mockResolvedValue(stream)
+    host.respond = (_ns, method, args) => {
+      if (method !== 'resolveStreamId') return { ok: true, value: undefined }
+      const [id] = args as [string]
+      if (id === 'zen-desktop-capture-x-1')
+        return { ok: true, value: { source: 'desktop', id: 'screen:0:0' } }
+      if (id === 'zen-desktop-capture-x-2')
+        return { ok: true, value: { source: 'tab', id: 'engine-7' } }
+      return { ok: true, value: null }
+    }
+    const desktop = (id: string): unknown => ({
+      mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: id }
+    })
+    await g.navigator.mediaDevices.getUserMedia({
+      audio: desktop('zen-desktop-capture-x-1'),
+      video: desktop('zen-desktop-capture-x-1')
+    } as Any)
+    expect(host.calls.filter((c) => c.method === 'resolveStreamId')).toEqual([
+      { namespace: 'desktopCapture', method: 'resolveStreamId', args: ['zen-desktop-capture-x-1'] }
+    ])
+    expect(getUserMedia).toHaveBeenLastCalledWith({
+      audio: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: 'screen:0:0' } },
+      video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: 'screen:0:0' } }
+    })
+    // No tabCapture permission: no status reports for a desktop pick.
+    expect(host.calls.some((c) => c.method === 'streamState')).toBe(false)
+    await g.navigator.mediaDevices.getUserMedia({
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: 'zen-desktop-capture-x-2',
+          maxWidth: 1280
+        }
+      }
+    } as Any)
+    expect(getUserMedia).toHaveBeenLastCalledWith({
+      video: {
+        mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: 'engine-7', maxWidth: 1280 }
+      }
+    })
+    await g.navigator.mediaDevices.getUserMedia({ video: desktop('screen:1:0') } as Any)
+    expect(getUserMedia).toHaveBeenLastCalledWith({ video: desktop('screen:1:0') })
+    // A tab id is left to tabCapture, which this extension has not got: untouched.
+    await g.navigator.mediaDevices.getUserMedia({
+      video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: 'zen-tab-capture-x-1' } }
+    } as Any)
+    expect(getUserMedia).toHaveBeenLastCalledWith({
+      video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: 'zen-tab-capture-x-1' } }
+    })
+    expect(host.calls.filter((c) => c.namespace === 'tabCapture')).toEqual([])
+    // A refusal from the host is Chromium's InvalidStateError.
+    host.respond = () => ({ ok: false, error: DESKTOP_CAPTURE_INVALID_STATE_ERROR })
+    await expect(
+      g.navigator.mediaDevices.getUserMedia({ video: desktop('zen-desktop-capture-x-9') } as Any)
+    ).rejects.toMatchObject({
+      name: 'InvalidStateError',
+      message: DESKTOP_CAPTURE_INVALID_STATE_ERROR
+    })
+    // Nothing of desktopCapture reaches a page without the permission.
+    expect(chrome.desktopCapture.chooseDesktopMedia).toBeTypeOf('function')
   })
 })

@@ -5600,6 +5600,13 @@
     padding: 16px;
     overflow-y: auto;
   }
+  /*
+   * One pane alone (an extension asked for one kind): no segment over it, so the title block's
+   * own 16 is the gap to the cards and its hairline is the one that shows on scroll.
+   */
+  .zen-scpick-list[data-alone] {
+    padding-top: 0;
+  }
   .zen-scpick-state {
     display: flex;
     min-height: var(--v2-line-body-box);

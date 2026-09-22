@@ -2,7 +2,10 @@ import type { WebContents } from 'electron'
 import type { Tab } from '../../../shared/types'
 import {
   DESKTOP_CAPTURE_CANCELLED,
+  DESKTOP_CAPTURE_INVALID_STATE_ERROR,
   DESKTOP_CAPTURE_INVALID_TAB_ERROR,
+  DESKTOP_CAPTURE_TARGET_NOT_FOUND_ERROR,
+  DESKTOP_CAPTURE_WORKER_NEEDS_TAB_ERROR,
   TAB_CAPTURE_FINDING_TAB_ERROR,
   TAB_CAPTURE_GRANT_ERROR,
   TAB_CAPTURE_INVALID_TAB_ERROR,
@@ -10,15 +13,22 @@ import {
   TAB_CAPTURE_SAME_TAB_ERROR,
   TAB_CAPTURE_STATES,
   TAB_CAPTURE_TAB_URL_NOT_SECURE_ERROR,
+  desktopCaptureResult,
+  desktopSourceKinds,
   isCapturableUrl,
   isPotentiallyTrustworthyUrl,
   normalizeCaptureOptions,
+  normalizeDesktopOptions,
   normalizeDesktopSources,
+  normalizeDesktopTarget,
   normalizeStreamIdOptions,
   withTabSourceConstraints,
   type CaptureInfo,
+  type DesktopCaptureResult,
+  type DesktopStreamResolution,
   type TabCaptureState
 } from '../../../core/extensions/api/tabCapture'
+import { tabIdOfSource } from '../../../core/screenCapture'
 import type { ActiveTabGrants } from './activeTab'
 import { ApiError, validated, type ApiContext, type ApiHost, type NamespaceHandlers } from './types'
 
@@ -39,6 +49,40 @@ export interface StreamRegistrar {
  * when the consumer calls, so it can afford the offscreen document's start-up.
  */
 const MINTED_ID_TTL_MS = 60_000
+
+/**
+ * How long a `chooseDesktopMedia` pick waits for the consumer's `getUserMedia` (Chrome's
+ * `DesktopStreamsRegistry` keeps a stream ten seconds; an extension that messages the id to a
+ * target tab's content script first gets the same allowance a minted tab id does), and how long
+ * the engine's media request may follow the consumer's call once it is under way.
+ */
+const PICK_TTL_MS = 60_000
+const ARMED_TTL_MS = 10_000
+
+/**
+ * Chrome's `DesktopStreamsRegistry` entry: what `chooseDesktopMedia` picked, for the one document
+ * that may take it (`chooseDesktopMedia`'s `targetTab`, else the calling document), once.
+ */
+interface DesktopPick {
+  /**
+   * The id the extension was answered: one of this layer's when the consumer is a document of
+   * the extension (its shim turns it into the engine's terms at `getUserMedia`), the engine's own
+   * source id when the consumer is a page (a `targetTab` of a site), which has no shim.
+   */
+  streamId: string
+  extensionId: string
+  /** The `WebContents` whose main frame may redeem the id. */
+  consumer: number
+  /** The consuming document's origin, as the engine's media request names it. */
+  origin: string
+  /** A `desktopCapturer` screen or window, or a Zenium tab. */
+  source: { kind: 'desktop'; id: string } | { kind: 'tab'; tabId: string }
+  createdAt: number
+  /** The consumer's `getUserMedia` is under way: the engine's media request may arrive. */
+  armedAt: number | null
+  /** The engine's request was approved: the entry is spent (Chrome hands a stream over once). */
+  spent: boolean
+}
 
 /** Chrome's `TabCaptureRegistry::LiveRequest`: one capture request of one extension on one tab. */
 interface LiveRequest {
@@ -78,9 +122,21 @@ interface LiveRequest {
  * consumer document's life: Chrome observes the media request, which the engine does not report
  * to the browser layer here. `getCapturedTabs` and `onStatusChanged` cover `capture`'s requests
  * only, like Chrome's (`getMediaStreamId`'s are anonymous).
+ *
+ * `chrome.desktopCapture.chooseDesktopMedia` puts up the chrome's screen picker (the core's
+ * `ScreenCaptureService`, the one `getDisplayMedia` uses) with the extension's name and icon and
+ * the panes it asked for, and answers the pick as a stream id (Chrome's `DesktopStreamsRegistry`
+ * hand-over): the engine takes a `desktopCapturer` source id natively from a `getUserMedia` with
+ * `chromeMediaSource: "desktop"`, once the session's permission handler has approved the media
+ * request it makes on the consuming document (`allowsMediaRequest`, with the pick standing for
+ * it); a picked tab goes the `tabCapture` way (the engine refuses a tab under `desktop`), which
+ * the consumer's shim arranges at `getUserMedia` through `resolveStreamId`.
  */
 export class TabCaptureApi {
   private readonly requests: LiveRequest[] = []
+  private readonly picks: DesktopPick[] = []
+  /** `chooseDesktopMedia` calls waiting on the picker: the caller's request id → the core's. */
+  private readonly choices = new Map<string, string>()
   private minted = 0
   private readonly prefix = Math.random().toString(36).slice(2, 10)
 
@@ -99,11 +155,15 @@ export class TabCaptureApi {
     streamState: (ctx, streamId, state) => this.streamState(ctx, streamId, state)
   }
 
-  /** `chrome.desktopCapture`: the picker is a UI piece to come; until then every call is a cancel. */
+  /**
+   * `chrome.desktopCapture`: the shim leads `chooseDesktopMedia`'s arguments with its request id,
+   * as Chrome's binding does, so `cancelChooseDesktopMedia` can name the call.
+   */
   readonly desktopHandlers: NamespaceHandlers = {
-    chooseDesktopMedia: (ctx, sources, targetTab) =>
-      this.chooseDesktopMedia(ctx, sources, targetTab),
-    cancelChooseDesktopMedia: () => undefined
+    chooseDesktopMedia: (ctx, requestId, sources, targetTab, options) =>
+      this.chooseDesktopMedia(ctx, requestId, sources, targetTab, options),
+    cancelChooseDesktopMedia: (ctx, requestId) => this.cancelChooseDesktopMedia(ctx, requestId),
+    resolveStreamId: (ctx, streamId) => this.resolveDesktopStreamId(ctx, streamId)
   }
 
   // ---------------------------------------------------------------------------
@@ -246,15 +306,23 @@ export class TabCaptureApi {
   // ---------------------------------------------------------------------------
 
   /**
-   * The engine asks the target tab's permission handler about a `getUserMedia` naming no device
-   * (`media` with an empty `mediaTypes`) from `securityOrigin`: allowed when a registered request
-   * of that origin stands on the tab. The engine's own registry already tied the id to the one
-   * consuming frame and to this moment.
+   * The engine asks a permission handler about a `getUserMedia` naming no device (`media` with
+   * an empty `mediaTypes`) from `securityOrigin`, on `target`: allowed when an extension's
+   * capture stands behind it – a registered `tabCapture` request of that origin on the tab
+   * (`target` is the captured tab), or a `chooseDesktopMedia` pick the consuming document
+   * (`target`, for a screen or window; the picked tab, for a tab) is redeeming now, which this
+   * spends. The engine's own registry already tied a tab stream to the one consuming frame and to
+   * this moment; a pick of a screen or window is tied here.
    */
   allowsMediaRequest(target: WebContents, securityOrigin: string | undefined): boolean {
     if (!securityOrigin) return false
     const origin = originOf(securityOrigin)
     if (!origin) return false
+    const pick = this.armedPick(target, origin)
+    if (pick) {
+      pick.spent = true
+      return true
+    }
     const tab = this.host.model.zenTab(target.id)
     if (!tab) return false
     return this.requests.some(
@@ -268,7 +336,10 @@ export class TabCaptureApi {
     )
   }
 
-  /** The target tab closed: its captures are over. */
+  /**
+   * The target tab closed: its captures are over. A `chooseDesktopMedia` pick of it stays until
+   * its consumer calls (Chrome's registry answers that call `Invalid state`) or it lapses.
+   */
   tabRemoved(chromeTabId: number): void {
     for (const request of [...this.requests]) {
       if (request.chromeTabId !== chromeTabId) continue
@@ -282,28 +353,205 @@ export class TabCaptureApi {
     for (const request of [...this.requests]) {
       if (request.extensionId === extensionId) this.remove(request)
     }
+    for (const pick of [...this.picks]) {
+      if (pick.extensionId === extensionId) this.picks.splice(this.picks.indexOf(pick), 1)
+    }
+    for (const [key, requestId] of [...this.choices]) {
+      if (!key.startsWith(`${extensionId}:`)) continue
+      this.choices.delete(key)
+      this.host.browser.screenCapture.respond(requestId, null)
+    }
   }
 
   // ---------------------------------------------------------------------------
   // desktopCapture
   // ---------------------------------------------------------------------------
 
-  private chooseDesktopMedia(
-    _ctx: ApiContext,
-    sources: unknown,
-    targetTab: unknown
-  ): typeof DESKTOP_CAPTURE_CANCELLED {
-    validated(() => normalizeDesktopSources(sources))
-    if (targetTab !== undefined && targetTab !== null) {
-      const tab = targetTab as Record<string, unknown>
-      if (typeof tab !== 'object' || (tab.id !== undefined && typeof tab.id !== 'number')) {
+  /**
+   * Chrome's `DesktopCaptureChooseDesktopMediaFunction`: the arguments checked in its order, the
+   * picker up over the target tab (or the calling document's tab, or the focused window's
+   * active tab for a document without one – a popup, the side panel) with the extension named
+   * where a site would be, the pick answered as a stream id for the consuming document. A worker
+   * has no document to consume the stream, so it must name a `targetTab`, as in Chrome.
+   *
+   * A `targetTab` of a site makes that page the consumer: it has no shim, so it gets the engine's
+   * own source id, which Electron parses natively for a screen or window; a tab it could not take
+   * that way, so the tab pane stays out of its picker.
+   */
+  private async chooseDesktopMedia(
+    ctx: ApiContext,
+    requestId: unknown,
+    rawSources: unknown,
+    rawTarget: unknown,
+    rawOptions: unknown
+  ): Promise<DesktopCaptureResult> {
+    const sources = validated(() => normalizeDesktopSources(rawSources))
+    const target = validated(() => normalizeDesktopTarget(rawTarget))
+    const options = validated(() => normalizeDesktopOptions(rawOptions))
+    const audio = sources.includes('audio')
+    const own = extensionOrigin(ctx.extensionId)
+    let consumer: WebContents
+    let origin: string
+    let anchor: Tab | undefined
+    if (target) {
+      let found: { url: string; wc: WebContents | undefined }
+      try {
+        found = this.consumerById(target.id)
+      } catch {
         throw new ApiError(DESKTOP_CAPTURE_INVALID_TAB_ERROR)
       }
-      if (typeof tab.id === 'number' && !this.host.model.zenTab(tab.id)) {
-        throw new ApiError(DESKTOP_CAPTURE_INVALID_TAB_ERROR)
-      }
+      if (!found.wc) throw new ApiError(DESKTOP_CAPTURE_TARGET_NOT_FOUND_ERROR)
+      consumer = found.wc
+      origin = originOf(target.url) ?? target.url
+      anchor = this.host.model.zenTab(target.id) ?? this.anchorTabOf(ctx)
+    } else {
+      if (ctx.sender.kind !== 'frame') throw new ApiError(DESKTOP_CAPTURE_WORKER_NEEDS_TAB_ERROR)
+      consumer = ctx.sender.webContents
+      origin = own
+      anchor = (ctx.tabId ? this.host.model.tab(ctx.tabId) : undefined) ?? this.anchorTabOf(ctx)
     }
-    return DESKTOP_CAPTURE_CANCELLED
+    if (!anchor) throw new ApiError(DESKTOP_CAPTURE_TARGET_NOT_FOUND_ERROR)
+    // The consumer's shim resolves an id of this layer's; a site's page has none.
+    const shimmed = origin === own
+    const kinds = desktopSourceKinds(sources).filter((kind) => shimmed || kind !== 'tab')
+    const anchorWc = this.host.model.webContentsOf(anchor)
+    const opened = this.host.browser.screenCapture.open({
+      tabId: anchor.id,
+      url: shimmed ? '' : (target?.url ?? ''),
+      audio,
+      extension: this.presentationOf(ctx),
+      kinds,
+      excludeSystemAudio: options.excludeSystemAudio,
+      excludeSelf: options.excludeSelf && anchorWc !== undefined && anchorWc.id === consumer.id
+    })
+    const key = opened.id ? choiceKey(ctx, requestId) : null
+    if (key && opened.id) this.choices.set(key, opened.id)
+    const picked = await opened.answer
+    if (key) this.choices.delete(key)
+    if (!picked.sourceId || consumer.isDestroyed()) return DESKTOP_CAPTURE_CANCELLED
+    const tabId = tabIdOfSource(picked.sourceId)
+    const source: DesktopPick['source'] = tabId
+      ? { kind: 'tab', tabId }
+      : { kind: 'desktop', id: picked.sourceId }
+    // Chrome's `audio_share`: the system-audio box for a screen; a tab's own sound whenever
+    // audio was asked for (the tab share carries it, as Chrome's "Share tab audio" does).
+    const canRequestAudioTrack = source.kind === 'tab' ? audio : picked.audio
+    const streamId = shimmed ? this.mintDesktop() : picked.sourceId
+    this.prunePicks()
+    this.picks.push({
+      streamId,
+      extensionId: ctx.extensionId,
+      consumer: consumer.id,
+      origin,
+      source,
+      createdAt: this.now(),
+      armedAt: shimmed ? null : this.now(),
+      spent: false
+    })
+    return desktopCaptureResult(streamId, canRequestAudioTrack)
+  }
+
+  /** Chrome's `DesktopCaptureRequestsRegistry::CancelRequest`: the picker goes, the call answers empty. */
+  private cancelChooseDesktopMedia(ctx: ApiContext, requestId: unknown): void {
+    const key = choiceKey(ctx, requestId)
+    const pending = this.choices.get(key)
+    if (!pending) return
+    this.choices.delete(key)
+    this.host.browser.screenCapture.respond(pending, null)
+  }
+
+  /**
+   * The consuming extension document is about to call `getUserMedia` with an id
+   * `chooseDesktopMedia` answered: the engine's terms for it – the `desktopCapturer` id under
+   * `chromeMediaSource: "desktop"`, or for a picked tab the engine's tab stream, registered for
+   * this document now, under `"tab"` – and the pick armed for the media request that follows.
+   * Null for an id this layer did not mint (the constraints stay as they are).
+   */
+  private resolveDesktopStreamId(
+    ctx: ApiContext,
+    streamId: unknown
+  ): DesktopStreamResolution | null {
+    if (typeof streamId !== 'string' || ctx.sender.kind !== 'frame') return null
+    this.prunePicks()
+    const pick = this.picks.find((p) => p.streamId === streamId)
+    if (!pick) return null
+    const consumerWc = ctx.sender.webContents
+    if (
+      pick.extensionId !== ctx.extensionId ||
+      pick.consumer !== consumerWc.id ||
+      ctx.sender.frame.parent !== null ||
+      pick.spent ||
+      pick.armedAt !== null
+    ) {
+      throw new ApiError(DESKTOP_CAPTURE_INVALID_STATE_ERROR)
+    }
+    if (pick.source.kind === 'tab') {
+      const tab = this.host.model.tab(pick.source.tabId)
+      const targetWc = tab ? this.host.model.webContentsOf(tab) : undefined
+      if (!targetWc) {
+        this.picks.splice(this.picks.indexOf(pick), 1)
+        throw new ApiError(DESKTOP_CAPTURE_INVALID_STATE_ERROR)
+      }
+      const engineId = this.registrar.register(targetWc, consumerWc)
+      pick.armedAt = this.now()
+      return { source: 'tab', id: engineId }
+    }
+    pick.armedAt = this.now()
+    return { source: 'desktop', id: pick.source.id }
+  }
+
+  /**
+   * The pick behind a media request the engine makes on `target` for `origin`: a screen or
+   * window's, when `target` is the consuming document; a tab's, when `target` is the picked tab.
+   */
+  private armedPick(target: WebContents, origin: string): DesktopPick | undefined {
+    this.prunePicks()
+    const now = this.now()
+    const tab = this.host.model.zenTab(target.id)
+    return this.picks.find(
+      (p) =>
+        p.origin === origin &&
+        !p.spent &&
+        p.armedAt !== null &&
+        now - p.armedAt <= ARMED_TTL_MS &&
+        (p.source.kind === 'desktop'
+          ? p.consumer === target.id
+          : tab !== undefined && p.source.tabId === tab.id)
+    )
+  }
+
+  /**
+   * Picks past their time go. A spent one stays until then, so a second `getUserMedia` with its
+   * id gets Chrome's `Invalid state` rather than the engine's word on an id it cannot parse.
+   */
+  private prunePicks(): void {
+    const now = this.now()
+    for (const pick of [...this.picks]) {
+      if (now - pick.createdAt > PICK_TTL_MS) this.picks.splice(this.picks.indexOf(pick), 1)
+    }
+  }
+
+  /** The extension as the picker names it: its name and icon, from the browser's record of it. */
+  private presentationOf(ctx: ApiContext): { name: string; icon: string | null } {
+    const info = this.host.browser.extensions.list().find((i) => i.id === ctx.extensionId)
+    return {
+      name: info?.name ?? ctx.extension.manifest.name ?? ctx.extensionId,
+      icon: info?.icon ?? null
+    }
+  }
+
+  /**
+   * Chrome makes the picker modal to the target's own window, else to the last active browser
+   * window: the tab it shows over is that window's active one.
+   */
+  private anchorTabOf(ctx: ApiContext): Tab | undefined {
+    const win = ctx.window ?? this.host.model.lastFocusedWindow()
+    return win ? this.host.browser.tabs.activeTabFor(win) : undefined
+  }
+
+  private mintDesktop(): string {
+    this.minted += 1
+    return `zen-desktop-capture-${this.prefix}-${this.minted}`
   }
 
   // ---------------------------------------------------------------------------
@@ -447,6 +695,18 @@ function isState(value: unknown): value is TabCaptureState {
 
 function extensionOrigin(extensionId: string): string {
   return `chrome-extension://${extensionId}`
+}
+
+/**
+ * A `chooseDesktopMedia` call's key: the shim's request id counts per document or worker, so
+ * the calling context qualifies it (Chrome keys its registry by the calling process).
+ */
+function choiceKey(ctx: ApiContext, requestId: unknown): string {
+  const context =
+    ctx.sender.kind === 'frame'
+      ? `f${ctx.sender.webContents.id}:${ctx.sender.frame.routingId}`
+      : `w${ctx.sender.worker.versionId}`
+  return `${ctx.extensionId}:${context}:${String(requestId)}`
 }
 
 /**

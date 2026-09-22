@@ -19,8 +19,20 @@ export const PICKER_PANES: ReadonlyArray<{ id: PickerPane; label: string }> = [
   { id: 'screen', label: 'Entire screen' }
 ]
 
-/** The pane the picker opens on: the tab pane, as Chrome's does. */
-export const INITIAL_PANE: PickerPane = 'tab'
+/**
+ * The panes this request shows, in the picker's order: a page's call has all three; an
+ * extension's (`chrome.desktopCapture`) the kinds it asked for, as Chrome hides the rest.
+ */
+export function panesOf(
+  request: ScreenCaptureRequest
+): ReadonlyArray<{ id: PickerPane; label: string }> {
+  return PICKER_PANES.filter((p) => request.kinds.includes(p.id))
+}
+
+/** The pane the picker opens on: the first on offer – the tab pane, as Chrome's does. */
+export function initialPane(request: ScreenCaptureRequest): PickerPane {
+  return panesOf(request)[0]?.id ?? 'tab'
+}
 
 /** The picker this window shows now: the request of its active tab (tab-modal, like Chrome's). */
 export function currentScreenCaptureRequest(state: UIState): ScreenCaptureRequest | null {
@@ -32,8 +44,14 @@ export function currentScreenCaptureRequest(state: UIState): ScreenCaptureReques
 /** Chrome's title line and the line under it. */
 export const PICKER_TITLE = 'Choose what to share'
 
+/**
+ * Who is asking: the site, or the extension – and, when the extension captures for a site's
+ * tab (`chooseDesktopMedia`'s `targetTab`), whom it shares with, as Chrome's picker says.
+ */
 export function pickerDescription(request: ScreenCaptureRequest): string {
-  return `${request.origin} wants to share the contents of your screen`
+  if (!request.extension) return `${request.origin} wants to share the contents of your screen`
+  const who = `${request.extension.name} wants to share the contents of your screen`
+  return request.origin ? `${who} with ${request.origin}` : who
 }
 
 /** The sources of one pane, in the core's order (the calling tab first in the tab pane). */
