@@ -245,6 +245,15 @@ export function checkManifest(manifest, sources = sourceDriverClasses()) {
       problems.push(`${driver.id}: runs through ${SHARED_SCRIPT} and needs its handshake dir`)
     if (driver.script && !existsSync(join(REPO_ROOT, driver.script)))
       problems.push(`${driver.id}: script ${driver.script} does not exist`)
+    else if (
+      driver.script &&
+      !driver.out &&
+      // Reads it (an expansion), not merely sets it for the shared script (android-ntp-morph-demo.sh).
+      !/\$\{?DEMO_OUT\b/.test(readFileSync(join(REPO_ROOT, driver.script), 'utf8'))
+    )
+      problems.push(
+        `${driver.id}: ${driver.script} does not read DEMO_OUT; name its fixed output path as 'out' so the runner moves its findings`
+      )
     if (driver.dir && classes.length === 1 && !driver.script) {
       const declared = declaredHandshakeDir(classes[0])
       if (declared && declared !== driver.dir)

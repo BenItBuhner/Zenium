@@ -775,6 +775,7 @@
       "shard": "phone-d",
       "mirrors": "android-ntp-morph-demo.yml:space",
       "script": ".github/scripts/android-ntp-morph-demo.sh",
+      "out": "artifacts/android-ntp-morph-demo",
       "env": {
         "MORPH_ACT": "space"
       },
@@ -953,6 +954,7 @@
       "shard": "webview",
       "mirrors": "android-ntp-morph-demo.yml:private",
       "script": ".github/scripts/android-ntp-morph-demo.sh",
+      "out": "artifacts/android-ntp-morph-demo",
       "env": {
         "MORPH_ACT": "private",
         "WEBVIEW_APK": ""
