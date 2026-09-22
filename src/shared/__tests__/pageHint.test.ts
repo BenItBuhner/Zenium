@@ -223,4 +223,50 @@ describe('the phone toast as a page hint', () => {
     expect(el.isConnected).toBe(false)
     expect(frames.pending).toBe(0)
   })
+
+  it("goes at the page's first touch, its stand cut short (MED-03)", () => {
+    reduceMotion(false)
+    let listener: ((hint: PageHint | null) => void) | null = null
+    installHint((l) => {
+      listener = l
+    })
+    listener!(fullscreenExitHint(false))
+    const el = document.documentElement.querySelector<HTMLElement>('zenium-fullscreen-hint')!
+    for (let i = 0; i < 200 && frames.pending > 0; i++) frames.tick()
+    expect(el.style.transform).toBe('translateY(0.00px)')
+    // A touch a moment into its stand: out it goes, thinning, well before its 2.8 s.
+    vi.advanceTimersByTime(300)
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    frames.tick()
+    expect(el.isConnected).toBe(true)
+    expect(Number.parseFloat(el.style.opacity)).toBeLessThan(1)
+    for (let i = 0; i < 200 && frames.pending > 0; i++) frames.tick()
+    expect(el.isConnected).toBe(false)
+    // The stand's timer is gone with it: nothing fires at the 2.8 s mark.
+    vi.advanceTimersByTime(TOAST_SHOW_MS)
+    expect(frames.pending).toBe(0)
+    // A second touch, the toast gone, is nobody's.
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(frames.pending).toBe(0)
+  })
+
+  it('a touch after the stand has ended changes nothing: the leave under way goes on', () => {
+    reduceMotion(false)
+    let listener: ((hint: PageHint | null) => void) | null = null
+    installHint((l) => {
+      listener = l
+    })
+    listener!(fullscreenExitHint(false))
+    const el = document.documentElement.querySelector<HTMLElement>('zenium-fullscreen-hint')!
+    for (let i = 0; i < 200 && frames.pending > 0; i++) frames.tick()
+    vi.advanceTimersByTime(TOAST_SHOW_MS)
+    frames.tick()
+    const leaving = frames.pending
+    expect(leaving).toBe(1)
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    // The one leave, not a second one over it.
+    expect(frames.pending).toBe(1)
+    for (let i = 0; i < 200 && frames.pending > 0; i++) frames.tick()
+    expect(el.isConnected).toBe(false)
+  })
 })

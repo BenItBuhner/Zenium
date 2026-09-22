@@ -3,9 +3,10 @@ import { FULLSCREEN_EXIT_HINT, TOAST_SHOW_MS, type PageHint } from '@shared/full
 import { fullscreenHintDue, onFullscreenEntered, type FullscreenHintIo } from '../fullscreenHint'
 
 /*
- * GN-20: the first time a page goes fullscreen (a video's, a canvas's or an embed's alike – every
- * fullscreen is left the same way) the phone shows how to leave, once ever, keyed
- * in settings as the gesture hint (FRE-07) is.
+ * GN-20: the first time a page puts a video in fullscreen the phone shows how to leave, once
+ * ever, keyed in settings as the gesture hint (FRE-07) is. MED-03: any other element's
+ * fullscreen (a canvas, a slide deck, an embed without a video) shows the same toast every time,
+ * as Chrome for Android's does.
  */
 
 function io(
@@ -29,29 +30,35 @@ function io(
   return rec
 }
 
+const toast = (dark: boolean): PageHint => ({
+  text: FULLSCREEN_EXIT_HINT,
+  exit: null,
+  duration: TOAST_SHOW_MS,
+  dark,
+  kind: 'toast'
+})
+
 describe('the first-time fullscreen exit hint (GN-20)', () => {
   it('is owed until it has had its showing', () => {
     expect(fullscreenHintDue({ fullscreenHintDone: false })).toBe(true)
     expect(fullscreenHintDue({ fullscreenHintDone: true })).toBe(false)
   })
 
-  it("shows once, in Chrome's words, as the chrome's toast drawn in the page", () => {
+  it("shows once for a video, in Chrome's words, as the chrome's toast drawn in the page", () => {
     const rec = io(false, true)
-    expect(onFullscreenEntered(rec)).toBe(true)
+    expect(onFullscreenEntered(rec, true)).toBe(true)
     expect(rec.marked).toBe(1)
-    expect(rec.posted).toEqual([
-      { text: FULLSCREEN_EXIT_HINT, exit: null, duration: TOAST_SHOW_MS, dark: true, kind: 'toast' }
-    ])
+    expect(rec.posted).toEqual([toast(true)])
     expect(FULLSCREEN_EXIT_HINT).toBe('Swipe down or press back to exit full screen')
     // The second video: the record was written as the first went up, nothing more.
-    expect(onFullscreenEntered(rec)).toBe(false)
+    expect(onFullscreenEntered(rec, true)).toBe(false)
     expect(rec.posted).toHaveLength(1)
     expect(rec.marked).toBe(1)
   })
 
-  it('shows nothing once the record says it was shown', () => {
+  it('shows nothing for a video once the record says it was shown', () => {
     const rec = io(true)
-    expect(onFullscreenEntered(rec)).toBe(false)
+    expect(onFullscreenEntered(rec, true)).toBe(false)
     expect(rec.posted).toEqual([])
     expect(rec.marked).toBe(0)
   })
@@ -71,8 +78,31 @@ describe('the first-time fullscreen exit hint (GN-20)', () => {
         posted.push(hint)
       }
     }
-    onFullscreenEntered(rec)
+    onFullscreenEntered(rec, true)
     expect(markedBeforePost).toBe(true)
     expect(posted[0]?.dark).toBe(false)
+  })
+})
+
+describe("the exit hint for an element that is not a video's (MED-03)", () => {
+  it('shows the same toast every time, record or no record', () => {
+    const rec = io(true, false)
+    expect(onFullscreenEntered(rec, false)).toBe(true)
+    expect(onFullscreenEntered(rec, false)).toBe(true)
+    expect(rec.posted).toEqual([toast(false), toast(false)])
+    // Nothing to record: the record was written already.
+    expect(rec.marked).toBe(0)
+  })
+
+  it("counts as the first-time hint's showing: the way out has been shown", () => {
+    const rec = io(false, true)
+    expect(onFullscreenEntered(rec, false)).toBe(true)
+    expect(rec.marked).toBe(1)
+    expect(rec.posted).toEqual([toast(true)])
+    // The first video after it owes nothing more; the next canvas shows the toast again.
+    expect(onFullscreenEntered(rec, true)).toBe(false)
+    expect(onFullscreenEntered(rec, false)).toBe(true)
+    expect(rec.posted).toHaveLength(2)
+    expect(rec.marked).toBe(1)
   })
 })

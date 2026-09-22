@@ -211,6 +211,8 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
   let stand: ReturnType<typeof setTimeout> | null = null
   let gone: ReturnType<typeof setTimeout> | null = null
   let motion: Cancel | null = null
+  /** The toast's ear for the page's first touch, while it stands; calling it stops listening. */
+  let touch: Cancel | null = null
 
   const clearTimers = (): void => {
     if (stand !== null) clearTimeout(stand)
@@ -219,6 +221,8 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
     gone = null
     motion?.()
     motion = null
+    touch?.()
+    touch = null
   }
   const remove = (): void => {
     clearTimers()
@@ -250,18 +254,26 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
   /**
    * The toast: in from below its edge on the gentle spring, its stand, out on the snappy one
    * thinning with its travel; a fade in place either way under reduced motion. `will-change`
-   * only while it moves (§9.33).
+   * only while it moves (§9.33). Its stand ends early at the page's first touch (MED-03, as
+   * Chrome's fullscreen toast goes at a touch): the user is on to the page, and the hint has
+   * been read or is in the way.
    */
   const showToast = (el: HTMLElement, hint: PageHint): void => {
     const leaveWith = (leave: (done: () => void) => Cancel): void => {
-      stand = setTimeout(() => {
+      const go = (): void => {
+        if (stand !== null) clearTimeout(stand)
         stand = null
+        touch?.()
+        touch = null
         motion?.()
         motion = leave(() => {
           motion = null
           if (current === el) remove()
         })
-      }, hint.duration)
+      }
+      stand = setTimeout(go, hint.duration)
+      document.addEventListener('pointerdown', go, { capture: true, once: true })
+      touch = () => document.removeEventListener('pointerdown', go, { capture: true })
     }
     if (reducedMotion()) {
       motion = fadeTo(el, 0, 1, TOAST_REDUCED_FADE_MS, () => (motion = null))
