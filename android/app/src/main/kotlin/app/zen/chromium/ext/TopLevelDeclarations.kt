@@ -253,16 +253,142 @@ object TopLevelDeclarations {
         else -> false
     }
 
+    /** A token that carries the line before it on (no semicolon is inserted before it): an operator, a call or index, a tagged template. */
     private fun continuesExpression(token: Token): Boolean = when (token.kind) {
         Kind.PUNCT -> token.text != ";" && token.text != ","
         Kind.OPEN -> token.text != "{"
         Kind.WORD -> token.text == "in" || token.text == "instanceof"
+        Kind.LITERAL -> token.text == "template"
         else -> false
+    }
+
+    /**
+     * Words that open a statement that is no expression (a declaration, a block statement, a
+     * control statement), and the clause words a split before them would leave at a statement's head.
+     */
+    private val STATEMENT_WORDS = setOf(
+        "var", "let", "const", "function", "class", "if", "for", "while", "do", "switch", "try", "with", "return", "throw",
+        "break", "continue", "debugger", "import", "export", "enum", "else", "catch", "finally", "case", "default"
+    )
+
+    /** Punctuation an expression statement can begin with (a prefix operator). */
+    private val EXPRESSION_PREFIXES = setOf("!", "~", "+", "-", "++", "--")
+
+    /** After the `}` of a statement one of these opened, a following word of these carries the statement on. */
+    private val STATEMENT_CONTINUATIONS = setOf("else", "catch", "finally")
+
+    /**
+     * Words whose statement ends at the `}` closing what they opened, whatever follows (a
+     * declaration or a block statement has no expression to carry on: `function f() {}` and then
+     * `(function () {})()` on the next line are two statements in Chrome, the second the script's
+     * value); a `var`, `return` or `throw` whose `}` closes an expression is read on by
+     * [continuesExpression], as the line-break rule has it.
+     */
+    private val BLOCK_WORDS = setOf("function", "async", "class", "if", "for", "while", "do", "switch", "try", "with", "{")
+
+    /**
+     * The last statement of `text[from, to)` when it is an expression statement: the offset of its
+     * first token and the end of its last (a trailing `;`, comments and blank lines left out), null
+     * when the script ends in a declaration, a block, a control statement, a label, or nothing.
+     * This is what Chrome answers for a `files` or `code` injection – the script's completion
+     * value, as `eval` gives it – and the exec wrapper ([ExtensionScripts.execScript]) keeps that
+     * statement's value in its completion parameter to return after the mirror ran. Statement
+     * boundaries: `;` at the top level; the `}` closing a statement a keyword opened (`function`,
+     * `class`, `if`, `try`, …) unless what follows carries the statement on (`else`, `catch`,
+     * `finally`, `while` after `do`; after a `var`, `return` or `throw`, anything that continues an
+     * expression, [BLOCK_WORDS]); a line end where an
+     * expression can end and the next line does not continue one (automatic semicolon insertion,
+     * as [skipInitializer] reads it). Only a split is ever wrong in a way that matters (an
+     * assignment written into the middle of an expression), so the reading merges where it is
+     * unsure: a statement it read as one when it was two returns no value, nothing more. Nothing
+     * for a text of [MAX_SCAN_CHARS] or more, as [scanSource]: a bundle that size is a function
+     * of its own.
+     */
+    fun lastExpressionStatement(text: CharSequence, from: Int = 0, to: Int = text.length): IntArray? {
+        if (to - from >= MAX_SCAN_CHARS) return null
+        val lexer = Lexer(text, from, to)
+        var depth = 0
+        var start = -1
+        var expression = false
+        var word: String? = null
+        var count = 0
+        var lastEnd = -1
+        var prev: Token? = null
+        var last: IntArray? = null
+        fun close(end: Int) {
+            if (start >= 0) last = if (expression && end > start) intArrayOf(start, end) else null
+            start = -1
+        }
+        while (true) {
+            val token = lexer.next() ?: break
+            if (token.kind == Kind.NEWLINE) {
+                val p = prev
+                if (depth == 0 && start >= 0 && p != null && expressionCanEnd(p.kind, p.text)) {
+                    lexer.skipNewlines()
+                    val next = lexer.peek()
+                    if (next == null || !continuesExpression(next)) close(lastEnd)
+                }
+                continue
+            }
+            if (depth == 0 && start < 0 && !(token.kind == Kind.PUNCT && token.text == ";")) {
+                start = token.start
+                count = 0
+                word = null
+                expression = when (token.kind) {
+                    Kind.WORD -> when {
+                        token.text in STATEMENT_WORDS -> { word = token.text; false }
+                        token.text == "async" && lexer.peekWord() == "function" -> { word = token.text; false }
+                        else -> true
+                    }
+                    Kind.OPEN -> token.text != "{"
+                    Kind.PUNCT -> token.text in EXPRESSION_PREFIXES
+                    Kind.LITERAL -> true
+                    else -> false
+                }
+                if (token.kind == Kind.OPEN && token.text == "{") word = "{"
+            } else if (depth == 0 && start >= 0 && count == 1 && expression && token.kind == Kind.PUNCT && token.text == ":") {
+                expression = false // a label
+            }
+            count++
+            when (token.kind) {
+                Kind.OPEN -> depth++
+                Kind.CLOSE -> {
+                    if (depth > 0) depth--
+                    if (depth == 0 && token.text == "}" && word != null) {
+                        lexer.skipNewlines()
+                        val next = lexer.peek()
+                        val carriesOn = next != null && (
+                            (word !in BLOCK_WORDS && continuesExpression(next)) ||
+                                (next.kind == Kind.WORD && (next.text in STATEMENT_CONTINUATIONS || (word == "do" && next.text == "while")))
+                            )
+                        if (!carriesOn) {
+                            lastEnd = token.end
+                            close(lastEnd)
+                            prev = token
+                            continue
+                        }
+                    }
+                }
+                Kind.PUNCT -> if (depth == 0 && token.text == ";") {
+                    close(lastEnd)
+                    prev = token
+                    continue
+                }
+                else -> {}
+            }
+            lastEnd = token.end
+            prev = token
+        }
+        // A bracket left open (a text the WebView will refuse to compile) is no statement to write into.
+        if (depth != 0) return null
+        close(lastEnd)
+        return last
     }
 
     private enum class Kind { WORD, LITERAL, PUNCT, OPEN, CLOSE, NEWLINE }
 
-    private class Token(val kind: Kind, val text: String)
+    /** One token: its kind, its text (a literal's is its sort), and `[start, end)` in the source. */
+    private class Token(val kind: Kind, val text: String, val start: Int = -1, val end: Int = -1)
 
     /**
      * Tokens of a script: words (identifiers and keywords), literals (strings, numbers, regular
@@ -321,8 +447,9 @@ object TopLevelDeclarations {
 
         private fun peekChar(k: Int): Char = if (i + k < to) text[i + k] else '\u0000'
 
-        private fun emit(kind: Kind, value: String): Token {
-            val token = Token(kind, value)
+        /** A token from `start` to the read position. */
+        private fun emit(kind: Kind, value: String, start: Int): Token {
+            val token = Token(kind, value, start, i)
             if (kind != Kind.NEWLINE) last = token
             return token
         }
@@ -330,14 +457,15 @@ object TopLevelDeclarations {
         private fun read(): Token? {
             if (resumeTemplate) {
                 resumeTemplate = false
-                return template()
+                return template(i)
             }
             while (i < to) {
                 val c = text[i]
+                val start = i
                 when {
                     c == '\n' -> {
                         i++
-                        return emit(Kind.NEWLINE, "\n")
+                        return emit(Kind.NEWLINE, "\n", start)
                     }
                     c.isWhitespace() -> i++
                     c == '/' && peekChar(1) == '/' -> {
@@ -350,22 +478,22 @@ object TopLevelDeclarations {
                     }
                     c == '\'' || c == '"' -> {
                         skipString(c)
-                        return emit(Kind.LITERAL, "string")
+                        return emit(Kind.LITERAL, "string", start)
                     }
                     c == '`' -> {
                         i++
-                        return template()
+                        return template(start)
                     }
                     c == '/' -> {
-                        if (regexAllowed() && skipRegex()) return emit(Kind.LITERAL, "regex")
+                        if (regexAllowed() && skipRegex()) return emit(Kind.LITERAL, "regex", start)
                         i++
                         if (i < to && text[i] == '=') i++
-                        return emit(Kind.PUNCT, "/")
+                        return emit(Kind.PUNCT, "/", start)
                     }
                     c == '{' || c == '(' || c == '[' -> {
                         i++
                         if (c == '{') braces++
-                        return emit(Kind.OPEN, c.toString())
+                        return emit(Kind.OPEN, c.toString(), start)
                     }
                     c == '}' -> {
                         i++
@@ -373,44 +501,43 @@ object TopLevelDeclarations {
                         if (templates.isNotEmpty() && templates.last() == braces) {
                             templates.removeLast()
                             resumeTemplate = true
-                            return emit(Kind.CLOSE, ")")
+                            return emit(Kind.CLOSE, ")", start)
                         }
-                        return emit(Kind.CLOSE, "}")
+                        return emit(Kind.CLOSE, "}", start)
                     }
                     c == ')' || c == ']' -> {
                         i++
-                        return emit(Kind.CLOSE, c.toString())
+                        return emit(Kind.CLOSE, c.toString(), start)
                     }
                     c.isDigit() || (c == '.' && peekChar(1).isDigit()) -> {
                         while (i < to && (text[i].isLetterOrDigit() || text[i] == '.' || text[i] == '_')) i++
-                        return emit(Kind.LITERAL, "number")
+                        return emit(Kind.LITERAL, "number", start)
                     }
                     isIdentifierStart(c) -> {
-                        val start = i
                         while (i < to && isIdentifierPart(text[i])) i++
-                        return emit(Kind.WORD, text.subSequence(start, i).toString())
+                        return emit(Kind.WORD, text.subSequence(start, i).toString(), start)
                     }
                     c == '\\' -> {
                         // A unicode escape in an identifier: read the word as one, unnamed.
                         i++
                         while (i < to && (isIdentifierPart(text[i]) || text[i] == '\\')) i++
-                        return emit(Kind.WORD, "\\")
+                        return emit(Kind.WORD, "\\", start)
                     }
                     else -> {
                         i++
                         if (i < to && (c == '+' || c == '-') && text[i] == c) {
                             i++
-                            return emit(Kind.PUNCT, "$c$c")
+                            return emit(Kind.PUNCT, "$c$c", start)
                         }
                         if (c == '=' && i < to && text[i] == '>') {
                             i++
-                            return emit(Kind.PUNCT, "=>")
+                            return emit(Kind.PUNCT, "=>", start)
                         }
                         if (c == '?' && i < to && text[i] == '.' && !peekChar(1).isDigit()) {
                             i++
-                            return emit(Kind.PUNCT, ".")
+                            return emit(Kind.PUNCT, ".", start)
                         }
-                        return emit(Kind.PUNCT, c.toString())
+                        return emit(Kind.PUNCT, c.toString(), start)
                     }
                 }
             }
@@ -431,7 +558,7 @@ object TopLevelDeclarations {
         }
 
         /** From inside a template's text: to its closing backtick (a literal), or into its `${` (an opening bracket). */
-        private fun template(): Token {
+        private fun template(start: Int): Token {
             while (i < to) {
                 val c = text[i]
                 if (c == '\\') {
@@ -440,17 +567,17 @@ object TopLevelDeclarations {
                 }
                 if (c == '`') {
                     i++
-                    return emit(Kind.LITERAL, "template")
+                    return emit(Kind.LITERAL, "template", start)
                 }
                 if (c == '$' && peekChar(1) == '{') {
                     i += 2
                     templates.addLast(braces)
                     braces++
-                    return emit(Kind.OPEN, "(")
+                    return emit(Kind.OPEN, "(", start)
                 }
                 i++
             }
-            return emit(Kind.LITERAL, "template")
+            return emit(Kind.LITERAL, "template", start)
         }
 
         private fun regexAllowed(): Boolean {

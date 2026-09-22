@@ -160,6 +160,79 @@ class TopLevelDeclarationsTest {
         assertEquals(listOf("first"), TopLevelDeclarations.scanSource("junk; var first = 1", 6))
     }
 
+    private fun last(text: String, from: Int = 0, to: Int = text.length): String? =
+        TopLevelDeclarations.lastExpressionStatement(text, from, to)?.let { text.substring(it[0], it[1]) }
+
+    @Test
+    fun `the last expression statement of a script is found by its statement boundaries, as eval's completion value`() {
+        assertEquals("document.title", last("document.title"))
+        assertEquals("document.title", last("document.title;"))
+        assertEquals("foo(a)", last("var a = 1;\nfoo(a)\n"))
+        assertEquals("foo(a)", last("var a = 1;\nfoo(a)\n;\n// done\n"))
+        assertEquals("(function(){ return list })()", last("var list = [];\n(function(){ return list })()"))
+        assertEquals("!function(){ run() }()", last("!function(){ run() }()"))
+        assertEquals("x + 1", last("var x = 1\nx + 1"))
+        assertEquals("a\n.b()", last("a\n.b()\n"))
+        assertEquals("/a/.test(s)", last("var s = 'a'; /a/.test(s)"))
+        assertEquals("\"use strict\"", last("\"use strict\""))
+        assertEquals("foo()", last("\"use strict\";\nfoo()"))
+        assertEquals("foo({a: 1})", last("x = `\${a}}`\nfoo({a: 1})"))
+        assertEquals("arr.forEach(x => {\n  y(x)\n})", last("arr.forEach(x => {\n  y(x)\n})"))
+        assertEquals("async () => 1", last("async () => 1"))
+        assertEquals("new Thing()", last("new Thing()"))
+        assertEquals("typeof x", last("typeof x"))
+        assertEquals("x = f(1)", last("if (a) { b() }\nx = f(1)"))
+        assertEquals("result", last("try { a() } catch (e) { b() } finally { c() }\nresult"))
+        assertEquals("foo()", last("do { a() } while (x)\nfoo()"))
+        assertEquals("go()", last("label: for (;;) { break label }\ngo()"))
+        assertEquals("go()", last("class A { m() { return {} } }\ngo()"))
+        assertEquals("go()", last("function f() {}\nfunction g() {}\ngo()"))
+        // A declaration's or a block's `}` ends its statement whatever the next line starts with (Chrome: two statements).
+        assertEquals("(function(){ return 1 })()", last("function f() {}\n(function(){ return 1 })()"))
+        assertEquals("[a, b].join()", last("if (x) { a() }\n[a, b].join()"))
+        assertEquals("(function(){ return 1 })()", last("class A {}\n(function(){ return 1 })()"))
+        assertEquals("(run)()", last("async function f() {}\n(run)()"))
+        assertEquals("go()", last("{ a() }\ngo()"))
+        assertEquals("y = () => {\n  return 1\n}", last("x = 1\ny = () => {\n  return 1\n}"))
+    }
+
+    @Test
+    fun `a script ending in a declaration, a block, a control statement, a label or nothing has no completion statement`() {
+        assertEquals(null, last("foo();\nfunction f(){}"))
+        assertEquals(null, last("foo();\nasync function f(){}"))
+        assertEquals(null, last("foo();\nclass X {}"))
+        assertEquals(null, last("foo();\nvar x = 1"))
+        assertEquals(null, last("foo();\nlet x = 1\n"))
+        assertEquals(null, last("foo();\nconst x = f()"))
+        assertEquals(null, last("if (x) { a() } else { b() }"))
+        assertEquals(null, last("for (const x of xs) { a(x) }"))
+        assertEquals(null, last("while (x) a()"))
+        assertEquals(null, last("foo: bar()"))
+        assertEquals(null, last("foo(); { a() }"))
+        assertEquals(null, last("try { a() } catch (e) {}"))
+        assertEquals(null, last(""))
+        assertEquals(null, last(";;\n// nothing\n"))
+        // A merge where the reading is unsure is no statement: a `var` whose function expression is followed
+        // on the next line by a parenthesis is one call in Chrome, and reads as one here; an arrow body's
+        // is two statements there and one here, so no value rather than a wrong split.
+        assertEquals(null, last("var x = function () {}\n(function(){})()"))
+        assertEquals(null, last("const f = () => {}\n(g)()"))
+        // An unterminated text ends the reading without a statement.
+        assertEquals(null, last("foo(); bar(\"never closed"))
+    }
+
+    @Test
+    fun `the completion statement is read within the given range and not from a text of a million characters`() {
+        val joined = "var a = 1;\nlast()\n;\nsecond(a)\n"
+        assertEquals("second(a)", last(joined))
+        assertEquals("last()", last(joined, 0, joined.indexOf("\n;\n")))
+        assertEquals("second(a)", last(joined, joined.indexOf("second")))
+        val big = StringBuilder(TopLevelDeclarations.MAX_SCAN_CHARS + 16).append("first()\n")
+        while (big.length < TopLevelDeclarations.MAX_SCAN_CHARS) big.append("// padding to a million characters\n")
+        assertEquals(null, TopLevelDeclarations.lastExpressionStatement(big))
+        assertEquals(listOf(0, 7), TopLevelDeclarations.lastExpressionStatement(big, 0, 8)?.toList())
+    }
+
     @Test
     fun `an unterminated string, comment, template or regular expression does not stop the scan from ending`() {
         assertEquals(listOf("a", "b"), scan("var a = 1; var b = \"never closed"))

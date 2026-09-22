@@ -19,8 +19,8 @@ import app.zen.chromium.UserAgent
 
 /**
  * A WebView on an extension's origin: the hidden background page (`context = "background"`), the
- * hidden offscreen document of `chrome.offscreen` (`"offscreen"`) or a popup / options page
- * (`context = "popup"` / `"options"`). It serves every file of the extension
+ * hidden offscreen document of `chrome.offscreen` (`"offscreen"`) or a popup / options / side
+ * panel page in the sheet (`context = "popup"` / `"options"` / `"sidePanel"`). It serves every file of the extension
  * directory plus the generated background page from `shouldInterceptRequest`, injects the page
  * bootstrap at document start and speaks the same `__zenExtBridge` protocol as tab frames.
  * Navigations off the origin open as tabs (a popup linking to a website, say); the view itself

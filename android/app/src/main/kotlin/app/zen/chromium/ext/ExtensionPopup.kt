@@ -12,8 +12,9 @@ import app.zen.chromium.Host
  * its height between a floor and most of the screen, its width the document's own when that is
  * narrower than the sheet (centred on the sheet's panel colour) and the sheet's otherwise. An
  * options page is a document made for a tab, so it fills the sheet and gets the tall body from
- * the start. `window.close()` in the popup dismisses the sheet, as do the scrim, the back gesture
- * and the header's close control.
+ * the start; a `chrome.sidePanel` document (`context = "sidePanel"`, which Chrome docks beside
+ * the page at full height) does the same. `window.close()` in the popup dismisses the sheet, as
+ * do the scrim, the back gesture and the header's close control.
  */
 class ExtensionPopup(
     private val host: Host,
