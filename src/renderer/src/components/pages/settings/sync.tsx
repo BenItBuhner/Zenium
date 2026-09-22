@@ -312,7 +312,8 @@ function remoteDeviceGroup(device: SyncDeviceTabs): RowGroup {
  * opens once it has gone (`closesSheet`), the new tab in front, as the history rows open theirs.
  */
 function remoteTabRow(device: SyncDeviceTabs, tab: SyncRemoteTab): SettingsRow {
-  const host = getHost(tab.url)
+  // The bare host, as the Recently closed rows write theirs.
+  const host = getHost(tab.url).replace(/^www\./, '')
   const when = relativeTime(tab.lastActive)
   return {
     kind: 'action',
