@@ -5,7 +5,8 @@ import type {
   MediaState,
   Platform as PlatformOs,
   Settings,
-  SharePayload
+  SharePayload,
+  Tab
 } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
@@ -932,6 +933,30 @@ describe('the app menu', () => {
       '-',
       'About Zenium 1.2.3'
     ])
+  })
+
+  it('on a phone the Home row goes with the homepage (SET-36): gone while Off, and it opens the homepage on the active tab', () => {
+    const h = harness(ANDROID, 'phone')
+    const active = (): Tab => h.browser.tabs.activeTabFor(h.win)!
+    h.browser.handleCommand(h.win, 'urlbar.submit', {
+      input: 'https://example.com/a',
+      newTab: true,
+      background: false
+    })
+    expect(active().url).toBe('https://example.com/a')
+    h.browser.handleCommand(h.win, 'settings.update', {
+      homepage: { mode: 'url', url: 'https://news.example/' }
+    })
+    const items = appMenu(h)
+    expect(items.indexOf('Home')).toBe(items.indexOf('-') + 1)
+    const home = item(h.shown(), 'Home')
+    expect(home.enabled).not.toBe(false)
+    home.click?.()
+    expect(h.viewCalls.at(-1)).toBe('loadURL("https://news.example/")')
+    // Off: no row, and the desktop's menu never had one.
+    h.browser.handleCommand(h.win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    expect(appMenu(h)).not.toContain('Home')
+    expect(appMenu(harness(DESKTOP))).not.toContain('Home')
   })
 
   it('offers private tabs where the host keeps the private session in tabs', () => {
@@ -2327,6 +2352,50 @@ function chromeParams(overrides: Partial<ChromeContextParams> = {}): ChromeConte
     ...overrides
   }
 }
+
+describe("the phone's new tab tile menu (NTP-06)", () => {
+  const tileMenu = (h: PageHarness, url: string, title: string): string[] => {
+    h.browser.handleCommand(h.win, 'newtab.tileContextMenu', { url, title, tabId: h.tabId })
+    return topLabels(h.shown())
+  }
+
+  it('a pinned tile: Open in New Tab, Copy Link, then Edit Shortcut…, Unpin Shortcut and Remove', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    const id = h.browser.newTab.addShortcut('Docs', 'https://docs.example/')!
+    expect(tileMenu(h, 'https://docs.example/', 'Docs')).toEqual([
+      'Open in New Tab',
+      'Copy Link',
+      '-',
+      'Edit Shortcut…',
+      'Unpin Shortcut',
+      'Remove'
+    ])
+    // Edit opens the shortcut's form sheet over the page the tile was held on.
+    h.sent.length = 0
+    h.click('Edit Shortcut…')
+    expect(h.sent).toContain('newtab.shortcutDialog')
+    // Unpin takes the tile off the pinned list; Remove hides its host from the page as well.
+    h.click('Unpin Shortcut')
+    expect(h.browser.state.newTabDevice.shortcuts.find((s) => s.id === id)).toBeUndefined()
+  })
+
+  it('a most visited tile has no edit – it is the history’s – and offers Pin instead', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    expect(tileMenu(h, 'https://often.example/', 'Often')).toEqual([
+      'Open in New Tab',
+      'Copy Link',
+      '-',
+      'Pin Shortcut',
+      'Remove'
+    ])
+    h.click('Pin Shortcut')
+    expect(h.browser.state.newTabDevice.shortcuts.map((s) => s.url)).toEqual([
+      'https://often.example/'
+    ])
+    h.click('Remove')
+    expect(h.browser.state.newTabDevice.hiddenHosts).toContain('often.example')
+  })
+})
 
 describe('the chrome context menus', () => {
   const show = async (h: PageHarness, params: ChromeContextParams): Promise<string[]> => {

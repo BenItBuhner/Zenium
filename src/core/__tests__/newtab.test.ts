@@ -6,7 +6,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
-import { errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
+import { BLANK_URL, errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { Browser } from '../browser'
 import type { RequestContext } from '../blocking/rules'
@@ -1103,5 +1103,110 @@ describe('NewTabService: what the page never leaves behind', () => {
     const before = f.browser.state.recentlyClosed.length
     f.browser.tabs.closeTab(tab.id, false, win)
     expect(f.browser.state.recentlyClosed).toHaveLength(before)
+  })
+})
+
+describe('NewTabService: the homepage (SET-36 / NTP-30)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  /** The active tab's view's last load, or null when nothing was loaded into it. */
+  const lastLoad = (f: Fixture): string | null =>
+    f.views.find((v) => v.tabId === activeTab(f)?.id)?.loads.at(-1) ?? null
+
+  it('defaults to the new tab page, and the setting is sanitised on every patch', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    expect(f.browser.state.settings.homepage).toEqual({ mode: 'newtab', url: '' })
+    f.browser.handleCommand(win, 'settings.update', {
+      homepage: { mode: 'url', url: 'example.com' }
+    })
+    expect(f.browser.state.settings.homepage).toEqual({
+      mode: 'url',
+      url: 'https://example.com/'
+    })
+    // A mode this build does not know reads as the default's; an internal page is no homepage.
+    f.browser.handleCommand(win, 'settings.update', {
+      homepage: { mode: 'blank', url: 'zen://settings' }
+    } as never)
+    expect(f.browser.state.settings.homepage).toEqual({ mode: 'newtab', url: '' })
+  })
+
+  it('homepageUrl is the page a Home control opens: the user’s page, the new tab page, or nothing while Off', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    // The served new tab page where the host has it.
+    expect(f.browser.newTab.homepageUrl()).toBe(NEW_TAB_URL)
+    f.browser.handleCommand(win, 'settings.update', {
+      homepage: { mode: 'url', url: 'https://news.example/' }
+    })
+    expect(f.browser.newTab.homepageUrl()).toBe('https://news.example/')
+    // "Specific page" with no address yet opens the new tab page too.
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'url', url: '' } })
+    expect(f.browser.newTab.homepageUrl()).toBe(NEW_TAB_URL)
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    expect(f.browser.newTab.homepageUrl()).toBeNull()
+    // The phone's chrome draws its page over the blank tab: that is Home there.
+    const phone = fixture({ newTabPage: false })
+    expect(phone.browser.newTab.homepageUrl()).toBe(BLANK_URL)
+  })
+
+  it('tab.home navigates the tab to the homepage and closes the URL bar; nothing runs while Off', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'urlbar.submit', {
+      input: 'https://example.com/a',
+      newTab: true,
+      background: false
+    })
+    const tab = activeTab(f)!
+    expect(lastLoad(f)).toBe('https://example.com/a')
+    f.browser.handleCommand(win, 'settings.update', {
+      homepage: { mode: 'url', url: 'https://news.example/' }
+    })
+    f.sent.length = 0
+    f.browser.handleCommand(win, 'tab.home', { tabId: tab.id })
+    expect(lastLoad(f)).toBe('https://news.example/')
+    expect(f.sent.map((e) => e.name)).toContain('urlbar.close')
+
+    f.browser.handleCommand(win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    f.browser.handleCommand(win, 'tab.home', { tabId: tab.id })
+    expect(lastLoad(f)).toBe('https://news.example/')
+  })
+
+  it('Home from the new tab page itself, with the new tab page as homepage, does not reload it', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    expect(tab.url).toBe(NEW_TAB_URL)
+    const loads = f.views.find((v) => v.tabId === tab.id)!.loads.length
+    f.browser.handleCommand(win, 'tab.home', { tabId: tab.id })
+    expect(f.views.find((v) => v.tabId === tab.id)!.loads).toHaveLength(loads)
+    // A page is left for the homepage, though.
+    f.browser.handleCommand(win, 'urlbar.submit', {
+      input: 'https://example.com/',
+      newTab: false,
+      tabId: tab.id,
+      background: false
+    })
+    f.browser.handleCommand(win, 'tab.home', { tabId: tab.id })
+    expect(lastLoad(f)).toBe(NEW_TAB_URL)
+  })
+
+  it('reorderShortcuts takes a partial order: the named tiles first, in that order, the rest as they were', () => {
+    const f = fixture()
+    const svc = f.browser.newTab
+    const ids = ['a', 'b', 'c', 'd'].map((h) => svc.addShortcut(h.toUpperCase(), `${h}.example`)!)
+    const [a, b, c, d] = ids
+    const order = (): string[] => f.browser.state.newTabDevice.shortcuts.map((s) => s.id)
+    // The drag's draft names the pinned tiles it drew; one it did not know keeps its place after.
+    svc.reorderShortcuts([c, a, b])
+    expect(order()).toEqual([c, a, b, d])
+    // A repeat and an unknown id are ignored; the same order is not a write.
+    const version = f.browser.state.newTabDevice
+    svc.reorderShortcuts([c, c, 'bogus', a, b, d])
+    expect(order()).toEqual([c, a, b, d])
+    expect(f.browser.state.newTabDevice).toBe(version)
   })
 })

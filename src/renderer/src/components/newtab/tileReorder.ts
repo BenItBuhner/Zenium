@@ -294,7 +294,7 @@ export function useTileReorder(
           velocity: new VelocityTracker()
         }
         // The box is the tile's own, not its lifted scale's: the scale is drawn about its centre.
-        const grow = (TILE_LIFT_SCALE - 1) / 2
+        const grow = (1 - 1 / TILE_LIFT_SCALE) / 2
         s.box = new DOMRect(
           s.box.left + s.box.width * grow,
           s.box.top + s.box.height * grow,
