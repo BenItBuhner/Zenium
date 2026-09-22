@@ -259,6 +259,27 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
  * both platforms at the platform's stroke (`--v2-icon-stroke`, set as a CSS property so it
  * outranks Lucide's 2); 14 (`h-3.5`) is not a size the language has (#295's review, nit B2).
  */
+describe('the toolbar button’s pressed fill (§9.3, §9.20)', () => {
+  it('is held through aria-expanded on --v2-window-fill-hover, one shared rule', () => {
+    const pressed = rule(
+      components,
+      ".zen-toolbar-button:active:not(:disabled),\n  .zen-toolbar-button[aria-expanded='true']"
+    )
+    expect(pressed).toContain('background: var(--v2-window-fill-hover)')
+  })
+
+  it('is the "⋯" button’s while its in-chrome menu stands – no fill rule of the anchor’s own (#299 on #295)', () => {
+    // #299 hung the app menu from the "⋯" and gave the open button a rule on the v1
+    // `--zen-element-bg`, unlayered, which outranked the shared rule in the components layer:
+    // the open "⋯" read .07 where the window family's pressed fill is .14 / .2. The anchor takes
+    // the toolbar button's rule; nothing in the stylesheet gives `[data-zen-app-menu-button]` a
+    // background of its own.
+    const own = [...css.matchAll(/\[data-zen-app-menu-button\][^{}]*\{([^}]*)\}/g)]
+    for (const [, body] of own) expect(body).not.toMatch(/background|opacity/)
+    expect(css).not.toContain("[data-zen-app-menu-button][aria-expanded='true'] {")
+  })
+})
+
 describe('the rows’ trailing glyphs (§9.3)', () => {
   const trailing = (svg: Element | null): void => {
     expect(svg).not.toBeNull()

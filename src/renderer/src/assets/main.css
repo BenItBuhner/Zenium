@@ -7921,14 +7921,13 @@
   margin-left: 0;
 }
 /*
- * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill at full ink
- * while the in-chrome menu stands, said by the `aria-expanded` the menu sets on it, as the
- * media hub's and the downloads' toolbar buttons keep theirs while their popovers are up.
+ * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill while the
+ * in-chrome menu stands, said by the `aria-expanded` the menu sets on it – the toolbar button's
+ * own `.zen-toolbar-button[aria-expanded='true']` rule (§9.3: `--v2-window-fill-hover` at radius
+ * 6, the glyph at full ink), the one the media hub's and the downloads' buttons keep theirs by.
+ * No rule of its own: an unlayered one here on the v1 `--zen-element-bg` outranked the shared
+ * rule in the components layer and left the open "⋯" on the wrong fill (.07 for .14 / .2).
  */
-[data-zen-app-menu-button][aria-expanded='true'] {
-  background: var(--zen-element-bg);
-  opacity: 1;
-}
 
 /*
  * The shared menulist (§9.34, §6, §9.13; #106 owns the rule, the look the one its review
