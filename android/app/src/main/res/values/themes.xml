@@ -68,4 +68,17 @@
         <item name="android:windowEnterAnimation">@anim/prompt_sheet_in</item>
         <item name="android:windowExitAnimation">@anim/prompt_sheet_out</item>
     </style>
+
+    <!-- The prompt sheet's §9.12 field: the platform draws a field's cursor and selection handles
+         in the theme's activated colour (Theme.Zen's primary), so the field is built under this
+         overlay, which makes that colour the v2 accent of the theme in force – v2_accent_*, the
+         token's value, pinned to main.css – and no ink on the sheet comes from outside the table. -->
+    <style name="ThemeOverlay.Zen.PromptField" parent="">
+        <item name="android:colorControlActivated">@color/v2_accent_light</item>
+        <item name="colorControlActivated">@color/v2_accent_light</item>
+    </style>
+    <style name="ThemeOverlay.Zen.PromptField.Dark">
+        <item name="android:colorControlActivated">@color/v2_accent_dark</item>
+        <item name="colorControlActivated">@color/v2_accent_dark</item>
+    </style>
 </resources>

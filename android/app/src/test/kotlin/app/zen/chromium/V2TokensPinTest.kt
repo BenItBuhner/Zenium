@@ -66,6 +66,25 @@ class V2TokensPinTest {
         assertEquals("--v2-scrim dark", "#8C000000", argb(css.color("--v2-scrim", dark = true)))
     }
 
+    /**
+     * What `themes.xml` draws of the sheet: the corners Material rounds are the sheet's radius (the
+     * hairline's arcs follow the same constant), and the field's overlay hands the platform the v2
+     * accent for the cursor and the handles, in each theme.
+     */
+    @Test
+    fun theSheetThemesDrawTheTokens() {
+        val shape = Regex("""<style name="ShapeAppearance\.Zen\.Sheet" [^>]*>([\s\S]*?)</style>""").find(themes)!!.groupValues[1]
+        for (corner in listOf("cornerSizeTopLeft", "cornerSizeTopRight"))
+            assertEquals("$corner is the sheet's radius", "${PromptSheetSpec.SHEET_RADIUS_DP}dp", Regex("""<item name="$corner">([^<]+)</item>""").find(shape)!!.groupValues[1])
+        for (corner in listOf("cornerSizeBottomLeft", "cornerSizeBottomRight"))
+            assertEquals("$corner: edge to edge at the bottom", "0dp", Regex("""<item name="$corner">([^<]+)</item>""").find(shape)!!.groupValues[1])
+        for ((style, theme) in listOf("ThemeOverlay\\.Zen\\.PromptField" to "light", "ThemeOverlay\\.Zen\\.PromptField\\.Dark" to "dark")) {
+            val overlay = Regex("""<style name="$style"[^>]*>([\s\S]*?)</style>""").find(themes)!!.groupValues[1]
+            for (attr in listOf("android:colorControlActivated", "colorControlActivated"))
+                assertEquals("$attr under the $theme field overlay is the v2 accent", "@color/v2_accent_$theme", Regex("""<item name="$attr">([^<]+)</item>""").find(overlay)!!.groupValues[1])
+        }
+    }
+
     @Test
     fun theSpecNumbersAreTheTokens() {
         assertEquals(css.px("--v2-radius-sheet"), PromptSheetSpec.SHEET_RADIUS_DP)
@@ -80,10 +99,22 @@ class V2TokensPinTest {
         assertEquals(css.px("--v2-line-body"), PromptSheetSpec.BODY_LINE_SP)
         assertEquals(css.weight("--v2-weight-body"), PromptSheetSpec.BODY_WEIGHT)
         assertEquals(css.weight("--v2-weight-button"), PromptSheetSpec.BUTTON_WEIGHT)
-        // The inks a token derives from the text: the alpha each states.
-        assertEquals(css.alpha("--v2-text-deemphasized"), PromptSheetSpec.DEEMPHASIZED_ALPHA, 0f)
-        assertEquals(css.alpha("--v2-fill"), PromptSheetSpec.FILL_ALPHA, 0f)
-        assertEquals(css.alpha("--v2-fill-hover"), PromptSheetSpec.FILL_PRESSED_ALPHA, 0f)
+        // The inks a token derives from the text, in both blocks (the dark block restates them): the
+        // alpha each states, and the colour it comes to – `--v2-text` at that alpha, as V2Ink derives it.
+        for (dark in listOf(false, true)) {
+            val block = if (dark) "dark" else "light"
+            val text = css.color("--v2-text", dark)
+            for ((token, fraction) in listOf(
+                "--v2-text-deemphasized" to PromptSheetSpec.DEEMPHASIZED_ALPHA,
+                "--v2-fill" to PromptSheetSpec.FILL_ALPHA,
+                "--v2-fill-hover" to PromptSheetSpec.FILL_PRESSED_ALPHA
+            )) {
+                assertEquals("$token in the $block block states the fraction", fraction, css.alpha(token, dark), 0f)
+                assertEquals("$token in the $block block is --v2-text at the fraction", argb(css.color(token, dark)), argb(V2Ink.alpha(text, fraction)))
+            }
+            // §9.6: the selection is the accent at 30 % – `color-mix(in srgb, var(--v2-accent) 30%, transparent)`.
+            assertEquals("--v2-selection in the $block block is --v2-accent at the fraction", argb(css.color("--v2-selection", dark)), argb(V2Ink.alpha(css.color("--v2-accent", dark), PromptSheetSpec.SELECTION_ALPHA)))
+        }
         // The phone row (§9.21): the body line box plus 24, so 44 at the default size, 12 above and below.
         val row = Regex("""calc\(var\(--v2-line-body-box\) \+ (\d+)px\)""").find(css.phone["--v2-row"]!!)!!.groupValues[1].toInt()
         assertEquals(PromptSheetSpec.BODY_LINE_SP + row, PromptSheetSpec.ROW_MIN_DP)
@@ -107,6 +138,12 @@ class V2TokensPinTest {
         assertEquals(PromptSheetSpec.BLOCK_PADDING_DP, px(block, "padding"))
         assertEquals(PromptSheetSpec.BODY_GAP_DP, px(block, "padding"))
         assertEquals(PromptSheetSpec.DESCRIPTION_GAP_DP, px(block, "gap"))
+        // The glyph's 8 to the title (`.zen-sheet-title-block h2`'s gap).
+        assertEquals(PromptSheetSpec.GLYPH_GAP_DP, px(css.rule(".zen-sheet-title-block h2"), "gap"))
+        // `.zen-sheet-scroll`: the body scrolls without a scrollbar and without the ends' glow.
+        val scroll = css.rule(".zen-sheet-scroll")
+        assertEquals("contain", declaration(scroll, "overscroll-behavior"))
+        assertEquals("none", declaration(scroll, "scrollbar-width"))
         // The hairline: `.zen-sheet`'s 1 CSS px border – a dp – round the top and the sides, none along the
         // bottom (`border-bottom: 0`); the same px on a field's and a checkbox's edge.
         val sheetRule = css.rule(".zen-sheet")
@@ -249,8 +286,8 @@ class V2TokensPinTest {
         fun weight(name: String): Int =
             Regex("""calc\((\d+) \+ var\(--zen-font-weight-adjustment\)\)""").find(light[name]!!)!!.groupValues[1].toInt()
 
-        /** The alpha a colour token states, `rgb(r g b / a)`. */
-        fun alpha(name: String): Float = alphaOf(value(name, dark = false))
+        /** The alpha a colour token states, `rgb(r g b / a)`, under a theme. */
+        fun alpha(name: String, dark: Boolean = false): Float = alphaOf(value(name, dark))
 
         /** The body of the first rule whose whole selector line is `selector`, at any indentation. */
         fun rule(selector: String): String {
@@ -272,6 +309,20 @@ class V2TokensPinTest {
         /** `#AARRGGBB` for a colour, uppercase. */
         fun argb(color: Int): String = "#%08X".format(color)
 
+        /** A comma-separated list split at the commas outside any parentheses. */
+        fun splitTopLevel(list: String): List<String> {
+            val out = ArrayList<String>()
+            var depth = 0
+            var start = 0
+            for ((i, c) in list.withIndex()) when (c) {
+                '(' -> depth++
+                ')' -> depth--
+                ',' -> if (depth == 0) { out.add(list.substring(start, i)); start = i + 1 }
+            }
+            out.add(list.substring(start))
+            return out
+        }
+
         /** colors.xml's `#RRGGBB` or `#AARRGGBB` as `#AARRGGBB`. */
         fun normalise(hex: String): String = if (hex.length == 7) "#FF" + hex.substring(1).uppercase() else hex.uppercase()
 
@@ -289,19 +340,31 @@ class V2TokensPinTest {
 
         /**
          * A resolved CSS colour as ARGB: `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(r g b / a)`,
-         * `rgb(r, g, b)` and `color-mix(in srgb, a p%, b [q%])` (the two weights normalised, the
-         * second defaulting to the rest of 100 %, as the spec has it), alphas rounded as `rgb()`'s are.
+         * `rgb(r, g, b)`, `transparent` and `color-mix(in srgb, a p%, b [q%])` (the two weights
+         * normalised, the second defaulting to the rest of 100 %; the channels mixed premultiplied, as
+         * the spec has it, so a mix towards `transparent` keeps the colour and thins its alpha),
+         * alphas rounded as `rgb()`'s are.
          */
         fun parseColor(value: String): Int {
             val v = value.trim()
-            Regex("""^color-mix\(in srgb,\s*(.+?)\s+([\d.]+)%\s*,\s*(.+?)(?:\s+([\d.]+)%)?\s*\)$""").find(v)?.let { m ->
-                val p1 = m.groupValues[2].toFloat()
-                val p2 = m.groupValues[4].ifEmpty { null }?.toFloat() ?: (100f - p1)
+            if (v == "transparent") return 0
+            Regex("""^color-mix\(in srgb,(.*)\)$""").find(v)?.let { m ->
+                // The two operands, split at the top-level comma (an operand may be a mix itself), each `colour [p%]`.
+                val operands = splitTopLevel(m.groupValues[1]).map { operand ->
+                    Regex("""^(.+?)(?:\s+([\d.]+)%)?$""").find(operand.trim())!!.let { it.groupValues[1] to it.groupValues[2].ifEmpty { null }?.toFloat() }
+                }
+                require(operands.size == 2) { "not a two-colour mix: $value" }
+                val p1 = operands[0].second ?: operands[1].second?.let { 100f - it } ?: 50f
+                val p2 = operands[1].second ?: (100f - p1)
                 val (w1, w2) = (p1 / (p1 + p2)) to (p2 / (p1 + p2))
-                val a = parseColor(m.groupValues[1])
-                val b = parseColor(m.groupValues[3])
-                fun mix(shift: Int): Int = Math.round(((a shr shift) and 0xFF) * w1 + ((b shr shift) and 0xFF) * w2)
-                return (mix(24) shl 24) or (mix(16) shl 16) or (mix(8) shl 8) or mix(0)
+                val a = parseColor(operands[0].first)
+                val b = parseColor(operands[1].first)
+                val (alphaA, alphaB) = ((a ushr 24) / 255f) to ((b ushr 24) / 255f)
+                val alpha = alphaA * w1 + alphaB * w2
+                fun channel(shift: Int): Int =
+                    if (alpha == 0f) 0
+                    else Math.round((((a shr shift) and 0xFF) * alphaA * w1 + ((b shr shift) and 0xFF) * alphaB * w2) / alpha)
+                return (Math.round(alpha * 255) shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
             }
             Regex("""^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)\s*(?:[/,]\s*([\d.]+)(%?))?\s*\)$""").find(v)?.let { m ->
                 val alpha = m.groupValues[4].ifEmpty { null }?.let { it.toFloat() / if (m.groupValues[5] == "%") 100f else 1f } ?: 1f

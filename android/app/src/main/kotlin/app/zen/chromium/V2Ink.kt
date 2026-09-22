@@ -55,6 +55,8 @@ class V2Ink(
     @ColorInt val danger: Int = color(R.color.v2_danger_light, R.color.v2_danger_dark)
     /** The accent under a press: `color-mix(in srgb, var(--v2-on-accent) 30%, var(--v2-accent))`. */
     @ColorInt val accentPressed: Int = ColorUtils.blendARGB(this.accent, this.onAccent, PromptSheetSpec.ACCENT_PRESSED_MIX)
+    /** `--v2-selection` (§9.6): the accent at 30 %, under selected text (`color-mix(in srgb, var(--v2-accent) 30%, transparent)`). */
+    @ColorInt val selection: Int = alpha(this.accent, PromptSheetSpec.SELECTION_ALPHA)
 
     /** A vector glyph of the app's in the ink (a globe, a check), as a §9.23 title glyph is drawn. */
     fun glyph(@DrawableRes id: Int, @ColorInt tint: Int = text): Drawable =

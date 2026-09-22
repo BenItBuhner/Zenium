@@ -17,6 +17,7 @@ import android.os.Build
 import android.text.InputType
 import android.text.TextUtils
 import android.util.TypedValue
+import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -30,6 +31,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.graphics.drawable.DrawableCompat
 import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -149,6 +151,8 @@ object PromptSheetSpec {
     const val FILL_PRESSED_ALPHA = 0.16f
     /** `.zen-v2-button[data-primary]:active`: the accent mixed 30 % towards the on-accent ink. */
     const val ACCENT_PRESSED_MIX = 0.3f
+    /** `--v2-selection` (§9.6): selected text sits on the accent at 30 %. */
+    const val SELECTION_ALPHA = 0.3f
     /** `.zen-v2-button`'s `transition: background 120ms`: a press fill's fade. */
     const val PRESS_FADE_MS = 120
 
@@ -190,16 +194,15 @@ object PromptSheetSpec {
  * under the status bar: a long body scrolls between the pinned block and the pinned footer
  * rather than pushing either off. The keyboard lifts the sheet and takes its room from the body.
  *
- * Motion is the 120 ms opacity fade of §11.3 in place, by default, scrim with sheet
- * ([Motion.FADE]): no slide, no drag, no recede of the page behind – the native allowance the
- * §9.23 line grants an imitation. [Motion.SLIDE] is the platform sheet's slide and drag, kept
- * behind the flag for the day the lead reopens it; a consumer that recedes the page reads
- * [onSlide] then.
+ * Motion is the 120 ms opacity fade of §11.3 in place, scrim with sheet: no slide, no drag, no
+ * recede of the page behind – the one motion §9.23's line allows the native chassis, and the
+ * one it can do: no argument of a consumer's reaches the platform sheet's slide or drag, since
+ * the sentence closes the door behind its two consumers and reopening it is a chassis change.
  *
  * Answering: the primary accepts ([Answer.accepted] true, a field's text with it; the field's
- * Done key is the primary); the secondary, the scrim, the system back, the grabber and a drag
- * (under [Motion.SLIDE]) answer the secondary – `accepted` false – so a dismissal is always the
- * answer that changes nothing. One answer per sheet, ever.
+ * Done key is the primary); the secondary, the scrim, the system back and the grabber answer
+ * the secondary – `accepted` false – so a dismissal is always the answer that changes nothing.
+ * One answer per sheet, ever.
  *
  * TalkBack: the window is a dialog named by the title (the platform announces it as the sheet
  * comes up); the title is a heading; the container takes the focus, as §9.22 has a
@@ -211,9 +214,6 @@ class NativePromptSheet(
     private val context: Context,
     private val ink: V2Ink,
     private val content: Content,
-    private val motion: Motion = Motion.FADE,
-    /** Under [Motion.SLIDE]: the sheet's progress, 0 gone to 1 standing, frame for frame on a drag. */
-    private val onSlide: ((Float) -> Unit)? = null,
     private val onAnswer: (Answer) -> Unit
 ) {
     /** What the sheet says and offers. */
@@ -255,9 +255,6 @@ class NativePromptSheet(
     /** How a footer button is drawn (§6, §9.11): the accent primary, the plain secondary, the destructive secondary. */
     enum class Tone { ACCENT, PLAIN, DANGER }
 
-    /** How the sheet comes and goes. */
-    enum class Motion { FADE, SLIDE }
-
     /** The one answer: whether the primary was taken, the field's text if it was, the check row's tick. */
     class Answer(val accepted: Boolean, val text: String?, val checked: Boolean)
 
@@ -274,10 +271,8 @@ class NativePromptSheet(
 
     fun show() {
         if (dialog != null) return
-        val theme = when (motion) {
-            Motion.FADE -> if (ink.dark) R.style.ThemeOverlay_Zen_PromptSheet_Dark else R.style.ThemeOverlay_Zen_PromptSheet
-            Motion.SLIDE -> if (ink.dark) R.style.ThemeOverlay_Zen_Sheet_Dark else R.style.ThemeOverlay_Zen_Sheet
-        }
+        // The sheet's theme: the panel, the radii, the dim – and the 120 ms fade in place of the platform's slide.
+        val theme = if (ink.dark) R.style.ThemeOverlay_Zen_PromptSheet_Dark else R.style.ThemeOverlay_Zen_PromptSheet
         val dialog = BottomSheetDialog(context, theme)
         this.dialog = dialog
         val column = content()
@@ -288,16 +283,9 @@ class NativePromptSheet(
         dialog.behavior.skipCollapsed = true
         dialog.behavior.isFitToContents = true
         dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
-        dialog.behavior.isDraggable = motion == Motion.SLIDE
-        dialog.dismissWithAnimation = motion == Motion.SLIDE
-        if (motion == Motion.SLIDE && onSlide != null) dialog.behavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
-            override fun onStateChanged(bottomSheet: View, newState: Int) {}
-            override fun onSlide(bottomSheet: View, slideOffset: Float) {
-                val parent = bottomSheet.parent as? View ?: return
-                if (bottomSheet.height <= 0) return
-                this@NativePromptSheet.onSlide.invoke(((parent.height - bottomSheet.top).toFloat() / bottomSheet.height).coerceIn(0f, 1f))
-            }
-        })
+        // No drag, and the window's fade rather than the sheet's slide on the way out (§9.23's allowance).
+        dialog.behavior.isDraggable = false
+        dialog.dismissWithAnimation = false
         // §9.22: the keyboard never comes up with the sheet; the field's tap brings it. When it
         // does, the Material sheet lifts itself: it pads its bottom by the window's system-window
         // inset, which counts the keyboard under `adjustResize` (the mode the Material sheet theme
@@ -426,6 +414,7 @@ class NativePromptSheet(
         strip.contentDescription = context.getString(R.string.prompt_sheet_dismiss)
         strip.isClickable = true
         strip.isFocusable = true
+        announceAsButton(strip)
         strip.setOnClickListener { decline() }
         return strip
     }
@@ -523,7 +512,10 @@ class NativePromptSheet(
             scrolled = now
             boundary.animate().alpha(if (now) 1f else 0f).setDuration(PromptSheetSpec.HAIRLINE_FADE_MS.toLong()).start()
         }.apply {
+            // `.zen-sheet-scroll`: no scrollbar, and no glow at the ends (`overscroll-behavior: contain`;
+            // the platform's would be the Activity theme's edge colour, an ink outside the table).
             isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
             addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         frame.addView(scroller, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -559,6 +551,11 @@ class NativePromptSheet(
      * §9.12: the page surface in a hairline box at the control radius, 12 in, the accent edge while
      * focused; the value selected, so it is replaced by the first keystroke when the field takes the
      * focus on the tap (the selection stands from the start; it shows once the field has the focus).
+     * The selection sits on the accent at 30 % (§9.6, `--v2-selection`), and the cursor and the
+     * selection's handles are the accent: the platform draws those three in the theme's activated
+     * colour, so the field is built under `ThemeOverlay.Zen.PromptField`, which makes that colour
+     * the v2 accent of the theme in force (`v2_accent_*`), and from Android 10 they are tinted with
+     * the live accent besides – no ink on the sheet outside [V2Ink]'s table.
      */
     private fun field(spec: Field): EditText {
         val box = { edge: Int ->
@@ -569,12 +566,20 @@ class NativePromptSheet(
                 setStroke(hairline, edge)
             }
         }
-        return EditText(context).apply {
+        val fieldTheme = if (ink.dark) R.style.ThemeOverlay_Zen_PromptField_Dark else R.style.ThemeOverlay_Zen_PromptField
+        return EditText(ContextThemeWrapper(context, fieldTheme)).apply {
             setText(spec.text)
             hint = spec.hint
             setSelectAllOnFocus(true)
             setTextColor(ink.text)
             setHintTextColor(ink.textDeemphasized)
+            highlightColor = ink.selection
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                textCursorDrawable?.let { setTextCursorDrawable(accentTinted(it)) }
+                textSelectHandle?.let { setTextSelectHandle(accentTinted(it)) }
+                textSelectHandleLeft?.let { setTextSelectHandleLeft(accentTinted(it)) }
+                textSelectHandleRight?.let { setTextSelectHandleRight(accentTinted(it)) }
+            }
             setTextSize(TypedValue.COMPLEX_UNIT_SP, PromptSheetSpec.BODY_SP.toFloat())
             typeface = weight(PromptSheetSpec.BODY_WEIGHT)
             inputType = spec.inputType
@@ -594,6 +599,9 @@ class NativePromptSheet(
             field = this
         }
     }
+
+    /** A platform drawable of the field's (its cursor, a selection handle) in the accent. */
+    private fun accentTinted(drawable: Drawable): Drawable = drawable.mutate().also { DrawableCompat.setTint(it, ink.accent) }
 
     /**
      * §9.14 in a prompt (§9.23): the 20 box at radius 2 on the label's first line – the page
@@ -689,15 +697,18 @@ class NativePromptSheet(
             }
             isClickable = true
             isFocusable = true
-            ViewCompat.setAccessibilityDelegate(this, object : AccessibilityDelegateCompat() {
-                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
-                    super.onInitializeAccessibilityNodeInfo(host, info)
-                    info.className = Button::class.java.name
-                }
-            })
+            announceAsButton(this)
             setOnClickListener { onClick() }
         }
     }
+
+    /** TalkBack reads the view as a button – "OK, button", "Dismiss, button" – as the chrome's `<button>`s are read. */
+    private fun announceAsButton(view: View) = ViewCompat.setAccessibilityDelegate(view, object : AccessibilityDelegateCompat() {
+        override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+            super.onInitializeAccessibilityNodeInfo(host, info)
+            info.className = Button::class.java.name
+        }
+    })
 
     // --- measure ---------------------------------------------------------------------------
 
