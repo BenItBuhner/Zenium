@@ -953,8 +953,10 @@ function SheetRow({
         className={className}
         data-danger={danger || undefined}
         disabled={disabled}
-        // The row's name is its label and its value, read as two parts ("Connection, Secure").
-        aria-label={value ? `${label}, ${value}` : label}
+        // The row's name is its label, its value and its second line, read as parts
+        // ("Connection, Secure"; "Cookies for this site, Never allow · Listed as [*.]example.com"):
+        // a description carries the row's state, which the name would otherwise drop.
+        aria-label={[label, value, description].filter(Boolean).join(', ')}
         aria-busy={busy || undefined}
         aria-haspopup={haspopup}
         onClick={busy ? undefined : onClick}

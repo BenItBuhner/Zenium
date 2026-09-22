@@ -927,7 +927,17 @@ export function createPreviewBridge(): NativeBridge {
     // sheet shows the connection only; with one, the sample it names (previewSiteData.ts) stands
     // for the profile – the viewer's origins and the active site's cookies – and a clear takes
     // the origin out of the sample, so a Clear in a still leaves the row gone.
-    'site.cookies': ({ url }) => previewCookies(siteDataSample, String(url)),
+    // A site whose cookies a state's Clear (or the never list's sweep) took out answers none,
+    // as the engine's jar would.
+    'site.cookies': ({ url }) => {
+      let origin = ''
+      try {
+        origin = new URL(String(url)).origin
+      } catch {
+        // Not an origin: the sample answers as it stands.
+      }
+      return clearedOrigins.has(origin) ? [] : previewCookies(siteDataSample, String(url))
+    },
     'site.storage': () => ({ usageBytes: null, quotaBytes: null, origins: [] }),
     'site.listOrigins': ({ containerId }) =>
       previewOrigins(siteDataSample, String(containerId)).filter(
