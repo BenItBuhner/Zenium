@@ -437,7 +437,7 @@ function FolderRow({
               {renaming ? (
                 <FolderRename folder={folder} />
               ) : (
-                <span className="zen-group-chip-name">{folder.name}</span>
+                <span className="zen-group-tag-name">{folder.name}</span>
               )}
             </GroupChip>
             {!compact && !saved && (

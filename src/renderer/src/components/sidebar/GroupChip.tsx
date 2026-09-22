@@ -24,7 +24,7 @@ interface Props {
  * is a 10 px dot of the colour for an open group, a 2 px ring of it for a saved one (the Groups
  * pane's two states, `GroupGlyph`), or the folder's own icon where the desktop gave it one. A
  * collapsed group carries its count after the name, as does a saved one (its kept pages):
- * expanded, the rows below say it. `.zen-group-chip` in main.css draws the pill; the chip is
+ * expanded, the rows below say it. `.zen-group-tag` in main.css draws the pill; the chip is
  * inert – the row around it is the target, its tap folding or unfolding the group (or opening a
  * saved one) and its hold the group's menu.
  */
@@ -32,21 +32,21 @@ export function GroupChip({ folder, count, saved, compact, children }: Props): J
   const own = folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? folder.icon : null
   return (
     <span
-      className={cn('zen-group-chip', compact && 'zen-group-chip-glyph-only')}
+      className={cn('zen-group-tag', compact && 'zen-group-tag-glyph-only')}
       data-saved={saved || undefined}
       data-testid="group-chip"
       style={{ '--zen-group-rgb': groupColorChannels(folder.color) } as CSSProperties}
     >
       {own ? (
-        <span className="zen-group-chip-icon" aria-hidden>
+        <span className="zen-group-tag-icon" aria-hidden>
           {own}
         </span>
       ) : (
-        <span className="zen-group-chip-dot" aria-hidden />
+        <span className="zen-group-tag-dot" aria-hidden />
       )}
       {!compact && children}
       {!compact && (saved || folder.collapsed) && (
-        <span className="zen-group-chip-count" data-testid="group-chip-count">
+        <span className="zen-group-tag-count" data-testid="group-chip-count">
           {count}
         </span>
       )}

@@ -6842,7 +6842,7 @@
 :root[data-form-factor='tablet'] .zen-tab.zen-group-row.justify-center {
   padding-left: 0;
 }
-.zen-group-chip {
+.zen-group-tag {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -6857,39 +6857,39 @@
   font-size: 14px;
   line-height: 20px;
 }
-.zen-group-chip-glyph-only {
+.zen-group-tag-glyph-only {
   width: 32px;
   padding: 0;
   justify-content: center;
 }
-.zen-group-chip-dot {
+.zen-group-tag-dot {
   flex-shrink: 0;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: rgb(var(--zen-group-rgb));
 }
-.zen-group-chip[data-saved] .zen-group-chip-dot {
+.zen-group-tag[data-saved] .zen-group-tag-dot {
   background: transparent;
   box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
 }
-.zen-group-chip-icon {
+.zen-group-tag-icon {
   flex-shrink: 0;
   width: 16px;
   text-align: center;
   font-size: calc(14px / var(--zen-text-zoom, 1));
   line-height: 1;
 }
-.zen-group-chip-name {
+.zen-group-tag-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.zen-group-chip input {
+.zen-group-tag input {
   font-size: 14px;
 }
-.zen-group-chip-count {
+.zen-group-tag-count {
   flex-shrink: 0;
   color: var(--v2-control-text-deemphasized, var(--zen-muted));
   font-size: 13px;

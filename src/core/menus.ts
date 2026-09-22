@@ -1980,7 +1980,8 @@ export class Menus {
    * Group; then Ungroup – the tabs stay, loose – Close Group (N Tabs) – the tabs close and the
    * group stays SAVED with their pages (TAB-16) – and Delete Group. A saved group (its tabs
    * closed, its pages kept) leads with Open Group (N Tabs) and has nothing to fold, ungroup or
-   * close; Delete Group forgets its pages. Title Case throughout (v2 §9.1).
+   * close; Delete Group forgets its pages. Title Case throughout (v2 §9.1); Close Group and
+   * Delete Group in the danger ink, as the phone's group sheets write them.
    */
   private groupMenu(folder: Folder, win: ZenWindow): Template {
     const { browser } = this
@@ -2003,7 +2004,11 @@ export class Menus {
     const closing: Template = live
       ? [
           { label: 'Ungroup', click: () => browser.deleteFolder(id, true) },
-          { label: `Close Group (${tabs})`, click: () => browser.closeFolder(id, win) }
+          {
+            label: `Close Group (${tabs})`,
+            danger: true,
+            click: () => browser.closeFolder(id, win)
+          }
         ]
       : []
     return [
@@ -2025,7 +2030,7 @@ export class Menus {
       ...fold,
       { type: 'separator' },
       ...closing,
-      { label: 'Delete Group', click: () => browser.deleteFolder(id, false) }
+      { label: 'Delete Group', danger: true, click: () => browser.deleteFolder(id, false) }
     ]
   }
 
