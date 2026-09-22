@@ -101,6 +101,15 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   const bridge = w.__zenPageBridge
   if (!bridge) return
 
+  /**
+   * A message up the bridge, the session token written last so no field of the message can
+   * displace it: Kotlin drops a message whose `token` is not the session's as a page's forgery
+   * (`routePageMessage`), silently. A message's own token – the PDF viewer report's – rides
+   * under its own name (`pdfToken`), which the router leaves in place.
+   */
+  const up = (message: object): void =>
+    bridge.postMessage(JSON.stringify({ ...message, token: TOKEN }))
+
   let onFlags: ((flags: PageScriptFlags) => void) | null = null
   let onZap: ((on: boolean) => void) | null = null
   let onForms: ((command: FormsCommand) => void) | null = null
@@ -204,8 +213,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   // and at once from a script that runs after the fact (no document-start support, so it arrived
   // at page finished).
   if (w.self === w.top) {
-    const domReady = (): void =>
-      bridge.postMessage(JSON.stringify({ token: TOKEN, type: 'domReady' }))
+    const domReady = (): void => up({ type: 'domReady' })
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', domReady, { once: true })
     } else {
@@ -220,7 +228,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     /* a page that seals navigator.credentials keeps its passkeys unlisted */
   }
   installFormsScript({
-    send: (forms) => bridge.postMessage(JSON.stringify({ token: TOKEN, type: 'forms', forms })),
+    send: (forms) => up({ type: 'forms', forms }),
     onCommand: (listener) => {
       onForms = listener
     }
@@ -238,7 +246,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     // sees only the <iframe>. The view lets a frame's fullscreen report through alone
     // (TabWebView.onPageMessage); the host weighs it against the top document's.
     reportFullscreen: true,
-    send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
+    send: (message) => up(message),
     // The fullscreen exit hint (GN-20): the chrome is under the fullscreen layer, so the hint
     // is drawn in the page's top layer, as the desktop's fullscreen hints are.
     onHint: (listener) => {
@@ -247,7 +255,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     onFlags: (listener) => {
       onFlags = listener
       // Ask for the current flags; the reply arrives through the listener above.
-      bridge.postMessage(JSON.stringify({ token: TOKEN, type: 'hello' }))
+      up({ type: 'hello' })
     },
     onZap: (listener) => {
       onZap = listener
@@ -273,7 +281,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   if (topFrame) {
     try {
       installNotificationPolyfill({
-        send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
+        send: (message) => up(message),
         onNotification: (listener) => {
           onNotification = listener
         }
@@ -289,8 +297,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     // share at a time, Chrome's file limits.
     try {
       installShareBridge({
-        send: (call) =>
-          bridge.postMessage(JSON.stringify({ token: TOKEN, type: 'share', share: call })),
+        send: (call) => up({ type: 'share', share: call }),
         onResult: (listener) => {
           onShareResult = listener
         },
@@ -304,7 +311,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     // WebView, which leaves text fragments off, the URL's own directive scrolled to and painted.
     try {
       installTextFragmentScript({
-        send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
+        send: (message) => up(message),
         onCommand: (listener) => {
           onTextFragment = listener
         },

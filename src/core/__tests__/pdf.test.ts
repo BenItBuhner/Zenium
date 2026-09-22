@@ -380,10 +380,10 @@ describe('the viewer page', () => {
     // Only with the document's token: the viewer's document runs under the PDF's own origin,
     // which a web page could share, so a report without it, or with another, is no one's.
     f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: report })
-    f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: report, token: 'not-the-token' })
+    f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: report, pdfToken: 'not-the-token' })
     expect(f.browser.pdf.report(tab.id)).toBeNull()
-    const token = f.browser.pdf.document(item.id)!.token
-    f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: report, token })
+    const pdfToken = f.browser.pdf.document(item.id)!.token
+    f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: report, pdfToken })
     expect(f.browser.pdf.report(tab.id)).toEqual(report)
     expect(await f.browser.handleCommand(f.win, 'pdf.state', { tabId: tab.id })).toEqual(report)
     expect(f.sent.find((s) => s.name === 'pdf.changed')?.payload).toEqual({ tabId: tab.id, report })

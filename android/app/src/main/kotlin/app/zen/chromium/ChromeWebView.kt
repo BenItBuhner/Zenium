@@ -43,6 +43,8 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     var ready = false
         private set
     private val whenReady = ArrayList<() -> Unit>()
+    /** `window.__zenNative`: the chrome's calls into Kotlin (its queue's refusals are readable for instrumentation). */
+    val bridge = JsBridge(host)
 
     init {
         // Named in the view hierarchy (`R.id.zen_chrome`) so the accessibility tree tells the
@@ -71,7 +73,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         overScrollMode = OVER_SCROLL_NEVER
         isVerticalScrollBarEnabled = false
         isHorizontalScrollBarEnabled = false
-        addJavascriptInterface(JsBridge(host), "__zenNative")
+        addJavascriptInterface(bridge, "__zenNative")
         webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                 handoffResponse(request.url) ?: loader.shouldInterceptRequest(request.url)?.also { profilable(request, it) }

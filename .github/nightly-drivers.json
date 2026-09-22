@@ -353,6 +353,15 @@
       "estimate": 2.5
     },
     {
+      "id": "tab-search-recent",
+      "class": "TabSearchRecentDemo",
+      "shard": "phone-b",
+      "mirrors": "android-tab-search-recent-demo.yml",
+      "dir": "tabsearch-demo",
+      "estimate": 5,
+      "note": "The overview's tab search and the History page's other-devices group: sets sync up through the engine over a plain directory and seeds two devices' open-tabs documents (19 scenes). Beside the overview demo, whose grid it searches; phone-a, where the sync demo is, has no room for it since the site-data drivers."
+    },
+    {
       "id": "group-strip",
       "class": "GroupStripDemo",
       "shard": "phone-b",
@@ -923,8 +932,8 @@
         "DEMO_RECORD": "0"
       },
       "timeout": 1200,
-      "estimate": 8,
-      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own)."
+      "estimate": 9,
+      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own). The estimate carries the group fold's four scenes (about a minute of the profile)."
     },
     {
       "id": "menu-perf",

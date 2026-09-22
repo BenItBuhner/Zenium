@@ -33,6 +33,16 @@ object ReadAloudLogic {
     /** `TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED`: the voice's data would have to be downloaded first. */
     const val FEATURE_NOT_INSTALLED = "notInstalled"
 
+    /**
+     * How often, and how many times, [ReadAloud] reads the engine's list again after a bind that
+     * found no installed voice: the engine may be downloading its data (Google's fetches the device
+     * locale's voice pack on its first bind, a few seconds on the emulator, longer on a slow
+     * network) and does not say when it lands. Thirty seconds of once a second, then the next
+     * `speech.voices` ask re-reads on its own.
+     */
+    const val VOICE_DATA_RECHECK_MS = 1_000L
+    const val VOICE_DATA_RECHECKS = 30
+
     /** The model's ladder runs 0.5 to 4 (Chrome's); the chip's 0.5 to 2 is inside it. */
     const val MIN_RATE = 0.5
     const val MAX_RATE = 4.0

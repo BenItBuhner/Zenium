@@ -78,3 +78,26 @@ export function isExtensionPageUrl(url: string): boolean {
 export function sameExtensionUrl(a: string, b: string): boolean {
   return presentExtensionUrl(a) === presentExtensionUrl(b)
 }
+
+const ORIGIN_ONLY = /^(?:\/|\/?[?#].*)?$/
+
+/**
+ * An extension's origin in Chrome's spelling, `chrome-extension://<id>`, from either spelling
+ * of it (`https://<id>.ext.zenium.invalid`, `chrome-extension://<id>`, a trailing slash
+ * allowed as `new URL(origin + '/')` leaves one); a string naming a path, or any other origin,
+ * as it is.
+ */
+export function presentExtensionOrigin(origin: string): string {
+  const match = SERVED.exec(origin) ?? CHROME_EXTENSION.exec(origin)
+  if (!match || !ORIGIN_ONLY.test(match[2])) return origin
+  return chromeExtensionOrigin(match[1].toLowerCase())
+}
+
+/**
+ * Whether two origins are the same, an extension's own in either spelling: the served origin a
+ * page's `location.origin` answers against Chrome's `chrome-extension://<id>` an extension
+ * writes out, or the reverse (`runtime.getContexts`'s `documentOrigins` filter).
+ */
+export function sameExtensionOrigin(a: string, b: string): boolean {
+  return presentExtensionOrigin(a) === presentExtensionOrigin(b)
+}

@@ -8203,6 +8203,129 @@
 }
 
 /*
+ * The overview's tab search (TAB-21, `components/phone/OverviewSearch.tsx`): the phone panels'
+ * §9.12 field (`.zen-phone-field`, 40 tall with its glyph and its clear, phonePanels.css)
+ * pinned under the overview's header in the grid's 12 gutter, 8 to the segment. A field is a
+ * page surface; standing on the window backdrop (§9.29) it takes the new tab page's resting
+ * field's treatment (`.zen-ntp-field`): the `--v2-urlbar` fill and the panel's shadow for its
+ * edge in place of the hairline, the page's ink inside as the primitive gives it; the control's
+ * own radius, not the URL bar pill's. A modifier on the primitive, unlayered beside it (§9.34).
+ * The ring on focus is the primitive's, inside the edge. Under it, when a query drops every
+ * card – the New Tab card leaves with them (§9.34) – the grid's one line (§9.17's sentence at
+ * 15 and 69% in the window's ink, centred in the 32 gutter, its first line 48 below the
+ * segment) stands where the grid was, over the reach's lists when they have rows.
+ */
+.zen-phone-field.zen-overview-search-field {
+  background: var(--v2-urlbar);
+  box-shadow: var(--v2-shadow-panel);
+}
+.zen-overview-search-empty {
+  padding: 40px 32px 24px;
+  text-align: center;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  color: var(--v2-control-text-deemphasized);
+}
+
+/*
+ * The tab search's reach (TAB-21, `OverviewSearchReach` in components/phone/OverviewSearch.tsx):
+ * the recently closed tabs and the other devices' tabs a query finds, as the phone panels' rows
+ * and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
+ * `.zen-v2-heading` with the panels' modifiers) under the grid on the overview's window
+ * backdrop, so they draw in the window family (§9.29) through the control roles the overview
+ * root's `data-surface="window"` resolves: the theme's ink, its 69% for a row's second line, the
+ * window fill for the press – where the panels' own draw in the page's. A modifier by context on
+ * the primitives, unlayered beside them (§9.34), each rule outranking the primitive's by
+ * specificity; the press and hover fills are not restated (the row's own rule set is the one
+ * place that gates on `data-static`): the list redefines the page fill token the row reads,
+ * `--v2-fill`, as the window fill, so the primitive's own press and hover draw the window
+ * family. The first heading keeps the primitive's 20 above (§10.3: a heading that follows rows –
+ * the cards – keeps its space): the rule names the list class too, to outrank the panels'
+ * first-heading rule (phonePanels.css, the 0 under a pinned field) on specificity, since the two
+ * sheets' order is the bundle's.
+ */
+.zen-overview-search-reach {
+  --v2-fill: var(--v2-window-fill);
+}
+.zen-overview-search-reach .zen-v2-row {
+  color: var(--v2-control-text);
+}
+.zen-overview-search-reach .zen-list-subtitle {
+  color: var(--v2-control-text-deemphasized);
+}
+.zen-overview-search-reach .zen-v2-heading {
+  color: var(--v2-control-text);
+}
+.zen-overview-search-reach.zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {
+  margin-top: 20px;
+}
+/* Under the grid's "no match" sentence (§9.34; the emptied grid stands between them), whose own
+   bottom padding is the gap. */
+.zen-overview-search-empty
+  ~ .zen-overview-search-reach.zen-phone-list
+  > :first-child
+  > .zen-v2-heading.zen-list-heading {
+  margin-top: 0;
+}
+
+/*
+ * A phone list's group with nothing in it, and the group's follow-up (§9.17's group form, §10.4;
+ * the History page's "From your other devices", `OtherDevicesGroup`): the empty sentence is one
+ * plain row at the gutter – the row primitive for its geometry, `data-static` for no fill and no
+ * role – 15 at 69% left-aligned like a row's label; the follow-up ("Turn on sync") is the
+ * group's next row, a target like any row, so it adds nothing to the primitive.
+ */
+.zen-v2-row.zen-list-empty-row {
+  color: var(--v2-text-deemphasized);
+}
+
+/*
+ * A device's heading in a phone list (§10.3; the History page's other devices, `DeviceGroup`) is
+ * the group's one control: the `<h3>` keeps the primitive's beat and gutter and the button inside
+ * it lays the name and the "Last active …" aside (13 at 69%, tabular) out on the heading's line,
+ * then takes §9.3's 44 target around that 20 line – 12 above and below, folded into the heading's
+ * 20 / 4 beat by its margins, so the text stays where the beat put it (the rows below are
+ * positioned and win the 8 the box reaches under them). The box is 44 by declaration, not by its
+ * content: the two sizes on one baseline would otherwise grow the line by a fraction and the
+ * heading with it. Pressed, it shows the page fill as a row does.
+ */
+.zen-v2-heading.zen-device-heading {
+  display: flex;
+  padding: 0;
+}
+.zen-device-heading-button {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -12px 0;
+  padding: 12px 16px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-device-heading-button:active {
+  background: var(--v2-fill);
+}
+@media (hover: hover) {
+  .zen-device-heading-button:hover {
+    background: var(--v2-fill);
+  }
+}
+.zen-device-heading-aside {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
  * The overview's Groups pane (TAB-16, `components/phone/GroupsPane.tsx`): the phone panels'
  * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
  * `.zen-v2-heading` with the panels' modifiers) and the row's 44 icon button standing on the
