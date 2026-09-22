@@ -31,6 +31,7 @@ import { ERROR_URL_PREFIX, displayUrl, isEmptyTabUrl, isNewTabUrl } from '@share
 import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
+import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
@@ -1495,6 +1496,9 @@ function PhoneSheet({
   const bottom = edge === 'bottom'
   // A long list dissolves at the edge that has more past it, like every scroller in the chrome.
   const fadeRows = useFadeEdges<HTMLUListElement>({ axis: 'y' })
+  // The pill's focus motion (MOT-07, lib/omniboxFocus.ts) writes its value on the layer per
+  // frame: the sheet and the field under it read it, so a frame recalculates the omnibox alone.
+  const bindFocus = useOmniboxFocusBinding()
   const bandStyle = {
     left: 'var(--zen-inset-left)',
     right: 'var(--zen-inset-right)',
@@ -1516,7 +1520,11 @@ function PhoneSheet({
   // The omnibox is the pill grown over the frame: a window surface (v2 §9.29), so the chips, the
   // Refine arrows and the clipboard row's Show draw in the window family through the control roles.
   return (
-    <div className="absolute inset-0 z-30" onMouseDown={onDismiss}>
+    <div
+      ref={bindFocus}
+      className="zen-omnibox-layer absolute inset-0 z-30"
+      onMouseDown={onDismiss}
+    >
       <div
         ref={sheetRef}
         data-surface="window"

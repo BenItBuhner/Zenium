@@ -6,6 +6,7 @@ import { securityIndicator } from '@shared/siteInfo'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
+import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
 import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
@@ -441,14 +442,18 @@ export function PhoneBar({
   // The bar that hides on scroll writes its progress on this element per frame (lib/barHide.ts);
   // the preview of the bar at the other edge, drawn during a carry, does not hide.
   const bindHide = useBarHideBinding(!inert)
-  // One ref for the two: the recede's registration reads the element off `barRef` in its layout
-  // effect, the hide's binding takes the element as it mounts and unmounts.
+  // The pill's focus motion writes its value here per frame too (lib/omniboxFocus.ts): the
+  // buttons and the pill under this element read it, so the frame recalculates the bar alone.
+  const bindFocus = useOmniboxFocusBinding()
+  // One ref for the three: the recede's registration reads the element off `barRef` in its
+  // layout effect, the two bindings take the element as it mounts and unmounts.
   const setBar = useCallback(
     (el: HTMLElement | null) => {
       barRef.current = el
       bindHide(el)
+      bindFocus(el)
     },
-    [bindHide]
+    [bindHide, bindFocus]
   )
 
   return (

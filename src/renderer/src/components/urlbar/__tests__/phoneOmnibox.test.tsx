@@ -30,6 +30,7 @@ const { HEADER_SWAP_FADE_MS, Urlbar } = await import('../Urlbar')
 const { isShareableUrl, showsPageHeader } = await import('../omniboxHeader')
 const { uiStore } = await import('@renderer/lib/ui')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
+const { omniboxFocusSurfaces } = await import('@renderer/lib/omniboxFocus')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -1000,6 +1001,31 @@ describe('removing a suggestion by touch (OMN-17)', () => {
     await type(input(bottom), 'cats')
     expect(headingOf(bottom, 'Pages')!.hasAttribute('data-outer')).toBe(false)
     expect(headingOf(bottom, 'Searches')!.hasAttribute('data-outer')).toBe(true)
+  })
+})
+
+/*
+ * The omnibox's layer is one of the two elements the pill's focus motion writes its value on
+ * (MOT-07, lib/omniboxFocus.ts; PERF-2's H3: written on the root the value had the whole
+ * chrome's style recalculated every spring frame). The sheet binds the layer – the sheet's and
+ * the field's parent – so every omnibox-side reader in main.css (the sheet's opacity, the field's
+ * backdrop and children) is under the bound element; the bar is the other half,
+ * `phone/__tests__/omniboxFocusBinding.test.tsx`.
+ */
+describe('the layer carries the focus motion’s value (MOT-07, PERF-2 H3)', () => {
+  it('binds the layer element itself, with the sheet and the field under it, and releases it on unmount', async () => {
+    const el = await render(phone(tab(PAGE)))
+    const layer = el.querySelector<HTMLElement>('.zen-omnibox-layer')!
+    expect(layer).not.toBeNull()
+    expect(omniboxFocusSurfaces()).toContain(layer)
+    expect(layer.querySelector('.zen-omnibox-sheet')).not.toBeNull()
+    expect(layer.querySelector('.zen-omnibox-field')).not.toBeNull()
+    expect(layer.contains(input(el))).toBe(true)
+    // The bar's backdrop the dismissal tests press is this same element, not a wrapper over it.
+    expect(el.firstElementChild).toBe(layer)
+    act(() => root!.unmount())
+    root = null
+    expect(omniboxFocusSurfaces()).not.toContain(layer)
   })
 })
 

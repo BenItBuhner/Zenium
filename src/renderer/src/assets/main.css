@@ -6229,16 +6229,22 @@
   /*
    * The pill growing into the omnibox's field (MOT-07, Chrome's omnibox focus animation;
    * lib/motion/omniboxFocus.ts is the machine, lib/omniboxFocus.ts drives it). One value,
-   * `--zen-omnibox-focus` on the root (0 the pill's pose, 1 the omnibox's), written per frame by
-   * the controller on one SPRING_SNAPPY over the field's growth, moves everything on transform
-   * and opacity alone – nothing is laid out per frame – in the rides §11.8 fixed for the field
+   * `--zen-omnibox-focus` (0 the pill's pose, 1 the omnibox's), written per frame by the
+   * controller on one SPRING_SNAPPY over the field's growth, moves everything on transform and
+   * opacity alone – nothing is laid out per frame – in the rides §11.8 fixed for the field
    * morph: the bar's buttons and the pill's words gone by half way, the sheet in from four
    * tenths, the field's contents over the second half. The slot the pill left – how far the
    * band's start and end are from it, its share of the band's width – is measured once at the
-   * tap and written beside the value (`--zen-omnibox-slot-*`). The root's `data-omnibox-focus`
-   * names the phase (opening, open, pulled, closing): while the motion owns the bar, the
-   * omnibox's own entrance animations (the pill-grow and its fades, which are the cut's) yield
-   * to it, at the landing too, so nothing replays there.
+   * tap and written beside the value (`--zen-omnibox-slot-*`). The value lives on the two
+   * elements whose subtrees read it – the bar (`.zen-phone-bar`) and the omnibox's layer
+   * (`.zen-omnibox-layer`, the sheet's and the field's parent), each bound by its component
+   * (`bindOmniboxFocus`) – and never on the root: registered below the layer as inheriting, a
+   * frame's write recalculates the style of that subtree alone (PERF-2's H3, the note over
+   * `--zen-recede`). Every rule reading it here has its subject under one of the two. The root
+   * carries only `data-omnibox-focus`, the phase (opening, open, pulled, closing), which
+   * changes at a run's ends: while the motion owns the bar, the omnibox's own entrance
+   * animations (the pill-grow and its fades, which are the cut's) yield to it, at the landing
+   * too, so nothing replays there.
    *
    * The field's backdrop sets out over the pill exactly – shifted past the buttons at the start
    * and scaled to the pill's width – and arrives over the first half on top of the pill's fill
@@ -6442,6 +6448,21 @@
       transform: none !important;
     }
   }
+}
+
+/*
+ * The focus motion's value, registered INHERITING – the one per-frame property that is: its
+ * readers are the descendants of the two elements it is written on (the bar's buttons and pill,
+ * the omnibox's sheet and field), and the field's backdrop is a `::before`, which takes only
+ * inherited properties from its element. So the pattern's `inherits: false` (the note over
+ * `--zen-recede` below) does not fit it, and its size is kept instead by where it is written: on
+ * the bar and the layer, whose subtrees are the readers, never on the root – written there, every
+ * spring frame recalculated the whole chrome's style (6 to 31 ms, PR #307's first-line review).
+ */
+@property --zen-omnibox-focus {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
 }
 
 /*

@@ -2,12 +2,25 @@
  * The phone's address pill becoming the omnibox's field and back (MOT-07, Chrome's omnibox focus
  * animation): the impure half of `lib/motion/omniboxFocus.ts`. It keeps the machine's state,
  * measures the pill's slot in the bar band once at the tap, runs the one spring, writes the
- * value to the root once per frame (`--zen-omnibox-focus`, read by the bar's buttons and pill,
- * the omnibox's field and its suggestion card – transform and opacity only, `main.css`), and
- * hooks the omnibox's open and close: the pill's tap opens the bar as the field sets out, a
- * dismissal is held until the field has run back into the pill. The bar stays mounted under the
- * omnibox while the field is on its way either way (`focusHoldsChrome`), so its buttons are seen
- * pushed off by the widening field and coming back as it narrows.
+ * value once per frame (`--zen-omnibox-focus`, read by the bar's buttons and pill, the omnibox's
+ * field and its suggestion card – transform and opacity only, `main.css`), and hooks the
+ * omnibox's open and close: the pill's tap opens the bar as the field sets out, a dismissal is
+ * held until the field has run back into the pill. The bar stays mounted under the omnibox while
+ * the field is on its way either way (`focusHoldsChrome`), so its buttons are seen pushed off by
+ * the widening field and coming back as it narrows.
+ *
+ * Where the value goes (PERF-2's H3, the pattern of `--zen-recede` (#269) and `--zen-bar-hide`
+ * (#270)): on the two elements whose subtrees read it – the bar (`.zen-phone-bar`, PhoneShell)
+ * and the omnibox's layer (`.zen-omnibox-layer`, the sheet's and the field's parent, Urlbar) –
+ * each bound by its component for as long as it is mounted (`bindOmniboxFocus`), never on the
+ * root. The property inherits (registered so in main.css: the field's backdrop is a `::before`,
+ * and a pseudo takes only inherited properties from its element), so a frame's write has that
+ * one subtree's style recalculated, about a hundred elements; written on the root, as #307's
+ * first head had it, every spring frame recalculated the style of the whole chrome – 6 to 31 ms
+ * of style against under half a millisecond of layout and paint, the first-line review's trace.
+ * The slot the pill left (`--zen-omnibox-slot-*`) is written beside it, once at the tap and on a
+ * surface binding mid-flight. The root keeps only the phase (`data-omnibox-focus`), which
+ * changes at a run's ends, never per frame.
  *
  * Nothing here runs unless the pill was tapped over a page (`focusOmnibox`); the new tab page's
  * field has its own morph (`lib/fakeboxMorph.ts`, v2 §11.8) and the desktop never comes here.
@@ -77,12 +90,38 @@ export const SPRING_FOCUS = SPRING_SNAPPY
 /** Under reduced motion the omnibox arrives and leaves on a 120 ms fade in place (v2 §11.3). */
 export const FOCUS_REDUCED_FADE_MS = 120
 
-/** The value on the root: 0 the pill's pose, 1 the omnibox's. */
+/** The value on the bound surfaces: 0 the pill's pose, 1 the omnibox's. */
 export const FOCUS_VAR = '--zen-omnibox-focus'
-/** The slot on the root, written once at the tap: the two gaps the buttons leave, the pill's share. */
+/** The slot beside it, written once at the tap: the two gaps the buttons leave, the pill's share. */
 export const FOCUS_SLOT_LEFT_VAR = '--zen-omnibox-slot-left'
 export const FOCUS_SLOT_RIGHT_VAR = '--zen-omnibox-slot-right'
 export const FOCUS_SLOT_SCALE_VAR = '--zen-omnibox-slot-scale'
+const FOCUS_VARS = [FOCUS_VAR, FOCUS_SLOT_LEFT_VAR, FOCUS_SLOT_RIGHT_VAR, FOCUS_SLOT_SCALE_VAR]
+
+/**
+ * The elements the value is written on (the header): the bar and the omnibox's layer, bound by
+ * their components. The bar binds again as a closing begins (it is mounted again beneath the
+ * field), the layer as the bar comes up under the tap: each takes the current value and slot at
+ * once, so its first frame is the spring's, not the fallback's.
+ */
+const surfaces = new Set<HTMLElement>()
+
+/**
+ * Bind an element whose subtree reads `--zen-omnibox-focus`: it carries the value and the slot
+ * from now until the returned release (its unmount), and nothing under it reads the fallback.
+ */
+export function bindOmniboxFocus(el: HTMLElement): () => void {
+  surfaces.add(el)
+  paintSurface(el)
+  return () => {
+    if (surfaces.delete(el)) clearSurface(el)
+  }
+}
+
+/** The surfaces bound right now (the tests: the bar and the layer, and never the root). */
+export function omniboxFocusSurfaces(): readonly HTMLElement[] {
+  return Array.from(surfaces)
+}
 
 let machine: OmniboxFocusState = OMNIBOX_FOCUS_REST
 let slot: FocusSlot | null = null
@@ -312,23 +351,38 @@ function publish(): void {
   }
 }
 
+/** The frame's value on every bound surface; at rest they carry nothing (the fallback's 0). */
 function paint(): void {
-  const root = document.documentElement.style
   if (!omniboxUp(machine)) {
-    root.removeProperty(FOCUS_VAR)
-    root.removeProperty(FOCUS_SLOT_LEFT_VAR)
-    root.removeProperty(FOCUS_SLOT_RIGHT_VAR)
-    root.removeProperty(FOCUS_SLOT_SCALE_VAR)
+    for (const el of surfaces) clearSurface(el)
     return
   }
-  root.setProperty(FOCUS_VAR, focusValue(machine).toFixed(4))
+  const value = focusValue(machine).toFixed(4)
+  for (const el of surfaces) el.style.setProperty(FOCUS_VAR, value)
+}
+
+/** What a surface carries right now: the value and the slot while the omnibox is up, else nothing. */
+function paintSurface(el: HTMLElement): void {
+  if (!omniboxUp(machine)) {
+    clearSurface(el)
+    return
+  }
+  if (slot) writeSlotOn(el, slot)
+  el.style.setProperty(FOCUS_VAR, focusValue(machine).toFixed(4))
+}
+
+function clearSurface(el: HTMLElement): void {
+  for (const name of FOCUS_VARS) el.style.removeProperty(name)
 }
 
 function writeSlot(s: FocusSlot): void {
-  const root = document.documentElement.style
-  root.setProperty(FOCUS_SLOT_LEFT_VAR, `${s.left.toFixed(2)}px`)
-  root.setProperty(FOCUS_SLOT_RIGHT_VAR, `${s.right.toFixed(2)}px`)
-  root.setProperty(FOCUS_SLOT_SCALE_VAR, s.scale.toFixed(4))
+  for (const el of surfaces) writeSlotOn(el, s)
+}
+
+function writeSlotOn(el: HTMLElement, s: FocusSlot): void {
+  el.style.setProperty(FOCUS_SLOT_LEFT_VAR, `${s.left.toFixed(2)}px`)
+  el.style.setProperty(FOCUS_SLOT_RIGHT_VAR, `${s.right.toFixed(2)}px`)
+  el.style.setProperty(FOCUS_SLOT_SCALE_VAR, s.scale.toFixed(4))
 }
 
 /** Everything back to rest: the spring stopped, the value gone, a held close let through. */
