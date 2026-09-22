@@ -55,4 +55,17 @@
     <!-- The custom tab's menu: the same sheet under its own name. -->
     <style name="ThemeOverlay.Zen.CustomTabSheet" parent="ThemeOverlay.Zen.Sheet" />
     <style name="ThemeOverlay.Zen.CustomTabSheet.Dark" parent="ThemeOverlay.Zen.Sheet.Dark" />
+
+    <!-- A native prompt sheet (NativePromptSheet, v2 §9.23): the same sheet, coming and going on
+         §11.3's 120 ms opacity fade in place instead of the platform's slide; the dim with it. -->
+    <style name="ThemeOverlay.Zen.PromptSheet" parent="ThemeOverlay.Zen.Sheet">
+        <item name="android:windowAnimationStyle">@style/Animation.Zen.PromptSheet</item>
+    </style>
+    <style name="ThemeOverlay.Zen.PromptSheet.Dark" parent="ThemeOverlay.Zen.Sheet.Dark">
+        <item name="android:windowAnimationStyle">@style/Animation.Zen.PromptSheet</item>
+    </style>
+    <style name="Animation.Zen.PromptSheet" parent="@android:style/Animation.Dialog">
+        <item name="android:windowEnterAnimation">@anim/prompt_sheet_in</item>
+        <item name="android:windowExitAnimation">@anim/prompt_sheet_out</item>
+    </style>
 </resources>
