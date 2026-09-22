@@ -19,8 +19,20 @@ export const PICKER_PANES: ReadonlyArray<{ id: PickerPane; label: string }> = [
   { id: 'screen', label: 'Entire screen' }
 ]
 
-/** The pane the picker opens on: the tab pane, as Chrome's does. */
-export const INITIAL_PANE: PickerPane = 'tab'
+/**
+ * The panes this request shows, in the picker's order: a page's call has all three; an
+ * extension's (`chrome.desktopCapture`) the kinds it asked for, as Chrome hides the rest.
+ */
+export function panesOf(
+  request: ScreenCaptureRequest
+): ReadonlyArray<{ id: PickerPane; label: string }> {
+  return PICKER_PANES.filter((p) => request.kinds.includes(p.id))
+}
+
+/** The pane the picker opens on: the first on offer – the tab pane, as Chrome's does. */
+export function initialPane(request: ScreenCaptureRequest): PickerPane {
+  return panesOf(request)[0]?.id ?? 'tab'
+}
 
 /** The picker this window shows now: the request of its active tab (tab-modal, like Chrome's). */
 export function currentScreenCaptureRequest(state: UIState): ScreenCaptureRequest | null {
@@ -32,8 +44,31 @@ export function currentScreenCaptureRequest(state: UIState): ScreenCaptureReques
 /** Chrome's title line and the line under it. */
 export const PICKER_TITLE = 'Choose what to share'
 
-export function pickerDescription(request: ScreenCaptureRequest): string {
-  return `${request.origin} wants to share the contents of your screen`
+/**
+ * The line under the title, in parts: who is asking – the site, as its host, or the extension,
+ * by name – "wants to share the contents of your screen", and, when the extension captures for
+ * a site's tab (`chooseDesktopMedia`'s `targetTab`), "with" whom, as Chrome's picker says. The
+ * hosts are kept apart from the words: an identity the user is asked to trust is never elided
+ * (§9.23), so the picker renders each with its break opportunities (`hostLabels`).
+ */
+export const PICKER_ASKS = 'wants to share the contents of your screen'
+
+export function pickerDescription(request: ScreenCaptureRequest): {
+  who: { host: string } | { name: string }
+  sharesWith: string | null
+} {
+  if (!request.extension) return { who: { host: request.origin }, sharesWith: null }
+  return { who: { name: request.extension.name }, sharesWith: request.origin || null }
+}
+
+/**
+ * A host's labels, each keeping its dot: `a.b.c` gives `a.`, `b.`, `c`. The picker puts a
+ * `<wbr>` between them, so a host too long for its line wraps at its dots rather than in the
+ * middle of a label (a lone label longer than the line still wraps, by the span's
+ * `overflow-wrap: anywhere`); the text reads the same.
+ */
+export function hostLabels(host: string): string[] {
+  return host.split(/(?<=\.)/)
 }
 
 /** The sources of one pane, in the core's order (the calling tab first in the tab pane). */

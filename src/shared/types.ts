@@ -34,6 +34,7 @@ import type { QrEvent, QrStartOutcome } from './qrScan'
 import type { MediaPositionInfo, MediaSessionAction, MediaSessionSourceKind } from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
+import type { PageFontSettings } from './fonts'
 import type {
   ReadAloudHighlightMode,
   ReadAloudSettings,
@@ -237,6 +238,22 @@ export interface HostCapabilities {
    * Listen / Read aloud entry points.
    */
   readAloud: boolean
+  /**
+   * Pages receive the preferred languages (`Settings.languages`, CT-41): the desktop host sets
+   * every session's `Accept-Language` from the list. Off on Android, whose WebView sends the
+   * system's languages and cannot be told otherwise; the list still drives translate and
+   * spellcheck there, and Settings says pages receive the system languages.
+   */
+  pageLanguages: boolean
+  /**
+   * The engine honours the generic-family slots of `Settings.fonts` (`serif`, `sansSerif`,
+   * `fixed`, CT-25) for text a page styles with the generic keywords. On the desktop it does;
+   * off on Android, where Blink's font selection never consults the generic-family settings
+   * (`FontSelector::FamilyNameFromSettings`, its Android branch) – `WebSettings.serifFontFamily`
+   * and its siblings are inert there – so only the standard family (the initial `font-family`)
+   * and the sizes take effect, and the phone's Settings rows are those three.
+   */
+  genericFontFamilies: boolean
 }
 
 export interface Rect {
@@ -2324,6 +2341,21 @@ export interface Settings {
    * Absent in profiles from before it existed (`sanitizeReadAloudSettings` fills the defaults).
    */
   readAloud: ReadAloudSettings
+  /**
+   * Page fonts (Settings › Appearance › Customize fonts, CT-25): the families for text a page
+   * leaves to the engine and for its generic families, the default size, the minimum size
+   * (`shared/fonts.ts`). Absent in profiles from before it existed (`sanitizeFontSettings`
+   * fills the platform defaults). Synced with the settings.
+   */
+  fonts: PageFontSettings
+  /**
+   * The preferred languages (Settings › Languages, CT-41): BCP 47 tags, most preferred first.
+   * Drives the `Accept-Language` every desktop session sends (Android's WebView follows the
+   * system locales and takes no list), translate's default target and its never-translate
+   * defaults, and the dictionary a profile that chose no spellcheck language checks in. Absent
+   * in profiles from before it existed: filled from the OS locales (`defaultLanguages`). Synced.
+   */
+  languages: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -2777,15 +2809,32 @@ export interface ScreenCaptureSource {
   icon: string | null
 }
 
+/** The picker's panes, in its order (Chrome's tab pane leads). */
+export type ScreenCaptureKind = ScreenCaptureSource['kind']
+
 /**
- * A page's `getDisplayMedia` call waiting on the picker (Chrome's "Choose what to share"): the
- * chrome shows the sources by kind and answers with `screenCapture.respond`. One per tab.
+ * A page's `getDisplayMedia` call, or an extension's `chrome.desktopCapture` call, waiting on
+ * the picker (Chrome's "Choose what to share"): the chrome shows the sources by kind and
+ * answers with `screenCapture.respond`. One per tab.
  */
 export interface ScreenCaptureRequest {
   id: string
   tabId: string
-  /** The site asking, as a display origin. */
+  /**
+   * The site asking, as a display origin. For an extension's call, the site of the tab it
+   * captures for (`targetTab`), or empty when the extension's own page consumes the stream.
+   */
   origin: string
+  /**
+   * An extension asking (`chrome.desktopCapture.chooseDesktopMedia`): named in the site's place
+   * with its icon, as Chrome's picker names it. Null for a page's own call.
+   */
+  extension: { name: string; icon: string | null } | null
+  /**
+   * The panes on offer, in the picker's order: an extension asks for some kinds (Chrome hides
+   * the others); a page's call has all three.
+   */
+  kinds: ScreenCaptureKind[]
   /** The page asked for audio as well. */
   audio: boolean
   /** The OS can hand a screen's sound along with its picture (the "Also share system audio" box). */
@@ -3760,6 +3809,11 @@ export interface Commands {
        * that engine's – no address, history, bookmark or tab rows.
        */
       engineId?: string
+      /**
+       * The phone card's sectioned order (OMN-18): the rows under their group headings in
+       * Chrome for Android's order, the default match alone at the field's end.
+       */
+      grouped?: boolean
     }
     result: Suggestion[]
   }
@@ -4709,6 +4763,18 @@ export interface Commands {
     result: TranslateSelectionResult | null
   }
   'translate.setPreferences': { args: Partial<TranslatePreferences>; result: void }
+  /**
+   * Translate the Reader View article the tab shows (CT-36): the article's blocks go through the
+   * engine in the core and the reader document re-renders from the translation, the original
+   * kept for the Show original toggle. `target` defaults to the first preferred language; a
+   * translation already shown is redone when the languages differ.
+   */
+  'translate.reader': {
+    args: { tabId: string; target?: string; source?: string }
+    result: void
+  }
+  /** The reader's Show original toggle: show the article as written (`true`) or its translation. */
+  'translate.readerShowOriginal': { args: { tabId: string; original: boolean }; result: void }
   /** Always translate, never translate, or ask for pages in `language`. */
   'translate.setLanguageRule': {
     args: { language: string; rule: 'always' | 'never' | 'ask' }

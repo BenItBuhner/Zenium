@@ -212,4 +212,114 @@ describe('ScreenCaptureService', () => {
     expect(tabIdOfSource('tab:abc')).toBe('abc')
     expect(tabIdOfSource('screen:0:0')).toBeNull()
   })
+
+  it("a page's request presents the site and all three panes", () => {
+    const h = harness()
+    void h.service.request({ tabId: 't1', url: 'https://meet.example/room', audio: false })
+    expect(h.service.list()[0]).toMatchObject({
+      origin: 'meet.example',
+      extension: null,
+      kinds: ['tab', 'window', 'screen']
+    })
+  })
+})
+
+describe("ScreenCaptureService for an extension's chooseDesktopMedia", () => {
+  const EXT = { name: 'Screen Recorder', icon: 'data:image/png;base64,AAA' }
+
+  it('presents the extension in the site’s place, with the panes it asked for, and answers its id alongside', async () => {
+    const h = harness({ systemAudio: true })
+    const opened = h.service.open({
+      tabId: 't1',
+      url: '',
+      audio: true,
+      extension: EXT,
+      kinds: ['screen', 'tab']
+    })
+    const [request] = h.service.list()
+    expect(opened.id).toBe(request.id)
+    expect(request).toMatchObject({
+      origin: '',
+      extension: EXT,
+      kinds: ['tab', 'screen'],
+      audio: true,
+      systemAudio: true,
+      loading: true
+    })
+    // Only the screens are asked of the OS.
+    expect(h.host.calls).toBe(1)
+    h.host.resolve([SCREEN])
+    await flush()
+    expect(h.service.list()[0].sources.map((s) => s.id)).toEqual(['screen:0:0', 'tab:t1', 'tab:t2'])
+    h.service.respond(request.id, 'screen:0:0', true)
+    expect(await opened.answer).toEqual({ sourceId: 'screen:0:0', audio: true })
+  })
+
+  it('a targetTab of a site names that site under the extension', () => {
+    const h = harness()
+    void h.service.open({
+      tabId: 't2',
+      url: 'https://docs.example/',
+      audio: false,
+      extension: EXT,
+      kinds: ['screen', 'window']
+    })
+    expect(h.service.list()[0]).toMatchObject({
+      origin: 'docs.example',
+      extension: EXT,
+      kinds: ['window', 'screen'],
+      sources: []
+    })
+  })
+
+  it('leaves the tab pane out of the OS list, and the OS out of a tab-only pick', async () => {
+    const h = harness()
+    const opened = h.service.open({
+      tabId: 't1',
+      url: '',
+      audio: false,
+      extension: EXT,
+      kinds: ['tab']
+    })
+    const [request] = h.service.list()
+    expect(request).toMatchObject({ kinds: ['tab'], loading: false })
+    expect(h.host.calls).toBe(0)
+    expect(request.sources.map((s) => s.id)).toEqual(['tab:t1', 'tab:t2'])
+    h.service.respond(request.id, 'tab:t2')
+    expect(await opened.answer).toEqual({ sourceId: 'tab:t2', audio: false })
+  })
+
+  it('honours the options: no system-audio box on request, the calling tab kept out of the tab pane', () => {
+    const h = harness({ systemAudio: true })
+    void h.service.open({
+      tabId: 't1',
+      url: '',
+      audio: true,
+      extension: EXT,
+      kinds: ['screen', 'tab'],
+      excludeSystemAudio: true,
+      excludeSelf: true
+    })
+    const [request] = h.service.list()
+    expect(request.systemAudio).toBe(false)
+    expect(request.sources.map((s) => s.id)).toEqual(['tab:t2'])
+  })
+
+  it('a request for no pane, or for a tab that is gone, is the refusal at once with no id', async () => {
+    const h = harness()
+    const none = h.service.open({ tabId: 't1', url: '', audio: false, extension: EXT, kinds: [] })
+    expect(none.id).toBeNull()
+    expect(await none.answer).toEqual({ sourceId: null, audio: false })
+    const gone = h.service.open({ tabId: 'nope', url: '', audio: false, extension: EXT })
+    expect(gone.id).toBeNull()
+    expect(h.service.list()).toEqual([])
+  })
+
+  it('cancelChooseDesktopMedia is the chrome’s cancel: respond with no source takes the picker down', async () => {
+    const h = harness()
+    const opened = h.service.open({ tabId: 't1', url: '', audio: false, extension: EXT })
+    h.service.respond(opened.id!, null)
+    expect(await opened.answer).toEqual({ sourceId: null, audio: false })
+    expect(h.service.list()).toEqual([])
+  })
 })

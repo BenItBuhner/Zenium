@@ -26,14 +26,16 @@ export function PhoneStage({
   state: UIState
   edge?: PhoneBarPosition
 }): JSX.Element | null {
-  const tabs = stageStore.use((s) => s.tabs)
+  // The track's phase alone: its position moves every frame of a swipe and is the track's own
+  // business (`TabSwitchStage` follows it from the store without a render up here).
+  const tabsPhase = stageStore.use((s) => s.tabs.phase)
   const overview = stageStore.use((s) => s.overview)
   const area = contentAreaStore.use((s) => s.area)
 
-  if (!area || (tabs.phase === 'idle' && overview.phase === 'closed')) return null
+  if (!area || (tabsPhase === 'idle' && overview.phase === 'closed')) return null
   return (
     <div className="absolute inset-0 z-20">
-      {tabs.phase !== 'idle' && <TabSwitchStage state={state} tabs={tabs} area={area} />}
+      {tabsPhase !== 'idle' && <TabSwitchStage state={state} area={area} />}
       {overview.phase !== 'closed' && (
         <TabOverview state={state} overview={overview} area={area} edge={edge} />
       )}

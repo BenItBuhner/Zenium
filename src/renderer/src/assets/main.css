@@ -1659,8 +1659,20 @@
     place-items: center;
     pointer-events: none;
   }
+  /*
+   * Every hosted dialog root is a stacking context of its own, ranked by its place in the slot
+   * (§9.24: later on top). Two stacked dialogs – a form and its prompt – are siblings in the one
+   * grid cell, and a root was a stacking context only while its pop's transform ran: after it
+   * the lower dialog's positioned children (a footer, a field's ring) painted over the upper
+   * one, interleaved. `isolation` closes each root; `z-index: sibling-index()` (Chromium 138+)
+   * ranks the roots by slot index, so the order is the slot's to give and no dialog carries the
+   * rule itself. Where the function is not understood, the roots still paint in tree order as
+   * closed contexts.
+   */
   .zen-frame-dialogs-slot > * {
     grid-area: 1 / 1;
+    isolation: isolate;
+    z-index: sibling-index();
   }
   .zen-frame-dialogs[data-open] .zen-frame-dialogs-slot > * {
     pointer-events: auto;
@@ -1915,6 +1927,19 @@
     .zen-animate-in,
     .zen-animate-fade {
       animation: zen-fade 120ms var(--zen-ease) !important;
+    }
+  }
+  /*
+   * The desktop popover's way out when it collapses into its anchor (§9.22; `DesktopPopover`
+   * in siteControls/primitives.tsx draws the reversed pop as an inline 180 ms transition on
+   * opacity and transform): under reduced motion the same 120 ms opacity fade in place as the
+   * frame dialogs' `zen-fade-out`, nothing travels. The component writes opacity alone for it,
+   * but an inline transition is removed by the global rule at the foot like any other, so the
+   * fade is declared here, `!important`, and the popover unmounts on its `transitionend`.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-desktop-popover[data-collapsing] {
+      transition: opacity 120ms var(--zen-ease) !important;
     }
   }
   /*
@@ -2788,11 +2813,19 @@
       animation: zen-fade 120ms var(--zen-ease) !important;
     }
   }
-  /* Along the top of a grouped tab's card on the swipe track. */
+  /*
+   * Along the top of a grouped tab's card on the swipe track: an opaque band, the group's
+   * colour at 22% over the theme's solid tone – the tint the translucent band had over a plain
+   * page, with nothing of the picture through it. It was `backdrop-filter: blur(12px)` over a
+   * 22% tint, and a blur reads its backdrop back and filters it on every frame the card
+   * beneath it moves (the swipe between two grouped tabs on PERF-5's profile: 8.8 layer
+   * updates a frame against 5.2 for the same swipe without a group, and frames 2.2x as long on
+   * the recipe's software GPU); v2 §1 has no blur but where the platform composites it, and
+   * "otherwise opaque".
+   */
   .zen-group-ribbon {
     color: var(--zen-fg);
-    background: rgb(var(--zen-group-rgb) / 0.22);
-    backdrop-filter: blur(12px) saturate(1.2);
+    background: color-mix(in srgb, rgb(var(--zen-group-rgb)) 22%, var(--zen-bg-solid));
     will-change: opacity;
   }
   /*
@@ -5585,6 +5618,15 @@
    * the pane wide. The footer is §9.11's: hugging, right-aligned, the 8 gap; the system-audio
    * checkbox leads it, its box centred on the line rather than on a row's first text line.
    */
+  /*
+   * A host in the title block's description (the site asking, or the one an extension shares
+   * with): an identity the user is asked to trust is never elided (§9.23). The description wraps
+   * as every description does; the picker puts a `<wbr>` after each of the host's dots, so a host
+   * too long for the line breaks there, and this takes a lone label longer than the whole line.
+   */
+  .zen-scpick-origin {
+    overflow-wrap: anywhere;
+  }
   .zen-scpick-panes {
     border-bottom: 1px solid transparent;
     transition: border-color 120ms var(--zen-ease);
@@ -5599,6 +5641,13 @@
     flex-direction: column;
     padding: 16px;
     overflow-y: auto;
+  }
+  /*
+   * One pane alone (an extension asked for one kind): no segment over it, so the title block's
+   * own 16 is the gap to the cards and its hairline is the one that shows on scroll.
+   */
+  .zen-scpick-list[data-alone] {
+    padding-top: 0;
   }
   .zen-scpick-state {
     display: flex;
@@ -6412,6 +6461,150 @@
   :root[data-fakebox='open'] .zen-omnibox-field .zen-toolbar-button {
     transition-property: background, transform;
   }
+  /*
+   * The pill growing into the omnibox's field (MOT-07, Chrome's omnibox focus animation;
+   * lib/motion/omniboxFocus.ts is the machine, lib/omniboxFocus.ts drives it). One value,
+   * `--zen-omnibox-focus` (0 the pill's pose, 1 the omnibox's), written per frame by the
+   * controller on one SPRING_SNAPPY over the field's growth, moves everything on transform and
+   * opacity alone – nothing is laid out per frame – in the rides §11.8 fixed for the field
+   * morph: the bar's buttons and the pill's words gone by half way, the sheet in from four
+   * tenths, the field's contents over the second half. The slot the pill left – how far the
+   * band's start and end are from it, its share of the band's width – is measured once at the
+   * tap and written beside the value (`--zen-omnibox-slot-*`). The value lives on the two
+   * elements whose subtrees read it – the bar (`.zen-phone-bar`) and the omnibox's layer
+   * (`.zen-omnibox-layer`, the sheet's and the field's parent), each bound by its component
+   * (`bindOmniboxFocus`) – and never on the root: registered below the layer as inheriting, a
+   * frame's write recalculates the style of that subtree alone (PERF-2's H3, the note over
+   * `--zen-recede`). Every rule reading it here has its subject under one of the two. The root
+   * carries only `data-omnibox-focus`, the phase (opening, open, pulled, closing), which
+   * changes at a run's ends: while the motion owns the bar, the omnibox's own entrance
+   * animations (the pill-grow and its fades, which are the cut's) yield to it, at the landing
+   * too, so nothing replays there.
+   *
+   * The field's backdrop sets out over the pill exactly – shifted past the buttons at the start
+   * and scaled to the pill's width – and arrives over the first half on top of the pill's fill
+   * (which leaves beneath it over the second, main.css below), so no frame has the surface
+   * see-through. Its contents fade in over the second half and ride the backdrop's edges as it
+   * widens: the glyph and the field with the start edge, the controls after the field with the
+   * end edge – so nothing of the field shows outside its backdrop on the way, and nothing
+   * scales but the backdrop. The contents' own opacity transitions (the toolbar button's 120 ms)
+   * are off while the value drives them, so no frame lags the spring; the button's resting 85 %
+   * is kept in the ride, so the landing hands over without a step.
+   */
+  :root[data-omnibox-focus] .zen-omnibox-sheet,
+  :root[data-omnibox-focus] .zen-omnibox-field::before,
+  :root[data-omnibox-focus] .zen-omnibox-field > * {
+    animation: none;
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-sheet,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-sheet,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-sheet {
+    opacity: clamp(0, (var(--zen-omnibox-focus, 0) - 0.4) / 0.6, 1);
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field::before,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-field::before,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field::before {
+    opacity: clamp(0, 2 * var(--zen-omnibox-focus, 0), 1);
+    transform: translateX(
+        calc(var(--zen-omnibox-slot-left, 48px) * (1 - var(--zen-omnibox-focus, 0)))
+      )
+      scaleX(
+        calc(
+          var(--zen-omnibox-slot-scale, 0.5) + (1 - var(--zen-omnibox-slot-scale, 0.5)) *
+            var(--zen-omnibox-focus, 0)
+        )
+      );
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field > *,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-field > *,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field > * {
+    transition: none;
+    opacity: clamp(0, 2 * var(--zen-omnibox-focus, 0) - 1, 1);
+    transform: translateX(
+      calc(var(--zen-omnibox-slot-left, 48px) * (1 - var(--zen-omnibox-focus, 0)))
+    );
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field > input ~ *,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-field > input ~ *,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field > input ~ * {
+    transform: translateX(
+      calc(-1 * var(--zen-omnibox-slot-right, 48px) * (1 - var(--zen-omnibox-focus, 0)))
+    );
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field > .zen-toolbar-button,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-field > .zen-toolbar-button,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field > .zen-toolbar-button {
+    opacity: calc(0.85 * clamp(0, 2 * var(--zen-omnibox-focus, 0) - 1, 1));
+  }
+  /*
+   * Nothing under the growing field takes a tap until the landing (the rows are rising in from
+   * four tenths and are hit-testable at any opacity: the fakebox's double-tap lesson), and a
+   * field on its way back takes none either – a touch there would hand the keyboard back to a
+   * bar that is leaving. The sheet itself keeps the pointer, so the tap ends there.
+   */
+  :root[data-omnibox-focus='opening'] .zen-omnibox-sheet > *,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-sheet > * {
+    pointer-events: none;
+  }
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field {
+    pointer-events: none;
+  }
+  /*
+   * The bar under the growing field (mounted for the way there and back and for a back gesture's
+   * pull, `focusHoldsChrome`): its buttons are pushed off by the widening field – the ones
+   * before the pill by the slot they stood in toward the band's start, the ones after it toward
+   * its end, each gone by half way – so the field is seen to take their room rather than to
+   * cover them; Chrome's focus animation. Their resting 85 % (a disabled one's 30 %) is kept in
+   * the ride and their own 120 ms transitions are off while the value drives them, so no frame
+   * lags the spring and the landing hands over without a step. The pill stays where it is: its
+   * words go with the buttons – the one source of their opacity, hence the `!important`: the
+   * bar is mounted again as a closing begins and the words' 160 ms entrance fade would replay
+   * over the ride (the field morph's `.zen-pill-away` lesson) – and its fill leaves over the
+   * second half beneath the field's backdrop, which is opaque over it by then, so no frame
+   * shows a seam at the pill's edge. Inert meanwhile: the omnibox's sheet is over the bar, and
+   * what a tap there reaches is the sheet's.
+   */
+  :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item],
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > [data-bar-item],
+  :root[data-omnibox-focus='closing'] .zen-phone-bar-row > [data-bar-item] {
+    transition: background 120ms var(--zen-ease);
+    opacity: calc(0.85 * clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1));
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item][data-disabled],
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > [data-bar-item][data-disabled],
+  :root[data-omnibox-focus='closing'] .zen-phone-bar-row > [data-bar-item][data-disabled] {
+    opacity: calc(0.3 * clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1));
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item]:not(.zen-phone-pill ~ *),
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > [data-bar-item]:not(.zen-phone-pill ~ *),
+  :root[data-omnibox-focus='closing']
+    .zen-phone-bar-row
+    > [data-bar-item]:not(.zen-phone-pill ~ *) {
+    transform: translateX(
+      calc(-1 * var(--zen-omnibox-slot-left, 48px) * var(--zen-omnibox-focus, 0))
+    );
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-bar-row > .zen-phone-pill ~ [data-bar-item],
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > .zen-phone-pill ~ [data-bar-item],
+  :root[data-omnibox-focus='closing'] .zen-phone-bar-row > .zen-phone-pill ~ [data-bar-item] {
+    transform: translateX(calc(var(--zen-omnibox-slot-right, 48px) * var(--zen-omnibox-focus, 0)));
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-pill > *,
+  :root[data-omnibox-focus='pulled'] .zen-phone-pill > *,
+  :root[data-omnibox-focus='closing'] .zen-phone-pill > * {
+    opacity: clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1) !important;
+    pointer-events: none;
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-pill,
+  :root[data-omnibox-focus='pulled'] .zen-phone-pill,
+  :root[data-omnibox-focus='closing'] .zen-phone-pill {
+    opacity: clamp(0, 2 - 2 * var(--zen-omnibox-focus, 0), 1);
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-bar,
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar,
+  :root[data-omnibox-focus='closing'] .zen-phone-bar {
+    pointer-events: none;
+  }
   @media (prefers-reduced-motion: reduce) {
     /*
      * Reduced motion (NTP-02, v2 §11.3; #243): the spring's part of the morph is a cut – no
@@ -6460,7 +6653,51 @@
      * frame it is written and the finger's motion is one to one (§11.3). The page's fades on
      * `.zen-ntp-fades` and the bar's are the two rules above, for the morph's two phases alone.
      */
+    /*
+     * The pill growing into the omnibox (MOT-07, lib/omniboxFocus.ts) the same way: the spring's
+     * part is a cut – the value jumps, and the controller holds the phase for these 120 ms – so
+     * the omnibox arrives and leaves on a 120 ms opacity fade in place (the sheet's, its field's
+     * backdrop's and its contents' own fades at that length), nothing is pushed (the buttons',
+     * the pill's and the field's rides on transform are off), and what the value's jump moves on
+     * the bar – the buttons' and the pill's opacities – takes the same 120 ms. Layered and
+     * `!important` as the morph's above, so they beat the remover at the foot.
+     */
+    :root[data-omnibox-focus='opening'] .zen-omnibox-sheet,
+    :root[data-omnibox-focus='opening'] .zen-omnibox-field::before,
+    :root[data-omnibox-focus='opening'] .zen-omnibox-field > * {
+      animation: zen-fade 120ms var(--zen-ease) both !important;
+    }
+    :root[data-omnibox-focus='closing'] .zen-omnibox-sheet,
+    :root[data-omnibox-focus='closing'] .zen-omnibox-field::before,
+    :root[data-omnibox-focus='closing'] .zen-omnibox-field > * {
+      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+    }
+    :root[data-omnibox-focus] .zen-phone-bar-row > [data-bar-item],
+    :root[data-omnibox-focus] .zen-omnibox-field > *,
+    :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill,
+    :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill > * {
+      transform: none !important;
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
+    :root[data-omnibox-focus] .zen-omnibox-field::before {
+      transform: none !important;
+    }
   }
+}
+
+/*
+ * The focus motion's value, registered INHERITING – the one per-frame property that is: its
+ * readers are the descendants of the two elements it is written on (the bar's buttons and pill,
+ * the omnibox's sheet and field), and the field's backdrop is a `::before`, which takes only
+ * inherited properties from its element. So the pattern's `inherits: false` (the note over
+ * `--zen-recede` below) does not fit it, and its size is kept instead by where it is written: on
+ * the bar and the layer, whose subtrees are the readers, never on the root – written there, every
+ * spring frame recalculated the whole chrome's style (6 to 31 ms, PR #307's first-line review).
+ */
+@property --zen-omnibox-focus {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
 }
 
 /*
@@ -7848,7 +8085,9 @@
 /*
  * The shared checkbox (§9.34, §6; #93 owns the rule, the values are the ones the extensions
  * surfaces drew it with): 16 on a mouse, 20 on a phone, radius 2, the accent fill with an
- * on-accent check when on, the hover fill on a mouse. As a row's leading box it sits
+ * on-accent check when on, the hover fill on a mouse while off only – the hover rule at 0,3,0
+ * outranks `:checked` at 0,2,0, so it must step aside from every checked form itself (a checked
+ * box under the pointer had lost its accent to `--v2-fill`). As a row's leading box it sits
  * (line − box) / 2 below the first text line's top (§9.2) and never grows the line. Disabled is
  * the one number (§9.30). A check row disabled as a dependent row puts the .4 on its content –
  * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
@@ -7875,7 +8114,12 @@
     border-color 120ms var(--zen-ease);
 }
 @media (hover: hover) {
-  .zen-v2-checkbox:hover:not(:disabled) {
+  .zen-v2-checkbox:hover:not(
+      :disabled,
+      :checked,
+      [aria-checked='true'],
+      [aria-checked='true'] > *
+    ) {
     background: var(--v2-fill);
   }
 }
@@ -9125,7 +9369,10 @@
  * The content column (§10.5, §5): scrolls on its own; its text column is 664 at most inside 32
  * side margins – the pane's 16 plus the rows' own 16 gutter, so a row's hover fill runs 16
  * past its text on both sides, as Zen's do, and the section title, the sub-headings and the
- * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred.
+ * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred. The find field
+ * spans that same 664 from the same 32 (its 16 padding plus the search wrapper's 16 margin),
+ * so §10.3's one edge holds on both sides: text on the field's leading edge, every row's
+ * trailing control ending on its trailing edge.
  */
 .zen-settings-content {
   position: relative;
@@ -9166,8 +9413,14 @@
 .zen-settings-content[data-scrolled] > .zen-settings-find::after {
   opacity: 1;
 }
+/*
+ * The pane's box is the text column plus both margins: its own 16 padding and the rows' 16
+ * gutter on each side, 728 for the 664. At 664 + 2 × 16 the rows' gutter came out of the text
+ * column instead, and every trailing control stopped 32 short of the find field's end (1138
+ * against 1170 at 1600 wide) while the labels sat on its start.
+ */
 .zen-settings-pane {
-  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  max-width: calc(var(--v2-content-max) + 2 * (16px + 16px));
   padding: 8px 16px 40px;
 }
 /*
@@ -10953,6 +11206,60 @@
 .zen-v2-heading.zen-omnibox-heading:first-child {
   margin-top: 0;
 }
+/*
+ * The phone card's section headings (OMN-18; Chrome for Android's grouped list): the same
+ * primitive at its own beat – §9.27's 15/600, §10.3's 20 above and 4 below, read from the
+ * primitive and not restated – the first on screen 8 in from the card's edge (12 with the
+ * list's own 4 inset), its text on the rows' glyph edge (the row's 10 inset), in the window's
+ * deemphasised ink: the card is a window surface (§9.29), so it reads the control role. A
+ * heading that arrives fades in on opacity in its slot over 120 ms (§11.4, the same under
+ * reduced motion); the rows around it cut, as Chrome's do on a keystroke, and nothing slides.
+ * The outermost heading is told by the list (`data-outer`), not by `:first-child`: a row
+ * leaving the card (below) stays a child of the list, out of the flow, until its exit has run.
+ */
+.zen-v2-heading.zen-omnibox-sheet-heading {
+  flex-shrink: 0;
+  padding: 0 10px;
+  color: var(--v2-control-text-deemphasized);
+  animation: zen-fade 120ms var(--zen-ease);
+}
+.zen-v2-heading.zen-omnibox-sheet-heading[data-outer] {
+  margin-top: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .zen-v2-heading.zen-omnibox-sheet-heading {
+    animation: zen-fade 120ms var(--zen-ease) !important;
+  }
+}
+/*
+ * A row leaving the card (OMN-17, §11.4; components/urlbar/rowExit.ts): a ghost drawn where
+ * the row stood – out of the flow at its measured box, so the rows below already stand in
+ * their final slots and glide back on transform alone – collapsing and fading on the exit
+ * spring while nothing beneath it can be touched.
+ */
+.zen-omnibox-list > [data-leaving] {
+  position: absolute;
+  margin: 0;
+  pointer-events: none;
+  animation: none;
+  will-change: transform, opacity;
+}
+/*
+ * The engine's favicon in a field's leading slot (NTP-09, components/urlbar/EngineFieldGlyph):
+ * content drawn in chrome, its own colours (§9.29); when it arrives after the slot's fallback
+ * was painted it fades in place over 120 ms (§11.4, the same under reduced motion).
+ */
+.zen-engine-field-favicon {
+  object-fit: contain;
+}
+.zen-engine-field-favicon[data-arrived] {
+  animation: zen-fade 120ms var(--zen-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .zen-engine-field-favicon[data-arrived] {
+    animation: zen-fade 120ms var(--zen-ease) !important;
+  }
+}
 
 /*
  * The page zoom sheet (design language v2 draft §1–§3, §6, §9, §11), the docked panel under the
@@ -11314,7 +11621,8 @@
  * frame-dialog host's sheet, the load bar, the overview's grid, panes and select-tabs action
  * band, a group's header and tint at the end of the glide, the segment's line, the read aloud
  * glyph swap, the new tab page's tiles, the desktop panels' pop and the frame dialogs' way out,
- * the sidebar's toast, and the morph's fades in the new tab page's section. Nothing re-declares
+ * the sidebar's toast, the morph's and the pill's focus fades in the new tab page's section, and
+ * the omnibox card's section headings and a field's engine favicon arriving. Nothing re-declares
  * a duration alone; `reducedMotion.test.ts` guards both halves. The fades the components write
  * per frame or on the Web Animations API – the message cards, the FLIP cross-fades, departing
  * cards, the pill run's and the page row's ghosts, the panes' stills, the group strip's chips –

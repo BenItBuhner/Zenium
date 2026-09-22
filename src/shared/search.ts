@@ -15,7 +15,8 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     searchUrl: 'https://www.google.com/search?q=%s',
     suggestUrl: 'https://suggestqueries.google.com/complete/search?client=chrome&q=%s',
     keyword: '@google',
-    glyph: 'G'
+    glyph: 'G',
+    favicon: 'https://www.google.com/favicon.ico'
   },
   {
     id: 'duckduckgo',
@@ -23,7 +24,8 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     searchUrl: 'https://duckduckgo.com/?q=%s',
     suggestUrl: 'https://duckduckgo.com/ac/?type=list&q=%s',
     keyword: '@ddg',
-    glyph: 'D'
+    glyph: 'D',
+    favicon: 'https://duckduckgo.com/favicon.ico'
   },
   {
     id: 'ecosia',
@@ -31,7 +33,8 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     searchUrl: 'https://www.ecosia.org/search?q=%s',
     suggestUrl: 'https://ac.ecosia.org/?q=%s',
     keyword: '@ecosia',
-    glyph: 'E'
+    glyph: 'E',
+    favicon: 'https://www.ecosia.org/favicon.ico'
   },
   {
     id: 'bing',
@@ -39,7 +42,8 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     searchUrl: 'https://www.bing.com/search?q=%s',
     suggestUrl: 'https://api.bing.com/osjson.aspx?query=%s',
     keyword: '@bing',
-    glyph: 'B'
+    glyph: 'B',
+    favicon: 'https://www.bing.com/favicon.ico'
   },
   {
     id: 'wikipedia',
@@ -47,9 +51,26 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
     searchUrl: 'https://en.wikipedia.org/w/index.php?search=%s',
     suggestUrl: 'https://en.wikipedia.org/w/api.php?action=opensearch&format=json&search=%s',
     keyword: '@wikipedia',
-    glyph: 'W'
+    glyph: 'W',
+    favicon: 'https://en.wikipedia.org/favicon.ico'
   }
 ]
+
+/** The vendor's default engine: the first shipped one, what a profile searches with untouched. */
+export const VENDOR_DEFAULT_ENGINE_ID = DEFAULT_SEARCH_ENGINES[0].id
+
+/**
+ * The mark a field's leading slot shows for the engine it searches with (NTP-09; Chrome's
+ * search engine logo at the start of its box, Edge's Bing logo): the engine's favicon from the
+ * registry when the engine is not the vendor's default and has one, else null – the slot then
+ * keeps what it always showed (the omnibox field's letter tile, the new tab field's magnifier).
+ * The vendor's default is not marked: it is where a search goes unless the user said otherwise,
+ * and the mark is for the choice they made.
+ */
+export function engineFieldFavicon(engine: Pick<SearchEngine, 'id' | 'favicon'>): string | null {
+  if (engine.id === VENDOR_DEFAULT_ENGINE_ID) return null
+  return engine.favicon ?? null
+}
 
 export function buildSearchUrl(engine: SearchEngine, query: string): string {
   return fillTemplate(engine.searchUrl, query)
