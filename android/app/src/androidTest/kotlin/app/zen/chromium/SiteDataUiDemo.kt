@@ -19,6 +19,7 @@ import java.net.Socket
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -31,15 +32,19 @@ import kotlin.math.roundToInt
  *    picker (Block all cookies, browser-wide, and back), the never list's Add sheet with the
  *    site's host typed into it, the row it makes; the page reloaded and asking with no cookies
  *    (the header stage relays a never-site's documents without them); the sheet's cookies level
- *    reading "Never allow · Listed as 127.0.0.1" and its picker moving the site to "Clear when
- *    Zenium closes"; the allow list's Add and the pattern row's Remove; the viewer with a row's
- *    Clear (the cookies gone from the jar) and Clear all's prompt cancelled; the on-exit type
- *    "Browsing history" switched on; the page holding its cookies again, the jar flushed to disk,
- *    and the app sent home – the pending-clear marker written by the core on the way.
+ *    reading "Never allow · Listed as 127.0.0.1" and its picker moving the site to "Clear on
+ *    exit"; the allow list's Add and the pattern row's Remove; the site-data page (§10.2, the
+ *    #322 ruling (a)) with the site's item sheet and its "Clear site data" prompt (the cookies
+ *    gone from the jar, the row from the page), Clear all's prompt cancelled, the back to the
+ *    section; the on-exit type "Browsing history" switched on; the page holding its cookies
+ *    again, the jar flushed to disk, and the app sent home – the pending-clear marker written by
+ *    the core on the way.
  *  - [SiteDataRestoreDemo], act two, after `am force-stop`: the cold start with the marker and
  *    the restored session. The first request the restored page makes must carry no cookie (the
  *    loopback server keeps every request's Cookie header), the document must hold none, the
  *    control site on no list keeps its cookies, the history is empty and the marker consumed.
+ *    Its measured sheet scenes run after a warm-up (one sheet open and dismiss unmeasured), so
+ *    they read the warm process as act one's do (#322 Q7).
  *
  * Every control inside a sheet is pressed with a real injected finger and the effect asserted
  * against the core's state (the rule in [DemoHarness]); the frames of the sheets' open and
@@ -283,6 +288,30 @@ abstract class SiteDataUiDemoBase(
         while (SystemClock.uptimeMillis() < deadline && sheetCount() != 0) SystemClock.sleep(200)
     }
 
+    /**
+     * Until every sheet that is up has come to rest: no translate left in any sheet's transform
+     * (a sheet mid-spring carries one; a receded lower sheet is a bare scale) and the same poses
+     * on two reads 150 ms apart. A still taken mid-spring misreads as a defect (the #322
+     * review's N7 on `ui-14-siteinfo-picker`), so every still of a sheet waits here first. Not
+     * for a measured scene: each read asks the chrome for a frame.
+     */
+    protected fun awaitSheetsSettled(timeoutMs: Long = 4_000) {
+        val poses = "JSON.stringify(Array.from(document.querySelectorAll('.zen-sheet[role=\"dialog\"]')).map(function(d){return getComputedStyle(d).transform}))"
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last: String? = null
+        while (SystemClock.uptimeMillis() < deadline) {
+            val now = chromeValue(poses)
+            val moving = Regex("matrix\\(([^)]*)\\)").findAll(now).any { m ->
+                val v = m.groupValues[1].split(',').map { it.trim().toDoubleOrNull() ?: 0.0 }
+                v.size == 6 && (abs(v[4]) > 0.5 || abs(v[5]) > 0.5)
+            }
+            if (!moving && now == last) return
+            last = now
+            SystemClock.sleep(150)
+        }
+        note("  (the sheets did not settle within $timeoutMs ms: $last)")
+    }
+
     /** Back out of the sheets that are up, a few at most; each back is given until the closing sheet has left. */
     protected fun closeSheets() {
         var count = sheetCount()
@@ -446,6 +475,13 @@ abstract class SiteDataUiDemoBase(
 
     /** Where the PAGE row `rowId` (`data-row`) is on screen, scrolled into view; read before a measured scene. */
     protected fun pageRowPoint(rowId: String): PointF? = chromePoint("[data-row=${JSONObject.quote(rowId)}]")
+
+    /**
+     * The drill-in page the phone Settings has up, by the chrome document (`data-page`, e.g.
+     * "site-data"; §10.2's third URL segment), or "" on the landing or a section.
+     */
+    protected fun settingsPage(): String =
+        chromeValue("(function(){var e=document.querySelector('.zen-settings-phone');return e?String(e.getAttribute('data-page')||''):''})()")
 
     /**
      * A finger on the PAGE row `rowId` (`data-row`) at the chrome's own rectangle – the page's rows
@@ -772,7 +808,8 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
             SystemClock.sleep(MOTION_MS)
         }
         if (tapPageRow("site-data-default") { optionNode("Block all cookies") != null }) {
-            SystemClock.sleep(800)
+            awaitSheetsSettled()
+            SystemClock.sleep(400)
             note("  block-all option: ${optionNode("Block all cookies")?.let { it.text ?: it.contentDescription }}")
             shot("05-default-picker")
             beat()
@@ -811,7 +848,8 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
             SystemClock.sleep(MOTION_MS)
         }
         if (tapPageRow("site-data-block-add") { awaitChrome("document.querySelector('[data-testid=\"add-pattern-form\"] input')", 1_000) }) {
-            SystemClock.sleep(1_000)
+            awaitSheetsSettled()
+            SystemClock.sleep(600)
             shot("08-add-site-sheet")
             beat()
             val typed = typeIntoAddField(DEMO_HOST)
@@ -824,7 +862,9 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                 SystemClock.sleep(1_000)
                 revealRow(DEMO_PATTERN)
                 SystemClock.sleep(600)
-                claim("the never list's row reads the host", nodeText(DEMO_PATTERN)?.contains("Can never use cookies") == true, nodeText(DEMO_PATTERN) ?: "(no row)")
+                // The row is the pattern alone in a 44 row: the heading already says what the list does (#322 N1).
+                val neverRow = nodeText(DEMO_PATTERN)
+                claim("the never list's row reads the host alone, no line restating the heading", neverRow != null && !neverRow.contains("Can never use cookies"), neverRow ?: "(no row)")
                 claim("the site's cookies left the jar when it went on the never list", awaitSettled(5_000) { jarCookie(DEMO_URL) == null }, "jar=${jarCookie(DEMO_URL)}")
                 shot("10-never-list-row")
                 beat()
@@ -862,7 +902,10 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
             // 7. The row's picker moves the site to the clear-on-exit list.
             note("\n7. the per-site picker: Clear on exit")
             if (touchTapLabelExpecting("Cookies for this site", "the picker is up", prefix = true) { optionNode("Clear on exit") != null }) {
-                SystemClock.sleep(800)
+                // The still after the picker has sprung up and the sheet under it has receded (#322 N7).
+                awaitSheetsSettled()
+                SystemClock.sleep(400)
+                note("  sheets at rest: ${chromeValue("JSON.stringify(Array.from(document.querySelectorAll('.zen-sheet[role=\"dialog\"]')).map(function(d){return getComputedStyle(d).transform}))")}")
                 shot("14-siteinfo-picker")
                 beat()
                 if (pickOption("Clear on exit", "the site is on the clear-on-exit list") { listHolds("clearOnExit", DEMO_PATTERN) && !listHolds("block", DEMO_PATTERN) }) {
@@ -898,7 +941,8 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                 SystemClock.sleep(600)
                 shot("16-allow-list-row")
                 if (tapPageRow("site-data-site:$ALLOW_PATTERN") { freshNode { it.startsWith("Remove from the list") } != null }) {
-                    SystemClock.sleep(800)
+                    awaitSheetsSettled()
+                    SystemClock.sleep(400)
                     shot("17-pattern-sheet")
                     beat()
                     if (touchTapLabelExpecting("Remove", "the pattern left the allow list", prefix = true) { !listHolds("allow", ALLOW_PATTERN) }) {
@@ -929,53 +973,88 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         claim("the control page sends its cookies", keep == "sent: zen_demo, zen_visit", keep)
         activateTab(DEMO_TAB)
 
-        // 10. The viewer: the two origins, a row's Clear, Clear all's prompt cancelled.
+        // 10. The viewer: a §10.2 drill-in page (#322 (a)) – the two origins as item rows, the
+        //     demo site's item sheet with "Clear site data" and its prompt (the cookies gone from
+        //     the jar, the row gone from the page), Clear all's prompt cancelled, the back to the
+        //     section. No row carries an inline button (§10.4).
         note("\n10. See all site data")
         if (openPrivacySettings(throughMenu = false)) {
             revealRow("See all site data and permissions")
             SystemClock.sleep(600)
-            val clearDemo = "Clear $DEMO_ORIGIN"
-            val viewerUp = { freshNode { it.startsWith(clearDemo) || it == "Clear all" } != null }
+            val originRow = "site-data-origin:$DEMO_ORIGIN"
+            val pageUp = { settingsPage() == "site-data" && freshNode { it.startsWith("Clear all site data") } != null }
             val seeAll = pageRowPoint("site-data-see-all")
             SystemClock.sleep(300)
-            traceFrames("viewer-sheet-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
+            traceFrames("viewer-page-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
                 if (seeAll != null) Finger().tap(seeAll.x, seeAll.y)
-                awaitNode(8_000) { it == "Clear all" }
+                awaitNode(8_000) { it.startsWith("Clear all site data") }
                 SystemClock.sleep(MOTION_MS)
             }
-            if (!viewerUp()) tapPageRow("site-data-see-all", viewerUp)
-            if (viewerUp()) {
-                awaitSettled(8_000) { freshNode { it.startsWith(clearDemo) } != null }
+            if (!pageUp()) tapPageRow("site-data-see-all", pageUp)
+            if (pageUp()) {
+                awaitSettled(8_000) { freshNode { it.startsWith(DEMO_ORIGIN) } != null }
                 SystemClock.sleep(600)
-                note("  viewer rows: ${chromeValue("JSON.stringify(Array.from(document.querySelectorAll('[data-row^=\"site-data-origin:\"]')).map(function(e){return e.getAttribute('data-row')+' :: '+e.innerText.replace(/\\n+/g,' | ')}))")}")
+                note("  page: ${chromeValue("(function(){var p=document.querySelectorAll('.zen-settings-drill-in');var b=p.length?p[p.length-1].querySelector('.zen-settings-bar'):null;return (b?b.innerText.replace(/\\n+/g,' | '):'(no bar)')+' ; panes='+p.length+' inert='+Array.from(p).map(function(x){return x.getAttribute('aria-label')+'='+x.hasAttribute('inert')}).join(',')})()")}")
+                note("  page rows: ${chromeValue("JSON.stringify(Array.from(document.querySelectorAll('[data-testid=\"site-data-page\"] [data-row]')).map(function(e){return e.getAttribute('data-row')+' :: '+e.innerText.replace(/\\n+/g,' | ')}))")}")
                 note("  count aside: ${chromeValue("(function(){var e=document.querySelector('[data-testid=\"site-data-count\"]');return e?e.textContent:''})()")}")
-                claim("the viewer lists the demo site with its cookies", freshNode { it.startsWith(clearDemo) } != null)
-                shot("19-viewer")
+                claim("the page lists the demo site as an item row with its cookies", freshNode { it.startsWith(DEMO_ORIGIN) } != null)
+                claim("no row on the page carries an inline button (§10.4)", chromeValue("String(document.querySelectorAll('[data-testid=\"site-data-page\"] button:not([data-row])').length)") == "0")
+                shot("19-viewer-page")
                 beat()
-                if (touchButtonExpecting(clearDemo, "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
-                    awaitSettled(6_000) { freshNode { it.startsWith(clearDemo) } == null }
-                    SystemClock.sleep(800)
-                    claim("the cleared origin's row left the viewer", freshNode { it.startsWith(clearDemo) } == null)
-                    claim("the control site kept its cookies", jarCookie(KEEP_URL) != null, "jar=${jarCookie(KEEP_URL)}")
-                    shot("20-viewer-cleared-row")
+                // The item sheet: the host as its title, the storage line, Clear site data as its one row.
+                if (tapPageRow(originRow) { sheetCount() == 1 && freshNode { it.startsWith("Clear site data") } != null }) {
+                    awaitSheetsSettled()
+                    SystemClock.sleep(400)
+                    note("  item sheet: ${chromeValue("(function(){var s=document.querySelector('.zen-sheet[role=\"dialog\"]');return s?s.innerText.replace(/\\n+/g,' | '):''})()")}")
+                    shot("20-viewer-item-sheet")
                     beat()
+                    // Its prompt: the title block and two buttons, the container focused (§9.20, §9.22).
+                    if (touchTapLabelExpecting("Clear site data", "the prompt is up", prefix = true) { sheetCount() == 2 && freshNode { it.startsWith("Clear data for") } != null }) {
+                        awaitSheetsSettled()
+                        SystemClock.sleep(400)
+                        note("  prompt: ${chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];if(!d)return '';return d.innerText.replace(/\\n+/g,' | ')+' ; focus='+(document.activeElement===d?'container':(document.activeElement&&document.activeElement.tagName))+' labelledby='+Boolean(d.getAttribute('aria-labelledby'))+' describedby='+Boolean(d.getAttribute('aria-describedby'))})()")}")
+                        claim("the prompt focuses its container, not a button", chromeValue("(function(){var s=document.querySelectorAll('.zen-sheet[role=\"dialog\"]');var d=s[s.length-1];return String(!!d&&document.activeElement===d)})()") == "true")
+                        shot("21-viewer-item-prompt")
+                        beat()
+                        if (touchButtonExpecting("Clear site data", "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
+                            awaitNoSheet(8_000)
+                            awaitSettled(6_000) { freshNode { it.startsWith(DEMO_ORIGIN) } == null }
+                            SystemClock.sleep(800)
+                            claim("the cleared origin's row left the page, its sheet with it", sheetCount() == 0 && freshNode { it.startsWith(DEMO_ORIGIN) } == null, "sheets=${sheetCount()}")
+                            claim("the control site kept its cookies", jarCookie(KEEP_URL) != null, "jar=${jarCookie(KEEP_URL)}")
+                            shot("22-viewer-page-cleared-row")
+                            beat()
+                        } else {
+                            closeSheets()
+                        }
+                    } else {
+                        closeSheets()
+                    }
+                } else {
+                    note("  the demo site's item row did not open its sheet")
+                    closeSheets()
                 }
-                if (touchButtonExpecting("Clear all", "the prompt is up") { freshNode { it.startsWith("Clear all site data?") } != null }) {
-                    SystemClock.sleep(800)
-                    shot("21-clear-all-prompt")
+                // Clear all: the page's action row in the danger ink, its prompt cancelled.
+                if (tapPageRow("site-data-clear-all") { freshNode { it.startsWith("Clear all site data?") } != null }) {
+                    awaitSheetsSettled()
+                    SystemClock.sleep(400)
+                    shot("23-clear-all-prompt")
                     beat()
-                    if (touchButtonExpecting("Cancel", "the prompt left, the viewer stays") { freshNode { it.startsWith("Clear all site data?") } == null && buttonNode("Clear all") != null }) {
+                    if (touchButtonExpecting("Cancel", "the prompt left, the page stays") { freshNode { it.startsWith("Clear all site data?") } == null && pageUp() }) {
                         claim("Cancel kept the control site's cookies", jarCookie(KEEP_URL) != null, "jar=${jarCookie(KEEP_URL)}")
                     }
                 }
-                awaitSettled(4_000) { sheetCount() == 1 }
-                traceFrames("viewer-sheet-dismiss", JankBudget.Kind.SPRING, baseline = "siteinfo-sheet-dismiss") {
+                awaitNoSheet()
+                SystemClock.sleep(400)
+                traceFrames("viewer-page-back", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
                     back()
+                    // The section's row is back in the tree once its pane is no longer inert.
+                    awaitNode(6_000) { it.startsWith("See all site data and permissions") }
                     SystemClock.sleep(MOTION_MS)
                 }
-                awaitNoSheet()
+                claim("the back leaves the page for its section", settingsPage() != "site-data" && revealRow("See all site data and permissions") != null, "page=${settingsPage()}")
             } else {
-                note("  the viewer did not open")
+                note("  the page did not open")
             }
         }
 
@@ -983,11 +1062,11 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         note("\n11. Delete browsing data on exit")
         if (revealRow("Delete browsing data on exit") != null) {
             SystemClock.sleep(600)
-            shot("22-exit-types")
+            shot("24-exit-types")
             if (tapPageRow("site-data-exit:history") { exitTypes().contains("history") }) {
                 SystemClock.sleep(800)
                 note("  types=${exitTypes()} description: ${chromeValue("(function(){var g=document.querySelector('[data-group=\"site-data-exit\"] .zen-settings-group-description');return g?g.textContent:''})()")}")
-                shot("23-exit-history-on")
+                shot("25-exit-history-on")
                 beat()
             } else {
                 note("  the Browsing history row did not toggle; setting it through the command")
@@ -1009,7 +1088,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         claim("both hosts hold cookies in the jar", jarCookie(DEMO_URL) != null && jarCookie(KEEP_URL) != null, "demo=${jarCookie(DEMO_URL)} keep=${jarCookie(KEEP_URL)}")
         Profiles.cookieManager(Profiles.DEFAULT_CONTAINER).flush()
         SystemClock.sleep(1_500)
-        shot("24-page-before-close")
+        shot("26-page-before-close")
         val closeField = closeUrlField()
         note("  URL field: ${closeField.describe()}")
         beat()
@@ -1019,7 +1098,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         note("  marker: $marker")
         note("  siteData status: ${siteData()}")
         SystemClock.sleep(1_500)
-        shot("25-home-marker-written")
+        shot("27-home-marker-written")
         note("\nact one done: the process is stopped by the script; act two starts cold")
     }
 
@@ -1110,6 +1189,22 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
         note("  jar now: demo=${jarCookie(DEMO_URL)} (the visit just set them again) keep=${jarCookie(KEEP_URL)}")
         shot("01-restored-page-no-cookies")
         beat()
+
+        // The cold process's first sheet dismissal scavenges (run 35703800931's one over-budget
+        // scene was this act's dismiss); the process is warmed first – the restore left to settle,
+        // then one sheet opened and dismissed unmeasured – so the measured scenes below read the
+        // warm process, as act one's do (#322 Q7). The warm-up touches no cookie or list.
+        note("\n(warm-up: the restore settled, one sheet open and dismiss unmeasured)")
+        SystemClock.sleep(2_000)
+        openSiteInfo()
+        val warmed = awaitPrefix("Cookies and site data", 8_000) != null
+        SystemClock.sleep(MOTION_MS)
+        if (sheetCount() > 0) {
+            back()
+            awaitNoSheet(8_000)
+        }
+        SystemClock.sleep(1_200)
+        note("  warm-up: the sheet ${if (warmed) "opened and left" else "did NOT open"}; sheets now ${sheetCount()}")
 
         // 2. The site-information sheet: the site still on the clear-on-exit list.
         note("\n2. the site-information sheet after the restore")
