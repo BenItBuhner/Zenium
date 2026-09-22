@@ -558,7 +558,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     stage(entry, "popup", "P", "no popup (the extension emptied it with action.setPopup); the click fired action.onClicked, which $what", detail)
                 } else if (live != null) {
                     val dom = detail.optJSONObject("dom") ?: JSONObject()
-                    stage(entry, "popup", "PARTIAL", "the sheet came up but its document stayed empty after ${POPUP_TIMEOUT_MS / 1000} s: ${dom.toString().take(200)}; console: ${detail.optJSONArray("console")?.toString()?.take(200)}", detail)
+                    // The document reads empty to a script: what the sheet shows decides (a
+                    // closed shadow root on the body, Click&Clean's menu).
+                    val seen = seenInView(live)
+                    detail.put("seen", seen)
+                    if (shownDespiteEmptyDom(seen)) {
+                        val labels = seen.optJSONArray("labels")?.let { l -> (0 until l.length()).map { l.optString(it) } } ?: emptyList()
+                        val uncaught = consoleOf(live).filter(::isUncaught)
+                        entry.put("popupText", labels.joinToString(" "))
+                        stage(
+                            entry, "popup",
+                            if (uncaught.isEmpty()) "P" else "PARTIAL",
+                            "the document reads empty to a script (its UI is in a closed shadow root) and the sheet shows it: ${seen.optInt("nodes")} accessibility nodes, labels \"${labels.joinToString(" ").take(80)}\"" +
+                                (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
+                            detail
+                        )
+                    } else stage(entry, "popup", "PARTIAL", "the sheet came up but its document stayed empty after ${POPUP_TIMEOUT_MS / 1000} s: ${dom.toString().take(200)}; console: ${detail.optJSONArray("console")?.toString()?.take(200)}", detail)
                 } else {
                     stage(entry, "popup", "F", "no popup sheet within ${POPUP_TIMEOUT_MS / 1000} s (runtime popup=${runtimePopup ?: "null"}, declared=$declared, tabs opened=${opened.size})", detail)
                 }
@@ -647,6 +662,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val opened = openedTabs.values.toList()
             detail.put("openedTabs", JSONArray(opened))
             if (sheet != null) detail.put("sheetDom", json(tabEval(sheet, DOM_REPORT))).put("sheetConsole", JSONArray(consoleOf(sheet).takeLast(20)))
+            val seen = sheet?.let(::seenInView)
+            if (sheet != null && seen != null && shownDespiteEmptyDom(seen)) {
+                // The document reads empty to a script but the sheet shows the page (a closed shadow root).
+                detail.put("seen", seen)
+                val labels = seen.optJSONArray("labels")?.let { l -> (0 until l.length()).map { l.optString(it) } } ?: emptyList()
+                val uncaught = consoleOf(sheet).filter(::isUncaught)
+                stage(
+                    entry, "options",
+                    if (uncaught.isEmpty()) "P" else "PARTIAL",
+                    "in a sheet: the document reads empty to a script (its UI is in a closed shadow root) and the sheet shows it: ${seen.optInt("nodes")} accessibility nodes, labels \"${labels.joinToString(" ").take(80)}\"" +
+                        (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
+                    detail
+                )
+                coreInvoke("extension.closePopup", "null")
+                SystemClock.sleep(900)
+                closeExtraTabs()
+                return
+            }
             // A tab that opened and drew nothing: its document's report (scripts, readyState), console,
             // the host's endpoints for it, the bridge trace of the stage and a message probe are the
             // evidence of why (Adblock Plus's and Ghostery's options pages stayed blank on both jobs,
@@ -3284,7 +3317,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture("page-c.html?history", factor, 2_000)
-        val bg = backgroundView(row.id)
+        // The worker idled out while the row's earlier stages ran: woken for the probe.
+        val bg = awakeBackground(row.id, factor)
         val historyProbe = HISTORY_PROBE.replace("__MATCH__", "/page-c\\.html\\?history/")
         val before = bg?.let { poll(scaled(10_000, factor), 1_500) { probe(it, historyProbe, "__zenHistory", scaled(8_000, factor)).takeIf { r -> r.optBoolean("present") } } ?: probe(it, historyProbe, "__zenHistory", scaled(8_000, factor)) }
             ?: JSONObject().put("error", "no background view")
@@ -3313,9 +3347,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("tile", tile)
         snap("${entry.optString("slug")}-clean")
         runCatching { coreInvoke("extension.closePopup", "null") }
-        val after = if (bg != null && tile.optBoolean("found")) {
-            poll(scaled(15_000, factor), 1_500) { probe(bg, historyProbe, "__zenHistory", scaled(8_000, factor)).takeIf { !it.optBoolean("present") && it.isNull("error") } }
-                ?: probe(bg, historyProbe, "__zenHistory", scaled(8_000, factor))
+        // The clean may take the worker with it (a `browsingData.remove` from the popup runs in
+        // the worker, and the worker may idle again): woken once more for the reading after.
+        val bgAfter = if (tile.optBoolean("found")) awakeBackground(row.id, factor) else bg
+        val after = if (bgAfter != null && tile.optBoolean("found")) {
+            poll(scaled(15_000, factor), 1_500) { probe(bgAfter, historyProbe, "__zenHistory", scaled(8_000, factor)).takeIf { !it.optBoolean("present") && it.isNull("error") } }
+                ?: probe(bgAfter, historyProbe, "__zenHistory", scaled(8_000, factor))
         } else JSONObject()
         extra.put("historyAfter", after)
         bg?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
@@ -3377,7 +3414,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("steps", steps)
         snap("${entry.optString("slug")}-block-popup")
         runCatching { coreInvoke("extension.closePopup", "null") }
-        val bg = backgroundView(row.id)
+        val bg = awakeBackground(row.id, factor)
         val rules = bg?.let { probe(it, DNR_DYNAMIC_RULES, "__zenDnr", scaled(8_000, factor)) } ?: JSONObject().put("error", "no background view")
         extra.put("dynamicRules", rules)
         // The next load of the fixture: sent to the block page, or shown.
@@ -3992,6 +4029,54 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         instrumentation.runOnMainSync { v = host.extensions.backgroundView(id) }
         return v
     }
+
+    /**
+     * The background's view, woken when it idled out: an MV3 worker stops half a minute after its
+     * last traffic (Chrome's clock too), and a probe of its APIs that comes later than that found
+     * no view in round 7's driver ("no background view"). The runtime starts it again on request
+     * (`Extensions.wakeBackground`, as Chrome's management page starts an inactive worker for its
+     * inspector) and the view is answered once its `chrome` is there.
+     */
+    private fun awakeBackground(id: String, factor: Double): ExtensionWebView? {
+        backgroundView(id)?.let { view ->
+            if (runCatching { tabEval(view, "String(typeof chrome === 'object' && !!chrome.runtime)", 5) }.getOrNull() == "true") return view
+        }
+        instrumentation.runOnMainSync { host.extensions.wakeBackground(id) }
+        return poll(scaled(15_000, factor), 400) {
+            val view = backgroundView(id) ?: return@poll null
+            if (runCatching { tabEval(view, "String(typeof chrome === 'object' && !!chrome.runtime && document.readyState !== 'loading')", 5) }.getOrNull() == "true") view else null
+        }?.also { SystemClock.sleep(scaled(800, factor)) }
+    }
+
+    /**
+     * What a sheet shows as the user sees it, read from the accessibility tree rather than the
+     * document: a page that keeps its whole UI in a closed shadow root (Click&Clean attaches one to
+     * its body and builds its menu inside) reads as empty to a script yet is drawn as Chrome draws
+     * it. The visible nodes inside the view's screen bounds, with their labels.
+     */
+    private fun seenInView(view: WebView): JSONObject {
+        val bounds = Rect()
+        instrumentation.runOnMainSync {
+            val xy = IntArray(2)
+            view.getLocationOnScreen(xy)
+            bounds.set(xy[0], xy[1], xy[0] + view.width, xy[1] + view.height)
+        }
+        val labels = ArrayList<String>()
+        var count = 0
+        if (bounds.width() > 0 && bounds.height() > 0) {
+            for (node in nodes { it.isVisibleToUser }) {
+                val rect = Rect().also(node::getBoundsInScreen)
+                if (rect.isEmpty || !bounds.contains(rect.centerX(), rect.centerY())) continue
+                count++
+                val text = (node.text ?: node.contentDescription)?.toString()?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
+                if (text.isNotEmpty() && labels.size < 24) labels += text.take(40)
+            }
+        }
+        return JSONObject().put("nodes", count).put("labels", JSONArray(labels))
+    }
+
+    /** A sheet whose document reads empty but that shows labelled content: the shadow-root case. */
+    private fun shownDespiteEmptyDom(seen: JSONObject): Boolean = (seen.optJSONArray("labels")?.length() ?: 0) >= 3
 
     private fun decisions(): List<String> {
         var list: List<String> = emptyList()
