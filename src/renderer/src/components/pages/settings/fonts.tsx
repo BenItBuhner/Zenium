@@ -233,8 +233,7 @@ export function fontsGroups({
 }: Pick<SectionContext, 'state' | 'set' | 'localFonts'>): RowGroup[] {
   const fonts = state.settings.fonts
   const generic = state.capabilities.genericFontFamilies
-  const patch = (change: Partial<PageFontSettings>): void =>
-    set({ fonts: { ...fonts, ...change } })
+  const patch = (change: Partial<PageFontSettings>): void => set({ fonts: { ...fonts, ...change } })
   const keywords = ['fonts', 'customize fonts', 'typeface', 'text size', 'font size']
 
   const sizeIndex = stepIndex(FONT_SIZE_STEPS, fonts.size)
@@ -275,7 +274,9 @@ export function fontsGroups({
     }
   ]
 
-  const slots: FontFamilySlot[] = generic ? ['standard', 'serif', 'sansSerif', 'fixed'] : ['standard']
+  const slots: FontFamilySlot[] = generic
+    ? ['standard', 'serif', 'sansSerif', 'fixed']
+    : ['standard']
   for (const slot of slots) {
     const current = fonts[slot]
     const options = familyOptions(current, generic ? (localFonts ?? null) : null, generic)

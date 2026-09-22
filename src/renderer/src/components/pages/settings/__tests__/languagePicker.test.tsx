@@ -75,7 +75,10 @@ describe('the language catalogue', () => {
       label: 'German',
       description: 'Deutsch'
     })
-    expect(choices.find((c) => c.value === 'ja')).toMatchObject({ label: 'Japanese', description: '日本語' })
+    expect(choices.find((c) => c.value === 'ja')).toMatchObject({
+      label: 'Japanese',
+      description: '日本語'
+    })
     const labels = choices.map((c) => c.label)
     expect(labels).toEqual([...labels].sort((a, b) => a.localeCompare(b, 'en')))
     // The listed tags are compared without regard to case (a synced `EN-gb`).
@@ -132,7 +135,9 @@ describe('the Add language picker', () => {
     const rows = [...group.querySelectorAll<HTMLButtonElement>('button.zen-settings-row')]
     expect(rows.length).toBe(choices.length)
     expect(rows[0].querySelector('.zen-settings-label')?.textContent).toBe(choices[0].label)
-    const german = rows.find((r) => r.querySelector('.zen-settings-label')?.textContent === 'German')!
+    const german = rows.find(
+      (r) => r.querySelector('.zen-settings-label')?.textContent === 'German'
+    )!
     expect(german.querySelector('.zen-settings-description')?.textContent).toBe('Deutsch')
     act(() => german.click())
     expect(onPick).toHaveBeenCalledWith('de')

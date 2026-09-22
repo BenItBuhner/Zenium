@@ -92,7 +92,10 @@ describe('the info row’s ⋯ menu (§10.4)', () => {
 
   it('a two-line row holds the button inside its lines rather than as a control row', () => {
     const el = render(
-      <RowView row={languageRow({ description: 'Pages are translated into this language' })} ctx={ctx} />
+      <RowView
+        row={languageRow({ description: 'Pages are translated into this language' })}
+        ctx={ctx}
+      />
     )
     const row = rowOf(el, 'languages-preferred:en')
     expect(row.hasAttribute('data-control')).toBe(false)

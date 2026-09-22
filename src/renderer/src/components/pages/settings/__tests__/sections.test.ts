@@ -1469,7 +1469,10 @@ describe('the section model', () => {
     // The preferred languages (CT-41, `Settings.languages`; translate's `preferred` is derived
     // from them) mirror the engine slice's two languages read.
     const c = context(state({}, { languages: ['en', 'fr'] }))
-    const languages = buildSection(PAGE.sections.find((x) => x.id === 'languages')!, c.ctx)
+    const languages = buildSection(
+      PAGE.sections.find((x) => x.id === 'languages')!,
+      c.ctx
+    )
     expect(languages.groups.map((g) => g.id)).toEqual([
       // CT-41's Preferred languages open the category (Chrome's order), one group: the list's
       // rows and Add language together, since the add row is the list's own last row.
@@ -1513,7 +1516,10 @@ describe('the section model', () => {
       label: 'English',
       menu: { label: 'Options for English' }
     })
-    expect(row(languages, 'languages-preferred:fr')).toMatchObject({ kind: 'info', label: 'French' })
+    expect(row(languages, 'languages-preferred:fr')).toMatchObject({
+      kind: 'info',
+      label: 'French'
+    })
     const add = row(languages, 'languages-add')
     if (add.kind !== 'action') throw new Error('not an action')
     expect(add.form?.title).toBe('Add language')
@@ -1596,7 +1602,11 @@ describe('the section model', () => {
     const menuOf = (id: string): { label: string; disabled?: boolean; onSelect(): void }[] => {
       const r = row(model, id)
       if (r.kind !== 'info' || !r.menu) throw new Error(`${id} has no menu`)
-      return r.menu.items.map((i) => ({ label: i.label, disabled: i.disabled, onSelect: i.onSelect }))
+      return r.menu.items.map((i) => ({
+        label: i.label,
+        disabled: i.disabled,
+        onSelect: i.onSelect
+      }))
     }
     // Title Case items (§9.1); the first row's Move Up and the last row's Move Down stay
     // listed, disabled (§9.30's .4); Remove stays on while more than one language remains.
