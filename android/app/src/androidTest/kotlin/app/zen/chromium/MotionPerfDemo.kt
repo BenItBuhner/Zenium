@@ -738,9 +738,16 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         /** How far the pull carries the overview in before the lift; the spring does the rest. */
         private const val PULL_FRACTION = 0.75f
         private const val PULL_MS = 1_200L
-        /** The fling lets go this far in, quickly. */
-        private const val FLING_FRACTION = 0.25f
-        private const val FLING_MS = 150L
+        /**
+         * The fling lets go this far in, quickly. Past the swipe's commit fraction (0.45 of the
+         * travel, `SWIPE_THRESHOLDS`) so the release commits on POSITION whatever the chrome's
+         * velocity tracker made of the injected moves: at a quarter of the travel over 150 ms the
+         * open hung on the velocity estimate alone and went either way run to run (open on six tabs
+         * and closed on thirty in one run, the reverse in the next), and a fling that closed took
+         * the back scenes after it off the record. Still a quick pull: 0.5 of the travel in 220 ms.
+         */
+        private const val FLING_FRACTION = 0.5f
+        private const val FLING_MS = 220L
         /** The spring's open and the grid's rest after a lift; the morph back and the page's return after a pick. */
         private const val OPEN_SETTLE_MS = 2_500L
         private const val CLOSE_SETTLE_MS = 3_000L
