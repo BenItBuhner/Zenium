@@ -14,10 +14,12 @@ import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 /**
  * Records the Cookies and site data UI on the phone (PS-23, PS-24, PS-25; the UI half of #310),
@@ -182,9 +184,37 @@ abstract class SiteDataUiDemoBase(
         }
     }
 
-    /** The whole accessible name of the first node whose name starts with `text`, or null. */
+    // --- the tree read afresh ---------------------------------------------------------------------
+    //
+    // UiAutomation's view of the chrome WebView trails the screen by seconds after a Settings
+    // drill-in on the emulator's software GPU (DemoHarness: "the tree read afresh"), and a static
+    // section runs no frame of its own for Blink to serialise the change with. The first run
+    // (35696836639) polled the cached tree for the section's heading for 12 s and never saw it
+    // while the chrome document had it. Every read of a Settings row here drops the cache and
+    // asks the document for a frame first; a finger that the tree keeps waiting lands on the box
+    // the document gives for the same row. Not inside a measured scene: a frame asked of the
+    // document is a frame in the statistics.
+
+    /** UiAutomation's cache dropped and a frame asked of the chrome document, so the next tree read is the screen's. */
+    protected fun fresh() {
+        dropTreeCache()
+        nudgeFrame()
+    }
+
+    /** The first node whose label or text `matches`, read afresh. */
+    protected fun freshNode(matches: (String) -> Boolean): AccessibilityNodeInfo? {
+        fresh()
+        return findNode(matches)
+    }
+
+    /**
+     * The whole accessible name of the first node whose name starts with `text` (read afresh),
+     * else the chrome document's text for the Settings row or heading of those words (its label
+     * and description as one line, marked "by the document"), else null.
+     */
     protected fun nodeText(text: String): String? =
-        findNode { it.startsWith(text) }?.let { it.contentDescription ?: it.text }?.toString()
+        freshNode { it.startsWith(text) }?.let { it.contentDescription ?: it.text }?.toString()
+            ?: documentRowText(text)?.let { "$it (by the document)" }
 
     /**
      * Poll for a node whose name starts with `label` (a sheet row is named "label, value,
@@ -193,12 +223,14 @@ abstract class SiteDataUiDemoBase(
     protected fun awaitPrefix(label: String, timeoutMs: Long = 8_000): Rect? =
         awaitNode(timeoutMs) { it.startsWith(label) }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
 
-    /** The BUTTON reading `label` exactly – a sheet's action, not its title of the same words. */
-    protected fun buttonNode(label: String): AccessibilityNodeInfo? =
-        findNodeWhere { n ->
+    /** The BUTTON reading `label` exactly – a sheet's action, not its title of the same words (read afresh). */
+    protected fun buttonNode(label: String): AccessibilityNodeInfo? {
+        fresh()
+        return findNodeWhere { n ->
             n.className?.toString() == "android.widget.Button" &&
                 (n.text ?: n.contentDescription)?.toString()?.trim() == label
         }
+    }
 
     /**
      * A finger on the button reading `label` (a sheet's control: the rule in [DemoHarness]), then
@@ -297,9 +329,27 @@ abstract class SiteDataUiDemoBase(
         }
         if (awaitPage(PRIVACY_URL, 12_000) == null) return false
         awaitSurface(up = true, timeoutMs = 6_000)
-        val there = rowBounds("Cookies and site data", 12_000) != null
+        // The section is there once the chrome document lays out the Cookies and site data group;
+        // the tree is given a while to list its heading too, and noted when it does not (the
+        // fingers go by the document's boxes either way).
+        val inDocument = awaitChrome("document.querySelector('[data-group=\"site-data\"]')", 12_000)
+        val start = SystemClock.uptimeMillis()
+        val inTree = rowBounds("Cookies and site data", if (inDocument) 8_000 else 12_000) != null
+        if (inDocument && !inTree) {
+            note("  (the section is in the chrome document; the tree did not list its heading within ${SystemClock.uptimeMillis() - start} ms)")
+        }
         SystemClock.sleep(800)
-        return there
+        return inDocument || inTree
+    }
+
+    /** Poll the chrome document until `code` is truthy, up to `timeoutMs`. */
+    protected fun awaitChrome(code: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (chromeValue("String(!!($code))") == "true") return true
+            SystemClock.sleep(200)
+        }
+        return chromeValue("String(!!($code))") == "true"
     }
 
     protected fun awaitPage(url: String, timeoutMs: Long): JSONObject? {
@@ -315,13 +365,15 @@ abstract class SiteDataUiDemoBase(
     /**
      * The bounds of the first node whose accessible text reads `text` exactly or as a prefix (a
      * Settings row runs its label and description together); a node below the fold is scrolled
-     * into view first. Polls, since the tree trails the screen on the emulator.
+     * into view first. Polls the tree afresh each round ([fresh]), since it trails the screen on
+     * the emulator; when it never lists the row within `timeoutMs`, the box the chrome document
+     * gives for the Settings row or heading of those words, scrolled into view ([documentRowBounds]).
      */
     protected fun rowBounds(text: String, timeoutMs: Long): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var revealed = false
         do {
-            val node = findNode { it == text || it.startsWith(text) }
+            val node = freshNode { it == text || it.startsWith(text) }
             if (node != null) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
                 val onScreen = bounds.width() > 0 && bounds.height() > 0 &&
@@ -336,10 +388,47 @@ abstract class SiteDataUiDemoBase(
             }
             SystemClock.sleep(200)
         } while (SystemClock.uptimeMillis() < deadline)
-        return null
+        return documentRowBounds(text)?.also {
+            Log.w(tag, "the tree did not list '$text' within $timeoutMs ms; the document has it at $it")
+        }
     }
 
     protected fun revealRow(text: String): Rect? = rowBounds(text, 6_000)
+
+    /** The chrome document's Settings rows and group headings (the phone page's), as a JS array expression. */
+    private fun settingsRowsJs(): String =
+        "Array.from(document.querySelectorAll('.zen-settings-phone [data-row], .zen-settings-phone .zen-settings-heading, .zen-sheet [data-row]'))"
+
+    /** The first Settings row or heading whose text reads `text` exactly or as a prefix, as a JS expression over [settingsRowsJs]. */
+    private fun documentRowJs(text: String): String =
+        "(function(){var t=${JSONObject.quote(text)};return ${settingsRowsJs()}.find(function(x){" +
+            "var s=(x.innerText||x.textContent||'').replace(/\\s+/g,' ').trim();return s===t||s.indexOf(t)===0})||null})()"
+
+    /**
+     * The screen rectangle of the Settings row or heading reading `text` by the chrome document,
+     * scrolled into view first; null when the document has no such row.
+     */
+    protected fun documentRowBounds(text: String): Rect? {
+        val raw = chromeJs(
+            "(function(){var e=${documentRowJs(text)};if(!e)return null;e.scrollIntoView({block:'center'});" +
+                "var r=e.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom]})()"
+        )
+        val box = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 4 } ?: return null
+        var origin = IntArray(2)
+        instrumentation.runOnMainSync { origin = IntArray(2).also(host.chrome::getLocationOnScreen) }
+        SystemClock.sleep(400)
+        return Rect(
+            origin[0] + (box.getDouble(0) * density).roundToInt(),
+            origin[1] + (box.getDouble(1) * density).roundToInt(),
+            origin[0] + (box.getDouble(2) * density).roundToInt(),
+            origin[1] + (box.getDouble(3) * density).roundToInt()
+        )
+    }
+
+    /** The text of the Settings row or heading reading `text` by the chrome document (its lines joined with ", "), or null. */
+    protected fun documentRowText(text: String): String? =
+        chromeValue("(function(){var e=${documentRowJs(text)};return e?(e.innerText||e.textContent||'').replace(/\\s*\\n+\\s*/g,', ').trim():null})()")
+            .takeIf { it.isNotEmpty() }
 
     /** Where the middle of the first chrome element matching `selector` is on screen (scrolled into view), or null. */
     protected fun chromePoint(selector: String): PointF? {
@@ -396,9 +485,11 @@ abstract class SiteDataUiDemoBase(
         return awaitSettled(3_000) { fieldValue() == text }
     }
 
-    /** The picker's checkable row whose text starts with `option`. */
-    protected fun optionNode(option: String): AccessibilityNodeInfo? =
-        findNodeWhere { n -> n.isCheckable && (n.text?.toString() ?: n.contentDescription?.toString())?.startsWith(option) == true }
+    /** The picker's checkable row whose text starts with `option` (read afresh). */
+    protected fun optionNode(option: String): AccessibilityNodeInfo? {
+        fresh()
+        return findNodeWhere { n -> n.isCheckable && (n.text?.toString() ?: n.contentDescription?.toString())?.startsWith(option) == true }
+    }
 
     /**
      * A finger on the picker's option reading `option` (a sheet's control: the rule in
@@ -444,6 +535,31 @@ abstract class SiteDataUiDemoBase(
 
     protected fun chromeValue(code: String): String =
         runCatching { org.json.JSONTokener(chromeJs(code)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
+
+    /** Evaluate in the page of tab `tabId` (the demo page's WebView); the raw JSON-encoded result ("" when it never answered or has no view). */
+    protected fun pageJs(code: String, tabId: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(tabId)
+            if (view == null) {
+                latch.countDown()
+            } else {
+                view.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        return result
+    }
+
+    /** How many cookies the page's `document.cookie` holds (the demo page's own view of its jar); -1 when the page did not answer. */
+    protected fun pageCookieCount(tabId: String): Int {
+        val raw = pageJs("String(document.cookie.split(';').filter(function(c){return c.trim()}).length)", tabId)
+        return runCatching { org.json.JSONTokener(raw).nextValue() }.getOrNull()?.toString()?.toIntOrNull() ?: -1
+    }
 
     /** The value of the add sheet's field, as the chrome holds it. */
     protected fun fieldValue(): String =
@@ -614,7 +730,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         }
         note("  root row: ${nodeText("Cookies and site data") ?: "(not in the tree)"}")
         shot("02-siteinfo-root")
-        if (touchTapLabelExpecting("Cookies and site data", "the cookies level is up", prefix = true) { findNode { it.startsWith("Cookies for this site") } != null }) {
+        if (touchTapLabelExpecting("Cookies and site data", "the cookies level is up", prefix = true) { freshNode { it.startsWith("Cookies for this site") } != null }) {
             SystemClock.sleep(800)
             val row = nodeText("Cookies for this site")
             note("  per-site row: $row")
@@ -735,7 +851,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         val root = nodeText("Cookies and site data")
         claim("the sheet's root row says Never allowed", root?.contains("Never allowed") == true, root ?: "")
         shot("12-siteinfo-never")
-        if (touchTapLabelExpecting("Cookies and site data", "the cookies level is up", prefix = true) { findNode { it.startsWith("Cookies for this site") } != null }) {
+        if (touchTapLabelExpecting("Cookies and site data", "the cookies level is up", prefix = true) { freshNode { it.startsWith("Cookies for this site") } != null }) {
             SystemClock.sleep(800)
             val row = nodeText("Cookies for this site")
             claim("the per-site row reads Never allow · Listed as $DEMO_PATTERN", row?.contains("Never allow") == true && row.contains("Listed as $DEMO_PATTERN"), row ?: "")
@@ -780,7 +896,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                 revealRow(ALLOW_PATTERN)
                 SystemClock.sleep(600)
                 shot("16-allow-list-row")
-                if (tapPageRow("site-data-site:$ALLOW_PATTERN") { findNode { it.startsWith("Remove from the list") } != null }) {
+                if (tapPageRow("site-data-site:$ALLOW_PATTERN") { freshNode { it.startsWith("Remove from the list") } != null }) {
                     SystemClock.sleep(800)
                     shot("17-pattern-sheet")
                     beat()
@@ -818,7 +934,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
             revealRow("See all site data and permissions")
             SystemClock.sleep(600)
             val clearDemo = "Clear $DEMO_ORIGIN"
-            val viewerUp = { findNode { it.startsWith(clearDemo) || it == "Clear all" } != null }
+            val viewerUp = { freshNode { it.startsWith(clearDemo) || it == "Clear all" } != null }
             val seeAll = pageRowPoint("site-data-see-all")
             SystemClock.sleep(300)
             measureFrames("viewer-sheet-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
@@ -828,26 +944,26 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
             }
             if (!viewerUp()) tapPageRow("site-data-see-all", viewerUp)
             if (viewerUp()) {
-                awaitSettled(8_000) { findNode { it.startsWith(clearDemo) } != null }
+                awaitSettled(8_000) { freshNode { it.startsWith(clearDemo) } != null }
                 SystemClock.sleep(600)
                 note("  viewer rows: ${chromeValue("JSON.stringify(Array.from(document.querySelectorAll('[data-row^=\"site-data-origin:\"]')).map(function(e){return e.getAttribute('data-row')+' :: '+e.innerText.replace(/\\n+/g,' | ')}))")}")
                 note("  count aside: ${chromeValue("(function(){var e=document.querySelector('[data-testid=\"site-data-count\"]');return e?e.textContent:''})()")}")
-                claim("the viewer lists the demo site with its cookies", findNode { it.startsWith(clearDemo) } != null)
+                claim("the viewer lists the demo site with its cookies", freshNode { it.startsWith(clearDemo) } != null)
                 shot("19-viewer")
                 beat()
                 if (touchButtonExpecting(clearDemo, "the demo site's cookies left the jar", timeoutMs = 10_000) { jarCookie(DEMO_URL) == null }) {
-                    awaitSettled(6_000) { findNode { it.startsWith(clearDemo) } == null }
+                    awaitSettled(6_000) { freshNode { it.startsWith(clearDemo) } == null }
                     SystemClock.sleep(800)
-                    claim("the cleared origin's row left the viewer", findNode { it.startsWith(clearDemo) } == null)
+                    claim("the cleared origin's row left the viewer", freshNode { it.startsWith(clearDemo) } == null)
                     claim("the control site kept its cookies", jarCookie(KEEP_URL) != null, "jar=${jarCookie(KEEP_URL)}")
                     shot("20-viewer-cleared-row")
                     beat()
                 }
-                if (touchButtonExpecting("Clear all", "the prompt is up") { findNode { it.startsWith("Clear all site data?") } != null }) {
+                if (touchButtonExpecting("Clear all", "the prompt is up") { freshNode { it.startsWith("Clear all site data?") } != null }) {
                     SystemClock.sleep(800)
                     shot("21-clear-all-prompt")
                     beat()
-                    if (touchButtonExpecting("Cancel", "the prompt left, the viewer stays") { findNode { it.startsWith("Clear all site data?") } == null && buttonNode("Clear all") != null }) {
+                    if (touchButtonExpecting("Cancel", "the prompt left, the viewer stays") { freshNode { it.startsWith("Clear all site data?") } == null && buttonNode("Clear all") != null }) {
                         claim("Cancel kept the control site's cookies", jarCookie(KEEP_URL) != null, "jar=${jarCookie(KEEP_URL)}")
                     }
                 }
@@ -915,15 +1031,6 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         return pendingMarker()
     }
 
-    private fun awaitChrome(code: String, timeoutMs: Long): Boolean {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (chromeValue("String(!!($code))") == "true") return true
-            SystemClock.sleep(200)
-        }
-        return chromeValue("String(!!($code))") == "true"
-    }
-
     companion object {
         private const val ALLOW_PATTERN = "[*.]example.org"
     }
@@ -945,13 +1052,40 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
     override fun warmUp() {
         coldStartMs = System.currentTimeMillis() - 60_000
         openNotes("Zenium Android site data UI demo, act two: the cold start with the pending clear")
-        val title = awaitTitle(DEMO_TAB, "sent:", 40_000)
-        val first = server.pageRequests(DEMO_HOST).firstOrNull()
-        note("first request of $DEMO_HOST after the cold start: ${first?.let { "cookies=${it.cookies}" } ?: "(none yet)"}")
+        // The restored session's active tab should be the demo page (act one left it there); a
+        // tab the restore does not show is restored when it is activated, and its first load
+        // after the cold start is what the claims read – the saved title says "sent: …" from
+        // before the close until then, so the wait is on the server's request, not the title.
+        val active = activeCoreTab()?.optString("id")
+        note("active tab after the cold start: $active (tabs ${coreState().getJSONObject("tabs").length()})")
+        if (active != DEMO_TAB) {
+            note("  (act one did not leave the demo tab active; activating it)")
+            activateTab(DEMO_TAB)
+        }
+        val first = awaitFirstRequest(DEMO_HOST, 40_000)
+        note("first request of $DEMO_HOST after the cold start: ${first?.let { "cookies=${it.cookies}" } ?: "(none within 40 s)"}")
+        val title = awaitTitle(DEMO_TAB, "sent:", 20_000)
         note("restored page title: $title")
+        note("server requests so far: ${describeRequests()}")
         val close = closeUrlField()
         note("URL field: ${close.describe()}")
     }
+
+    /** Poll for the first page request `host` makes of the server, up to `timeoutMs`. */
+    private fun awaitFirstRequest(host: String, timeoutMs: Long): CookiePage.Request? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            server.pageRequests(host).firstOrNull()?.let { return it }
+            SystemClock.sleep(250)
+        }
+        return server.pageRequests(host).firstOrNull()
+    }
+
+    /** Every page request the server saw, oldest first, as "host cookies=[…]". */
+    private fun describeRequests(): String =
+        (server.pageRequests(DEMO_HOST) + server.pageRequests(KEEP_HOST)).sortedBy { it.at }
+            .joinToString("; ") { "${it.host} cookies=${it.cookies}" }
+            .ifEmpty { "none" }
 
     override fun demo() {
         // 1. The restored page: its first request carried no cookie; the document holds none.
@@ -959,7 +1093,11 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
         val requests = server.pageRequests(DEMO_HOST)
         val first = requests.firstOrNull()
         claim("the restored page's first request carried no cookie", first != null && first.cookies.isEmpty(), "requests=${requests.map { it.cookies }}")
-        claim("the restored page's title says none was sent", tabTitle(DEMO_TAB) == "sent: none", tabTitle(DEMO_TAB))
+        claim("the restored page's title says none was sent", awaitSettled(10_000) { tabTitle(DEMO_TAB) == "sent: none" }, tabTitle(DEMO_TAB))
+        // The visit that just answered set the two cookies again (Set-Cookie on the response), so
+        // the document reads them now: what it must not hold is the pair from before the close,
+        // which the request above shows gone. Noted, not claimed.
+        note("  document.cookie after the restored visit: ${pageCookieCount(DEMO_TAB)} cookie(s)")
         claim("the clear-on-exit list still holds the site", listHolds("clearOnExit", DEMO_PATTERN), siteData().optJSONArray("clearOnExit")?.toString() ?: "")
         claim("the marker was consumed", awaitSettled(15_000) { !siteData().optBoolean("pendingClear") && pendingMarker() == null }, "status=${siteData().optBoolean("pendingClear")} file=${pendingMarker()}")
         claim("the control site on no list kept its cookies", jarCookie(KEEP_URL) != null, "keep=${jarCookie(KEEP_URL)}")
@@ -980,7 +1118,7 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
             SystemClock.sleep(MOTION_MS)
         }
         note("  root row: ${nodeText("Cookies and site data")}")
-        if (touchTapLabelExpecting("Cookies and site data", "the cookies level is up", prefix = true) { findNode { it.startsWith("Cookies for this site") } != null }) {
+        if (touchTapLabelExpecting("Cookies and site data", "the cookies level is up", prefix = true) { freshNode { it.startsWith("Cookies for this site") } != null }) {
             SystemClock.sleep(800)
             val row = nodeText("Cookies for this site")
             claim("the per-site row still reads Clear when Zenium closes", row?.contains("Clear when Zenium closes") == true, row ?: "")

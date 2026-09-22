@@ -34,7 +34,8 @@ out=${DEMO_OUT:-artifacts/android-site-data-ui-demo}
 mkdir -p "$out"
 
 status=0
-DEMO_CLASS=app.zen.chromium.SiteDataUiDemo DEMO_DIR=site-data-demo DEMO_OUT=$out/act-1 \
+# DEMO_DIR is each act's handshake directory: the one its driver class names (SiteDataUiDemo.kt).
+DEMO_CLASS=app.zen.chromium.SiteDataUiDemo DEMO_DIR=site-data-ui-demo DEMO_OUT=$out/act-1 \
   DEMO_VIDEO=services-site-data-android-ui.mp4 DEMO_ARGS="-e holdBackgroundWork true" \
   bash .github/scripts/android-gesture-demo.sh || status=$?
 if [ -f "$out/act-1/emulator-died" ]; then
