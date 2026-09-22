@@ -163,6 +163,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * a release build never reads it. An instrumentation driver sets it on the activity's host.
      */
     @Volatile var netOriginOverride: String? = null
+
+    /**
+     * End the demo harness's hold on the core's startup sweeps ([BackgroundWorkHold]): the held
+     * filter-list and Safe Browsing refreshes run now. Main thread; idempotent, and nothing where
+     * nothing was held. An instrumentation driver calls it once its measured scenes are over.
+     */
+    fun releaseBackgroundWork() = chrome.hostEvent(BackgroundWorkHold.RELEASE_EVENT, null)
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
@@ -307,7 +314,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // A screen lock (or biometric) the device can verify the user with: the "Lock
                 // private tabs when you leave Zenium" switch is enabled (`PrivateLock`); the lock
                 // itself is never on at boot (it lives in memory).
-                "screenLock" to reauth.available()
+                "screenLock" to reauth.available(),
+                // The demo harness's hold on the startup sweeps (`BackgroundWorkHold`): the launch
+                // intent's extra, honoured by debuggable builds alone; false in every normal run.
+                "holdBackgroundWork" to BackgroundWorkHold.requested(
+                    activity.intent?.getBooleanExtra(BackgroundWorkHold.EXTRA_HOLD, false) == true,
+                    BuildConfig.DEBUG
+                )
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -1110,13 +1123,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         controller.isAppearanceLightNavigationBars = !dark
         // Pages see Zenium's colour scheme, not only the system's: the app's night mode drives
         // `prefers-color-scheme` and the algorithmic darkening in every page WebView (the manifest
-        // handles `uiMode` in place, so nothing reloads).
-        val night = when (scheme) {
-            "dark" -> AppCompatDelegate.MODE_NIGHT_YES
-            "light" -> AppCompatDelegate.MODE_NIGHT_NO
-            else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-        }
-        if (AppCompatDelegate.getDefaultNightMode() != night) AppCompatDelegate.setDefaultNightMode(night)
+        // handles `uiMode` in place, so nothing reloads). The chrome hands `scheme` over as its
+        // own paint crosses to that side (`boot.ts`, `pageScheme.ts`), so the pages flip with it.
+        val night = PageTheme.nightMode(scheme)
+        if (AppCompatDelegate.getDefaultNightMode() == night) return
+        val uiModeBefore = activity.resources.configuration.uiMode
+        AppCompatDelegate.setDefaultNightMode(night)
+        // AppCompat rewrote the activity's configuration in place; no view heard of it. The pages
+        // learn their colour scheme in WebView's own `onConfigurationChanged`, which only a real
+        // system `uiMode` change would send – so send it now, to every page and to the chrome
+        // (whose `prefers-color-scheme` under the `system` scheme is this same reading), and every
+        // open page flips with the chrome instead of at the next system flip (PageTheme).
+        val configuration = activity.resources.configuration
+        if (!PageTheme.nightFlipped(uiModeBefore, configuration.uiMode)) return
+        val pages = tabs.all()
+        for (tab in pages) tab.dispatchConfigurationChanged(configuration)
+        chrome.dispatchConfigurationChanged(configuration)
+        Log.i(TAG, "theme flip to $scheme: the configuration change dispatched to ${pages.size} page(s) and the chrome")
     }
 
     /** The core's page-controls policy: every tab re-registers its document-start script. */

@@ -86,6 +86,31 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
     )
   })
 
+  it('keeps the phone’s keyboard ring: the coarse-pointer suppressor stands down while the keyboard is the last input, and the phone pill rings as the desktop’s (A11Y-09)', () => {
+    // The suppressor hides the legacy buttons' rings under a finger (a script-moved focus
+    // matches `:focus-visible` before any pointer has been used); a hardware keyboard's Tab
+    // must still ring the pill and the bar's buttons. `:where()` keeps the rule's specificity
+    // where it was, beneath every component's own ring rule.
+    const suppressor = ringRules(css).filter(
+      (r) => r.value === 'none' && r.selector.includes("[data-pointer='coarse']")
+    )
+    expect(suppressor.map((r) => r.selector)).toEqual([
+      ":root[data-pointer='coarse']:where(:not([data-input='keyboard'])) button:focus-visible, :root[data-pointer='coarse']:where(:not([data-input='keyboard'])) [role='button']:focus-visible"
+    ])
+    expect(css).not.toMatch(/:root\[data-pointer='coarse'\] button:focus-visible/)
+    // The phone pill rings as a whole for the keyboard on its address or a chip, and none of
+    // its buttons rings on its own – the desktop pill's rule, keyed on the keyboard's input.
+    expect(ringRules(css)).toEqual(
+      expect.arrayContaining([
+        {
+          selector: ":root[data-input='keyboard'] .zen-phone-pill:has(button:focus-visible)",
+          value: '2px solid var(--v2-ring)'
+        },
+        { selector: '.zen-phone-pill button:focus-visible', value: 'none' }
+      ])
+    )
+  })
+
   it('is not forked into translucent utility rings in the components', () => {
     const root = fileURLToPath(new URL('../../', import.meta.url))
     const files = readdirSync(root, { recursive: true, encoding: 'utf8' })

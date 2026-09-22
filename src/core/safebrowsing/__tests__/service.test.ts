@@ -2,6 +2,7 @@
 // eslint-disable-next-line no-restricted-imports
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BackgroundWork } from '../../background/work'
 import type { Browser } from '../../browser'
 import type { NetHost, PrivacyHost, StoreIO } from '../../platform'
 import {
@@ -16,6 +17,7 @@ import {
   DOCUMENT_LOAD_DELAY_MS,
   FEED_DOCUMENT_VERSION,
   SafeBrowsingService,
+  STARTUP_SWEEP_DELAY_MS,
   bypassKey,
   feedFile,
   parseFeedDocument,
@@ -58,6 +60,7 @@ function fake(overrides: Partial<PrivacySettings> = {}): Fake {
   const bundled = new Map<string, string>()
   const browser = {
     state: { settings: { privacy: settings } },
+    background: new BackgroundWork(),
     platform: {
       io,
       net: { fetchText },
@@ -466,7 +469,9 @@ describe('SafeBrowsingService with the tables at the host', () => {
     })
     // The startup sweep follows the load, not the start: a bundled feed is stale, so it is fetched.
     expect(f.fetchText).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(20_000)
+    await vi.advanceTimersByTimeAsync(STARTUP_SWEEP_DELAY_MS - 100)
+    expect(f.fetchText).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(100)
     expect(f.fetchText).toHaveBeenCalled()
   })
 

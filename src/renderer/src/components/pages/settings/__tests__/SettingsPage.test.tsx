@@ -626,3 +626,44 @@ describe('below the two-pane width', () => {
     expect(markup).toContain('data-testid="settings-page"')
   })
 })
+
+describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () => {
+  /** Settings opened from a site's information sheet: the site's tab is the opener. */
+  function fromSheet(url: string): UIState {
+    const s = state(ANDROID, 'android', {}, url)
+    s.tabs.site = tab('https://news.example/story', { id: 'site', blockedCount: 3 })
+    s.tabs.settings = { ...s.tabs.settings!, openerTabId: 'site' }
+    return s
+  }
+
+  it('opens the drill-in with the site’s group on screen: "Block on <host>" scrolled to the top', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    const el = mountPage(fromSheet('zen://settings/privacy?site=https%3A%2F%2Fnews.example'))
+    const row = el.querySelector('[data-row="tracking-site-current"]')!
+    expect(row.textContent).toContain('Block on news.example')
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    const target = scrolled.mock.instances[0] as Element
+    expect(target).toBe(row.closest('[data-group]'))
+    expect(target.getAttribute('data-group')).toBe('tracking-exceptions')
+    expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
+    scrolled.mockRestore()
+  })
+
+  it('opens the two-pane content column the same way, and the section alone at the top', () => {
+    viewport(TWO_PANE_MIN_WIDTH, false)
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'tablet' })
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    mountPage(fromSheet('zen://settings/privacy?site=https%3A%2F%2Fnews.example'))
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    expect((scrolled.mock.instances[0] as Element).getAttribute('data-group')).toBe(
+      'tracking-exceptions'
+    )
+    act(() => root!.unmount())
+    root = null
+    // The section reached from the landing or the nav (no `site`): nothing is scrolled to.
+    mountPage(fromSheet('zen://settings/privacy'))
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    scrolled.mockRestore()
+  })
+})

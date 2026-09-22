@@ -38,6 +38,7 @@ import type {
   NetHost,
   PageMessage,
   PasswordsHost,
+  PerformanceHost,
   PickedTextFile,
   Platform,
   PlatformInfo,
@@ -89,6 +90,8 @@ import {
   permissionName,
   permissionRequestDetails
 } from './security'
+import { electronPerformanceHost } from './backgroundWork'
+import createBackgroundWorker from './backgroundWorker?nodeWorker'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
@@ -184,6 +187,8 @@ export class ElectronPlatform implements Platform {
   readonly passwords: PasswordsHost
   readonly blocking: ElectronBundledLists
   readonly privacy: ElectronPrivacy
+  /** The `worker_threads` worker the core's heavy parsing runs in, and the demo drivers' hold on the startup sweeps. */
+  readonly performance: PerformanceHost
   /** The webRequest multiplexer and text matcher; created with the browser in `start`. */
   requestBlocking!: ElectronBlocking
   readonly translate: ElectronTranslateHost
@@ -215,8 +220,15 @@ export class ElectronPlatform implements Platform {
   browser!: Browser
   private readonly profileDir: string
 
-  constructor(private readonly userDataDir: string) {
+  constructor(
+    private readonly userDataDir: string,
+    options: { holdBackgroundWork?: boolean } = {}
+  ) {
     this.info = { os: process.platform as PlatformOs, version: app.getVersion() }
+    this.performance = electronPerformanceHost({
+      holdBackgroundWork: options.holdBackgroundWork === true,
+      spawnWorker: () => createBackgroundWorker({})
+    })
     this.profileDir = join(userDataDir, 'zen')
     this.io = new FileStoreIO(this.profileDir)
     this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)

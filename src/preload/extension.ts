@@ -56,14 +56,19 @@ function makeHost(kind: 'frame' | 'worker'): ShimHost {
   }
 }
 
-/** The router's addressing of a delivery to filtered listeners; absent means everyone. */
+/**
+ * The router's addressing of a delivery to filtered listeners; absent means everyone. `url` comes
+ * along when the router could not match this context's filters yet (the shim matches them).
+ */
 function eventDelivery(raw: unknown): EventDelivery | undefined {
   if (raw === null || typeof raw !== 'object') return undefined
   const record = raw as Record<string, unknown>
   const matched = Array.isArray(record.matched)
     ? record.matched.filter((id): id is number => typeof id === 'number')
     : []
-  return { unfiltered: record.unfiltered === true, matched }
+  const delivery: EventDelivery = { unfiltered: record.unfiltered === true, matched }
+  if (typeof record.url === 'string') delivery.url = record.url
+  return delivery
 }
 
 /**

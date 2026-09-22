@@ -550,6 +550,21 @@ export class TabsApi {
     for (const [zenId, after] of next.tabs) {
       if (prev.tabs.has(zenId)) continue
       this.host.broadcast('tabs', 'onCreated', (ext) => [this.visibleTab(ext, after.chrome)])
+      // Chrome follows a new tab's `onCreated` with an `onUpdated` that reports it entered
+      // `loading` (then `complete` when it settles); `diff` only compares tabs present in both
+      // snapshots, so a tab born mid-load never produced the loading edge, and the later
+      // complete edge did (its first snapshot already read `loading`). Media sniffers build
+      // their per-tab state on that loading edge with the tab's URL (Stream Recorder's
+      // `tabs.onUpdated` handler returns unless `changeInfo.status === 'loading'`), so a stream
+      // opened straight into a new tab was never seen. Emit it here to match Chrome's sequence.
+      if (after.chrome.status === 'loading') {
+        const info: TabChangeInfo = { status: 'loading' }
+        if (after.chrome.url) info.url = after.chrome.url
+        this.host.broadcast('tabs', 'onUpdated', (ext) => {
+          const change = this.visibleChange(ext, info, after.url)
+          return change ? [after.chrome.id, change, this.visibleTab(ext, after.chrome)] : null
+        })
+      }
     }
     for (const [zenId, before] of prev.tabs) {
       if (next.tabs.has(zenId)) continue

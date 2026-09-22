@@ -2008,10 +2008,8 @@ class ChromeA11yDemo : DemoHarness(
         return false
     }
 
-    /** A frame asked of the chrome document (an animation frame), so Blink runs its lifecycle – and the accessibility step that sends location changes – while the scene waits. */
-    private fun nudgeFrame() {
-        chromeJs("(function(){requestAnimationFrame(function(){});return 1})()")
-    }
+    // `nudgeFrame` (a frame asked of the chrome document while the scene waits on the tree) is the
+    // harness's now, shared with the other drivers.
 
     /**
      * A real touch on one of the bar's buttons (`item` is its `data-bar-item`): at the tree's

@@ -4516,6 +4516,20 @@
 .zen-pill > button:focus-visible {
   outline: none;
 }
+/*
+ * The phone pill the same way (A11Y-09): a hardware keyboard's Tab rings the pill – its address
+ * fills it and its chips sit in it – and the buttons inside draw no ring of their own. Keyed on
+ * the keyboard being the last input (`data-input`, lib/lastInput.ts) rather than on the coarse
+ * suppressor standing down: the pill is no button, so the suppressor would not reach a ring
+ * drawn on it, and a focus a script moves under a finger must not ring it either.
+ */
+:root[data-input='keyboard'] .zen-phone-pill:has(button:focus-visible) {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: -2px;
+}
+.zen-phone-pill button:focus-visible {
+  outline: none;
+}
 
 /*
  * The tab search popover's section headings (components/tabsearch/TabSearchPopover.tsx) on the
@@ -6794,8 +6808,17 @@
 :root[data-pointer='coarse'] .zen-kbd-hint {
   display: none;
 }
-:root[data-pointer='coarse'] button:focus-visible,
-:root[data-pointer='coarse'] [role='button']:focus-visible {
+/*
+ * The coarse-pointer suppressor of the legacy buttons' rings (the v2 controls keep theirs, §1):
+ * under a finger, a focus a script moves matches `:focus-visible` before any pointer has been
+ * used and would ring. It stands down while the keyboard is what the user drives with – the
+ * root's `data-input='keyboard'`, set by a hardware keyboard's Tab, arrows or shortcut and
+ * cleared by the next touch (lib/lastInput.ts; A11Y-09) – so a Tab on a phone rings the pill
+ * and the bar's buttons as it does on the desktop. `:where()` keeps the rule's specificity as
+ * it was, beneath every component's own ring rule.
+ */
+:root[data-pointer='coarse']:where(:not([data-input='keyboard'])) button:focus-visible,
+:root[data-pointer='coarse']:where(:not([data-input='keyboard'])) [role='button']:focus-visible {
   outline: none;
 }
 :root[data-pointer='coarse'] .group\/sep .zen-toolbar-button {
