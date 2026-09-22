@@ -13,6 +13,7 @@ import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -113,7 +114,9 @@ class PillChipsA11yDemo : DemoHarness(
             shot("%02d-focus-back-%s".format(stops.size + 2, slug(stops[stops.size - 2])))
         }
 
-        // 3. Double-tap on the site icon: the sheet opens and both chips report it expanded.
+        // 3. Double-tap on the site icon: the sheet opens (a dialog named 'Site information for
+        // <host>', #237) and both chips report it expanded – off the document, since the sheet
+        // holds the bar inert and the tree drops the chips while it stands (§9.5).
         focus(SITE_INFO_LABEL)
         activate(SITE_INFO_LABEL)
         if (waitForSheet()) {
@@ -314,7 +317,11 @@ class PillChipsA11yDemo : DemoHarness(
         return false
     }
 
-    /** The open sheet is a dialog carrying the site icon's label, as wide as the screen. */
+    /**
+     * The open sheet is a dialog named for what it is and whose – `Site information for
+     * example.com` since #237's A11Y-01 (`SiteInfoSheet.tsx`, the root level's composed name;
+     * before it, the chip's bare label) – as wide as the screen and not itself a control.
+     */
     private fun sheetOpen(): Boolean {
         val root = ui.rootInActiveWindow ?: return false
         val queue = ArrayDeque<AccessibilityNodeInfo>()
@@ -323,7 +330,8 @@ class PillChipsA11yDemo : DemoHarness(
         while (queue.isNotEmpty() && visited < 6_000) {
             val node = queue.removeFirst()
             visited++
-            if (label(node) == SITE_INFO_LABEL && !node.isClickable) {
+            val name = label(node)
+            if ((name == SITE_INFO_LABEL || name.startsWith(SITE_INFO_SHEET_PREFIX)) && !node.isClickable) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
                 if (bounds.width() > width * 0.8) return true
             }
@@ -353,6 +361,20 @@ class PillChipsA11yDemo : DemoHarness(
     private fun checkChip(label: String, expanded: Boolean) {
         val chip = findLabelled(label)
         if (chip == null) {
+            // While a sheet stands the shell chrome is inert (§9.5), so the chip is not in the
+            // tree then – TalkBack does not reach it, by design – and the expanded state the
+            // tree cannot show is read off the document (the product's `aria-expanded`).
+            val dom = if (expanded) chipDom(label) else null
+            if (dom != null && dom.optBoolean("inert")) {
+                val domExpanded = dom.optString("expanded")
+                if (domExpanded == "true") {
+                    note("'$label' is inert under the sheet (§9.5: not TalkBack's to reach while it stands); the document has it aria-expanded=true")
+                } else {
+                    fail("'$label' under the sheet: aria-expanded '$domExpanded' in the document, not true")
+                }
+                Log.i(tag, "chip '$label' (expanded, inert under the sheet): $dom")
+                return
+            }
             fail("no chip labelled '$label' in the pill")
             return
         }
@@ -365,6 +387,19 @@ class PillChipsA11yDemo : DemoHarness(
         val expectedName = if (expanded) "ACTION_COLLAPSE (aria-expanded=true)" else "ACTION_EXPAND (aria-expanded=false)"
         if (expectedAction !in actions) note("'$label' lacks $expectedName; actions ${actions.map(::actionName)}")
         Log.i(tag, "chip '$label' (${if (expanded) "expanded" else "collapsed"}): ${describe(chip)}")
+    }
+
+    /**
+     * The chip's element in the chrome's document (`[data-pill-chip]` with its label): its
+     * `aria-expanded` and whether an ancestor holds it `inert` (the shell chrome under a sheet).
+     * Null when the document has no such chip or the chrome did not answer.
+     */
+    private fun chipDom(label: String): JSONObject? {
+        val raw = chromeJs(
+            "(function(){var el=document.querySelector('[data-pill-chip][aria-label='+JSON.stringify(${JSONObject.quote(label)})+']');" +
+                "if(!el)return null;return {expanded:el.getAttribute('aria-expanded'),inert:el.closest('[inert]')!==null};})()"
+        )
+        return runCatching { JSONObject(raw) }.getOrNull()
     }
 
     private fun dump(name: String, group: AccessibilityNodeInfo) {
@@ -497,6 +532,8 @@ class PillChipsA11yDemo : DemoHarness(
 
     private companion object {
         const val SITE_INFO_LABEL = "Site information"
+        /** The sheet's dialog name, the host after it (`Site information for example.com`, #237). */
+        const val SITE_INFO_SHEET_PREFIX = "$SITE_INFO_LABEL for "
         const val LOCK_LABEL = "Connection is secure"
         const val TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
         const val TALKBACK_SERVICE = "$TALKBACK_PACKAGE/$TALKBACK_PACKAGE.TalkBackService"
