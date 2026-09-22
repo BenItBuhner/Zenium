@@ -85,10 +85,12 @@ jobs:
         env:
           SHARD: ${{ inputs.shard || 'all' }}
         run: |
-          echo "matrix=$(node .github/scripts/android-nightly-drivers.mjs matrix --shard "$SHARD")" >> "$GITHUB_OUTPUT"
-          echo "shard=$SHARD" >> "$GITHUB_OUTPUT"
-          echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            echo "matrix=$(node .github/scripts/android-nightly-drivers.mjs matrix --shard "$SHARD")"
+            echo "shard=$SHARD"
+            echo "date=$(date -u +%F)"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
           {
             echo "### The plan ($SHARD) on $(git rev-parse --short HEAD)"
             echo
