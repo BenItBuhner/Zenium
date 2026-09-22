@@ -35,6 +35,7 @@ import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorph'
+import { focusBackPulled, focusTakesCommit } from '@renderer/lib/omniboxFocus'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
 import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
@@ -553,8 +554,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     travel: 320,
     render: (v) => {
       // The bar the new tab page's field morphed into: the gesture pulls the field back toward
-      // the page instead, and the sheet fades on the morph's value (lib/fakeboxMorph.ts).
-      if (fakeboxBackPulled(v)) return
+      // the page instead, and the sheet fades on the morph's value (lib/fakeboxMorph.ts). The
+      // bar the pill grew into: the field shrinks back toward the pill and the bar's buttons
+      // come back with the finger, on the focus value (lib/omniboxFocus.ts).
+      if (fakeboxBackPulled(v) || focusBackPulled(v)) return
       const sheet = sheetRef.current
       if (sheet) {
         sheet.style.transform = `scale(${1 - 0.08 * v})`
@@ -569,13 +572,14 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       el.style.transform = `translateY(${-100 * v}%) scale(${1 - 0.06 * v})`
       el.style.opacity = String(1 - 0.7 * v)
     },
-    // The bar the field morphed into: a commit the field has not followed – mid-flight, or a
-    // back key with nothing pulled – dismisses on the morph's own closing segment from where the
-    // field is (the close hook starts it), not at the end of the bar's spring, which the field
-    // would meet in a jump. After a pull the bar's spring finishes the way home: the field
-    // follows it (`fakeboxBackPulled`) and the close comes at once when it lands.
+    // The bar the field morphed into, or the pill grew into: a commit the field has not followed
+    // – mid-flight, or a back key with nothing pulled – dismisses on the motion's own closing
+    // segment from where the field is (the close hook starts it), not at the end of the bar's
+    // spring, which the field would meet in a jump. After a pull the bar's spring finishes the
+    // way home: the field follows it (`fakeboxBackPulled` / `focusBackPulled`) and the close
+    // comes at once when it lands.
     committed: (value) => {
-      if (!fakeboxTakesCommit(value)) return false
+      if (!fakeboxTakesCommit(value) && !focusTakesCommit(value)) return false
       close(true)
       return true
     },

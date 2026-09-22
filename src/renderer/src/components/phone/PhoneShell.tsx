@@ -27,6 +27,7 @@ import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gesture
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
+import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
@@ -43,7 +44,6 @@ import {
   openBarEditor,
   openMediaSheet,
   openTabsMenu,
-  openUrlbar,
   overlayCoversContent,
   showBanner,
   uiStore,
@@ -180,7 +180,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         // information instead – where the translate offer and the blocking shield are (OMN-02).
         const r = icon.getBoundingClientRect()
         void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
-      } else void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, { attached: true })
+      } else {
+        // The pill grows into the omnibox's field as the bar's buttons are pushed off (MOT-07,
+        // lib/omniboxFocus.ts): the bar opens under the field on its way.
+        focusOmnibox(tab?.id ?? null)
+      }
     }
   })
 
@@ -188,9 +192,11 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // The new tab page's field on its way to or from the omnibox (NTP-02, lib/fakeboxMorph.ts):
   // the bar stays mounted under the arriving sheet, fading on the morph's value (main.css), so
   // the field is seen to leave it and to come back to it; the pill's slot is the field's well
-  // while the field is the page's.
+  // while the field is the page's. The pill growing into the field (MOT-07,
+  // lib/omniboxFocus.ts) holds it the same way, its buttons pushed off and back on the value.
   const morph = fakeboxMorphStore.use()
-  const barUp = !barHidden || fakeboxHoldsChrome(morph)
+  const focus = omniboxFocusStore.use()
+  const barUp = !barHidden || fakeboxHoldsChrome(morph) || focusHoldsChrome(focus)
   // The tab group strip (TAB-14): present while the active tab is grouped, and on its way out for
   // a moment after it leaves; its share of the bar band is published by the hook.
   const strip = useGroupStrip(state)

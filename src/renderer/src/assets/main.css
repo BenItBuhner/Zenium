@@ -6029,6 +6029,144 @@
   :root[data-fakebox='open'] .zen-omnibox-field .zen-toolbar-button {
     transition-property: background, transform;
   }
+  /*
+   * The pill growing into the omnibox's field (MOT-07, Chrome's omnibox focus animation;
+   * lib/motion/omniboxFocus.ts is the machine, lib/omniboxFocus.ts drives it). One value,
+   * `--zen-omnibox-focus` on the root (0 the pill's pose, 1 the omnibox's), written per frame by
+   * the controller on one SPRING_SNAPPY over the field's growth, moves everything on transform
+   * and opacity alone – nothing is laid out per frame – in the rides §11.8 fixed for the field
+   * morph: the bar's buttons and the pill's words gone by half way, the sheet in from four
+   * tenths, the field's contents over the second half. The slot the pill left – how far the
+   * band's start and end are from it, its share of the band's width – is measured once at the
+   * tap and written beside the value (`--zen-omnibox-slot-*`). The root's `data-omnibox-focus`
+   * names the phase (opening, open, pulled, closing): while the motion owns the bar, the
+   * omnibox's own entrance animations (the pill-grow and its fades, which are the cut's) yield
+   * to it, at the landing too, so nothing replays there.
+   *
+   * The field's backdrop sets out over the pill exactly – shifted past the buttons at the start
+   * and scaled to the pill's width – and arrives over the first half on top of the pill's fill
+   * (which leaves beneath it over the second, main.css below), so no frame has the surface
+   * see-through. Its contents fade in over the second half and ride the backdrop's edges as it
+   * widens: the glyph and the field with the start edge, the controls after the field with the
+   * end edge – so nothing of the field shows outside its backdrop on the way, and nothing
+   * scales but the backdrop. The contents' own opacity transitions (the toolbar button's 120 ms)
+   * are off while the value drives them, so no frame lags the spring; the button's resting 85 %
+   * is kept in the ride, so the landing hands over without a step.
+   */
+  :root[data-omnibox-focus] .zen-omnibox-sheet,
+  :root[data-omnibox-focus] .zen-omnibox-field::before,
+  :root[data-omnibox-focus] .zen-omnibox-field > * {
+    animation: none;
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-sheet,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-sheet,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-sheet {
+    opacity: clamp(0, (var(--zen-omnibox-focus, 0) - 0.4) / 0.6, 1);
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field::before,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-field::before,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field::before {
+    opacity: clamp(0, 2 * var(--zen-omnibox-focus, 0), 1);
+    transform: translateX(
+        calc(var(--zen-omnibox-slot-left, 48px) * (1 - var(--zen-omnibox-focus, 0)))
+      )
+      scaleX(
+        calc(
+          var(--zen-omnibox-slot-scale, 0.5) + (1 - var(--zen-omnibox-slot-scale, 0.5)) *
+            var(--zen-omnibox-focus, 0)
+        )
+      );
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field > *,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-field > *,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field > * {
+    transition: none;
+    opacity: clamp(0, 2 * var(--zen-omnibox-focus, 0) - 1, 1);
+    transform: translateX(
+      calc(var(--zen-omnibox-slot-left, 48px) * (1 - var(--zen-omnibox-focus, 0)))
+    );
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field > input ~ *,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-field > input ~ *,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field > input ~ * {
+    transform: translateX(
+      calc(-1 * var(--zen-omnibox-slot-right, 48px) * (1 - var(--zen-omnibox-focus, 0)))
+    );
+  }
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field > .zen-toolbar-button,
+  :root[data-omnibox-focus='pulled'] .zen-omnibox-field > .zen-toolbar-button,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field > .zen-toolbar-button {
+    opacity: calc(0.85 * clamp(0, 2 * var(--zen-omnibox-focus, 0) - 1, 1));
+  }
+  /*
+   * Nothing under the growing field takes a tap until the landing (the rows are rising in from
+   * four tenths and are hit-testable at any opacity: the fakebox's double-tap lesson), and a
+   * field on its way back takes none either – a touch there would hand the keyboard back to a
+   * bar that is leaving. The sheet itself keeps the pointer, so the tap ends there.
+   */
+  :root[data-omnibox-focus='opening'] .zen-omnibox-sheet > *,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-sheet > * {
+    pointer-events: none;
+  }
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field {
+    pointer-events: none;
+  }
+  /*
+   * The bar under the growing field (mounted for the way there and back and for a back gesture's
+   * pull, `focusHoldsChrome`): its buttons are pushed off by the widening field – the ones
+   * before the pill by the slot they stood in toward the band's start, the ones after it toward
+   * its end, each gone by half way – so the field is seen to take their room rather than to
+   * cover them; Chrome's focus animation. Their resting 85 % (a disabled one's 30 %) is kept in
+   * the ride and their own 120 ms transitions are off while the value drives them, so no frame
+   * lags the spring and the landing hands over without a step. The pill stays where it is: its
+   * words go with the buttons – the one source of their opacity, hence the `!important`: the
+   * bar is mounted again as a closing begins and the words' 160 ms entrance fade would replay
+   * over the ride (the field morph's `.zen-pill-away` lesson) – and its fill leaves over the
+   * second half beneath the field's backdrop, which is opaque over it by then, so no frame
+   * shows a seam at the pill's edge. Inert meanwhile: the omnibox's sheet is over the bar, and
+   * what a tap there reaches is the sheet's.
+   */
+  :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item],
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > [data-bar-item],
+  :root[data-omnibox-focus='closing'] .zen-phone-bar-row > [data-bar-item] {
+    transition: background 120ms var(--zen-ease);
+    opacity: calc(0.85 * clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1));
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item][data-disabled],
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > [data-bar-item][data-disabled],
+  :root[data-omnibox-focus='closing'] .zen-phone-bar-row > [data-bar-item][data-disabled] {
+    opacity: calc(0.3 * clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1));
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-bar-row > [data-bar-item]:not(.zen-phone-pill ~ *),
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > [data-bar-item]:not(.zen-phone-pill ~ *),
+  :root[data-omnibox-focus='closing']
+    .zen-phone-bar-row
+    > [data-bar-item]:not(.zen-phone-pill ~ *) {
+    transform: translateX(
+      calc(-1 * var(--zen-omnibox-slot-left, 48px) * var(--zen-omnibox-focus, 0))
+    );
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-bar-row > .zen-phone-pill ~ [data-bar-item],
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar-row > .zen-phone-pill ~ [data-bar-item],
+  :root[data-omnibox-focus='closing'] .zen-phone-bar-row > .zen-phone-pill ~ [data-bar-item] {
+    transform: translateX(calc(var(--zen-omnibox-slot-right, 48px) * var(--zen-omnibox-focus, 0)));
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-pill > *,
+  :root[data-omnibox-focus='pulled'] .zen-phone-pill > *,
+  :root[data-omnibox-focus='closing'] .zen-phone-pill > * {
+    opacity: clamp(0, 1 - 2 * var(--zen-omnibox-focus, 0), 1) !important;
+    pointer-events: none;
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-pill,
+  :root[data-omnibox-focus='pulled'] .zen-phone-pill,
+  :root[data-omnibox-focus='closing'] .zen-phone-pill {
+    opacity: clamp(0, 2 - 2 * var(--zen-omnibox-focus, 0), 1);
+  }
+  :root[data-omnibox-focus='opening'] .zen-phone-bar,
+  :root[data-omnibox-focus='pulled'] .zen-phone-bar,
+  :root[data-omnibox-focus='closing'] .zen-phone-bar {
+    pointer-events: none;
+  }
 }
 
 /*
@@ -10378,18 +10516,17 @@
 }
 /*
  * The phone card's section headings (OMN-18; Chrome for Android's grouped list): the same
- * primitive at the phone list's beat – §9.27's 15/600, §10.3's 20 above and 4 below, the first
- * on screen 8 in from the card's edge (12 with the list's own 4 inset) – its text on the rows'
- * glyph edge (the row's 10 inset), in the window's deemphasised ink: the card is a window
- * surface (§9.29), so it reads the control role. A heading that arrives fades in on opacity in
- * its slot over 120 ms (§11.4, the same under reduced motion); the rows around it cut, as
- * Chrome's do on a keystroke, and nothing slides. The outermost heading is told by the list
- * (`data-outer`), not by `:first-child`: a row leaving the card (below) stays a child of the
- * list, out of the flow, until its exit has run.
+ * primitive at its own beat – §9.27's 15/600, §10.3's 20 above and 4 below, read from the
+ * primitive and not restated – the first on screen 8 in from the card's edge (12 with the
+ * list's own 4 inset), its text on the rows' glyph edge (the row's 10 inset), in the window's
+ * deemphasised ink: the card is a window surface (§9.29), so it reads the control role. A
+ * heading that arrives fades in on opacity in its slot over 120 ms (§11.4, the same under
+ * reduced motion); the rows around it cut, as Chrome's do on a keystroke, and nothing slides.
+ * The outermost heading is told by the list (`data-outer`), not by `:first-child`: a row
+ * leaving the card (below) stays a child of the list, out of the flow, until its exit has run.
  */
 .zen-v2-heading.zen-omnibox-sheet-heading {
   flex-shrink: 0;
-  margin: 20px 0 4px;
   padding: 0 10px;
   color: var(--v2-control-text-deemphasized);
   animation: zen-fade 120ms var(--zen-ease);
@@ -10811,6 +10948,35 @@
   :root[data-fakebox='opening'] .zen-ntp-fades,
   :root[data-fakebox='closing'] .zen-ntp-fades {
     transition: opacity 120ms var(--zen-ease) !important;
+  }
+  /*
+   * The pill growing into the omnibox (MOT-07, lib/omniboxFocus.ts) the same way: the spring's
+   * part is a cut – the value jumps, and the controller holds the phase for these 120 ms – so
+   * the omnibox arrives and leaves on a 120 ms opacity fade in place (the sheet's, its field's
+   * backdrop's and its contents' own fades at that length), nothing is pushed (the buttons', the
+   * pill's and the field's rides on transform are off), and what the value's jump moves on the
+   * bar – the buttons' and the pill's opacities – takes the same 120 ms (the pill's selectors
+   * outrank the scrub's `transition-property: none` below, which is for the finger's motion).
+   */
+  :root[data-omnibox-focus='opening'] .zen-omnibox-sheet,
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field::before,
+  :root[data-omnibox-focus='opening'] .zen-omnibox-field > * {
+    animation: zen-fade 120ms var(--zen-ease) both !important;
+  }
+  :root[data-omnibox-focus='closing'] .zen-omnibox-sheet,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field::before,
+  :root[data-omnibox-focus='closing'] .zen-omnibox-field > * {
+    animation: zen-fade-out 120ms var(--zen-ease) both !important;
+  }
+  :root[data-omnibox-focus] .zen-phone-bar-row > [data-bar-item],
+  :root[data-omnibox-focus] .zen-omnibox-field > *,
+  :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill,
+  :root[data-form-factor='phone'][data-omnibox-focus] .zen-phone-pill > * {
+    transform: none !important;
+    transition: opacity 120ms var(--zen-ease) !important;
+  }
+  :root[data-omnibox-focus] .zen-omnibox-field::before {
+    transform: none !important;
   }
   /*
    * What the scrub and the morph write per frame – the double's box and the layer's clip, the

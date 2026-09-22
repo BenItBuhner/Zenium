@@ -114,7 +114,10 @@ describe('the bar fade (§11.1): the bottom-docked bar, and only that one', () =
     // field landing in the bar's band (NTP-02, `data-fakebox` on the root, lib/fakeboxMorph.ts):
     // the omnibox takes the band at either edge, so the bar's buttons go under the arriving
     // field – not a sheet's recede – and those rules apply only while the morph owns the bar; at
-    // the bottom edge they compose the recede in.
+    // the bottom edge they compose the recede in. The pill's own focus motion (MOT-07,
+    // `data-omnibox-focus` on the root, lib/omniboxFocus.ts) fades the bar's BUTTONS as the
+    // field pushes them off – rules on the items inside the bar, never on the bar, so the bar's
+    // own recede still multiplies in at the bottom edge and none of them names an edge.
     const barRules = [...css.matchAll(/[^{}]*\.zen-phone-bar[^{}]*\{[^}]*\}/g)].map((m) => m[0])
     expect(barRules.length).toBeGreaterThan(1)
     const fading = barRules.filter((r) => /opacity\s*:/.test(r))
@@ -125,7 +128,20 @@ describe('the bar fade (§11.1): the bottom-docked bar, and only that one', () =
       if (r.includes("[data-edge='bottom']")) expect(r).toContain('--zen-recede')
       else expect(r).not.toContain("[data-edge='top']")
     }
-    const recedes = fading.filter((r) => !r.includes('data-fakebox'))
+    const focus = fading.filter((r) => r.includes('data-omnibox-focus'))
+    expect(focus.length).toBeGreaterThan(0)
+    for (const r of focus) {
+      expect(r).toContain('--zen-omnibox-focus')
+      expect(r).not.toContain('data-edge')
+      const head = r.slice(0, r.indexOf('{'))
+      const selectors = head.slice(head.lastIndexOf('*/') + 2)
+      for (const selector of selectors.split(',')) {
+        expect(selector.trim()).toMatch(/\.zen-phone-bar-row > \[data-bar-item\]/)
+      }
+    }
+    const recedes = fading.filter(
+      (r) => !r.includes('data-fakebox') && !r.includes('data-omnibox-focus')
+    )
     expect(recedes).toHaveLength(1)
     expect(recedes[0]).toContain("[data-edge='bottom']")
     expect(recedes[0]).not.toContain('--zen-bar-hide')
