@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { AndroidWebNavigation, navigationReport } from '../extensionWebNavigation'
 import {
   type Harness,
+  ID,
   backgroundUp,
   call,
   events,
   harness,
+  hello,
   makeTab,
   manifest,
   message,
@@ -412,6 +414,80 @@ describe('AndroidExtensionRuntime: webNavigation from the navigation listener', 
     message(h, 'bg1', { t: 'listen', event: 'webNavigation.onCommitted', on: false, filterId: 1 })
     nav(h, 't1', { phase: 'completed', url: 'https://b.example.com/', committed: true })
     expect(events(h, 'bg1', 'webNavigation.onCommitted')).toHaveLength(3)
+  })
+
+  it('holds a URL-filtered event that wakes the worker, or reaches one still starting, to the filters it registers (PDF Viewer’s file:// .pdf filter; the desktop round-7 answer)', async () => {
+    const h = harness({ navigationListener: true })
+    await withNavigation(h, [])
+    const pdfOnly = {
+      t: 'listen',
+      event: 'webNavigation.onBeforeNavigate',
+      on: true,
+      filterId: 1,
+      filters: [{ schemes: ['file'], pathSuffix: '.pdf' }]
+    }
+    message(h, 'bg1', pdfOnly)
+    expect(events(h, 'bg1', 'webNavigation.onBeforeNavigate')).toHaveLength(0)
+    // The worker idles out with the filtered listener persisted by its event name.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    expect(h.runtime.background.persistedListeners(ID)).toEqual(['webNavigation.onBeforeNavigate'])
+    // A navigation the filter does not match: the persisted name wakes the worker, the event
+    // waits for its listeners, and once they are known it is not the woken worker's to hear.
+    nav(h, 't1', { phase: 'started', url: 'https://fixture.test/sample.pdf', byPage: true })
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    // A second one arrives while it is still starting.
+    nav(h, 't1', { phase: 'started', url: 'file:///sdcard/paper.pdf', byPage: true })
+    hello(h, 'bg2', 'background')
+    message(h, 'bg2', pdfOnly)
+    message(h, 'bg2', { t: 'ready' })
+    const heard = events(h, 'bg2', 'webNavigation.onBeforeNavigate')
+    expect(heard).toHaveLength(1)
+    expect((heard[0].args as Array<Record<string, unknown>>)[0].url).toBe(
+      'file:///sdcard/paper.pdf'
+    )
+    expect(heard[0].delivery).toEqual({ unfiltered: false, matched: [1] })
+    // Running: the same filter, no unfiltered listener, an event it does not match is not sent.
+    nav(h, 't1', { phase: 'started', url: 'https://example.com/viewer.html', byPage: true })
+    expect(events(h, 'bg2', 'webNavigation.onBeforeNavigate')).toHaveLength(1)
+    expect(h.runtime.backgroundStats(ID)).toMatchObject({ starts: 2, idleStops: 1, queued: 2 })
+  })
+
+  it('reports a new tab’s loading edge to tabs.onUpdated after its onCreated, then complete (the desktop round-7 answer)', async () => {
+    const h = harness({ navigationListener: true })
+    await withNavigation(h, ['tabs.onCreated', 'tabs.onUpdated'])
+    h.tabs.t2 = makeTab('t2', 'https://two.example/')
+    h.tabs.t2.loading = true
+    h.notifyState()
+    const created = events(h, 'bg1', 'tabs.onCreated')
+    expect(created).toHaveLength(1)
+    expect((created[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
+      url: 'https://two.example/',
+      status: 'loading'
+    })
+    // The WebView commits the new tab's first document: Chrome's `{ status: 'loading', url }`.
+    h.runtime.onViewEvent('t2', 'navigated', {
+      url: 'https://two.example/',
+      title: '',
+      inPage: false,
+      canGoBack: false,
+      canGoForward: false
+    })
+    h.runtime.onViewEvent('t2', 'stopLoading', { url: 'https://two.example/' })
+    const tabId = h.runtime.api.tabs.chromeIdFor('t2')
+    const updated = events(h, 'bg1', 'tabs.onUpdated').filter(
+      (e) => (e.args as unknown[])[0] === tabId
+    )
+    expect(updated.map((e) => (e.args as unknown[])[1])).toEqual([
+      { status: 'loading', url: 'https://two.example/' },
+      { status: 'complete' }
+    ])
+    // Created before updated, as Chrome orders them.
+    const all = h.kt.to('bg1').filter((m) => m.t === 'event' && m.ns === 'tabs')
+    expect(all.findIndex((m) => m.name === 'onCreated')).toBeLessThan(
+      all.findIndex((m) => m.name === 'onUpdated' && (m.args as unknown[])[0] === tabId)
+    )
   })
 
   it('keeps a private tab’s navigations from an extension not allowed in it', async () => {
