@@ -35,6 +35,7 @@ import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
+import { emptySiteDataStatus } from '@shared/siteData'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -259,6 +260,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     privacy: emptyPrivacyStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
+    siteData: emptySiteDataStatus(),
     newTabBackground: { image: false, canPick: false },
     translate: TRANSLATE,
     spellcheck: UNAVAILABLE_SPELLCHECK,
@@ -565,9 +567,17 @@ describe('the section model', () => {
       'safe-browsing',
       'safe-browsing-feeds',
       'clear-data',
-      'cookies',
+      'site-data',
       'cookies-related-sites',
       'cookies-add-site',
+      'site-data-allow',
+      'site-data-allow-add',
+      'site-data-clearOnExit',
+      'site-data-clearOnExit-add',
+      'site-data-block',
+      'site-data-block-add',
+      'site-data-exit',
+      'site-data-viewer',
       'sites-permissions',
       'sites-content',
       'sites-additional',
@@ -1576,9 +1586,17 @@ describe('the section model', () => {
       'tracking-filters',
       'tracking-exceptions',
       'clear-data',
-      'cookies',
+      'site-data',
       'cookies-related-sites',
       'cookies-add-site',
+      'site-data-allow',
+      'site-data-allow-add',
+      'site-data-clearOnExit',
+      'site-data-clearOnExit-add',
+      'site-data-block',
+      'site-data-block-add',
+      'site-data-exit',
+      'site-data-viewer',
       'sites-permissions',
       'sites-content',
       'sites-additional',
@@ -3502,10 +3520,11 @@ describe('searching the rows', () => {
     const familyOf = (id: string): string | undefined =>
       families.find((f) => id === f || id.startsWith(`${f}-`))
     const protection = privacy.groups.filter((g) => familyOf(g.id) !== undefined)
+    // The third-party cookie mode itself is Cookies and site data's default row since #322's
+    // ruling on Q3 folded the Third-party cookies group into it; the related sites follow it.
     expect(protection.map((g) => g.id)).toEqual([
       'safe-browsing',
       'safe-browsing-feeds',
-      'cookies',
       'cookies-related-sites',
       'cookies-add-site',
       'https-only',
@@ -3517,8 +3536,13 @@ describe('searching the rows', () => {
     const at = (id: string): number => ids.indexOf(id)
     expect(at('safe-browsing')).toBe(at('safety-check-actions') + 1)
     expect(at('safe-browsing-feeds')).toBe(at('tracking-prevention') - 1)
-    expect(at('cookies')).toBe(at('clear-data') + 1)
-    expect(at('cookies-add-site')).toBe(at('sites-permissions') - 1)
+    // #310's Cookies and site data groups (site-data-*) stand between Clear browsing data and
+    // Site settings, where Chrome's cookies page sits, the related sites right under the default
+    // they qualify; siteData.test.ts asserts their content.
+    expect(at('site-data')).toBe(at('clear-data') + 1)
+    expect(at('cookies-related-sites')).toBe(at('site-data') + 1)
+    expect(at('site-data-allow')).toBe(at('cookies-add-site') + 1)
+    expect(at('site-data-viewer')).toBe(at('sites-permissions') - 1)
     expect(at('https-only')).toBe(at('sites-own') + 1)
     // The signals close the protection groups; after them only the private-tab lock (INC-05,
     // Chrome's Incognito lock after Do Not Track).
@@ -3563,14 +3587,18 @@ describe('searching the rows', () => {
       leaves: 'external'
     })
 
-    // Cookies: the middle mode speaks of private tabs on a host without windows.
-    const cookies = row(privacy, 'cookies-mode')
+    // Cookies: the third-party mode is Cookies and site data's default (Chrome's three radios,
+    // siteData.test.ts) with the private-only switch under it, which speaks of private tabs on a
+    // host without windows; the related sites follow.
+    const cookies = row(privacy, 'site-data-default')
     if (cookies.kind !== 'value') throw new Error('not a value row')
-    expect(cookies.options.map((o) => o.label)).toEqual([
-      'Allow third-party cookies',
-      'Block third-party cookies in private tabs',
-      'Block third-party cookies'
-    ])
+    expect(cookies.options.map((o) => o.value)).toEqual(['allow', 'block-third-party', 'block-all'])
+    expect(row(privacy, 'site-data-private-only')).toMatchObject({
+      kind: 'switch',
+      label: 'Only in private tabs',
+      checked: true,
+      disabled: false
+    })
     expect(privacy.groups.find((g) => g.id === 'cookies-related-sites')?.empty).toBe(
       'No related sites yet'
     )
@@ -3611,9 +3639,11 @@ describe('searching the rows', () => {
     const https = row(privacy, 'https-only-mode')
     if (https.kind !== 'value') throw new Error('not a value row')
     https.onChange('always')
-    const cookies = row(privacy, 'cookies-mode')
-    if (cookies.kind !== 'value') throw new Error('not a value row')
-    cookies.onChange('block')
+    // The private-only switch off: third-party cookies blocked everywhere (the default radio
+    // itself runs `siteData.setDefault`, siteData.test.ts).
+    const privateOnly = row(privacy, 'site-data-private-only')
+    if (privateOnly.kind !== 'switch') throw new Error('not a switch')
+    privateOnly.onChange(false)
     const gpc = row(privacy, 'signals-gpc')
     if (gpc.kind !== 'switch') throw new Error('not a switch')
     gpc.onChange(true)
@@ -3706,11 +3736,16 @@ describe('searching the rows', () => {
         }
       }
     ])
+    // With third-party cookies allowed – the engine's site-data default says `allow` for the
+    // mode, as `SiteDataService.default()` derives it – the related sites have nothing to relax.
     const allowed = buildSection(
       PAGE.sections.find((x) => x.id === 'privacy')!,
       context(
         state(
-          { privacy: PRIVACY_STATUS },
+          {
+            privacy: PRIVACY_STATUS,
+            siteData: { ...emptySiteDataStatus(), default: 'allow' }
+          },
           {
             privacy: {
               ...base,
@@ -3723,6 +3758,7 @@ describe('searching the rows', () => {
     )
     expect(row(allowed, 'cookies-site:a.example').disabled).toBe(true)
     expect(row(allowed, 'cookies-add-site').disabled).toBe(true)
+    expect(row(allowed, 'site-data-private-only').disabled).toBe(true)
 
     // Sites allowed over http: stored ones forget through the permission, session ones through
     // the service; a site in both lists is one row.
@@ -3783,10 +3819,11 @@ describe('searching the rows', () => {
     expect(c.patches.at(-1)).toEqual({
       privacy: { ...base, secureDnsMode: 'provider', secureDnsProvider: 'custom' }
     })
-    // The middle cookie mode speaks of private windows here.
-    const cookies = row(privacy, 'cookies-mode')
-    if (cookies.kind !== 'value') throw new Error('not a value row')
-    expect(cookies.options[1]?.label).toBe('Block third-party cookies in private windows')
+    // The private-only switch under the cookies default speaks of private windows here.
+    expect(row(privacy, 'site-data-private-only')).toMatchObject({
+      kind: 'switch',
+      label: 'Only in private windows'
+    })
 
     // With the custom entry picked the field appears: refused at once for a non-https address,
     // asked one question for a well-formed one, kept when the resolver answers.
