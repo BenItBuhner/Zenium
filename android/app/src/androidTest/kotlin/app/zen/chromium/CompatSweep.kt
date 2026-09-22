@@ -3703,12 +3703,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * Clear Cache: its action click (no popup) runs `browsingData.remove` for its default set and
-     * reloads the active tab (`reloadOnClear`, on by default). Over a settled fixture tab the
-     * click is made, a `permissions.request` prompt it may raise first is accepted, and the tab's
-     * `performance.timeOrigin` moving is the reload: the pass. "Could not perform clear" in its
-     * worker (the API missing or refusing) is `F`, ours, with the line and the bridge's errors;
-     * a click that neither reloaded nor logged is `F` with the trace.
+     * Clear Cache: its action click runs `browsingData.remove` for its default set and reloads
+     * the active tab (`reloadOnClear`, on by default), after a confirmation since 2.4: the action
+     * opens its popup, which moves into the tab as an iframe and shows what will be cleared with
+     * a Clear button. Over a settled fixture tab the click is made, a `permissions.request` prompt
+     * it may raise first is accepted, the confirmation's Clear is taken (in the popup while it is
+     * up, in the iframe through the accessibility tree), and the tab's `performance.timeOrigin`
+     * moving is the reload: the pass. "Could not perform clear" in its worker (the API missing or
+     * refusing) is `F`, ours, with the line and the bridge's errors; a click that neither reloaded
+     * nor logged is `F` with the trace and the confirmation's state.
      */
     private fun clearCache(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
@@ -3719,7 +3722,47 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val since = StepEvidence(row)
         coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         extra.put("prompt", acceptPrompt(factor, 5_000))
-        val reloaded = poll(scaled(25_000, factor), 500) {
+        // Clear Cache 2.4 (April 2026) confirms before it clears, in Chrome too: the action opens
+        // its popup, which moves into the tab as an iframe of the extension's origin when the tab
+        // takes a script (`popup.mode` "popup" still: the popup closes itself once the iframe is
+        // in) and waits for Clear. The popup's document is the driver's to click while it is up;
+        // the iframe is another origin's frame in the tab's WebView, so its Clear is tapped
+        // through the accessibility tree, which Chromium exposes across frames. Both are looked
+        // for until the tab reloads or the wait runs out; the confirmation taken is recorded.
+        val iframeSelector = JSONObject.quote("iframe[src*=\"${row.id}\"]")
+        val confirmed = poll(scaled(15_000, factor), 500) {
+            val now = runCatching { tabEval(view, "String(performance.timeOrigin)") }.getOrNull()
+            if (!now.isNullOrEmpty() && now != "null" && now != originBefore) return@poll JSONObject().put("reloadedFirst", now)
+            popupView()?.let { popup ->
+                val clicked = json(
+                    tabEval(
+                        popup,
+                        "(function(){var b=Array.prototype.slice.call(document.querySelectorAll('button, [role=\"button\"]')).filter(function(e){var r=e.getBoundingClientRect();return r.width>8&&r.height>8&&/^\\s*clear\\s*$/i.test(e.textContent||'')});" +
+                            "if(!b.length)return JSON.stringify({clicked:false});var r=b[0].getBoundingClientRect();try{b[0].click()}catch(e){}return JSON.stringify({clicked:true,x:r.left+r.width/2,y:r.top+r.height/2})})()"
+                    )
+                )
+                if (clicked.optBoolean("clicked")) {
+                    screenPoint(popup, clicked)?.let { tap(it.first, it.second) }
+                    return@poll JSONObject().put("popupClear", clicked)
+                }
+            }
+            val iframe = json(tabEval(view, "(function(){var f=document.querySelector($iframeSelector);if(!f)return '{}';var r=f.getBoundingClientRect();return JSON.stringify({w:r.width,h:r.height})})()"))
+            if (iframe.has("w")) {
+                val button = nodes { node ->
+                    val label = (node.text ?: node.contentDescription)?.toString()?.trim().orEmpty()
+                    label.equals("Clear", ignoreCase = true) && (node.isClickable || node.className == "android.widget.Button")
+                }.firstOrNull()
+                if (button != null) {
+                    val bounds = Rect().also(button::getBoundsInScreen)
+                    snap("${entry.optString("slug")}-confirm")
+                    tapRect(bounds)
+                    return@poll JSONObject().put("iframeClear", bounds.flattenToString()).put("iframe", iframe)
+                }
+            }
+            null
+        }
+        extra.put("confirmation", confirmed ?: JSONObject().put("none", "no Clear in the popup or the tab's accessibility tree within ${scaled(15_000, factor) / 1000} s"))
+        val reloaded = confirmed?.optString("reloadedFirst")?.takeIf { it.isNotEmpty() } ?: poll(scaled(25_000, factor), 500) {
             val now = runCatching { tabEval(view, "String(performance.timeOrigin)") }.getOrNull()
             if (!now.isNullOrEmpty() && now != "null" && now != originBefore) now else null
         }
@@ -3738,10 +3781,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         snap("${entry.optString("slug")}-clear")
         return when {
             reloaded != null && failed == null && notImplemented.isEmpty() ->
-                Grade("P", "Clear Cache: the action click cleared its default set ($calls browsingData call(s) on the bridge, ${errors.size} refused) and reloaded the tab (timeOrigin $originBefore -> $reloaded)", extra)
+                Grade("P", "Clear Cache: the action click cleared its default set ($calls browsingData call(s) on the bridge, ${errors.size} refused) and reloaded the tab (timeOrigin $originBefore -> $reloaded; confirmation ${confirmed?.keys()?.next() ?: "none"})", extra)
             failed != null || notImplemented.isNotEmpty() ->
                 Grade("F", "Clear Cache: ${failed?.let { "its worker logged \"${it.take(160)}\"" } ?: "the bridge refused ${notImplemented.first()}"}; $calls browsingData call(s), tab ${if (reloaded != null) "reloaded" else "not reloaded"}", extra)
-            else -> Grade("F", "Clear Cache: the action click neither reloaded the tab within ${scaled(25_000, factor) / 1000} s nor logged an error ($calls browsingData call(s), bridge errors ${errors.take(2)}; prompt ${extra.optJSONObject("prompt")?.toString()?.take(100)})", extra)
+            else -> Grade("F", "Clear Cache: the action click neither reloaded the tab within ${scaled(25_000, factor) / 1000} s nor logged an error ($calls browsingData call(s), bridge errors ${errors.take(2)}; confirmation ${extra.optJSONObject("confirmation")?.toString()?.take(120)}; prompt ${extra.optJSONObject("prompt")?.toString()?.take(100)})", extra)
         }
     }
 
