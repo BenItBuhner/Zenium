@@ -112,14 +112,20 @@ abstract class SiteDataUiDemoBase(
     protected fun tabTitle(tabId: String): String =
         coreState().getJSONObject("tabs").optJSONObject(tabId)?.optString("title") ?: ""
 
-    /** The hosts of the history's recent entries, newest first (`history.recent`). */
-    protected fun historyHosts(): List<String> {
+    /** The history's recent entries, newest first (`history.recent`). */
+    protected fun historyEntries(): List<JSONObject> {
         val entries = JSONArray(coreInvoke("history.recent", """{"limit":50}"""))
-        return (0 until entries.length()).map { i ->
-            val url = entries.optJSONObject(i)?.optString("url") ?: ""
-            runCatching { java.net.URI(url).host ?: url }.getOrDefault(url)
-        }
+        return (0 until entries.length()).mapNotNull { entries.optJSONObject(it) }
     }
+
+    /** An entry as "host@firstVisit" (wall-clock ms), for the notes. */
+    protected fun describeEntry(entry: JSONObject): String {
+        val url = entry.optString("url")
+        val host = runCatching { java.net.URI(url).host ?: url }.getOrDefault(url)
+        return "$host@${entry.optLong("firstVisit", entry.optLong("lastVisit"))}"
+    }
+
+    protected fun historyHosts(): List<String> = historyEntries().map { describeEntry(it).substringBefore('@') }
 
     /** Poll the tab's title until it starts with `prefix` and the tab is not loading; the title then, or what stood. */
     protected fun awaitTitle(tabId: String, prefix: String, timeoutMs: Long = 20_000): String {
@@ -458,7 +464,8 @@ abstract class SiteDataUiDemoBase(
     protected class CookiePage(private val template: String, port: Int) : Thread("site-data-demo-server") {
         class Request(val at: Long, val host: String, val path: String, val cookies: List<String>)
 
-        private val socket = ServerSocket(port, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
+        // Every loopback address (dual-stack): `localhost` resolves to ::1 first on the emulator.
+        private val socket = ServerSocket(port, 16)
         @Volatile private var closed = false
         val requests: MutableList<Request> = Collections.synchronizedList(ArrayList())
         private val visitsByHost = HashMap<String, Int>()
@@ -872,8 +879,9 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                 coreInvoke("settings.update", JSONObject().put("privacy", privacy).toString())
             }
         }
-        val historyBefore = JSONArray(coreInvoke("history.recent", """{"limit":50}""")).length()
-        note("  history entries before the close: $historyBefore")
+        val historyBefore = historyHosts()
+        note("  history before the close: ${historyBefore.size} entries, hosts $historyBefore")
+        claim("the control site is in the history before the close (what act two must find gone)", historyBefore.contains(KEEP_HOST), historyBefore.toString())
 
         // 12. The pages hold their cookies; the jar flushed; the app sent home: the marker.
         note("\n12. cookies held, the app sent home")
@@ -931,7 +939,11 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
 class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android-restore", "site-data-restore-demo", keepProfile = true) {
     override val tag = "SiteDataRestoreDemo"
 
+    /** Wall-clock ms a little before this act's launch: what act one wrote is minutes older. */
+    private var coldStartMs = 0L
+
     override fun warmUp() {
+        coldStartMs = System.currentTimeMillis() - 60_000
         openNotes("Zenium Android site data UI demo, act two: the cold start with the pending clear")
         val title = awaitTitle(DEMO_TAB, "sent:", 40_000)
         val first = server.pageRequests(DEMO_HOST).firstOrNull()
@@ -951,8 +963,11 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
         claim("the clear-on-exit list still holds the site", listHolds("clearOnExit", DEMO_PATTERN), siteData().optJSONArray("clearOnExit")?.toString() ?: "")
         claim("the marker was consumed", awaitSettled(15_000) { !siteData().optBoolean("pendingClear") && pendingMarker() == null }, "status=${siteData().optBoolean("pendingClear")} file=${pendingMarker()}")
         claim("the control site on no list kept its cookies", jarCookie(KEEP_URL) != null, "keep=${jarCookie(KEEP_URL)}")
-        val history = JSONArray(coreInvoke("history.recent", """{"limit":50}""")).length()
-        claim("the on-exit type Browsing history ran at the launch: the history is empty", history == 0, "entries=$history")
+        // The restored page's own visit is recorded after the launch-time clear; every entry from
+        // before the close – minutes older than this act's launch – must be gone.
+        val history = historyEntries()
+        val stale = history.filter { it.optLong("firstVisit", it.optLong("lastVisit")) < coldStartMs }
+        claim("the on-exit type Browsing history ran at the launch: no entry from before the close remains", stale.isEmpty(), "entries=${history.map { describeEntry(it) }} launch=$coldStartMs")
         note("  jar now: demo=${jarCookie(DEMO_URL)} (the visit just set them again) keep=${jarCookie(KEEP_URL)}")
         shot("01-restored-page-no-cookies")
         beat()
@@ -961,7 +976,7 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
         note("\n2. the site-information sheet after the restore")
         measureFrames("siteinfo-sheet-open-restored", JankBudget.Kind.OPEN) {
             openSiteInfo()
-            waitFor("Cookies and site data", 8_000)
+            awaitPrefix("Cookies and site data", 8_000)
             SystemClock.sleep(MOTION_MS)
         }
         note("  root row: ${nodeText("Cookies and site data")}")
@@ -971,12 +986,14 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
             claim("the per-site row still reads Clear when Zenium closes", row?.contains("Clear when Zenium closes") == true, row ?: "")
             shot("02-siteinfo-after-restore")
             beat()
+            back()
+            SystemClock.sleep(1_200)
         }
-        measureFrames("siteinfo-sheet-dismiss-restored", JankBudget.Kind.SPRING) {
-            back()
-            SystemClock.sleep(600)
-            back()
-            SystemClock.sleep(MOTION_MS)
+        if (sheetCount() > 0) {
+            measureFrames("siteinfo-sheet-dismiss-restored", JankBudget.Kind.SPRING) {
+                back()
+                SystemClock.sleep(MOTION_MS)
+            }
         }
         awaitNoSheet()
 
