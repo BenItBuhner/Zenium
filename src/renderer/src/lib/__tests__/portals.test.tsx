@@ -517,12 +517,13 @@ describe('the way out: the host keeps a closed dialog’s panel through its exit
     expect(cssRule('.zen-frame-dialogs[data-open], .zen-frame-dialogs[data-leaving]')).toContain(
       'pointer-events: auto'
     )
-    // §11.3: the departure stays a fade, the pop's scale dropped.
+    // §11.3: the departure stays a fade, the pop's scale dropped – written out in full and
+    // `!important`, past the global reduced-motion rule that removes every other animation
+    // (reduced motion removes, never shortens: reducedMotion.test.ts).
     const reduced = cssRule(
       '.zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving], .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving]'
     )
-    expect(reduced).toContain('animation-name: zen-fade-out')
-    expect(reduced).toContain('animation-duration: 120ms !important')
+    expect(reduced).toContain('animation: zen-fade-out 120ms var(--zen-ease) forwards !important')
     // Every `[data-leaving]` rule on the slot's panels and the scrim is so gated – none reaches
     // a sheet host – and on a phone the chassis slides the slot: the panels' own animation is
     // off there.
