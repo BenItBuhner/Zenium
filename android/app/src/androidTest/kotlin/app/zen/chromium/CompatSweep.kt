@@ -3790,32 +3790,48 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /**
      * Mobile simulator (a desktop concept: a device frame around the page): the action click
-     * on a settled fixture sends the tab, or a new one, to the extension's simulator page with
-     * the fixture in a frame; what it does on the phone is graded as it is.
+     * on a settled fixture runs its `js/simulator.js` in the tab, which rebuilds the document
+     * around a device frame with the page itself in an `<iframe>` (the fixture tab's URL stays;
+     * round 9's final run showed the frame while the driver looked for a page of the
+     * extension's own), or sends the tab to a page of the extension's; either is read for the
+     * frame. What it does on the phone is graded as it is.
      */
     private fun mobileSimulator(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val (tab, _) = fixture("page-a.html?sim", factor, 2_000)
+        val (tab, fixtureView) = fixture("page-a.html?sim", factor, 2_000)
         val before = tabUrls()
         val since = StepEvidence(row)
         coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val landed = poll(scaled(30_000, factor), 700) {
-            tabUrls().entries.firstOrNull { (it.key !in before || before[it.key] != it.value) && extensionPage(it.value, row.id) }
+        val frameReport =
+            """(function(){var f=document.querySelector('iframe');var r=f?f.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();return JSON.stringify({pass:!!f&&r.width>100&&r.height>150,frame:f?(f.src||'').slice(0,120):null,w:Math.round(r.width),h:Math.round(r.height),devices:(t.match(/iPhone|Galaxy|Pixel|iPad/g)||[]).length,text:t.slice(0,120)})})()"""
+        // Either the extension's own page in a tab, or the fixture tab rebuilt around the frame.
+        var landed: Map.Entry<String, String>? = null
+        var inPage: JSONObject? = null
+        poll(scaled(30_000, factor), 700) {
+            landed = tabUrls().entries.firstOrNull { (it.key !in before || before[it.key] != it.value) && extensionPage(it.value, row.id) }
+            if (landed == null) {
+                inPage = runCatching { json(tabEval(fixtureView, frameReport)) }.getOrNull()?.takeIf { it.optBoolean("pass") }
+            }
+            if (landed != null || inPage != null) true else null
         }
         var found = JSONObject()
+        val where: String
         if (landed != null) {
-            val view = waitForView(landed.key)
-            showTab(landed.key)
-            found = pollExpr(
-                view,
-                """(function(){var f=document.querySelector('iframe');var r=f?f.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();return JSON.stringify({pass:!!f&&r.width>100&&r.height>150,frame:f?(f.src||'').slice(0,120):null,w:Math.round(r.width),h:Math.round(r.height),devices:(t.match(/iPhone|Galaxy|Pixel|iPad/g)||[]).length,text:t.slice(0,120)})})()""",
-                scaled(30_000, factor)
-            )
-            found.put("url", landed.value.take(160)).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            val view = waitForView(landed!!.key)
+            showTab(landed!!.key)
+            found = pollExpr(view, frameReport, scaled(30_000, factor))
+            found.put("url", landed!!.value.take(160)).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            where = extensionPath(landed!!.value).take(60)
+        } else if (inPage != null) {
+            found = inPage!!
+            found.put("url", (tabUrls()[tab] ?: "").take(160)).put("console", JSONArray(consoleOf(fixtureView).takeLast(10)))
+            where = "the frame in the fixture tab"
         } else {
             extra.put("tabs", JSONArray(tabUrls().values.toList()))
+            runCatching { extra.put("fixturePage", json(tabEval(fixtureView, frameReport))) }
             popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+            where = ""
         }
         extra.put("page", found).put("fixtureTab", tabUrls()[tab] ?: "")
         since.record(extra, "atEnd")
@@ -3824,7 +3840,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runCatching { coreInvoke("extension.closePopup", "null") }
         return Grade(
             if (found.optBoolean("pass")) "P" else "F",
-            "Mobile simulator: ${if (landed == null) "the action click opened no simulator page within ${scaled(30_000, factor) / 1000} s" else "${extensionPath(landed.value).take(60)}: ${found.toString().take(220)}"}",
+            "Mobile simulator: ${if (where.isEmpty()) "the action click opened no simulator page and put no frame in the fixture tab within ${scaled(30_000, factor) / 1000} s" else "$where: ${found.toString().take(220)}"}",
             extra
         )
     }
@@ -4534,7 +4550,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("hodiladlefdpcbemnbbcpclbmknkiaem", "Google Meet Enhanced Experience", "meet-enhanced", core = accountGate("Google Meet Enhanced Experience", Regex("meet\\.google|accounts\\.google", RegexOption.IGNORE_CASE), gate = "a live Google Meet call (its features act inside one; its settings popup renders)")),
         Row("aabcgdmkeabbnleenpncegpcngjpnjkc", "Easy Auto Refresh", "easy-auto-refresh", core = ::easyAutoRefresh),
         Row("phidhnmbkbkbkbknhldmpmnacgicphkf", "MyBib: Free Citation Generator", "mybib", core = ::myBib),
-        Row("egjidjbpglichdcondbcbdnbeeppgdph", "Trust Wallet", "trust-wallet", core = domMarker("Trust Wallet's provider injected into the page world", "wallet.html?trust", "JSON.stringify({pass:!!(window.trustwallet||(window.ethereum&&window.ethereum.isTrust)),trustwallet:typeof window.trustwallet,isTrust:!!(window.ethereum&&window.ethereum.isTrust),ethereum:typeof window.ethereum,announced:(window.__eip6963||[]).slice(0,4)})", settleMs = 25_000)),
+        // Its content scripts match `https://*/*`, `http://localhost/*` and `http://127.0.0.1/*` (its host
+        // permissions say the same), so the fixture server's `http://10.0.2.2:8765` is outside them, in
+        // Chrome too (round 9's final run: 0 groups applied on `wallet.html`); the provider is read on a live https page.
+        Row("egjidjbpglichdcondbcbdnbeeppgdph", "Trust Wallet", "trust-wallet", core = liveMarker("Trust Wallet's provider injected into the page world", "https://example.com/?trust", "(function(){if(!window.__eip6963){window.__eip6963=[];window.addEventListener('eip6963:announceProvider',function(e){try{var i=e.detail&&e.detail.info;window.__eip6963.push({name:i&&i.name,rdns:i&&i.rdns})}catch(_){}});window.dispatchEvent(new Event('eip6963:requestProvider'))}var announced=window.__eip6963.slice(0,4);var eth=window.ethereum;var pass=!!(window.trustwallet||(eth&&eth.isTrust)||announced.some(function(a){return /trust/i.test(String((a&&(a.name||a.rdns))||''))}));return JSON.stringify({pass:pass,trustwallet:typeof window.trustwallet,isTrust:!!(eth&&eth.isTrust),ethereum:typeof eth,announced:announced})})()", settleMs = 30_000)),
         Row("njgehaondchbmjmajphnhlojfnbfokng", "Video Downloader PLUS", "video-downloader-plus-njg", core = ::videoDownloaderPLUS),
         Row("fllaojicojecljbmefodhfapmkghcbnh", "Google Analytics Opt-out Add-on (by Google)", "ga-opt-out", core = domMarker("Google Analytics Opt-out Add-on's page signal", "gtag.html?gaoptout", "JSON.stringify({pass:!!(window._gaUserPrefs&&typeof window._gaUserPrefs.ioo==='function'&&window._gaUserPrefs.ioo()===true),prefs:typeof window._gaUserPrefs,attribute:document.documentElement.hasAttribute('data-google-analytics-opt-out'),signalScript:!!document.querySelector('script[src*=\"gaoptout_signal\"]')})", settleMs = 20_000))
     )
