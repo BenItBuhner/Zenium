@@ -944,7 +944,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             tabEval(
                 installView,
                 "(function(){var label=function(n){return (n.value||n.textContent||'').trim()};var visible=function(n){return n.offsetParent!==null};" +
-                    "var isInstall=function(n){return /^(install|confirm installation)$/i.test(label(n))&&visible(n)};" +
+                    "var isInstall=function(n){return /^(install|install script|confirm installation)$/i.test(label(n))&&visible(n)};" +
                     "var buttons=Array.prototype.slice.call(document.querySelectorAll('button, input[type=button], input[type=submit]'));var nodes=Array.prototype.slice.call(document.querySelectorAll('a, [role=button], div, span'));" +
                     "var hit=buttons.find(isInstall)||nodes.find(isInstall);if(!hit)return JSON.stringify({clicked:false,buttons:buttons.map(label).slice(0,10)});hit.click();return JSON.stringify({clicked:true,label:label(hit)})})()"
             )
@@ -1625,9 +1625,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * `.play-button`) or a `connectWords` label regex (1clickVPN's location rows) when given.
      * A consent control whose handler checks `isTrusted` (Planet VPN's React "Agree and
      * Continue", VPNLY's) is pressed by a finger at its centre (`tapConsent`) instead of a
-     * script's `click()`, as the desktop's `consentThenTrusted` presses it.
+     * script's `click()`, as the desktop's `consentThenTrusted` presses it. A row without a
+     * popup (`hasPopup = false`: Yandex Access, whose worker sets its `pac_script` on its own from
+     * `onInstalled` / `onStartup` and has no action) is graded on the API shape and the
+     * settings reading alone.
      */
-    private fun vpn(label: String, pac: Boolean = false, consent: Boolean = false, connectSelector: String? = null, connectWords: String? = null, tapConsent: Boolean = false): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun vpn(label: String, pac: Boolean = false, consent: Boolean = false, connectSelector: String? = null, connectWords: String? = null, tapConsent: Boolean = false, hasPopup: Boolean = true): (Row, JSONObject) -> Grade = vpn@{ row, entry ->
         val extra = JSONObject()
         val factor = speedFactor(entry)
         val bg = backgroundView(row.id)
@@ -1637,6 +1640,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 ?: JSONObject().put("pass", false).put("note", "no answer within 10 s")
         } else JSONObject().put("pass", false).put("note", "no background view")
         extra.put("proxy", proxy)
+        if (!hasPopup) {
+            // No control to press: the worker's own proxy setting is the whole surface.
+            val reading = proxy.optJSONObject("reading")
+            val mode = reading?.optJSONObject("value")?.optString("mode") ?: ""
+            val console = bg?.let { consoleOf(it).takeLast(10) } ?: emptyList()
+            extra.put("workerConsole", JSONArray(console))
+            val note = "chrome.proxy: ${proxy.toString().take(200)}; settings.get reads mode \"$mode\" (levelOfControl ${reading?.optString("levelOfControl")})"
+            return@vpn when {
+                !proxy.optBoolean("pass") -> Grade("F", "$label: the proxy API is not Chrome's shape in the worker: $note", extra)
+                pac -> Grade("n/a", "$label: the proxy API answers in the worker (no popup; its worker sets its config itself); it connects with a pac_script proxy config, which the WebView cannot apply (ProxyController takes fixed rules and a bypass list only: WebView limit): $note", extra)
+                else -> Grade("n/m", "$label: the proxy API answers in the worker (no popup; its worker sets its config itself); a routed egress needs the vendor's live service (not measurable here): $note", extra)
+            }
+        }
         val egressTab = createTab("$BASE/proxy-check.html")
         val egressView = waitForView(egressTab)
         val before = pollExpr(egressView, EGRESS_REPORT, scaled(20_000, factor))
@@ -3133,7 +3149,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * of the tab's address, Boxel Rebound's game canvas): the popup opens, `expr` (a
      * `JSON.stringify` of `{pass, ...}`) is polled in it.
      */
-    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun popupMarker(label: String, expr: String, page: String = "page-a.html?popup", settleMs: Long = 20_000, notMeasurable: Regex? = null, gate: String = "its service"): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
         fixture(page, factor, 1_500)
@@ -3148,7 +3164,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-popup-core")
         runCatching { coreInvoke("extension.closePopup", "null") }
-        Grade(if (found.optBoolean("pass")) "P" else "F", "$label: popup ${if (popup == null) "did not render in the core check" else found.toString().take(240)}", extra)
+        // The popup up but its answer the service's refusal (`notMeasurable` on what it shows,
+        // Scribbr's "something went wrong" from its citation API): the gate, not the runtime.
+        val refused = popup != null && !found.optBoolean("pass") && notMeasurable != null && notMeasurable.containsMatchIn(extra.optString("popupText") + " " + found.optString("text"))
+        when {
+            found.optBoolean("pass") -> Grade("P", "$label: popup ${found.toString().take(240)}", extra)
+            refused -> Grade("n/m", "$label: popup renders and answers with $gate's refusal (\"${extra.optString("popupText").take(100)}\"); the core needs $gate (not measurable here)", extra)
+            else -> Grade("F", "$label: popup ${if (popup == null) "did not render in the core check" else found.toString().take(240)}", extra)
+        }
     }
 
     /**
@@ -3671,6 +3694,222 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return Grade(grade.verdict, "${grade.note}; $relay", extra)
     }
 
+    // --- the core checks of compat round 10 (ranks 211-240 by installs) --------------------------
+
+    /** The bridge's `reply error=` lines in `trace` (the layer's refusals), the "not implemented" ones apart. */
+    private fun bridgeErrors(trace: List<String>): Pair<List<String>, List<String>> {
+        val errors = trace.filter { " reply error=" in it }.map { it.substringAfter(" reply ").take(120) }
+        return errors to errors.filter { NOT_IMPLEMENTED_WORDS.containsMatchIn(it) }
+    }
+
+    /**
+     * Clear Cache: its action click (no popup) runs `browsingData.remove` for its default set and
+     * reloads the active tab (`reloadOnClear`, on by default). Over a settled fixture tab the
+     * click is made, a `permissions.request` prompt it may raise first is accepted, and the tab's
+     * `performance.timeOrigin` moving is the reload: the pass. "Could not perform clear" in its
+     * worker (the API missing or refusing) is `F`, ours, with the line and the bridge's errors;
+     * a click that neither reloaded nor logged is `F` with the trace.
+     */
+    private fun clearCache(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?clear", factor, 2_000)
+        val originBefore = tabEval(view, "String(performance.timeOrigin)")
+        extra.put("timeOriginBefore", originBefore)
+        val since = StepEvidence(row)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        extra.put("prompt", acceptPrompt(factor, 5_000))
+        val reloaded = poll(scaled(25_000, factor), 500) {
+            val now = runCatching { tabEval(view, "String(performance.timeOrigin)") }.getOrNull()
+            if (!now.isNullOrEmpty() && now != "null" && now != originBefore) now else null
+        }
+        extra.put("timeOriginAfter", reloaded ?: JSONObject.NULL)
+        val console = backgroundView(row.id)?.let { consoleOf(it).takeLast(20) } ?: emptyList()
+        val failed = console.lastOrNull { it.contains("Could not perform clear") }
+        extra.put("workerConsole", JSONArray(console))
+        since.record(extra, "atEnd")
+        val trace = since.trace()
+        val calls = trace.count { " call browsingData." in it }
+        val (errors, notImplemented) = bridgeErrors(trace)
+        extra.put("browsingDataCalls", calls).put("bridgeErrors", JSONArray(errors.take(6)))
+        popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-clear")
+        return when {
+            reloaded != null && failed == null && notImplemented.isEmpty() ->
+                Grade("P", "Clear Cache: the action click cleared its default set ($calls browsingData call(s) on the bridge, ${errors.size} refused) and reloaded the tab (timeOrigin $originBefore -> $reloaded)", extra)
+            failed != null || notImplemented.isNotEmpty() ->
+                Grade("F", "Clear Cache: ${failed?.let { "its worker logged \"${it.take(160)}\"" } ?: "the bridge refused ${notImplemented.first()}"}; $calls browsingData call(s), tab ${if (reloaded != null) "reloaded" else "not reloaded"}", extra)
+            else -> Grade("F", "Clear Cache: the action click neither reloaded the tab within ${scaled(25_000, factor) / 1000} s nor logged an error ($calls browsingData call(s), bridge errors ${errors.take(2)}; prompt ${extra.optJSONObject("prompt")?.toString()?.take(100)})", extra)
+        }
+    }
+
+    /**
+     * A window-layout row (Tab Resize's layout grid, Dualless's split ratios): its popup control
+     * has the worker arrange the open tabs into new windows (`windows.create` with a tab id and a
+     * frame, `windows.update`, `system.display.getInfo`). The phone has one window to give, so
+     * the layout itself is `n/a`; what is measured is the popup rendering its controls, the click
+     * running the flow through the bridge without a refusal (`windows.create` / `update` /
+     * `getAll` and `system.display.getInfo` answering Chrome's shapes), and the tabs still open
+     * after it. A "not implemented" refusal or an uncaught error in the worker is `F`, ours.
+     */
+    private fun windowLayout(label: String, selector: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-b.html?layout", factor, 1_000)
+        fixture("page-a.html?layout", factor, 1_500)
+        val tabsBefore = tabUrls()
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(2_500, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            click = json(
+                tabEval(
+                    popup,
+                    "(function(){var sel=${JSONObject.quote(selector)};var all=Array.prototype.slice.call(document.querySelectorAll(sel)).filter(function(e){var r=e.getBoundingClientRect();return r.width>8&&r.height>8});" +
+                        "var hit=all[0]||null;if(!hit)return JSON.stringify({clicked:false,matched:document.querySelectorAll(sel).length});var r=hit.getBoundingClientRect();try{hit.click()}catch(e){}return JSON.stringify({clicked:true,tag:hit.tagName,cls:String(hit.className).slice(0,60),n:all.length,x:r.left+r.width/2,y:r.top+r.height/2})})()"
+                )
+            )
+            if (click.optBoolean("clicked")) {
+                screenPoint(popup, click)?.let { tap(it.first, it.second) }
+                SystemClock.sleep(scaled(5_000, factor))
+            }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        snap("${entry.optString("slug")}-layout")
+        since.record(extra, "atEnd")
+        val trace = since.trace()
+        val windowCalls = trace.filter { " call windows." in it || " call system.display." in it }.map { it.substringAfter(" call ") }
+        val (errors, notImplemented) = bridgeErrors(trace)
+        val workerErrors = backgroundView(row.id)?.let { consoleOf(it).filter(::isUncaught).takeLast(3) } ?: emptyList()
+        extra.put("windowCalls", JSONArray(windowCalls.take(12))).put("bridgeErrors", JSONArray(errors.take(6))).put("workerUncaught", JSONArray(workerErrors))
+        val tabsAfter = tabUrls()
+        extra.put("tabsAfter", JSONArray(tabsAfter.values.toList()))
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        val note = "popup ${if (popup == null) "absent" else "rendered"}, control ${click.toString().take(100)}; window calls ${windowCalls.groupingBy { it }.eachCount()}; bridge errors ${errors.take(3)}; tabs ${tabsBefore.size} -> ${tabsAfter.size}"
+        when {
+            popup == null -> Grade("F", "$label: popup did not render in the core check: $note", extra)
+            !click.optBoolean("clicked") -> Grade("F", "$label: no $selector control in the popup: $note", extra)
+            notImplemented.isNotEmpty() -> Grade("F", "$label: the bridge refused a window call: ${notImplemented.first()}; $note", extra)
+            workerErrors.isNotEmpty() -> Grade("F", "$label: its worker threw after the click: ${workerErrors.last().take(160)}; $note", extra)
+            windowCalls.isEmpty() -> Grade("F", "$label: the click reached no window call within ${scaled(5_000, factor) / 1000} s: $note", extra)
+            else -> Grade("n/a", "$label: the click ran its layout through ${windowCalls.size} window call(s) without a refusal; the phone has one window to lay tabs out in, so the arrangement itself has nowhere to go (WebView limit): $note", extra)
+        }
+    }
+
+    /**
+     * A row whose popup control opens a web page of a service for the current tab (Lighthouse's
+     * "Generate report" opens PageSpeed Insights on the tab's address): the popup opens over a
+     * settled fixture tab, the control is pressed, and a new tab on `opens` is the pass; the
+     * report itself is the service's.
+     */
+    private fun popupOpens(label: String, clickWords: String, opens: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?opens", factor, 2_000)
+        val before = tabUrls().keys
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, clickTarget(clickWords))).takeIf { it.optBoolean("clicked") } } ?: json(tabEval(popup, clickTarget(clickWords)))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        var opened = poll(scaled(15_000, factor), 500) { tabUrls().entries.firstOrNull { it.key !in before && opens.containsMatchIn(it.value) } }
+        if (opened == null && click.optBoolean("clicked") && popupView() != null) {
+            extra.put("clickedByScript", tabEval(popup!!, CLICK_TARGET_SYNTH))
+            opened = poll(scaled(15_000, factor), 500) { tabUrls().entries.firstOrNull { it.key !in before && opens.containsMatchIn(it.value) } }
+        }
+        extra.put("tabsAfter", JSONArray(tabUrls().values.toList()))
+        snap("${entry.optString("slug")}-opens")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        Grade(
+            if (opened != null) "P" else "F",
+            "$label: popup ${if (popup == null) "did not render" else "control ${click.toString().take(90)}"}; ${if (opened == null) "no ${opens.pattern} tab opened within ${scaled(30_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(120)})" else "opened ${opened.value.take(120)}"}",
+            extra
+        )
+    }
+
+    /**
+     * Redux DevTools: its page-world script (`page.bundle.js`, a MAIN-world content script at
+     * document start) puts `__REDUX_DEVTOOLS_EXTENSION__` on the page before the store runs; the
+     * fixture connects a store through it, inits and sends one action. The hook there and the
+     * store connected is the page side; the popup (`devpanel.html#popup`, the monitor the
+     * DevTools panel shows, which the phone has no DevTools to host) listing the fixture's store
+     * or action is the pass, the hook alone `PARTIAL`.
+     */
+    private fun reduxDevTools(row: Row, entry: JSONObject): Grade {
+        val hook = domMarker(
+            "Redux DevTools' page hook", "redux.html?redux",
+            "JSON.stringify({pass:!!(window.__redux&&window.__redux.hook&&window.__redux.connected&&!window.__redux.error),redux:window.__redux||null,hook:typeof window.__REDUX_DEVTOOLS_EXTENSION__,compose:typeof window.__REDUX_DEVTOOLS_EXTENSION_COMPOSE__})",
+            settleMs = 25_000
+        )(row, entry)
+        if (hook.verdict != "P") return hook
+        val factor = speedFactor(entry)
+        val extra = hook.extra ?: JSONObject()
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        if (popup != null) {
+            found = pollExpr(popup, "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();return JSON.stringify({pass:/INCREMENT|@@INIT|Zenium sweep store/i.test(t),text:t.slice(0,160),els:document.body?document.body.querySelectorAll('*').length:0})})()", scaled(20_000, factor))
+            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+        }
+        extra.put("popup", found)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-monitor")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(
+            if (found.optBoolean("pass")) "P" else "PARTIAL",
+            "${hook.note.take(200)}; popup monitor ${if (popup == null) "did not render" else found.toString().take(160)}",
+            extra
+        )
+    }
+
+    /**
+     * EPUBReader: its static ruleset redirects any `.epub` main-frame address to its
+     * `reader.html?filename=<address>` (a `regexSubstitution` with `\0`), and the reader fetches
+     * the book and draws the chapter in its `#content_frame`. The fixture book opens in a tab;
+     * the tab landing on the reader is the redirect, the chapter's heading in the reader (its
+     * frame, or the page) is the pass. A tab left on the raw file is the DNR gap, `F`; the reader
+     * up without the chapter is `PARTIAL`.
+     */
+    private fun epubReader(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val since = StepEvidence(row)
+        val tab = createTab("$BASE/sample.epub")
+        val landed = poll(scaled(30_000, factor), 500) { tabUrls()[tab]?.takeIf { extensionPage(it, row.id) } }
+        extra.put("landed", landed ?: JSONObject.NULL).put("tabUrl", tabUrls()[tab] ?: JSONObject.NULL)
+        var found = JSONObject()
+        if (landed != null) {
+            val view = waitForView(tab)
+            showTab(tab)
+            found = pollExpr(
+                view,
+                "(function(){var f=document.getElementById('content_frame');var inner='';try{inner=f&&f.contentDocument&&f.contentDocument.body?f.contentDocument.body.innerText:''}catch(e){inner='cross-origin: '+e.message}" +
+                    "var outer=document.body?document.body.innerText:'';var text=(inner+' '+outer).replace(/\\s+/g,' ').trim();return JSON.stringify({pass:/Probe Chapter One/.test(text),frame:!!f,frameSrc:f?String(f.src||f.getAttribute('src')||'').slice(0,80):null,inner:inner.replace(/\\s+/g,' ').trim().slice(0,120),outer:outer.replace(/\\s+/g,' ').trim().slice(0,120),title:document.title})})()",
+                scaled(40_000, factor)
+            )
+            found.put("console", JSONArray(consoleOf(view).takeLast(10)))
+            if (!found.optBoolean("pass")) extra.put("blankTab", blankPageEvidence(view, row, 0L))
+        }
+        extra.put("reader", found)
+        since.record(extra, "atEnd")
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-reader")
+        return when {
+            found.optBoolean("pass") -> Grade("P", "EPUBReader: sample.epub redirected to ${extensionPath(landed!!).take(60)} and the reader drew the chapter (\"${found.optString("inner").ifEmpty { found.optString("outer") }.take(80)}\")", extra)
+            landed != null -> Grade("PARTIAL", "EPUBReader: sample.epub redirected to ${extensionPath(landed).take(60)} but the reader showed no chapter within ${scaled(40_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+            else -> Grade("F", "EPUBReader: the tab stayed on ${tabUrls()[tab]?.take(80)} for ${scaled(30_000, factor) / 1000} s (its declarativeNetRequest redirect to reader.html did not fire)", extra)
+        }
+    }
+
     // --- the table -------------------------------------------------------------------------------
 
     /** The desktop sweep's thirty, the twenty-seven the feasibility table calls feasible first, the three it does not last. */
@@ -3908,7 +4147,47 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("oiiaigjnkhngdbnoookogelabohpglmd", "HubSpot Sales", "hubspot-sales", account = true, core = popupLogin("HubSpot Sales")),
         Row("ofaokhiedipichpaobibbnahnkdoiiah", "Instant Data Scraper", "instant-data-scraper", core = actionPage("Instant Data Scraper", Regex("popup\\.html", RegexOption.IGNORE_CASE), "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var hits=['Aster lamp','Birch shelf','Lighting','Storage'].filter(function(w){return t.indexOf(w)>=0}).length;return JSON.stringify({pass:hits>=2,hits:hits,cells:document.querySelectorAll('td').length,text:t.slice(0,200)})})()", listOf("table.html?scrape"))),
         Row("ghmbeldphafepmbegfdlkpapadhbakde", "Proton Pass", "proton-pass", account = true, core = popupLogin("Proton Pass")),
-        Row("hbapdpeemoojbophdfndmlgdhppljgmp", "Keywords Everywhere", "keywords-everywhere", core = accountGate("Keywords Everywhere", Regex("keywordseverywhere", RegexOption.IGNORE_CASE), gate = "an API key and a Google results page to draw its widgets on (Google serves its robot check to the runner, as it did the desktop)"))
+        Row("hbapdpeemoojbophdfndmlgdhppljgmp", "Keywords Everywhere", "keywords-everywhere", core = accountGate("Keywords Everywhere", Regex("keywordseverywhere", RegexOption.IGNORE_CASE), gate = "an API key and a Google results page to draw its widgets on (Google serves its robot check to the runner, as it did the desktop)")),
+        // Compat round 10: ranks 211-240 by installs (`.github/scripts/ext-compat/next30-round8.json`,
+        // compiled by the desktop rounds' method for a future desktop release round to reuse),
+        // graded with the phone's feasibility classes as rounds 4-9 graded theirs: an account or
+        // a vendor's service is `n/m` with its gate surface rendered (Helium 10, Scopus, Jitsi,
+        // Mote, Brisk, the two Don Johnston rows), a desktop application over native messaging
+        // (1C:Enterprise) is `n/m` once `connectNative` answers as Chrome does without the
+        // host, the `chrome.proxy` rows are measured against what ProxyController applies, a
+        // window layout (Tab Resize, Dualless) is `n/a` once its window calls answer, a live
+        // site the phone has no fixture for (Twitch, Steam's market, FACEIT, WhatsApp Web) is
+        // read on the site.
+        Row("nlbejmccbhkncgokjcmghpfloaajcffj", "Hotspot Shield Free VPN Proxy - Unlimited VPN", "hotspot-shield", core = vpn("Hotspot Shield", pac = true)),
+        Row("bjogjfinolnhfhkbipphpdlldadpnmhc", "SEO META in 1 CLICK", "seo-meta", core = popupMarker("SEO META in 1 CLICK", "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var title=document.getElementById('seoTitle');var tt=title?(title.textContent||title.value||''):'';return JSON.stringify({pass:/Probe Page A/.test(tt)||/Probe Page A/.test(t),seoTitle:tt.slice(0,80),text:t.slice(0,160)})})()", settleMs = 25_000)),
+        Row("cppjkneekbjaeellbfkmgnhonkkjfpdn", "Clear Cache", "clear-cache", core = ::clearCache),
+        Row("ohcpnigalekghcmgcdcenkpelffpdolg", "ColorPick Eyedropper", "colorpick-eyedropper", core = actionMarker("ColorPick Eyedropper", "page-a.html?colorpick", "(function(){var box=document.getElementById('color_pick_click_box');var mark=document.getElementById('colorpick-watermark');var r=box?box.getBoundingClientRect():{width:0,height:0};return JSON.stringify({pass:!!box||!!mark,box:!!box,watermark:!!mark,w:Math.round(r.width),h:Math.round(r.height)})})()")),
+        Row("jbojhlhhggfmmkpefknmbdhlaghehini", "Privacy Extension For WhatsApp Web", "privacy-whatsapp-web", core = liveMarker("Privacy Extension For WhatsApp Web", "https://web.whatsapp.com/", "(function(){var links=document.querySelectorAll('link.pfwa, style.pfwa-variables, .pfwa').length;return JSON.stringify({pass:links>0,styles:links,title:document.title,host:location.host})})()")),
+        Row("ekmeppjgajofkpiofbebgcbohbmfldaf", "OrangeMonkey", "orangemonkey", core = { row, entry -> userscripts(row, entry, Regex("/options/index\\.html", RegexOption.IGNORE_CASE)) }),
+        Row("bkpenclhmiealbebdopglffmfdiilejc", "Tab Resize - split screen layouts", "tab-resize", core = windowLayout("Tab Resize", ".resize-container .resize-selector")),
+        Row("hnfanknocfeofbddgcijnmhnfnkdnaad", "Coinbase Wallet extension", "coinbase-wallet", core = domMarker("Coinbase Wallet's provider injected into the page world", "wallet.html?coinbase", "JSON.stringify({pass:!!(window.coinbaseWalletExtension||(window.ethereum&&(window.ethereum.isCoinbaseWallet||window.ethereum.isCoinbaseBrowser))||(window.__wallet&&window.__wallet.announced&&window.__wallet.announced.some(function(n){return /coinbase/i.test(n)}))),coinbaseWalletExtension:typeof window.coinbaseWalletExtension,ethereum:typeof window.ethereum,isCoinbaseWallet:!!(window.ethereum&&window.ethereum.isCoinbaseWallet),announced:window.__wallet?window.__wallet.announced:null})", settleMs = 30_000)),
+        Row("cfnpidifppmenkapgihekkeednfoenal", "TrafficLight", "trafficlight", core = siteVerdict("TrafficLight")),
+        Row("fadndhdgpmmaapbmfcknlfgcflmmmieb", "FrankerFaceZ", "frankerfacez", core = liveMarker("FrankerFaceZ", "https://www.twitch.tv/directory", "(function(){var src=document.body&&document.body.dataset?document.body.dataset.ffzSource:null;var re=/ffz/i;var n=0,shown=0;var all=document.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var key=e.tagName+' '+(e.id||'')+' '+(typeof e.className==='string'?e.className:'');if(re.test(key)){n++;var r=e.getBoundingClientRect();if(r.width>0&&r.height>0)shown++}}return JSON.stringify({pass:!!src||n>0,ffzSource:src||null,n:n,visible:shown,ffz:typeof window.ffz,title:document.title})})()")),
+        Row("njmehopjdpcckochcggncklnlmikcbnb", "Helium 10 for Amazon Sellers, Influencers & Brands", "helium-10", core = accountGate("Helium 10", Regex("helium10", RegexOption.IGNORE_CASE), gate = "a Helium 10 account (its popup signs in) and an Amazon product page to draw on")),
+        Row("lmhkpmbekcpmknklioeibfkpmmfibljd", "Redux DevTools", "redux-devtools", core = ::reduxDevTools),
+        Row("mjbepbhonbojpoaenhckjocchgfiaofo", "Ace Script", "ace-script", core = { row, entry -> userscripts(row, entry, Regex("/src/install\\.html", RegexOption.IGNORE_CASE)) }),
+        Row("pcblbflgdkdfdjpjifeppkljdnaekohj", "Brisk Teaching - AI that Works Where Teachers Work", "brisk-teaching", core = accountGate("Brisk Teaching", Regex("brisk|accounts\\.google", RegexOption.IGNORE_CASE), injects = "plasmo-csui, #plasmo-shadow-container, [class*='brisk-menu'], [id*='brisk']", gate = "a Google sign-in (its menu signs in with Google)")),
+        Row("jfiihjeimjpkpoaekpdpllpaeichkiod", "Page Marker - Draw on Web", "page-marker", core = actionMarker("Page Marker", "page-a.html?marker", "(function(){var c=document.getElementById('pageMarker_canvas')||document.querySelector('canvas[id*=\"pageMarker\"]');var bar=document.getElementById('pageMarker_draggable');var r=c?c.getBoundingClientRect():{width:0,height:0};return JSON.stringify({pass:!!c&&r.width>100&&r.height>100,canvas:!!c,toolbar:!!bar,w:Math.round(r.width),h:Math.round(r.height)})})()")),
+        Row("jjicbefpemnphinccgikpdaagjebbnhg", "CSFloat Market Checker", "csfloat", core = liveMarker("CSFloat Market Checker", "https://steamcommunity.com/market/listings/730/AK-47%20%7C%20Redline%20%28Field-Tested%29", injectedAny("csfloat"))),
+        Row("cnjifjpddelmedmihgijeibhnjfabmlf", "Obsidian Web Clipper", "obsidian-web-clipper", core = popupMarker("Obsidian Web Clipper", "(function(){var name=document.getElementById('note-name-field');var body=document.getElementById('note-content-field');var nv=name?(name.value||name.textContent||''):'';var bv=body?(body.value||body.textContent||''):'';var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();return JSON.stringify({pass:/Probe Page A/.test(nv)||/Probe Page A|quick brown fox/.test(bv),name:nv.slice(0,60),body:bv.slice(0,80),text:t.slice(0,120)})})()", settleMs = 30_000)),
+        Row("pbhelknnhilelbnhfpcjlcabhmfangik", "1C:Enterprise extension", "1c-enterprise", core = serviceBacked("1C:Enterprise extension", "it bridges the page to the 1C:Enterprise platform (a desktop application) over native messaging; without the host, connectNative disconnects as Chrome's does", native = true)),
+        Row("donbcfbmhbcapadipfkeojnmajbakjdc", "Ruffle - Flash Emulator", "ruffle", core = domMarker("Ruffle's player over the page's Flash tags", "flash.html?ruffle", "(function(){var all=document.querySelectorAll('*');var tags=[],canvases=0;for(var i=0;i<all.length;i++){var e=all[i];if(/^ruffle-/i.test(e.tagName)){tags.push(e.tagName.toLowerCase());if(e.shadowRoot)canvases+=e.shadowRoot.querySelectorAll('canvas').length}}var embed=document.getElementById('swf-embed');return JSON.stringify({pass:tags.length>0&&canvases>0,tags:tags.slice(0,4),canvases:canvases,player:typeof window.RufflePlayer,embed:embed?embed.tagName.toLowerCase():'gone'})})()", settleMs = 45_000)),
+        Row("oakfpjifgmfpainopanfgfckhkcfgacb", "Yandex Access", "yandex-access", core = vpn("Yandex Access", pac = true, hasPopup = false)),
+        Row("mokknliiomknodkdmpcellamkopbdmao", "Repeek (formerly FACEIT Enhancer)", "repeek", core = liveMarker("Repeek", "https://www.faceit.com/en/players/s1mple", injectedAny("repeek"))),
+        Row("blipmdconlkpinefehnmjammfjpmpbjk", "Lighthouse", "lighthouse", core = popupOpens("Lighthouse", "/generate report|generate/i", Regex("pagespeed\\.web\\.dev", RegexOption.IGNORE_CASE))),
+        Row("jhhclmfgfllimlhabjkgkeebkbiadflb", "EPUBReader", "epubreader", core = ::epubReader),
+        Row("ojplelelocihfchkdaebocpankipadmp", "Scopus Document Download Manager", "scopus-download-manager", core = accountGate("Scopus Document Download Manager", Regex("scopus|elsevier", RegexOption.IGNORE_CASE), gate = "a Scopus session (its popup says it works with Scopus authenticated users)")),
+        Row("bgdpkilkheacbboffppjgceiplijhfpd", "Dualless", "dualless", core = windowLayout("Dualless", ".split-panel-win")),
+        Row("kglhbbefdnlheedjiejgomgmfplipfeb", "Jitsi Meetings", "jitsi-meetings", core = accountGate("Jitsi Meetings", Regex("calendar\\.google|outlook\\.(live|office)|accounts\\.google|login\\.microsoft", RegexOption.IGNORE_CASE), gate = "a Google or Outlook calendar session (its popup links to both)")),
+        Row("ajphlblkfpppdpkgokiejbjfohfohhmk", "Mote for Google Chrome", "mote", core = accountGate("Mote", Regex("mote\\.com|justmote", RegexOption.IGNORE_CASE), injects = "[class*='mote-'], [id*='mote-'], mote-app, #mote-root", gate = "a Mote account (its click sends a signed-out user to mote.com/login)")),
+        Row("epbobagokhieoonfplomdklollconnkl", "Scribbr Citation Generator", "scribbr", core = popupMarker("Scribbr Citation Generator", "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();return JSON.stringify({pass:/Probe Page A/.test(t),text:t.slice(0,200)})})()", settleMs = 30_000, notMeasurable = Regex("something went wrong|try again|could not|unable to|failed|log ?in|sign ?in", RegexOption.IGNORE_CASE), gate = "its citation service (api.scribbr.com)")),
+        Row("mloajfnmjckfjbeeofcdaecbelnblden", "Snap&Read", "snap-and-read", account = true, core = popupLogin("Snap&Read")),
+        Row("ifajfiofeifbbhbionejdliodenmecna", "Co:Writer", "cowriter", account = true, core = popupLogin("Co:Writer"))
     )
 
     // --- stages and evidence ---------------------------------------------------------------------
@@ -4646,7 +4925,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          */
         private const val USERSCRIPT_INSTALL_PAGE_STATE =
             "(function(){var label=function(n){return (n.value||n.textContent||'').trim()};var visible=function(n){return n.offsetParent!==null};" +
-                "var isInstall=function(n){return /^(install|confirm installation)$/i.test(label(n))&&visible(n)};" +
+                "var isInstall=function(n){return /^(install|install script|confirm installation)$/i.test(label(n))&&visible(n)};" +
                 "var buttons=Array.prototype.slice.call(document.querySelectorAll('button, input[type=button], input[type=submit]'));var nodes=Array.prototype.slice.call(document.querySelectorAll('a, [role=button], div, span'));" +
                 "var hit=buttons.find(isInstall)||nodes.find(isInstall);var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var waiting=/please wait/i.test(text);" +
                 "return JSON.stringify({pass:!!hit&&!waiting,waiting:waiting,button:hit?{label:label(hit),disabled:!!hit.disabled}:null,buttons:buttons.map(label).filter(Boolean).slice(0,8),text:text.slice(0,200),readyState:document.readyState})})()"
@@ -4667,6 +4946,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private val LOGIN_WORDS = Regex("\\b(?:log ?in|sign ?in|create account|get started|continue|welcome|e-?mail|unlock|passwords?)\\b", RegexOption.IGNORE_CASE)
         /** An extension page routed to an error view (1Password's `app.html#/page/error`) is no sign-in, whatever it says. */
         private val ERROR_ROUTE = Regex("/error(?:[/?#]|$)", RegexOption.IGNORE_CASE)
+        /** A bridge refusal that is the layer's own gap (an API the phone's runtime has not got), not the extension's error. */
+        private val NOT_IMPLEMENTED_WORDS = Regex("not implemented|is not a function|no handler|unknown (?:namespace|method|api)", RegexOption.IGNORE_CASE)
         /** How long a raised prompt may go without a reachable positive button before the command answers it. */
         private const val PROMPT_TAP_TIMEOUT_MS = 8_000L
         /** Taps on the prompt's own button before the command answers it, and the wait between them. */
