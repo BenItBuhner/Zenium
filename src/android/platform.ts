@@ -47,6 +47,7 @@ import type {
   MediaSessionAction,
   MediaSessionHost,
   NetHost,
+  PageFontsHost,
   PasswordsHost,
   PickedTextFile,
   PerformanceHost,
@@ -1011,6 +1012,18 @@ export function bundledListFrom(raw: unknown): BundledFilterList | null {
 }
 
 /**
+ * The OS's languages as the chrome document sees them (`PlatformInfo.locales`, CT-41): the chrome
+ * WebView's `navigator.languages` is the system's locale list, the UI locale first – the same
+ * list the page WebViews send as `Accept-Language`, which is why a profile's preferred languages
+ * start from it. Empty where the document has none (the tests), and the core starts from English.
+ */
+function chromeLocales(): readonly string[] {
+  if (typeof navigator === 'undefined') return []
+  const languages = Array.isArray(navigator.languages) ? navigator.languages : []
+  return languages.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
+}
+
+/**
  * The chrome's background worker (`backgroundWorker.ts`), a module Web Worker Vite bundles
  * beside the chrome the way the translate engine's is (`renderer/translate/engine.ts`); null
  * where the document has no `Worker` (the tests), and the core's work stays on the main thread.
@@ -1056,6 +1069,13 @@ export class AndroidPlatform implements Platform {
   readonly autofill: AndroidAutofillHost
   readonly blocking: BlockingHost
   readonly privacy: PrivacyHost
+  /**
+   * Page fonts (Settings › Appearance › Customize fonts, CT-25): `Settings.fonts` goes to Kotlin
+   * as one document (`fonts.apply`), which maps it onto every page WebView's `WebSettings` and
+   * keeps it for a custom tab (`PageFonts.kt`). The preferred languages have no host here:
+   * WebView sends the system's languages (`capabilities.pageLanguages` is off).
+   */
+  readonly pageFonts: PageFontsHost
   /**
    * The background worker the core's heavy parsing runs in (`backgroundWorker.ts`, a module Web
    * Worker of the chrome document) and the demo harness's hold on the startup sweeps.
@@ -1111,7 +1131,7 @@ export class AndroidPlatform implements Platform {
     boot: BootInfo,
     io: AndroidStoreIO = new AndroidStoreIO(bridge, boot.files, boot.deferred)
   ) {
-    this.info = { os: boot.os ?? 'android', version: boot.version }
+    this.info = { os: boot.os ?? 'android', version: boot.version, locales: chromeLocales() }
     this.extensionsRoot = boot.extensionsRoot || null
     this.capabilities = {
       ...androidCapabilities({
@@ -1135,6 +1155,7 @@ export class AndroidPlatform implements Platform {
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
     this.privacy = new AndroidPrivacyHost(bridge)
+    this.pageFonts = { apply: (fonts) => bridge.send('fonts.apply', { ...fonts }) }
     const holdBackgroundWork = boot.holdBackgroundWork === true
     this.performance = {
       createBackgroundWorker: () => spawnBackgroundWorker(),

@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import type { Tab } from '../../../shared/types'
 import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/platform'
+import { DEFAULT_FONT_SETTINGS, type PageFontSettings } from '../../../shared/fonts'
 import type { SessionManager } from '../sessions'
 import { ElectronTabViewHost, fullPagePaint, type ElectronTabView } from '../views'
 
@@ -32,22 +33,35 @@ vi.mock('electron', async () => {
     /** Another client (DevTools) holds the page: `attach` refuses. */
     taken = false
     readonly log: string[] = []
+    /** Every command with its parameters, for the tests that read what was sent. */
+    readonly commands: Array<{ method: string; params: Record<string, unknown> | undefined }> = []
+    /** How many agents (attachments) have seen `Page.setFontFamilies`: Chromium allows one per agent. */
+    private fontFamiliesSet = false
     isAttached(): boolean {
       return this.attached
     }
     attach(): void {
       if (this.attached || this.taken) throw new Error('Debugger is already attached')
       this.attached = true
+      this.fontFamiliesSet = false
       this.log.push('attach')
     }
     detach(): void {
       this.attached = false
       this.log.push('detach')
     }
-    async sendCommand(method: string): Promise<Record<string, unknown>> {
+    async sendCommand(
+      method: string,
+      params?: Record<string, unknown>
+    ): Promise<Record<string, unknown>> {
       if (!this.attached) throw new Error('Debugger is not attached')
       this.log.push(method)
+      this.commands.push({ method, params })
       await new Promise((r) => setTimeout(r, 1))
+      if (method === 'Page.setFontFamilies') {
+        if (this.fontFamiliesSet) throw new Error('Font families can only be set once')
+        this.fontFamiliesSet = true
+      }
       return {}
     }
   }
@@ -117,7 +131,10 @@ vi.mock('electron', async () => {
     }
   }
   /** The view host follows the chrome's scheme for dark theme for sites; light and quiet here. */
-  const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false })
+  // Every view host in the tests listens for a flip (the app has one host; the tests many).
+  const nativeTheme = Object.assign(new EventEmitter().setMaxListeners(0), {
+    shouldUseDarkColors: false
+  })
   return { WebContentsView: FakeWebContentsView, nativeTheme }
 })
 
@@ -511,6 +528,165 @@ describe('ElectronTabView.sendInput and the DevTools session', () => {
     dbg.taken = false
     await view.sendInput({ type: 'mouseMove', x: 1, y: 1 })
     expect(dbg.log).toEqual(['attach', 'Input.dispatchMouseEvent', 'detach'])
+  })
+})
+
+/**
+ * The page fonts (Settings › Appearance › Customize fonts, CT-25): every new page is made with
+ * the setting in its web preferences; a page already open takes a change over the DevTools
+ * protocol where its debugger is free, and keeps its floor (no protocol command) until its
+ * contents are remade.
+ */
+describe('page fonts (CT-25)', () => {
+  interface FakeDebug {
+    attached: boolean
+    taken: boolean
+    log: string[]
+    commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+  }
+  const FONTS: PageFontSettings = {
+    standard: 'Georgia',
+    serif: null,
+    sansSerif: 'Inter',
+    fixed: null,
+    size: 20,
+    minimumSize: 12
+  }
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 2))
+  }
+  const page = (
+    host: ElectronTabViewHost,
+    id: string
+  ): { view: ElectronTabView; dbg: FakeDebug; prefs: Record<string, unknown> } => {
+    constructed.length = 0
+    const view = host.createView(
+      { id, containerId: 'default' } as Tab,
+      noEvents,
+      detachedWindow
+    ) as ElectronTabView
+    const wc = view.webContents as unknown as { debugger: FakeDebug }
+    return {
+      view,
+      dbg: wc.debugger,
+      prefs: (constructed[0] as { webPreferences: Record<string, unknown> }).webPreferences
+    }
+  }
+  const sent = (dbg: FakeDebug, method: string): Array<Record<string, unknown> | undefined> =>
+    dbg.commands.filter((c) => c.method === method).map((c) => c.params)
+
+  afterEach(() => {
+    new ElectronTabViewHost(sessions).applyFonts(DEFAULT_FONT_SETTINGS)
+  })
+
+  it('makes a new page with the engine’s own fonts until the core says otherwise', () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { prefs } = page(host, 'tab_fonts_default')
+    expect(prefs.defaultFontFamily).toEqual({})
+    expect(prefs.defaultFontSize).toBe(16)
+    expect(prefs.defaultMonospaceFontSize).toBe(13)
+    expect(prefs.minimumFontSize).toBe(0)
+    expect(ElectronTabViewHost.currentFonts()).toEqual(DEFAULT_FONT_SETTINGS)
+  })
+
+  it('makes every page after a change with the setting in its web preferences, families chosen only', () => {
+    const host = new ElectronTabViewHost(sessions)
+    host.applyFonts(FONTS)
+    const { prefs, dbg } = page(host, 'tab_fonts_new')
+    expect(prefs.defaultFontFamily).toEqual({ standard: 'Georgia', sansSerif: 'Inter' })
+    expect(prefs.defaultFontSize).toBe(20)
+    // Chrome's fixed-width size rides along: 13 for 16, so 16 for 20.
+    expect(prefs.defaultMonospaceFontSize).toBe(16)
+    expect(prefs.minimumFontSize).toBe(12)
+    // A page made with the setting has nothing to take live.
+    expect(dbg.log).toEqual([])
+  })
+
+  it('brings an open page to the setting over its own DevTools session and lets go', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { dbg } = page(host, 'tab_fonts_live')
+    host.applyFonts(FONTS)
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Page.setFontFamilies', 'Page.setFontSizes', 'detach'])
+    expect(dbg.attached).toBe(false)
+    // Every family is named, the unchosen ones as the engine's defaults, so a later change can
+    // take a slot back to the engine's own (the protocol has no "unset").
+    expect(sent(dbg, 'Page.setFontFamilies')).toEqual([
+      {
+        fontFamilies: {
+          standard: 'Georgia',
+          serif: 'Times New Roman',
+          sansSerif: 'Inter',
+          fixed: 'Courier New'
+        }
+      }
+    ])
+    expect(sent(dbg, 'Page.setFontSizes')).toEqual([{ fontSizes: { standard: 20, fixed: 16 } }])
+    // The same setting again is nothing to send.
+    host.applyFonts({ ...FONTS })
+    await settle()
+    expect(dbg.log).toHaveLength(4)
+  })
+
+  it('sends the sizes alone when only the size moved, and takes families back to the engine’s own', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { dbg } = page(host, 'tab_fonts_size')
+    host.applyFonts({ ...DEFAULT_FONT_SETTINGS, size: 24 })
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Page.setFontSizes', 'detach'])
+    expect(sent(dbg, 'Page.setFontSizes')).toEqual([{ fontSizes: { standard: 24, fixed: 20 } }])
+    host.applyFonts({ ...DEFAULT_FONT_SETTINGS, size: 24, fixed: 'Fira Code' })
+    await settle()
+    expect(dbg.log.slice(3)).toEqual(['attach', 'Page.setFontFamilies', 'Page.setFontSizes', 'detach'])
+    host.applyFonts({ ...DEFAULT_FONT_SETTINGS, size: 24 })
+    await settle()
+    // Back to the engine's monospace by name: a fresh agent each time, so "once" never bites.
+    expect(sent(dbg, 'Page.setFontFamilies').at(-1)).toEqual({
+      fontFamilies: {
+        standard: 'Times New Roman',
+        serif: 'Times New Roman',
+        sansSerif: 'Arial',
+        fixed: 'Courier New'
+      }
+    })
+    expect(dbg.attached).toBe(false)
+  })
+
+  it('leaves a page whose debugger another owner holds alone, and tries again on its next load', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, dbg } = page(host, 'tab_fonts_held')
+    dbg.attached = true
+    host.applyFonts(FONTS)
+    await settle()
+    expect(dbg.log).toEqual([])
+    // DevTools closed; the page navigates: the new document is brought to the setting.
+    dbg.attached = false
+    ;(view.webContents as unknown as EventEmitter).emit('did-navigate', {}, 'https://a.example/')
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Page.setFontFamilies', 'Page.setFontSizes', 'detach'])
+  })
+
+  it('sends a live change again after the engine re-read the page’s web preferences (a scheme flip)', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { dbg } = page(host, 'tab_fonts_flip')
+    host.applyFonts(FONTS)
+    await settle()
+    expect(dbg.log).toHaveLength(4)
+    const { nativeTheme } = await import('electron')
+    ;(nativeTheme as unknown as EventEmitter).emit('updated')
+    await settle()
+    // The flip took the page back to the fonts it was made with: the setting goes out again.
+    expect(dbg.log.slice(4)).toEqual([
+      'attach',
+      'Page.setFontFamilies',
+      'Page.setFontSizes',
+      'detach'
+    ])
+    // A page made with the setting has nothing to re-send after a flip.
+    const made = page(host, 'tab_fonts_flip_made')
+    ;(nativeTheme as unknown as EventEmitter).emit('updated')
+    await settle()
+    expect(made.dbg.log).toEqual([])
   })
 })
 

@@ -505,6 +505,11 @@ export class BrowserState {
       this.applyPersisted(data)
       // Profiles from before the marker count as clean; only an explicit false is a crash.
       this.uncleanExit = data.cleanExit === false
+    } else {
+      // A fresh profile's preferred languages are the OS's (CT-41), as `applyPersisted` gives a
+      // profile from before the list; the defaults name English for a host without locales.
+      this.settings.languages = defaultLanguages(this.systemLocales)
+      this.languagesDefaulted = true
     }
     this.ensureValid()
     // The blobs' folder hears which ids the session refers to; the documents of the others go at
