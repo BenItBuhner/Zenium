@@ -10,7 +10,9 @@ import kotlin.math.roundToInt
  * `WebSettings` – the families text a page leaves to the engine gets and the generic families
  * it names, Chrome's size, the floor no text goes under. Plain data and pure decisions, so the
  * mapping runs under JUnit (`PageFontsTest`); [applyTo] is the one line per field that touches
- * the engine, and WebView restyles the open document as its settings change (no reload).
+ * the engine. WebView restyles the open document as a size changes (no reload); a family
+ * changing alone does not reach the text, so [applyTo] says when the document must be asked
+ * ([RESTYLE_SCRIPT], run by `TabWebView.applyFonts`).
  *
  * A `null` family is the engine's own: WebView resolves `serif` / `sans-serif` / `monospace`
  * through the system's `fonts.xml` aliases. Zenium's standard family is `serif`, Chrome's
@@ -57,7 +59,28 @@ data class PageFonts(
     val sansSerifFamily: String get() = sansSerif ?: DEFAULT_SANS_SERIF
     val fixedFamily: String get() = fixed ?: DEFAULT_FIXED
 
-    fun applyTo(settings: WebSettings) {
+    /**
+     * Bring `settings` to this document, and say whether the open document must be asked to
+     * restyle ([RESTYLE_SCRIPT]): true when a family moved and no size did. A size moving
+     * restyles every element on its own (Blink's `kStyle` invalidation, and every setter here is
+     * its own `UpdateWebPreferences` to the renderer, the sizes after the families); a family
+     * alone reaches only the elements whose style depends on font metrics, so the document
+     * keeps the old face until asked. The decision is [familiesMoveFrom] and [sizesMoveFrom],
+     * pure, on the values the settings held.
+     */
+    fun applyTo(settings: WebSettings): Boolean {
+        val familiesMove = familiesMoveFrom(
+            settings.standardFontFamily,
+            settings.serifFontFamily,
+            settings.sansSerifFontFamily,
+            settings.fixedFontFamily
+        )
+        val sizesMove = sizesMoveFrom(
+            settings.defaultFontSize,
+            settings.defaultFixedFontSize,
+            settings.minimumFontSize,
+            settings.minimumLogicalFontSize
+        )
         settings.standardFontFamily = standardFamily
         settings.serifFontFamily = serifFamily
         settings.sansSerifFontFamily = sansSerifFamily
@@ -66,7 +89,16 @@ data class PageFonts(
         settings.defaultFixedFontSize = fixedSize
         settings.minimumFontSize = minimumFontSize
         settings.minimumLogicalFontSize = MINIMUM_LOGICAL_SIZE
+        return familiesMove && !sizesMove
     }
+
+    /** Whether the families `WebSettings` hold differ from this document's (see [applyTo]). */
+    fun familiesMoveFrom(standard: String?, serif: String?, sansSerif: String?, fixed: String?): Boolean =
+        standard != standardFamily || serif != serifFamily || sansSerif != sansSerifFamily || fixed != fixedFamily
+
+    /** Whether the sizes `WebSettings` hold differ from this document's (see [applyTo]). */
+    fun sizesMoveFrom(size: Int, fixedSize: Int, minimum: Int, minimumLogical: Int): Boolean =
+        size != this.size || fixedSize != this.fixedSize || minimum != minimumFontSize || minimumLogical != MINIMUM_LOGICAL_SIZE
 
     fun toJson(): JSONObject = json(
         "standard" to standard,
@@ -97,6 +129,23 @@ data class PageFonts(
         const val NO_FLOOR = 1
         /** Chrome's floor for sizes given relative to the default (`smaller`, `0.4em`). */
         const val MINIMUM_LOGICAL_SIZE = 6
+
+        /**
+         * Told to an open document (`evaluateJavascript`) when [applyTo] moved a family and no
+         * size, the same script the desktop runs (`shared/fonts.ts`, `FONT_RESTYLE_SCRIPT`, which
+         * says why): a generic-family change alone ends in Blink's `StyleEngine::FontsNeedUpdate`,
+         * which since the reduced font-loading invalidations recomputes only the elements whose
+         * style depends on font metrics (`ex`, `ch`, `font-size-adjust`), while the standard
+         * family's *name* is baked into every element's computed font as its style is resolved
+         * (`FontBuilder::StandardFontFamily`). Registering an unused custom property marks every
+         * element for a recalc (`StyleEngine::PropertyRegistryChanged`) and renders nothing: no
+         * DOM mutation, no stylesheet, nothing a page can see short of registering the same
+         * unguessable name. The name is fresh each time, as a name registers once per document.
+         * WebView runs it in the page's world (it has no other); a page that replaced
+         * `CSS.registerProperty` keeps the old face until its next restyle, as before.
+         */
+        const val RESTYLE_SCRIPT =
+            "(() => { try { CSS.registerProperty({ name: '--zenium-fonts-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), syntax: '*', inherits: false }) } catch {} })()"
 
         val DEFAULT = PageFonts(null, null, null, null, SIZE_DEFAULT, 0)
 
