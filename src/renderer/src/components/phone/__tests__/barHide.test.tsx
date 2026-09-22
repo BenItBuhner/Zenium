@@ -246,11 +246,21 @@ describe('the published hide progress', () => {
     expect(css).toContain(
       ":root[data-form-factor='phone'] .zen-phone-bar { pointer-events: auto; will-change: transform; }"
     )
+    // The one transform carries the fullscreen hide too (MOT-32, lib/fullscreenHide.ts): its
+    // own `<number>` property, written on the bar alone as the hide is, times its own travel
+    // (the band and a gutter more: nothing of the bar left in the frame at 1), added to the
+    // hide's offset – one transform, one promoted layer, no second element moving.
     expect(css).toContain(
-      ".zen-phone-bar[data-edge='bottom'] { transform: translate3d(0, calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0); }"
+      ".zen-phone-bar[data-edge='bottom'] { transform: translate3d( 0, calc( var(--zen-bar-hide) * var(--zen-bar-hide-travel) + var(--zen-fullscreen-hide) * var(--zen-fullscreen-hide-travel) ), 0 ); }"
     )
     expect(css).toContain(
-      ".zen-phone-bar[data-edge='top'] { transform: translate3d(0, calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0); }"
+      ".zen-phone-bar[data-edge='top'] { transform: translate3d( 0, calc( -1 * ( var(--zen-bar-hide) * var(--zen-bar-hide-travel) + var(--zen-fullscreen-hide) * var(--zen-fullscreen-hide-travel) ) ), 0 ); }"
+    )
+    expect(css).toContain(
+      "@property --zen-fullscreen-hide { syntax: '<number>'; inherits: false; initial-value: 0; }"
+    )
+    expect(css).toContain(
+      '--zen-fullscreen-hide-travel: calc(var(--zen-phone-band) + var(--zen-padding));'
     )
     expect(css).not.toMatch(/\.zen-phone-bar\[data-edge='(bottom|top)'\] \{[^}]*clip-path/)
     // The clip is the parent box's: from the inset line to the window's far edge, static.
