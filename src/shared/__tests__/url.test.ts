@@ -231,10 +231,15 @@ describe('pillText (the desktop pill at rest)', () => {
     )
   })
 
-  it('leaves a site’s address to truncate: there is no title to stand in for it', () => {
+  it('leaves a site’s address to truncate at any width – never its title (§9.29)', () => {
     const url = 'https://en.wikipedia.org/wiki/Zen_(browser)#History'
+    // The address as Zen trims it: the scheme and `www.` off, the host first, then the path.
+    expect(displayUrl(url)).toBe('en.wikipedia.org/wiki/Zen_(browser)#History')
     expect(pillText(url, displayUrl(url), false)).toBe(displayUrl(url))
     expect(pillText(url, fullUrl(url), false)).toBe(fullUrl(url))
+    expect(pillText(url, displayUrl(url), true)).toBe(displayUrl(url))
+    // Nothing a site's tab carries changes that: the function takes no title for a site.
+    expect(pillText.length).toBe(3)
     expect(pillText('file:///home/me/notes.html', 'file:///home/me/notes.html', false)).toBe(
       'file:///home/me/notes.html'
     )

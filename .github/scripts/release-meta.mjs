@@ -9,6 +9,7 @@
 //
 // Outputs: version, tag, ref, prerelease, publish, title
 import { readFileSync, appendFileSync } from 'node:fs'
+import { androidVersionCodeProblem } from './version-limits.mjs'
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
 
@@ -33,6 +34,11 @@ const version = pkg.version
 if (typeof version !== 'string' || !SEMVER.test(version)) {
   fail(`package.json version "${version}" is not a semver string (major.minor.patch[-prerelease])`)
 }
+// Fail the run at this first job rather than in the Android build five minutes in: the
+// versionCode derivation caps each field (patch ≤ 99), and a hand bump can get past the
+// checks in cut-release.mjs and Prepare release.
+const versionCodeProblem = androidVersionCodeProblem(version)
+if (versionCodeProblem) fail(versionCodeProblem)
 
 const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
 const lockVersions = [lock.version, lock.packages?.['']?.version]

@@ -23,6 +23,14 @@ export const V2_GLYPH =
   'h-[var(--v2-icon)] w-[var(--v2-icon)] shrink-0 [stroke-width:var(--v2-icon-stroke)]'
 
 /**
+ * A trailing glyph in a row or list (§9.3): the chevron, a status alert, the row's own icon
+ * buttons – punctuation rather than the row's subject – is 16 on both platforms (§10.4) at the
+ * platform's stroke, where the leading glyph (`V2_GLYPH`) grows to 20 on the phone. 14 (`h-3.5`)
+ * is not a size the language has (#295's review of the strip's rows).
+ */
+export const V2_TRAILING_GLYPH = 'h-4 w-4 shrink-0 [stroke-width:var(--v2-icon-stroke)]'
+
+/**
  * The stroke of a 16 px glyph in the desktop toolbar row and the app title bar (§9.3: one stroke
  * per size, 1.5 at 16 – the `--v2-icon-stroke` token's desktop value; pr-245 chassis (d)). The
  * window's `.zen-toolbar-button`s and pill chips size their glyphs in utilities (`h-4 w-4`)

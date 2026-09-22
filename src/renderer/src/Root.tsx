@@ -10,6 +10,7 @@ import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolShe
 import { QrScanLayer } from './components/qr/QrScanSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
 import { ExtensionsSheetLayer } from './components/phone/ExtensionsSheet'
+import { SendTabSheetLayer } from './components/phone/SendTabSheet'
 import { GroupEditorLayer } from './components/sidebar/GroupEditorBubble'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
 import { TabSearchLayer } from './components/tabsearch/TabSearchPopover'
@@ -34,6 +35,7 @@ export function Root(): JSX.Element {
       <GroupEditorLayer />
       <BarEditorLayer />
       <ExtensionsSheetLayer />
+      <SendTabSheetLayer />
       <DownloadBubbleLayer />
       <MediaHubLayer />
       <MenuLayer />

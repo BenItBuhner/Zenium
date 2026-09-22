@@ -28,7 +28,17 @@ const NEXT_LAYOUT: Record<SplitLayout, SplitLayout> = {
   grid: 'vertical'
 }
 
-/** Header strips and resize gutters for a split view (drawn in the gaps between the tab views). */
+/**
+ * Header strips, the active pane's outline and resize gutters for a split view (drawn in the
+ * gaps between the tab views).
+ *
+ * The active pane is marked in the content as Zen marks it (design language v2 §9.35): a 2 px
+ * `--zen-accent` outline inside its frame's radius, which with the §9.35 group row in the
+ * sidebar is the whole indicator – no underline under the pane's header, no layout glyph on
+ * the rows, no chip in the pill. The page is a native view the chrome cannot paint over, so
+ * the outline is drawn on the pane's frame in the band every view keeps inside it
+ * (`SPLIT_OUTLINE`, lib/layout.ts).
+ */
 export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Element | null {
   const { coarse } = useViewport()
   const gap = coarse ? SPLIT_GAP_TOUCH : SPLIT_GAP
@@ -56,12 +66,6 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
             }}
             onMouseDown={() => !active && run('tab.activate', { tabId: pane.tabId })}
           >
-            <span
-              className={cn(
-                'absolute inset-x-0 bottom-0 h-0.5 rounded-full',
-                active ? 'bg-[var(--zen-accent)]' : 'bg-transparent'
-              )}
-            />
             <Favicon tab={tab} size={12} />
             <span className="min-w-0 flex-1 truncate">{tabTitle(tab)}</span>
             {active && (
@@ -87,6 +91,22 @@ export function SplitChrome({ state, group, area, activeTabId }: Props): JSX.Ele
           </div>
         )
       })}
+      {panes.map((pane) =>
+        pane.tabId === activeTabId && state.tabs[pane.tabId] ? (
+          <div
+            key={`outline:${pane.tabId}`}
+            className="zen-split-pane-outline"
+            data-split-pane-outline={pane.tabId}
+            style={{
+              left: pane.frame.x,
+              top: pane.frame.y,
+              width: pane.frame.width,
+              height: pane.frame.height
+            }}
+            aria-hidden
+          />
+        ) : null
+      )}
       {gutters.map((g) => (
         <Gutter key={g.index} gutter={g} group={group} area={area} />
       ))}

@@ -36,6 +36,7 @@ import {
   openOverlay,
   openPrintPreview,
   openReaderPreferences,
+  openSendTabSheet,
   openUrlbar,
   openZoom,
   overlayAvailable,
@@ -236,6 +237,11 @@ export function useMainEvents(): void {
       onEvent('extensions.open', () => {
         closeUrlbar()
         openExtensionsSheet()
+      }),
+      // The phone menu's "Send to Your Devices…": the device picker sheet for the tab (ID-27).
+      onEvent('sendTab.open', ({ tabId }) => {
+        closeUrlbar()
+        openSendTabSheet(tabId)
       }),
       // The PDF viewer document in a tab reported where it stands: the docked bar and the find
       // bar draw from the report (lib/pdfViewer.ts).

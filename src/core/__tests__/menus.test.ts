@@ -2843,6 +2843,127 @@ describe('a menu asked for from the keyboard', () => {
   })
 })
 
+describe('Send to your devices (ID-27)', () => {
+  /** The browser's sync as a connected engine would report it, its `sendTab` recorded. */
+  function connectSync(
+    h: Harness,
+    devices: Array<{ id: string; name: string; lastSeen: number }>
+  ): ReturnType<typeof vi.fn> {
+    const sendTab = vi.fn(async () => undefined)
+    const status = { ...h.browser.sync.status(), enabled: true, devices }
+    const sync = new Proxy(h.browser.sync, {
+      get: (target, key) =>
+        key === 'status' ? () => status : key === 'sendTab' ? sendTab : Reflect.get(target, key)
+    })
+    Object.defineProperty(h.browser, 'sync', { value: sync, configurable: true })
+    return sendTab
+  }
+  const LAPTOP = { id: 'dev-2', name: 'Work laptop', lastSeen: 2_000 }
+  const DESK = { id: 'dev-3', name: 'Home desktop', lastSeen: 5_000 }
+
+  it('is not in the tab menu or the app menu while sync is off or no other device has synced: nothing to send to is not greyed (§10.4)', () => {
+    const h = pageHarness()
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    expect(labels(h.shown()).some((l) => l.startsWith('Send to'))).toBe(false)
+    expect(appMenu(h).some((l) => l.startsWith('Send to'))).toBe(false)
+    connectSync(h, [])
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    expect(labels(h.shown()).some((l) => l.startsWith('Send to'))).toBe(false)
+    expect(appMenu(h).some((l) => l.startsWith('Send to'))).toBe(false)
+  })
+
+  it('with one other device names it beside Share – "Send to Work laptop" – and sends the tab’s page on the click, in the tab menu and the app menu', () => {
+    const h = pageHarness()
+    const sendTab = connectSync(h, [LAPTOP])
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    const tabMenu = labels(h.shown())
+    expect(tabMenu).toContain('Send to Work laptop')
+    expect(tabMenu.indexOf('Send to Work laptop')).toBe(tabMenu.indexOf('Share > Email Link…') + 1)
+    const item = h.shown().find((i) => i.label === 'Send to Work laptop')
+    expect(item?.enabled).toBe(true)
+    expect(item?.submenu).toBeUndefined()
+    item?.click?.()
+    expect(sendTab).toHaveBeenCalledWith(
+      { deviceId: 'dev-2', url: PAGE_URL, tabId: h.tabId },
+      h.win
+    )
+    const menu = appMenu(h)
+    expect(menu).toContain('Send to Work laptop')
+    // On the desktop the app menu has no Share… (no share target): the item sits where Share…
+    // does on the hosts that have it – the page group's order is find, zoom, print, save,
+    // share, translate, reader (#299) – so after Save Page As… and before Reader View.
+    expect(menu.indexOf('Send to Work laptop')).toBe(menu.indexOf('Save Page As…') + 1)
+    expect(menu.indexOf('Send to Work laptop')).toBeLessThan(menu.indexOf('Reader View'))
+  })
+
+  it('with several devices is "Send to Your Devices", the devices most recently seen first, each row sending to its device', () => {
+    const h = pageHarness()
+    const sendTab = connectSync(h, [LAPTOP, DESK])
+    h.browser.menus.showTabContextMenu(h.tabId, h.win)
+    expect(labels(h.shown())).toEqual(
+      expect.arrayContaining([
+        'Send to Your Devices',
+        'Send to Your Devices > Home desktop',
+        'Send to Your Devices > Work laptop'
+      ])
+    )
+    const item = h.shown().find((i) => i.label === 'Send to Your Devices')
+    expect(item?.submenu?.map((d) => d.label)).toEqual(['Home desktop', 'Work laptop'])
+    item?.submenu?.[1]?.click?.()
+    expect(sendTab).toHaveBeenCalledWith(
+      { deviceId: 'dev-2', url: PAGE_URL, tabId: h.tabId },
+      h.win
+    )
+    // The tablet's popover menu cascades the same submenu.
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    connectSync(tablet, [LAPTOP, DESK])
+    expect(appMenu(tablet)).toEqual(
+      expect.arrayContaining(['Send to Your Devices', 'Send to Your Devices > Home desktop'])
+    )
+  })
+
+  it('on a phone with several devices the item opens the device picker sheet instead (sendTab.open), beside Share…', () => {
+    const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+    const sendTab = connectSync(phone, [LAPTOP, DESK])
+    const sheet = appMenu(phone)
+    expect(sheet).toContain('Send to Your Devices…')
+    expect(sheet.indexOf('Send to Your Devices…')).toBe(sheet.indexOf('Share…') + 1)
+    // No drill-in level: the picker is the chrome's sheet, asked for as the menu leaves.
+    expect(sheet.some((l) => l.startsWith('Send to Your Devices… >'))).toBe(false)
+    const item = phone.shown().find((i) => i.label === 'Send to Your Devices…')
+    expect(item?.submenu).toBeUndefined()
+    phone.sent.length = 0
+    item?.click?.()
+    expect(phone.sent).toEqual(['sendTab.open'])
+    expect(sendTab).not.toHaveBeenCalled()
+    // The tab's own menu (the overview card's hold) carries the same item.
+    phone.browser.menus.showTabContextMenu(phone.tabId, phone.win)
+    expect(labels(phone.shown())).toContain('Send to Your Devices…')
+    // One device still sends outright on the phone: one tap, the toast confirms.
+    const one = pageHarness(ANDROID, { formFactor: 'phone' })
+    const sendOne = connectSync(one, [LAPTOP])
+    expect(appMenu(one)).toContain('Send to Work laptop')
+    one
+      .shown()
+      .find((i) => i.label === 'Send to Work laptop')
+      ?.click?.()
+    expect(sendOne).toHaveBeenCalledWith(
+      { deviceId: 'dev-2', url: PAGE_URL, tabId: one.tabId },
+      one.win
+    )
+  })
+
+  it('keeps the item for a page that cannot travel – an internal page – disabled, so the page reads as the reason', () => {
+    const h = pageHarness()
+    connectSync(h, [LAPTOP])
+    const settings = h.browser.tabs.createTab({ url: 'zen://settings', active: true }, h.win)
+    h.browser.menus.showTabContextMenu(settings.id, h.win)
+    const item = h.shown().find((i) => i.label === 'Send to Work laptop')
+    expect(item).toBeDefined()
+    expect(item?.enabled).toBe(false)
+  })
+})
+
 describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   /** The item of that label in the last popup, wherever it sits – in a submenu too. */
   const item = (h: Harness, label: string): MenuItemTemplate => {

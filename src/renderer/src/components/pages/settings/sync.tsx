@@ -1,9 +1,17 @@
 import { FolderX } from 'lucide-react'
-import type { SyncStatus } from '@shared/types'
+import type { SyncDeviceTabs, SyncRemoteTab, SyncStatus, UIState } from '@shared/types'
+import { displayUrl, getHost } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
+import {
+  remoteTabCount,
+  remoteTabsStore,
+  remoteTabsSummary,
+  remoteTabsWanted
+} from '@renderer/lib/remoteTabs'
 import { SYNC_COPY, SYNC_SCOPES, syncSetupStore, syncStatusLine } from '@renderer/lib/syncSetup'
 import { relativeTime } from '@renderer/lib/utils'
+import { FaviconGlyph } from './blocks'
 import type { RowGroup, SettingsRow } from './model'
 import type { SectionContext } from './sections'
 import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncForms'
@@ -34,7 +42,7 @@ import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncFor
  */
 export function syncGroups({ state }: SectionContext): RowGroup[] {
   const sync = state.sync
-  return sync.enabled ? connectedGroups(sync) : setupGroups(sync)
+  return sync.enabled ? connectedGroups(sync, state.tabs) : setupGroups(sync)
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +116,7 @@ const FOLDER_KEYWORDS = [
 // Connected
 // ---------------------------------------------------------------------------
 
-function connectedGroups(sync: SyncStatus): RowGroup[] {
+function connectedGroups(sync: SyncStatus, held: UIState['tabs']): RowGroup[] {
   const status: SettingsRow[] = []
   if (sync.folderLost) {
     // The §9.17 / §9.33 message row: the way out as the description and the state's glyph
@@ -185,16 +193,22 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
       // The count reads 0 rather than disappearing (§9.17): over the empty sentence it is the
       // one number on the page that says the state, and the sentence explains it.
       aside: sync.devices.length.toLocaleString(),
-      rows: [...sync.devices]
-        .sort((a, b) => b.lastSeen - a.lastSeen)
-        .map((device) => ({
-          kind: 'info',
-          id: `sync-device:${device.id}`,
-          label: device.name,
-          keywords: ['device', 'last seen'],
-          // The last-seen age trails the name in the summary's 13 at 69 %, `tabular-nums` (§4).
-          trailing: <span className="zen-settings-summary">{relativeTime(device.lastSeen)}</span>
-        })),
+      rows: [
+        ...[...sync.devices]
+          .sort((a, b) => b.lastSeen - a.lastSeen)
+          .map((device): SettingsRow => ({
+            kind: 'info',
+            id: `sync-device:${device.id}`,
+            label: device.name,
+            keywords: ['device', 'last seen'],
+            // The last-seen age trails the name in the summary's 13 at 69 %, `tabular-nums` (§4).
+            trailing: <span className="zen-settings-summary">{relativeTime(device.lastSeen)}</span>
+          })),
+        // The devices' tabs follow the devices (§9.17: a group's next row is its action); with
+        // no device there is nothing to list, so the row is not drawn disabled on the first
+        // screen – it appears when its state does (§10.4).
+        ...(sync.devices.length > 0 ? [remoteTabsRow(sync, held)] : [])
+      ],
       empty: SYNC_COPY.noDevices
     },
     scopeGroup(sync),
@@ -247,6 +261,78 @@ function deviceNameRow(sync: SyncStatus): SettingsRow {
       if (value.trim() !== sync.deviceName) run('sync.setDeviceName', { name: value })
       return undefined
     }
+  }
+}
+
+/**
+ * "Tabs from other devices" (ID-28, Chrome's label): an item row whose description is the list's
+ * summary ("12 tabs on 2 devices"), opening the sheet – the desktop's dialog – that lists each
+ * device's open tabs under the device's name (§10.3 heading, its count as the aside) as §10.4
+ * rows: favicon, title, host and when the tab was last in front; a tap opens the tab here. The
+ * row is a dependent of the Open tabs switch in What you sync: with it off the row stays laid
+ * out at 40 % and says so (§10.4), and with nothing to open it is disabled rather than left to
+ * open an empty sheet (§9.17). The list is the store's (`remoteTabsStore`), asked of the core
+ * once per `remoteTabsVersion` by the page's `useRemoteTabs`, never read here. `held` is this
+ * device's own tabs: the Open tabs scope also carries the tab records (ID-10), so a tab another
+ * device lists may already sit in this sidebar under the same id, and its row then brings that
+ * tab to the front rather than opening a second one.
+ */
+function remoteTabsRow(sync: SyncStatus, held: UIState['tabs']): SettingsRow {
+  const wanted = remoteTabsWanted(sync)
+  const devices = wanted ? remoteTabsStore.get().devices : []
+  const count = remoteTabCount(devices)
+  return {
+    kind: 'item',
+    id: 'sync-remote-tabs',
+    label: SYNC_COPY.remoteTabs,
+    description: wanted ? remoteTabsSummary(devices) : SYNC_COPY.remoteTabsOff,
+    keywords: ['open tabs', 'synced tabs', 'other devices', 'remote tabs'],
+    disabled: !wanted || count === 0,
+    sheet: {
+      title: SYNC_COPY.remoteTabs,
+      groups: [...devices]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((device) => remoteDeviceGroup(device, held))
+    }
+  }
+}
+
+/** One device's tabs, newest activity first as the engine lists them, under the device's name. */
+function remoteDeviceGroup(device: SyncDeviceTabs, held: UIState['tabs']): RowGroup {
+  return {
+    id: `sync-remote-tabs:${device.deviceId}`,
+    heading: device.deviceName,
+    aside: device.tabs.length.toLocaleString(),
+    rows: device.tabs.map((tab) => remoteTabRow(device, tab, tab.tabId in held)),
+    empty: SYNC_COPY.remoteTabsDeviceEmpty
+  }
+}
+
+/**
+ * A tab of another device: its title over "host · when it was last in front", the favicon
+ * leading – every row of the list carries one, so the list keeps one glyph column (§10.4's
+ * mixing rule). Opening it is an action that leaves the page: the sheet goes first and the tab
+ * opens once it has gone (`closesSheet`), the new tab in front, as the history rows open theirs
+ * – or, when this device already holds that very tab (`held`), that tab comes to the front.
+ */
+function remoteTabRow(device: SyncDeviceTabs, tab: SyncRemoteTab, held: boolean): SettingsRow {
+  // The bare host, as the Recently closed rows write theirs.
+  const host = getHost(tab.url).replace(/^www\./, '')
+  const when = relativeTime(tab.lastActive)
+  return {
+    kind: 'action',
+    id: `sync-remote-tab:${device.deviceId}:${tab.tabId}`,
+    label: tab.title.trim() || displayUrl(tab.url),
+    description: host ? `${host} · ${when}` : when,
+    leading: <FaviconGlyph src={tab.favicon} />,
+    // The title is the page's, any length: one line, truncating from the end, as the History
+    // rows (§6; the #314 ruling) – the host under it says which page a cut title is.
+    truncate: true,
+    closesSheet: true,
+    onPress: () =>
+      held
+        ? run('tab.activate', { tabId: tab.tabId })
+        : run('tab.create', { url: tab.url, active: true })
   }
 }
 
