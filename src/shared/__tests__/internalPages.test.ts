@@ -6,6 +6,7 @@ import {
   availableSections,
   internalPageAliasUrl,
   internalPageSection,
+  internalPageSubpage,
   internalPageTitle,
   internalPageUrl,
   isInternalPageUrl,
@@ -210,6 +211,47 @@ describe('parsing page addresses', () => {
     })
   })
 
+  it('names a section’s own drill-in page as a third segment (v2 §10.2), a stale one landing on the section', () => {
+    expect(parseInternalPageUrl('zen://settings/privacy/site-data')).toEqual({
+      id: 'settings',
+      section: 'privacy',
+      subpage: 'site-data'
+    })
+    expect(parseInternalPageUrl('zenium://Settings/Privacy/Site-Data?site=a')).toEqual({
+      id: 'settings',
+      section: 'privacy',
+      subpage: 'site-data',
+      query: { site: 'a' }
+    })
+    expect(internalPageSubpage('zen://settings/privacy/site-data')).toEqual({
+      id: 'site-data',
+      label: 'Site data'
+    })
+    expect(internalPageSubpage('zen://settings/privacy')).toBeNull()
+    expect(internalPageSection('zen://settings/privacy/site-data')?.id).toBe('privacy')
+    // A page the section does not have, or a page under a section that has none: the section.
+    expect(parseInternalPageUrl('zen://settings/privacy/deeper')).toEqual({
+      id: 'settings',
+      section: 'privacy'
+    })
+    expect(parseInternalPageUrl('zen://settings/look/site-data')).toEqual({
+      id: 'settings',
+      section: 'look'
+    })
+    expect(parseInternalPageUrl('zen://settings/privacy/site-data/more')).toBeNull()
+    expect(internalPageUrl({ id: 'settings', section: 'privacy', subpage: 'site-data' })).toBe(
+      'zen://settings/privacy/site-data'
+    )
+    // A drill-in page hangs off a section: without one it is not an address.
+    expect(internalPageUrl({ id: 'settings', section: null, subpage: 'site-data' })).toBe(
+      'zen://settings'
+    )
+    expect(internalPageAliasUrl('zen://settings/privacy/site-data?site=a')).toBe(
+      'zenium://settings/privacy/site-data'
+    )
+    expect(internalPageTitle('zen://settings/privacy/site-data')).toBe('Settings')
+  })
+
   it('refuses documents, sites and unregistered pages', () => {
     expect(parseInternalPageUrl('zen://error?code=-105')).toBeNull()
     expect(parseInternalPageUrl('zen://newtab')).toBeNull()
@@ -217,7 +259,6 @@ describe('parsing page addresses', () => {
     expect(parseInternalPageUrl('zenium://nothing')).toBeNull()
     expect(parseInternalPageUrl('https://settings/')).toBeNull()
     expect(parseInternalPageUrl('settings')).toBeNull()
-    expect(parseInternalPageUrl('zen://settings/privacy/deeper')).toBeNull()
     expect(parseInternalPageUrl('')).toBeNull()
   })
 
