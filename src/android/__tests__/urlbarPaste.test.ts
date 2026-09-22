@@ -79,4 +79,17 @@ describe('the urlbar.paste host event', () => {
     expect(emit).not.toHaveBeenCalled()
     expect(handleCommand).not.toHaveBeenCalled()
   })
+
+  // The command the event runs reads the clipboard through `ClipboardHost.readText` and does
+  // nothing for a host without one (core/browser.ts `pasteAndGo`): the phone has it, on the same
+  // host read as the clipboard row's reveal (ClipboardPeek.read).
+  it('gives the core the clipboard read that Paste and go runs on', async () => {
+    const call = vi.fn(async (name: string) =>
+      name === 'clipboard.read' ? ' http://a.example/ ' : null
+    )
+    const platform = new AndroidPlatform({ ...bridge, call } as unknown as Bridge, BOOT)
+    expect(platform.clipboard.readText).toBeTypeOf('function')
+    await expect(platform.clipboard.readText!()).resolves.toBe(' http://a.example/ ')
+    expect(call).toHaveBeenCalledWith('clipboard.read', {})
+  })
 })

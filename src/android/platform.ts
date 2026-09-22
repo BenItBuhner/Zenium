@@ -1124,7 +1124,11 @@ export class AndroidPlatform implements Platform {
         return kind === 'url' || kind === 'text' || kind === 'image' ? kind : 'none'
       },
       read: () => bridge.call<string>('clipboard.read', {}),
-      markUsed: () => bridge.send('clipboard.markUsed')
+      markUsed: () => bridge.send('clipboard.markUsed'),
+      // The core's Paste and go / Paste and search (`urlbar.pasteAndGo`, `urlbar.pasteAndSearch`;
+      // the field toolbar's item, OMN-23) read the clipboard through this once they run; without
+      // it they do nothing. The same read as the row's: the system's toast is its word about it.
+      readText: () => bridge.call<string>('clipboard.read', {})
     }
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),
