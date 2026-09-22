@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AppWindow, Globe, Monitor } from 'lucide-react'
 import type { ScreenCaptureRequest, ScreenCaptureSource, UIState } from '@shared/types'
 import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
+import { activeTab } from '@renderer/lib/selectors'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { run } from '@renderer/lib/api'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
@@ -33,15 +34,18 @@ const DESCRIPTION_ID = 'zen-scpick-description'
  * The screen-capture picker (MW-19) in the frame dialog host `TabDialogs` mounts: the
  * `screenCapture` surface (`ChromeSurface`) of a host whose pages can capture – the core holds a
  * page's `getDisplayMedia` for a window only while this is up, and refuses it as Chrome's cancel
- * would while it is not – so the layer registers on those hosts alone. Tab-modal like Chrome's:
- * the request of the window's active tab shows; another tab in front hides it until its tab is
- * back, and a closed or navigated tab takes its request with it (the core answers the page).
+ * would while it is not – so the layer registers on those hosts alone. A page's request is
+ * tab-modal like Chrome's: the request of the window's active tab shows; another tab in front
+ * hides it until its tab is back, and a closed or navigated tab takes its request with it (the
+ * core answers the page). An extension's request is modal to its window, over whichever tab is
+ * active there (Chrome's `chooseDesktopMedia` picker is modal to the target's browser window).
  */
 export function ScreenPickerLayer({ state }: { state: UIState }): JSX.Element | null {
   const capable = state.capabilities.screenCapture
   useChromeSurface('screenCapture', capable)
   const request = capable ? currentScreenCaptureRequest(state) : null
-  return request ? <ScreenPicker key={request.id} request={request} /> : null
+  const under = activeTab(state)?.id ?? request?.tabId
+  return request ? <ScreenPicker key={request.id} request={request} under={under} /> : null
 }
 
 /**
@@ -62,9 +66,16 @@ export function ScreenPickerLayer({ state }: { state: UIState }): JSX.Element | 
  * An extension's request (`chrome.desktopCapture.chooseDesktopMedia`) is the same dialog with
  * the extension's icon at the title's start and its name where the site's goes – "with
  * <site>" when it captures for a site's tab – and only the panes it asked for: one pane stands
- * alone, with no segment over it, as Chrome's does.
+ * alone, with no segment over it, as Chrome's does. `under` is the tab whose page the dialog
+ * covers: the calling tab, or for an extension's window-modal request the window's active tab.
  */
-function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Element {
+function ScreenPicker({
+  request,
+  under = request.tabId
+}: {
+  request: ScreenCaptureRequest
+  under?: string
+}): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const answered = useRef(false)
   const [busy, setBusy] = useState(false)
@@ -90,17 +101,17 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
   }
 
   // The page's view hides under chrome overlays; its snapshot stands in while the picker is up –
-  // and is the calling tab's own card picture.
+  // and is the calling tab's own card picture. A window-modal picker follows the active tab.
   useEffect(() => {
     let gone = false
-    void openScreenPicker(request.tabId).then(() => {
+    void openScreenPicker(under).then(() => {
       if (gone) closeScreenPicker()
     })
     return () => {
       gone = true
       closeScreenPicker()
     }
-  }, [request.tabId])
+  }, [under])
 
   const sources = sourcesIn(request, pane)
   const selected = effectiveSelection(pane, sources, chosen[pane])

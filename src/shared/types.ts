@@ -2789,6 +2789,12 @@ export interface ScreenCaptureRequest {
   id: string
   tabId: string
   /**
+   * The window the picker is modal to: the one holding the tab's page. A page's call shows over
+   * its own tab there; an extension's over whichever tab is active there (Chrome's is modal to
+   * the target's browser window, and stays up while its tabs change).
+   */
+  windowId: string
+  /**
    * The site asking, as a display origin. For an extension's call, the site of the tab it
    * captures for (`targetTab`), or empty when the extension's own page consumes the stream.
    */

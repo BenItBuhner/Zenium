@@ -87,6 +87,7 @@ describe('ScreenCaptureService', () => {
     const [request] = h.service.list()
     expect(request).toMatchObject({
       tabId: 't1',
+      windowId: 'w1',
       origin: 'meet.example',
       audio: true,
       systemAudio: false,
@@ -239,6 +240,9 @@ describe("ScreenCaptureService for an extension's chooseDesktopMedia", () => {
     const [request] = h.service.list()
     expect(opened.id).toBe(request.id)
     expect(request).toMatchObject({
+      tabId: 't1',
+      // The window the picker is modal to: the target tab's, whichever tab is active there.
+      windowId: 'w1',
       origin: '',
       extension: EXT,
       kinds: ['tab', 'screen'],

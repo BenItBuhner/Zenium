@@ -80,7 +80,10 @@ export function tabIdOfSource(sourceId: string): string | null {
  *
  * An extension's `chrome.desktopCapture.chooseDesktopMedia` is the same picker with the
  * extension's name and icon in the site's place and the panes it asked for (`kinds`); the
- * browser layer of the extension API makes the request and hands the extension the id.
+ * browser layer of the extension API makes the request and hands the extension the id. Its
+ * request may name a tab that is not the active one (`targetTab`, or a worker's call): the
+ * picker is modal to that tab's window (`windowId`), over whichever tab is active there, as
+ * Chrome's is to the target's browser window.
  *
  * The OS's list arrives after the request is up (`loading` until then); on Wayland the desktop
  * portal's own dialog shows first and the list holds the one source it granted.
@@ -123,7 +126,8 @@ export class ScreenCaptureService {
     const tab = this.browser.tabs.tab(init.tabId)
     if (!tab) return refused
     this.cancelForTab(init.tabId)
-    if (!surfaceMounted(this.browser.tabs.ownerOf(init.tabId), 'screenCapture')) return refused
+    const owner = this.browser.tabs.ownerOf(init.tabId)
+    if (!owner || !surfaceMounted(owner, 'screenCapture')) return refused
     // The panes, in the picker's order; a call that asks for none has nothing to pick from.
     const kinds = SCREEN_CAPTURE_KINDS.filter((k) => !init.kinds || init.kinds.includes(k))
     if (kinds.length === 0) return refused
@@ -132,6 +136,7 @@ export class ScreenCaptureService {
     const request: ScreenCaptureRequest = {
       id: newId('capture'),
       tabId: init.tabId,
+      windowId: owner.id,
       origin: displayHost(init.url) || init.url,
       extension: init.extension ?? null,
       kinds,
