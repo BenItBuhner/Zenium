@@ -642,17 +642,26 @@ export function createEmulatedEngine(
         }
       }
     }
-    // `system.display` and `system.storage` are the table's, for the extensions that declared
-    // them (`engineSpec.ts`); the host answers from the phone's screen and its no devices.
-    chrome.system = {
-      cpu: {
-        getInfo: (...args: unknown[]) =>
-          settle(notImplemented('system.cpu.getInfo'), takeCallback(args))
-      },
-      memory: {
-        getInfo: (...args: unknown[]) =>
-          settle(notImplemented('system.memory.getInfo'), takeCallback(args))
-      }
+    // Chrome defines `chrome.system` once one of the `system.*` permissions is held, and `cpu`
+    // and `memory` under it each with its own; `system.display` and `system.storage` are the
+    // table's, for the extensions that declared them (`engineSpec.ts`), and the host answers
+    // from the phone's screen and its no devices. Coinbase Wallet's worker feature-detects
+    // `chrome.system?.cpu?.getInfo` before it reads the CPU load, and a `cpu` that was always
+    // there passed the test and then rejected, an uncaught rejection on every start (run
+    // 35787391495).
+    if (granted('system')) {
+      const system: Record<string, unknown> = {}
+      if (granted('system.cpu'))
+        system.cpu = {
+          getInfo: (...args: unknown[]) =>
+            settle(notImplemented('system.cpu.getInfo'), takeCallback(args))
+        }
+      if (granted('system.memory'))
+        system.memory = {
+          getInfo: (...args: unknown[]) =>
+            settle(notImplemented('system.memory.getInfo'), takeCallback(args))
+        }
+      chrome.system = system
     }
   }
 
