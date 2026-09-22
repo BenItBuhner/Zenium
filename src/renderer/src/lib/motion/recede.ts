@@ -181,6 +181,10 @@ function sameFrame(a: RecedeLayerFrame | null, b: RecedeLayerFrame): boolean {
   return a !== null && a.recede === b.recede && a.scrim === b.scrim && a.inert === b.inert
 }
 
+/** Who hears the page's recede as it changes (`subscribePageRecede`), and what they last heard. */
+const pageListeners = new Set<(page: number) => void>()
+let lastPage = 0
+
 /** The surfaces registered by their components (`registerRecedeSurface`). */
 const surfaces = new Set<HTMLElement>()
 /** The `[data-recede-surface]` elements found when a sheet last registered. */
@@ -234,6 +238,26 @@ function publish(): void {
     entry.last = next
     entry.onFrame?.(next)
   })
+  // Last, once the surfaces carry the value: a listener that measures the frame measures it as
+  // this frame paints it.
+  const page = stack.length > 0 ? frame.page : 0
+  if (page !== lastPage) {
+    lastPage = page
+    for (const listener of Array.from(pageListeners)) listener(page)
+  }
+}
+
+/**
+ * Hear the page's recede whenever it changes – 0 once more when its sheets have landed away or
+ * the stack has emptied. For chrome that measures the frame (the layout reporter): a measure
+ * taken while the frame stood receded is taken again at its rest. Told after the surfaces carry
+ * the frame's value, never of a value it already heard; the returned function unsubscribes.
+ */
+export function subscribePageRecede(listener: (page: number) => void): () => void {
+  pageListeners.add(listener)
+  return () => {
+    pageListeners.delete(listener)
+  }
 }
 
 /**
