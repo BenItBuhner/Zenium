@@ -190,10 +190,12 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         )
         SystemClock.sleep(2_500)
         // The landing's Languages category under a finger where the document has it, the section
-        // proven by its `data-section` (its Languages you read heading the tree's word for it);
-        // the tree's click standing in when no finger could go in.
-        val section = { settingsSectionIs(LANGUAGES_SECTION, treeSign = "Languages you read") }
-        val opened = touchSettingsRowExpecting("Languages", "the Languages section is up (its Languages you read heading)", timeoutMs = 8_000, took = section) ||
+        // proven by its `data-section` (its Preferred languages heading the tree's word for it:
+        // the section leads with that group as CT-41 lays it out, `settings/languages.tsx`, and
+        // translate's languages-you-read is derived from it since #328); the tree's click
+        // standing in when no finger could go in.
+        val section = { settingsSectionIs(LANGUAGES_SECTION, treeSign = "Preferred languages") }
+        val opened = touchSettingsRowExpecting("Languages", "the Languages section is up (its Preferred languages heading)", timeoutMs = 8_000, took = section) ||
             section() ||
             standIn("Languages") { clickSettingsRow("Languages") && awaitTook(section, 8_000) }
         results.put("settingsLanguages", JSONObject().put("opened", opened).put("section", section()))
@@ -212,22 +214,27 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         // preferences, then the page's row – and Afrikaans to English in the model list must set
         // its download going – the core's downloading list, then the page's row saying so. A
         // sheet is up by the document (`[data-sheet-layer] [role=dialog]` named by its title,
-        // [sheetPresented]), the tree's node for the title second.
-        val addSheet = { sheetPresented("Add a language you read") || findByLabel("Add a language you read") != null }
-        val addOpened = touchSettingsRowExpecting("Add a language", "the Add a language you read sheet is up", timeoutMs = 8_000, took = addSheet) ||
+        // [sheetPresented]), the tree's node second.
+        // Preferred languages' Add language row opens the §9.13 picker sheet with its filter field
+        // ("Find a language") pinned over the list – the field is what tells the sheet is up. Its
+        // rows read the language's name and, under it, the native name (`Basque` / `euskara`):
+        // the document finds the row by its label, the tree by the prefix.
+        val addSheet = { sheetPresented("Add language", prefix = true) || findByLabel("Find a language") != null }
+        val addOpened = touchSettingsRowExpecting("Add language", "the Add language picker sheet is up (its Find a language field)", timeoutMs = 8_000, took = addSheet) ||
             addSheet() ||
-            standIn("Add a language") { clickSettingsRow("Add a language") && awaitTook(addSheet, 8_000) }
+            standIn("Add language") { clickSettingsRow("Add language") && awaitTook(addSheet, 8_000) }
         SystemClock.sleep(1_200)
         shot("13-settings-add-language")
         val readsBasque = { "eu" in preferred() }
+        revealPrefix("Basque")
         val basqueRead = touchSettingsRowExpecting(
             "Basque",
-            "Basque is among the languages read (the core's preferences)",
+            "Basque is among the languages read (the core's preferences, derived from the preferred languages)",
             timeoutMs = 8_000,
             took = readsBasque
         )
         if (!basqueRead && !readsBasque()) standIn("Basque") { (clickSettingsRow("Basque") || clickByLabel("Basque")) && awaitTook(readsBasque, 5_000) }
-        val addClosed = awaitSheetGone("Add a language you read", 5_000) && waitForGone("Add a language you read", 3_000)
+        val addClosed = awaitSheetGone("Add language", 5_000, prefix = true) && waitForGone("Find a language", 3_000)
         val basqueRow = awaitSettingsRow("Basque", 8_000) || waitFor("Basque", 3_000) != null
         results.put(
             "addLanguageSheet",
