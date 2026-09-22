@@ -25,6 +25,12 @@ export interface MenulistOption<T extends string> {
    * is a §9.2 description.
    */
   description?: string
+  /**
+   * The label drawn in this font family (a font picker, as Chrome's fonts page draws its
+   * options): the face is what is being chosen, so the row shows it; the trigger keeps the
+   * chrome's own type.
+   */
+  font?: string
 }
 
 /** A row after the options that acts rather than picks ("Choose another folder…"). */
@@ -168,6 +174,7 @@ function List<T extends string>({
       >
         {options.map((option) => {
           const selected = option.value === value
+          const face = option.font ? { fontFamily: option.font } : undefined
           return (
             <button
               key={option.value}
@@ -179,11 +186,15 @@ function List<T extends string>({
             >
               {option.description ? (
                 <span className="zen-v2-menulist-option-text">
-                  <span className="truncate">{option.label}</span>
+                  <span className="truncate" style={face}>
+                    {option.label}
+                  </span>
                   <span className="zen-v2-menulist-option-description">{option.description}</span>
                 </span>
               ) : (
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                <span className="min-w-0 flex-1 truncate" style={face}>
+                  {option.label}
+                </span>
               )}
               {selected && <Check aria-hidden />}
             </button>

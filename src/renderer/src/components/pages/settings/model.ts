@@ -52,6 +52,12 @@ export interface RowOption {
    * without one come first, then each heading's options in the order the headings first appear.
    */
   group?: string
+  /**
+   * The option's label drawn in this font family (a font picker's rows, as Chrome's fonts page
+   * draws them – the face is the choice, so the row shows it): the desktop's menulist popover
+   * reads it (`MenulistOption.font`); the phone's picker rows draw it themselves (`fonts.tsx`).
+   */
+  font?: string
 }
 
 /** The picker sheet's option groups: the ungrouped options first (heading null), then each heading's. */
@@ -196,6 +202,33 @@ export interface SliderRow extends RowBase {
   /** The value as the row shows it ("70%"). */
   format(value: number): string
   onChange(value: number): void
+  /**
+   * Labels under the slider's two ends at 13/69 % (Chrome's font-size slider: "Very small" …
+   * "Very large"), decoration for the eye – the value beside the label is what is read.
+   */
+  ends?: readonly [string, string]
+}
+
+/** One entry of a row's ⋯ menu; Title Case, as Zen's menu items are (§9.1). */
+export interface RowMenuItem {
+  id: string
+  label: string
+  /** Not applicable now (Move up on the first row): the item stays listed at §9.30's .4. */
+  disabled?: boolean
+  /** A destructive item, in the danger ink. */
+  danger?: boolean
+  onSelect(): void
+}
+
+/**
+ * A row's trailing ⋯ (§10.4: a list row whose few actions are a menu, not an item sheet – the
+ * preferred languages' Move up / Move down / Remove): the shared `LocalMenu`, a popover under
+ * the button on a mouse and a sheet of 44 rows titled with the row's label on a finger.
+ */
+export interface RowMenu {
+  /** The button's accessible name ("Options for English"). */
+  label: string
+  items: readonly RowMenuItem[]
 }
 
 /** A fact: label and description, optionally a leading or trailing glyph or value; nothing to press. */
@@ -213,6 +246,11 @@ export interface InfoRow extends RowBase {
    * is for a row whose second line is the status; a row sets one of the two.
    */
   danger?: boolean
+  /**
+   * A trailing ⋯ button with the row's actions as a menu (§10.4): the row stays static, the
+   * button is the target – `trailing` and `menu` are not set together.
+   */
+  menu?: RowMenu
 }
 
 /** One thing in a list (a container, a route, a Boost): opens a sheet of rows about it. */

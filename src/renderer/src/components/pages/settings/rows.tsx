@@ -1,9 +1,11 @@
 import type { JSX, ReactNode } from 'react'
 import { useState } from 'react'
-import { ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
+import { ChevronRight, Ellipsis, ExternalLink, Loader2 } from 'lucide-react'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { cn } from '@renderer/lib/utils'
-import { V2Button } from '../../extensions/v2'
+import { V2Button, V2IconButton } from '../../extensions/v2'
 import { V2Menulist } from '../../extensions/V2Menulist'
+import { LocalMenu } from '../../menus/LocalMenu'
 import { Slider } from '../../ui/slider'
 import {
   currentOptionLabel,
@@ -11,6 +13,7 @@ import {
   type ActionRow,
   type FieldRow,
   type RowGroup,
+  type RowMenu,
   type SettingsRow,
   type SliderRow,
   type SwitchRow,
@@ -217,13 +220,16 @@ export function RowView({
       // Not a target (§9.34): the shared row for its geometry, `data-static` for no fill and no
       // pointer cursor, no role – a div, since static text is not a button. A row whose label
       // is the status takes the danger row class the destructive action has: its label rule
-      // puts the ink on the sentence, the description keeps its 69%.
+      // puts the ink on the sentence, the description keeps its 69%. A row with a ⋯ menu holds
+      // the icon button in its trailing slot and, on one line, is a control row (§9.21: the
+      // button plus 8 – `data-control`, as `ListRow control` marks it).
       return (
         <div
-          ref={row.trailing ? attachLineCount : undefined}
+          ref={row.trailing || row.menu ? attachLineCount : undefined}
           data-row={row.id}
           data-static=""
           data-tone={row.tone}
+          data-control={row.menu && !row.description && !caption ? '' : undefined}
           className={cn(
             'zen-settings-row zen-v2-row',
             row.danger && 'zen-settings-row-danger',
@@ -238,6 +244,11 @@ export function RowView({
           )}
           <RowText label={row.label} description={row.description} caption={caption} />
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
+          {row.menu && (
+            <span className="zen-settings-trailing zen-settings-control">
+              <RowMenuButton menu={row.menu} title={row.label} disabled={row.disabled} />
+            </span>
+          )}
         </div>
       )
     case 'slider':
@@ -430,10 +441,25 @@ function SliderControl({
       onValueCommit={([v]) => v !== undefined && v !== row.value && row.onChange(v)}
     />
   )
+  // The end labels (Chrome's "Very small" … "Very large") under the track's two ends, for the
+  // eye alone: the value beside the label is what the row says and the slider reads.
+  const ends = row.ends && (
+    <span className="zen-settings-slider-ends" aria-hidden="true">
+      <span>{row.ends[0]}</span>
+      <span>{row.ends[1]}</span>
+    </span>
+  )
   if (!labelled) {
     return (
       <span className="zen-settings-slider-control">
-        {slider}
+        {ends ? (
+          <span className="zen-settings-slider-stack">
+            {slider}
+            {ends}
+          </span>
+        ) : (
+          slider
+        )}
         <span className="zen-settings-slider-value">{row.format(local)}</span>
       </span>
     )
@@ -447,7 +473,56 @@ function SliderControl({
       </span>
       {row.description && <span className="zen-settings-description">{row.description}</span>}
       {slider}
+      {ends}
     </span>
+  )
+}
+
+/**
+ * A row's ⋯ (§10.4): the shared icon button in the row's trailing slot opening the shared
+ * `LocalMenu` from it – a popover flush under the button on a mouse (§9.20), a sheet of 44 rows
+ * titled with the row's label on a finger – with the row's items, a disabled one listed at .4
+ * (§9.30: Move up on the first row stays where the eye expects it). The button is the one
+ * target in a static row, so it rings at its own offset; a dependent row's button is disabled
+ * with the row (`aria-disabled` on the row, `disabled` on the button, one .4 – the
+ * `.zen-settings-row-disabled` rule keeps the button's own off).
+ */
+function RowMenuButton({
+  menu,
+  title,
+  disabled
+}: {
+  menu: RowMenu
+  title: string
+  disabled?: boolean
+}): JSX.Element {
+  const [anchor, setAnchor] = useState<Anchor | null>(null)
+  return (
+    <>
+      <V2IconButton
+        icon={Ellipsis}
+        label={menu.label}
+        className="zen-settings-row-menu"
+        aria-haspopup="menu"
+        aria-expanded={anchor !== null || undefined}
+        disabled={disabled}
+        onClick={(e) => setAnchor(anchorOf(e.currentTarget))}
+      />
+      {anchor && (
+        <LocalMenu
+          anchor={anchor}
+          title={title}
+          items={menu.items.map((item) => ({
+            id: item.id,
+            label: item.label,
+            disabled: item.disabled,
+            danger: item.danger,
+            onSelect: item.onSelect
+          }))}
+          onClose={() => setAnchor(null)}
+        />
+      )}
+    </>
   )
 }
 

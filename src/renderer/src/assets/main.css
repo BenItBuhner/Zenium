@@ -10483,6 +10483,96 @@
   border-color: var(--v2-page);
 }
 /*
+ * A slider's end labels (`SliderRow.ends`; Chrome's fonts page has "Very small" … "Very large"
+ * under the track's ends): 13/69 % like the value, `aria-hidden` – the value beside the label
+ * is what the row says. On a phone the line follows the slider in the row's block; on the
+ * desktop the slider and its labels stack in the trailing slot, the value at the stack's side,
+ * the track 200 so its stops (Chrome's 25 sizes) are 8 apart under the thumb.
+ */
+.zen-settings-slider-ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-settings-slider-stack {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.zen-settings-slider-control > .zen-settings-slider-stack > .zen-settings-slider {
+  width: 200px;
+}
+/*
+ * A row's ⋯ (`InfoRow.menu`, `RowMenuButton` in rows.tsx): the shared icon button at its own
+ * size in the trailing slot, its box ending at the row's gutter as a control row's button and
+ * the reader stepper's buttons do; the row is `data-control` on one line (36 / 52, §9.21) and
+ * holds the button inside its two lines otherwise. The static row keeps no fill; the button
+ * carries its own.
+ */
+.zen-settings-row-menu {
+  color: var(--v2-text-deemphasized);
+}
+.zen-settings-row-menu:hover:not(:disabled),
+.zen-settings-row-menu[aria-expanded='true'] {
+  color: var(--v2-text);
+}
+/*
+ * Customize fonts (`settings/fonts.tsx`, CT-25): the preview paragraph is a static content
+ * row (§10.3: a row of content grows with its text) in the page's gutter, drawn in the page
+ * fonts themselves – the standard family at the chosen size, then the fixed-width family at
+ * Chrome's ratio – so the row shows what a page will get; the row's own `font-family` and
+ * `font-size` ride in from the row through its variables. The face and size are what the row
+ * is for, so they are not the chrome's type; the ink and the 69 % note are.
+ */
+.zen-settings-fonts-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 16px 12px;
+  color: var(--v2-text);
+}
+.zen-settings-fonts-preview > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--zen-settings-preview-family);
+  font-size: var(--zen-settings-preview-size);
+  line-height: 1.4;
+}
+.zen-settings-fonts-preview > p[data-face='fixed'] {
+  font-family: var(--zen-settings-preview-fixed-family);
+  font-size: var(--zen-settings-preview-fixed-size);
+}
+.zen-settings-fonts-preview > .zen-settings-description {
+  display: block;
+}
+/*
+ * The phone's font picker (`FontPickList`, fonts.tsx): §9.13's radio rows in a sheet, each
+ * label in its own face at the row's body size (the face is the choice), the current one
+ * marked; the desktop's menulist popover draws the same through `MenulistOption.font`.
+ */
+.zen-settings-font-option .zen-settings-label {
+  font-family: var(--zen-settings-option-font, inherit);
+}
+/*
+ * A picker sheet or dialog with a filter (`LanguagePickList`, languages.tsx; §10.3: a field
+ * pinned under a header): the field in the 16 gutter, 8 under the header, stuck to the top of
+ * the scrolling body on the panel's own surface so the rows scroll under it; the rows follow
+ * edge to edge; no match is §9.17's one line.
+ */
+.zen-settings-pick-filter {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0 16px 8px;
+  background: var(--v2-panel);
+}
+.zen-settings-pick-filter > .zen-v2-field {
+  width: 100%;
+}
+/*
  * Resources › Live usage (`blocks.tsx`'s `ResourceMeter`): label and numbers on one line, the
  * 4 px bar under them – the accent, the warning ink from 85 % of a budget, the danger ink at
  * 100 %, half strength with no budget to measure against – and the note at 13/69 %.

@@ -134,6 +134,8 @@ import {
   vaultProtectionLabel
 } from '../../overlays/settingsCopy'
 import { ModelPickList, PickList } from '../../translate/pickers'
+import { fontsGroups } from './fonts'
+import { preferredLanguagesGroups } from './languages'
 import {
   AddRouteForm,
   AppIconGrid,
@@ -243,6 +245,13 @@ export interface SectionContext {
    * reads the setting meanwhile.
    */
   downloadDirectory?: string | null
+  /**
+   * The families installed on this computer (`useLocalFonts`), for Appearance › Customise
+   * fonts' family pickers on a host whose engine takes them: null while the list is on its way,
+   * left out where the rows are not drawn (a phone host, a test) – the pickers keep to the
+   * generic families meanwhile.
+   */
+  localFonts?: string[] | null
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -366,7 +375,8 @@ function lookSection({
   pointer,
   formFactor,
   openBarEditor,
-  tab
+  tab,
+  localFonts
 }: SectionContext): RowGroup[] {
   const s = state.settings
   const caps = state.capabilities
@@ -386,6 +396,9 @@ function lookSection({
           id: 'color-scheme',
           label: 'Colour scheme',
           value: s.colorScheme,
+          // Pages follow the scheme too (CT-23: the engine's theme source is this setting), so
+          // the row says so – the desktop's description, the phone picker's title block.
+          sheetDescription: 'Websites follow this too.',
           options: [
             { value: 'system', label: 'Follow system' },
             { value: 'light', label: 'Light' },
@@ -491,6 +504,9 @@ function lookSection({
       empty: 'No sites yet. Zooming a page remembers the zoom for its site here.'
     })
   }
+  // Customise fonts (CT-25) follows Appearance and the zooms: what pages look like, before the
+  // chrome's own look.
+  groups.push(...fontsGroups({ state, set, localFonts }))
   groups.push({
     id: 'app-icon',
     heading: 'App icon',
@@ -2877,15 +2893,16 @@ function passkeysGroup({ passkeys }: AutofillSettingsData): RowGroup {
 // ---------------------------------------------------------------------------
 
 /**
- * Settings › Languages, the desktop pane (`LanguagesSection.tsx`) row for row: whether Zenium
- * offers to translate, the languages the user reads – the first is what pages are translated
- * into – as item rows that promote or remove, the always and never lists, the sites never
- * offered, and the models on the device with their size and a confirmed removal. What the
- * desktop adds through a menulist is an action row here (§9.13: no menulist on a phone settings
- * page) opening a sheet of the languages or models left to pick. The lists read the core's
- * translate state and write through its commands, so both platforms keep one set of rules.
+ * Settings › Languages: the preferred languages first (CT-41, `languages.tsx`: `Settings.
+ * languages` in order with a ⋯ menu per row and Add language – the list translate's "languages
+ * you read" is derived from), then the desktop pane (`LanguagesSection.tsx`) row for row:
+ * whether Zenium offers to translate, the always and never lists, the sites never offered, and
+ * the models on the device with their size and a confirmed removal. What the desktop adds
+ * through a menulist is an action row here (§9.13: no menulist on a phone settings page)
+ * opening a sheet of the languages or models left to pick. The lists read the core's translate
+ * state and write through its commands, so both platforms keep one set of rules.
  */
-function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
+function languagesSection({ state, dictionary, set: setSettings }: SectionContext): RowGroup[] {
   const t = state.translate
   const prefs = t.preferences
   // The "Download a model" sheet lists the registry's pairs, which the core is asked for: asked
@@ -2900,17 +2917,12 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
   const languageRows = (
     prefix: string,
     codes: readonly string[],
-    actions: (code: string, index: number) => SettingsRow[],
-    description?: (code: string, index: number) => string | undefined
+    actions: (code: string, index: number) => SettingsRow[]
   ): SettingsRow[] =>
     codes.map((code, index) =>
-      item(
-        `${prefix}:${code}`,
-        languageName(code),
-        description?.(code, index),
-        actions(code, index),
-        { keywords: [code] }
-      )
+      item(`${prefix}:${code}`, languageName(code), undefined, actions(code, index), {
+        keywords: [code]
+      })
     )
 
   /** The action row that adds to a list, in a group of its own after it; none when nothing is left. */
@@ -2945,7 +2957,6 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
     ]
   }
 
-  const preferred = prefs.preferred
   const installedBytes = t.installed.reduce((sum, m) => sum + m.bytes, 0)
   const modelRows: SettingsRow[] = [
     ...t.installed.map((m) => {
@@ -2984,11 +2995,12 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
   }
 
   return [
+    ...preferredLanguagesGroups({ state, set: setSettings }),
     {
       id: 'translation',
       heading: 'Translation',
       description:
-        'Pages in other languages are translated on this device, with models Zenium downloads the first time a language pair is used. Nothing leaves the device.',
+        'Pages in other languages are translated on this device, with models Zenium downloads the first time a language pair is used. Pages in your preferred languages are shown as they are. Nothing leaves the device.',
       rows: [
         {
           kind: 'switch',
@@ -3000,46 +3012,6 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
         }
       ]
     },
-    {
-      id: 'read',
-      heading: 'Languages you read',
-      description:
-        'Pages in these languages are shown as they are; the first one is the language other pages are translated into.',
-      rows: languageRows(
-        'languages-read',
-        preferred,
-        (code, index) => [
-          ...(index > 0
-            ? [
-                {
-                  kind: 'action',
-                  id: `languages-read:${code}:first`,
-                  label: 'Translate pages into this language',
-                  description: 'Puts it first among the languages you read.',
-                  button: 'Make first',
-                  onPress: () => set({ preferred: [code, ...preferred.filter((c) => c !== code)] })
-                } satisfies SettingsRow
-              ]
-            : []),
-          ...(preferred.length > 1
-            ? [
-                {
-                  kind: 'action',
-                  id: `languages-read:${code}:remove`,
-                  label: 'Remove',
-                  description: 'Pages in this language are offered for translation again.',
-                  button: 'Remove',
-                  onPress: () => set({ preferred: preferred.filter((c) => c !== code) })
-                } satisfies SettingsRow
-              ]
-            : [])
-        ],
-        (_code, index) => (index === 0 ? 'Pages are translated into this language' : undefined)
-      )
-    },
-    ...addGroup('read', 'Add a language you read', preferred, (code) =>
-      set({ preferred: [...preferred, code] })
-    ),
     {
       id: 'always',
       heading: 'Always translate',

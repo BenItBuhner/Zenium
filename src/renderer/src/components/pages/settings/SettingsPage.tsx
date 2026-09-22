@@ -22,6 +22,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { privateLockStore } from '@renderer/lib/privateLock'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useRemoteTabs } from '@renderer/lib/remoteTabs'
+import { useLocalFonts } from '@renderer/lib/localFonts'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
@@ -203,6 +204,11 @@ function PhoneSettings({
     current?.id === 'downloads',
     state.settings.downloads?.directory ?? null
   )
+  // The computer's font families while Look and Feel is the section shown, on a host whose
+  // engine takes the family rows (Customise fonts' pickers; a phone host lists the generic names).
+  const localFonts = useLocalFonts(
+    current?.id === 'look' && state.capabilities.genericFontFamilies
+  )
   // Likewise the other devices' open tabs, asked of the core once per `remoteTabsVersion`.
   useRemoteTabs(state.sync)
   const ctx: SectionContext = {
@@ -221,7 +227,8 @@ function PhoneSettings({
     screenLock,
     readAloudVoices,
     dictionary,
-    downloadDirectory
+    downloadDirectory,
+    localFonts
   }
   const searching = current === null && query.trim() !== ''
   // The section shown, or – while the landing's search is on – every section for its results.

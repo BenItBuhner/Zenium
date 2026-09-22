@@ -13,6 +13,7 @@ import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useDownloadDirectory } from '@renderer/lib/downloadDirectory'
 import { useImportSources } from '@renderer/lib/importSources'
 import { privateLockStore } from '@renderer/lib/privateLock'
+import { useLocalFonts } from '@renderer/lib/localFonts'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useRemoteTabs } from '@renderer/lib/remoteTabs'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
@@ -91,6 +92,9 @@ export function DesktopSettings({
     sectionId === 'downloads',
     state.settings.downloads?.directory ?? null
   )
+  // The computer's font families while Look and Feel is the open category, on a host whose
+  // engine takes the family rows (Customise fonts' menulists; a phone host lists the generic names).
+  const localFonts = useLocalFonts(sectionId === 'look' && state.capabilities.genericFontFamilies)
   // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
   // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
   syncSetupStore.use((s) => s.folder)
@@ -117,7 +121,8 @@ export function DesktopSettings({
     readAloudVoices,
     dictionary,
     importSources,
-    downloadDirectory
+    downloadDirectory,
+    localFonts
   }
 
   // The search: a query while it is not empty. A section change (the nav, back, forward)
