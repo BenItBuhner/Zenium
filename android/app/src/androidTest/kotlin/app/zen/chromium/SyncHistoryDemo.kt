@@ -623,11 +623,30 @@ class SyncHistoryDemo : SyncDemo("sync-demo-state.json", "services-sync-history-
      * finger's: nothing on the chrome is claimed here.
      */
     private fun postSiteNotification() {
-        val granted = awaitSettled({ pageJs("Notification.permission") == "\"granted\"" }, 8_000)
-        if (!granted) {
-            note("warm-up: the demo page's Notification.permission reads ${pageJs("Notification.permission")}, not granted; no site channel")
+        // The seeded decision (permissions.json) did not reach the page's polyfill in 35681463729
+        // (it read `denied`: the polyfill asks once, at its install, and the answer it kept was the
+        // one from before the tab stood in the core). The decision is set again through the core's
+        // own command – Settings › Site settings' path – whose change the core pushes to the open
+        // pages of the site, and the page asks once more itself.
+        val before = pageJs("Notification.permission")
+        val set = coreInvoke("permissions.set", """{"origin":"$DEMO_ORIGIN","permission":"notifications","decision":"allow"}""")
+        if (set.startsWith("ERR:")) {
+            note("warm-up: permissions.set for the demo page's notifications failed ($set); its Notification.permission reads $before; no site channel")
             return
         }
+        // With the decision stored, the page's own request settles without a prompt (`decide`
+        // answers from the store); a prompt sheet all the same is closed, and noted.
+        pageJs("(function(){try{Notification.requestPermission(function(s){window.__siteAsked=s})}catch(e){window.__siteAsked='threw '+e}return 'asked'})()")
+        val granted = awaitSettled({ pageJs("Notification.permission") == "\"granted\"" }, 8_000)
+        if (sheetCount() != 0) {
+            note("warm-up: the page's own notification request brought a prompt up although the decision was stored; closed")
+            closeSheets()
+        }
+        if (!granted) {
+            note("warm-up: the demo page's Notification.permission reads ${pageJs("Notification.permission")} (was $before at the seed; its own request answered ${pageJs("window.__siteAsked||''")}), not granted; no site channel")
+            return
+        }
+        note("warm-up: the demo page's Notification.permission reads granted (was $before at the seed)")
         pageJs(
             "(function(){try{var n=new Notification('Sync demo',{body:'A notification of the demo page, so its channel exists'});" +
                 "n.onshow=function(){window.__siteNote='shown'};n.onerror=function(){window.__siteNote='error'};" +

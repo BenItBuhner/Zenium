@@ -232,9 +232,36 @@ open class SyncDemo(
         if (activeCoreTab()?.optString("url") != SECTION_URL) coreInvoke("page.open", """{"id":"settings","section":"sync"}""")
         if (awaitPage(SECTION_URL, 12_000) == null) error("the tab did not come to the Sync section")
         awaitSurface(up = true, timeoutMs = 6_000)
-        if (rowBounds(FOLDER_LABEL, 10_000) == null) error("no $FOLDER_LABEL row on the section")
+        if (rowBounds(FOLDER_LABEL, 10_000) == null) {
+            // 35681463729: the section painted (the recording shows it, the chrome's document has
+            // the row), and the tree read none of its rows for ten seconds. The chrome's own row is
+            // the check then – the flow's fingers find their rows through it too ([tapRow]'s second
+            // finger) – and what the tree and the document did read goes to the notes, so a repeat
+            // says which side trailed.
+            val inChrome = chromePoint("[data-row=\"sync-folder\"]")
+            note("  the tree read no $FOLDER_LABEL row on the section; the chrome's document: ${describeChromeRow("sync-folder")}")
+            dumpNames("the Sync section, on the tree")
+            if (inChrome == null) error("no $FOLDER_LABEL row on the section: not on the tree, not in the chrome's document")
+        }
         SystemClock.sleep(800)
     }
+
+    /**
+     * What the chrome's document says of the row `rowId`: its rectangle (CSS px), the start of
+     * its text, and whichever ancestor keeps it from the tree – `inert`, `aria-hidden`, a hidden
+     * visibility or display, opacity 0, a content-visibility – with the count of sheets up.
+     */
+    protected fun describeChromeRow(rowId: String): String =
+        chromeJs(
+            "(function(){var r=document.querySelector('[data-row=' + ${JSONObject.quote(JSONObject.quote(rowId))} + ']');if(!r)return 'no such row';" +
+                "var out=[];var e=r;while(e&&e!==document.documentElement){var cs=getComputedStyle(e);var f=[];" +
+                "if(e.hasAttribute('inert'))f.push('inert');if(e.getAttribute('aria-hidden')==='true')f.push('aria-hidden');" +
+                "if(cs.visibility!=='visible')f.push('visibility='+cs.visibility);if(cs.display==='none')f.push('display=none');" +
+                "if(cs.opacity==='0')f.push('opacity=0');if(cs.contentVisibility&&cs.contentVisibility!=='visible')f.push('content-visibility='+cs.contentVisibility);" +
+                "if(f.length)out.push((e.className||e.tagName)+':'+f.join(','));e=e.parentElement}" +
+                "var b=r.getBoundingClientRect();return {rect:[Math.round(b.left),Math.round(b.top),Math.round(b.width),Math.round(b.height)]," +
+                "text:(r.textContent||'').replace(/\\s+/g,' ').slice(0,48),keeps:out,sheets:document.querySelectorAll('.zen-sheet').length}})()"
+        ).ifEmpty { "(the chrome did not answer)" }
 
     // --- 2. the folder ---------------------------------------------------------------------------
 
@@ -790,8 +817,21 @@ open class SyncDemo(
     protected fun rowBounds(text: String, timeoutMs: Long): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var reveals = 0
+        var misses = 0
         do {
-            val node = findNode { it == text || it.startsWith(text) }
+            var node = findNode { it == text || it.startsWith(text) }
+            if (node == null) {
+                // Nothing of that name on the active window's tree: after a few polls, the
+                // automation's cache of the tree is flushed (a node it kept from before the page
+                // changed answers for the row that replaced it: 35681463729 read the landing's
+                // tree for ten seconds over the Sync section painted on screen) and every window
+                // on screen is read, in case the focus sits with another.
+                if (++misses % 5 == 0) {
+                    flushTree()
+                    node = findInWindows(app.packageName) { it == text || it.startsWith(text) }
+                    if (node != null) Log.i(tag, "'$text' read off another window's tree (or the flushed cache), not the active window's")
+                }
+            }
             if (node != null) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
                 val band = pageBand()
@@ -890,13 +930,25 @@ open class SyncDemo(
 
     protected fun syncNowRowText(): String = rowText(SYNC_NOW_LABEL) ?: "(no Sync now row)"
 
+    /**
+     * Poll `settled` every 250 ms up to `timeoutMs`. Every second of misses the automation's
+     * cache of the tree is flushed (API 34), so a condition read off the tree is read afresh
+     * rather than off nodes the cache kept from before the page changed (see [rowBounds]).
+     */
     protected fun awaitSettled(settled: () -> Boolean, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var polls = 0
         while (SystemClock.uptimeMillis() < deadline) {
             if (settled()) return true
+            if (++polls % 4 == 0) flushTree()
             SystemClock.sleep(250)
         }
         return settled()
+    }
+
+    /** Flush the automation's cache of the accessibility tree (a no-op below API 34). */
+    protected fun flushTree() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) ui.clearCache()
     }
 
     protected fun awaitPage(url: String, timeoutMs: Long): JSONObject? {
