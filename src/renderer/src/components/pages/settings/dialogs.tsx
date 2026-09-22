@@ -475,7 +475,9 @@ function FieldDialog({
  * A prompt (§9.23) at §9.20's notice width: the question as the title block over its line, the
  * destructive action trailing (§9.11) and nothing else – 320, never the width of the dialog it
  * covers, so a Remove prompt over an item's 400 dialog reads as a prompt and not a band across
- * it (§9.5; the #324 lead check). Cancel, the first button, takes the focus as the dialog opens.
+ * it (§9.5; the #324 lead check). It passes no `initial`, so the focus lands on the first
+ * tabbable – Cancel – where §9.22 wants the container (`SiteDataPrompt` returns the root for
+ * its own prompts): the chassis owners' queued follow-up, not a rule of this prompt.
  */
 function ConfirmDialog({
   row,
