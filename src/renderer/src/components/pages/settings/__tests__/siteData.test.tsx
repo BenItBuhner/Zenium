@@ -289,8 +289,20 @@ describe('the Cookies and site data groups', () => {
     if (remove.kind !== 'action') throw new Error('not an action row')
     expect(remove.label).toBe('Remove from the list')
     expect(remove.button).toBe('Remove')
+    // The finger's form keeps #297's text ink: a list entry is a setting, not the user's data.
+    expect(remove.destructive).toBeUndefined()
     remove.onPress?.()
     expect(invoke).toHaveBeenCalledWith('siteData.remove', { pattern: '[*.]example.com' })
+  })
+
+  it('carry the same Remove as the row’s one inline action for a mouse – the danger ink, at once, no confirmation (§10.5, the #322 lead check)', () => {
+    const { ctx } = context(status({ allow: ['docs.example'] }))
+    const row = findRow(siteDataGroups(ctx), 'site-data-site:docs.example')
+    if (row?.kind !== 'item') throw new Error('not an item row')
+    expect(row.action).toMatchObject({ label: 'Remove', destructive: true })
+    row.action!.onPress()
+    expect(invoke).toHaveBeenCalledWith('siteData.remove', { pattern: 'docs.example' })
+    expect(invoke).toHaveBeenCalledTimes(1)
   })
 
   it('give each list an Add row whose sheet is the pattern form, titled for the list', () => {

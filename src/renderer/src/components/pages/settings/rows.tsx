@@ -288,9 +288,11 @@ function pressAction(row: ActionRow, ctx: RowContext, dismissSheet: SheetDismiss
 }
 
 /**
- * A model row in the desktop vocabulary. Info, item and custom rows are the phone's; a value row
- * trails a menulist, a switch row is a check row, a field row holds its field, an action with a
- * `button` trails it and any other action is the whole-row target with its leaving glyph.
+ * A model row in the desktop vocabulary. Info and custom rows are the phone's, and so is an item
+ * row unless it carries its one `action`, which then trails it as a button in place of a dialog;
+ * a value row trails a menulist, a switch row is a check row, a field row holds its field, an
+ * action with a `button` trails it and any other action is the whole-row target with its
+ * leaving glyph.
  */
 function DesktopRowView({
   row,
@@ -366,6 +368,27 @@ function DesktopRowView({
           <SliderControl row={row} />
         </ControlRow>
       )
+    case 'item':
+      // A row that exists to be acted on carries its one action as the trailing 32 button on a
+      // mouse and opens no dialog (§10.5); the button is named for the row it acts on, as the
+      // viewer's Clear is, since a list of them reads "Remove" many times over.
+      if (row.action) {
+        const action = row.action
+        return (
+          <ControlRow row={row} caption={caption} description={row.description}>
+            <V2Button
+              variant={action.destructive ? 'danger' : 'secondary'}
+              busy={action.busy}
+              disabled={row.disabled}
+              aria-label={`${action.label} ${row.label}`}
+              onClick={action.onPress}
+            >
+              {action.label}
+            </V2Button>
+          </ControlRow>
+        )
+      }
+      return <RowView row={row} ctx={ctx} caption={caption} />
     default:
       return <RowView row={row} ctx={ctx} caption={caption} />
   }

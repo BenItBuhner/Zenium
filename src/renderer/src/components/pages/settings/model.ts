@@ -218,6 +218,26 @@ export interface ItemRow extends RowBase {
   kind: 'item'
   leading?: ReactNode
   sheet: ItemSheet
+  /**
+   * The row exists to be acted on (a site exception, a saved item) and this is its one action:
+   * on a mouse it trails the row as the desktop's 32 secondary button – `destructive` for the
+   * danger ink – and runs at once, and the row opens no dialog, since a dialog opened to hold
+   * one action is a surface for nothing (§10.5, the #322 lead check); a confirmation is the
+   * bulk action's, never a row's. The phone's item sheet is the finger's form of the same row
+   * and holds the action as a row of its own, so `sheet` stays what it is.
+   */
+  action?: InlineAction
+}
+
+/** An item row's one action as the desktop's trailing button (`ItemRow.action`, §10.5). */
+export interface InlineAction {
+  /** The button's label ("Remove", "Clear"); its name for a reader is this and the row's label. */
+  label: string
+  /** The danger ink, where the action removes what the row stands for. */
+  destructive?: boolean
+  /** The action is running (§9.30): the button is busy, not disabled. */
+  busy?: boolean
+  onPress(): void
 }
 
 /**

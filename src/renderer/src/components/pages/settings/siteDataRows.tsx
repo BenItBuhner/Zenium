@@ -34,9 +34,11 @@ export const SITE_DATA_PAGE = 'site-data'
  * third-party state, `siteData.setDefault` writing `privacy.thirdPartyCookies`), then the
  * related sites that keep third-party cookies whatever the block says (`protectionRows.tsx`);
  * the three lists, each a group of item rows (a pattern in a 44 row, the clear-on-exit list's
- * with its timing under it, Remove in its sheet) with its §9.17 empty line and an Add row whose
- * sheet is the §9.12 form for the pattern; "Delete browsing data on exit" as one switch row per
- * type (the desktop's check rows); and "See all site data and permissions", which on the phone
+ * with its timing under it; Remove in its sheet on the phone and trailing the row as the
+ * desktop's 32 button – §10.5's list whose rows exist to be acted on) with its §9.17 empty line
+ * and an Add row whose sheet is the §9.12 form for the pattern; "Delete browsing data on exit"
+ * as one switch row per type (the desktop's check rows); and "See all site data and
+ * permissions", which on the phone
  * leaves for the section's drill-in page (`zen://settings/privacy/site-data`, `SiteDataPage`:
  * Chrome's All sites, the #322 ruling (a)) and on the two-pane layout opens the viewer dialog
  * (`SiteDataViewer`, §10.5). Every row reads `state.siteData` (the engine's `SiteDataStatus`)
@@ -178,9 +180,12 @@ function listGroups(list: SiteDataList, status: SiteDataStatus, windows: boolean
 }
 
 /**
- * A pattern on a list: the pattern alone in a 44 row (the clear-on-exit list's with its timing
- * under it), and Remove in its sheet – in the text ink, since a list entry is a setting and not
- * the user's data (#297).
+ * A pattern on a list: a row that exists to be acted on (§10.5). On the phone the pattern alone
+ * in a 44 row (the clear-on-exit list's with its timing under it) opening its sheet, whose one
+ * row is Remove with its consequence line – in the text ink, since a list entry is a setting and
+ * not the user's data (#297). On a mouse the same row trails Remove as its 32 button in the
+ * danger ink, no confirmation (that is the bulk action's), and opens no dialog (the #322 lead
+ * check: a dialog opened to hold one Remove is a surface for nothing).
  */
 function patternRow(
   list: SiteDataList,
@@ -188,13 +193,14 @@ function patternRow(
   heading: string,
   nextLaunch: boolean
 ): SettingsRow {
+  const onPress = (): void => void run('siteData.remove', { pattern })
   const remove: ActionRow = {
     kind: 'action',
     id: `site-data-site:${pattern}:remove`,
     label: SITE_DATA_TEXT.lists.remove,
     description: SITE_DATA_TEXT.lists.removeDescription,
     button: SITE_DATA_TEXT.lists.removeButton,
-    onPress: () => run('siteData.remove', { pattern })
+    onPress
   }
   return {
     kind: 'item',
@@ -202,6 +208,7 @@ function patternRow(
     label: pattern,
     description: siteDataPatternDescription(list, nextLaunch),
     keywords: [heading],
+    action: { label: SITE_DATA_TEXT.lists.removeButton, destructive: true, onPress },
     sheet: {
       title: pattern,
       description: heading,
