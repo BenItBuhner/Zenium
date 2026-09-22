@@ -242,6 +242,18 @@
       "estimate": 4.5
     },
     {
+      "id": "page-dialogs",
+      "class": "PageDialogsDemo",
+      "shard": "phone-a",
+      "mirrors": "android-page-dialogs-demo.yml:light",
+      "dir": "page-dialogs-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 5,
+      "note": "The workflow runs light and dark; the nightly runs light (the same API 34 pixel_6 image on every phone shard; phone-a had the room under its budget). Twelve scenes over two loopback servers inside the instrumentation (the site and an embedded frame's origin); the sheet is read from its own window in the accessibility tree."
+    },
+    {
       "id": "ext-runtime",
       "class": "ExtensionDemo",
       "shard": "phone-a",
@@ -799,18 +811,6 @@
       "script": ".github/scripts/android-sync-history-demo.sh",
       "timeout": 900,
       "estimate": 5.5
-    },
-    {
-      "id": "page-dialogs",
-      "class": "PageDialogsDemo",
-      "shard": "phone-d",
-      "mirrors": "android-page-dialogs-demo.yml:light",
-      "dir": "page-dialogs-demo",
-      "env": {
-        "DEMO_THEME": "light"
-      },
-      "estimate": 5,
-      "note": "The workflow runs light and dark; the nightly runs light. Twelve scenes over two loopback servers inside the instrumentation (the site and an embedded frame's origin); the sheet is read from its own window in the accessibility tree."
     },
     {
       "id": "ntp-morph",

@@ -549,7 +549,10 @@ describe('closing one card', () => {
     // The core lists the tab in `closingTabIds` from the close until its page's unload check
     // is through – a page that objects asking "Leave site?" (on Android as the host's own
     // sheet, which the chrome never sees) for as long as the user takes.
-    const asking = (state: UIState, tabId: string): UIState => ({ ...state, closingTabIds: [tabId] })
+    const asking = (state: UIState, tabId: string): UIState => ({
+      ...state,
+      closingTabIds: [tabId]
+    })
     show(three())
     const close = document.querySelector<HTMLElement>('[data-cell="b"] [aria-label^="Close "]')!
     act(() => close.click())
