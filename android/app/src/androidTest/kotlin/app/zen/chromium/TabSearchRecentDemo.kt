@@ -150,6 +150,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         expect("every card stands before the query (${before.size} regular, ${essentialCount()} essentials)", before.size == CARDS && essentialCount() == ESSENTIALS)
         expect("the Research group stands as a group card with both its tabs: ${groupCards()}", groupCards().toSet() == setOf(WWW, DAMPING))
         watchExits()
+        watchAnnouncements()
         traceFrames("search-filter-overview", JankBudget.Kind.SPRING) {
             keys("wiki")
             // The dropped cards leave in place (§11.4) while the survivors glide on the same frames.
@@ -171,6 +172,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     /** 4. A query nothing matches: "No tabs found" over the New Tab card. */
     private fun nothingFound() {
         finding("\n4. Nothing found: 'wikiz'")
+        watchAnnouncements()
         keys("z")
         expect("no card stands", awaitUntil(4_000) { cardBoxes().isEmpty() })
         expect("the group dissolved with its last match (no group card)", awaitDom("!document.querySelector('$GROUP')"))
@@ -196,6 +198,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     /** 6. "cern" narrows by address: World Wide Web's title says nothing of it. */
     private fun typingNarrowsByAddress() {
         finding("\n6. Typing narrows by address: 'cern' (info.cern.ch)")
+        watchAnnouncements()
         keys("cern")
         val after = awaitCards(setOf(WWW))
         expect("World Wide Web alone stays: ${after.keys}", after.keys == setOf(WWW))
@@ -719,19 +722,38 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         awaitUntil(timeoutMs) { jsString("(function(){return ($expression)?'yes':''})()") == "yes" }
 
     /**
-     * Whether the chrome's status region (`Announcer`, `role="status"`) reads `text` within
-     * `timeoutMs`: the count is announced once the typing has paused (500 ms), and the region
-     * is emptied seconds later, so it is read often.
+     * Start recording what the chrome's status region (`Announcer`, `role="status"`, one node
+     * for the whole chrome) is given, through an observer in the page: a count is announced once
+     * the typing has paused (500 ms) and the region is emptied 7 s later, and a trace's pull
+     * between the typing and the check can outlast that – a poll after it finds the region empty
+     * (the first retry did), though the words were said.
+     */
+    private fun watchAnnouncements() {
+        chromeJs(
+            "(function(){var r=document.querySelector('[data-announcer]');if(!r)return '';window.__zenSaid=[];" +
+                "if(window.__zenSaidWatch)window.__zenSaidWatch.disconnect();" +
+                "var note=function(){var t=r.textContent.trim();if(t&&window.__zenSaid[window.__zenSaid.length-1]!==t)window.__zenSaid.push(t)};" +
+                "var o=new MutationObserver(note);o.observe(r,{childList:true,subtree:true,characterData:true});" +
+                "window.__zenSaidWatch=o;note();return 'ok'})()"
+        )
+    }
+
+    /** What the status region has been given since [watchAnnouncements], in order. */
+    private fun announcements(): List<String> = jsList("(window.__zenSaid||[])")
+
+    /**
+     * Whether the status region reads `text` now, or was given it since [watchAnnouncements],
+     * within `timeoutMs`.
      */
     private fun awaitAnnouncement(text: String, timeoutMs: Long = 6_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var last = ""
         while (SystemClock.uptimeMillis() < deadline) {
             last = textOf("[data-announcer]")
-            if (last == text) return true
+            if (last == text || text in announcements()) return true
             SystemClock.sleep(100)
         }
-        finding("  (the status region read '$last', not '$text')")
+        finding("  (the status region read '$last', not '$text'; said so far: ${announcements()})")
         return false
     }
 
