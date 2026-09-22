@@ -76,12 +76,14 @@ import { ReadAloudService } from './readAloud'
 import { WebNotificationService } from './webNotifications'
 import { ScreenCaptureService } from './screenCapture'
 import { ShareService } from './share'
+import { TextFragments } from './textFragments'
 import { GeolocationService } from './geolocation'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
 import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
+import { ConnectivityService } from './connectivity'
 import { DefaultBrowserService } from './defaultBrowser'
 import { ImportService } from './import/service'
 import { BackgroundWork } from './background/work'
@@ -193,6 +195,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'menu.show',
   'menu.app',
   'tabsearch.open',
+  'overview.open',
   'bookmark.star',
   'bookmark.edit',
   'webapp.install',
@@ -269,6 +272,8 @@ export class Browser {
   readonly autofill: AutofillService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
+  /** The device's connectivity: the offline banner's state and the error pages that reload themselves. */
+  readonly connectivity: ConnectivityService
   /** Chrome's "Import bookmarks and settings": other browsers' profiles and picked files (ID-23). */
   readonly imports: ImportService
   /**
@@ -314,6 +319,8 @@ export class Browser {
   readonly screenCapture: ScreenCaptureService
   /** The chrome's share sheet (MW-21). */
   readonly shares: ShareService
+  /** Links to a highlight: the selection's `#:~:text=` directive, made by the page (SH-11). */
+  readonly textFragments: TextFragments
   /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
   readonly geolocation: GeolocationService
   readonly windows = new Map<string, ZenWindow>()
@@ -435,6 +442,7 @@ export class Browser {
     this.passwords = new PasswordService(this, platform.passwords)
     this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
+    this.connectivity = new ConnectivityService(this)
     this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
@@ -452,6 +460,7 @@ export class Browser {
     this.searchEngines = new SearchEngineService(this)
     this.screenCapture = new ScreenCaptureService(this)
     this.shares = new ShareService(this)
+    this.textFragments = new TextFragments(this)
     this.geolocation = new GeolocationService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
@@ -467,6 +476,7 @@ export class Browser {
       updates: this.updates.status(),
       passwords: this.passwords.status(),
       defaultBrowser: this.defaultBrowser.status(),
+      network: this.connectivity.status(),
       blockedPopups: this.popups.all(),
       permissionRules: this.permissions.rules(),
       permissionDefaults: this.permissions.defaults(CONTENT_SETTINGS.map((s) => s.id)),
@@ -1054,6 +1064,7 @@ export class Browser {
     this.passwords.start()
     this.autofill.start()
     this.defaultBrowser.start()
+    this.connectivity.start()
     this.translate.start()
     this.spellcheck.start()
     this.syncShortcuts()
@@ -2349,6 +2360,10 @@ export class Browser {
       this.shares.handleMessage(tabId, message.share)
       return
     }
+    if (message.type === 'textFragment') {
+      this.textFragments.handleMessage(tabId, message)
+      return
+    }
     if (message.type === 'geolocation') {
       this.geolocation.handleMessage(tabId, message.geolocation)
       return
@@ -2393,6 +2408,12 @@ export class Browser {
     }
     if (message.type === 'interstitial') {
       if (typeof message.action === 'string' && typeof message.url === 'string') {
+        // The crash page's Show tabs (ERR-15): the tab switcher, from the sad tab alone.
+        if (message.action === 'show-tabs') {
+          if (this.tabs.isSadTab(tab))
+            this.emit('overview.open', undefined, this.tabs.windowFor(tabId))
+          return
+        }
         // The certificate interstitial's tab answers first; the other warning pages are the
         // protection service's.
         if (!this.tabs.handleCertificateInterstitial(tabId, message.action, message.url))
@@ -2700,6 +2721,23 @@ export class Browser {
           if (active) this.shareTab(active.id, win)
         }
       },
+      // The preview card's and the long-screenshot editor's actions (SH-07, SH-08): the host's
+      // gallery pictures. A host without one never shows the card, so these have nothing to do.
+      'screenshot.share': async ({ uri }) => {
+        await this.platform.screenshots?.share(uri)
+      },
+      'screenshot.delete': ({ uri }) => this.platform.screenshots?.delete(uri) ?? false,
+      'screenshot.open': async ({ uri }) => {
+        await this.platform.screenshots?.open(uri)
+      },
+      'screenshot.captureLong': ({ tabId }) =>
+        this.platform.screenshots?.captureLong(tabId) ?? null,
+      'screenshot.saveLong': async ({ id, crop, share }, win) => {
+        const saved = (await this.platform.screenshots?.saveLong(id, crop, Boolean(share))) ?? null
+        if (!saved) this.toast('Could not save the screenshot', 'error', win)
+        return saved
+      },
+      'screenshot.discardLong': ({ id }) => this.platform.screenshots?.discardLong(id),
       'media.action': ({ tabId, action, seekTime, seekOffset }) =>
         this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
       'media.pictureInPicture': ({ tabId }) => this.mediaSession.enterPictureInPicture(tabId),

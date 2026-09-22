@@ -45,7 +45,7 @@ import type {
 import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
 import type { TabAlert } from './captureState'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
-import type { ShareFileInfo } from './share'
+import type { ShareFile, ShareFileInfo } from './share'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -2400,6 +2400,18 @@ export interface SharePayload {
   tabId?: string
   /** The page's favicon (a `data:` or `http(s)` URL) for the preview thumbnail. */
   favicon?: string
+  /**
+   * Files to share (a page's `navigator.share({ files })`, SH-14), as the host holds them by
+   * then (`ShareFile.uri`: its own copies behind its FileProvider). The sheet offers the files;
+   * `text` and `url` ride along as the message beside them.
+   */
+  files?: ShareFile[]
+  /**
+   * Hold the answer until the sheet has closed and say how it ended: `shared` once a target took
+   * the share, `aborted` when the sheet was dismissed – a page's `navigator.share` promise hangs
+   * on it. Without it the host answers as soon as the sheet is up (the browser's own shares).
+   */
+  awaitOutcome?: boolean
 }
 
 /**
@@ -2410,6 +2422,47 @@ export interface ShareAction {
   kind: 'copy' | 'screenshot' | 'print'
   url: string
   tabId: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots to the gallery (Android; SH-07, SH-08)
+// ---------------------------------------------------------------------------
+
+/**
+ * A screenshot the host has put in the device's gallery (`MediaStore.Images`, Pictures/Zenium):
+ * what the preview card shows and what its Share, Delete and the viewer address.
+ */
+export interface ScreenshotSaved {
+  /** The gallery's row (a `content:` URI). */
+  uri: string
+  /** A small picture of it for the card's thumbnail, a `data:` URL (JPEG). */
+  thumbnail: string
+  /** The picture's size in pixels. */
+  width: number
+  height: number
+  /** The file's size in bytes. */
+  bytes: number
+}
+
+/**
+ * A full-page capture held by the host for the long-screenshot editor (SH-08): the page from its
+ * top, cut at the capture's height limit (about ten screens), as a picture the editor can show
+ * (`preview`, a `data:` URL scaled down to a phone's width) with the full picture's size, and the
+ * viewport's height in it (the first screen, which the viewport screenshot already showed).
+ * `saveLong` crops the full-resolution picture the host kept under `id`.
+ */
+export interface LongCapture {
+  id: string
+  preview: string
+  width: number
+  height: number
+  viewportHeight: number
+}
+
+/** What the editor keeps of the long capture: rows from the top and the bottom, in picture pixels. */
+export interface LongCaptureCrop {
+  top: number
+  bottom: number
 }
 
 /**
@@ -3147,6 +3200,19 @@ export interface CrashRestoreOffer {
 /** What Zenium does with the previous session's pages after an unclean exit. */
 export type CrashRestoreMode = 'ask' | 'always' | 'never'
 
+/**
+ * The device's connectivity as the chrome shows it (`core/connectivity.ts`): the host's raw
+ * word, debounced, so a network switch never flashes the offline banner.
+ */
+export interface NetworkStatus {
+  /**
+   * False while the device has had no validated route to the internet for the debounce window:
+   * the phone chrome shows "No internet connection" (v2 §9.33) and the error pages that mean
+   * offline reload themselves once it turns true again.
+   */
+  online: boolean
+}
+
 // ---------------------------------------------------------------------------
 // The full UI state snapshot broadcast to the renderer
 // ---------------------------------------------------------------------------
@@ -3231,6 +3297,8 @@ export interface UIState {
   passwords: PasswordsStatus
   /** Default-browser role: whether Zenium holds it and which prompt (if any) is due. */
   defaultBrowser: DefaultBrowserStatus
+  /** The device's connectivity, debounced; hosts without a monitor are online for good. */
+  network: NetworkStatus
   /** Pop-ups the blocker refused, per tab (the URL bar shows an indicator). */
   blockedPopups: Record<string, BlockedPopup[]>
   /** Every remembered per-site permission answer (Settings lists and revokes them). */
@@ -3817,6 +3885,28 @@ export interface Commands {
   'share.respond': { args: { id: string; answer: ShareAnswer }; result: void }
   /** Open the share sheet for a tab's page (its title and address), or for `payload`. */
   'share.open': { args: { tabId?: string; payload?: SharePayload }; result: void }
+  // ---- Screenshots to the gallery (`platform.screenshots`; SH-07, SH-08) ---------------------
+  /** The preview card's Share: the system share sheet with the saved picture. */
+  'screenshot.share': { args: { uri: string }; result: void }
+  /** The preview card's Delete: the picture goes from the gallery. False when it could not. */
+  'screenshot.delete': { args: { uri: string }; result: boolean }
+  /** A tap on the card's thumbnail: the picture in the system's viewer. */
+  'screenshot.open': { args: { uri: string }; result: void }
+  /**
+   * The card's Capture more (Chrome's long screenshot): the whole page from the top, cut at
+   * about ten screens, held by the host for the editor. Null when the page could not be drawn.
+   */
+  'screenshot.captureLong': { args: { tabId: string }; result: LongCapture | null }
+  /**
+   * The editor's Save (or Share): the long capture cropped to `crop`, saved to the gallery – and
+   * with `share`, the system share sheet with it. Null when the capture is gone or the write failed.
+   */
+  'screenshot.saveLong': {
+    args: { id: string; crop: LongCaptureCrop; share?: boolean }
+    result: ScreenshotSaved | null
+  }
+  /** The editor closed without saving: the host lets the capture go. */
+  'screenshot.discardLong': { args: { id: string }; result: void }
 
   'split.create': { args: { tabIds: string[]; layout: SplitLayout }; result: void }
   'split.toggleLayout': { args: { layout: SplitLayout }; result: void }
@@ -4943,6 +5033,11 @@ export interface Events {
    */
   'tabsearch.open': void
   /**
+   * The crash page's Show tabs asked for the tab switcher (ERR-15: a page that crashed twice
+   * within the minute suggests closing other tabs): the phone chrome opens its overview.
+   */
+  'overview.open': void
+  /**
    * The app menu's "Now Playing…" row asked for the media hub (design language v2 §9.29: the
    * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's
    * popover from the "⋯" menu button the row's menu hung from (the toolbar button, were it up).
@@ -5006,6 +5101,11 @@ export interface Events {
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
   'qr.event': QrEvent
   toast: { message: string; kind?: 'info' | 'error' }
+  /**
+   * Take Screenshot put the visible page in the gallery (SH-07): the chrome shows the preview
+   * card in the toast's slot – the thumbnail, Share | Delete, Capture more – for `tabId`'s page.
+   */
+  'screenshot.saved': ScreenshotSaved & { tabId: string }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }
   'sidebar.toggle': void

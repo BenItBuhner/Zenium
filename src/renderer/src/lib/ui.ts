@@ -12,9 +12,12 @@ import type {
   DefaultBrowserRequestSource,
   ExtensionPromptRequest,
   ExternalProtocolRequest,
+  LongCapture,
+  LongCaptureCrop,
   MenuDescriptor,
   OverlayKind,
   Rect,
+  ScreenshotSaved,
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
@@ -95,6 +98,32 @@ export interface Toast {
   duration: number
   /** Set once the toast is on its way out: the card animates off and then forgets itself. */
   leaving?: boolean
+}
+
+/**
+ * The preview card Take Screenshot leaves in the toast's slot (SH-07): the picture the host put
+ * in the gallery, with the tab it is of (Capture more takes the whole page of that tab). It
+ * lives by the toast's rules – one live card in the slot, §9.33's clock with an action, a
+ * finger pauses it, a swipe or the close sends it off.
+ */
+export interface ScreenshotCard extends ScreenshotSaved {
+  id: number
+  tabId: string
+  /** The editor's crop: the card offers no Capture more (the page was captured whole already). */
+  long?: boolean
+  leaving?: boolean
+}
+
+/**
+ * The long-screenshot editor (SH-08): the sheet is up for `tabId`'s page with `capture`, the
+ * page in its frame with the two handles; `busy` while Save or Share writes the crop. The sheet
+ * mounts with the picture in hand (`openLongScreenshot` waits for the host's stitch first).
+ */
+export interface LongScreenshotEditor {
+  id: number
+  tabId: string
+  capture: LongCapture
+  busy: boolean
 }
 
 /** An extension popup the renderer is framing (the document itself is main's WebContentsView). */
@@ -235,6 +264,10 @@ export interface UiState {
   snapshotTabId: string | null
   /** At most one toast is live; a toast on its way out may still be alongside it. */
   toasts: Toast[]
+  /** The screenshot preview card in the toast's slot (one live, one maybe on its way out). */
+  screenshotCards: ScreenshotCard[]
+  /** The long-screenshot editor sheet is up. */
+  longScreenshot: LongScreenshotEditor | null
   /** Top message banners, newest first (it sits on top; the older ones are pushed down). */
   banners: Banner[]
   statusText: string
@@ -505,6 +538,8 @@ export const uiStore = createStore<UiState>(
     snapshot: null,
     snapshotTabId: null,
     toasts: [],
+    screenshotCards: [],
+    longScreenshot: null,
     banners: [],
     statusText: '',
     drag: null,
@@ -654,6 +689,9 @@ export function pushToast(
       return
     }
     if (live) dismissToast(live.id)
+    // The slot is one card's: a screenshot's preview gives way to the toast as a toast would.
+    for (const card of uiStore.get().screenshotCards)
+      if (!card.leaving) dismissScreenshotCard(card.id)
   }
   const id = ++messageSeq
   const toast: Toast = { id, message, kind, duration, action: opts.action, icon: opts.icon }
@@ -695,6 +733,155 @@ export function pickToastAction(id: number): void {
   if (!toast || toast.leaving) return
   dismissToast(id)
   toast.action?.onPick()
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots: the preview card in the toast's slot (SH-07), the long-screenshot editor (SH-08)
+// ---------------------------------------------------------------------------
+
+/**
+ * Take Screenshot saved a picture to the gallery: its preview card takes the toast's slot (one
+ * live card there – the toast up gives way, as it would to a newer toast) on the clock a toast
+ * with an action keeps (§9.33's 5 s), paused under a finger. `long` for the editor's crop, whose
+ * card offers no Capture more of its own.
+ */
+export function showScreenshotCard(
+  saved: ScreenshotSaved & { tabId: string; long?: boolean }
+): void {
+  for (const toast of uiStore.get().toasts) if (!toast.leaving) dismissToast(toast.id)
+  for (const card of uiStore.get().screenshotCards)
+    if (!card.leaving) dismissScreenshotCard(card.id)
+  const id = ++messageSeq
+  const card: ScreenshotCard = { ...saved, id }
+  uiStore.set((s) => ({ screenshotCards: [...s.screenshotCards, card] }))
+  armClock(id, TOAST_ACTION_DURATION, () => dismissScreenshotCard(id))
+}
+
+/** Send the card on its way (it animates off and forgets itself); without the cards it just goes. */
+export function dismissScreenshotCard(id: number): void {
+  disarmClock(id)
+  const card = uiStore.get().screenshotCards.find((c) => c.id === id)
+  if (!card || card.leaving) return
+  if (!onCards()) {
+    forgetScreenshotCard(id)
+    return
+  }
+  uiStore.set((s) => ({
+    screenshotCards: s.screenshotCards.map((c) => (c.id === id ? { ...c, leaving: true } : c))
+  }))
+  setTimeout(() => forgetScreenshotCard(id), EXIT_SWEEP_MS)
+}
+
+export function forgetScreenshotCard(id: number): void {
+  disarmClock(id)
+  if (!uiStore.get().screenshotCards.some((c) => c.id === id)) return
+  uiStore.set((s) => ({ screenshotCards: s.screenshotCards.filter((c) => c.id !== id) }))
+}
+
+export function holdScreenshotCard(id: number, held: boolean): void {
+  holdMessage(id, held, () => dismissScreenshotCard(id))
+}
+
+/**
+ * The card's actions. Share puts the picture on the OS's sheet and Delete takes it out of the
+ * gallery; both send the card off. The thumbnail opens the picture in the system's viewer and
+ * leaves the card up (the user comes back to it). Capture more opens the editor on the tab's
+ * whole page and sends the card off – the editor's own card follows its crop.
+ */
+export function pickScreenshotAction(
+  id: number,
+  action: 'share' | 'delete' | 'open' | 'more'
+): void {
+  const card = uiStore.get().screenshotCards.find((c) => c.id === id)
+  if (!card || card.leaving) return
+  switch (action) {
+    case 'open':
+      run('screenshot.open', { uri: card.uri })
+      return
+    case 'share':
+      dismissScreenshotCard(id)
+      run('screenshot.share', { uri: card.uri })
+      return
+    case 'delete':
+      dismissScreenshotCard(id)
+      void cmd('screenshot.delete', { uri: card.uri }).then((gone) => {
+        if (gone) pushToast('Screenshot deleted')
+      })
+      return
+    case 'more':
+      dismissScreenshotCard(id)
+      openLongScreenshot(card.tabId)
+  }
+}
+
+let longScreenshotSeq = 0
+/** The capture on its way for the editor, if one is (`openLongScreenshot`); the newest wins. */
+let longScreenshotPending: number | null = null
+
+/**
+ * Open the long-screenshot editor on `tabId`'s page (SH-08): the host stitches the page first
+ * (Chrome's ~10 screens at most) and the sheet comes up with the picture. The order is the
+ * chassis's: the host copies the page from the window, and on Android the chrome lies under the
+ * pages, so a sheet over the page has the page hidden – a sheet up while the page was being
+ * stitched would have the host copy the sheet, or nothing (`PageCapture.kt`). Until the picture
+ * is in, the page is what shows (it scrolls through its screens as the host copies them); a page
+ * that could not be captured says so in a toast and no editor opens.
+ */
+export function openLongScreenshot(tabId: string): void {
+  const id = ++longScreenshotSeq
+  longScreenshotPending = id
+  void cmd('screenshot.captureLong', { tabId })
+    .catch(() => null)
+    .then((capture) => {
+      if (longScreenshotPending !== id) {
+        // A newer request took over while the page was being stitched: the host's copy is not wanted.
+        if (capture) run('screenshot.discardLong', { id: capture.id })
+        return
+      }
+      longScreenshotPending = null
+      if (!capture) {
+        pushToast('Could not capture the page', 'error')
+        return
+      }
+      const editor = uiStore.get().longScreenshot
+      if (editor) run('screenshot.discardLong', { id: editor.capture.id })
+      uiStore.set({ longScreenshot: { id, tabId, capture, busy: false } })
+    })
+}
+
+/** Whether a long capture is on its way to the editor (tests and the preview host). */
+export function longScreenshotCapturing(): boolean {
+  return longScreenshotPending !== null
+}
+
+/** The editor went without a save: the host drops the page it holds. A capture still on its way is not wanted either. */
+export function closeLongScreenshot(): void {
+  longScreenshotPending = null
+  const editor = uiStore.get().longScreenshot
+  if (!editor) return
+  run('screenshot.discardLong', { id: editor.capture.id })
+  uiStore.set({ longScreenshot: null })
+}
+
+/**
+ * Save the crop to the gallery (and put it on the OS's sheet, for Share): the editor goes and
+ * the picture's card follows. A failed write leaves the editor up (the core toasts it).
+ */
+export async function saveLongScreenshot(crop: LongCaptureCrop, share: boolean): Promise<void> {
+  const editor = uiStore.get().longScreenshot
+  if (!editor || editor.busy) return
+  uiStore.set({ longScreenshot: { ...editor, busy: true } })
+  const saved = await cmd('screenshot.saveLong', { id: editor.capture.id, crop, share }).catch(
+    () => null
+  )
+  const current = uiStore.get().longScreenshot
+  if (!current || current.id !== editor.id) return
+  if (!saved) {
+    uiStore.set({ longScreenshot: { ...current, busy: false } })
+    return
+  }
+  uiStore.set({ longScreenshot: null })
+  showScreenshotCard({ ...saved, tabId: editor.tabId, long: true })
 }
 
 /** Show a banner under the toolbar; returns its id for `dismissBanner`. */
@@ -892,6 +1079,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.externalProtocol &&
     !ui.voice &&
     !ui.qrScan &&
+    !ui.longScreenshot &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
@@ -952,6 +1140,7 @@ export function invalidateSnapshot(): void {
     !ui.externalProtocol &&
     !ui.voice &&
     !ui.qrScan &&
+    !ui.longScreenshot &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
@@ -1640,6 +1829,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.externalProtocol !== null ||
     ui.voice !== null ||
     ui.qrScan !== null ||
+    ui.longScreenshot !== null ||
     ui.extensionPrompts.length > 0 ||
     ui.extensionPopup !== null ||
     ui.floatingChrome > 0 ||

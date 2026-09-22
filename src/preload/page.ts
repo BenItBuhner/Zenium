@@ -23,6 +23,7 @@ import {
 } from '../shared/screenCapture'
 import { installCaptureReporter, installCaptureShim } from '../shared/captureState'
 import { installShareBridge, installShareShim } from '../shared/share'
+import { installTextFragmentScript } from '../shared/textFragmentScript'
 import { installGeolocationBridge, installGeolocationShim } from '../shared/geolocation'
 import { NOTIFICATION_PERMISSION_CHANNEL } from '../shared/notifications'
 import { installNotificationBridge, installNotificationShim } from './notifications'
@@ -217,6 +218,13 @@ if (process.isMainFrame) {
       send: (call) => ipcRenderer.send('zen:page', { type: 'share', share: call }),
       onResult: (listener) => onHost('share', (message) => listener(message.id, message.result)),
       installShim: (events) => inMainWorld(installShareShim, [events])
+    })
+    // Links to a highlight (SH-11): the selection's `text=` directive for Copy Link to Highlight
+    // and the selection's share. The isolated world sees the document's selection; the engine
+    // follows text fragments itself, so the script's fallback stays idle here.
+    installTextFragmentScript({
+      send: (message) => ipcRenderer.send('zen:page', message),
+      onCommand: (listener) => onHost('textFragment', listener)
     })
     // Geolocation (MW-04): Linux has no location provider in the engine, so every call is
     // answered by Zenium's network provider; Windows and macOS ask the OS first and fall back.

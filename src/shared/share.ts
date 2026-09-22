@@ -7,15 +7,25 @@
  * resolves) or `aborted` (it rejects with `AbortError`, as when Chrome's sheet is dismissed).
  *
  * Files travel as base64 in the message; Chrome's own limits apply (10 files, 50 MB in all).
+ *
+ * On Android (SH-14) the shim and the bridge share the page's one world, the host spills the
+ * files to its cache on the way through (`ShareFile.uri`, a `content:` address behind its
+ * FileProvider) and the OS's own sheet takes the call: the chosen target resolves the promise,
+ * a dismissed sheet rejects it.
  */
 
-/** A file the page shared, with its bytes. */
+/**
+ * A file the page shared: its bytes as base64 (`data`), or – once a host has written them to a
+ * file of its own on the way to its share sheet – the file's address (`uri`). One of the two.
+ */
 export interface ShareFile {
   name: string
   type: string
   size: number
   /** The bytes, base64. */
-  data: string
+  data?: string
+  /** The host's copy of the file (a `content:` URI on Android); the bytes are no longer carried. */
+  uri?: string
 }
 
 /** What the sheet shows about a shared file (no bytes). */
@@ -62,12 +72,11 @@ export interface ShareBridgeTransport {
 export function isShareFile(value: unknown): value is ShareFile {
   if (!value || typeof value !== 'object') return false
   const f = value as Record<string, unknown>
-  return (
-    typeof f.name === 'string' &&
-    typeof f.type === 'string' &&
-    typeof f.size === 'number' &&
-    typeof f.data === 'string'
-  )
+  if (typeof f.name !== 'string' || typeof f.type !== 'string' || typeof f.size !== 'number')
+    return false
+  const data = typeof f.data === 'string'
+  const uri = typeof f.uri === 'string' && f.uri.length > 0
+  return data !== uri
 }
 
 /** Whether a value has the shape of a share call within Chrome's limits (the page is not trusted). */

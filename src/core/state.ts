@@ -10,6 +10,7 @@ import type {
   ClosedEntry,
   ImportProgress,
   NavigationSnapshot,
+  NetworkStatus,
   Container,
   CrashRestoreOffer,
   DefaultBrowserStatus,
@@ -241,6 +242,7 @@ export interface StateExtras {
   updates: UpdateStatus
   passwords: PasswordsStatus
   defaultBrowser: DefaultBrowserStatus
+  network: NetworkStatus
   blockedPopups: Record<string, BlockedPopup[]>
   permissionRules: PermissionRule[]
   permissionDefaults: Record<string, ContentDefault>
@@ -391,6 +393,7 @@ export class BrowserState {
     }),
     passwords: emptyPasswordsStatus(),
     defaultBrowser: { isDefault: null, prompt: null },
+    network: { online: true },
     blockedPopups: {},
     permissionRules: [],
     permissionDefaults: {},
