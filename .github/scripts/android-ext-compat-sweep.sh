@@ -206,10 +206,10 @@ adb shell run-as "$app_id" touch files/ext-compat-sweep/recording
 seen=0
 while kill -0 "$driver_pid" 2> /dev/null; do
   sleep 30
-  rows=$(grep -c 'CompatSweep: ROW ' "$out/logcat.txt" 2> /dev/null || true)
+  rows=$(grep -cE 'I/CompatSweep\( *[0-9]+\): ROW ' "$out/logcat.txt" 2> /dev/null || true)
   rows=${rows:-0}
   if [ "$rows" -gt "$seen" ]; then
-    grep 'CompatSweep: ROW ' "$out/logcat.txt" | tail -n $((rows - seen)) | sed 's/^.*CompatSweep: /  /'
+    grep -E 'I/CompatSweep\( *[0-9]+\): ROW ' "$out/logcat.txt" | tail -n $((rows - seen)) | sed -E 's/^.*CompatSweep\( *[0-9]+\): /  /'
     seen=$rows
     pull_new
   fi
