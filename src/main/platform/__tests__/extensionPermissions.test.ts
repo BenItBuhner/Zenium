@@ -28,6 +28,8 @@ function world(
   saved: Map<string, PermissionSet>
   prompts: Array<{ id: string; warnings: string[] }>
   dispatched: Array<{ event: string; args: unknown[] }>
+  /** What every context of the extension was sent (`__zen.grants`), in order. */
+  pushed: Array<{ context: string; event: string; args: unknown[] }>
   ctx: (ext: LoadedExtension) => ApiContext
 } {
   const saved = new Map<string, PermissionSet>()
@@ -40,8 +42,18 @@ function world(
   }
   const prompts: Array<{ id: string; warnings: string[] }> = []
   const dispatched: Array<{ event: string; args: unknown[] }> = []
+  const pushed: Array<{ context: string; event: string; args: unknown[] }> = []
+  // Two contexts of the extension: its popup and its worker.
+  const registry = {
+    framesOf: () => [{ key: 'popup' }],
+    workersOf: () => [{ key: 'worker' }],
+    sendTo: (context: { key: string }, namespace: string, event: string, args: unknown[]) => {
+      pushed.push({ context: context.key, event: `${namespace}.${event}`, args })
+    }
+  }
   const host = {
     store,
+    registry,
     confirmPermissions: async (id: string, warnings: string[]) => {
       prompts.push({ id, warnings })
       return answer
@@ -53,7 +65,7 @@ function world(
   const api = new PermissionsApi(host)
   const ctx = (ext: LoadedExtension): ApiContext =>
     ({ extensionId: ext.id, extension: ext }) as unknown as ApiContext
-  return { api, saved, prompts, dispatched, ctx }
+  return { api, saved, prompts, dispatched, pushed, ctx }
 }
 
 const stylusLike: ExtensionManifest = {
@@ -134,6 +146,33 @@ describe('permissions.request', () => {
     expect(w.dispatched).toEqual([
       { event: 'onAdded', args: [{ permissions: ['tabGroups'], origins: [] }] }
     ])
+    // Every context learns the whole granted set before the event, so `chrome.tabGroups` is
+    // defined in each (listeners on `onAdded` or not).
+    const grants = { permissions: ['tabs', 'storage', 'contextMenus', 'tabGroups'] }
+    expect(w.pushed).toEqual([
+      { context: 'popup', event: '__zen.grants', args: [grants] },
+      { context: 'worker', event: '__zen.grants', args: [grants] }
+    ])
+  })
+
+  it('tells every context the set a removal leaves, then fires onRemoved', async () => {
+    const w = world()
+    const ext = loaded(oneTabLike, 'onetab')
+    w.api.load(ext)
+    await w.api.handlers.request(w.ctx(ext), { permissions: ['tabGroups'] })
+    w.pushed.length = 0
+    expect(w.api.handlers.remove(w.ctx(ext), { permissions: ['tabGroups'] })).toBe(true)
+    expect(w.pushed.map((p) => p.args[0])).toEqual([
+      { permissions: ['tabs', 'storage', 'contextMenus'] },
+      { permissions: ['tabs', 'storage', 'contextMenus'] }
+    ])
+    expect(w.dispatched.at(-1)).toEqual({
+      event: 'onRemoved',
+      args: [{ permissions: ['tabGroups'], origins: [] }]
+    })
+    // Nothing moves, nothing is pushed.
+    expect(w.api.handlers.remove(w.ctx(ext), { permissions: ['tabGroups'] })).toBe(true)
+    expect(w.pushed).toHaveLength(2)
   })
 
   it('lists a new host the way the install prompt would', async () => {

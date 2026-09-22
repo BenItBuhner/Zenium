@@ -309,7 +309,7 @@ describe('installExtensionApi', () => {
     g.chrome.runtime.getManifest = () => manifest
     installExtensionApi(host, API_SPEC)
     expect(g.chrome.bookmarks.getTree).toBeTypeOf('function')
-    // Optional and not granted yet: the namespace is there for the grant to make useful.
+    // Without the host's view of the grants, declaring counts: the optional namespace is there.
     expect(g.chrome.tabGroups.query).toBeTypeOf('function')
     expect(g.chrome.tabs.group).toBeTypeOf('function')
     expect(g.chrome.identity.getRedirectURL()).toBe(
@@ -326,6 +326,89 @@ describe('installExtensionApi', () => {
     ]) {
       expect(g.chrome[hidden]).toBeUndefined()
     }
+  })
+
+  it('leaves an optional namespace undefined until its permission is granted, as Chrome does', async () => {
+    // Checker Plus for Gmail: `webRequest` optional, `if (chrome.webRequest) addListener(...)` at
+    // start-up. Chrome has no `chrome.webRequest` before the grant; a namespace that answered
+    // threw "The 'webRequest' permission is required." into the worker instead.
+    const manifest = {
+      manifest_version: 3,
+      name: 'Probe',
+      version: '1.0',
+      permissions: ['bookmarks', 'storage'],
+      optional_permissions: ['webRequest', 'tabGroups', 'userScripts']
+    }
+    g.chrome.runtime.getManifest = () => manifest
+    installExtensionApi(host, API_SPEC, {
+      granted: ['bookmarks', 'storage'],
+      toggles: { userScripts: true }
+    })
+    expect(g.chrome.bookmarks.getTree).toBeTypeOf('function')
+    expect(g.chrome.webRequest).toBeUndefined()
+    expect(g.chrome.tabGroups).toBeUndefined()
+    expect(g.chrome.userScripts).toBeUndefined()
+    expect(g.chrome.runtime.onUserScriptMessage).toBeUndefined()
+    expect(g.browser.webRequest).toBeUndefined()
+
+    // A grant made here: the namespace is defined before the caller hears the answer.
+    host.respond = (namespace, method) =>
+      namespace === 'permissions' && method === 'request'
+        ? { ok: true, value: true }
+        : { ok: true, value: undefined }
+    let seenInCallback: unknown = 'unread'
+    g.chrome.permissions.request({ permissions: ['webRequest'] }, (granted: boolean) => {
+      seenInCallback = granted && typeof g.chrome.webRequest?.onCompleted?.addListener
+    })
+    await flush()
+    expect(seenInCallback).toBe('function')
+    expect(host.calls.at(-1)).toEqual({
+      namespace: 'permissions',
+      method: 'request',
+      args: [{ permissions: ['webRequest'] }]
+    })
+    expect(g.chrome.webRequest.MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES).toBe(20)
+    expect(g.browser.webRequest).toBe(g.chrome.webRequest)
+    // The promise form, for a permission whose namespace is toggled: it takes the toggle's side.
+    await expect(g.chrome.permissions.request({ permissions: ['userScripts'] })).resolves.toBe(true)
+    expect(g.chrome.userScripts.register).toBeTypeOf('function')
+    expect(g.chrome.runtime.onUserScriptMessage.addListener).toBeTypeOf('function')
+
+    // A refusal defines nothing.
+    host.respond = () => ({ ok: true, value: false })
+    await expect(g.chrome.permissions.request({ permissions: ['tabGroups'] })).resolves.toBe(false)
+    expect(g.chrome.tabGroups).toBeUndefined()
+
+    // The host's word on the whole set (a grant or removal made in another context) is followed
+    // both ways: what it adds is defined, what it drops is deleted.
+    host.push('__zen', 'grants', {
+      permissions: ['bookmarks', 'storage', 'tabGroups', 'userScripts']
+    })
+    expect(g.chrome.tabGroups.query).toBeTypeOf('function')
+    expect(g.chrome.webRequest).toBeUndefined()
+    host.respond = () => ({ ok: true, value: true })
+    await expect(g.chrome.permissions.remove({ permissions: ['userScripts'] })).resolves.toBe(true)
+    expect(g.chrome.userScripts).toBeUndefined()
+    expect(g.chrome.runtime.onUserScriptMessage).toBeUndefined()
+    // A required permission's namespace never goes, and `tabs.group` is on `tabs` regardless.
+    expect(g.chrome.bookmarks.getTree).toBeTypeOf('function')
+    expect(g.chrome.tabs.group).toBeTypeOf('function')
+  })
+
+  it('patches a permission-gated namespace the engine made, whatever the grants say', () => {
+    const manifest = {
+      manifest_version: 3,
+      name: 'Probe',
+      version: '1.0',
+      permissions: ['webRequest'],
+      optional_permissions: []
+    }
+    g.chrome.runtime.getManifest = () => manifest
+    g.chrome.webRequest = { onCompleted: { addListener: vi.fn(), removeListener: vi.fn() } }
+    installExtensionApi(host, API_SPEC, { granted: [] })
+    expect(g.chrome.webRequest.onBeforeRequest.addListener).toBeTypeOf('function')
+    host.push('__zen', 'grants', { permissions: [] })
+    expect(g.chrome.webRequest.onBeforeRequest.addListener).toBeTypeOf('function')
   })
 
   it('shows gcm as the shape of a profile with GCM off: registrations fail with GCM_DISABLED, the events never fire', async () => {

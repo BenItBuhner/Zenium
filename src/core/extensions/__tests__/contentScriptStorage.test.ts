@@ -237,6 +237,40 @@ describe('installContentScriptStorage', () => {
     })
   })
 
+  it("gives the world Chrome's chrome.extension, storage permission or not", () => {
+    // An MV3 extension: `inIncognitoContext` alone, as in Chrome's content scripts.
+    native.chrome.runtime.getManifest = () => ({ manifest_version: 3 })
+    installContentScriptStorage(root)
+    expect(native.chrome.extension).toEqual({ inIncognitoContext: false })
+    expect(Object.getOwnPropertyDescriptor(native.chrome, 'extension')?.enumerable).toBe(true)
+    // Without the `storage` permission the storage layer stays out, `chrome.extension` still comes.
+    const bare: Any = { chrome: { runtime: { getManifest: () => ({ manifest_version: 3 }) } } }
+    expect(installContentScriptStorage(bare)).toEqual({ installed: false, reason: 'no-storage' })
+    expect(bare.chrome.extension).toEqual({ inIncognitoContext: false })
+  })
+
+  it('adds getURL to chrome.extension for an MV2 extension, from runtime.getURL', () => {
+    native.chrome.runtime.getManifest = () => ({ manifest_version: 2 })
+    native.chrome.runtime.getURL = (path: string) => `chrome-extension://${'a'.repeat(32)}/${path}`
+    installContentScriptStorage(root)
+    expect(native.chrome.extension.inIncognitoContext).toBe(false)
+    expect(native.chrome.extension.getURL('x.png')).toBe(
+      `chrome-extension://${'a'.repeat(32)}/x.png`
+    )
+  })
+
+  it('leaves a chrome.extension the engine already has alone and mirrors it onto browser', () => {
+    const own = { inIncognitoContext: true }
+    native.chrome.extension = own
+    installContentScriptStorage(root)
+    expect(native.chrome.extension).toBe(own)
+    const browser: Any = { storage: { local: native.chrome.storage.local }, runtime: {} }
+    const chrome: Any = { runtime: native.chrome.runtime, storage: fakeNative().chrome.storage }
+    installContentScriptStorage({ chrome, browser })
+    expect(browser.extension).toBe(chrome.extension)
+    expect(browser.extension).toEqual({ inIncognitoContext: false })
+  })
+
   it('reads sync and managed from the reserved keys of local', async () => {
     native.items[`${SYNC_KEY_PREFIX}theme`] = 'dark'
     native.items[`${SYNC_KEY_PREFIX}size`] = 3
