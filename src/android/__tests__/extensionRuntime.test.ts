@@ -925,6 +925,9 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       }
     ])
     expect(added.error).toBeUndefined()
+    // The answer came after the blocking index was flushed (a host without `blocking.stats`
+    // answers at the flush).
+    expect(h.blockingFlushes.count).toBe(1)
     await h.runtime.dnr.whenSynced(ID)
     // The session set is in the engine, and the core's mirror of it takes the same decision the
     // Kotlin engine takes on the phone: the headers rewritten, the rule named.
@@ -981,6 +984,83 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
         tabId: chromeTab,
         type: 'main_frame'
       }
+    })
+  })
+
+  it("a rule update answers once the phone's engine applies it: the index flushed, then Kotlin's snapshot rebuilt (User-Agent Switcher reloads the tab on the answer)", async () => {
+    const h = harness()
+    // The phone's engine reports its snapshot's build count (`blocking.stats`).
+    h.kt.blockingBuilds = 5
+    await h.runtime.attach(
+      record(
+        h,
+        {},
+        manifest({ permissions: ['declarativeNetRequest'], host_permissions: ['<all_urls>'] })
+      )
+    )
+    await h.runtime.dnr.whenSynced(ID)
+    backgroundUp(h, 'bg1')
+    const id = nextCallId()
+    const reply = (): Record<string, unknown> | undefined =>
+      h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)
+    const poll = (): boolean => h.timers.some((t) => !t.cleared && t.ms === 50)
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'declarativeNetRequest',
+      method: 'updateSessionRules',
+      args: [
+        {
+          addRules: [
+            {
+              id: 1,
+              priority: 1,
+              action: {
+                type: 'modifyHeaders',
+                requestHeaders: [{ header: 'User-Agent', operation: 'set', value: 'Zenium/1' }]
+              },
+              condition: { resourceTypes: ['main_frame'] }
+            }
+          ]
+        }
+      ]
+    })
+    // The set reached the core engine and the index was written out now (not after its
+    // debounce), but the snapshot `shouldInterceptRequest` decides from is still the old one:
+    // the answer is held and the engine's build count polled.
+    await until(poll)
+    expect(h.engine.summary(`ext:${ID}:_session`)).toMatchObject({ enabled: true, ruleCount: 1 })
+    expect(h.blockingFlushes.count).toBe(1)
+    expect(reply()).toBeUndefined()
+    // The snapshot the old count stands for is still what the phone decides from: not yet.
+    h.tick(50)
+    await until(poll)
+    expect(reply()).toBeUndefined()
+    // Kotlin rebuilt (`Blocking.scheduleRebuild` landed): the next poll sees the count move and
+    // the update answers, so the reload the extension asks for meets its rule.
+    h.kt.blockingBuilds = 6
+    h.tick(50)
+    await until(() => reply() !== undefined)
+    expect(reply()).toMatchObject({ t: 'reply', id, ok: true })
+    expect(h.kt.calledWith('blocking.stats')).toHaveLength(4)
+    // An update that changes no rule leaves the index alone and the count where it is: the
+    // answer comes at the bound rather than never.
+    const idle = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id: idle,
+      ns: 'declarativeNetRequest',
+      method: 'updateSessionRules',
+      args: [{ removeRuleIds: [999] }]
+    })
+    await until(poll)
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === idle)).toBeUndefined()
+    h.tick(2_000)
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === idle))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === idle)).toMatchObject({
+      t: 'reply',
+      id: idle,
+      ok: true
     })
   })
 

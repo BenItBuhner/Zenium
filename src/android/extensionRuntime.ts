@@ -383,6 +383,12 @@ const STORAGE_AREAS: readonly StorageArea[] = ['local', 'sync', 'session', 'mana
 const NOT_IMPLEMENTED = 'is not implemented on Zenium for Android'
 /** How long `offscreen.createDocument` waits for its page's hello (a first load on a cold WebView takes a few seconds). */
 const OFFSCREEN_LOAD_MS = 20_000
+/**
+ * How long a rule update's answer waits for Kotlin's engine snapshot to follow the flushed index
+ * (`applyRules`): the rebuild is scheduled 300 ms after the index changes and takes milliseconds.
+ */
+const RULES_APPLIED_WAIT_MS = 2_000
+const RULES_APPLIED_POLL_MS = 50
 const CONTEXTS: readonly EngineContextKind[] = [
   'content',
   'userScript',
@@ -1105,6 +1111,43 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   warn(message: string): void {
     console.warn(`[zen] ${message}`)
+  }
+
+  /**
+   * A rule update answers once the phone's request engine applies it (`DnrHost.applyRules`). The
+   * sink puts the sets in the core engine at once, but `shouldInterceptRequest` decides from
+   * Kotlin's snapshot, which follows the blocking store's `index.json` on disk with a 300 ms
+   * debounce (`Blocking.scheduleRebuild`): a reload the extension asks for on the answer, as
+   * User-Agent Switcher does, otherwise beats its own rule to the wire. So the store is flushed
+   * (the index written now, not after its own debounce) and the answer waits for the engine's
+   * build count (`blocking.stats`) to move past the one read before the update, within a bound;
+   * an update that changed nothing leaves the index alone and the bound is the wait. A host
+   * without the call, or a failing one, answers at the flush.
+   */
+  async applyRules(update: () => Promise<void>): Promise<void> {
+    const before = await this.engineBuilds()
+    await update()
+    await this.browser.blocking.store.whenSettled()
+    if (before === null) return
+    const deadline = this.now() + RULES_APPLIED_WAIT_MS
+    while (this.now() < deadline) {
+      const builds = await this.engineBuilds()
+      if (builds === null || builds > before) return
+      await new Promise<void>((resolve) => this.timers.setTimeout(resolve, RULES_APPLIED_POLL_MS))
+    }
+  }
+
+  /** The engine's snapshot build count (`Blocking.stats`), or null where the host has none. */
+  private async engineBuilds(): Promise<number | null> {
+    let stats: unknown
+    try {
+      stats = await this.bridge.call<unknown>('blocking.stats')
+    } catch {
+      return null
+    }
+    if (typeof stats !== 'object' || stats === null) return null
+    const builds = (stats as { builds?: unknown }).builds
+    return typeof builds === 'number' ? builds : null
   }
 
   /**
