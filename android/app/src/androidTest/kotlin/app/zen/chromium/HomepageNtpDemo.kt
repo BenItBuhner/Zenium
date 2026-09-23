@@ -42,9 +42,9 @@ import kotlin.math.abs
  *     the core lays the page out as it was (the field high, the gear low), and back. The gate's
  *     one geometry (§9.29) is measured at both docks in CSS px: the free height split 3:5 with
  *     the block on the bar's side (the spacers' heights), 24 between the field and the tiles,
- *     the gear 12 into the corner opposite the bar, and the field's centre the same distance
- *     from the bar's edge at either dock (the design's 224 at a 920 frame; this frame's number
- *     is on record).
+ *     the gear 12 into the corner opposite the bar, and the field the same distance from the
+ *     bar's edge at either dock (224 to its near edge at the design's 920 frame, its centre on
+ *     the frame's third; this frame's numbers are on record).
  *  4. NTP-06 a tile's hold menu: a hold on a pinned tile lifts its menu with Edit Shortcut…, Move
  *     Left, Move Right (the drag's accessible path, the gate's addendum), Unpin Shortcut and
  *     Remove; Edit opens the shortcut's form sheet on the Settings sheets' chassis (the 48
@@ -435,10 +435,11 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             finding("  Edit Shortcut… touched: sheet ${verdict(edit)}; heading 'Edit shortcut' in the tree $heading; $fields fields; name '${chromeValue("(document.querySelector('$EDIT_NAME')||{}).value||''")}', url '${chromeValue("(document.querySelector('$EDIT_URL')||{}).value||''")}'")
             expect("a finger on Edit Shortcut… opens the form sheet (Name, URL) for the tile", edit && fields == "2", "tile-edit-sheet")
             // The gate's chassis: the Settings sheet, its 48 header naming the form, Cancel | Save
-            // in the footer, the sheet itself focused on open (the keyboard waits for the finger).
+            // splitting the form's last row (`SheetActions`, as the Address sheet draws them), the
+            // sheet itself focused on open (the keyboard waits for the finger).
             val onChassis = chromeValue("String(!!document.querySelector('$EDIT_SHEET $EDIT_DIALOG'))") == "true"
             val title = chromeValue("((document.querySelector('$EDIT_SHEET .zen-sheet-title')||{}).textContent||'').trim()")
-            val footer = chromeValue("Array.prototype.map.call(document.querySelectorAll('$EDIT_SHEET .zen-sheet-footer button'),function(b){return b.textContent.trim()}).join(',')")
+            val footer = chromeValue("Array.prototype.map.call(document.querySelectorAll('$EDIT_SHEET .zen-settings-sheet-actions button'),function(b){return b.textContent.trim()}).join(',')")
             val focused = chromeValue("String(document.activeElement===document.querySelector('$EDIT_SHEET'))") == "true"
             val active = chromeValue(ACTIVE_ELEMENT_JS)
             val keyboardWaits = !imeShown()
@@ -742,8 +743,8 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
 
     private fun JSONObject.box(key: String): CssBox? = optJSONObject(key)?.let { CssBox(it) }
 
-    /** What the cross-dock claim needs from one dock: the free height (the two spacers' sum) and the field's centre's distance from the bar's edge. */
-    private class DockGeometry(val free: Double, val fromBar: Double, val pageHeight: Double)
+    /** What the cross-dock claim needs from one dock: the free height (the two spacers' sum), the field's near edge's and its centre's distances from the bar's edge, the page's height. */
+    private class DockGeometry(val free: Double, val edge: Double, val fromBar: Double, val pageHeight: Double)
 
     private fun fmt(value: Double): String = "%.1f".format(value)
 
@@ -777,11 +778,15 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
         val gearRight = page.right - gear.right
         val fromBar = if (bottom) bar.top - field.centreY else field.centreY - bar.bottom
         val fromPage = if (bottom) page.bottom - field.centreY else field.centreY - page.top
+        val frame = g.optJSONObject("viewport")?.optDouble("h") ?: 0.0
+        val fromFrame = fromBar + bar.height
         finding(
             "  $dock dock geometry (CSS px; viewport ${g.optJSONObject("viewport")}): page $page (${fmt(page.height)} tall), bar $bar, " +
                 "spacers ${fmt(first.height)} / ${fmt(last.height)} (free ${fmt(free)}; the bar's side ${fmt(barSide.height)} = ${fmt(barSide.height / free * 8)}/8), " +
                 "field $field (${fmt(field.height)} tall), grid $grid, gear $gear; field to tiles ${fmt(gap)}; " +
-                "gear ${fmt(gearInset)} from the far edge, ${fmt(gearRight)} from the right; the field's centre ${fmt(fromBar)} from the bar's edge (${fmt(fromPage)} from the page's)"
+                "gear ${fmt(gearInset)} from the far edge, ${fmt(gearRight)} from the right; " +
+                "the field ${fmt(barSide.height)} from the bar (the design's 224 at its 920 frame), its centre ${fmt(fromBar)} from the bar's edge (${fmt(fromPage)} from the page's), " +
+                "${fmt(fromFrame)} from the frame's edge = ${if (frame > 0) fmt(fromFrame / frame * 3) else "?"}/3 of the frame (the design's third)"
         )
         expect(
             "$dock dock: the free height splits 3:5 with the 3 on the bar's side (bar side ${fmt(barSide.height)} of ${fmt(free)}, expected ${fmt(free * 3 / 8)}; far side ${fmt(farSide.height)})",
@@ -799,14 +804,14 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             abs(fromBar - (barSide.height + field.height / 2)) <= 2,
             "ntp-$dock-from-bar"
         )
-        return DockGeometry(free, fromBar, page.height)
+        return DockGeometry(free, barSide.height, fromBar, page.height)
     }
 
     /**
-     * One geometry at both docks: the field's centre the same distance from the bar's edge
-     * whichever edge the bar takes, allowing 3/8 of any difference between the two docks' free
-     * heights (the system insets the frame gives each dock). The design's number is 224 at a
-     * 920 frame; this frame's is on record beside it.
+     * One geometry at both docks: the field the same distance from the bar's edge whichever
+     * edge the bar takes (its near edge – the design's 224 at its 920 frame – and so its
+     * centre), allowing 3/8 of any difference between the two docks' free heights (the system
+     * insets the frame gives each dock). This frame's numbers are on record beside the design's.
      */
     private fun claimOneGeometry(bottom: DockGeometry?, top: DockGeometry?) {
         if (bottom == null || top == null) {
@@ -815,8 +820,9 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
         }
         val framesShift = (bottom.free - top.free) * 3 / 8
         finding(
-            "  one geometry: the field's centre ${fmt(bottom.fromBar)} from the bar at the bottom dock, ${fmt(top.fromBar)} at the top " +
-                "(pages ${fmt(bottom.pageHeight)} / ${fmt(top.pageHeight)} tall, free ${fmt(bottom.free)} / ${fmt(top.free)}; the design's 224 at a 920 frame)"
+            "  one geometry: the field ${fmt(bottom.edge)} from the bar at the bottom dock, ${fmt(top.edge)} at the top (the design's 224 at its 920 frame); " +
+                "its centre ${fmt(bottom.fromBar)} / ${fmt(top.fromBar)} from the bar's edge " +
+                "(pages ${fmt(bottom.pageHeight)} / ${fmt(top.pageHeight)} tall, free ${fmt(bottom.free)} / ${fmt(top.free)})"
         )
         expect(
             "the field's centre is the same distance from the bar's edge at both docks (${fmt(bottom.fromBar)} vs ${fmt(top.fromBar)}; the frames' difference accounts for ${fmt(framesShift)})",
