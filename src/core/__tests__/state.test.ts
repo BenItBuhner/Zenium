@@ -435,6 +435,25 @@ describe('state.json v5 (new tab page)', () => {
     expect(state(fakeIo(legacyProfile(5, { settings: off }))).settings.splitEdgeZones).toBe(false)
   })
 
+  it('reads the developer tools dock, the bottom for profiles from before it and for garbage (§9.29)', () => {
+    const without = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
+    delete without.devtoolsDock
+    const older = state(fakeIo(legacyProfile(5, { settings: without as typeof DEFAULT_SETTINGS })))
+    expect(older.settings.devtoolsDock).toBe('bottom')
+
+    const garbage = structuredClone(DEFAULT_SETTINGS)
+    ;(garbage as unknown as Record<string, unknown>).devtoolsDock = 'detach'
+    expect(state(fakeIo(legacyProfile(5, { settings: garbage }))).settings.devtoolsDock).toBe(
+      'bottom'
+    )
+
+    for (const dock of ['right', 'left', 'undocked'] as const) {
+      const chosen = structuredClone(DEFAULT_SETTINGS)
+      chosen.devtoolsDock = dock
+      expect(state(fakeIo(legacyProfile(5, { settings: chosen }))).settings.devtoolsDock).toBe(dock)
+    }
+  })
+
   it('folds a v4 profile carrying both keys into the one model, once', async () => {
     const io = fakeIo(
       legacyProfile(4, {
