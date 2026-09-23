@@ -24,8 +24,12 @@
     </style>
 
     <!-- A phone sheet drawn natively per the v2 draft (§6): neutral panel, top radius 12, edge to
-         edge under the navigation bar, scrim black .4 light / .55 dark. The 1 px border is drawn
-         by the sheet's content view (CustomTabMenuSheet, ext/ExtensionSheet). -->
+         edge under the navigation bar, scrim black .4 light / .55 dark. The 1 dp hairline is drawn
+         by the sheet's content view (SheetEdge, under NativePromptSheet and ext/ExtensionSheet):
+         its sides run through the navigation bar to the screen's bottom, so the sheet style pads
+         nothing for the bar – the content view takes the bar as its own bottom padding, through the
+         edge – where Material's would pad the container and stop the content view, and the
+         hairline's sides with it, a bar's height above the panel fill's edge. -->
     <style name="ThemeOverlay.Zen.Sheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
         <item name="bottomSheetStyle">@style/Widget.Zen.Sheet</item>
         <item name="android:backgroundDimAmount">0.4</item>
@@ -40,6 +44,7 @@
         <item name="backgroundTint">@color/v2_panel_light</item>
         <item name="shapeAppearance">@style/ShapeAppearance.Zen.Sheet</item>
         <item name="shapeAppearanceOverlay">@null</item>
+        <item name="paddingBottomSystemWindowInsets">false</item>
     </style>
     <style name="Widget.Zen.Sheet.Dark">
         <item name="backgroundTint">@color/v2_panel_dark</item>
@@ -52,9 +57,21 @@
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
 
-    <!-- The custom tab's menu: the same sheet under its own name. -->
-    <style name="ThemeOverlay.Zen.CustomTabSheet" parent="ThemeOverlay.Zen.Sheet" />
-    <style name="ThemeOverlay.Zen.CustomTabSheet.Dark" parent="ThemeOverlay.Zen.Sheet.Dark" />
+    <!-- The custom tab's menu: the same sheet under its own name, with the sheet style padding the
+         container for the navigation bar as Material's does (CustomTabMenuSheet draws its own
+         border and pads nothing for the bar itself). -->
+    <style name="ThemeOverlay.Zen.CustomTabSheet" parent="ThemeOverlay.Zen.Sheet">
+        <item name="bottomSheetStyle">@style/Widget.Zen.CustomTabSheet</item>
+    </style>
+    <style name="ThemeOverlay.Zen.CustomTabSheet.Dark" parent="ThemeOverlay.Zen.Sheet.Dark">
+        <item name="bottomSheetStyle">@style/Widget.Zen.CustomTabSheet.Dark</item>
+    </style>
+    <style name="Widget.Zen.CustomTabSheet" parent="Widget.Zen.Sheet">
+        <item name="paddingBottomSystemWindowInsets">true</item>
+    </style>
+    <style name="Widget.Zen.CustomTabSheet.Dark" parent="Widget.Zen.Sheet.Dark">
+        <item name="paddingBottomSystemWindowInsets">true</item>
+    </style>
 
     <!-- A native prompt sheet (NativePromptSheet, v2 §9.23): the same sheet, coming and going on
          §11.3's 120 ms opacity fade in place instead of the platform's slide; the dim with it. -->

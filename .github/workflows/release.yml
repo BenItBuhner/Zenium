@@ -54,7 +54,7 @@ env:
 jobs:
   prepare:
     name: Validate version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.meta.outputs.version }}
@@ -95,7 +95,7 @@ jobs:
   check:
     name: Typecheck, lint, test
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -118,10 +118,10 @@ jobs:
       matrix:
         include:
           - name: linux-x64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             args: --linux --x64
           - name: linux-arm64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             args: --linux --arm64
           - name: windows-x64
             os: windows-latest
@@ -247,7 +247,7 @@ jobs:
   android:
     name: Android
     needs: [prepare, check]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -415,7 +415,7 @@ jobs:
   assemble:
     name: Manifest, checksums, notes
     needs: [prepare, desktop, android, macos-verify]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -500,7 +500,7 @@ jobs:
     name: Publish GitHub release
     needs: [prepare, assemble]
     if: needs.prepare.outputs.publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Normally ~5 minutes; the headroom is for the bounded upload retries below (worst case for
     # one package: 5 attempts × 5 minutes plus the pauses), not for the happy path.
     timeout-minutes: 45

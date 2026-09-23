@@ -779,6 +779,18 @@
       "estimate": 2.5
     },
     {
+      "id": "page-dialogs",
+      "class": "PageDialogsDemo",
+      "shard": "phone-e",
+      "mirrors": "android-page-dialogs-demo.yml:light",
+      "dir": "page-dialogs-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 5,
+      "note": "The workflow runs light and dark; the nightly runs light (the same API 34 pixel_6 image on every phone shard). On phone-e for the room: phone-b, its first home, stands at 63 of its 68 minutes with #344's trued-up estimates and would stand at the budget itself with this driver; phone-e is #344's fifth shard for what the first four could not hold, at 59.5 with it. Twelve scenes over two loopback servers inside the instrumentation (the site and an embedded frame's origin); the sheet is read from its own window in the accessibility tree. The estimate is the author's, not yet a nightly's measure (the workflow's light act took 7m21s with the boot and the install)."
+    },
+    {
       "id": "sync",
       "class": "SyncDemo",
       "shard": "phone-e",

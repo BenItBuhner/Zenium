@@ -46,6 +46,7 @@ import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSetting
 import type { TabAlert } from './captureState'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 import type { ShareFile, ShareFileInfo } from './share'
+import type { PageCaptureRequest, PageCaptureResult, PageViewport } from './capture'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -3316,6 +3317,13 @@ export interface UIState {
   securityPrompts: SecurityPrompt[]
   /** Pending `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, oldest first. */
   pageDialogs: PageDialog[]
+  /**
+   * Tabs the user has told to close whose close is still in flight (`tab.close`,
+   * `tab.closeMany`): their pages' `beforeunload` handlers are being run, one that objects
+   * asking "Leave site?" – on a host that draws that question itself (Android) the chrome hears
+   * of it only here. The phone overview holds a card's exit while its tab is listed.
+   */
+  closingTabIds: string[]
   /** Pages waiting on the screen-capture picker, oldest first (one per tab). */
   screenCaptureRequests: ScreenCaptureRequest[]
   /** Shares waiting on this window's share sheet, oldest first. */
@@ -3636,6 +3644,14 @@ export interface Commands {
    */
   'tab.activate': { args: { tabId: string; keepFocus?: boolean }; result: void }
   'tab.close': { args: { tabId: string; force?: boolean; keepFocus?: boolean }; result: void }
+  /**
+   * Close several tabs the way the user asks for them, one after the other: a page whose
+   * `beforeunload` handler objects asks "Leave site?" in its turn, and a "Cancel" keeps that tab
+   * alone, the run going on (the desktop's Close N Tabs loop; the phone overview's Close, Close
+   * other tabs and Close all). `activate` names the tab to end on once the closes are through,
+   * if it is still open.
+   */
+  'tab.closeMany': { args: { tabIds: string[]; activate?: string }; result: void }
   /**
    * A private tab in this window (`capabilities.privateTabs`): the in-memory private container,
    * no history, no persisted downloads; its session is wiped when the last private tab closes.
@@ -4416,6 +4432,40 @@ export interface Commands {
    * page beyond the viewport (Edge's "Capture full page"; the visible area when the host cannot).
    */
   'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
+  // ---- Web capture (`core/capture.ts`, `shared/capture.ts`) ------------------------------------
+  /**
+   * The page's picture for the chrome's capture UI (Edge's Web capture): the visible area, the
+   * whole page or a region in CSS pixels relative to the document, as a data URL with its pixel
+   * size – PNG unless `format` says JPEG. Goes through the host's agent capture; a full page or
+   * region the host could not paint as asked comes back as the visible area with
+   * `fallback: 'viewport'`. Refuses a picture past `CAPTURE_MAX_PIXELS` with
+   * `CaptureTooLargeError` (a named error the UI shows), never with a silent null; null only
+   * for a page that cannot be captured at all (not painted yet, gone) or a region outside the
+   * document.
+   */
+  'page.capture': {
+    args: { tabId: string } & PageCaptureRequest
+    result: PageCaptureResult | null
+  }
+  /**
+   * The page's geometry for the overlay's drag rectangle (`regionFromChrome` in
+   * `shared/capture.ts`): scroll offset, viewport and document sizes, zoom and device pixel
+   * ratio; null when the host cannot read the page.
+   */
+  'page.viewport': { args: { tabId: string }; result: PageViewport | null }
+  /** Put a captured picture (an image data URL) on the clipboard as a PNG; false when the host could not. */
+  'capture.copy': { args: { dataUrl: string }; result: boolean }
+  /**
+   * Save a captured picture to the downloads location (Settings › Downloads, else the platform's
+   * folder) under `fileName` or the screenshot name rule, and list it as a completed download
+   * so the bubble and the Downloads page show it; `tabId` puts it in the tab's container (a
+   * private window's capture stays in the private list). Resolves with where it landed, null
+   * when the host could not write it.
+   */
+  'capture.save': {
+    args: { dataUrl: string; fileName?: string; tabId?: string }
+    result: { path: string } | null
+  }
   /** Print through the system dialog (Ctrl+Shift+P; Ctrl+P too on a host without the preview). */
   'page.print': { args: { tabId: string }; result: void }
   /**

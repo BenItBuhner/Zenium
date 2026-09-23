@@ -250,6 +250,8 @@ export interface StateExtras {
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
   pageDialogs: PageDialog[]
+  /** Tabs whose `requestClose` is in flight, their pages asked "Leave site?" (`TabManager.closingTabIds`). */
+  closingTabIds: string[]
   screenCaptureRequests: ScreenCaptureRequest[]
   shareRequests: ShareRequest[]
   crashRestore: CrashRestoreOffer | null
@@ -399,6 +401,7 @@ export class BrowserState {
     permissionPrompts: [],
     securityPrompts: [],
     pageDialogs: [],
+    closingTabIds: [],
     screenCaptureRequests: [],
     shareRequests: [],
     crashRestore: null,

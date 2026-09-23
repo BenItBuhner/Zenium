@@ -15,7 +15,7 @@
 //                                        [--dpkg-exit <n>] [--dpkg-log <file>]
 //       After `sudo dpkg -i` (and, where the runner image lacked one of the package's Depends,
 //       `sudo apt-get install -f`, which completes the configuration from the declared Depends
-//       alone: ubuntu-latest carries neither libnotify4 nor libsecret-1-0): the package is
+//       alone: the ubuntu-24.04 image carries neither libnotify4 nor libsecret-1-0): the package is
 //       installed, every file dpkg lists exists,
 //       /opt/Zenium/zenium is executable, /usr/bin/zenium resolves to it (update-alternatives),
 //       the desktop entry is the LINUX_DESKTOP_ID of src/main/platform/defaultBrowser.ts with
