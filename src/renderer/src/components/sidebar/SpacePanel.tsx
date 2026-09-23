@@ -370,7 +370,7 @@ function SpaceHeader({
   return (
     <button
       type="button"
-      className="mb-1 flex h-[var(--zen-tab-row)] w-full items-center gap-2 rounded-lg px-2 text-[13px] font-semibold text-[var(--zen-fg)] hover:bg-[var(--v2-window-fill-hover)]"
+      className="zen-space-header mb-1 flex h-[var(--zen-tab-row)] w-full items-center gap-2 rounded-lg px-2 text-[13px] font-semibold text-[var(--zen-fg)]"
       title={space.pinnedCollapsed ? 'Show pinned tabs' : 'Collapse pinned tabs'}
       aria-label={`${space.name} pinned tabs`}
       aria-expanded={!space.pinnedCollapsed}
@@ -386,7 +386,11 @@ function SpaceHeader({
       }}
     >
       <SpaceGlyph icon={space.icon} size={14} />
-      {!compact && <span className="min-w-0 flex-1 truncate text-left">{space.name}</span>}
+      {!compact && (
+        <span className="zen-space-header-name min-w-0 flex-1 truncate text-left">
+          {space.name}
+        </span>
+      )}
       {!compact &&
         (space.pinnedCollapsed ? (
           <ChevronRight className={V2_TRAILING_GLYPH} />
@@ -899,6 +903,7 @@ function SavedPageRow({
       aria-label={title}
       aria-description={`Saved page ${index + 1} of ${count}, opens the folder`}
       data-saved-page={index}
+      data-indent
       data-strip-item={key}
       data-strip-parent={parent}
       tabIndex={tabIndex}

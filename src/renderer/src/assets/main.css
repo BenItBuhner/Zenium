@@ -1268,6 +1268,10 @@
   .zen-tab[data-editing]:not([data-active='true']) {
     background: var(--v2-window-fill-hover);
   }
+  /* The pinned section's header (`SpaceHeader`) takes the rows' hover fill. */
+  .zen-space-header:hover {
+    background: var(--v2-window-fill-hover);
+  }
   .zen-tab[data-active='true'] {
     background: var(--v2-window-fill);
   }
@@ -1719,32 +1723,220 @@
   }
 
   /*
-   * The collapsed rail's flyout (tabs-03; sidebar/useRailFlyout.ts, design language v2 §9.37,
-   * §11.4): the sidebar's own box flown out to the expanded width over the page's picture, the
-   * frame staying where it is. It is the window's chrome, not a panel – no radius, no blur, no
-   * border: the window's gradient (`--zen-bg`, fixed to the viewport so the flyout's stretch of
-   * it is the very stretch the window would paint there) under the window's grain, and the
-   * frame's shadow rule (§9.20, `--zen-frame-shadow`) at its one visible edge: the box runs the
-   * window's full height at the window's edge, so the shadow's other three sides fall outside
-   * the window, where the root's `overflow: hidden` clips them, and the hairline plus the 14 px
-   * fall lie on the frame alone – the frame's own outline, lifted onto the flyout. Above the
-   * frame at 40 with the compact sidebar's reveal, under the hover card (80) and the chrome
-   * layer's popovers and menus (100), which its rows raise. `data-flyout` is on from the open's
-   * first frame to the fold's rest; while the width moves (`data-flyout-moving`) a title is cut
-   * at the edge rather than re-ellipsised every frame – the ellipsis is the resting form's.
+   * The collapsed rail's flyout (tabs-03; sidebar/useRailFlyout.ts; design language v2 §9.20's
+   * sidebar anchor and cascade, §9.37, §11.4): a second surface flown out BESIDE the rail to the
+   * expanded sidebar's width over the page's picture, the rail and the frame staying where they
+   * are. The box (`.zen-rail-flyout`) spans the rail and the panel and draws nothing itself: the
+   * panel's surface is its `::before`, from the rail's edge (`--zen-rail-rest`, the box's inline
+   * variable) to the box's far edge, on the window's own gradient (`--zen-bg`, fixed to the
+   * viewport so the stretch it paints is the very stretch the window would paint there) under
+   * the window's grain, with the frame's shadow rule (§9.20, `--zen-frame-shadow`) at its
+   * edges: a 1 px spread outside the surface, so the flyout's hairline stands in the rail's
+   * LAST column – the column the frame's own hairline stands in at rest, the frame beginning
+   * where the rail ends – overlapping the rail by that 1 px, the two hairlines sharing the
+   * pixel (the cascade's rule). The surface runs the window's full height, so the shadow's top
+   * and bottom fall outside the window, where the root's `overflow: hidden` clips them. It is
+   * the window's chrome, not a panel: no radius, no blur, no border. Above the frame at 40 with
+   * the compact sidebar's reveal, under the hover card (80) and the chrome layer's popovers and
+   * menus (100), which its rows raise. `data-flyout` is on from the open's first frame to the
+   * fold's rest; while the width moves (`data-flyout-moving`) a title is cut at the edge rather
+   * than re-ellipsised every frame – the ellipsis is the resting form's. A rail on the right
+   * (`data-side`) mirrors the surface.
    */
   .zen-rail-flyout[data-flyout] {
     z-index: 40;
+  }
+  .zen-rail-flyout[data-flyout]::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 0 var(--zen-rail-rest);
+    z-index: -1;
     background: var(--zen-bg);
     background-attachment: fixed;
     box-shadow: var(--zen-frame-shadow);
     transition: background 600ms var(--zen-ease);
+    pointer-events: none;
+  }
+  .zen-rail-flyout[data-flyout][data-side='right']::before {
+    inset: 0 var(--zen-rail-rest) 0 0;
   }
   .zen-rail-flyout[data-flyout] > .zen-texture {
+    left: var(--zen-rail-rest);
     background-attachment: fixed;
+  }
+  .zen-rail-flyout[data-flyout][data-side='right'] > .zen-texture {
+    left: 0;
+    right: var(--zen-rail-rest);
   }
   .zen-rail-flyout[data-flyout-moving] .zen-tab-title {
     text-overflow: clip;
+  }
+
+  /*
+   * The flyout's rows (§9.20's start alignment): a row is ONE element running across the seam
+   * – the tab row, the folder header, a saved page, the New Tab row, the pinned header – its
+   * glyph in the rail where the compact row drew it and its title in the panel, so nothing
+   * moves under the pointer that opened the flyout, and the flyout is start-aligned to the row
+   * it opened from by construction. The row's fill splits in two at the seam: its `::before`
+   * is the rail's TILE (the compact row's box: the rail's width less the list's inset each
+   * side, the scrollbar's gutter while the rows overflow, and the row's indent) and its
+   * `::after` the PANEL's row (from the rail's edge to the row's end), each at the row's radius
+   * and under the row's content (at -1 in the nearest stacking context – the spaces' strip, the
+   * scroller under its fades – which draws no fill of its own), the fills the row's own for
+   * hover, the active tab and a selection (`--zen-tile-fill`, `--zen-row-fill`). The glyph's
+   * lead centres its 16 in the tile as the compact row's `justify-center` did; its trailing
+   * margin puts the title 10 into the panel's row, as the expanded row's padding does. The
+   * PARENT row (`data-flyout-anchor`: the row the flyout opened from) keeps the hover fill on
+   * its tile alone while the flyout stands – §9.20's lit anchor – the active row's fill and a
+   * selection's outranking it. A split group's row keeps its rail column (§9.35;
+   * `SplitGroupRow`), boxed at the tile's width, its segments untouched here. The indent is the
+   * rows' `ml-5` (`data-indent`).
+   */
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout] .zen-space-header,
+  .zen-rail-flyout[data-flyout] .zen-split-row {
+    --zen-tile-fill: transparent;
+    --zen-row-fill: transparent;
+    --zen-tile-width: calc(
+      var(--zen-rail-rest) - 2 * var(--zen-list-inset) - var(--zen-list-gutter, 0px) -
+        var(--zen-row-indent, 0px)
+    );
+    --zen-glyph-lead: calc((var(--zen-tile-width) - 16px) / 2);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout] .zen-space-header {
+    position: relative;
+    background: none;
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg) {
+    padding-left: 0;
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab[data-indent]:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout] .zen-split-row[data-indent] {
+    --zen-row-indent: 1.25rem;
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::before,
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::after,
+  .zen-rail-flyout[data-flyout] .zen-space-header::before,
+  .zen-rail-flyout[data-flyout] .zen-space-header::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: -1;
+    border-radius: 8px;
+    pointer-events: none;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::before,
+  .zen-rail-flyout[data-flyout] .zen-space-header::before {
+    left: 0;
+    width: var(--zen-tile-width);
+    background: var(--zen-tile-fill);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::after,
+  .zen-rail-flyout[data-flyout] .zen-space-header::after {
+    left: var(--zen-rail-rest);
+    right: 0;
+    background: var(--zen-row-fill);
+  }
+  /* The leading glyph: the row's favicon or mask, the folder's mark, the New Tab row's +. */
+  .zen-rail-flyout[data-flyout]
+    .zen-tab:not(.zen-split-seg)
+    > :is(.zen-tab-favicon, .zen-group-row-glyph),
+  .zen-rail-flyout[data-flyout] .zen-tab[data-new-tab] > svg {
+    margin-left: var(--zen-glyph-lead);
+    margin-right: calc(var(--zen-rail-rest) + 10px - 16px - 9px - var(--zen-glyph-lead));
+  }
+  /* The pinned header keeps its 14 glyph at its own 8 padding, its name 8 after; the name moves
+     to the panel's 10. */
+  .zen-rail-flyout[data-flyout] .zen-space-header-name {
+    margin-left: calc(var(--zen-rail-rest) + 10px - 8px - 14px - 8px);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg):hover,
+  .zen-rail-flyout[data-flyout] .zen-tab[data-editing]:not(.zen-split-seg, [data-active='true']),
+  .zen-rail-flyout[data-flyout] .zen-space-header:hover {
+    --zen-tile-fill: var(--v2-window-fill-hover);
+    --zen-row-fill: var(--v2-window-fill-hover);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab[data-flyout-anchor]:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout] .zen-space-header[data-flyout-anchor] {
+    --zen-tile-fill: var(--v2-window-fill-hover);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab[data-drop-into]:not(.zen-split-seg) {
+    --zen-tile-fill: var(--v2-control-fill-hover);
+    --zen-row-fill: var(--v2-control-fill-hover);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab[data-active='true']:not(.zen-split-seg) {
+    --zen-tile-fill: var(--v2-window-fill);
+    --zen-row-fill: var(--v2-window-fill);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab[data-selected]:not(.zen-split-seg) {
+    --zen-tile-fill: rgb(var(--zen-accent-rgb) / 0.16);
+    --zen-row-fill: rgb(var(--zen-accent-rgb) / 0.16);
+    box-shadow: none;
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab[data-selected]:not(.zen-split-seg)::before,
+  .zen-rail-flyout[data-flyout] .zen-tab[data-selected]:not(.zen-split-seg)::after {
+    box-shadow: inset 0 0 0 1.5px rgb(var(--zen-accent-rgb) / 0.7);
+  }
+  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg) > .zen-tab-progress {
+    left: calc(var(--zen-rail-rest) + 10px);
+  }
+  .zen-essential[data-flyout-anchor] {
+    background: var(--v2-window-fill-hover);
+  }
+  .zen-rail-flyout[data-flyout] .zen-split-row {
+    width: var(--zen-tile-width);
+    align-self: flex-start;
+  }
+  /* The rail on the right: the tile at the row's end, the panel's row before it, the row's
+     content run from the end – the glyph in the tile where the compact row drew it (the tab
+     row's centred, the pinned header's 8 in), the title before it, its text at the glyph. */
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header {
+    flex-direction: row-reverse;
+  }
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab:not(.zen-split-seg) {
+    padding-left: 8px;
+    padding-right: 0;
+  }
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab:not(.zen-split-seg)::before,
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header::before {
+    left: auto;
+    right: 0;
+  }
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab:not(.zen-split-seg)::after,
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header::after {
+    left: 0;
+    right: var(--zen-rail-rest);
+  }
+  .zen-rail-flyout[data-flyout][data-side='right']
+    .zen-tab:not(.zen-split-seg)
+    > :is(.zen-tab-favicon, .zen-group-row-glyph),
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab[data-new-tab] > svg {
+    margin-right: var(--zen-glyph-lead);
+    margin-left: calc(var(--zen-rail-rest) + 10px - 16px - 9px - var(--zen-glyph-lead));
+  }
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header > :first-child {
+    margin-right: calc(var(--zen-tile-width) - 8px - 14px - 8px);
+  }
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header-name {
+    margin-left: 0;
+    margin-right: calc(var(--zen-rail-rest) + 10px - var(--zen-tile-width));
+    text-align: right;
+  }
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab-title {
+    text-align: right;
+  }
+  .zen-rail-flyout[data-flyout][data-side='right']
+    .zen-tab:not(.zen-split-seg)
+    > .zen-tab-progress {
+    left: 10px;
+    right: calc(var(--zen-rail-rest) + 10px);
+  }
+  .zen-rail-flyout[data-flyout][data-side='right'] .zen-split-row {
+    align-self: flex-end;
   }
 
   /*

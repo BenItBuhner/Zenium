@@ -271,6 +271,7 @@ export function TabItem({
       aria-setsize={position?.size}
       data-active={active}
       data-selected={selected || undefined}
+      data-indent={(indent && !horizontal) || undefined}
       data-discarded={tab.discarded}
       data-frozen={tab.frozen}
       data-agent={agent ? true : undefined}

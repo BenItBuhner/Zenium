@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject
+} from 'react'
 import { onEvent } from '@renderer/lib/api'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { captureActiveTab, invalidateSnapshot, uiStore } from '@renderer/lib/ui'
@@ -26,25 +34,56 @@ export const RAIL_FLYOUT_GRACE_MS = 450
  */
 export const RAIL_FLYOUT_COVER_WAIT_MS = 160
 
+/**
+ * The rows the flyout marks: a tab row, a folder header, a saved page, the New Tab row, an
+ * Essentials tile – whichever the pointer rested on or the keyboard landed in when it opened
+ * (`data-flyout-anchor`, the lit parent row of §9.20's cascade).
+ */
+const ANCHOR_ROWS = '.zen-tab, .zen-essential'
+
+/**
+ * Whether the rail's flyout is out (or on its way): the split group row reads it to keep its
+ * rail column (§9.35) while the rows around it take their expanded form beside the rail, so
+ * nothing under the pointer that opened the flyout changes height.
+ */
+export const RailFlyoutContext = createContext(false)
+
+export function useRailFlyoutOut(): boolean {
+  return useContext(RailFlyoutContext)
+}
+
 export interface RailFlyoutOptions {
   /** The Collapsed sidebar layout with `sidebarExpandOnHover` on, a fine pointer, docked. */
   enabled: boolean
-  /** The rail's width at rest (px). */
+  /** The rail's width at rest (px): the box's width with the flyout folded. */
   rest: number
-  /** The flyout's width at its full extent: the expanded sidebar's (px). */
+  /**
+   * The flyout panel's width beside the rail (px): the expanded sidebar's. Out, the box spans
+   * the rail and the panel, `rest + extent`.
+   */
   extent: number
   /** The active tab, whose picture stands in for the live page while the flyout is out. */
   activeTabId: string | null
 }
 
 /**
- * The collapsed rail's flyout (tabs-03; v2 §9.37, §11.4): after a short dwell of the pointer on
- * the rail (`RAIL_FLYOUT_DWELL_MS`) the sidebar flies out to its expanded width OVER the page –
- * the frame stays where it is – on `SPRING_GENTLE`, the container motion the sidebar's fold runs
- * on, and folds back once the pointer and the keyboard have both left it for a grace
- * (`RAIL_FLYOUT_GRACE_MS`), at once on Escape or a press into the page. The keyboard landing in
- * the rail (the pane chord, Tab – a `:focus-visible` focus, not a click's) flies it out with no
- * dwell and holds it while the focus stays inside.
+ * The collapsed rail's flyout (tabs-03; v2 §9.20's sidebar anchor and cascade, §9.37, §11.4):
+ * after a short dwell of the pointer on the rail (`RAIL_FLYOUT_DWELL_MS`) a second surface flies
+ * out BESIDE the rail – the rail stays where it is, drawn and lit, and the frame stays where it
+ * is – to the expanded sidebar's width over the page, on `SPRING_GENTLE`, the container motion
+ * the sidebar's fold runs on; it folds back once the pointer and the keyboard have both left it
+ * for a grace (`RAIL_FLYOUT_GRACE_MS`), at once on Escape or a press into the page. The keyboard
+ * landing in the rail (the pane chord, Tab – a `:focus-visible` focus, not a click's) flies it
+ * out with no dwell and holds it while the focus stays inside.
+ *
+ * The cascade's placement (§9.20, main.css's `.zen-rail-flyout` rules): the flyout's surface
+ * begins at the rail's edge with the frame's own shadow rule, so its hairline stands in the
+ * rail's last column – the column the frame's hairline stands in at rest – overlapping the rail
+ * by that 1 px, the two hairlines sharing the pixel; the rows run across the seam, one element
+ * each, the glyph in the rail's tile where the compact row drew it and the title in the panel,
+ * so the flyout is start-aligned to the row that opened it by construction (nothing moves under
+ * the pointer); and that row keeps its lit fill in the rail while the flyout stands
+ * (`data-flyout-anchor`, the cascade's parent row) until the fold rests.
  *
  * The page under it is its picture: the page view composites above the chrome, so the flyout
  * takes the active tab's capture and raises `railFlyout` – the layout reporter hides the view
@@ -92,8 +131,13 @@ export function useRailFlyout(
     }
     const enter = (): void => f.pointerEnter()
     const leave = (): void => f.pointerLeave()
+    // The row under the pointer, kept as it moves: the one the dwell opens the flyout from.
+    const over = (e: PointerEvent): void => {
+      f.pointerOver(e.target instanceof Element ? e.target.closest<HTMLElement>(ANCHOR_ROWS) : null)
+    }
     const focusIn = (e: FocusEvent): void => {
-      if (e.target instanceof HTMLElement && keyboardFocused(e.target)) f.keyboardIn()
+      if (e.target instanceof HTMLElement && keyboardFocused(e.target))
+        f.keyboardIn(e.target.closest<HTMLElement>(ANCHOR_ROWS))
     }
     const focusOut = (e: FocusEvent): void => {
       const to = e.relatedTarget
@@ -110,6 +154,7 @@ export function useRailFlyout(
     }
     el.addEventListener('pointerenter', enter)
     el.addEventListener('pointerleave', leave)
+    el.addEventListener('pointerover', over)
     el.addEventListener('focusin', focusIn)
     el.addEventListener('focusout', focusOut)
     window.addEventListener('pointerdown', pressOutside, true)
@@ -117,6 +162,7 @@ export function useRailFlyout(
     return () => {
       el.removeEventListener('pointerenter', enter)
       el.removeEventListener('pointerleave', leave)
+      el.removeEventListener('pointerover', over)
       el.removeEventListener('focusin', focusIn)
       el.removeEventListener('focusout', focusOut)
       window.removeEventListener('pointerdown', pressOutside, true)
@@ -146,7 +192,9 @@ type Phase = 'rest' | 'opening' | 'out' | 'folding'
  * The flyout's machine: the dwell and the grace, the capture that stands in for the page, the
  * width on its spring. `pointerEnter` / `pointerLeave` / `keyboardIn` / `keyboardOut` say where
  * the pointer and the keyboard are; the flyout is wanted while either is inside, and heads for
- * the rail after the grace once neither is. `dismiss` folds it at once.
+ * the rail after the grace once neither is. `dismiss` folds it at once. `pointerOver` names the
+ * row under the pointer, which the dwell opens the flyout from: the cascade's parent row, lit
+ * (`data-flyout-anchor`) from the open to the fold's rest.
  */
 export class RailFlyout {
   private phase: Phase = 'rest'
@@ -159,6 +207,9 @@ export class RailFlyout {
   private rest = 56
   private extent = 240
   private activeTabId: string | null = null
+  /** The row under the pointer, and the row the flyout stands beside while it is out. */
+  private hovered: HTMLElement | null = null
+  private anchor: HTMLElement | null = null
   private readonly spring: SpringAnimation
 
   constructor(
@@ -169,19 +220,34 @@ export class RailFlyout {
       SPRING_GENTLE,
       (width) => {
         // The spring's hair of overshoot past either end (§7) is drawn nothing: the rail's
-        // width is the floor and the extent the ceiling.
+        // width is the floor and the rail plus the panel the ceiling.
         const el = this.box.current
-        if (el) el.style.width = `${Math.min(this.extent, Math.max(this.rest, width))}px`
+        if (el) el.style.width = `${Math.min(this.out, Math.max(this.rest, width))}px`
       },
       () => this.rested()
     )
   }
 
-  /** The rail's width and the flyout's; a change while out retargets the spring. */
+  /** The box's width with the flyout out: the rail and the panel beside it. */
+  private get out(): number {
+    return this.rest + this.extent
+  }
+
+  /** The rail's width and the panel's; a change while out retargets the spring. */
   configure(rest: number, extent: number): void {
     this.rest = rest
     this.extent = extent
-    if (this.phase === 'out') this.spring.retarget(extent)
+    if (this.phase === 'out') this.spring.retarget(this.out)
+  }
+
+  /** The row under the pointer (null between rows): the dwell opens the flyout from it. */
+  pointerOver(row: HTMLElement | null): void {
+    this.hovered = row
+  }
+
+  /** The row the flyout opened from, while it is out; null at rest or from the rail's blank. */
+  get anchorRow(): HTMLElement | null {
+    return this.anchor
   }
 
   /**
@@ -208,7 +274,7 @@ export class RailFlyout {
       this.phase = 'out'
       this.mark('out')
       this.moving(true)
-      this.spring.retarget(this.extent)
+      this.spring.retarget(this.out)
       return
     }
     if (this.phase !== 'rest' || this.dwell !== null) return
@@ -216,29 +282,31 @@ export class RailFlyout {
       this.dwell = null
       // A tab in the hand: the rows are drop targets, and the flyout would move them under it.
       if (uiStore.get().drag) return
-      this.open()
+      this.open(this.hovered)
     }, RAIL_FLYOUT_DWELL_MS)
   }
 
   pointerLeave(): void {
     this.pointerInside = false
+    this.hovered = null
     this.clearDwell()
     this.armGrace()
   }
 
-  keyboardIn(): void {
+  /** The keyboard's focus landed in the rail, on `row` (the focused row's; null for none). */
+  keyboardIn(row: HTMLElement | null = null): void {
     this.keyboardInside = true
     this.clearGrace()
     if (this.phase === 'folding') {
       this.phase = 'out'
       this.mark('out')
       this.moving(true)
-      this.spring.retarget(this.extent)
+      this.spring.retarget(this.out)
       return
     }
     if (this.phase === 'rest') {
       this.clearDwell()
-      this.open()
+      this.open(row)
     }
   }
 
@@ -269,11 +337,24 @@ export class RailFlyout {
     this.opening?.cancel()
     this.opening = null
     this.spring.stop()
+    this.setAnchor(null)
     if (this.phase !== 'rest') {
       this.phase = 'rest'
       uiStore.set({ railFlyout: false })
       invalidateSnapshot()
     }
+  }
+
+  /**
+   * The cascade's parent row (§9.20): the row the flyout opened from keeps its lit fill in the
+   * rail while the flyout stands – `data-flyout-anchor`, set on the open and cleared at the
+   * fold's rest (a row closed meanwhile is a detached element; clearing it is nothing).
+   */
+  private setAnchor(row: HTMLElement | null): void {
+    if (this.anchor === row) return
+    if (this.anchor) delete this.anchor.dataset.flyoutAnchor
+    this.anchor = row
+    if (row) row.dataset.flyoutAnchor = ''
   }
 
   private armGrace(): void {
@@ -286,11 +367,15 @@ export class RailFlyout {
     }, RAIL_FLYOUT_GRACE_MS)
   }
 
-  /** Take the page's picture, raise the flag, and set off once the host has taken the view down. */
-  private open(): void {
+  /**
+   * Take the page's picture, raise the flag, and set off once the host has taken the view down;
+   * `from` is the row the flyout opens beside, lit while it stands.
+   */
+  private open(from: HTMLElement | null): void {
     if (this.phase !== 'rest') return
     this.phase = 'opening'
     this.mark('opening')
+    this.setAnchor(from)
     let live = true
     let unsubscribe: (() => void) | null = null
     let deadline: ReturnType<typeof setTimeout> | null = null
@@ -321,7 +406,7 @@ export class RailFlyout {
         this.mark('out')
         this.moving(true)
         this.setOut(true)
-        this.spring.start(this.rest, 0, this.extent)
+        this.spring.start(this.rest, 0, this.out)
       }
       unsubscribe = onEvent('layout.applied', (applied) => {
         if (applied.contentHidden) go()
@@ -356,6 +441,7 @@ export class RailFlyout {
     if (this.phase === 'folding') {
       this.phase = 'rest'
       this.mark(null)
+      this.setAnchor(null)
       if (el) el.style.width = ''
       this.setOut(false)
       if (uiStore.get().railFlyout) uiStore.set({ railFlyout: false })
@@ -364,7 +450,7 @@ export class RailFlyout {
       // back. The keyboard inside holds nothing either until it moves again.
       return
     }
-    if (this.phase === 'out' && el) el.style.width = `${this.extent}px`
+    if (this.phase === 'out' && el) el.style.width = `${this.out}px`
   }
 
   private mark(state: 'opening' | 'out' | 'folding' | null): void {

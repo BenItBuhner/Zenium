@@ -213,7 +213,13 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     expect(header.className).toContain('text-[13px]')
     expect(header.className).toContain('font-semibold')
     expect(header.className).toContain('text-[var(--zen-fg)]')
-    expect(header.className).toContain('hover:bg-[var(--v2-window-fill-hover)]')
+    // The hover fill is the stylesheet's (`.zen-space-header`), so the rail's flyout can split
+    // it at the seam as it does the tab row's (tabs-03).
+    expect(header.className).toContain('zen-space-header')
+    expect(rule(components, '.zen-space-header:hover')).toContain(
+      'background: var(--v2-window-fill-hover)'
+    )
+    expect(header.className).not.toContain('hover:bg-')
     expect(header.className).not.toContain('--zen-element-bg')
     // The header's empty space dot is the ring, in the header's ink.
     expect(header.querySelector('svg[data-space-dot]')).not.toBeNull()
