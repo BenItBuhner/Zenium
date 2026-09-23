@@ -2730,7 +2730,9 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
             heading: 'Inactive',
             description: 'Engines kept but not offered in the address bar until you activate them.',
             layouts: ['desktop'] as const,
-            rows: inactiveOwn.map((e) => searchEngineItem(e, state, set, glyph(e)))
+            rows: inactiveOwn.map((e) =>
+              searchEngineItem(e, state, set, glyph(e), { underInactiveHeading: true })
+            )
           } satisfies RowGroup
         ]
       : []),
@@ -2766,20 +2768,24 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
  * site's, inactive – its shortcut (Chrome's Shortcut column) and the host it searches; its
  * sheet offers Make default (an active engine; the default's is held), Edit – the Add form
  * pre-filled with a Shortcut field, the desktop's – Deactivate or Activate (the desktop's; the
- * default engine stays active), and Remove.
+ * default engine stays active), and Remove. Under the desktop's Inactive heading the row does
+ * not say "Inactive" again – the heading says it, as Added's rows do not say "Added" (§9.17) –
+ * and carries its source instead; on the phone and the tablet, where every engine sits under
+ * Added, an inactive engine's row is the one place that says so.
  */
 function searchEngineItem(
   e: SearchEngine,
   state: UIState,
   set: SectionContext['set'],
-  leading: ReactNode
+  leading: ReactNode,
+  { underInactiveHeading = false }: { underInactiveHeading?: boolean } = {}
 ): SettingsRow {
   const s = state.settings
   const isDefault = e.id === s.searchEngineId
   const inactive = !isDefault && !isActiveSearchEngine(e)
   const standing = isDefault
     ? 'Default search engine'
-    : inactive
+    : inactive && !underInactiveHeading
       ? 'Inactive'
       : e.source === 'discovered'
         ? 'Recently visited'

@@ -3097,11 +3097,13 @@ describe('what a row does', () => {
       const inactive = model.groups.find((g) => g.id === 'inactive-search-engines')!
       expect(inactive.heading).toBe('Inactive')
       expect(inactive.empty).toBeUndefined()
-      // The inactive engine reads so on its row, its shortcut and host kept.
+      // The heading says "Inactive"; the row does not say it again (§9.17) – it keeps its
+      // source, its shortcut and its host, as a row under Added does.
       expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
         kind: 'item',
-        description: 'Inactive · @forum · forum.example'
+        description: 'Recently visited · @forum · forum.example'
       })
+      for (const r of inactive.rows) expect(r.description).not.toMatch(/\bInactive\b/)
       // Not the default's candidate: the picker lists the active engines alone …
       const picker = row(model, 'search-engine')
       if (picker.kind !== 'value') throw new Error('not a value row')
@@ -3199,6 +3201,10 @@ describe('what a row does', () => {
           'search-engine:discovered:forum.example'
         ])
         expect(model.groups.some((g) => g.id === 'inactive-search-engines')).toBe(false)
+        // With no heading to say it, the row is the one place the engine reads inactive.
+        expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
+          description: 'Inactive · @forum · forum.example'
+        })
         expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
           'search-engine:discovered:forum.example:remove'
         ])
