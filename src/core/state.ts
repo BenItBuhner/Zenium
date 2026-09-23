@@ -893,9 +893,12 @@ export class BrowserState {
         tabs[tab.id] = tab
       }
       essentialTabIds = m.essentialTabIds
-      // A blank or private window's folders and split views stay its own, as its tabs do.
+      // A blank or private window's folders and split views stay its own, as its tabs do; a
+      // folder whose space is gone (moved with its tabs into a blank window since closed) is
+      // no window's until the next load drops it, as load drops any folder without a space.
       folders = {}
-      for (const f of Object.values(m.folders)) if (!m.localSpaces[f.spaceId]) folders[f.id] = f
+      const persisted = new Set(m.spaces.map((s) => s.id))
+      for (const f of Object.values(m.folders)) if (persisted.has(f.spaceId)) folders[f.id] = f
       splitGroups = {}
       for (const g of Object.values(m.splitGroups))
         if (!m.localSpaces[g.spaceId]) splitGroups[g.id] = g

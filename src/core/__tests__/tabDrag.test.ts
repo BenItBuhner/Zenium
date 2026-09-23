@@ -561,6 +561,27 @@ describe('a folder moved to a new window', () => {
     expect(f.browser.allWindows()).toHaveLength(2)
   })
 
+  it("the new window closed, the folder is no window's: the source lists neither it nor its tabs", () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const space = win.activeSpace()
+    const kept = f.openPage(win, 'https://kept.test/')
+    const { folder, tabs } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
+    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
+    if (!moved) throw new Error('no new window')
+    expect(f.browser.state.snapshot(moved).folders[folder.id]).toBe(folder)
+    moved.host.close()
+    const m = f.browser.state.model
+    // The window's tabs and space go with it; its folder's space is no space now, so the
+    // source's chrome lists no folder for the space it left (load drops such a folder).
+    expect(tabs.map((t) => m.tabs[t.id])).toEqual([undefined, undefined])
+    expect(m.spaces.some((s) => s.id === folder.spaceId)).toBe(false)
+    const snap = f.browser.state.snapshot(win)
+    expect(snap.folders[folder.id]).toBeUndefined()
+    expect(Object.keys(snap.tabs)).toEqual([kept.id])
+    expect(space.tabIds).toEqual([kept.id])
+  })
+
   it('opens a saved folder first – its pages back as its tabs – and moves it whole', () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
