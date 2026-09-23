@@ -4,10 +4,11 @@
 //
 // LaunchServices keeps the default web browser and only the user can change it: the app's
 // `app.setAsDefaultProtocolClient('http')` (src/main/platform/defaultBrowser.ts, macRequest) makes
-// the system put "Do you want to change your default web browser to Zenium?" on screen, and
-// nothing in a runner's session answers it (UI scripting through System Events needs the
-// Accessibility permission a fresh runner has not granted). So the scenario asserts the app's
-// side of the hand-over and records the OS's:
+// the system put "Do you want to change your default web browser to Zenium?" on screen, and the
+// app then waits for the user's yes. The scenario asserts the app's side of the hand-over and
+// reads the OS's; where the session lets a script press the dialog's "Use" button (UI scripting
+// through System Events needs the Accessibility permission – the GitHub runners grant it, a fresh
+// Mac does not) the app's follow-through on the yes is asserted too:
 //
 //   bundle-claims-web          the bundle's Info.plist has CFBundleURLTypes for http and https
 //                              (electron-builder's `protocols`): the registration LaunchServices
@@ -19,12 +20,18 @@
 //                              only once http is held (two prompts otherwise, #defaultBrowser.ts) –
 //                              and what LaunchServices returned for the call; the app's path up to
 //                              the OS's dialog
-//   os-dialog                  the screen as the dialog would be on it; a best-effort look at
-//                              CoreServicesUIAgent's windows and a best-effort click on its "Use"
-//                              button through System Events (refused without the Accessibility
-//                              permission: recorded as not automatable) – the OS's half
-//   handlers-after             LSHandlers again, and whether http is now held – recorded (held
-//                              only when the click above went through)
+//   os-dialog                  the screen as the dialog would be on it; every process's windows
+//                              scanned through System Events for the dialog (its "default web
+//                              browser" text or its "Use …"/"Keep …" buttons, whoever owns it),
+//                              its "Use" button clicked when found (refused without the
+//                              Accessibility permission: recorded as not automatable) – the OS's
+//                              half, recorded; after a click, LaunchServices reporting http held
+//                              (the OS's yes, recorded – an ad-hoc-signed bundle may be refused)
+//                              makes the app claim https and resolve the request true
+//                              (macClaimHttps) – the app's follow-through, asserted; a second scan
+//                              tells whether the https claim put another dialog up
+//   handlers-after             LSHandlers again, and whether http and https are now held –
+//                              recorded (held only when the click above went through)
 import path from 'node:path'
 
 export const DEFAULT_BROWSER_SCENARIO = 'default-browser'
@@ -198,37 +205,97 @@ export function requestReading({ calls, httpHeldBefore }) {
 }
 
 /**
- * The `osascript` results of looking at and clicking the dialog, read into one verdict: what
- * System Events said, or why it could not say ('not automatable' when the Accessibility
- * permission is missing – error -1719 or -1743 – or System Events is not scriptable here).
+ * The windows System Events found on screen, out of `windowScanScript`'s output: one line per
+ * window, six tab-separated fields – the owner's pid and name, the window's index among the
+ * owner's windows (1-based, what `clickUseScript` addresses), its name, its static texts and
+ * its buttons (each list joined with ' | ', newlines flattened). Lines short of the six fields
+ * are skipped.
  */
-export function dialogReading({ windows, click }) {
+export function parseWindowScan(stdout) {
+  const windows = []
+  const list = (s) =>
+    s
+      .split(' | ')
+      .map((t) => t.trim())
+      .filter(Boolean)
+  for (const line of String(stdout ?? '').split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const fields = line.split('\t')
+    if (fields.length < 6) continue
+    const [pid, process, index, name, texts, buttons] = fields
+    windows.push({
+      pid: Number(pid),
+      process,
+      index: Number(index),
+      name: name.trim(),
+      texts: list(texts),
+      buttons: list(buttons)
+    })
+  }
+  return windows
+}
+
+/**
+ * The default-browser dialog among the scanned windows: the one whose name or texts say
+ * "default web browser" (LaunchServices' "Do you want to change your default web browser to
+ * “…” or keep using “…”?"), or that offers a "Use …" and a "Keep …" button (the dialog's two
+ * answers) – whichever process owns it (the scan assumes none). The app's own windows are not
+ * candidates (`ownProcess`: the app's process name). null when no window matches.
+ */
+export function findDefaultBrowserDialog(windows, { ownProcess } = {}) {
+  return (
+    (windows ?? []).find((w) => {
+      if (ownProcess && String(w.process).startsWith(ownProcess)) return false
+      if (/default web browser/i.test([w.name, ...(w.texts ?? [])].join(' '))) return true
+      const buttons = w.buttons ?? []
+      return buttons.some((b) => /^Use\b/.test(b)) && buttons.some((b) => /^Keep\b/.test(b))
+    }) ?? null
+  )
+}
+
+/**
+ * The `osascript` results of scanning the screen's windows and clicking the dialog, read into
+ * one verdict: what System Events found, or why it could not look ('not automatable' when the
+ * Accessibility permission is missing – error -1719 or -1743 – or System Events is not
+ * scriptable here). With the dialog on screen: its owner (`process`, `pid`, the window's
+ * `index`), its text and buttons; with `click`, whether the "Use" button was pressed.
+ */
+export function dialogReading({ scan, click, ownProcess }) {
   const text = (r) => `${r?.stderr ?? ''} ${r?.stdout ?? ''} ${r?.error ?? ''}`.trim()
   const clip = (t) => String(t).slice(0, 300)
-  if (!windows) return { dialog: 'not looked at', clicked: false }
-  if (windows.status !== 0) {
+  if (!scan) return { dialog: 'not looked at', clicked: false }
+  if (scan.status !== 0) {
     if (
-      /-1719|-1743|assistive access|not allowed to send keystrokes|is not allowed/i.test(
-        text(windows)
-      )
+      /-1719|-1743|assistive access|not allowed to send keystrokes|is not allowed/i.test(text(scan))
     ) {
       return {
-        dialog: `not automatable: ${clip(text(windows) || 'osascript refused')}`,
+        dialog: `not automatable: ${clip(text(scan) || 'osascript refused')}`,
         clicked: false
       }
     }
-    if (/-1728|can.t get process/i.test(text(windows))) {
-      return { dialog: 'no CoreServicesUIAgent process (no dialog up)', clicked: false }
-    }
     return {
-      dialog: `osascript failed: ${clip(text(windows) || `exit ${windows.status}`)}`,
+      dialog: `osascript failed: ${clip(text(scan) || `exit ${scan.status}`)}`,
       clicked: false
     }
   }
-  const names = String(windows.stdout).trim()
-  if (!names || names === 'missing value')
-    return { dialog: 'no CoreServicesUIAgent window on screen', clicked: false }
-  const base = { dialog: `on screen: ${clip(names)}` }
+  const windows = parseWindowScan(scan.stdout)
+  const processes = new Set(windows.map((w) => w.process)).size
+  const dialog = findDefaultBrowserDialog(windows, { ownProcess })
+  if (!dialog) {
+    return {
+      dialog: `no default-browser dialog among the ${windows.length} window(s) of ${processes} process(es) on screen`,
+      clicked: false,
+      windows: windows.length
+    }
+  }
+  const base = {
+    dialog: `on screen (${dialog.process}, pid ${dialog.pid}, window ${dialog.index}): ${clip([dialog.name, ...dialog.texts].filter(Boolean).join(' '))}`,
+    process: dialog.process,
+    pid: dialog.pid,
+    index: dialog.index,
+    buttons: dialog.buttons,
+    windows: windows.length
+  }
   if (!click) return { ...base, clicked: false }
   if (click.status !== 0)
     return { ...base, clicked: false, clickError: clip(text(click) || `exit ${click.status}`) }
@@ -238,6 +305,136 @@ export function dialogReading({ windows, click }) {
 /** Whether `dialogReading`'s look found the dialog on screen (the click is worth trying). */
 export function dialogOnScreen(reading) {
   return typeof reading?.dialog === 'string' && reading.dialog.startsWith('on screen')
+}
+
+/**
+ * The verdict on the app's follow-through once the dialog was answered "Use": LaunchServices
+ * reporting http held – the OS's part, recorded when it does not come (an ad-hoc-signed bundle
+ * may be refused) – is what makes the app claim https (macClaimHttps: granted without a second
+ * dialog) and resolve the request true. Nothing to judge without a click, or without http held.
+ * One line per miss.
+ */
+export function followThroughProblems({ clicked, held, calls, request }) {
+  if (!clicked || held?.http !== true) return []
+  const problems = []
+  const sets = (calls ?? []).filter((c) => c.method === 'setAsDefaultProtocolClient')
+  if (!sets.some((c) => c.args?.[0] === 'https')) {
+    problems.push('http is held after the yes but the app never claimed https (macClaimHttps)')
+  }
+  if (!request?.settled) {
+    problems.push('the request has not resolved although the app holds http')
+  } else if (request.result !== true) {
+    problems.push(
+      `the request resolved ${JSON.stringify(request.result)} although the app holds http`
+    )
+  }
+  return problems
+}
+
+/**
+ * The AppleScript that lists every window of every process with its name, static texts and
+ * buttons (one level of groups deep – the dialog's message and answers), one tab-separated line
+ * each, for `parseWindowScan`. Processes whose name begins with `skipPrefix` (the app's own) are
+ * left alone: querying a Chromium window's accessibility tree would switch the app's
+ * accessibility on mid-run, and the OS's dialog is never the app's window.
+ */
+export function windowScanScript(skipPrefix = '') {
+  const skip = JSON.stringify(skipPrefix)
+  return `on clean(t)
+  set AppleScript's text item delimiters to {linefeed, return, tab}
+  set parts to text items of (t as text)
+  set AppleScript's text item delimiters to " "
+  return parts as text
+end clean
+
+on joinItems(xs)
+  set s to ""
+  repeat with x in xs
+    try
+      set v to contents of x
+      if v is not missing value then
+        if s is not "" then set s to s & " | "
+        set s to s & my clean(v)
+      end if
+    end try
+  end repeat
+  return s
+end joinItems
+
+set out to ""
+tell application "System Events"
+  repeat with p in (every application process)
+    try
+      set pn to name of p
+      set ownerPid to unix id of p
+      if ${skip} is "" or pn does not start with ${skip} then
+        set idx to 0
+        repeat with w in (every window of p)
+          set idx to idx + 1
+          try
+            set wn to name of w
+            if wn is missing value then set wn to ""
+            set texts to {}
+            set btns to {}
+            try
+              set texts to value of every static text of w
+            end try
+            try
+              set btns to name of every button of w
+            end try
+            try
+              repeat with g in (every group of w)
+                try
+                  set texts to texts & (value of every static text of g)
+                end try
+                try
+                  set btns to btns & (name of every button of g)
+                end try
+              end repeat
+            end try
+            set out to out & (ownerPid as text) & tab & pn & tab & (idx as text) & tab & (my clean(wn)) & tab & (my joinItems(texts)) & tab & (my joinItems(btns)) & linefeed
+          end try
+        end repeat
+      end if
+    end try
+  end repeat
+end tell
+return out`
+}
+
+/**
+ * The AppleScript that presses the first button beginning with "Use" ("Use “Zenium”") in window
+ * `index` of the process with `pid` – in the window itself or in one of its groups – and names
+ * the button it pressed.
+ */
+export function clickUseScript(pid, index) {
+  const p = Number(pid)
+  const i = Number(index)
+  if (!Number.isInteger(p) || !Number.isInteger(i) || i < 1) {
+    throw new Error(`clickUseScript needs a pid and a 1-based window index, got ${pid}, ${index}`)
+  }
+  return `tell application "System Events"
+  set p to first application process whose unix id is ${p}
+  tell p
+    set w to window ${i}
+    set b to missing value
+    try
+      set b to first button of w whose name begins with "Use"
+    end try
+    if b is missing value then
+      repeat with g in (every group of w)
+        try
+          set b to first button of g whose name begins with "Use"
+          exit repeat
+        end try
+      end repeat
+    end if
+    if b is missing value then error "no button beginning with Use in window ${i}"
+    set bn to name of b
+    click b
+    return "clicked " & bn
+  end tell
+end tell`
 }
 
 /**
@@ -341,6 +538,9 @@ export async function scenarioDefaultBrowser(h) {
 
   return runScenario(DEFAULT_BROWSER_SCENARIO, userData, {}, async (s, out) => {
     const skip = { skipped: 'Make default through LaunchServices is macOS-only' }
+    // The app's process name as System Events sees it (the bundle's executable): its own windows
+    // are no candidates for the OS's dialog.
+    const appName = await s.app.evaluate(({ app }) => app.getName())
     let bundleId = null
     let httpHeldBefore = null
 
@@ -427,53 +627,124 @@ export async function scenarioDefaultBrowser(h) {
       return detail
     })
 
-    await s.step('os-dialog', async () => {
-      if (!isMac) return skip
-      // The dialog takes a moment to come up; then the screen as it is.
-      await delay(2000)
-      const screen = grabScreen(`${DEFAULT_BROWSER_SCENARIO}-dialog`)
-      const windows = osascript(
-        'tell application "System Events" to tell process "CoreServicesUIAgent" to get name of every window',
-        20000
-      )
-      let click = null
-      if (dialogOnScreen(dialogReading({ windows }))) {
-        // "Use "Zenium"" makes the app the default: the whole path, when the session lets a script
-        // press it. Any other answer is left to the user.
-        click = osascript(
-          'tell application "System Events" to tell process "CoreServicesUIAgent" to tell window 1 to click (first button whose name begins with "Use")',
-          20000
-        )
-      }
-      const reading = dialogReading({ windows, click })
-      if (reading.clicked) await delay(3000)
-      const held = await s.app.evaluate(({ app }) => {
+    // What LaunchServices says the app holds, through the unwrapped methods (the wrapper's
+    // record stays the app's own calls).
+    const heldNow = () =>
+      s.app.evaluate(({ app }) => {
         const is =
           globalThis.__smokeLS?.orig?.isDefaultProtocolClient ??
           app.isDefaultProtocolClient.bind(app)
         return { http: is('http'), https: is('https') }
       })
+    const lsCalls = () => s.app.evaluate(() => globalThis.__smokeLS?.calls ?? [])
+    // The screen's windows read through System Events, and the dialog among them pressed "Use"
+    // when `press` is set: "Use “Zenium”" makes the app the default – the whole path, when the
+    // session lets a script press it. Any other answer is left to the user.
+    const lookForDialog = (press) => {
+      const scan = osascript(windowScanScript(appName), 90000)
+      const look = dialogReading({ scan, ownProcess: appName })
+      const click =
+        press && dialogOnScreen(look)
+          ? osascript(clickUseScript(look.pid, look.index), 20000)
+          : null
+      return { reading: dialogReading({ scan, click, ownProcess: appName }), scan, click }
+    }
+
+    await s.step('os-dialog', async () => {
+      if (!isMac) return skip
+      // The dialog takes a moment to come up; then the screen as it is.
+      await delay(2000)
+      const screen = grabScreen(`${DEFAULT_BROWSER_SCENARIO}-dialog`)
+      const { reading, scan, click } = lookForDialog(true)
+      let held = await heldNow()
+      let afterYes = null
+      if (reading.clicked) {
+        // The app's awaitChoice asks LaunchServices every second: http held is the OS's yes, the
+        // https claim and the request's resolution the app's follow-through.
+        held = await waitFor(
+          async () => {
+            const h = await heldNow()
+            return h.http ? h : null
+          },
+          15000,
+          'LaunchServices reporting http held',
+          500
+        ).catch(() => heldNow())
+        if (held.http) {
+          await waitFor(
+            async () => {
+              const calls = await lsCalls()
+              const request = await s.chrome.evaluate(READ_REQUEST)
+              const https = calls.some(
+                (c) => c.method === 'setAsDefaultProtocolClient' && c.args?.[0] === 'https'
+              )
+              return https && request?.settled ? true : null
+            },
+            15000,
+            'https claimed and the request resolved',
+            500
+          ).catch(() => undefined)
+          held = await heldNow()
+        }
+        // The https claim is meant to go through without another dialog: the screen again, and
+        // any dialog that is up pressed too, for the record.
+        await delay(1500)
+        const second = lookForDialog(true)
+        afterYes = {
+          screen: grabScreen(`${DEFAULT_BROWSER_SCENARIO}-after-yes`).file,
+          dialog: second.reading
+        }
+        if (second.reading.clicked) {
+          await delay(1500)
+          held = await heldNow()
+        }
+      }
+      const calls = await lsCalls()
+      const request = await s.chrome.evaluate(READ_REQUEST)
+      const detail = {
+        screen: screen.file,
+        reading,
+        scan: {
+          status: scan.status,
+          stderr: scan.stderr,
+          windows: scan.status === 0 ? parseWindowScan(scan.stdout) : []
+        },
+        click,
+        held,
+        calls,
+        request,
+        afterYes
+      }
+      const problems = followThroughProblems({ clicked: reading.clicked, held, calls, request })
+      if (problems.length) {
+        const err = new Error(problems.join('; '))
+        err.detail = detail
+        throw err
+      }
       log(
-        `${DEFAULT_BROWSER_SCENARIO}: dialog ${reading.dialog}; clicked ${reading.clicked}; app holds http ${held.http}, https ${held.https}`
+        `${DEFAULT_BROWSER_SCENARIO}: dialog ${reading.dialog}; clicked ${reading.clicked}; app holds http ${held.http}, https ${held.https}; request ${request?.settled ? `resolved ${JSON.stringify(request.result)}` : 'pending'}${afterYes ? `; after the yes: ${afterYes.dialog.dialog}` : ''}`
       )
-      out.dialog = reading
-      return { screen: screen.file, reading, windows, click, held }
+      out.dialog = { ...reading, held, request, afterYes: afterYes?.dialog ?? null }
+      return detail
     })
 
     await s.step('handlers-after', async () => {
       if (!isMac) return skip
       const facts = readHandlers()
       writeJson(path.join(outDir, `${DEFAULT_BROWSER_SCENARIO}-handlers-after.json`), facts)
-      const calls = await s.app.evaluate(() => globalThis.__smokeLS?.calls ?? [])
-      const held = await s.app.evaluate(({ app }) => {
-        const is =
-          globalThis.__smokeLS?.orig?.isDefaultProtocolClient ??
-          app.isDefaultProtocolClient.bind(app)
-        return { http: is('http'), https: is('https') }
-      })
+      const calls = await lsCalls()
+      const held = await heldNow()
       const request = await s.chrome.evaluate(READ_REQUEST)
+      // LSHandlers names the bundle id in lower case, as LaunchServices writes it.
+      const namesApp = Object.fromEntries(
+        WEB_SCHEMES.map((scheme) => [
+          scheme,
+          String(facts.web[scheme] ?? '').toLowerCase() === String(bundleId ?? '').toLowerCase()
+        ])
+      )
       const detail = {
         ...facts,
+        namesApp,
         held,
         request,
         sets: calls.filter((c) => c.method === 'setAsDefaultProtocolClient')
@@ -481,7 +752,7 @@ export async function scenarioDefaultBrowser(h) {
       log(
         `${DEFAULT_BROWSER_SCENARIO}: after the request http → ${facts.web.http ?? 'system default'}, https → ${facts.web.https ?? 'system default'}; app holds http ${held.http}, https ${held.https}`
       )
-      out.after = { web: facts.web, held }
+      out.after = { web: facts.web, namesApp, held }
       return detail
     })
 

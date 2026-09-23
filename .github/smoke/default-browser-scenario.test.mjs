@@ -6,13 +6,18 @@ import {
   DEFAULT_BROWSER_SCENARIO,
   LAUNCH_SERVICES_DOMAIN,
   WEB_SCHEMES,
+  clickUseScript,
   dialogOnScreen,
   dialogReading,
+  findDefaultBrowserDialog,
+  followThroughProblems,
   parseLsHandlers,
+  parseWindowScan,
   requestProblems,
   requestReading,
   urlTypeProblems,
-  webHandlers
+  webHandlers,
+  windowScanScript
 } from './default-browser-scenario.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -258,66 +263,228 @@ describe('requestReading', () => {
   })
 })
 
+// The window scan's output as `windowScanScript` prints it: pid, process, index, name, static
+// texts, buttons – tabs between, ' | ' within the lists.
+const dialogLine = [
+  '812',
+  'CoreServicesUIAgent',
+  '1',
+  '',
+  'Do you want to change your default web browser to “Zenium” or keep using “Safari”? | You can change this later in System Settings.',
+  'Use “Zenium” | Keep “Safari”'
+].join('\t')
+const scanWithDialog = [
+  '501\tFinder\t1\tDesktop\t\t',
+  '4321\tZenium\t1\tZenium\tMake Zenium your default web browser | Not now\tUse Zenium | Keep',
+  dialogLine,
+  'short\tline',
+  ''
+].join('\n')
+const scanWithout = ['501\tFinder\t1\tDesktop\t\t', '777\tTerminal\t2\truns\t\t'].join('\n')
+
+describe('parseWindowScan', () => {
+  it('reads one window per line, its lists split on the separator', () => {
+    const windows = parseWindowScan(scanWithDialog)
+    expect(windows).toHaveLength(3)
+    expect(windows[0]).toEqual({
+      pid: 501,
+      process: 'Finder',
+      index: 1,
+      name: 'Desktop',
+      texts: [],
+      buttons: []
+    })
+    expect(windows[2]).toEqual({
+      pid: 812,
+      process: 'CoreServicesUIAgent',
+      index: 1,
+      name: '',
+      texts: [
+        'Do you want to change your default web browser to “Zenium” or keep using “Safari”?',
+        'You can change this later in System Settings.'
+      ],
+      buttons: ['Use “Zenium”', 'Keep “Safari”']
+    })
+  })
+
+  it('reads nothing out of an empty output', () => {
+    expect(parseWindowScan('')).toEqual([])
+    expect(parseWindowScan(undefined)).toEqual([])
+    expect(parseWindowScan('\n\n')).toEqual([])
+  })
+})
+
+describe('findDefaultBrowserDialog', () => {
+  it('finds the dialog by its text, whoever owns it, and skips the app’s own windows', () => {
+    const windows = parseWindowScan(scanWithDialog)
+    expect(findDefaultBrowserDialog(windows, { ownProcess: 'Zenium' })?.pid).toBe(812)
+    expect(
+      findDefaultBrowserDialog(
+        parseWindowScan('99\tUserNotificationCenter\t3\t\tChange your default web browser?\tOK'),
+        { ownProcess: 'Zenium' }
+      )?.process
+    ).toBe('UserNotificationCenter')
+    // Without the exclusion the app's own banner would pass for the dialog.
+    expect(findDefaultBrowserDialog(windows)?.process).toBe('Zenium')
+  })
+
+  it('finds the dialog by its two answers when its text says nothing', () => {
+    const windows = parseWindowScan('12\tagent\t1\t\tsomething else\tUse “Zenium” | Keep “Safari”')
+    expect(findDefaultBrowserDialog(windows)?.pid).toBe(12)
+    expect(
+      findDefaultBrowserDialog(parseWindowScan('12\tagent\t1\t\tsomething else\tKeep “Safari”'))
+    ).toBeNull()
+  })
+
+  it('finds none among unrelated windows', () => {
+    expect(findDefaultBrowserDialog(parseWindowScan(scanWithout))).toBeNull()
+    expect(findDefaultBrowserDialog([])).toBeNull()
+    expect(findDefaultBrowserDialog(undefined)).toBeNull()
+  })
+})
+
 describe('dialogReading', () => {
   const ok = (stdout) => ({ status: 0, stdout, stderr: '' })
   const failed = (stderr) => ({ status: 1, stdout: '', stderr })
 
   it('reads a session that refuses UI scripting as not automatable', () => {
     const r = dialogReading({
-      windows: failed(
+      scan: failed(
         'execution error: System Events got an error: osascript is not allowed assistive access. (-1719)'
       )
     })
     expect(r.dialog).toMatch(/^not automatable: .*-1719/)
     expect(r.clicked).toBe(false)
     expect(dialogOnScreen(r)).toBe(false)
-    expect(dialogReading({ windows: failed('(-1743)') }).dialog).toMatch(/^not automatable/)
+    expect(dialogReading({ scan: failed('(-1743)') }).dialog).toMatch(/^not automatable/)
   })
 
-  it('reads no agent process and no window as no dialog', () => {
-    expect(
-      dialogReading({
-        windows: failed(
-          'execution error: System Events got an error: Can’t get process "CoreServicesUIAgent". (-1728)'
-        )
-      })
-    ).toEqual({
-      dialog: 'no CoreServicesUIAgent process (no dialog up)',
-      clicked: false
+  it('reads a scan without the dialog, and one that could not run', () => {
+    expect(dialogReading({ scan: ok(scanWithout) })).toEqual({
+      dialog: 'no default-browser dialog among the 2 window(s) of 2 process(es) on screen',
+      clicked: false,
+      windows: 2
     })
-    expect(dialogReading({ windows: ok('') })).toEqual({
-      dialog: 'no CoreServicesUIAgent window on screen',
-      clicked: false
-    })
-    expect(dialogReading({ windows: ok('missing value') }).dialog).toBe(
-      'no CoreServicesUIAgent window on screen'
+    expect(dialogReading({ scan: ok('') }).dialog).toBe(
+      'no default-browser dialog among the 0 window(s) of 0 process(es) on screen'
     )
-    expect(dialogReading({ windows: null })).toEqual({ dialog: 'not looked at', clicked: false })
-    expect(dialogReading({ windows: failed('some other error') }).dialog).toBe(
+    expect(dialogReading({ scan: null })).toEqual({ dialog: 'not looked at', clicked: false })
+    expect(dialogReading({ scan: failed('some other error') }).dialog).toBe(
       'osascript failed: some other error'
     )
+    expect(
+      dialogReading({ scan: { status: null, stdout: '', stderr: '', error: 'ETIMEDOUT' } }).dialog
+    ).toBe('osascript failed: ETIMEDOUT')
   })
 
-  it('reads the dialog on screen, and the click’s outcome', () => {
-    const windows = ok('Do you want to change your default web browser to “Zenium”?')
-    const seen = dialogReading({ windows })
+  it('reads the dialog on screen with its owner, and the click’s outcome', () => {
+    const scan = ok(scanWithDialog)
+    const seen = dialogReading({ scan, ownProcess: 'Zenium' })
     expect(seen).toEqual({
-      dialog: 'on screen: Do you want to change your default web browser to “Zenium”?',
+      dialog:
+        'on screen (CoreServicesUIAgent, pid 812, window 1): Do you want to change your default web browser to “Zenium” or keep using “Safari”? You can change this later in System Settings.',
+      process: 'CoreServicesUIAgent',
+      pid: 812,
+      index: 1,
+      buttons: ['Use “Zenium”', 'Keep “Safari”'],
+      windows: 3,
       clicked: false
     })
     expect(dialogOnScreen(seen)).toBe(true)
     expect(
+      dialogReading({ scan, ownProcess: 'Zenium', click: ok('clicked Use “Zenium”') })
+    ).toMatchObject({
+      pid: 812,
+      clicked: true,
+      clickResult: 'clicked Use “Zenium”'
+    })
+    expect(
       dialogReading({
-        windows,
-        click: ok('button "Use “Zenium”" of window 1 of application process "CoreServicesUIAgent"')
+        scan,
+        ownProcess: 'Zenium',
+        click: failed('execution error: no button beginning with Use in window 1 (-2700)')
       })
     ).toMatchObject({
-      clicked: true,
-      clickResult: expect.stringContaining('Use')
-    })
-    expect(dialogReading({ windows, click: failed('Can’t get button 1 (-1728)') })).toMatchObject({
       clicked: false,
-      clickError: expect.stringContaining('-1728')
+      clickError: expect.stringContaining('no button beginning with Use')
     })
+  })
+})
+
+describe('followThroughProblems', () => {
+  const settled = { settled: true, result: true, error: null }
+
+  it('judges nothing without a click, or while the OS has not reported http held', () => {
+    expect(
+      followThroughProblems({
+        clicked: false,
+        held: { http: false, https: false },
+        calls: [set('http')],
+        request: { settled: false }
+      })
+    ).toEqual([])
+    expect(
+      followThroughProblems({
+        clicked: true,
+        held: { http: false, https: false },
+        calls: [set('http')],
+        request: { settled: false }
+      })
+    ).toEqual([])
+  })
+
+  it('accepts the https claim and the request resolved true once http is held', () => {
+    expect(
+      followThroughProblems({
+        clicked: true,
+        held: { http: true, https: true },
+        calls: [set('http'), is('http', true), is('https', false), set('https')],
+        request: settled
+      })
+    ).toEqual([])
+  })
+
+  it('names a missing https claim and a request that did not resolve true', () => {
+    expect(
+      followThroughProblems({
+        clicked: true,
+        held: { http: true, https: false },
+        calls: [set('http'), is('http', true)],
+        request: { settled: false }
+      })
+    ).toEqual([
+      'http is held after the yes but the app never claimed https (macClaimHttps)',
+      'the request has not resolved although the app holds http'
+    ])
+    expect(
+      followThroughProblems({
+        clicked: true,
+        held: { http: true, https: true },
+        calls: [set('http'), set('https')],
+        request: { settled: true, result: null }
+      })
+    ).toEqual(['the request resolved null although the app holds http'])
+  })
+})
+
+describe('the AppleScripts', () => {
+  it('scans every process but the app’s own, one tab-separated line per window', () => {
+    const script = windowScanScript('Zenium')
+    expect(script).toContain('every application process')
+    expect(script).toContain('pn does not start with "Zenium"')
+    expect(script).toContain('every static text of w')
+    expect(script).toContain('every button of g')
+    expect(script).toMatch(/tab & pn & tab & \(idx as text\) & tab/)
+    expect(windowScanScript()).toContain('"" is ""')
+  })
+
+  it('presses the first Use button in the window of the process given', () => {
+    const script = clickUseScript(812, 1)
+    expect(script).toContain('first application process whose unix id is 812')
+    expect(script).toContain('set w to window 1')
+    expect(script).toContain('first button of w whose name begins with "Use"')
+    expect(script).toContain('first button of g whose name begins with "Use"')
+    expect(() => clickUseScript('812', 0)).toThrow(/1-based window index/)
+    expect(() => clickUseScript(undefined, 1)).toThrow(/needs a pid/)
   })
 })

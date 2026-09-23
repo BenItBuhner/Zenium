@@ -82,18 +82,26 @@ dispatched click does not exercise), whether Windows hands the foreground to the
 
 `default-browser-scenario.mjs` runs last on the macOS legs for os-07. LaunchServices asks the
 user before changing the default web browser ("Do you want to change your default web browser
-to Zenium?"), and nothing in a runner's session answers it, so the app's half is asserted and the
-OS's recorded: `bundle-claims-web` reads the bundle's `CFBundleURLTypes` for `http` and `https`
+to “Zenium” or keep using “Safari”?"), so the app's half is asserted, the OS's recorded, and
+where the session lets a script answer the dialog the app's follow-through on the yes is
+asserted too: `bundle-claims-web` reads the bundle's `CFBundleURLTypes` for `http` and `https`
 (electron-builder's `protocols`; gates); `handlers-before` and `handlers-after` read
 `LSHandlers` out of `com.apple.launchservices.secure` (who holds `http`/`https`; no entry means
-Safari); `make-default-calls-ls` wraps `app.setAsDefaultProtocolClient` in the main process,
-fires `defaultBrowser.request` (the Settings row's source, not awaited: it polls for the user's
-answer for two minutes) and requires the request for `http` first and alone – `https` only once
-`http` is held, or the OS puts a second prompt up – recording what LaunchServices returned;
-`os-dialog` takes the screen and looks for the dialog through System Events, pressing its "Use"
-button when the session lets a script (a fresh runner refuses: `not automatable`). The
-ad-hoc-signed bundle is a caveat on the OS's answer, not on the call. `mac-facts.sh` prints the
-same `LSHandlers` before and after the run and, after it, the unified log's LaunchServices lines.
+Safari; after a yes both should name the bundle id – recorded as `namesApp`);
+`make-default-calls-ls` wraps `app.setAsDefaultProtocolClient` in the main process, fires
+`defaultBrowser.request` (the Settings row's source, not awaited: it polls for the user's answer
+for two minutes) and requires the request for `http` first and alone – `https` only once `http`
+is held, or the OS puts a second prompt up – recording what LaunchServices returned; `os-dialog`
+takes the screen, scans every process's windows through System Events for the dialog (its
+"default web browser" text or its "Use …"/"Keep …" buttons, whoever owns it – the app's own
+windows excepted) and presses "Use" when found (UI scripting needs the Accessibility
+permission: the GitHub runners grant it, a fresh Mac says `not automatable`). After a click,
+LaunchServices reporting `http` held is the OS's yes (recorded – an ad-hoc-signed bundle may be
+refused); given the yes the app must claim `https` (`macClaimHttps`) and resolve the request
+`true` (gates), and a second scan records whether the `https` claim put another dialog up (it
+is meant not to). `mac-facts.sh` prints the same `LSHandlers` before and after the run and,
+after it, LaunchServices' own record of the bundle (`lsregister -dump`: what the dialog names
+the app from) and the unified log's LaunchServices lines.
 
 ## Teardown
 

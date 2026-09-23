@@ -76,6 +76,13 @@ section "Processes"
 ps -axo pid,ppid,rss,%cpu,comm | grep -i '[Z]enium' | tee -a "$TXT"
 
 if [ "$LABEL" = "after-run" ]; then
+  # LaunchServices' own record of the bundle (name, displayName, identifier, the claimed
+  # schemes): what the OS's dialog names the app from. `lsregister -dump` prints the whole
+  # database, so only the first records naming the id are kept, and perl's alarm survives the
+  # exec and ends the pipeline after 120 s.
+  section "LaunchServices' record of the bundle (lsregister -dump, first records naming the id, 120 s bound)"
+  LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+  run perl -e 'alarm 120; exec @ARGV' -- sh -c "$LSREGISTER -dump 2>&1 | grep -m 3 -B12 -A40 'identifier: *io.github.benitbuhner.zenium'"
   # What LaunchServices and the prompt's agent logged about the default-browser request (the
   # smoke's default-browser scenario ran within the last minutes). `log show` can take long on a
   # runner: perl's alarm survives the exec and ends it after 120 s; whatever it printed by then

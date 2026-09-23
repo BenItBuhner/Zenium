@@ -126,9 +126,12 @@
 //   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
 //                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
 //                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
-//                to change your default web browser?" dialog answers, which the runner cannot;
-//                LaunchServices' LSHandlers are read before and after for the record, the dialog
-//                (if any) is on the screenshot and dismissed best-effort (macOS jobs)
+//                to change your default web browser?" dialog answers; the dialog is on the
+//                screenshot and, where System Events may (the GitHub runners allow UI
+//                scripting), found among every process's windows and answered "Use", after
+//                which the app has to claim https and resolve the request true once
+//                LaunchServices reports http held; LaunchServices' LSHandlers are read before
+//                and after for the record (macOS jobs)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
 // restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash
