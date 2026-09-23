@@ -2007,6 +2007,12 @@ export interface Shortcut {
   unsupported?: boolean
   /** Reserved for a feature that has not shipped: bound (a no-op) but left out of the list. */
   hidden?: boolean
+  /**
+   * The chrome layouts whose listings show the row, when the action is one shell's alone
+   * (Web Capture is the desktop's; the phone's chord takes its screenshot); left out, every
+   * layout lists it. The binding itself is untouched – a layout that hides the row keeps the key.
+   */
+  layouts?: FormFactor[]
 }
 
 // ---------------------------------------------------------------------------

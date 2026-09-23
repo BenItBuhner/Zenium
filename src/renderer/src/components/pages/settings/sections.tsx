@@ -4134,6 +4134,7 @@ function shortcutsSection({ state }: SectionContext): RowGroup[] {
           formatBinding(s.binding, state.platform),
           ...(s.unsupported ? ['unsupported'] : [])
         ],
+        layouts: s.layouts,
         bare: true,
         render: () => (
           <ShortcutRow shortcut={s} shortcuts={state.shortcuts} platform={state.platform} />

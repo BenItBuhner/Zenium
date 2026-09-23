@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ExtensionErrorEntry,
   ExtensionInfo,
+  FormFactor,
   HostCapabilities,
   ImportSource,
   SafetyCheckResult,
@@ -30,6 +31,7 @@ import {
   emptyResourceSnapshot
 } from '@shared/defaults'
 import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
+import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
@@ -4159,6 +4161,22 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
       excluded.onCommit('Mail.example.com, notion.so')
       expect(c.patches.at(-1)).toEqual({ unloadExcludedDomains: ['mail.example.com', 'notion.so'] })
     }
+  })
+})
+
+describe('the Keyboard Shortcuts listing by layout', () => {
+  it('lists Web Capture on the desktop shell alone; the tablet, whose chord takes a screenshot, leaves the row out and keeps the rest', () => {
+    const def = PAGE.sections.find((x) => x.id === 'shortcuts')!
+    const c = context(state({ platform: 'linux', shortcuts: defaultShortcuts('linux', 'chrome') }))
+    const ids = (layout: FormFactor): string[] =>
+      buildSection(def, { ...c.ctx, formFactor: layout })
+        .groups.filter((g) => g.id === 'shortcuts-pageOperations')
+        .flatMap((g) => g.rows.map((r) => r.id))
+    expect(ids('desktop')).toContain('shortcut:key_webCapture')
+    expect(ids('desktop')).toContain('shortcut:key_screenshot')
+    expect(ids('tablet')).not.toContain('shortcut:key_webCapture')
+    expect(ids('tablet')).toContain('shortcut:key_screenshot')
+    expect(ids('tablet')).toHaveLength(ids('desktop').length - 1)
   })
 })
 

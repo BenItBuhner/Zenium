@@ -180,6 +180,14 @@ describe('the Ctrl+Shift+S chord', () => {
     expect(bound('zen', 'key_screenshot')).toBe(true)
   })
 
+  it('lists Web Capture on the desktop layout alone – the touch shells’ chord takes their screenshot – the binding itself on every layout', () => {
+    for (const preset of ['zen', 'chrome'] as const) {
+      const table = defaultShortcuts('linux', preset)
+      expect(table.find((s) => s.id === 'key_webCapture')?.layouts).toEqual(['desktop'])
+      expect(table.find((s) => s.id === 'key_screenshot')?.layouts).toBeUndefined()
+    }
+  })
+
   it('is no collision: Edge’s reference row names capture.start', () => {
     for (const platform of ['linux', 'win32', 'darwin'] as const) {
       const found = collisions(defaultShortcuts(platform, 'chrome'), chromeReference(platform))

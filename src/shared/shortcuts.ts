@@ -1,4 +1,5 @@
 import type {
+  FormFactor,
   KeyBinding,
   Platform,
   Shortcut,
@@ -315,6 +316,8 @@ interface Def {
   hidden?: boolean
   /** Closes or discards something the user cannot get back with one key. */
   destructive?: boolean
+  /** Listed on these chrome layouts alone (`Shortcut.layouts`). */
+  layouts?: FormFactor[]
   zen: Spec
   chrome: Spec
 }
@@ -953,6 +956,10 @@ const DEFS: Def[] = [
     action: 'capture.start',
     group: 'pageOperations',
     label: 'Web Capture',
+    // The desktop's overlay; the touch shells' Ctrl+Shift+S takes their screenshot instead
+    // (`capture.start` falls through to `page.screenshot` there), so their listings leave the
+    // row out rather than name a surface the chord does not open.
+    layouts: ['desktop'],
     zen: UNBOUND,
     chrome: { key: 's', mods: ACCEL_SHIFT }
   },
@@ -1170,6 +1177,7 @@ export function defaultShortcuts(
     }
     if (def.unsupported) shortcut.unsupported = true
     if (def.hidden) shortcut.hidden = true
+    if (def.layouts) shortcut.layouts = [...def.layouts]
     return shortcut
   })
 }
