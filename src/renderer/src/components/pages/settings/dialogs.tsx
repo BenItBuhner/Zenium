@@ -241,11 +241,13 @@ function HostedDialog({
   // The sheet's dismiss as the forms and rows inside know it (`useSheetDismiss`): the dialog has
   // no motion to wait for, so `after` – an action that opens a surface of its own once the
   // dialog is gone (`ActionRow.closesSheet`, a form's Cancel), a prompt's confirmed action –
-  // runs at once.
+  // runs at once. Only a function runs: a caller that bound the dismiss straight to a button
+  // hands it the click's event, and the phone sheet's landing threw calling one (#145); the two
+  // hosts take the same guard.
   const dismiss = useCallback<SheetDismiss>(
     (after) => {
       onClose()
-      after?.()
+      if (typeof after === 'function') after()
     },
     [onClose]
   )

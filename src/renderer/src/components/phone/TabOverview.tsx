@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Ellipsis,
@@ -13,7 +13,6 @@ import {
 } from 'lucide-react'
 import type {
   Folder,
-  FolderColor,
   PhoneBarPosition,
   Rect,
   Space,
@@ -38,7 +37,7 @@ import {
   type OverviewState
 } from '@renderer/lib/gestures/stage'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
-import { groupColorVars, groupsOf, nextGroupColor } from '@renderer/lib/groups'
+import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
@@ -96,6 +95,7 @@ import {
 } from '@renderer/lib/selectors'
 import { browserStore, openOverlay, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { CloseAllSheet } from './CloseAllSheet'
@@ -110,7 +110,7 @@ import {
   type Departure,
   type GroupDeparture
 } from './departureStore'
-import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
+import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
 import { CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
@@ -1614,7 +1614,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                   </div>
                 )}
                 <div
-                  className="grid gap-3"
+                  // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
+                  // takes the shell out of the flow at its `offsetTop`, which is read against
+                  // the nearest positioned ancestor and ignores the scroller's scroll – against
+                  // this grid, which scrolls with the cells, the shell stands where the card
+                  // stood; against the pane outside the scroller it landed `scrollTop` px too
+                  // low, and the tracker held only the cells drawn under that lower box (#355's
+                  // finding, seed 49).
+                  className="relative grid gap-3"
                   style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
                 >
                   {pinned.map(card)}
@@ -2043,7 +2050,7 @@ function GroupPickerSheet({
     ...groups.map(({ folder, count: held }): SheetAction => ({
       id: `group-${folder.id}`,
       label: `Add to ${folder.name} (${held})`,
-      icon: <GroupDot color={folder.color} />,
+      icon: <GroupGlyph folder={folder} />,
       onPick: () => onPick(folder.id)
     }))
   ]
@@ -2126,7 +2133,7 @@ function TabSheet({
       actions.push({
         id: `group-${g.id}`,
         label: current ? `Move to ${g.name}` : `Add to ${g.name}`,
-        icon: <GroupDot color={g.color} />,
+        icon: <GroupGlyph folder={g} />,
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: g.id })
       })
     }
@@ -2210,17 +2217,6 @@ function GroupSheet({
       header={<GroupColorPalette folder={folder} />}
       actions={actions}
       onClose={onClose}
-    />
-  )
-}
-
-/** A sheet row's leading dot in the group's colour – the scheme's set (§9.14's pair), following a theme flip live. */
-function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Element {
-  return (
-    <span
-      className="h-2.5 w-2.5 rounded-full bg-[rgb(var(--zen-group-rgb))]"
-      data-group-rgb=""
-      style={groupColorVars(color) as CSSProperties}
     />
   )
 }

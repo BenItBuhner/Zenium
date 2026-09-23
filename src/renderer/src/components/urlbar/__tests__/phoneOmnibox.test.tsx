@@ -1098,11 +1098,18 @@ describe('the field’s engine mark (NTP-09)', () => {
   const slot = (el: HTMLElement): HTMLElement =>
     el.querySelector<HTMLElement>('.zen-omnibox-field [data-testid="engine-field-glyph"]')!
 
-  it('keeps the letter tile for the vendor’s default', async () => {
+  it('leads with the vendor’s default’s favicon too, the letter tile until it loads (v2 §6)', async () => {
     const el = await render(withEngine('google'))
-    expect(slot(el).textContent).toBe('G')
-    expect(slot(el).getAttribute('aria-label')).toBe('Search engine: Google')
-    expect(slot(el).querySelector('img')).toBeNull()
+    const s = slot(el)
+    expect(s.getAttribute('aria-label')).toBe('Search engine: Google')
+    const img = s.querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+    expect(img.getAttribute('src')).toBe('https://www.google.com/favicon.ico')
+    expect(s.textContent).toBe('G')
+    act(() => {
+      img.dispatchEvent(new Event('load'))
+    })
+    expect(s.textContent).toBe('')
+    expect(img.className).toContain('h-5 w-5')
   })
 
   it('shows the chosen engine’s favicon at 20 in the 28 slot once it loads, the letter until then', async () => {

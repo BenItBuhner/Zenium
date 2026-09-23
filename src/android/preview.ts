@@ -1056,6 +1056,8 @@ export function createPreviewBridge(): NativeBridge {
     // switch's word is taken, and the cover's Unlock passes after the time the system's sheet
     // takes to notice, as `reauth.verify` does.
     'private.setLockOnLeave': () => undefined,
+    // The chrome's masked-tree report; the preview has no veil to lower (LockVeil.kt is the host's).
+    'private.masked': () => undefined,
     'private.unlock': () =>
       new Promise((resolve) => setTimeout(() => resolve({ locked: false }), 400)),
     // Passwords: the Android Keystore and BiometricPrompt stand-ins (see `vaultMode`). Refusals

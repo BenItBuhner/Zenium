@@ -141,8 +141,7 @@ import {
   DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
   sanitizeAutofillSettings,
-  sanitizePasswordSettings,
-  spaceLabel
+  sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
@@ -1420,8 +1419,10 @@ export class Browser {
       this.toast('There are no pages to bookmark.', 'info', win)
       return
     }
-    // A whole space is offered under the space's name (the engine's default); picked tabs count.
-    const defaultTitle = tabIds ? `${pages.length} tabs` : spaceLabel(space)
+    // A whole space is offered under the space's name alone – its icon is its picture, not a
+    // character of the name or a leading glyph in the field (§9.12, pr-386 gate 1); picked tabs
+    // count.
+    const defaultTitle = tabIds ? `${pages.length} tabs` : space.name
     this.emit('bookmark.allTabs', { tabIds: pages.map((t) => t.id), defaultTitle }, win)
   }
 

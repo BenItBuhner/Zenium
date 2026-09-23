@@ -288,7 +288,10 @@ function syncPrivateSurface(bridge: Bridge): void {
 function syncPrivateLock(bridge: Bridge, boot: BootInfo, platform: AndroidPlatform): void {
   setPrivateLockHost({
     unlock: (reason) => bridge.call<{ locked: boolean }>('private.unlock', { reason }),
-    verify: (reason) => bridge.call<boolean>('reauth.verify', { reason })
+    verify: (reason) => bridge.call<boolean>('reauth.verify', { reason }),
+    // The lock's masked tree is committed: the host's veil over the chrome (`LockVeil.kt`)
+    // falls with the frame that carries it, never a frame before.
+    masked: () => bridge.send('private.masked')
   })
   applyPrivateLock({ locked: false, screenLock: boot.screenLock === true })
   let last: boolean | null = null

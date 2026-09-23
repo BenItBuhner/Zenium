@@ -3,14 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 import type { BookmarkNode, Rect, UIState } from '@shared/types'
 import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
-import { useViewport } from '@renderer/lib/formFactor'
 import {
   ChromePortal,
   POPOVER_MARGIN,
   POPOVER_WIDTH,
   placePopover,
   popoverStyle,
-  useFrameDialog,
   useLightDismiss,
   viewportSize,
   type DismissReason
@@ -99,8 +97,8 @@ export function StarDialog({
  * (`ChromePortal`), never inside the frame, and the layer's light dismiss puts it away: a press
  * anywhere else keeps the bookmark and closes it (the press goes no further), the star's own
  * press closes it and hands it the focus, scroll and resize close it; Escape too returns the
- * focus to the star (§9.22). On phones it is a sheet placed through the `FrameDialogHost`
- * TabDialogs mounts, over that host's scrim.
+ * focus to the star (§9.22). A phone never opens it: its star flow is the toast with Edit and
+ * the editor sheet (`starredOnPhone`, `BookmarkEditSheet`; HB-19).
  */
 function StarBubble({
   tree,
@@ -111,7 +109,6 @@ function StarBubble({
   node: BookmarkNode
   star: StarTarget
 }): JSX.Element {
-  const phone = useViewport().formFactor === 'phone'
   const [name, setName] = useState(node.title)
   const [nested, setNested] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
@@ -120,8 +117,7 @@ function StarBubble({
   const scrolled = useScrolled(bodyRef)
   const removed = useRef(false)
 
-  useEscapeTrap(!nested, phone ? close : closeToAnchor)
-  useFrameDialog({ onScrimPress: close, active: phone })
+  useEscapeTrap(!nested, closeToAnchor)
 
   useEffect(() => {
     nameRef.current?.focus()
@@ -152,7 +148,7 @@ function StarBubble({
   useLightDismiss(
     panelRef,
     (reason: DismissReason) => (reason === 'anchor' ? closeToAnchor() : close()),
-    { anchor: starChip, disabled: phone }
+    { anchor: starChip }
   )
 
   const title = star.created ? 'Bookmark added' : 'Edit bookmark'
@@ -219,20 +215,6 @@ function StarBubble({
       </form>
     </>
   )
-
-  if (phone) {
-    return (
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-labelledby={TITLE_ID}
-        className="zen-v2 zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-col self-end justify-self-stretch"
-        onKeyDown={onKeyDown}
-      >
-        {body}
-      </div>
-    )
-  }
 
   // With no pill on screen (compact mode) the bubble stands in the window's top trailing corner.
   const viewport = viewportSize()
