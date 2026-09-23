@@ -465,7 +465,7 @@ function lookSection({
           )
         },
         // The desktop bar's optional controls (settings-36; Chrome's toolbar customisation).
-        // "Show forward button" is the Customize toolbar dialog's Forward row by another name –
+        // "Show forward button" is the Customise toolbar dialog's Forward row by another name –
         // one setting, `toolbarPins.forward` (`shared/toolbarPins.ts`) – and the dialog holds
         // every control the bar can fold into the app menu; Reset puts the default bar back,
         // the downloads button's own key (`downloads.alwaysShowButton`) included, since the
@@ -485,11 +485,12 @@ function lookSection({
         {
           kind: 'action',
           id: 'customize-toolbar',
-          label: 'Customize toolbar',
+          label: 'Customise toolbar',
           description: 'Choose which controls show beside the address bar.',
           keywords: [
             'toolbar',
             'customise toolbar',
+            'customize toolbar',
             'pin',
             'unpin',
             'buttons',
@@ -500,9 +501,9 @@ function lookSection({
             'downloads'
           ],
           layouts: ['desktop'],
-          button: 'Customize…',
+          button: 'Customise…',
           form: {
-            title: 'Customize toolbar',
+            title: 'Customise toolbar',
             description: 'Choose the controls beside the address bar and how they show.',
             body: 'list',
             render: (close) => <CustomizeToolbarForm state={state} set={set} close={close} />

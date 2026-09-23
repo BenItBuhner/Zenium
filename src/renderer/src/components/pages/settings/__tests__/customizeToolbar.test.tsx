@@ -25,7 +25,7 @@ import { toolbarTiering } from '@renderer/lib/toolbarPins'
 
 /*
  * Look and Feel › Appearance's toolbar rows (settings-36; Chrome's toolbar customisation): the
- * "Show forward button" switch, the "Customize toolbar" row and its 400 form dialog – the
+ * "Show forward button" switch, the "Customise toolbar" row and its 400 form dialog – the
  * lead's spec in design language v2 §10.5: §6 check rows, one per optional control in the
  * bar's order, each leading with the control's glyph after the box, "Hidden at this width." on
  * a pinned control the width tier folded, Done alone in the footer – and the "Reset to
@@ -133,7 +133,7 @@ function render(element: ReactElement): HTMLElement {
   return host
 }
 
-/** The Customize toolbar dialog over the real Look and Feel groups. */
+/** The Customise toolbar dialog over the real Look and Feel groups. */
 function openDialog(
   s: UIState,
   closeTop = vi.fn()
@@ -221,23 +221,27 @@ describe('Look and Feel › the toolbar rows (settings-36)', () => {
     expect(folded.patches).toEqual([{ toolbarPins: { star: false } }])
   })
 
-  it('"Customize toolbar" is a button row opening the 400 form dialog with the lead’s title block (§9.20)', () => {
+  it('"Customise toolbar" is a button row opening the 400 form dialog with the lead’s title block (§9.20); British spelling on every surface, the id and the search keywords carrying both', () => {
     const { groups } = look(state())
     const customize = row(groups, 'customize-toolbar')
     expect(customize).toMatchObject({
       kind: 'action',
-      label: 'Customize toolbar',
-      button: 'Customize…',
+      label: 'Customise toolbar',
+      button: 'Customise…',
       form: {
-        title: 'Customize toolbar',
+        title: 'Customise toolbar',
         description: 'Choose the controls beside the address bar and how they show.',
         body: 'list'
       }
     })
+    expect(customize.keywords).toEqual(
+      expect.arrayContaining(['customise toolbar', 'customize toolbar'])
+    )
     const { h } = openDialog(state())
     const dialog = h.querySelector<HTMLElement>('[role="dialog"]')!
     expect(dialog.getAttribute('data-dialog')).toBe('form:customize-toolbar')
-    expect(dialog.textContent).toContain('Customize toolbar')
+    expect(dialog.textContent).toContain('Customise toolbar')
+    expect(dialog.textContent).not.toContain('Customize')
     expect(dialog.textContent).toContain(
       'Choose the controls beside the address bar and how they show.'
     )
@@ -285,7 +289,7 @@ describe('Look and Feel › the toolbar rows (settings-36)', () => {
   })
 })
 
-describe('the Customize toolbar dialog (the lead’s spec, §10.5)', () => {
+describe('the Customise toolbar dialog (the lead’s spec, §10.5)', () => {
   it('lists the optional controls as check rows in the bar’s order, each with its glyph after the box and no row for the bar itself', () => {
     const { h } = openDialog(state())
     const rows = controlRows(h)

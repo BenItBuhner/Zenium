@@ -18,7 +18,7 @@ import { toolbarTiering } from '@renderer/lib/toolbarPins'
 import { NavRow } from '../SidebarTop'
 
 /*
- * The desktop toolbar under Settings › Look and Feel › Customize toolbar (settings-36): a
+ * The desktop toolbar under Settings › Look and Feel › Customise toolbar (settings-36): a
  * control unpinned in `Settings.toolbarPins` is not drawn – Forward leaves the row, a chip
  * leaves the pill, the media hub's button folds as the width tier folds it (the ⋯ dot and the
  * menu's "Now Playing…" row stand in) – and the pins speak for the desktop layout alone. The

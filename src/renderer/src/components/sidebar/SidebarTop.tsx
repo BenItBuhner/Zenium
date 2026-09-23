@@ -83,7 +83,7 @@ import {
 
 /**
  * Back, forward, reload, the puzzle piece and the menu: in the row at every width, never folded
- * by the tier. Forward alone can leave it by a setting (Look and Feel › Customize toolbar,
+ * by the tier. Forward alone can leave it by a setting (Look and Feel › Customise toolbar,
  * `fixedButtons` below), and the puzzle piece stands only while there are extensions.
  */
 const FIXED_BUTTONS = 5
@@ -228,7 +228,7 @@ export function NavRow({
   const tree = useBookmarkTree(state)
   // The star stays on a site and on an internal page whose registry entry keeps it (Chrome shows
   // it on chrome://settings; the new tab page hides it) – `pill.showStar`, v2 §10.1.
-  // The pins (Settings › Look and Feel › Customize toolbar, settings-36): the desktop's
+  // The pins (Settings › Look and Feel › Customise toolbar, settings-36): the desktop's
   // alone – the phone and the tablet keep their own bars (`pinsFor`). A control folded away is
   // not drawn and not measured: Forward leaves the fixed set, a chip leaves the pill's tier, the
   // hub's button folds as the width tier folds it, with the menu's "Now Playing…" row and the
@@ -364,7 +364,7 @@ export function NavRow({
     chipsPresent.push({ id: 'reader-prefs', tier: 'state', width: CHIP_WIDTH.small })
   }
   const fits = fittingChips(pillInner, chipsPresent)
-  // What the width tier hid of the pinned controls, for the Customize toolbar dialog's "Hidden
+  // What the width tier hid of the pinned controls, for the Customise toolbar dialog's "Hidden
   // at this width" (settings-36): the chips present in the pill that did not fit, and the hub's
   // button while media plays and the row has no room for it – never a control the pins folded,
   // and never one the page has no chip for. From the layout phase, as the hub's own word is.

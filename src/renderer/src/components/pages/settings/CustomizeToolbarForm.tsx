@@ -9,7 +9,7 @@ import { SheetFooter } from './blocks'
 import { RowText } from './rows'
 
 /**
- * Look and Feel › Customize toolbar (settings-36; Chrome's pinnable toolbar actions, Firefox's
+ * Look and Feel › Customise toolbar (settings-36; Chrome's pinnable toolbar actions, Firefox's
  * Customize): the body of the 400 form dialog the row opens (`FormSheet.body: 'list'` – the
  * title block over a list, the footer form under it, design language v2 §9.20). The lead's
  * spec (§10.5): §6's desktop checkbox form, one 32 row per optional control in the bar's own
