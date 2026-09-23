@@ -116,6 +116,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val focusHandoff = FocusHandoff(root) { landing -> onFocusLanding(landing) }
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
+    /** The updates' card on the shade – available, ready – from the core's `update.notify` (NOT-17). */
+    val updateNotifications = UpdateNotifications(activity)
     val translate = Translate(activity, this)
     val siteData = SiteData()
     private val accessibility: AccessibilityManager? = activity.getSystemService(AccessibilityManager::class.java)
@@ -1098,6 +1100,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             )
             "update.cancel" -> { updates.cancel(args.str("token")); reply(null) }
             "update.install" -> reply(updates.install(args.str("path")))
+            "update.notify" -> { updateNotifications.notify(args.optJSONObject("notice")); reply(null) }
 
             // --- extension store (ext/ExtensionStore.kt; the contract is src/android/extensionStoreIo.ts).
             //     The runtime that runs extensions has its own methods, in its own block. -------------

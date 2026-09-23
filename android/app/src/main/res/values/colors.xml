@@ -4,6 +4,12 @@
     <color name="zen_background_dark">#16161B</color>
     <!-- The private theme's purple (PRIVATE_THEME's second stop), behind the launcher shortcut's mask glyph. -->
     <color name="shortcut_private_background">#3F2C7A</color>
+    <!--
+      Zenium's accent (the default theme's zen-accent custom property, main.css), the colour the shade tints
+      the app's glyph and name with on every card Zenium posts in its own name (the private
+      session's, the capture's, the updates'; NOT-13, NOT-17): one brand colour on the shade.
+    -->
+    <color name="zen_accent">#6264DC</color>
 
     <!--
       The v2 token block (design-language-v2-draft.md §1; the v2 custom properties main.css

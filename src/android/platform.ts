@@ -72,6 +72,7 @@ import type {
   SystemAutofillStatus,
   ThumbnailHost,
   UpdateHost,
+  UpdateNotice,
   WebNotificationHost,
   WindowHost,
   WindowHostFactory
@@ -789,6 +790,15 @@ class AndroidUpdateHost implements UpdateHost {
     if (!this.token) return
     this.cancelled = true
     this.bridge.send('update.cancel', { token: this.token })
+  }
+
+  /**
+   * The shade's card on the Updates channel (`UpdateNotifications.kt`, NOT-17): "Update
+   * available" once a release is found, "Update ready" once its APK is downloaded, taken down
+   * when neither stands. A tap opens Settings › Updates through the `zenium://` deep link.
+   */
+  notify(notice: UpdateNotice | null): void {
+    this.bridge.send('update.notify', { notice })
   }
 
   onProgress(payload: HostEventPayloads['update.progress']): void {

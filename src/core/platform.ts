@@ -1930,6 +1930,19 @@ export interface UpdateHost {
   /** Apply the downloaded update: restart into it, or hand the file to the system installer. */
   install(release: UpdateRelease, downloadedPath: string | null): Promise<void>
   cancel(): void
+  /**
+   * The host's standing word on an update outside the chrome (Android's shade, NOT-17): the
+   * release found (`available`), the one downloaded and waiting to be applied (`ready`), or null
+   * when there is nothing to say – idle, checking, up to date, downloading, an error. Told once
+   * per edge, not per progress tick. Optional: a host without a shade leaves it out.
+   */
+  notify?(notice: UpdateNotice | null): void
+}
+
+/** What the host's shade says of an update: which edge, and the release's version. */
+export interface UpdateNotice {
+  kind: 'available' | 'ready'
+  version: string
 }
 
 // ---------------------------------------------------------------------------

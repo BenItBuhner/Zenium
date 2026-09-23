@@ -2,14 +2,15 @@ import { describe, expect, it, vi } from 'vitest'
 // The release pipeline signs manifests with Node's crypto; this proves tweetnacl accepts them.
 // eslint-disable-next-line no-restricted-imports
 import { generateKeyPairSync, sign } from 'node:crypto'
-import { UpdateService, verifyManifestSignature } from '../updates'
-import type { UpdateHost } from '../platform'
+import { UpdateService, updateNoticeFor, verifyManifestSignature } from '../updates'
+import type { UpdateHost, UpdateNotice } from '../platform'
 import type { Browser } from '../browser'
 import {
   UPDATE_REPOSITORY,
   sanitizeUpdateSettings,
   type UpdateProgress,
   type UpdateSettings,
+  type UpdateStatus,
   type UpdateTarget
 } from '../../shared/updates'
 
@@ -123,6 +124,8 @@ class FakeHost implements UpdateHost {
   downloads = 0
   installs: Array<string | null> = []
   cancelled = false
+  /** A host with a shade (Android) hears the update's edges; the desktop's leaves this out. */
+  notify?: (notice: UpdateNotice | null) => void
   private reject: ((error: Error) => void) | null = null
 
   constructor(private readonly kind: UpdateTarget) {}
@@ -469,5 +472,57 @@ describe('UpdateService', () => {
     expect(service.status().channel).toBe('beta')
     expect(service.status().release).toBeNull()
     service.stop()
+  })
+
+  // NOT-17: the host's shade hears the two edges once each, and nothing of the phases between.
+  it('tells a host with a shade of a release found, of one downloaded, and of neither', async () => {
+    const host = new FakeHost({ os: 'android', arch: 'universal', kind: 'apk' })
+    const notices: Array<UpdateNotice | null> = []
+    host.notify = (notice) => notices.push(notice)
+    const { browser } = fakeBrowser(
+      '0.1.0',
+      { [`${LATEST}/update-manifest.json`]: { ok: true, status: 200, text: manifestFor('0.2.0') } },
+      { autoDownload: false, autoCheck: false }
+    )
+    const service = new UpdateService(browser, host)
+    // Checking is the page's to show, not the shade's: no notice for it.
+    await service.check({ manual: true })
+    expect(notices).toEqual([{ kind: 'available', version: '0.2.0' }])
+    // Downloading is the page's too: the card comes down for it (the progress ticks say nothing
+    // more), and the download complete is the second edge.
+    await service.download()
+    await until(() => service.status().phase === 'ready')
+    expect(notices).toEqual([
+      { kind: 'available', version: '0.2.0' },
+      null,
+      { kind: 'ready', version: '0.2.0' }
+    ])
+    // A check again passes through checking (the card down) and lands on the release (up again):
+    // every notice is an edge – no two in a row say the same – and the last is the phase's.
+    await service.check({ manual: true })
+    expect(notices.at(-1)).toEqual(updateNoticeFor(service.status()))
+    for (let i = 1; i < notices.length; i++)
+      expect(JSON.stringify(notices[i])).not.toBe(JSON.stringify(notices[i - 1]))
+    // The result forgotten: the card comes down.
+    browser.state.settings.updates.channel = 'beta'
+    service.onSettingsChanged()
+    expect(notices.at(-1)).toBeNull()
+    service.stop()
+  })
+
+  it('has a notice for the two edges only', () => {
+    const status = (phase: UpdateStatus['phase'], version: string | null): UpdateStatus =>
+      ({
+        phase,
+        release: version ? { version } : null
+      }) as unknown as UpdateStatus
+    expect(updateNoticeFor(status('available', '1.0.0'))).toEqual({
+      kind: 'available',
+      version: '1.0.0'
+    })
+    expect(updateNoticeFor(status('ready', '1.0.0'))).toEqual({ kind: 'ready', version: '1.0.0' })
+    for (const phase of ['idle', 'checking', 'up-to-date', 'downloading', 'error'] as const)
+      expect(updateNoticeFor(status(phase, '1.0.0'))).toBeNull()
+    expect(updateNoticeFor(status('available', null))).toBeNull()
   })
 })

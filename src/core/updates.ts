@@ -19,8 +19,21 @@ import {
   type UpdateStatus
 } from '../shared/updates'
 import type { Browser } from './browser'
-import type { UpdateHost } from './platform'
+import type { UpdateHost, UpdateNotice } from './platform'
 import type { ZenWindow } from './window'
+
+/**
+ * What the host's shade says of `status` (NOT-17): a release found and waiting for the user
+ * (`available`), a download complete and waiting to be applied (`ready`), nothing otherwise –
+ * checking, downloading and an error are the Settings page's to show, not the shade's.
+ */
+export function updateNoticeFor(status: UpdateStatus): UpdateNotice | null {
+  const version = status.release?.version
+  if (!version) return null
+  if (status.phase === 'available') return { kind: 'available', version }
+  if (status.phase === 'ready') return { kind: 'ready', version }
+  return null
+}
 
 /** Progress broadcasts to the chrome are rate-limited to this many milliseconds apart. */
 const PROGRESS_INTERVAL_MS = 250
@@ -40,6 +53,8 @@ export class UpdateService {
   private checking: Promise<void> | null = null
   private cancelRequested = false
   private lastProgressAt = 0
+  /** The notice the host's shade last heard (`kind:version`; '' for none), so an edge is told once. */
+  private noticed = ''
 
   constructor(
     private readonly browser: Browser,
@@ -330,6 +345,17 @@ export class UpdateService {
   private set(patch: Partial<UpdateStatus>): void {
     this.current = { ...this.current, ...patch }
     this.browser.state.commitVolatile()
+    this.notifyHost()
+  }
+
+  /** The host's shade hears the phase's edges – a release found, a download complete, either gone – once each. */
+  private notifyHost(): void {
+    if (!this.host.notify) return
+    const notice = updateNoticeFor(this.current)
+    const key = notice ? `${notice.kind}:${notice.version}` : ''
+    if (key === this.noticed) return
+    this.noticed = key
+    this.host.notify(notice)
   }
 }
 
