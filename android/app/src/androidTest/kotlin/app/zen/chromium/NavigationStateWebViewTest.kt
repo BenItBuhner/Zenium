@@ -298,13 +298,34 @@ class NavigationStateWebViewTest {
 
     /**
      * Run `action` on `view` on the main thread and wait for the page finished it brings about,
-     * returning what the action returned (a `WebBackForwardList` for `restoreState`).
+     * returning what the action returned (a `WebBackForwardList` for `restoreState`). WebView
+     * reports `onPageFinished` for one document more than once (its `DidFinishLoad`, then its
+     * `DidStopLoading`), and on the emulator the second can land after the next load has been
+     * asked for: the nightly's proof run read three entries for four loads, the history page
+     * not yet committed when the document before's late finished counted the latch down. So a
+     * finished stands for the load once the action's own commit (`doUpdateVisitedHistory`,
+     * which every action here makes: a load, a restore, a Back) is on record; one ahead of the
+     * commit is the document before's and the wait goes on, up to [LOAD_GRACE_MS] past the first
+     * finished, after which the finished is taken as the load's (an action that commits nothing).
      */
     private fun <T> load(view: WebView, action: (WebView) -> T): T {
-        val latch = CountDownLatch(1)
+        val commitsBefore = committed[view]?.size ?: 0
+        var latch = CountDownLatch(1)
         finished[view] = latch
         val result = onMain { action(view) }
         assertTrue("the page finished loading", latch.await(20, TimeUnit.SECONDS))
+        val grace = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(LOAD_GRACE_MS)
+        while ((committed[view]?.size ?: 0) <= commitsBefore) {
+            latch = CountDownLatch(1)
+            finished[view] = latch
+            // The commit may have landed as the latch was re-armed: look once more before waiting.
+            if ((committed[view]?.size ?: 0) > commitsBefore) break
+            val left = grace - System.nanoTime()
+            if (left <= 0 || !latch.await(left, TimeUnit.NANOSECONDS)) {
+                Log.i(TAG, "a page finished with no commit of the action's own within $LOAD_GRACE_MS ms: taken as the load's")
+                break
+            }
+        }
         return result
     }
 
@@ -371,6 +392,8 @@ class NavigationStateWebViewTest {
 
     private companion object {
         private const val TAG = "NavStateTest"
+        /** How long past a page finished [load] waits for the action's commit before taking the finished as the load's. */
+        private const val LOAD_GRACE_MS = 5_000L
         private val PAGES = listOf("https://nav-snapshot.test/one", "https://nav-snapshot.test/two", "https://nav-snapshot.test/three")
         /** A reader page's name, the way the core makes one (`zen://reader?id=…&url=…`). */
         private const val READER = "zen://reader?id=article_test&url=https%3A%2F%2Fnav-snapshot.test%2Fone"

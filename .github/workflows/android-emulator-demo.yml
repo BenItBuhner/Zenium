@@ -175,7 +175,7 @@ env:
 jobs:
   record:
     name: Record on an API ${{ inputs.api-level }} emulator
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.timeout-minutes }}
     outputs:
       emulator-died: ${{ steps.emulator.outputs.died }}

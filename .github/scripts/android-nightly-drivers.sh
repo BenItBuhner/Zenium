@@ -165,8 +165,8 @@ reset_device() {
     adb shell settings put global "$setting" 1 > /dev/null 2>&1 || true
   done
   adb shell rm -f /data/local/tmp/webview-command-line > /dev/null 2>&1 || true
-  adb shell cmd overlay disable com.android.internal.systemui.navbar.gestural > /dev/null 2>&1 || true
-  adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton > /dev/null 2>&1 || true
+  # The recipe's three-button bar, exclusive within its category (android-gesture-demo.sh says why).
+  adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton > /dev/null 2>&1 || true
   adb shell wm size "${display%@*}" > /dev/null 2>&1 || true
   adb shell wm density "${display#*@}" > /dev/null 2>&1 || true
   adb shell input keyevent KEYCODE_WAKEUP > /dev/null 2>&1 || true

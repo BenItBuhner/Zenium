@@ -53,8 +53,9 @@
   --zen-ok-rgb: 31 138 76;
   --zen-warn: #b45f06;
   --zen-warn-rgb: 180 95 6;
-  --zen-danger: #c43434;
-  --zen-danger-rgb: 196 52 52;
+  /* Danger ink (v2 §1): 4.82:1 on the secondary fill, 5.95:1 on the panel; #c43434 was 3.98. */
+  --zen-danger: #b02a2a;
+  --zen-danger-rgb: 176 42 42;
 
   /* Surfaces over the window: the space-tinted panel colour, blurred. The scrim under them is
      the v2 one, aliased in the v2 token block below. */

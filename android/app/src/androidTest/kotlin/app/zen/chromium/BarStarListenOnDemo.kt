@@ -27,6 +27,8 @@ import java.util.concurrent.TimeUnit
  *     `aria-pressed` (its node not checkable: TalkBack names a button, not a toggle); a touch
  *     saves the page – the fill climbs on the menu star's spring (`StarGlyph`, one component for
  *     both), the "Saved to Bookmarks" toast comes with its Edit, the star reads "Edit Bookmark"
+ *     (the DOM's state, #266's stateful glyph; TalkBack's name for it read from the tree once
+ *     the editor is closed – a sheet holds the bar inert, and an inert bar has no node)
  *     – and a touch on the toast's Edit opens the editor sheet; a second touch on the filled
  *     star opens the editor again and removes nothing. Then the design record: the star filled
  *     and outlined in light and dark, with the bar at the bottom and at the top.
@@ -168,9 +170,13 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
         val landing = opacities.indexOfFirst { it >= 0.999 }
         val landingStep = if (landing > 0) opacities[landing] - opacities[landing - 1] else 0.0
         val after = bookmarkCount()
+        // The star's state is the DOM's (#266's design: a stateful glyph named by the page's
+        // state, no `aria-pressed`), read now. The tree's word on it – TalkBack's name, no
+        // checkable state – waits until the editor the toast's Edit opened is closed again: a
+        // sheet makes the bar inert (`holdChromeInert`, lib/portals.tsx) and an inert bar has no
+        // node for its star (the nightly's "node MISSING" read it here, under the editor).
         val filledDom = starDom()
-        val filledNode = starNode()
-        finding("  after the touch: touched=$touched saved=$saved toast=$toasted; dom $filledDom; node ${describe(filledNode)}; bookmarks $after")
+        finding("  after the touch: touched=$touched saved=$saved toast=$toasted; dom $filledDom; bookmarks $after")
         check("a real touch on the star bookmarked the page (one node more, $before -> $after; the tab bookmarked)", touched && saved && after == before + 1)
         check(
             "the fill climbed on the shared spring over several frames, no cut into the fill (${samples.length()} frames, $climbs climbing, peak ${"%.2f".format(peak)}, landing step ${"%.3f".format(landingStep)}; path ${opacities.joinToString(" ") { "%.2f".format(it) }})",
@@ -182,8 +188,8 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
             filledDom != null && filledDom.optString("label") == LABEL_EDIT && filledDom.optString("filled") == "true" && filledDom.optString("fill") == "1"
         )
         check(
-            "still no aria-pressed once filled; TalkBack names it '$LABEL_EDIT'",
-            filledDom != null && filledDom.isNull("pressed") && filledNode != null && !filledNode.isCheckable && nameOf(filledNode) == LABEL_EDIT
+            "still no aria-pressed once filled (aria-pressed '${filledDom?.optString("pressed")}': a button, not a toggle)",
+            filledDom != null && filledDom.isNull("pressed")
         )
         check("a touch on the toast's Edit opened the editor sheet", editFromToast)
         if (editFromToast) {
@@ -193,6 +199,12 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
             beat()
             closeEditor()
         }
+        val filledNode = awaitStarNode(TREE_WINDOW_MS)
+        finding("  the filled star's node, the editor closed: ${describe(filledNode)}")
+        check(
+            "TalkBack names the filled star '$LABEL_EDIT', its node not checkable",
+            filledNode != null && !filledNode.isCheckable && nameOf(filledNode) == LABEL_EDIT
+        )
         // The second touch: the filled star opens the editor and removes nothing.
         val count = bookmarkCount()
         val again = touchTapLabelExpecting(LABEL_EDIT, "the editor sheet is up", 8_000) { editorUp() }
@@ -542,6 +554,16 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
             val name = nameOf(node)
             name == LABEL_STAR || name == LABEL_EDIT
         }
+
+    /** [starNode] within `timeoutMs`: the tree trails the screen on the emulator, and lists no bar while a sheet holds it inert. */
+    private fun awaitStarNode(timeoutMs: Long): AccessibilityNodeInfo? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            starNode()?.let { return it }
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(250)
+        }
+    }
 
     /** What TalkBack reads for the node: its text, else its content description. */
     private fun nameOf(node: AccessibilityNodeInfo): String? =

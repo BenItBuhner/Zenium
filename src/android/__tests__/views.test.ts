@@ -69,6 +69,35 @@ describe('AndroidTabView.executeJavaScript', () => {
       args: { tabId: 'tab_1', mode: 'fullPage', region: null, format: 'jpeg' }
     })
   })
+
+  it('asks Kotlin for the page’s geometry and takes only a full answer', async () => {
+    const { bridge, calls } = fakeBridge()
+    const view = new AndroidTabView('tab_1', bridge)
+    // Kotlin's `CapturePlan.viewportJson`: the visual viewport of a phone page, pinch-panned.
+    const answer = {
+      scrollX: 20,
+      scrollY: 1230,
+      width: 411,
+      height: 700,
+      zoom: 1.0011,
+      devicePixelRatio: 2.6277,
+      documentWidth: 411,
+      documentHeight: 3000
+    }
+    Object.assign(bridge, {
+      call: async (method: string, args: unknown) => {
+        calls.push({ method, args })
+        return method === 'view.viewport' ? answer : null
+      }
+    })
+    await expect(view.viewport()).resolves.toEqual(answer)
+    expect(calls[0]).toEqual({ method: 'view.viewport', args: { tabId: 'tab_1' } })
+    // No document to read: null, never a made-up geometry.
+    Object.assign(bridge, { call: async () => null })
+    await expect(view.viewport()).resolves.toBeNull()
+    Object.assign(bridge, { call: async () => ({ scrollX: 0, scrollY: 0, width: 0, height: 700 }) })
+    await expect(view.viewport()).resolves.toBeNull()
+  })
 })
 
 describe('AndroidTabView.dispatch', () => {
