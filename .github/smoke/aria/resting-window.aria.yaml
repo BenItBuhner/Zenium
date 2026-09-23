@@ -1,0 +1,30 @@
+- complementary "Sidebar":
+  - button "Minimize"
+  - button "Maximize"
+  - button "Close"
+  - toolbar "Toolbar":
+    - button "Back (Alt+←)"
+    - button "Forward (Alt+→)" [disabled]
+    - button "Reload (Ctrl+R)"
+    - group "Address":
+      - button "fixture/first.html"
+      - button "Site information"
+    - button "Menu (Alt+F)"
+  - navigation "Tabs":
+    - button "Clear unpinned tabs (Ctrl+Alt+Shift+K)"
+    - tablist "Default tabs":
+      - 'tab "Smoke fixture: second page"':
+        - text: "Smoke fixture: second page"
+        - button "Close tab"
+      - 'tab "Smoke fixture: first page" [selected]':
+        - text: "Smoke fixture: first page"
+        - button "Close tab"
+    - button "New Tab"
+  - button "Default"
+  - button "New Space"
+  - button "Change theme"
+- main:
+  - status:
+    - text: Make Zenium your default browser
+    - button "Not now"
+    - button "Make default"
