@@ -403,42 +403,79 @@ abstract class FakeboxMorphDemoBase(
      * and the tap is aimed a little ahead of the box toward the omnibox's field, where the box
      * will be over the tap's 60 ms ([RETAP_LEAD]: less than the turn's, since the box is caught
      * at any pace of the spring's, the fastest included).
+     *
+     * The catch is a race the driver can lose on a slow host: a reading of the machine costs two
+     * turns of the app's UI thread, and the nightly (run 35822500800, phone-e) had that thread
+     * blocked through the whole band – Choreographer skipping 45 to 62 frames back to back – while
+     * the sampler recorded three in-band frames over 1.9 s that no reading returned in time. So,
+     * as [midFlightBack] and [turnRound]: up to [ATTEMPTS] tries, each miss recorded with why the
+     * loop ended (the deadline, the flight landed first, an in-band reading without the double's
+     * box) and the band frames the sampler saw in that attempt; the first attempt whose second
+     * tap went in is the one judged. [RETAP_FROM] and [RETAP_TO] stand: the band is not loosened.
      */
     private fun retapMidFlight(scene: String) {
         section("$scene: a second tap on the double mid-flight changes nothing")
-        settleAtRest()
-        val g = geometry()
-        startSampling()
-        tapField()
-        var retapped: PointF? = null
+        var kept: List<FakeboxMorph.Frame>? = null
+        var keptOpened = false
+        var g: FakeboxMorph.Geometry? = null
         var at = ""
-        val deadline = SystemClock.uptimeMillis() + 6_000
-        while (SystemClock.uptimeMillis() < deadline) {
-            val s = snapshot()
-            val ph = s.optString("ph")
-            val m = s.optDouble("m", 0.0)
-            if (ph == "opening" && m > RETAP_FROM && m < RETAP_TO) {
-                val box = s.optJSONObject("d") ?: break
-                val target = s.optJSONObject("of")
-                val cy = (box.getDouble("y") + box.getDouble("h") / 2).toFloat()
-                val ty = target?.let { (it.getDouble("y") + it.getDouble("h") / 2).toFloat() } ?: cy
-                val p = PointF(((box.getDouble("x") + box.getDouble("w") / 2) * density).toFloat(), FakeboxMorph.lerp(cy, ty, RETAP_LEAD) * density)
-                Finger().tap(p.x, p.y)
-                retapped = p
-                at = "m ${"%.2f".format(m)}"
+        for (attempt in 1..ATTEMPTS) {
+            settleAtRest()
+            g = geometry()
+            startSampling()
+            tapField()
+            var retapped: PointF? = null
+            var missed = "the deadline of $RETAP_DEADLINE_MS ms passed with no reading of the double between $RETAP_FROM and $RETAP_TO"
+            val deadline = SystemClock.uptimeMillis() + RETAP_DEADLINE_MS
+            while (SystemClock.uptimeMillis() < deadline) {
+                val s = snapshot()
+                val ph = s.optString("ph")
+                val m = s.optDouble("m", 0.0)
+                if (ph == "opening" && m > RETAP_FROM && m < RETAP_TO) {
+                    val box = s.optJSONObject("d")
+                    if (box == null) {
+                        missed = "the reading at m ${"%.2f".format(m)} carried no box for the double"
+                        break
+                    }
+                    val target = s.optJSONObject("of")
+                    val cy = (box.getDouble("y") + box.getDouble("h") / 2).toFloat()
+                    val ty = target?.let { (it.getDouble("y") + it.getDouble("h") / 2).toFloat() } ?: cy
+                    val p = PointF(((box.getDouble("x") + box.getDouble("w") / 2) * density).toFloat(), FakeboxMorph.lerp(cy, ty, RETAP_LEAD) * density)
+                    Finger().tap(p.x, p.y)
+                    retapped = p
+                    at = "m ${"%.2f".format(m)}"
+                    break
+                }
+                if (ph == "open") {
+                    missed = "the flight had landed (phase open) before a reading found the double between $RETAP_FROM and $RETAP_TO"
+                    break
+                }
+                SystemClock.sleep(6)
+            }
+            val opened = awaitPhase("open", 8_000)
+            awaitIme(shown = true, timeoutMs = 4_000)
+            SystemClock.sleep(900)
+            val frames = stopSampling("$scene-$attempt")
+            val band = frames.filter { it.phase == "opening" && it.morph > RETAP_FROM && it.morph < RETAP_TO }
+            finding(
+                "  attempt $attempt: second tap ${retapped?.let { "at $it ($at)" } ?: "NOWHERE ($missed)"}; open $opened; " +
+                    "the sampler's band frames: ${band.size}${if (band.isEmpty()) "" else " (m ${band.joinToString("/") { "%.2f".format(it.morph) }} at ${band.joinToString("/") { "${it.t}" }} ms)"}; " +
+                    FakeboxMorph.describe(frames)
+            )
+            if (retapped != null) {
+                kept = frames
+                keptOpened = opened
                 break
             }
-            if (ph == "open") break
-            SystemClock.sleep(6)
+            if (opened) {
+                closeUrlField()
+                awaitPhase("rest", 6_000)
+            }
         }
-        val opened = awaitPhase("open", 8_000)
-        awaitIme(shown = true, timeoutMs = 4_000)
-        SystemClock.sleep(900)
-        val frames = stopSampling(scene)
-        finding("  second tap ${retapped?.let { "at $it ($at)" } ?: "NOWHERE (the flight was over before the double was caught between $RETAP_FROM and $RETAP_TO)"}; open $opened; ${FakeboxMorph.describe(frames)}")
-        check(scene, "the double was caught mid-flight for the second tap", retapped != null, at.ifEmpty { "not caught" })
-        check(scene, "the flight went on to the landing unturned", opened && frames.none { it.phase == "closing" }, "open $opened, phases ${frames.map { it.phase }.distinct()}")
-        judge(scene, frames, reducedRun = false, g = g, opening = true)
+        check(scene, "the double was caught mid-flight for the second tap (within $ATTEMPTS attempts)", kept != null, if (kept == null) "not caught" else at)
+        val frames = kept ?: return
+        check(scene, "the flight went on to the landing unturned", keptOpened && frames.none { it.phase == "closing" }, "open $keptOpened, phases ${frames.map { it.phase }.distinct()}")
+        judge(scene, frames, reducedRun = false, g = g!!, opening = true)
         closeUrlField()
         awaitPhase("rest", 6_000)
     }
@@ -1286,6 +1323,8 @@ abstract class FakeboxMorphDemoBase(
         private const val RETAP_TO = 0.95
         /** The second tap's lead toward the omnibox's field: a little, since the box may be caught at the spring's fastest. */
         private const val RETAP_LEAD = 0.15f
+        /** How long one attempt polls the machine for an in-band reading of the double before the miss is recorded. */
+        private const val RETAP_DEADLINE_MS = 6_000L
         /** How far through the travel the page is scrolled for a tap part way. */
         private const val PART_WAY = 0.45f
         /**
