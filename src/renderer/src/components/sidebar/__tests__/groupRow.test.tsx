@@ -36,6 +36,7 @@ vi.mock('@renderer/lib/motion/spring', async (original) => {
 
 import { run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
+import { SlideMotion } from '@renderer/lib/motion/slide'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { SpacePanel } from '../SpacePanel'
 import { StripAxisContext, type StripAxis } from '../stripAxis'
@@ -51,7 +52,9 @@ import { StripAxisContext, type StripAxis } from '../stripAxis'
  * desktop half – desktopGroups.test.tsx), its fold the same spring (W4-2): the block's height
  * on SPRING_GENTLE with the rows it had – its tabs, or a saved folder's pages – kept drawn
  * until the spring rests, and the cut under reduced motion (§11.3); the strip's chip (§9.37)
- * the same fold along `x`.
+ * the same fold along `x`. The rows below the block are kept honest: the list's FLIP baseline
+ * follows every frame of the fold, and the block holds the header's height at a shut rest until
+ * the commit that removes the kept rows, so no frame paints it open.
  */
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
@@ -710,6 +713,66 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(shell().style.height).toBe('')
     expect(shell().hasAttribute('data-folding')).toBe(false)
     expect(memberRows()).toEqual([])
+  })
+
+  it('keeps the rows below honest (W4-2): the list’s baseline follows every frame of the fold, and the block holds the header’s height at a shut rest until the kept rows go', () => {
+    const record = vi.spyOn(SlideMotion.prototype, 'record')
+    panel(grouped(), [folder()], 'desktop')
+    expect(record).not.toHaveBeenCalled()
+    // The folding commit records nothing itself: the panel's FLIP measures there, the block
+    // set to its whole. Each frame after moves the layout under the rows below with no commit
+    // between – and re-records where they are, so the commit after finds them there rather
+    // than a block's height away.
+    panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    expect(record).not.toHaveBeenCalled()
+    act(() => {
+      frame()
+      frame()
+    })
+    expect(record).toHaveBeenCalledTimes(2)
+    // The spring rests on a frame while the kept rows are still in the DOM. Were the layout to
+    // hold the height there, the frame before their removal commits would paint the block
+    // whole: the shell stands at the header's height, clipped, until that commit lets go.
+    let rested: { height: string; folding: boolean; rows: string[] } | null = null
+    act(() => {
+      for (let i = 0; i < 600 && frames.size; i++) {
+        frame()
+        if (!frames.size)
+          rested = {
+            height: shell().style.height,
+            folding: shell().hasAttribute('data-folding'),
+            rows: memberRows()
+          }
+      }
+    })
+    expect(rested).toEqual({ height: `${ROW}px`, folding: true, rows: ['alpha', 'beta'] })
+    expect(shell().style.height).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(memberRows()).toEqual([])
+    // The baseline was recorded on every frame and at the rest.
+    const foldFrames = record.mock.calls.length
+    expect(foldFrames).toBeGreaterThan(3)
+    // A commit at rest records nothing more.
+    panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    expect(record).toHaveBeenCalledTimes(foldFrames)
+    // Resting open, the layout holds the whole in that very frame: nothing to hold for.
+    record.mockClear()
+    panel(grouped(), [folder()], 'desktop')
+    expect(record).not.toHaveBeenCalled()
+    let open: { height: string; folding: boolean; rows: string[] } | null = null
+    act(() => {
+      for (let i = 0; i < 600 && frames.size; i++) {
+        frame()
+        if (!frames.size)
+          open = {
+            height: shell().style.height,
+            folding: shell().hasAttribute('data-folding'),
+            rows: memberRows()
+          }
+      }
+    })
+    expect(open).toEqual({ height: '', folding: false, rows: ['alpha', 'beta'] })
+    expect(record.mock.calls.length).toBeGreaterThan(3)
   })
 
   it('keeps a saved folder’s pages through the desktop’s fold (W4-2, #360’s F5): the block measures whole as it shuts, the pages drawn until the spring rests, and back in the commit that unfolds', () => {
