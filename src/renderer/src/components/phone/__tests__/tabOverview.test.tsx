@@ -1887,6 +1887,48 @@ describe('the private pane', () => {
   })
 
   /*
+   * TAB-03: the pane's own entry shows the cover, never the cards. Coming to the Private pane
+   * from the Tabs pane under the lock, the cover and the inert grid are in the commit that
+   * brings the pane – no frame of a card sharp before the cover – and the still of the pane on
+   * the way out carries the cover with it, so the fade shows the cover too.
+   */
+  it('entering the Private pane under the lock brings the cover with the pane, and its still leaves covered', async () => {
+    const { applyPrivateLock, resetPrivateLock } = await import('@renderer/lib/privateLock')
+    try {
+      act(() => applyPrivateLock({ locked: true, screenLock: true }))
+      render(mixed())
+      expect(selected('tabs')).toBe(true)
+      expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
+      act(() => segment('private').click())
+      const cover = host!.querySelector<HTMLElement>('[data-testid="private-lock-cover"]')!
+      expect(cover).not.toBeNull()
+      expect(cover.getAttribute('aria-label')).toBe('Private tabs locked')
+      expect(cover.querySelector('[data-testid="private-lock-unlock"]')).not.toBeNull()
+      expect(grid().hasAttribute('inert')).toBe(true)
+      expect(grid().getAttribute('aria-hidden')).toBe('true')
+      expect(host!.textContent).not.toContain('one.example')
+      expect(host!.textContent).not.toContain('two.example')
+      expect(
+        Array.from(grid().querySelectorAll('.zen-overview-card-title')).map((t) => t.textContent)
+      ).toEqual(['Private tab', 'Private tab'])
+      // Leaving the pane: the still of it is the covered pane – a copy of the slot, cover included.
+      // (The Tabs pane's still from the way in may still be fading – here without `animate()`
+      // it waits on its timer – so the newest still is the one to read.)
+      act(() => segment('tabs').click())
+      const still = [...host!.querySelectorAll<HTMLElement>('[data-testid="pane-still"]')].at(-1)!
+      expect(still).not.toBeNull()
+      expect(
+        still.dataset.pane ?? still.querySelector('[data-pane]')?.getAttribute('data-pane')
+      ).toBe('private')
+      expect(still.querySelector('.zen-private-lock')).not.toBeNull()
+      expect(still.textContent).not.toContain('one.example')
+      expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
+    } finally {
+      act(() => resetPrivateLock())
+    }
+  })
+
+  /*
    * The lock cover over the Private pane (INC-05, v2 §9.19): nothing of a locked private tab's
    * identity shows or reads before the unlock – the cards' title rows read "Private tab" behind
    * the mask, their names say the same, the grid is inert and hidden from readers under the
@@ -1970,12 +2012,29 @@ describe('the private pane', () => {
     }
   })
 
-  it('with no private tab the private pane is the explainer, whose button asks for a private tab', () => {
+  it('with no private tab the private pane is the explainer, whose button asks for a private tab', async () => {
+    const { PRIVATE_EXPLAINER_DETAIL } = await import('../TabOverview')
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
     act(() => segment('private').click())
     expect(host!.querySelector('.zen-overview-grid')).toBeNull()
     const empty = host!.querySelector<HTMLElement>('[data-testid="overview-private-empty"]')!
     expect(empty.querySelector('h2')!.textContent).toBe('No private tabs')
+    // TAB-03: Chrome's words about what private does and does not do, on a §9.33 message card –
+    // a page surface, the mask on the title's line, the title 15/600, the detail 13 at 69% – and
+    // the pane's one button under it. The title stays the pane's fact.
+    const card = empty.querySelector<HTMLElement>('.zen-private-explainer')!
+    expect(card).not.toBeNull()
+    expect(card.getAttribute('data-surface')).toBe('page')
+    expect(card.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
+    expect(card.querySelector('h2')!.className).toBe('zen-private-explainer-title')
+    expect(card.querySelector('.zen-private-explainer-detail')!.textContent).toBe(
+      PRIVATE_EXPLAINER_DETAIL
+    )
+    expect(PRIVATE_EXPLAINER_DETAIL).toBe(
+      "Zenium won't save your browsing history, cookies, site data or what you enter in forms. Websites you visit, your employer or school and your internet service provider can still see your activity."
+    )
+    // No cover: with nothing open there is nothing the lock protects, and the card is not a card of a tab.
+    expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
     expect(countShown()).toBe('0 tabs')
     const button = empty.querySelector<HTMLElement>('[data-testid="overview-private-empty-new"]')!
     // A button, so sentence case (v2 §9.1); the menus' rows stay Title Case.

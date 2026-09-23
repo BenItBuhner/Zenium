@@ -2295,9 +2295,22 @@ function PaneSegment({
 }
 
 /**
- * The private pane with nothing in it (TAB-03): a page's empty state (v2 §9.17 – title 22/600,
- * one 15 description at 69%, one button, the block centred with its middle at 45% of the
- * pane), in the window family on the private theme's backdrop.
+ * What private browsing does and does not do, in Chrome's words for its incognito description
+ * ("Chrome won't save: your browsing history, cookies and site data, information entered in
+ * forms" / "Your activity might still be visible to: websites you visit, your employer or
+ * school, your internet service provider") as two sentences – the private new tab page's
+ * `PRIVATE_EXPLAINER` lists, one vocabulary (NTP-31).
+ */
+export const PRIVATE_EXPLAINER_DETAIL =
+  "Zenium won't save your browsing history, cookies, site data or what you enter in forms. Websites you visit, your employer or school and your internet service provider can still see your activity."
+
+/**
+ * The private pane with nothing in it (TAB-03): Chrome's incognito description on a §9.33
+ * message card – §9.20's chrome 8 px inside the pane's edges and capped at 560, the 20 px mask
+ * on the title's first line, the title 15/600, the detail 13 at 69% running to its length –
+ * with its middle at 45% of the pane (§9.17's page form) and the pane's one button 16 below it,
+ * on the private theme's backdrop. The title stays the pane's fact ("No private tabs"); the card
+ * says what private does and does not do.
  */
 function PrivateEmpty(): JSX.Element {
   return (
@@ -2307,14 +2320,16 @@ function PrivateEmpty(): JSX.Element {
       data-testid="overview-private-empty"
     >
       <div
-        className="absolute inset-x-0 flex -translate-y-1/2 flex-col items-center px-8 text-center"
+        className="absolute inset-x-0 flex -translate-y-1/2 flex-col items-center px-2"
         style={{ top: '45%' }}
       >
-        <h2 className="text-[22px] font-semibold leading-7 tracking-[-0.012em]">No private tabs</h2>
-        <p className="mt-2 max-w-[360px] text-[15px] leading-5 text-[rgb(var(--zen-fg-rgb)/0.69)]">
-          Pages you open here leave no history, cookies or site data once the last private tab
-          closes
-        </p>
+        <div className="zen-private-explainer" data-surface="page">
+          <VenetianMask className="mt-px h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+          <div className="min-w-0 flex-1">
+            <h2 className="zen-private-explainer-title">No private tabs</h2>
+            <p className="zen-private-explainer-detail">{PRIVATE_EXPLAINER_DETAIL}</p>
+          </div>
+        </div>
         <button
           type="button"
           className="zen-v2-button mt-4"
