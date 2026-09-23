@@ -255,7 +255,11 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
       'preferred languages',
       'spell'
     ],
-    requires: 'translate'
+    requires: 'translate',
+    // Add language: Chrome's 160-language picker as the phone's find-and-pick page – a set the
+    // user finds in rather than scans (§9.13, §10.2); `?list=` names which of the section's
+    // lists the pick joins (preferred, always, never).
+    pages: [{ id: 'add', label: 'Add language' }]
   },
   {
     id: 'privacy',

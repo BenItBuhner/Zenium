@@ -1147,3 +1147,86 @@ describe("the keyboard lift and the sheet's observers", () => {
     expect(bodyObservations(body)).toBe(mounted)
   })
 })
+
+describe("a picker sheet opened 'overflow' (§9.13)", () => {
+  /** A §9.13 picker's rows – twenty radio rows, `checked` marked – on a sheet opened as asked. */
+  const picker = (checked: string, openExpanded?: boolean | 'overflow'): ReactElement => (
+    <BottomSheet onDismissed={() => undefined} openExpanded={openExpanded}>
+      <div role="radiogroup" aria-label="Standard font">
+        {Array.from({ length: 20 }, (_, i) => `Font ${i + 1}`).map((label) => (
+          <button
+            key={label}
+            type="button"
+            role="radio"
+            aria-checked={label === checked}
+            className="zen-v2-row"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </BottomSheet>
+  )
+
+  /**
+   * Rows past the peek: the sheet's intrinsic height is 1000 px on the 800 px layer (a peek at
+   * 416, the expanded detent at 760), its grip 24 and each row 44 – the body's box is 300 px
+   * (`clientHeight`, beforeEach) holding 880 px of rows.
+   */
+  const tallRows = (): void => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.hasAttribute('data-sheet-grip')) return 24
+        if (this.getAttribute('role') === 'radio') return 44
+        return 1000
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get: () => 880
+    })
+  }
+
+  afterEach(() => {
+    // `scrollHeight` is Element's: the override on HTMLElement goes with the test.
+    delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight
+  })
+
+  it('rows that exceed the peek: the sheet comes in at its expanded detent, the body scrolled to the checked option in the middle of its box', async () => {
+    tallRows()
+    render(picker('Font 15', 'overflow'))
+    const body = document.querySelector<HTMLElement>('.zen-sheet-scroll')!
+    const checked = document.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')!
+    // happy-dom lays nothing out: the checked row stands 14 × 44 = 616 px down the body.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      return this === checked ? box(616, 44) : box(0, 0)
+    })
+    await settle()
+    act(() => frames.run(60))
+    expect(sheets()[0].style.height).toBe('760px')
+    // The body at the expanded detent is 760 − (24 + 8) = 728 tall: the row's top at
+    // 616 − (728 − 44) / 2 = 274 puts it in the middle.
+    expect(body.scrollTop).toBe(274)
+  })
+
+  it('the same rows without the mark come in at the peek, the body at its top', async () => {
+    tallRows()
+    render(picker('Font 15'))
+    await settle()
+    act(() => frames.run(60))
+    expect(sheets()[0].style.height).toBe('416px')
+    expect(document.querySelector<HTMLElement>('.zen-sheet-scroll')!.scrollTop).toBe(0)
+  })
+
+  it('rows that fit the peek: the mark changes nothing – the sheet is its content’s height, the body at its top', async () => {
+    // The 300 px content (beforeEach) has one detent: 300, under the 416 peek.
+    render(picker('Font 15', 'overflow'))
+    await settle()
+    act(() => frames.run(60))
+    expect(sheets()[0].style.height).toBe('300px')
+    expect(document.querySelector<HTMLElement>('.zen-sheet-scroll')!.scrollTop).toBe(0)
+  })
+})

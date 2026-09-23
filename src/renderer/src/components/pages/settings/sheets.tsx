@@ -170,6 +170,11 @@ interface SheetProps {
    * prompt stands as tall as it is.
    */
   body?: SheetBody
+  /**
+   * A §9.13 picker passes `'overflow'` (`PhoneSheet`'s `openExpanded`): rows that exceed the
+   * peek open the sheet expanded and scrolled to the checked option; rows that fit keep the peek.
+   */
+  openExpanded?: boolean | 'overflow'
   sheetRef?: RefObject<BottomSheetHandle | null>
 }
 
@@ -197,6 +202,7 @@ export function SettingsSheet({
   focus,
   titleId,
   body,
+  openExpanded,
   sheetRef
 }: SheetProps): JSX.Element {
   const own = useRef<BottomSheetHandle>(null)
@@ -234,6 +240,7 @@ export function SettingsSheet({
       under={under}
       onClose={onClose}
       contentKey={`${contentKey ?? ''}|${relayouts}|${footerClaimed ? 'footer' : ''}`}
+      openExpanded={openExpanded}
       className="zen-settings-sheet"
       sheetRef={sheet}
       footer={
@@ -287,10 +294,11 @@ function watchFooter(element: HTMLElement, relayout: () => void): () => void {
 
 /**
  * §9.13 on a phone: the options as 44 px radio rows, the current one marked (and, by the
- * chassis, focused as the sheet opens); a pick closes it. Exported for a form that keeps a
- * value row of its own (Clear browsing data's time range) and opens its picker over itself.
- * Options under a heading (the search engine picker's "Recently visited") follow the ungrouped
- * ones, each set under its §10.3 heading.
+ * chassis, focused as the sheet opens); a pick closes it. Rows that exceed the peek open the
+ * sheet expanded and scrolled to the checked option (`openExpanded: 'overflow'`); rows that fit
+ * keep the peek. Exported for a form that keeps a value row of its own (Clear browsing data's
+ * time range) and opens its picker over itself. Options under a heading (the search engine
+ * picker's "Recently visited") follow the ungrouped ones, each set under its §10.3 heading.
  */
 export function OptionsSheet({
   row,
@@ -310,6 +318,7 @@ export function OptionsSheet({
       under={under}
       body="list"
       onClose={close}
+      openExpanded="overflow"
       sheetRef={sheet}
     >
       <div role="radiogroup" aria-label={row.label} className="zen-settings-sheet-rows">
@@ -493,7 +502,12 @@ function ConfirmSheet({
   )
 }
 
-/** A small form (add a route, create a container): the form draws its own footer. */
+/**
+ * A small form (add a route, create a container): the form draws its own footer. A form whose
+ * body is a picker of the row's current value (`body: 'picker'`, the Standard font's list of
+ * families) is a §9.13 picker sheet: it opens expanded and scrolled to the checked option when
+ * its rows exceed the peek.
+ */
 function FormSheet({
   row,
   under,
@@ -510,8 +524,10 @@ function FormSheet({
       title={form.title}
       description={form.description}
       under={under}
-      body={form.body}
+      // A picker's list of options is a list body here too: the same 80 % cap (§9.20).
+      body={form.body && 'list'}
       onClose={close}
+      openExpanded={form.body === 'picker' ? 'overflow' : undefined}
     >
       <FormBody render={form.render} />
     </SettingsSheet>
