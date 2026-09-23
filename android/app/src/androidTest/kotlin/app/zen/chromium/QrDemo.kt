@@ -367,14 +367,14 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         shot("09-address-loaded")
     }
 
-    /** The omnibox's camera (the field cleared): words in the code are searched through the engine. */
+    /** The omnibox's camera (the field opens empty, #208): words in the code are searched through the engine. */
     private fun wordsFromOmnibox() {
         finding("\nwords from the omnibox's camera")
         standIn.scene = null
         touchAddress()
-        check("the omnibox opens from the pill", awaitNode(8_000) { it == CLEAR_LABEL } != null)
+        val opened = awaitOmniboxOpen()
+        check("the omnibox opens from the pill (${opened.describe()})", opened.ok)
         SystemClock.sleep(1_000)
-        check("Clear is touched", touchTapLabel(CLEAR_LABEL))
         check("the empty field shows the camera button", waitFor(CAMERA_LABEL, 6_000) != null)
         SystemClock.sleep(800)
         shot("10-omnibox-camera")
@@ -403,9 +403,9 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         finding("\nthe app sent behind while scanning")
         standIn.scene = null
         touchAddress()
-        check("the omnibox opens from the pill", awaitNode(8_000) { it == CLEAR_LABEL } != null)
+        val opened = awaitOmniboxOpen()
+        check("the omnibox opens from the pill (${opened.describe()})", opened.ok)
         SystemClock.sleep(800)
-        check("Clear is touched", touchTapLabel(CLEAR_LABEL))
         check("the omnibox's camera button is touched", touchTapLabel(CAMERA_LABEL))
         val up = awaitPhase(setOf("scanning"), 10_000)
         check("the sheet scans (phase ${phase()})", up)
@@ -759,7 +759,6 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         private const val NEW_TAB_LABEL = "New tab"
         /** The new tab page's button and the omnibox's (both "Scan a QR code"; only one is ever on screen). */
         private const val CAMERA_LABEL = "Scan a QR code"
-        private const val CLEAR_LABEL = "Clear"
         /** The address button inside the pill reads "Address, <host>" (`PillContent`); the pill itself is the group "Address". */
         private const val ADDRESS_LABEL_PREFIX = "Address, "
         private const val CANCEL_LABEL = "Cancel"

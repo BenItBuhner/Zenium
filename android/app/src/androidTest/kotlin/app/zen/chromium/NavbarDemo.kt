@@ -112,7 +112,10 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         SystemClock.sleep(1_000)
 
         // 9. The tab count: the Tabs button's hold opens its quick menu instead of the editor, Close
-        //    Tab rolls the count down; the bar's New tab (through the URL bar) takes it back up.
+        //    Tab rolls the count down; the bar's New tab takes it back up. Since #51 New tab opens
+        //    the new tab page – its field in the page, the pill reading 'Search or enter address',
+        //    no URL bar – so the address goes in the way a user's does: a tap on the pill opens the
+        //    field, then the keys. (The nightly's run typed into nothing here and lost the pill.)
         val before = tabCount() ?: error("no tab count on the Tabs button")
         holdBarButton("Tabs ($before)")
         expect("a hold on Tabs opens its quick menu", waitFor("Close Tab", 4_000) != null)
@@ -123,6 +126,9 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         expect("the count rolled down", waitFor("Tabs (${before - 1})", 4_000) != null)
         SystemClock.sleep(1_500)
         tap("New tab")
+        expect("New tab opens the new tab page, the pill empty", awaitPillLabel(8_000) { it == NTP_PILL_LABEL })
+        remeasurePill()
+        Finger().tap(pillCenterX, pillY)
         typeAddress(NEW_TAB_HOST)
         expect("the bar is back after the new tab", waitForBar())
         SystemClock.sleep(2_000)
@@ -132,10 +138,13 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         // 10. The pill still switches tabs: the new tab is last in the space, so a fling from the
         //     pill's left end goes to the previous tab (an article) and one from its right end back.
         remeasurePill()
+        awaitPageSettled()
         flingRight()
         expect("the pill's swipe switches to the previous tab", waitForAddress(12_000) { SECOND_HOST in it })
         SystemClock.sleep(2_500)
         shot("14-swiped")
+        remeasurePill()
+        awaitPageSettled()
         flingLeft()
         expect("the pill's swipe switches back", waitForAddress(12_000) { NEW_TAB_HOST in it })
         SystemClock.sleep(2_500)
@@ -144,7 +153,11 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         //     hold on the top bar, and the swipe.
         carryBarToTop()
         remeasurePill()
-        expect("the bar docked at the top", pill.top < height / 2)
+        // The dock by the document (`.zen-phone-bar[data-edge]`, the setting's word) and the
+        // pill's box in the upper half; the tree trails the moved bar by seconds here.
+        val edge = barEdge()
+        Log.i(tag, "after the carry: bar edge '$edge', pill $pill")
+        expect("the bar docked at the top", edge == "top" && pill.top < height / 2)
         shot("15-bar-top")
         holdBarButton("Menu")
         expect("a hold on the top bar opens the editor", waitFor("Reset to defaults", 6_000) != null)
@@ -153,6 +166,7 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         back()
         SystemClock.sleep(2_500)
         remeasurePill()
+        awaitPageSettled()
         flingRight()
         expect("the pill's swipe switches tabs at the top", waitForAddress(12_000) { SECOND_HOST in it })
         SystemClock.sleep(2_500)
@@ -213,18 +227,37 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
     }
 
     /**
-     * Type into the URL bar once it is up and the keyboard has settled (the first keyboard of a
-     * run comes up slowly, and keys sent before it is ready are lost), then Go.
+     * Type into the URL field once it is open – by the field ([awaitOmniboxOpen]: the store's
+     * word and the focused input, never the tree, which trails the screen here) – and the
+     * keyboard has settled (the first keyboard of a run comes up slowly, and keys sent before it
+     * is ready are lost), then Go.
      */
     private fun typeAddress(text: String) {
-        val deadline = SystemClock.uptimeMillis() + 6_000
-        while (findNode { it.startsWith("Search engine:") } == null && SystemClock.uptimeMillis() < deadline) {
-            SystemClock.sleep(200)
-        }
+        val open = awaitOmniboxOpen(8_000)
+        if (!open.ok) Log.w(tag, "typing into a field not proven open: ${open.describe()}")
         SystemClock.sleep(2_000)
         instrumentation.sendStringSync(text)
         SystemClock.sleep(600)
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+    }
+
+    /**
+     * Wait for the active page to have loaded (the core's word) and a moment past it before a
+     * fling. On the nightly's proof run the swipe back went into a Wikipedia page still loading
+     * at four to six frames a second (`app_time_stats` avg 250 ms) and never became a switch:
+     * the 120 ms fling fell inside one frame. The claim is a swipe on a page at rest, not one
+     * raced against the software GPU; the fling itself stays the harness's quick one.
+     */
+    private fun awaitPageSettled(timeoutMs: Long = 20_000) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var loading = true
+        while (SystemClock.uptimeMillis() < deadline) {
+            loading = activeCoreTab()?.optBoolean("loading", true) ?: true
+            if (!loading) break
+            SystemClock.sleep(250)
+        }
+        if (loading) Log.w(tag, "the active page is still loading after $timeoutMs ms; flinging anyway")
+        SystemClock.sleep(1_500)
     }
 
     /** The pill's hold carries the whole bar to the top edge (the page slides down under it). */
@@ -243,11 +276,15 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         SystemClock.sleep(2_500)
     }
 
-    /** The pill moved (with the bar, or back from under the URL bar): find it again. */
+    /**
+     * The pill moved (with the bar, or back from under the URL bar): find it again where the
+     * chrome lays it out ([pillBounds]: the document first, the tree – by either name – after it;
+     * the tree kept the pill's old bounds for seconds after the carry on the nightly's proof run).
+     */
     private fun remeasurePill() {
-        val found = findByLabelPrefix(PILL_LABEL)?.takeIf { it.width() > 100 * density }
+        val found = pillBounds()?.takeIf { it.width() > 100 * density }
         if (found == null) {
-            Log.w(tag, "pill not in the accessibility tree; keeping $pill")
+            Log.w(tag, "pill neither in the document nor the accessibility tree; keeping $pill")
             return
         }
         pill = found
@@ -268,12 +305,12 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
     /** Whether the control labelled `label` is enabled (`aria-disabled` dims a bar button). */
     private fun enabled(label: String): Boolean? = findNode { it == label }?.isEnabled
 
-    /** The address the pill shows (`Address, example.com`), or null while the URL bar hides the bar. */
-    private fun address(): String? {
-        val node = findNode { it.startsWith("$PILL_LABEL,") } ?: return null
-        val label = node.contentDescription?.toString() ?: node.text?.toString() ?: return null
-        return label.removePrefix("$PILL_LABEL,").trim()
-    }
+    /** The pill's whole label ([pillNode]: `Address, example.com, …` on a page, the empty field's words on the new tab page), or null while the URL bar hides the bar. */
+    private fun pillLabel(): String? = pillNode()?.let { it.contentDescription?.toString() ?: it.text?.toString() }
+
+    /** The address the pill shows (`example.com, Connection is secure`), or null on the new tab page and while the URL bar hides the bar. */
+    private fun address(): String? =
+        pillLabel()?.takeIf { it.startsWith("$PILL_LABEL,") }?.removePrefix("$PILL_LABEL,")?.trim()
 
     /** Poll until the pill's address satisfies `matches`. */
     private fun waitForAddress(timeoutMs: Long, matches: (String) -> Boolean): Boolean {
@@ -283,7 +320,18 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
             if (now != null && matches(now)) return true
             SystemClock.sleep(200)
         }
-        Log.w(tag, "address still ${address()}")
+        Log.w(tag, "address still ${address()} (pill '${pillLabel()}')")
+        return false
+    }
+
+    /** Poll until the pill's whole label satisfies `matches` (the new tab page's empty pill). */
+    private fun awaitPillLabel(timeoutMs: Long, matches: (String) -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            pillLabel()?.let { if (matches(it)) return true }
+            SystemClock.sleep(200)
+        }
+        Log.w(tag, "pill still '${pillLabel()}'")
         return false
     }
 
@@ -320,11 +368,11 @@ class NavbarDemo : DemoHarness("navbar-demo-state.json", "navbar", "navbar-demo"
         return runCatching { JSONTokener(answer ?: "null").nextValue() as? String }.getOrNull()
     }
 
-    /** Poll until the address pill is back on screen (the URL bar hides the bar while it is up). */
+    /** Poll until the address pill is back on screen, by either name (the URL bar hides the bar while it is up). */
     private fun waitForBar(timeoutMs: Long = 8_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (findByLabelPrefix(PILL_LABEL) != null) return true
+            if (pillNode() != null) return true
             SystemClock.sleep(200)
         }
         return false

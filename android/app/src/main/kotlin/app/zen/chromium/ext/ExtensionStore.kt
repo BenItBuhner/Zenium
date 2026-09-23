@@ -7,6 +7,8 @@ import android.provider.OpenableColumns
 import android.util.Log
 import android.webkit.WebSettings
 import androidx.core.content.IntentCompat
+import app.zen.chromium.BackgroundWorkHold
+import app.zen.chromium.BuildConfig
 import app.zen.chromium.Host
 import app.zen.chromium.Storage
 import app.zen.chromium.arr
@@ -46,8 +48,8 @@ class ExtensionStore(private val host: Host, private val io: ExecutorService, pr
     private val fetcher = PackageFetcher(packagesDir, runCatching { WebSettings.getDefaultUserAgent(host.activity) }.getOrNull())
     /** Tokens this process handed out: what `sweep` leaves alone. */
     private val live = HashSet<String>()
-    /** Packages another app handed us that the host has not collected yet. */
-    private val sideloads = ArrayList<JSONObject>()
+    /** Packages another app handed us that the host has not collected yet ([SideloadQueue]). */
+    private val sideloads = SideloadQueue()
 
     /** `files/zen/extensions`, what every managed registry path starts with (the boot payload names it). */
     val root: File get() = files.root
@@ -153,29 +155,29 @@ class ExtensionStore(private val host: Host, private val io: ExecutorService, pr
         }
     }
 
-    /** Handles queued by [sideload]; the host installs them and the queue empties. */
-    fun takeSideloads(): JSONArray {
-        val taken = JSONArray(sideloads)
-        sideloads.clear()
-        return taken
-    }
+    /**
+     * Handles queued by [sideload]; the host installs them and the queue empties. Answers at
+     * once, or once a quiet handover's import in flight has landed ([SideloadQueue.take]).
+     */
+    fun takeSideloads(reply: (JSONArray) -> Unit) = sideloads.take(reply)
 
     // --- packages from other apps ---------------------------------------------------------------
 
     /**
      * A `VIEW` or `SEND` intent carrying a `.crx` or `.zip`: the document is copied to a package
-     * file and queued; the chrome is told there is something to collect. False when the intent
-     * carries no package (the caller handles it as before).
+     * file and queued; the chrome is told there is something to collect – unless the intent asks
+     * for the quiet handover ([EXTRA_QUIET_HANDOVER], honoured by debuggable builds alone: the
+     * drivers' still of the prompt on the fallback path), where the store's `start()` collects
+     * it as after a cold start, with no window to show the chrome's own sheet ([SideloadQueue]).
+     * False when the intent carries no package (the caller handles it as before).
      */
     fun sideload(intent: Intent): Boolean {
         val uri = packageUri(intent) ?: return false
+        val quiet = BackgroundWorkHold.requested(intent.getBooleanExtra(EXTRA_QUIET_HANDOVER, false), BuildConfig.DEBUG)
+        sideloads.beginImport(quiet)
         importPackage(uri) { handle ->
-            if (handle == null) {
-                Log.w(TAG, "could not read the package $uri")
-                return@importPackage
-            }
-            sideloads.add(handle)
-            host.chrome.hostEvent("extension.sideload", json("count" to sideloads.size))
+            if (handle == null) Log.w(TAG, "could not read the package $uri")
+            if (sideloads.endImport(quiet, handle)) host.chrome.hostEvent("extension.sideload", json("count" to sideloads.size))
         }
         return true
     }
@@ -256,6 +258,11 @@ class ExtensionStore(private val host: Host, private val io: ExecutorService, pr
         /** The host names its own cap (`MAX_PACKAGE_BYTES`); this is the fallback for a call without one. */
         const val DEFAULT_MAX_PACKAGE_BYTES = 256L * 1024 * 1024
         const val CRX_MIME_TYPE = "application/x-chrome-extension"
+        /**
+         * A `VIEW` / `SEND` intent's boolean extra asking for the quiet handover ([sideload],
+         * [SideloadQueue]); honoured by debuggable builds alone (the drivers: `ExtensionSheetStills`).
+         */
+        const val EXTRA_QUIET_HANDOVER = "app.zen.chromium.extra.QUIET_HANDOVER"
         val PACKAGE_MIME_TYPES = setOf(CRX_MIME_TYPE, "application/zip", "application/x-zip-compressed")
         /** What the document picker offers; `octet-stream` for providers that do not know `.crx`. */
         val PICKER_MIME_TYPES = arrayOf(CRX_MIME_TYPE, "application/zip", "application/x-zip-compressed", "application/octet-stream")

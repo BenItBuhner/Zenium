@@ -132,6 +132,49 @@ class CapturePlanTest {
     }
 
     @Test
+    fun viewportJsonPutsTheVisualViewportInTheChromesTerms() {
+        // Scrolled and pinch-panned: what is on screen starts where the visual viewport says.
+        val scrolled = phone.copy(scrollY = 1200.0, pageLeft = 20.0, pageTop = 1230.0)
+        val json = CapturePlan.viewportJson(scrolled, viewWidthPx, 2.625)
+        assertEquals(20.0, json.getDouble("scrollX"), 0.0)
+        assertEquals(1230.0, json.getDouble("scrollY"), 0.0)
+        assertEquals(411.0, json.getDouble("width"), 0.0)
+        assertEquals(700.0, json.getDouble("height"), 0.0)
+        // The view's 1080 px cover the 411 CSS px visual viewport: that many device px per CSS px…
+        assertEquals(1080.0 / 411.0, json.getDouble("devicePixelRatio"), 1e-9)
+        // …and, over the density, how many dp of the chrome one page px takes (about 1 here).
+        assertEquals(1080.0 / 411.0 / 2.625, json.getDouble("zoom"), 1e-9)
+        assertEquals(411.0, json.getDouble("documentWidth"), 0.0)
+        assertEquals(3000.0, json.getDouble("documentHeight"), 0.0)
+    }
+
+    @Test
+    fun viewportJsonZoomFollowsTheVisualViewportsScale() {
+        // A desktop-layout page squeezed into the screen: 980 CSS px in 1080 device px, well below 1.
+        val overview = phone.copy(viewportWidth = 980.0, documentWidth = 980.0)
+        assertEquals(1080.0 / 980.0 / 2.625, CapturePlan.viewportJson(overview, viewWidthPx, 2.625).getDouble("zoom"), 1e-9)
+        // Pinched in to twice the size: half the CSS px on screen, a zoom of about 2.
+        val pinched = phone.copy(viewportWidth = 205.5, viewportHeight = 350.0)
+        assertEquals(1080.0 / 205.5 / 2.625, CapturePlan.viewportJson(pinched, viewWidthPx, 2.625).getDouble("zoom"), 1e-9)
+        // The document is never reported smaller than the visible area.
+        val shallow = phone.copy(documentWidth = 100.0, documentHeight = 100.0)
+        val json = CapturePlan.viewportJson(shallow, viewWidthPx, 2.625)
+        assertEquals(411.0, json.getDouble("documentWidth"), 0.0)
+        assertEquals(700.0, json.getDouble("documentHeight"), 0.0)
+    }
+
+    @Test
+    fun viewportJsonWithoutALaidOutViewFallsBackToTheDensity() {
+        val json = CapturePlan.viewportJson(phone, 0, 2.625)
+        assertEquals(2.625, json.getDouble("devicePixelRatio"), 0.0)
+        assertEquals(1.0, json.getDouble("zoom"), 0.0)
+        // No density either (a headless test): 1 all round rather than a division by zero.
+        val bare = CapturePlan.viewportJson(phone, 0, 0.0)
+        assertEquals(1.0, bare.getDouble("devicePixelRatio"), 0.0)
+        assertEquals(1.0, bare.getDouble("zoom"), 0.0)
+    }
+
+    @Test
     fun boxesIntersectAndContain() {
         val a = Box(0.0, 0.0, 10.0, 10.0)
         assertEquals(Box(5.0, 5.0, 5.0, 5.0), a.intersect(Box(5.0, 5.0, 20.0, 20.0)))

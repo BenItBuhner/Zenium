@@ -214,7 +214,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         tapLabel(f, CLOSE_LABEL)
         if (!waitGone(CLOSE_LABEL, 6_000)) step("the manager did not close")
         SystemClock.sleep(900)
-        openSettingsTabPasswords(f)
+        openSettingsTabPasswords()
         SystemClock.sleep(900)
         snap("settings-tab-passwords")
         setGraceToEveryTime(f)
@@ -279,51 +279,53 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
     /**
      * Settings from the app menu (a tab of its own, #134), then its Passwords category: the
      * landing lists the categories as rows, and the category shows the manager's rows under
-     * their headings.
+     * their headings. The landing and the category are proven by the chrome document's
+     * `data-section` (the harness's Settings reads: on the emulator's software GPU the tree
+     * lists a Settings page seconds after it is on screen, and the nightly's run had the
+     * category open on the recording with "the Passwords category did not open" from the tree);
+     * Passwords is far down the landing's category list (after the twelve categories the phone
+     * has before it), and the document scrolls it into view for the finger.
      */
-    private fun openSettingsTabPasswords(f: Finger) {
+    private fun openSettingsTabPasswords() {
         step("Settings from the app menu")
         if (!openMenuItem("Settings")) {
             dumpNames("the app menu")
             error("the menu had no Settings item")
         }
         if (!waitGone(HANDLE_LABEL, 8_000)) step("the menu is still up after Settings was tapped")
-        if (waitForRow("Passwords", 6_000) == null) {
-            // Passwords is far down the landing's category list (after the twelve categories the
-            // phone has before it): off screen, the list is dragged up and looked at again.
-            step("Passwords is below the fold; scrolling the landing")
-            f.down(width / 2f, height * 0.75f)
-            f.moveBy(0f, -height * 0.4f, 350)
-            f.hold(100)
-            f.up()
-            SystemClock.sleep(900)
-        }
-        if (waitForRow("Passwords", 6_000) == null) {
+        if (!awaitSettingsSection(SETTINGS_LANDING, 8_000, treeSign = "Passwords")) {
             dumpNames("the Settings landing")
-            error("the Settings landing has no Passwords category")
+            error("the Settings landing never came up (section '${settingsSection()}')")
         }
         SystemClock.sleep(900)
         step("the Passwords category")
-        tapRow(f, "Passwords") { waitForRow("Manage passwords", 6_000) != null }
-        if (waitForRow("Manage passwords", 8_000) == null) {
-            dumpNames("the Settings tab")
-            error("the Passwords category did not open")
+        val opened = { settingsSectionIs(PASSWORDS_SECTION, treeSign = "Manage passwords") }
+        if (!touchSettingsRowExpecting("Passwords", "the Passwords category is up", timeoutMs = 8_000, took = opened) && !opened()) {
+            step("the touch on the 'Passwords' row did not take; clicking it through accessibility")
+            clickSettingsRow("Passwords")
+            if (!awaitTrue(8_000, opened)) {
+                dumpNames("the Settings tab")
+                error("the Passwords category did not open (section '${settingsSection()}')")
+            }
         }
+        if (!awaitSettingsRow("Manage passwords", 8_000)) step("the document lists no 'Manage passwords' row yet")
     }
 
     /**
      * Tap a row named after its label (then its description) and wait for `took` to say the
-     * tap did something; the accessibility click is the fallback, as for every row.
+     * tap did something; the accessibility click is the fallback, as for every row. A Settings
+     * page's row is found by the document first ([revealSettingsRow]: scrolled into view there),
+     * the tree's node second.
      */
     private fun tapRow(f: Finger, label: String, took: () -> Boolean) {
-        val row = waitForRow(label, 8_000) ?: run {
+        val row = revealSettingsRow(label) ?: waitForRow(label, 8_000) ?: run {
             dumpNames("the rows")
             error("no row '$label'")
         }
         f.tap(row.exactCenterX(), row.exactCenterY())
         if (took()) return
         step("the tap on the '$label' row did not take; clicking it through accessibility")
-        clickRow(label)
+        if (!clickSettingsRow(label)) clickRow(label)
         if (!took()) step("the '$label' row did nothing")
     }
 
@@ -605,7 +607,7 @@ class PasswordsUiDemo : DemoHarness("passwords-demo-state.json", "services-passw
         val current = zen("app.getState").getJSONObject("settings").getJSONObject("passwords")
         step("the grace row reads ${current.getInt("reauthGraceSeconds")} s")
         val picked = pickOption(f, "Every time", "settings-tab-grace-sheet", open = {
-            val row = waitForRow(GRACE_LABEL, 5_000)
+            val row = revealSettingsRow(GRACE_LABEL) ?: waitForRow(GRACE_LABEL, 5_000)
             if (row == null) step("no row '$GRACE_LABEL'") else f.tap(row.exactCenterX(), row.exactCenterY())
             row != null
         }) { awaitGrace(0, 5_000) }

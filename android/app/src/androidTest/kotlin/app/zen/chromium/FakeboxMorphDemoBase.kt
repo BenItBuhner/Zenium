@@ -684,13 +684,31 @@ abstract class FakeboxMorphDemoBase(
         f.down(EDGE_X, height * 0.5f)
         f.moveBy(0.28f * width, 0f, 520)
         f.hold(900)
-        val held = snapshot()
+        // The chrome's word on the pull, read while the finger holds: the hold has no clock in
+        // the system's back, and on the emulator the pull reached the field after the 900 ms
+        // (the repairs' third proof run read 'open' at 1.00 with the finger down while the
+        // scene's own frames held a pulled pair), so the read waits [PULL_READ_MS] for it.
+        var held = snapshot()
+        val heldBy = SystemClock.uptimeMillis() + PULL_READ_MS
+        while (held.optString("lk") != "pulled" && SystemClock.uptimeMillis() < heldBy) {
+            f.hold(100)
+            held = snapshot()
+        }
         shot("$scene-held")
         // Back to the edge and off: the system cancels a gesture let go where it began.
         f.moveBy(-(0.28f * width) + 4f, 0f, 320)
         f.up()
         SystemClock.sleep(1_200)
-        val cancelled = snapshot()
+        // The spring back to the omnibox at 14 fps takes longer than the 1.2 s (the first two
+        // proof runs read it at 0.80 and 0.72, still 'pulled'): the read waits for its rest.
+        var cancelled = snapshot()
+        val cancelledBy = SystemClock.uptimeMillis() + PULL_READ_MS
+        while (!(cancelled.optString("ph") == "open" && cancelled.optString("lk") == "open" && cancelled.optDouble("m") > 0.99) &&
+            SystemClock.uptimeMillis() < cancelledBy
+        ) {
+            SystemClock.sleep(100)
+            cancelled = snapshot()
+        }
         val frames1 = stopSampling(scene + "-cancel")
         finding(
             "  held: look '${held.optString("lk")}', value ${"%.2f".format(held.optDouble("m"))}; " +
@@ -1270,6 +1288,12 @@ abstract class FakeboxMorphDemoBase(
         private const val RETAP_LEAD = 0.15f
         /** How far through the travel the page is scrolled for a tap part way. */
         private const val PART_WAY = 0.45f
+        /**
+         * How long the pulled scene's two reads wait past their sleeps for the state they read –
+         * the pull under the held finger, the spring's rest after the cancel – on a chrome
+         * drawing at 14 fps with gaps of half a second.
+         */
+        private const val PULL_READ_MS = 3_000L
         /**
          * The measured window of a cost scene ([morphCost]) from the touch: the flight and its
          * landing with nothing read from the chrome meanwhile. The emulator's flights in runs 1
