@@ -118,6 +118,10 @@ class MainActivity : BrowserActivity() {
         root.addView(host.chrome, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val shell = FrameLayout(this)
         shell.addView(root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // Above the root, so the pages appended to it later never cover the bubble; under the
+        // fullscreen layer, which takes the whole screen when it shows. The layer is the window's
+        // box (the chrome's frames are window px) and clips the disc to the page frame.
+        shell.addView(host.historyNavBubbleLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         shell.addView(fullscreenLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(shell)
 
@@ -201,6 +205,9 @@ class MainActivity : BrowserActivity() {
     private fun applyInsets(windowInsets: WindowInsetsCompat) {
         val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
         val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+        // The system's navigation mode rides the same insets: a gesture-mode window has a
+        // `systemGestures` inset down each side, a three-button one has none (GN-04).
+        host.navigationModeFromInsets(windowInsets.getInsets(WindowInsetsCompat.Type.systemGestures()).left)
         val d = resources.displayMetrics.density
         insets = json(
             "top" to bars.top / d,

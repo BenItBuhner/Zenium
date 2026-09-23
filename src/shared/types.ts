@@ -43,7 +43,7 @@ import type {
   ReadAloudVoicesResult
 } from './readAloud'
 import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
-import type { TabAlert } from './captureState'
+import type { TabAlert, TabCapture } from './captureState'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 import type { ShareFile, ShareFileInfo } from './share'
 import type { PageCaptureRequest, PageCaptureResult, PageViewport } from './capture'
@@ -449,11 +449,20 @@ export interface Tab {
   muted: boolean
   /**
    * The tab's alert indicator above audio (tabs-43, Chrome's priority): the page uses the camera
-   * or microphone (`recording`), shares a screen, window or tab (`capturing`), or plays
-   * picture-in-picture (`pip`). Folded from every frame's `capture-state` report; a session's
-   * own (not persisted, cleared on load). Absent on records older than the field.
+   * or microphone (`recording`), shares a screen, window or tab (`capturing`), holds a device
+   * session – a connected Bluetooth device (`bluetooth`), a USB device (`usb`), a HID device
+   * (`hid`), a serial port (`serial`) – plays picture-in-picture (`pip`), or presents to a VR
+   * headset (`vr`). Folded from every frame's `capture-state` report; a session's own (not
+   * persisted, cleared on load). Absent on records older than the field.
    */
   alert?: TabAlert | null
+  /**
+   * The kinds behind a `recording` / `capturing` alert (omnibox-38): which of the camera, the
+   * microphone and the screen the page holds, for the URL pill's site-information slot, whose
+   * glyph and name say which. Folded with `alert` from the same reports; null while nothing is
+   * captured.
+   */
+  capture?: TabCapture | null
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**
@@ -3974,6 +3983,15 @@ export interface Commands {
   'tab.switchTo': { args: { tabId: string }; result: void }
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
   'tab.navigationEntries': { args: { tabId: string }; result: NavigationSnapshot }
+  /**
+   * The entries behind (or ahead of) the tab's current one, nearest first, at most `limit`, each
+   * with the favicon history knows for its URL: the phone's Back-hold popup (Chrome's
+   * `getDirectedNavigationHistory`).
+   */
+  'tab.navigationHistory': {
+    args: { tabId: string; direction: NavigationDirection; limit: number }
+    result: NavigationHistoryEntry[]
+  }
   'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
   /** The back/forward list as a menu (long press / right click on the back and forward buttons). */
   'tab.navigationMenu': { args: { tabId: string }; result: void }
@@ -5713,6 +5731,18 @@ export interface NavigationSnapshotEntry {
   url: string
   title: string
   pageState?: string
+}
+
+/** Which way along the tab's stack a directed history list looks. */
+export type NavigationDirection = 'back' | 'forward'
+
+/** One row of a directed history list (`tab.navigationHistory`): the entry and where it sits. */
+export interface NavigationHistoryEntry {
+  /** The entry's index in the stack, what `tab.goToIndex` takes. */
+  index: number
+  url: string
+  title: string
+  favicon: string | null
 }
 
 export interface ClosedTabEntry {

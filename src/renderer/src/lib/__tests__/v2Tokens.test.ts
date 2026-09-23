@@ -31,7 +31,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The phone sheet chassis (components/sheet/BottomSheet.tsx): surface, header, grabber, rows
   // and separators shared by every phone sheet (v2 §6, §9.16, §9.25) – the shell pass.
   ['.zen-sheet {', '/*\n   * Bookmarks, built to the v2 draft'],
-  // The pull-to-refresh disc (components/content/PullIndicator.tsx).
+  // The pull-to-refresh disc (components/content/PullIndicator.tsx) and the history navigation
+  // bubble after it (components/content/HistoryNavBubble.tsx, GN-04).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
   // The phone's resting pill (components/phone/PhoneShell.tsx, pillChips.tsx; §9.29, the shell
   // pass): its fill and pressed fill on the window family's control roles, its quiet chips (the
@@ -99,6 +100,11 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The tab row's throbber (components/sidebar/Favicon.tsx, tabs-41): its two phases in the
   // control roles' deemphasised ink and accent (§9.29), the v1 inks as fallbacks off a surface.
   ['.zen-tab-throbber {', '.zen-tab-favicon-in {'],
+  // The collapsed rail's flyout (components/sidebar/Sidebar.tsx, useRailFlyout.ts; tabs-03,
+  // §9.20's cascade, §9.29): a row's tile and its panel half across the seam in the window
+  // family – hover, the lit parent row, drop-into, active – and the pinned header's hover. Its
+  // block ends where the overlay header's comment begins.
+  ['.zen-rail-flyout[data-flyout-rows] {', '/*\n   * The overlay header (design language v2 §9.7'],
   // The overlay header (§9.7, overlays/OverlayShell.tsx): the title on the type scale, the
   // hairline in the border token once the body scrolls under it.
   ['.zen-overlay-header {', '/* The 1px outline is a spread shadow'],

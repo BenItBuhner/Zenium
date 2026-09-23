@@ -122,7 +122,17 @@ const PAGE = 'https://meet.example/call'
 
 const report = (
   id: string,
-  over: Partial<{ camera: boolean; microphone: boolean; display: boolean; pip: boolean }>
+  over: Partial<{
+    camera: boolean
+    microphone: boolean
+    display: boolean
+    pip: boolean
+    bluetooth: boolean
+    usb: boolean
+    hid: boolean
+    serial: boolean
+    vr: boolean
+  }>
 ): unknown => ({ id, camera: false, microphone: false, display: false, pip: false, ...over })
 
 function openPage(f: Fixture): { tab: Tab; view: Recorded } {
@@ -149,11 +159,11 @@ describe('the tab alert from the frames’ capture reports', () => {
     })
     expect(f.browser.tabs.tab(tab.id)!.alert).toBe('recording')
     await vi.advanceTimersByTimeAsync(10)
-    // The row repaints once per change, not per report.
+    // The row repaints once per change (of the alert or of the kinds behind it), not per report.
     expect(f.states).toBe(before + 1)
     view.events.onPageMessage({
       type: 'capture-state',
-      capture: report('top', { microphone: true })
+      capture: report('top', { camera: true, microphone: true })
     })
     await vi.advanceTimersByTimeAsync(10)
     expect(f.states).toBe(before + 1)
@@ -179,6 +189,34 @@ describe('the tab alert from the frames’ capture reports', () => {
     send(report('share', {}))
     expect(f.browser.tabs.tab(tab.id)!.alert).toBe('pip')
     send(report('player', {}))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBeNull()
+  })
+
+  it('slots a device session where Chrome does – below a capture, above picture-in-picture – and clears it with the document (tabs-43)', () => {
+    const f = fixture()
+    const { tab, view } = openPage(f)
+    const send = (capture: unknown): void =>
+      view.events.onPageMessage({ type: 'capture-state', capture })
+    send(report('player', { pip: true }))
+    send(report('top', { usb: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('usb')
+    send(report('top', { usb: true, bluetooth: true, serial: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('bluetooth')
+    send(report('share', { display: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('capturing')
+    send(report('share', {}))
+    send(report('top', { hid: true, vr: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('hid')
+    send(report('top', { vr: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('pip')
+    send(report('player', {}))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('vr')
+    // A reporter older than the device fields (no such keys) reads as none of them.
+    send({ id: 'top', camera: false, microphone: false, display: false, pip: false })
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBeNull()
+    send(report('top', { serial: true }))
+    expect(f.browser.tabs.tab(tab.id)!.alert).toBe('serial')
+    view.events.onNavigated('https://meet.example/lobby', false)
     expect(f.browser.tabs.tab(tab.id)!.alert).toBeNull()
   })
 
@@ -214,6 +252,44 @@ describe('the tab alert from the frames’ capture reports', () => {
     f.browser.tabs.discard(again.id)
     expect(f.browser.tabs.tab(again.id)!.alert).toBeNull()
     expect(f.browser.tabs.tab(again.id)!.discarded).toBe(true)
+  })
+
+  it('folds the kinds behind the alert into `capture`, for the pill’s in-use chip (omnibox-38)', async () => {
+    const f = fixture()
+    const { tab, view } = openPage(f)
+    const send = (capture: unknown): void =>
+      view.events.onPageMessage({ type: 'capture-state', capture })
+    const read = (): Tab => f.browser.tabs.tab(tab.id)!
+    await vi.advanceTimersByTimeAsync(10)
+    expect(read().capture).toBeNull()
+    send(report('call', { microphone: true }))
+    expect(read().capture).toEqual({ camera: false, microphone: true, display: false })
+    await vi.advanceTimersByTimeAsync(10)
+    // The alert stays `recording`, but the kinds changed: the pill repaints for the camera.
+    const before = f.states
+    send(report('call', { camera: true, microphone: true }))
+    expect(read().alert).toBe('recording')
+    expect(read().capture).toEqual({ camera: true, microphone: true, display: false })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(f.states).toBe(before + 1)
+    // Another frame's screen share joins the reading; the alert ranks recording above it.
+    send(report('share', { display: true }))
+    expect(read().alert).toBe('recording')
+    expect(read().capture).toEqual({ camera: true, microphone: true, display: true })
+    send(report('call', {}))
+    expect(read().alert).toBe('capturing')
+    expect(read().capture).toEqual({ camera: false, microphone: false, display: true })
+    // Picture-in-picture is an alert, not a capture.
+    send(report('share', {}))
+    send(report('player', { pip: true }))
+    expect(read().alert).toBe('pip')
+    expect(read().capture).toBeNull()
+    // A report that changes neither repaints nothing.
+    await vi.advanceTimersByTimeAsync(10)
+    const settled = f.states
+    send(report('player', { pip: true }))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(f.states).toBe(settled)
   })
 
   it('takes no report it cannot read, and none for a tab without a page', () => {

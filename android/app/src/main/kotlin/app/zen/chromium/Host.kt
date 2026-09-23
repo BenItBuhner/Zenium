@@ -100,6 +100,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     override val tabs = TabHost(root, this)
     /**
+     * The history navigation bubble (GN-04), drawn natively above the pages – the chrome's disc
+     * could not show through them – where the chrome's machine puts it each frame
+     * (`chrome.historyNavBubble`), in a layer that clips it to the page frame as the DOM disc is;
+     * the activity lays the layer over [root].
+     */
+    val historyNavBubbleLayer = HistoryNavBubbleLayer(activity)
+    /** The bubble's disc, for whoever reads where it stands (the gestures demo). */
+    val historyNavBubble: HistoryNavBubbleView get() = historyNavBubbleLayer.disc
+    /**
      * Page-to-chrome Tab traversal for a hardware keyboard (A11Y-09): the chrome's WebView and
      * every page's are wired into it ([TabHost.create]); a Tab run off one document lands in
      * the other, [onFocusLanding].
@@ -399,6 +408,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
+    override fun historyNavEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.historyNavEvent(tabId, phase, payload)
+    /**
+     * Read off the window's `systemGestures` insets as they arrive ([MainActivity.applyInsets]):
+     * a left inset says the system takes the edges for its back gesture (Chrome's
+     * `UiUtils.isGestureNavigationMode`); none says the three buttons are up.
+     */
+    override var threeButtonNavigation = false
+        private set
+
+    /** The window's insets changed: `systemGestureLeft` is the `systemGestures` inset on the left, device px. */
+    fun navigationModeFromInsets(systemGestureLeft: Int) {
+        threeButtonNavigation = systemGestureLeft == 0
+    }
     override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
     override fun barScroll(tabId: String, phase: String, payload: JSONObject?) = chrome.barScroll(tabId, phase, payload)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
@@ -896,6 +918,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // The bar that hides on scroll says where it is (per frame while it moves) or that it
             // may not hide: every page's edge on the bar's side follows (see `TabHost.place`).
             "chrome.setBarHide" -> { tabs.setBarHide(BarHideFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
+            "chrome.historyNavBubble" -> { historyNavBubbleLayer.apply(HistoryNavBubbleFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "window.setSecure" -> { setPrivateSurface(args.bool("secure")); reply(null) }
@@ -1624,6 +1647,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // the chrome's own, or the draft's defaults for the scheme when it sent none.
         themeAccent = if (accent.isNotEmpty()) parseColor(accent) else ContextCompat.getColor(activity, if (dark) R.color.v2_accent_dark else R.color.v2_accent_light)
         themeOnAccent = if (onAccent.isNotEmpty()) parseColor(onAccent) else ContextCompat.getColor(activity, if (dark) R.color.v2_on_accent_dark else R.color.v2_on_accent_light)
+        historyNavBubbleLayer.retint(V2Ink(activity, dark, themeAccent, themeOnAccent))
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
         themeBackground = color
         root.setBackgroundColor(color)
