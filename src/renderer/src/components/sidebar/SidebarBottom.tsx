@@ -132,7 +132,8 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
             <button
               type="button"
               className="zen-toolbar-button h-7 w-7 opacity-50 hover:opacity-100 focus-visible:opacity-100"
-              title={hint('New Space', state, 'space.new')}
+              aria-label={hint('New Space', state, 'space.new')}
+              data-tooltip={hint('New Space', state, 'space.new')}
               onClick={() => void openOverlay('space-editor', current?.id ?? null, null)}
             >
               {/* A 16 toolbar glyph at §9.3's stroke, as the palette beside it. */}
@@ -142,7 +143,8 @@ export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Prop
           <button
             type="button"
             className="zen-toolbar-button h-7 w-7"
-            title="Change theme"
+            aria-label="Change theme"
+            data-tooltip="Change theme"
             onClick={() => void openOverlay('theme', current?.id ?? null, state.activeSpaceId)}
           >
             {/* A 16 toolbar glyph at §9.3's stroke, as the row above draws its own. */}
@@ -170,7 +172,7 @@ function AgentPill({
         'zen-panel flex items-center gap-2 px-2 py-1.5 text-[12px]',
         compact && 'justify-center px-0'
       )}
-      title={`${label}: ${agents.map((a) => `${a.name} (${a.mode})`).join(', ')}. Click to manage.`}
+      data-tooltip={`${label}: ${agents.map((a) => `${a.name} (${a.mode})`).join(', ')}. Click to manage.`}
       onClick={() => openSettings('agents')}
     >
       <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
@@ -226,7 +228,8 @@ function SpaceIcon({
       data-drop-into={isDrop || undefined}
       data-space-target={space.id}
       aria-current={active ? 'true' : undefined}
-      title={space.name}
+      aria-label={space.name}
+      data-tooltip={space.name}
       onClick={() => run('space.activate', { spaceId: space.id })}
       onContextMenu={(e) => {
         e.preventDefault()
@@ -275,7 +278,7 @@ function MediaPlayer({
         <button
           type="button"
           className="min-w-0 flex-1 truncate text-left text-[12px]"
-          title={title}
+          data-tooltip={title}
           onClick={() => run('tab.activate', { tabId: tab.id })}
         >
           {title}
@@ -284,7 +287,8 @@ function MediaPlayer({
       <button
         type="button"
         className="zen-toolbar-button h-6 w-6"
-        title={media.playing ? 'Pause' : 'Play'}
+        aria-label={media.playing ? 'Pause' : 'Play'}
+        data-tooltip={media.playing ? 'Pause' : 'Play'}
         onClick={() => run('media.toggle', { tabId: tab.id })}
       >
         {media.playing ? (
@@ -296,7 +300,8 @@ function MediaPlayer({
       <button
         type="button"
         className="zen-toolbar-button h-6 w-6"
-        title={tab.muted ? 'Unmute' : 'Mute'}
+        aria-label={tab.muted ? 'Unmute' : 'Mute'}
+        data-tooltip={tab.muted ? 'Unmute' : 'Mute'}
         onClick={() => run('tab.toggleMute', { tabId: tab.id })}
       >
         {tab.muted ? (

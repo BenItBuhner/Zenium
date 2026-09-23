@@ -40,6 +40,7 @@ import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ListMotionContext } from '../sidebar/listMotion'
 import { FolderRow, NewTabButton, StripRowItem } from '../sidebar/SpacePanel'
+import { TabSet } from '../sidebar/TabSet'
 import { StripAxisContext } from '../sidebar/stripAxis'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
@@ -374,9 +375,11 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
                   data-active="true"
                   data-tab-list="pinned"
                 >
-                  {stripRows(pinned, state.splitGroups).map((row) => (
-                    <StripRowItem key={rowKey(row)} row={row} activeTabId={activeTabId} compact />
-                  ))}
+                  <TabSet tabs={pinned}>
+                    {stripRows(pinned, state.splitGroups).map((row) => (
+                      <StripRowItem key={rowKey(row)} row={row} activeTabId={activeTabId} compact />
+                    ))}
+                  </TabSet>
                 </div>
               </ListMotionContext.Provider>
             )}
@@ -414,15 +417,17 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
                       slot={slot}
                     />
                   ))}
-                  {stripRows(loose, state.splitGroups).map((row) => (
-                    <StripRowItem
-                      key={rowKey(row)}
-                      row={row}
-                      activeTabId={activeTabId}
-                      compact={false}
-                      slot={slot}
-                    />
-                  ))}
+                  <TabSet tabs={loose}>
+                    {stripRows(loose, state.splitGroups).map((row) => (
+                      <StripRowItem
+                        key={rowKey(row)}
+                        row={row}
+                        activeTabId={activeTabId}
+                        compact={false}
+                        slot={slot}
+                      />
+                    ))}
+                  </TabSet>
                 </div>
               </div>
             </ListMotionContext.Provider>

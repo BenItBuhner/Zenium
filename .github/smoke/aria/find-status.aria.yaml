@@ -1,0 +1,9 @@
+- search "Find in page":
+  - textbox "Find in page": loopback
+  - status: 1 of 2 matches
+  - button "Previous match"
+  - button "Next match"
+  - button "Close find bar"
+
+# facts
+- status "1 of 2 matches" [live=polite atomic=true]

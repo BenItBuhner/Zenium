@@ -173,10 +173,14 @@ describe('the split group row', () => {
     panel([tab('a'), tab('b'), tab('c')], [split('g1', ['a', 'b'])], 'c')
     const [row] = rows('regular')
     const segs = segments(row!)
-    expect(segs.map((s) => s.getAttribute('aria-description'))).toEqual([
-      'Split view, pane 1 of 2',
-      'Split view, pane 2 of 2'
-    ])
+    // The pane is the row's description: hidden text the row is described by (a11y-31 – the
+    // hover card joins the same `aria-describedby` when it stands).
+    const described = (s: HTMLElement): string | null =>
+      document.getElementById(s.getAttribute('aria-describedby') ?? '')?.textContent ?? null
+    expect(segs.map(described)).toEqual(['Split view, pane 1 of 2', 'Split view, pane 2 of 2'])
+    // And each pane is one of the list's three tabs, in the group's order.
+    expect(segs.map((s) => s.getAttribute('aria-posinset'))).toEqual(['1', '2'])
+    expect(segs.map((s) => s.getAttribute('aria-setsize'))).toEqual(['3', '3'])
     expect(segs.every((s) => s.classList.contains('zen-split-seg'))).toBe(true)
     expect(segs.every((s) => s.getAttribute('role') === 'tab')).toBe(true)
     expect(segs.map((s) => s.dataset.stripItem)).toEqual(['tab:a', 'tab:b'])
