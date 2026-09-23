@@ -9867,6 +9867,22 @@
   height: var(--v2-line-body-box);
   margin-top: var(--zen-settings-label-top, 0px);
 }
+/*
+ * The one trailing content taller than its control: an inline field with the message of a
+ * commit the row refused (`rows.tsx`'s `InlineField` – the field and its `role="alert"` line in
+ * one column). Centred as a pair in the line's box, the 32 field and its two-line message put
+ * the field's top 24 over the row above and the message beside the description. The field
+ * alone is seated: the column starts at the box's top less the field's overhang – the
+ * (line − control) / 2 the centring gave it – so the field's centre stays on the label's line
+ * and the message follows under the field (§9.12: validation text below the field), into the
+ * gap before the next heading rather than over a row.
+ */
+.zen-settings-row[data-lines='3']
+  > .zen-settings-trailing
+  > .zen-settings-inline-field:has(.zen-settings-inline-error) {
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-control)) / 2);
+}
 /* A detail row's summary (§10.4): what its sheet holds, 13 at 69 % on the trailing side, before the chevron. */
 .zen-settings-summary {
   white-space: nowrap;
