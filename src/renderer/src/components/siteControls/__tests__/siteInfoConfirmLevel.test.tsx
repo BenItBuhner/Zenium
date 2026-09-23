@@ -14,8 +14,10 @@ import type { SiteInfoSnapshot } from '@shared/siteInfo'
  * Cancel and Shift+Tab at the danger verb; Enter from the held container is inert – a
  * destructive prompt has no default – and confirms nothing; Escape is one hop back to the level
  * the confirmation came from, the popover staying up, with the focus on the footer verb that
- * opened it, as Cancel's button does; the deed is in the danger ink (`data-danger`), no primary.
- * The primitive's own contract is dialogs/__tests__/confirmDialog.test.tsx's.
+ * opened it, as Cancel's button does – the control recorded as the level was pushed, found again
+ * by name in the re-mounted footer, the footer's first danger verb only as the fallback (#413
+ * A2); the deed is in the danger ink (`data-danger`), no primary. The primitive's own contract is
+ * dialogs/__tests__/confirmDialog.test.tsx's.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -122,10 +124,16 @@ const buttonNamed = (text: string): HTMLButtonElement => {
   expect(found, text).toBeDefined()
   return found!
 }
-const click = (el: Element): void => {
+/** A click as the mouse alone delivers it here: no focus moves (happy-dom has no mousedown focus). */
+const clickOnly = (el: Element): void => {
   act(() => {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
   })
+}
+/** A click as Chromium delivers it: the control takes the focus on mousedown, then the click. */
+const click = (el: Element): void => {
+  if (el instanceof HTMLElement && el.tabIndex >= 0) act(() => el.focus())
+  clickOnly(el)
 }
 function press(from: Element, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })
@@ -292,5 +300,47 @@ describe('the site-information popover’s confirmations', () => {
     await settle()
     expect(level('clear-cookies')).toBeNull()
     expect(popover()!.dataset.level).toBe('cookies')
+  })
+
+  it('the return is to the control that opened the level – recorded as it was pushed and found again by name in the re-mounted footer, not the footer’s first danger verb; only an open that recorded nothing falls to that heuristic', async () => {
+    await open()
+    // A decoy: a foreign footer standing first in the popover, with a danger verb of its own – the
+    // first `[data-footer] .zen-v2-button[data-danger]` in the document, so the heuristic alone
+    // would land on it.
+    const decoy = document.createElement('div')
+    decoy.dataset.footer = 'panel'
+    decoy.innerHTML = '<button class="zen-v2-button" data-danger type="button">Clear other</button>'
+    popover()!.prepend(decoy)
+    const decoyVerb = decoy.querySelector('button')!
+
+    // Opened from the focused verb (the keyboard's path; the mouse's too, Chromium focusing a
+    // button on mousedown): recorded as the level is pushed.
+    const opener = buttonNamed('Clear site data')
+    click(opener)
+    await settle()
+    expect(document.activeElement).toBe(level('clear-data'))
+    // One level at a time: the recorded element is out of the document while the level stands.
+    expect(opener.isConnected).toBe(false)
+    pressEscape()
+    await settle()
+    expect(popover()!.dataset.level).toBe('overview')
+    const back = buttonNamed('Clear site data')
+    expect(back).not.toBe(opener)
+    expect(document.activeElement).toBe(back)
+    expect(document.activeElement).not.toBe(decoyVerb)
+
+    // Opened with nothing tellable holding the focus (a click that moved none, the focus on
+    // body): nothing recorded, and the return falls to the heuristic – the first danger verb, the
+    // decoy.
+    act(() => back.blur())
+    expect(document.activeElement).toBe(document.body)
+    clickOnly(back)
+    await settle()
+    expect(document.activeElement).toBe(level('clear-data'))
+    pressEscape()
+    await settle()
+    expect(popover()!.dataset.level).toBe('overview')
+    expect(document.activeElement).toBe(decoyVerb)
+    decoy.remove()
   })
 })
