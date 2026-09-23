@@ -26,6 +26,11 @@ name: Android tab groups demo
 # into the job summary by the shared workflow and kept as its jank-report artifact; the gate is
 # the shared default, soft.
 on:
+  # TEMPORARY (W5-2c, PR #405: the coordinator's one authorised run + one retry of the tablet act
+  # – TabletGroupsDemo §6 and the forced §6b – on this head; no token in the project can dispatch);
+  # the phone act does not run on the push; removed before the PR's final head.
+  push:
+    branches: [cursor/android-tablet-rename-focus-4aab]
   workflow_dispatch:
 
 permissions:
@@ -38,6 +43,8 @@ concurrency:
 jobs:
   phone:
     name: Tab groups demo, phone
+    # TEMPORARY with the push trigger above: the authorised run is the tablet act's alone.
+    if: ${{ github.event_name != 'push' }}
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
