@@ -39,7 +39,7 @@ import { isEmptyTabUrl } from '@shared/url'
 import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, ERROR_URL_PREFIX, EXTENSION_SCHEME, crashPageOptionsOf } from '@shared/url'
-import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
+import { DEFAULT_FOLDER_ICON } from '@renderer/lib/groups'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
   browserStore,
