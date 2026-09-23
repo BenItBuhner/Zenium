@@ -9,15 +9,24 @@ import type { MessageAction, Toast } from '../ui'
  * Undo for closing tabs (lib/closeUndo.ts; v2 draft §9.33; matrix TAB-05, TAB-06, TAB-07,
  * GN-16): a close goes through at once; the toast comes once the core has filed the closed tab
  * on its recently closed list and offers to bring the tabs back through `session.restoreClosed`,
- * newest first, so every tab lands at the index it held as it closed. The core here is a stand-in
- * that keeps the list newest first and fires `session.recentlyClosedChanged` as the real one does.
+ * newest first, so every tab lands at the index it held as it closed. A close of several goes
+ * one page after the other in the core (`tab.closeMany`, each page's `beforeunload` heard in
+ * turn), and the chrome hears which tab is closing from `closingTabIds`: the toast waits for the
+ * run to end, however long it takes, and counts every tab that closed. The core here is a
+ * stand-in that keeps the list newest first, fires `session.recentlyClosedChanged` as the real
+ * one does, and says which tabs it has closing as the chrome's state would.
  */
 
 /** The core as the module sees it: the list (newest first), the change event, the commands. */
 class FakeCore {
   list: ClosedEntrySummary[] = []
   calls: Array<[string, unknown]> = []
+  /** `UIState.closingTabIds` as the chrome last heard it. */
+  closingTabIds: string[] = []
+  /** How many times the module has (un)subscribed to the chrome's state. */
+  stateSubscriptions = { on: 0, off: 0 }
   private listeners = new Set<(payload: undefined) => void>()
+  private stateListeners = new Set<() => void>()
 
   invoke = async (name: string, args: unknown): Promise<unknown> => {
     this.calls.push([name, args])
@@ -43,6 +52,24 @@ class FakeCore {
     this.changed()
   }
 
+  /**
+   * The core's next state reaches the chrome with these tabs closing (a `requestClose` in
+   * flight for each: its page's unload check under way, or asking "Leave site?").
+   */
+  closing(...tabIds: string[]): void {
+    this.closingTabIds = tabIds
+    for (const listener of this.stateListeners) listener()
+  }
+
+  onState = (listener: () => void): (() => void) => {
+    this.stateListeners.add(listener)
+    this.stateSubscriptions.on += 1
+    return () => {
+      this.stateListeners.delete(listener)
+      this.stateSubscriptions.off += 1
+    }
+  }
+
   /** The commands of one name, in order. */
   of(name: string): unknown[] {
     return this.calls.filter(([n]) => n === name).map(([, args]) => args)
@@ -51,6 +78,8 @@ class FakeCore {
   reset(): void {
     this.list = []
     this.calls = []
+    this.closingTabIds = []
+    this.stateSubscriptions = { on: 0, off: 0 }
   }
 
   private changed(): void {
@@ -123,9 +152,12 @@ function entry(t: Tab, closedAt: number): ClosedEntrySummary {
 const UNLOAD: Pick<Settings, 'pinnedCloseBehavior'> = { pinnedCloseBehavior: 'unload' }
 const CLOSE: Pick<Settings, 'pinnedCloseBehavior'> = { pinnedCloseBehavior: 'close' }
 
-/** The async work between the event and the toast: the list read and its attribution. */
-async function flush(): Promise<void> {
-  for (let i = 0; i < 8; i++) await Promise.resolve()
+/**
+ * The async work between the event and the toast: the list read and its attribution (`ticks`
+ * microtasks; an Undo of several restores each in turn and needs a few per entry).
+ */
+async function flush(ticks = 8): Promise<void> {
+  for (let i = 0; i < ticks; i++) await Promise.resolve()
 }
 
 /** An undo over the fake core; `toast` records the toasts, `active` is the tab the user is on. */
@@ -143,7 +175,9 @@ function harness(active: string | null = null): {
     on: core.on as unknown as Subscribe,
     toast: (message, action) => toasts.push({ message, action }),
     now: () => now.value,
-    activeTabId: () => current.value
+    activeTabId: () => current.value,
+    closingTabIds: () => core.closingTabIds,
+    onState: core.onState
   })
   return {
     toasts,
@@ -264,17 +298,59 @@ describe('closing one tab', () => {
     expect(core.of('session.restoreClosed')).toEqual([{ id: 'closed:a' }])
   })
 
-  it('a page that holds its close past the settle time gets no toast', async () => {
+  it('a close the chrome hears nothing of past the settle time gets no toast', async () => {
     const h = harness()
     h.close([tab('a')])
+    // The core never listed the tab as closing and filed nothing: the wait runs out.
     await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
     expect(h.toasts).toEqual([])
-    // The tab is filed late (the user let the page go): no toast comes for it after the fact…
+    // An entry filed after the fact is nobody's…
     core.file(entry(tab('a'), h.now.value + CLOSE_SETTLE_MS + 2))
     await flush()
     expect(h.toasts).toEqual([])
-    // …and the entry is free for the next close to take, should its clock allow.
+    // …and free for the next close to take, should its clock allow.
     expect(core.list).toHaveLength(1)
+  })
+
+  it('a page asking "Leave site?" holds the toast for as long as the user takes; Leave then gets it', async () => {
+    const h = harness('a')
+    const a = tab('a', { title: 'Draft' })
+    h.close([a], 'a')
+    // The core has the close in flight: the page objected, its question is up on the tab.
+    core.closing('a')
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS * 4)
+    expect(h.toasts).toEqual([])
+    // Leave, well past the settle time: the tab is filed and the question is gone.
+    h.now.value += CLOSE_SETTLE_MS * 4
+    core.file(entry(a, h.now.value))
+    core.closing()
+    await flush()
+    expect(h.toasts.map((t) => t.message)).toEqual(['Closed Draft'])
+    h.toasts[0].action.onPick()
+    await flush()
+    expect(core.of('session.restoreClosed')).toEqual([{ id: 'closed:a' }])
+  })
+
+  it('Stay keeps the tab: the question goes without an entry and no toast follows', async () => {
+    const h = harness()
+    h.close([tab('a')])
+    core.closing('a')
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS * 4)
+    core.closing()
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    expect(h.toasts).toEqual([])
+  })
+
+  it("another tab's close in flight holds nothing here", async () => {
+    const h = harness()
+    core.closing('other')
+    h.close([tab('a')])
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    expect(h.toasts).toEqual([])
+    // The intent settled on its wait: an entry filed now is nobody's.
+    core.file(entry(tab('a'), h.now.value + CLOSE_SETTLE_MS + 2))
+    await flush()
+    expect(h.toasts).toEqual([])
   })
 })
 
@@ -316,7 +392,7 @@ describe('closing several tabs at once', () => {
     expect(h.toasts.map((t) => t.message)).toEqual(['2 tabs closed'])
   })
 
-  it('what has come by the settle time is offered; the rest is nobody’s', async () => {
+  it('what has come by the settle time is offered when the chrome hears nothing of the close; the rest is nobody’s', async () => {
     const h = harness()
     const [a, b] = [tab('a'), tab('b')]
     h.close([a, b])
@@ -331,6 +407,125 @@ describe('closing several tabs at once', () => {
     h.toasts[0].action.onPick()
     await flush()
     expect(core.of('session.restoreClosed')).toEqual([{ id: 'closed:a' }])
+  })
+})
+
+// --- one page after the other (tab.closeMany) --------------------------------------------------
+
+/** The seven unpinned tabs of the tab-close demo's space: a group of two, then five loose. */
+const SEVEN = ['www', 'damping', 'example', 'hn', 'rfc', 'tea', 'coffee'].map((id) => tab(id))
+/** What one page's unload check takes on the emulator (H-2's `ZenBack` cadence). */
+const PER_TAB_MS = 1200
+
+/**
+ * The core's Close All over `tabs`: the group closes as one (`folder.close`, both entries filed
+ * in the tick the command runs), then `tab.closeMany` takes the rest one page after the other
+ * – each in `closingTabIds` for its unload check, filed as it goes – with `keep` kept by its
+ * user's "Stay" (asked for `askMs`, then no entry). Fires the states and the events in the order
+ * the core does; the fake clock moves `PER_TAB_MS` per page.
+ */
+async function closeAllRun(
+  h: ReturnType<typeof harness>,
+  tabs: Tab[],
+  opts: { keep?: string; askMs?: number } = {}
+): Promise<void> {
+  const [w, d, ...rest] = tabs
+  core.file(entry(w, h.now.value), entry(d, h.now.value))
+  await flush()
+  for (const t of rest) {
+    core.closing(t.id)
+    await flush()
+    if (t.id === opts.keep) {
+      // The page objects; the user reads the question, then stays. No entry, the run goes on.
+      await vi.advanceTimersByTimeAsync(opts.askMs ?? CLOSE_SETTLE_MS * 3)
+      h.now.value += opts.askMs ?? CLOSE_SETTLE_MS * 3
+      continue
+    }
+    await vi.advanceTimersByTimeAsync(PER_TAB_MS)
+    h.now.value += PER_TAB_MS
+    core.file(entry(t, h.now.value))
+    await flush()
+  }
+  core.closing()
+  await flush()
+}
+
+describe('closing several one page after the other', () => {
+  it('the toast waits for the run, however long, and counts the seven; Undo brings the seven back newest first', async () => {
+    const h = harness('example')
+    const close = h.close(SEVEN, 'example')
+    expect(close).toHaveBeenCalledTimes(1)
+    // Seven pages at ~1.2 s each is well past the settle time; nothing shows before the last.
+    const before = h.toasts.length
+    await closeAllRun(h, SEVEN)
+    expect(before).toBe(0)
+    expect(h.toasts.map((t) => t.message)).toEqual(['7 tabs closed'])
+    expect(h.toasts[0].action.label).toBe('Undo')
+    h.toasts[0].action.onPick()
+    await flush(40)
+    // Newest first, each back to the index it held as it closed; the user ends on their tab.
+    expect(core.of('session.restoreClosed')).toEqual(
+      [...SEVEN].reverse().map((t) => ({ id: `closed:${t.id}` }))
+    )
+    expect(core.of('tab.activate')).toEqual([{ tabId: 'example' }])
+    expect(core.list).toEqual([])
+  })
+
+  it('no toast stands while a page of the run is still closing, even past the settle time', async () => {
+    const h = harness()
+    h.close(SEVEN)
+    const [w, d, example, hn, ...rest] = SEVEN
+    core.file(entry(w, h.now.value), entry(d, h.now.value))
+    core.closing(example.id)
+    await vi.advanceTimersByTimeAsync(PER_TAB_MS)
+    h.now.value += PER_TAB_MS
+    core.file(entry(example, h.now.value))
+    // The fourth page is slow to answer (a silent page waits out the core's 5 s): the wait is
+    // held all along, with three entries in – the state the fixed wait used to toast on.
+    core.closing(hn.id)
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS * 4)
+    expect(h.toasts).toEqual([])
+    h.now.value += CLOSE_SETTLE_MS * 4
+    core.file(entry(hn, h.now.value))
+    for (const t of rest) {
+      core.closing(t.id)
+      await vi.advanceTimersByTimeAsync(PER_TAB_MS)
+      h.now.value += PER_TAB_MS
+      core.file(entry(t, h.now.value))
+    }
+    await flush()
+    expect(h.toasts.map((t) => t.message)).toEqual(['7 tabs closed'])
+  })
+
+  it('a page kept by its user\'s "Stay" is left out of the count; the rest close and come back', async () => {
+    const h = harness()
+    h.close(SEVEN)
+    await closeAllRun(h, SEVEN, { keep: 'rfc' })
+    expect(h.toasts.map((t) => t.message)).toEqual([])
+    // The run is through with six entries in; the wait for the seventh runs out.
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    expect(h.toasts.map((t) => t.message)).toEqual(['6 tabs closed'])
+    h.toasts[0].action.onPick()
+    await flush(40)
+    expect(core.of('session.restoreClosed').map((a) => (a as { id: string }).id)).toEqual(
+      ['coffee', 'tea', 'hn', 'example', 'damping', 'www'].map((id) => `closed:${id}`)
+    )
+  })
+
+  it("the chrome's state is watched while an intent is pending and let go after", async () => {
+    const h = harness()
+    expect(core.stateSubscriptions).toEqual({ on: 0, off: 0 })
+    h.close(SEVEN)
+    expect(core.stateSubscriptions).toEqual({ on: 1, off: 0 })
+    await closeAllRun(h, SEVEN)
+    expect(h.toasts.map((t) => t.message)).toEqual(['7 tabs closed'])
+    expect(core.stateSubscriptions).toEqual({ on: 1, off: 1 })
+    // A second close subscribes again; two pending share the one subscription.
+    h.close([tab('x')])
+    h.close([tab('y')])
+    expect(core.stateSubscriptions).toEqual({ on: 2, off: 1 })
+    await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    expect(core.stateSubscriptions).toEqual({ on: 2, off: 2 })
   })
 })
 
