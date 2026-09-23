@@ -100,6 +100,11 @@ interface Props {
   footer?: ReactNode
   /** A class on the panel (`.zen-sheet`) for the surface's own rules – its body, never its title. */
   className?: string
+  /**
+   * The title element's id, for a body that names the title as its own label – §9.12's one-field
+   * sheet, whose field is labelled by the header that reads its name. Generated when omitted.
+   */
+  titleId?: string
   /** Change it when the body is swapped, so the detents are measured again. */
   contentKey?: string
   /** Measure the detents again whenever the content changes size (`BottomSheet`'s `fitContent`). */
@@ -134,6 +139,7 @@ function Chassis({
   children,
   footer,
   className,
+  titleId: givenTitleId,
   contentKey,
   fitContent,
   openExpanded,
@@ -158,7 +164,8 @@ function Chassis({
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
   const body = useRef<HTMLDivElement>(null)
-  const titleId = useId()
+  const ownTitleId = useId()
+  const titleId = givenTitleId ?? ownTitleId
   // The title block's paragraph describes the dialog (§9.22): read after the name when the sheet
   // itself takes the focus – a confirmation's – and harmless when a row or button does.
   const descriptionId = useId()
