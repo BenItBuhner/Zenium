@@ -11,6 +11,11 @@ name: Android tab close demo
 # cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
+  # TEMPORARY (W5-2a): the one emulator run of the close-undo fix on its own branch; removed
+  # before the PR is marked ready.
+  push:
+    branches:
+      - cursor/android-tab-close-undo-11da
 
 permissions:
   contents: read
