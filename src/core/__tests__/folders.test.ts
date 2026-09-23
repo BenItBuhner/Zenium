@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { FOLDER_COLOR_ORDER } from '../../shared/defaults'
+import { isEmptyTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
 import type {
   MenuHost,
@@ -50,7 +51,7 @@ interface Harness {
   open: (url: string, opts?: { folderId?: string; containerId?: string }) => string
 }
 
-function harness(): Harness {
+function harness(capabilities: Partial<HostCapabilities> = {}): Harness {
   let last: MenuItemTemplate[] = []
   const sent: Harness['sent'] = []
   const menus: MenuHost = {
@@ -60,7 +61,7 @@ function harness(): Harness {
   }
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '1.2.3' },
-    capabilities: stub<HostCapabilities>({ windows: true, nativeMenus: true }),
+    capabilities: stub<HostCapabilities>({ windows: true, nativeMenus: true, ...capabilities }),
     io: memoryIo(),
     windows: {
       create: () =>
@@ -318,7 +319,7 @@ describe('the tab menu’s group items (context-menus-91)', () => {
 })
 
 describe('the folder header menu (tabs-13)', () => {
-  it('runs act / change / destroy: New Tab in Folder – Edit Folder… with Zenium’s live folder item – Unpack and Close – Delete Folder', () => {
+  it('runs act / change / destroy: New Tab in Folder – Edit Folder… with Zenium’s live folder item and Move Folder to New Window last – Unpack and Close – Delete Folder', () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const folder = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
@@ -326,11 +327,14 @@ describe('the folder header menu (tabs-13)', () => {
     h.open('https://b.test/', { folderId: folder.id })
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
     const shown = labels(h.shown())
+    // Move Folder to New Window is a change of place: it closes the change group, as the tab
+    // menu files Move Tab to New Window with its place-changing verbs, not beside New Tab.
     expect(shown).toEqual([
       'New Tab in Folder',
       '-',
       'Edit Folder…',
       'Make Live Folder…',
+      'Move Folder to New Window',
       '-',
       'Unpack Folder',
       'Close Folder (2 Tabs)',
@@ -376,6 +380,7 @@ describe('the folder header menu (tabs-13)', () => {
       'Refresh Every',
       'Live Folder Settings…',
       'Stop Updating (make static)',
+      'Move Folder to New Window',
       '-',
       'Unpack Folder',
       'Close Folder (1 Tab)',
@@ -395,7 +400,8 @@ describe('the folder header menu (tabs-13)', () => {
     expect(labels(h.shown())).toContain('Close Folder (1 Tab)')
     const empty = h.browser.createFolder(space, 'Empty', '📁', h.win, { rename: false })
     h.browser.menus.showFolderContextMenu(empty.id, h.win)
-    // An empty group leaves no double rule: the three groups that remain, one separator each.
+    // An empty group leaves no double rule: the three groups that remain, one separator each;
+    // no Move Folder to New Window either, with no tabs to move.
     expect(labels(h.shown())).toEqual([
       'New Tab in Folder',
       '-',
@@ -408,7 +414,7 @@ describe('the folder header menu (tabs-13)', () => {
     expect(h.browser.state.model.folders[empty.id]).toBeUndefined()
   })
 
-  it('Close Folder (N Tabs) keeps the folder SAVED with its pages, folded; its menu then leads with Open Folder (N Tabs) and offers nothing to unpack, close or add to', () => {
+  it('Close Folder (N Tabs) keeps the folder SAVED with its pages, folded; its menu then leads with Open Folder (N Tabs) · New Tab in Folder and offers nothing to unpack or close', () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const folder = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
@@ -427,18 +433,19 @@ describe('the folder header menu (tabs-13)', () => {
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
     const shown = labels(h.shown())
     expect(shown[0]).toBe('Open Folder (2 Tabs)')
-    // The whole menu of a saved folder, act / change / destroy: New Tab in Folder is left out –
-    // on a saved folder the tab it made would forget the kept pages (the model's `folderOpened`
-    // rule) under a plain-ink label – as are Unpack and Close, which have no tabs to act on.
+    // The whole menu of a saved folder, act / change / destroy: Open Folder (N Tabs) then New
+    // Tab in Folder – which opens the folder first and adds the tab behind its pages (the
+    // model's open-then-add), so the plain-ink label loses nothing – and no Unpack or Close,
+    // which have no tabs to act on.
     expect(shown).toEqual([
       'Open Folder (2 Tabs)',
+      'New Tab in Folder',
       '-',
       'Edit Folder…',
       'Make Live Folder…',
       '-',
       'Delete Folder'
     ])
-    expect(shown).not.toContain('New Tab in Folder')
     expect(shown).not.toContain('Unpack Folder')
     expect(shown.some((l) => l.startsWith('Close Folder'))).toBe(false)
     // Open Folder brings the pages back as the folder's tabs, the folder unfolded and live again.
@@ -446,11 +453,29 @@ describe('the folder header menu (tabs-13)', () => {
     const opened = h.browser.state.model.folders[folder.id]
     expect(opened.savedTabs ?? null).toBeNull()
     expect(opened.collapsed).toBe(false)
-    const members = h.win
-      .activeSpace()
-      .tabIds.filter((id) => h.browser.tabs.tab(id)?.folderId === folder.id)
-      .map((id) => h.browser.tabs.tab(id)!.url)
-    expect(members).toEqual(['https://a.test/', 'https://b.test/'])
+    const members = (): string[] =>
+      h.win
+        .activeSpace()
+        .tabIds.filter((id) => h.browser.tabs.tab(id)?.folderId === folder.id)
+        .map((id) => h.browser.tabs.tab(id)!.url)
+    expect(members()).toEqual(['https://a.test/', 'https://b.test/'])
+    // New Tab in Folder on the saved folder: the pages back as its tabs, the new tab behind
+    // them and active, the folder open and unfolded – nothing it kept lost.
+    h.browser.closeFolder(folder.id, h.win)
+    expect(h.browser.state.model.folders[folder.id].savedTabs).toHaveLength(2)
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    item(h.shown(), 'New Tab in Folder').click!()
+    const reopened = h.browser.state.model.folders[folder.id]
+    expect(reopened.savedTabs ?? null).toBeNull()
+    expect(reopened.collapsed).toBe(false)
+    const active = h.browser.tabs.tab(h.win.selectedTabIn(h.win.activeSpace())!)!
+    expect(isEmptyTabUrl(active.url)).toBe(true)
+    expect(active.folderId).toBe(folder.id)
+    expect(members()).toEqual(['https://a.test/', 'https://b.test/', active.url])
+    // Open again: its menu is an open folder's, New Tab in Folder leading.
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    expect(labels(h.shown())[0]).toBe('New Tab in Folder')
+    expect(labels(h.shown())).toContain('Close Folder (3 Tabs)')
   })
 
   it('Delete Folder asks the chrome first when the folder holds tabs or saved pages, and deletes an empty one outright', () => {
@@ -506,6 +531,56 @@ describe('the folder header menu (tabs-13)', () => {
     expect(members).toHaveLength(2)
     expect(members[0]).toBe(a)
     expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(members[1])
+  })
+
+  it('Move Folder to New Window takes the folder’s tabs and the folder into a window of their own (context-menus-107)', () => {
+    const h = harness()
+    const space = h.win.activeSpace()
+    const folder = h.browser.createFolder(space.id, 'Docs', '📁', h.win, { rename: false })
+    const a = h.open('https://a.test/', { folderId: folder.id })
+    const b = h.open('https://b.test/', { folderId: folder.id })
+    const loose = h.open('https://loose.test/')
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    item(h.shown(), 'Move Folder to New Window').click!()
+    const moved = h.browser.allWindows().find((w) => w !== h.win)
+    if (!moved) throw new Error('no new window')
+    // Shared tabs (sync all) can only live alone in a blank window: the folder follows them
+    // into its space and the window's chrome lists it there, with the tabs still its members.
+    expect(moved.kind).toBe('unsynced')
+    expect(moved.localSpace?.tabIds).toEqual([a, b])
+    const after = h.browser.state.model.folders[folder.id]
+    expect(after.spaceId).toBe(moved.localSpace?.id)
+    expect(h.browser.tabs.tab(a)?.folderId).toBe(folder.id)
+    expect(h.browser.tabs.tab(b)?.folderId).toBe(folder.id)
+    expect(Object.keys(h.browser.state.snapshot(moved).folders)).toEqual([folder.id])
+    expect(h.browser.state.snapshot(h.win).folders[folder.id]).toBeUndefined()
+    // The source keeps its loose tab and nothing of the folder; in the new window the folder's
+    // menu is an open folder's, the folder movable on (a blank window's tab tears off the same).
+    expect(space.tabIds).toEqual([loose])
+    h.browser.menus.showFolderContextMenu(folder.id, moved)
+    expect(labels(h.shown())).toEqual([
+      'New Tab in Folder',
+      '-',
+      'Edit Folder…',
+      'Make Live Folder…',
+      'Move Folder to New Window',
+      '-',
+      'Unpack Folder',
+      'Close Folder (2 Tabs)',
+      '-',
+      'Delete Folder'
+    ])
+  })
+
+  it('offers no Move Folder to New Window on a host without windows', () => {
+    const h = harness({ windows: false })
+    const folder = h.browser.createFolder(h.win.activeSpaceId, 'Docs', '📁', h.win, {
+      rename: false
+    })
+    h.open('https://a.test/', { folderId: folder.id })
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    expect(labels(h.shown())).not.toContain('Move Folder to New Window')
+    expect(labels(h.shown())[0]).toBe('New Tab in Folder')
   })
 
   it('shows nothing for a folder that is gone', () => {

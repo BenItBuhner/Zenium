@@ -295,7 +295,7 @@ describe('the Groups pane (TAB-16)', () => {
     expect(q('[data-testid="overview-groups"]')!.textContent).not.toContain('Ghost')
   })
 
-  it('draws the group’s colour in the row’s glyph: a 12 px dot for an open group, a 2 px ring for a saved one', () => {
+  it('draws the one group glyph in the row (§9.37): the 10 dot for an open group, the 10 ring at a 2 stroke for a saved one', () => {
     pane(
       [
         folder('work'),
@@ -303,8 +303,8 @@ describe('the Groups pane (TAB-16)', () => {
       ],
       [tab('w1', 'work')]
     )
-    const dot = rowNamed('Work').querySelector<HTMLElement>('.zen-overview-group-glyph')!
-    const ring = rowNamed('Trip').querySelector<HTMLElement>('.zen-overview-group-glyph')!
+    const dot = rowNamed('Work').querySelector<HTMLElement>('.zen-group-row-glyph')!
+    const ring = rowNamed('Trip').querySelector<HTMLElement>('.zen-group-row-glyph')!
     // §9.14's pair on the glyph – both schemes' channels – with the marker main.css derives the
     // theme's `--zen-group-rgb` from; no hex, no single-scheme value on the element.
     expect(dot.hasAttribute('data-group-rgb')).toBe(true)
@@ -323,13 +323,19 @@ describe('the Groups pane (TAB-16)', () => {
       hexToRgb(FOLDER_COLORS_DARK.green)!.join(' ')
     )
     expect(ring.hasAttribute('data-saved')).toBe(true)
-    const glyph = rule('.zen-overview-group-glyph')
-    expect(glyph).toContain('width: 12px')
-    expect(glyph).toContain('height: 12px')
+    // The same glyph as the tablet row's, the card header's and the strip chip's (`GroupGlyph`):
+    // the 16 box, the 10 dot, the ring the dot itself becomes – no glyph rule of the pane's.
+    expect(dot.querySelector('.zen-group-row-dot')).not.toBeNull()
+    expect(ring.querySelector('.zen-group-row-dot')).not.toBeNull()
+    expect(rule('.zen-group-row-glyph')).toContain('width: 16px')
+    const glyph = rule('.zen-group-row-dot')
+    expect(glyph).toContain('width: 10px')
+    expect(glyph).toContain('height: 10px')
     expect(glyph).toContain('background: rgb(var(--zen-group-rgb))')
-    const saved = rule('.zen-overview-group-glyph[data-saved]')
-    expect(saved).toContain('border: 2px solid rgb(var(--zen-group-rgb))')
+    const saved = rule('.zen-group-row-glyph[data-saved] .zen-group-row-dot')
+    expect(saved).toContain('box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb))')
     expect(saved).toContain('background: transparent')
+    expect(css).not.toContain('.zen-overview-group-glyph')
     // The pane speaks the window family (§9.29): the theme's ink and fills, no rule of its own for the rows.
     const pane_ = rule('.zen-overview-groups')
     expect(pane_).toContain('--v2-text: var(--v2-control-text)')
@@ -370,7 +376,7 @@ describe('the Groups pane (TAB-16)', () => {
     pane([folder('work')], [tab('w1', 'work')], 'work')
     const row = q<HTMLElement>('[data-testid="overview-group-rename"]')!
     expect(row.hasAttribute('data-static')).toBe(true)
-    expect(row.querySelector('.zen-overview-group-glyph')).not.toBeNull()
+    expect(row.querySelector('.zen-group-row-glyph')).not.toBeNull()
     const field = row.querySelector<HTMLInputElement>('input[aria-label="Group name"]')!
     expect(document.activeElement).toBe(field)
     expect(field.value).toBe('Work')

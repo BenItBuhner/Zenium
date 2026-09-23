@@ -9,7 +9,21 @@ import type { ZenWindow } from './window'
  * browser keybindings. Returns true when the host must swallow the event.
  */
 export class KeyboardHandler {
+  /** Tabs whose focused frame reports a text field under the keyboard (`setEditing`). */
+  private readonly editing = new Set<string>()
+
   constructor(private readonly browser: Browser) {}
+
+  /**
+   * A frame of `tabId` that holds the keyboard said whether it is on a text field
+   * (`shared/editingFocus`, over the page-message channel). The caret's chords yield to it.
+   */
+  setEditing(tabId: string, editing: boolean): void {
+    if (editing) this.editing.add(tabId)
+    else this.editing.delete(tabId)
+    // A closed tab's last word is not taken back: forget the tabs that are gone (a handful).
+    for (const id of this.editing) if (!this.browser.tabs.tab(id)) this.editing.delete(id)
+  }
 
   handle(input: KeyEventInput, sourceTabId: string | null, win: ZenWindow): boolean {
     // Esc held in a fullscreen window leaves it (both edges of the key are needed for that).
@@ -22,6 +36,18 @@ export class KeyboardHandler {
 
     const shortcut = matchShortcut(this.browser.state.shortcuts, input)
     if (shortcut) {
+      // ⌘ with an arrow is the caret's on macOS (line start and end, document start and end),
+      // and Chrome keeps it the text field's by giving the page the key first – Back on ⌘← is
+      // for a page without a field under the keyboard (history-14). The table is matched before
+      // any field sees the key here, so the chord yields where one may be under it: in the
+      // chrome, whose fields say nothing, and in a page whose focused frame reports a field
+      // (`setEditing`). Whatever action the chord is bound to.
+      if (
+        this.browser.platform.info.os === 'darwin' &&
+        isCaretChord(input) &&
+        (sourceTabId === null || this.editing.has(sourceTabId))
+      )
+        return false
       if (input.isAutoRepeat && !REPEATABLE.has(shortcut.action)) return true
       if (shortcut.unsupported) {
         this.browser.toast(`"${shortcut.label}" is not available in this build yet.`, 'info', win)
@@ -55,6 +81,17 @@ export class KeyboardHandler {
     }
     return false
   }
+}
+
+/** ⌘ and an arrow, Shift or not: macOS's caret motion and selection in any text field. */
+function isCaretChord(input: KeyEventInput): boolean {
+  if (!input.meta || input.control || input.alt) return false
+  return (
+    input.key === 'ArrowLeft' ||
+    input.key === 'ArrowRight' ||
+    input.key === 'ArrowUp' ||
+    input.key === 'ArrowDown'
+  )
 }
 
 const REPEATABLE = new Set([

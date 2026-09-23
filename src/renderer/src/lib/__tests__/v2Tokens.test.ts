@@ -245,6 +245,9 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/SpaceGlyph.tsx',
   // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
   'components/siteinfo/SiteInfoSheet.tsx',
+  // The connection verdict the pill's chip and the site-information sheet share (ERR-09, §9.19's
+  // ink rule): the warn and danger inks of the open lock, the triangle and the shield.
+  'lib/securityVerdict.ts',
   // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
   // desktop popover, dialog and pane primitives' metrics and inks; the Settings panes' card
   // padding and deemphasised ink; the builder rows' glyph ink. (The pill carries no private
@@ -1703,6 +1706,23 @@ describe('the fullscreen hint palette', () => {
     expect(TOAST_DURATION).toBe(TOAST_SHOW_MS)
     expect(MESSAGE_INSET).toBe(TOAST_CARD.insetPx)
     expect(FULLSCREEN_RETURN_MS).toBe(REDUCED_FADE_MS)
+  })
+})
+
+describe('the chrome tooltip (§9.31, a11y-26)', () => {
+  it('is the plain panel at the control radius through the token, a round corner – no squircle under 8 (§2)', () => {
+    // The design review of #400 (A2): the tooltip had its own 6 with the squircle. It reads
+    // the control radius (4 on the desktop; the coarse-pointer block's 6 follows through the
+    // same token), and declares no `corner-shape` – §2 keeps the squircle for radius 8 and up.
+    // The rule sits inside `@layer components`: its own close is the indented one.
+    const whole = block('.zen-tooltip')
+    const tip = whole.slice(0, whole.indexOf('\n  }'))
+    expect(tip).toMatch(/^ {4}border-radius: var\(--v2-radius-control\);$/m)
+    expect(tip).not.toMatch(/corner-shape/)
+    expect(tip).not.toMatch(/box-shadow/)
+    expect(tip).toMatch(/^ {4}background: var\(--v2-panel\);$/m)
+    expect(tip).toMatch(/^ {4}border: 1px solid var\(--v2-border\);$/m)
+    expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-radius-control: 4px;$/m)
   })
 })
 

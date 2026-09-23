@@ -802,9 +802,9 @@ abstract class DemoHarness(
 
     /**
      * A real touch inside `node`'s bounds, where a finger's would land (see [touchPoint]). False,
-     * and nothing injected, when the node has gone or no part of it is inside [touchable] (a row
-     * below the fold, one under the navigation bar): the caller says so rather than touching a
-     * corner.
+     * and nothing injected, when the node has gone or no part of it is inside [touchable] (one
+     * under the navigation bar) or inside what its list shows ([scrollClip]: a row below the
+     * list's fold): the caller says so rather than touching a corner.
      */
     protected fun touchTap(node: AccessibilityNodeInfo): Boolean = touchTapPoint(node) != null
 
@@ -814,20 +814,58 @@ abstract class DemoHarness(
             Log.w(tag, "the node to touch went away")
             return null
         }
-        val point = touchPoint(bounds) ?: run {
-            Log.w(tag, "no part of $bounds is inside the touchable window $touchable")
+        val clip = scrollClip(node)
+        val label = node.text ?: node.contentDescription
+        val point = touchPoint(bounds, clip) ?: run {
+            if (clip != null && touchPoint(bounds) != null) {
+                Log.w(tag, "'$label' at $bounds lies under the fold of its list (the list shows $clip): not touched")
+                noteLine("  ('$label' lies under the fold of its list: $bounds against the list's $clip; not touched)")
+            } else {
+                Log.w(tag, "no part of $bounds is inside the touchable window $touchable")
+            }
             return null
         }
-        Log.i(tag, "touch at ${point.x},${point.y} on '${node.text ?: node.contentDescription}' (bounds $bounds, touchable $touchable)")
+        Log.i(tag, "touch at ${point.x},${point.y} on '$label' (bounds $bounds, touchable $touchable${clip?.let { ", clip $it" } ?: ""})")
         Finger().tap(point.x, point.y)
         return point
     }
 
-    /** Where a finger touches `bounds`: the middle of their part inside [touchable]; null when no part is. */
-    protected fun touchPoint(bounds: Rect): PointF? {
+    /**
+     * Where a finger touches `bounds`: the middle of their part inside [touchable] – and inside
+     * `clip`, when given: the part of the screen the target's scrolling ancestors show
+     * ([scrollClip]) – or null when no part is. The tree reports a row's unclipped bounds, so a
+     * row scrolled under its list's fold still crosses the touchable band; judged against the
+     * band alone, the finger landed on whatever chrome lay there (the nightly's focus-ring run:
+     * the address pill, whose long press carried the bar) instead of the refusal [touchTap]
+     * promises. Callers with a box of their own (the DOM's rect, a card) pass no clip and run
+     * as before.
+     */
+    protected fun touchPoint(bounds: Rect, clip: Rect? = null): PointF? {
         val reach = Rect(bounds)
         if (bounds.isEmpty || !reach.intersect(touchable)) return null
+        if (clip != null && !reach.intersect(clip)) return null
         return PointF(reach.exactCenterX(), reach.exactCenterY())
+    }
+
+    /**
+     * The part of the screen `node`'s scrolling ancestors show: the intersection of the bounds of
+     * every ancestor the tree marks scrollable (Blink marks a box whose content overflows its
+     * scrollable axis – the History list's `overflow-y: auto` with rows below its fold), the
+     * nearest one's clip within the next's. Null when no ancestor scrolls, and the node is clipped
+     * by nothing but the window; an empty rect when the ancestors' boxes do not even overlap. A
+     * descendant positioned outside its scroller's box (`position: fixed` under a scroller) would
+     * read as under the fold here; the chrome's sheets and panels have none.
+     */
+    protected fun scrollClip(node: AccessibilityNodeInfo): Rect? {
+        var clip: Rect? = null
+        for (ancestor in generateSequence(node.parent) { it.parent }) {
+            if (!ancestor.isScrollable) continue
+            val box = Rect().also { ancestor.getBoundsInScreen(it) }
+            if (box.isEmpty) continue
+            val so = clip
+            if (so == null) clip = box else if (!so.intersect(box)) so.setEmpty()
+        }
+        return clip
     }
 
     /**

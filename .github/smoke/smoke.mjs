@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split,downloads,notifications,default-browser]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
@@ -110,10 +110,34 @@
 //                shows the same group, tabs and ratio without "Restore pages?"; Unsplit View
 //                (Ctrl+Alt+U) dissolves it, the active tab's view has the whole area, all three
 //                tabs stay (Linux job; two launches: split and split-restore)
+//   notifications  a page's Web Notification on the OS (os-27/os-28/os-30; notifications-
+//                scenario.mjs): a profile past onboarding whose permissions.json allows
+//                notifications for the fixture origin reads `Notification.permission ===
+//                'granted'`; on Windows the AppUserModelId class key the app registers for
+//                itself (DisplayName, IconUri) and, for the installed build, the shortcuts'
+//                System.AppUserModel.ID; `new Notification()` fires `show` and Electron's toast
+//                log (ELECTRON_DEBUG_NOTIFICATIONS) says "Notification created"; Windows then has
+//                the per-sender Notifications\Settings key Settings lists the app from (the
+//                banner, the platform's store and a UI Automation click on the banner are
+//                recorded, not judged: the runner's session shows no banner); the
+//                notification's `click`, dispatched in the page under a user gesture, brings
+//                its tab back to the front through the preload's focus IPC and the core's reveal
+//                (Windows jobs; the click's app path runs everywhere)
+//   default-browser  Make default on macOS (os-07; default-browser-scenario.mjs): the bundle's
+//                Info.plist claims http and https (CFBundleURLTypes); `defaultBrowser.request`
+//                calls app.setAsDefaultProtocolClient('http') – the call the OS's "Do you want
+//                to change your default web browser?" dialog answers; the dialog is on the
+//                screenshot and, where System Events may (the GitHub runners allow UI
+//                scripting), found among every process's windows and answered "Use", after
+//                which the app has to see to https (held with http on macOS 26, claimed
+//                otherwise) and resolve the request true once LaunchServices reports http
+//                held; LaunchServices' LSHandlers are read before and after for the record
+//                (macOS jobs)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs, pip and the
-// split pair run on Linux under Xvfb only.
+// restore), Windows notifications too and macOS default-browser too; the walkthrough, the crash
+// pair, clear-on-exit, the two mv3-worker legs, pip and the split pair run on Linux under Xvfb
+// only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -140,10 +164,14 @@ import {
   formatAriaDiff,
   formatAxeViolation,
   normalizeAriaSnapshot,
-  parseAxeAllowlist
+  parseAxeAllowlist,
+  withAriaFacts
 } from './aria.mjs'
 import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fixture.mjs'
+import { DEFAULT_BROWSER_SCENARIO, scenarioDefaultBrowser } from './default-browser-scenario.mjs'
+import { DOWNLOADS_SCENARIO, scenarioDownloads } from './downloads-scenario.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
+import { NOTIFICATIONS_SCENARIO, scenarioNotifications } from './notifications-scenario.mjs'
 import {
   COOKIE_PATH,
   FIXTURE_COOKIE,
@@ -620,9 +648,12 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
     )
     // The page script's gesture reports and blocked pop-ups, timed: what the pop-up step reads
     // when a window.open was refused (did the frame's gesture reach the app, and before the ask?).
+    // And the page's focus requests (a notification's onclick calling window.focus(), which the
+    // page preload forwards as {type:'focus'}): what the notifications scenario reads to tell the
+    // page's ask from the core's reveal.
     wc.on('ipc-message', (event, channel, message) => {
       const kind = message && typeof message === 'object' ? message.type : undefined
-      if (channel !== 'zen:page' || (kind !== 'activation' && kind !== 'popup-blocked')) return
+      if (channel !== 'zen:page' || !['activation', 'popup-blocked', 'focus'].includes(kind)) return
       emit({
         type: 'page-message',
         wc: wc.id,
@@ -2201,8 +2232,11 @@ async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
  *
  * A serious or critical axe violation fails the step unless `aria/axe-known.json` names it (an
  * entry is for a surface another program owns – services, extensions – never the chrome's own);
- * moderate and minor ones are reported in the step's detail and tolerated. The four states are
- * the resting window, the open app menu, the open URL bar and a hosted Settings dialog.
+ * moderate and minor ones are reported in the step's detail and tolerated. The states are the
+ * resting window, the open app menu, the open URL bar and a hosted Settings dialog, and (a11y
+ * pass 2, W4-6) the cover behind that dialog, a toolbar control's tooltip on keyboard focus, the
+ * tab rows' places and states, and the find bar's status region – these four with the facts
+ * the snapshot leaves out written under it (aria.mjs `withAriaFacts`, `readFacts` below).
  */
 class AriaAudit {
   constructor(session, { origin }) {
@@ -2279,16 +2313,120 @@ class AriaAudit {
   }
 
   /**
-   * One state: `locator` is the surface whose tree is snapshotted (the chrome root at rest, the
-   * menu, the omnibox, the dialog); axe runs over the page the locator is on. Throws on a
-   * snapshot that differs from its baseline or a gating axe violation, after both were read.
+   * What the aria snapshot leaves out, read from the chrome document for the facts under a
+   * state's snapshot (aria.mjs `formatAriaFacts`): for each element `selectors` match, in the
+   * order given, its role (the `role` attribute, else the landmark its tag is, else its tag),
+   * its name (`aria-label`, else `aria-labelledby`'s text, else a control's `<label>`, else,
+   * for a role its content names – a button, a tab, a status region – its text with the
+   * `aria-hidden` parts left out, as a reader gets it; a landmark, frame or dialog takes none
+   * from its content), the states `focused`, `selected` and `inert` (the element or an
+   * ancestor), the attributes in `attrs` (`aria-…` or `data-…`, written without the prefix, the
+   * value as written) and its accessible description (`aria-describedby`'s targets' text –
+   * hidden ones included, as Chromium reads them – else `aria-description`). A selector may be
+   * `{ selector, as }` to write `as` for the role (the content frame has none). A selector that
+   * matches nothing writes `- none <selector>`, so an absent surface shows in the diff rather
+   * than vanishing from it.
    */
-  async state(name, locator) {
+  readFacts(page, selectors, attrs = []) {
+    return page.evaluate(
+      ({ selectors, attrs }) => {
+        const landmarks = {
+          aside: 'complementary',
+          main: 'main',
+          nav: 'navigation',
+          header: 'banner',
+          footer: 'contentinfo',
+          form: 'form',
+          button: 'button',
+          input: 'textbox'
+        }
+        const namedByContent = new Set([
+          'button',
+          'tab',
+          'menuitem',
+          'option',
+          'link',
+          'heading',
+          'status',
+          'tooltip',
+          'checkbox',
+          'radio',
+          'switch',
+          'treeitem',
+          'cell'
+        ])
+        const textOf = (ids) =>
+          (ids ?? '')
+            .split(/\s+/)
+            .filter(Boolean)
+            .map((id) => (document.getElementById(id)?.textContent ?? '').trim())
+            .filter(Boolean)
+            .join(' ')
+        const spoken = (node) => {
+          if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
+          if (node.nodeType !== Node.ELEMENT_NODE || node.getAttribute('aria-hidden') === 'true') {
+            return ''
+          }
+          return [...node.childNodes].map(spoken).join('')
+        }
+        const labelOf = (el) =>
+          [...(el.labels ?? [])]
+            .map((label) => (label.textContent ?? '').trim())
+            .filter(Boolean)
+            .join(' ')
+        const facts = []
+        for (const entry of selectors) {
+          const { selector, as } = typeof entry === 'string' ? { selector: entry } : entry
+          const found = [...document.querySelectorAll(selector)]
+          if (!found.length) facts.push({ role: 'none', name: selector })
+          for (const el of found) {
+            const role =
+              as ||
+              el.getAttribute('role') ||
+              landmarks[el.tagName.toLowerCase()] ||
+              el.tagName.toLowerCase()
+            const name =
+              el.getAttribute('aria-label') ||
+              textOf(el.getAttribute('aria-labelledby')) ||
+              labelOf(el) ||
+              (namedByContent.has(role) ? spoken(el).replace(/\s+/g, ' ').trim() : '') ||
+              null
+            const flags = []
+            if (el === document.activeElement) flags.push('focused')
+            if (el.getAttribute('aria-selected') === 'true') flags.push('selected')
+            if (el.closest('[inert]')) flags.push('inert')
+            const read = {}
+            for (const attr of attrs) {
+              read[attr.replace(/^(aria|data)-/, '')] = el.getAttribute(attr)
+            }
+            const description = el.hasAttribute('aria-describedby')
+              ? textOf(el.getAttribute('aria-describedby'))
+              : el.getAttribute('aria-description')
+            facts.push({ role, name, flags, attrs: read, description: description || null })
+          }
+        }
+        return facts
+      },
+      { selectors, attrs }
+    )
+  }
+
+  /**
+   * One state: `locator` is the surface whose tree is snapshotted (the chrome root at rest, the
+   * menu, the omnibox, the dialog); axe runs over the page the locator is on. `facts`, for a
+   * state that has them, reads them (`readFacts`) once the page has settled; they are written
+   * under the snapshot and compared with it. Throws on a snapshot that differs from its baseline
+   * or a gating axe violation, after both were read.
+   */
+  async state(name, locator, facts) {
     if (!ARIA_STATES.includes(name)) throw new Error(`unknown aria state ${name}`)
     const page = locator.page()
     await this.settled(page)
     const raw = await withTimeout(locator.ariaSnapshot(), EVALUATE_TIMEOUT_MS, `aria ${name}`)
-    const actual = normalizeAriaSnapshot(raw, { origin: this.origin })
+    const actual = withAriaFacts(
+      normalizeAriaSnapshot(raw, { origin: this.origin }),
+      facts ? await facts() : undefined
+    )
     const file = ariaBaselineName(name)
     fs.writeFileSync(path.join(this.outDir, file), actual)
     const baselineFile = path.join(ariaDir, file)
@@ -2922,13 +3060,15 @@ async function scenarioWalkthrough() {
     })
 
     await s.step('accessibility', async () => {
-      // The chrome's accessibility tree and axe's verdict in five states (ci-13; the roles of
+      // The chrome's accessibility tree and axe's verdict in nine states (ci-13; the roles of
       // a11y-02): what a screen reader gets of the window at rest – the sidebar's landmarks, the
       // toolbar, the tablists with the two fixture tabs, the active one selected – of the app
       // menu, of the URL bar over the active tab, of a hosted dialog with the chrome inert
-      // around it, and of the Web capture overlay over the page. Each snapshot is compared with
-      // its baseline under .github/smoke/aria/ (`AriaAudit`); every state also runs axe over the
-      // whole document.
+      // around it, and of the Web capture overlay over the page; then (a11y pass 2, W4-6) the
+      // cover behind that dialog, a toolbar control's tooltip on keyboard focus, the tab rows'
+      // places and states (and the rename field's focus, a fact only a real browser holds), and
+      // the find bar's status region. Each snapshot is compared with its baseline under
+      // .github/smoke/aria/ (`AriaAudit`); every state also runs axe over the whole document.
       await s.reset()
       const audit = new AriaAudit(s, { origin: bootSite.origin })
       const rowsBefore = await s.sidebarTabCount()
@@ -2937,6 +3077,11 @@ async function scenarioWalkthrough() {
       const page = s.chrome.locator('[data-testid="settings-page"]').first()
       const form = s.chrome.locator('[data-dialog="form:add-search-engine"]').first()
       const capture = s.chrome.locator(CAPTURE_OVERLAY).first()
+      const tooltip = s.chrome.locator('#zen-tooltip')
+      const tablist = s.chrome.locator('[role="tablist"]').first()
+      const renameField = s.chrome.locator('.zen-tab-rename input').first()
+      const findBar = s.chrome.locator('[data-testid="find-bar"]').first()
+      let muted = false
       try {
         await audit.state('resting-window', s.chrome.locator('[data-testid="chrome-root"]'))
 
@@ -2984,6 +3129,21 @@ async function scenarioWalkthrough() {
         await s.chrome.locator('[data-row="add-search-engine"] button').first().click()
         await form.waitFor({ state: 'visible', timeout: 5000 })
         await audit.state('hosted-dialog', form)
+
+        // The cover behind that dialog (a11y-32): the window chrome roots and the content frame
+        // are inert – the sidebar, the toolbar's Back button, the frame beside the dialog host –
+        // the dialog is live with the keyboard on its first field, and an F6 has moved the
+        // keyboard nowhere (the pane rotation asks nothing while a dialog holds).
+        await s.press('F6')
+        await audit.state('dialog-cover', form, () =>
+          audit.readFacts(s.chrome, [
+            'aside[aria-label="Sidebar"]',
+            'button[aria-label^="Back"]',
+            { selector: 'main > :not(.zen-frame-dialogs)', as: 'frame' },
+            '[role="dialog"], [role="alertdialog"]',
+            ':focus'
+          ])
+        )
         await s.press('Escape')
         await form.waitFor({ state: 'hidden', timeout: 5000 })
         await s.press(`${ACCEL}+w`)
@@ -3007,6 +3167,97 @@ async function scenarioWalkthrough() {
         await audit.state('web-capture', capture)
         await s.press('Escape')
         await capture.waitFor({ state: 'hidden', timeout: 8000 })
+
+        // A toolbar control on keyboard focus shows its tooltip (a11y-26): Shift+Alt+T puts the
+        // keyboard on the toolbar's first enabled control – the Back button, the fixture page
+        // having a page behind it – and the tooltip is the control's description while it
+        // shows; Escape hides it and leaves the keyboard where it was.
+        await s.reset()
+        await s.press('Shift+Alt+t')
+        await tooltip.waitFor({ state: 'visible', timeout: 5000 })
+        await audit.state('tooltip-focus', tooltip, () =>
+          audit.readFacts(
+            s.chrome,
+            [':focus', '#zen-tooltip'],
+            ['aria-describedby', 'data-side', 'data-by']
+          )
+        )
+        await s.press('Escape')
+        await tooltip.waitFor({ state: 'hidden', timeout: 5000 })
+
+        // The tab rows (a11y-31): each row's place in its list (`aria-posinset` of
+        // `aria-setsize`) and the states a reader hears in its description – the active fixture
+        // tab muted for the read (Ctrl+M; unmuted the same way after).
+        await s.press(`${ACCEL}+m`)
+        muted = true
+        const mutedRow = tablist.locator('[role="tab"][aria-selected="true"][aria-describedby]')
+        await mutedRow.waitFor({ state: 'attached', timeout: 5000 })
+        await audit.state('tab-row', tablist, () =>
+          audit.readFacts(
+            s.chrome,
+            ['[role="tablist"] [role="tab"]'],
+            ['aria-posinset', 'aria-setsize']
+          )
+        )
+        await s.press(`${ACCEL}+m`)
+        muted = false
+        await mutedRow.waitFor({ state: 'detached', timeout: 5000 })
+
+        // The row's rename field (a11y-31, axe nested-interactive) stands beside the row in the
+        // chrome layer and takes the keyboard as it opens – a second click on the active row
+        // within 400 ms opens it; Escape drops the edit and hands the keyboard back to the row.
+        // Its focus is a real-browser fact the unit tests cannot hold (jsdom grants focus under
+        // `visibility: hidden`; Chromium refuses it), which is why the smoke reads it.
+        const activeRow = tablist.locator('[role="tab"][aria-selected="true"]').first()
+        await activeRow.dblclick()
+        await renameField.waitFor({ state: 'visible', timeout: 5000 })
+        await waitFor(
+          async () =>
+            (await renameField.evaluate((el) => document.activeElement === el)) ? true : null,
+          3000,
+          'the keyboard in the rename field'
+        )
+        await s.press('Escape')
+        await renameField.waitFor({ state: 'detached', timeout: 5000 })
+        await waitFor(
+          async () =>
+            (await activeRow.evaluate((el) => document.activeElement === el)) ? true : null,
+          3000,
+          'the keyboard back on the row after Escape'
+        )
+
+        // The find bar's count is its own live region (a11y-35): the fixture's word found, the
+        // region reads "1 of 2 matches" in words, polite and atomic, the figures hidden from it.
+        await s.press(`${ACCEL}+f`)
+        await findBar.waitFor({ state: 'visible', timeout: 8000 })
+        const findInput = s.chrome.locator('[data-testid="find-input"]').first()
+        await findInput.waitFor({ state: 'visible', timeout: 5000 })
+        await findInput.fill(FIND_WORD)
+        const findCount = s.chrome.locator('[data-testid="find-count"]').first()
+        await waitFor(
+          async () => {
+            const text = ((await findCount.textContent().catch(() => null)) ?? '').trim()
+            return text === `1/${FIND_MATCHES}` ? text : null
+          },
+          8000,
+          `the find count reading 1/${FIND_MATCHES} for "${FIND_WORD}"`
+        )
+        await audit.state('find-status', findBar, () =>
+          audit.readFacts(s.chrome, ['[data-testid="find-status"]'], ['aria-live', 'aria-atomic'])
+        )
+        // The field emptied before the bar closes: an empty query stops the page's find and
+        // clears its selection (the core's `find.start`), where Escape alone keeps the match
+        // selected and the bar's remembered query, and the find-bar step's own search would
+        // then take up from that match (reading 2/2) instead of starting from the top.
+        await findInput.fill('')
+        await waitFor(
+          async () =>
+            ((await findCount.textContent().catch(() => null)) ?? '').trim() === '' || null,
+          5000,
+          'the find count cleared with the field'
+        )
+        await s.press('Escape')
+        await findBar.waitFor({ state: 'hidden', timeout: 8000 })
       } catch (e) {
         // The failure keeps what was read up to it (a state's verdict is its own detail).
         if (e && typeof e === 'object' && !e.detail) e.detail = audit.summary()
@@ -3014,7 +3265,8 @@ async function scenarioWalkthrough() {
       } finally {
         // Whatever failed, the window is left as the step found it, so the steps after start
         // from the same window: the dialog cancelled, the overlay down, the menu or bar closed,
-        // the Settings tab gone (a reset closes no tab).
+        // the Settings tab gone (a reset closes no tab), the rename field dropped, the find bar
+        // closed, the tab unmuted.
         if (await form.isVisible().catch(() => false)) {
           await s.press('Escape')
           await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
@@ -3023,6 +3275,21 @@ async function scenarioWalkthrough() {
           await s.press('Escape')
           await capture.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
         }
+        if (await renameField.isVisible().catch(() => false)) {
+          await renameField.focus().catch(() => undefined)
+          await s.press('Escape')
+          await renameField.waitFor({ state: 'detached', timeout: 5000 }).catch(() => undefined)
+        }
+        if (await findBar.isVisible().catch(() => false)) {
+          await s.chrome
+            .locator('[data-testid="find-input"]')
+            .first()
+            .fill('')
+            .catch(() => undefined)
+          await s.press('Escape')
+          await findBar.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
+        }
+        if (muted) await s.press(`${ACCEL}+m`).catch(() => undefined)
         await s.reset().catch(() => undefined)
         if (await page.isVisible().catch(() => false)) {
           await s.press(`${ACCEL}+w`)
@@ -3309,9 +3576,11 @@ async function scenarioWalkthrough() {
       await spinning(tabId, 'the Stop button')
       const button = s.chrome.locator(`[data-zen-menu="reload"][data-zen-menu-tab="${tabId}"]`)
       await button.first().waitFor({ state: 'visible', timeout: 8000 })
+      // The button's name while it loads is its chrome tooltip's text (`data-tooltip`,
+      // lib/tooltip.ts – a11y-26: the toolbar carries no native `title`).
       const titleWhileLoading = await waitFor(
         async () => {
-          const title = await button.first().getAttribute('title')
+          const title = await button.first().getAttribute('data-tooltip')
           return title && title.startsWith('Stop') ? title : null
         },
         8000,
@@ -3324,7 +3593,7 @@ async function scenarioWalkthrough() {
       }
       const titleAtRest = await waitFor(
         async () => {
-          const title = await button.first().getAttribute('title')
+          const title = await button.first().getAttribute('data-tooltip')
           return title && title.startsWith('Reload') ? title : null
         },
         8000,
@@ -3482,7 +3751,9 @@ async function scenarioWalkthrough() {
       if (!['address', 'title'].includes(reads ?? '') || shown !== expected) {
         throw new Error(`the pill reads "${shown}" (${reads}), expected "${expected}"`)
       }
-      const tooltip = await pill.getAttribute('title')
+      // The pill's tooltip is the chrome's (`data-tooltip`, lib/tooltip.ts – a11y-26), no native
+      // `title`.
+      const tooltip = await pill.getAttribute('data-tooltip')
       if (tooltip !== address) {
         throw new Error(`the pill's tooltip is "${tooltip}", expected "${address}"`)
       }
@@ -3582,7 +3853,7 @@ async function scenarioWalkthrough() {
       if (!['address', 'title'].includes(reads ?? '') || address !== expected) {
         throw new Error(`the pill reads "${address}" (${reads}), expected "${expected}"`)
       }
-      const tooltip = await pill.getAttribute('title')
+      const tooltip = await pill.getAttribute('data-tooltip')
       if (tooltip !== 'zenium://settings') {
         throw new Error(`the pill's tooltip is "${tooltip}", expected "zenium://settings"`)
       }
@@ -5736,7 +6007,49 @@ async function main() {
       dark: scenarioDark,
       'mv3-worker': scenarioMv3Worker,
       pip: scenarioPip,
-      split: scenarioSplit
+      split: scenarioSplit,
+      [DOWNLOADS_SCENARIO]: () =>
+        scenarioDownloads({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          fixture: bootSite,
+          isLinux: IS_LINUX
+        }),
+      [NOTIFICATIONS_SCENARIO]: () =>
+        scenarioNotifications({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          writeJson,
+          grabScreen,
+          ps,
+          fixture: bootSite,
+          label: opts.label,
+          // The installed build's shortcuts carry the AUMID (the installer's WinShell); the
+          // unpacked build has none and rides on the class key it registers for itself.
+          expectShortcuts: IS_WIN && opts.label === 'installed',
+          isWin: IS_WIN
+        }),
+      [DEFAULT_BROWSER_SCENARIO]: () =>
+        scenarioDefaultBrowser({
+          freshProfile,
+          runScenario,
+          waitFor,
+          delay,
+          log,
+          writeJson,
+          grabScreen,
+          sh,
+          osascript,
+          exe: opts.exe,
+          outDir,
+          isMac: IS_MAC
+        })
     }[name]
     if (!run) {
       result.scenarios[name] = { fatal: `unknown scenario ${name}` }

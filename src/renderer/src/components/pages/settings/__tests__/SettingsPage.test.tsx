@@ -6,6 +6,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import axe from 'axe-core'
 import type { HostCapabilities, Settings, Tab, UIState } from '@shared/types'
 import { emptyBlockingStatus } from '@shared/blocking'
 import {
@@ -70,6 +71,7 @@ const DESKTOP: HostCapabilities = {
   pageControls: false,
   darkenSites: true,
   privateTabs: false,
+  inactiveTabs: false,
   secureDns: true,
   quitsThroughCore: true,
   newTabPage: true,
@@ -108,6 +110,7 @@ const ANDROID: HostCapabilities = {
   pullToRefresh: true,
   pageControls: true,
   privateTabs: true,
+  inactiveTabs: true,
   secureDns: false,
   quitsThroughCore: false,
   newTabPage: false
@@ -536,7 +539,11 @@ describe('Find in Settings (§10.5)', () => {
       expect(start, selector).toBeGreaterThan(-1)
       return css.slice(start, css.indexOf('\n}', start))
     }
-    expect(rule('.zen-settings-find')).toMatch(/^ {2}padding: 16px 16px 8px;$/m)
+    // The find's side padding is the 16; its top and bottom are the column's two custom
+    // properties (16 and 8), which the column's scroll padding reads too.
+    expect(rule('.zen-settings-find')).toMatch(
+      /^ {2}padding: var\(--zen-settings-find-pad-top\) 16px var\(--zen-settings-find-pad-bottom\);$/m
+    )
     expect(rule('.zen-settings-search')).toMatch(/^ {2}margin: 0 16px 8px;$/m)
     expect(rule('.zen-settings-find > .zen-settings-search')).toMatch(
       /^ {2}max-width: var\(--v2-content-max\);$/m
@@ -840,6 +847,50 @@ describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () =
   })
 })
 
+describe('a group is not a landmark (axe landmark-unique, the desktop’s #358)', () => {
+  /**
+   * axe's `landmark-unique` over the page: a `region` needs a name no other landmark of its role
+   * shares, and a `<section>` named by its heading is one. The Search section's pane (the
+   * desktop) and its drill-in (the phone) are regions named "Search"; its first group is headed
+   * "Search" too, and as a region of that name it doubled them – the boot smoke's one moderate.
+   */
+  async function landmarkUnique(el: HTMLElement): Promise<string[]> {
+    const results = await axe.run(el, {
+      runOnly: { type: 'rule', values: ['landmark-unique'] },
+      resultTypes: ['violations']
+    })
+    return results.violations.flatMap((v) => v.nodes.map((n) => String(n.target[0])))
+  }
+
+  it('the Search pane yields no landmark-unique finding: its groups are `group`s named by their headings, the pane the one region "Search"', async () => {
+    viewport(TWO_PANE_MIN_WIDTH)
+    const el = mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/search'))
+    const pane = el.querySelector('.zen-settings-pane')!
+    expect(pane.getAttribute('aria-labelledby')).toBe('zen-settings-section-title')
+    expect(el.querySelector('#zen-settings-section-title')?.textContent).toBe('Search')
+    const groups = [...el.querySelectorAll<HTMLElement>('.zen-settings-group')]
+    expect(groups.length).toBeGreaterThan(1)
+    expect(groups[0]!.getAttribute('aria-label')).toBe('Search')
+    for (const group of groups) expect(group.getAttribute('role')).toBe('group')
+    // The one region of that name is the pane; nothing else on the page is a named region.
+    expect(
+      el.querySelectorAll('section[aria-label]:not([role]), section[aria-labelledby]:not([role])')
+    ).toHaveLength(1)
+    expect(await landmarkUnique(el)).toEqual([])
+  })
+
+  it('the Search drill-in on the phone the same: the drill-in is the region "Search", its groups are groups', async () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/search'))
+    const drillIn = el.querySelector('.zen-settings-drill-in')!
+    expect(drillIn.getAttribute('aria-label')).toBe('Search')
+    const groups = [...drillIn.querySelectorAll<HTMLElement>('.zen-settings-group')]
+    expect(groups[0]!.getAttribute('aria-label')).toBe('Search')
+    for (const group of groups) expect(group.getAttribute('role')).toBe('group')
+    expect(await landmarkUnique(el)).toEqual([])
+  })
+})
+
 describe('a section asked for one of its rows (zen://settings/<section>?row=<id>)', () => {
   /** A phone that syncs (`ANDROID` has no sync engine; the row asked for is Sync's). */
   const SYNCING_PHONE: HostCapabilities = { ...ANDROID, sync: true }
@@ -870,5 +921,182 @@ describe('a section asked for one of its rows (zen://settings/<section>?row=<id>
     mountPage(state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=%22%5D%2C%20*'))
     expect(scrolled).not.toHaveBeenCalled()
     scrolled.mockRestore()
+  })
+})
+
+describe('a landing reaches the top of the column at a 1000 px window (the desktop’s #356)', () => {
+  const SYNCING_PHONE: HostCapabilities = { ...ANDROID, sync: true }
+  const css = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../../../../assets/main.css'),
+    'utf8'
+  )
+  const rule = (selector: string): string => {
+    const start = css.indexOf(`\n${selector} {`)
+    expect(start, selector).toBeGreaterThan(-1)
+    return css.slice(start, css.indexOf('\n}', start))
+  }
+
+  /*
+   * happy-dom lays nothing out, so the column and the landed group take the desktop's #356
+   * geometry at a 1000 px window: the content column's viewport 944 tall, 1113 of content –
+   * 169 of scroll, the number the desktop measured – and Sync's Open tabs group (`sync-scope`)
+   * starting 521 down the content, so that scrolled as far as the content allowed it stopped at
+   * 352, mid-page. The desktop's column has the sticky find field's box as its scroll padding
+   * (`main.css`'s declaration, pinned below; the stylesheet in `layout` carries its value); the
+   * phone's column none.
+   * `scrollIntoView({ block: 'start' })` scrolls as Chrome would: to the group's top less the
+   * padding, and no further than the content allows.
+   */
+  const VIEWPORT = 944
+  const GROUP_TOP = 521
+  const INSET = 56
+
+  function layout(content: number): () => void {
+    const isColumn = (el: Element): boolean =>
+      el.classList.contains('zen-settings-content') || el.classList.contains('zen-settings-scroll')
+    const pad = (column: Element): number =>
+      parseFloat(
+        column
+          .closest<HTMLElement>('.zen-settings-page')
+          ?.style.getPropertyValue('--zen-settings-landing-pad') ?? ''
+      ) || 0
+    const clientHeight = vi
+      .spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+      .mockImplementation(function (this: HTMLElement) {
+        return isColumn(this) ? VIEWPORT : 0
+      })
+    const scrollHeight = vi
+      .spyOn(Element.prototype, 'scrollHeight', 'get')
+      .mockImplementation(function (this: Element) {
+        return isColumn(this) ? content + pad(this) : 0
+      })
+    const rect = Element.prototype.getBoundingClientRect
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const column = this.closest<HTMLElement>('.zen-settings-content, .zen-settings-scroll')
+      if (this.getAttribute('data-group') === 'sync-scope' && column) {
+        return { ...rect.call(this), top: GROUP_TOP - column.scrollTop }
+      }
+      return rect.call(this)
+    })
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (
+      this: Element
+    ) {
+      const column = this.closest<HTMLElement>('.zen-settings-content, .zen-settings-scroll')!
+      const top =
+        this.getBoundingClientRect().top - column.getBoundingClientRect().top + column.scrollTop
+      const inset = parseFloat(getComputedStyle(column).scrollPaddingTop) || 0
+      column.scrollTop = Math.max(
+        0,
+        Math.min(top - inset, column.scrollHeight - column.clientHeight)
+      )
+    })
+    // happy-dom leaves `calc()` unevaluated in a computed style, so the sheet carries the
+    // declaration's value at the desktop's 32 control – 16 + 32 + 8; the pin below holds the
+    // declaration itself.
+    const sheet = document.createElement('style')
+    sheet.textContent = `.zen-settings-content { scroll-padding-top: ${INSET}px; }`
+    document.head.appendChild(sheet)
+    return () => {
+      clientHeight.mockRestore()
+      scrollHeight.mockRestore()
+      rects.mockRestore()
+      scrolled.mockRestore()
+      sheet.remove()
+    }
+  }
+
+  /** Where the landed group's top sits from the column's top, after the landing. */
+  function landed(el: HTMLElement): { page: HTMLElement; column: HTMLElement; groupTop: number } {
+    const page = el.querySelector<HTMLElement>('.zen-settings-page')!
+    const group = el.querySelector<HTMLElement>('[data-group="sync-scope"]')!
+    const column = group.closest<HTMLElement>('.zen-settings-content, .zen-settings-scroll')!
+    return {
+      page,
+      column,
+      groupTop: group.getBoundingClientRect().top - column.getBoundingClientRect().top
+    }
+  }
+
+  it('the desktop column pads its end by what the group lacks, and the group lands under the find field – the column’s top for scrolled content', () => {
+    const restore = layout(1113)
+    try {
+      viewport(TWO_PANE_MIN_WIDTH)
+      const el = mountPage(
+        state(DESKTOP, 'linux', {}, 'zen://settings/sync?row=sync-scope%3AopenTabs')
+      )
+      const { page, column, groupTop } = landed(el)
+      expect(parseFloat(getComputedStyle(column).scrollPaddingTop)).toBe(INSET)
+      expect(page.hasAttribute('data-landing')).toBe(true)
+      // 521 − 56 + 944 − 1113: the 296 the group stopped short of the field's edge (at 352).
+      expect(page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('296px')
+      expect(column.scrollTop).toBe(465)
+      expect(groupTop).toBe(INSET)
+    } finally {
+      restore()
+    }
+  })
+
+  it('the phone column the same, to its own top', () => {
+    const restore = layout(1113)
+    try {
+      viewport(TWO_PANE_MIN_WIDTH - 1, false)
+      const el = mountPage(
+        state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=sync-scope%3AopenTabs')
+      )
+      const { page, column, groupTop } = landed(el)
+      expect(column.classList.contains('zen-settings-scroll')).toBe(true)
+      expect(page.hasAttribute('data-landing')).toBe(true)
+      expect(page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('352px')
+      expect(column.scrollTop).toBe(GROUP_TOP)
+      expect(groupTop).toBe(0)
+    } finally {
+      restore()
+    }
+  })
+
+  it('a group that reaches the top on its own is not padded for; a section without a landing keeps its end', () => {
+    const restore = layout(3000)
+    try {
+      viewport(TWO_PANE_MIN_WIDTH)
+      const asked = landed(
+        mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/sync?row=sync-scope%3AopenTabs'))
+      )
+      expect(asked.page.hasAttribute('data-landing')).toBe(true)
+      expect(asked.page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('')
+      expect(asked.groupTop).toBe(INSET)
+      act(() => root!.unmount())
+      root = null
+      const plain = landed(mountPage(state(DESKTOP, 'linux', {}, 'zen://settings/sync')))
+      expect(plain.page.hasAttribute('data-landing')).toBe(false)
+      expect(plain.page.style.getPropertyValue('--zen-settings-landing-pad')).toBe('')
+    } finally {
+      restore()
+    }
+  })
+
+  it('main.css: the pad is the column body’s padding-bottom only under `data-landing`, and the desktop column’s scroll padding is the find field’s box', () => {
+    // The field's box: the control between the two paddings the column names and the field
+    // reads (`.zen-settings-find`), so the scroll padding and the field's padding cannot drift.
+    const column = rule('.zen-settings-content').replace(/\s+/g, ' ')
+    expect(column).toContain('--zen-settings-find-pad-top: 16px;')
+    expect(column).toContain('--zen-settings-find-pad-bottom: 8px;')
+    expect(column).toContain(
+      'scroll-padding-top: calc( var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom) );'
+    )
+    expect(rule('.zen-settings-find')).toMatch(
+      /^ {2}padding: var\(--zen-settings-find-pad-top\) 16px var\(--zen-settings-find-pad-bottom\);$/m
+    )
+    const selectors =
+      '.zen-settings-page[data-landing] .zen-settings-scroll > .zen-settings-body,\n' +
+      '.zen-settings-page[data-landing] .zen-settings-pane > .zen-settings-body'
+    const start = css.indexOf(`\n${selectors} {`)
+    expect(start).toBeGreaterThan(-1)
+    expect(css.slice(start, css.indexOf('\n}', start))).toMatch(
+      /^ {2}padding-bottom: var\(--zen-settings-landing-pad, 0px\);$/m
+    )
+    // Nothing pads a body's end without the landing: the rule is the only one taking the pad.
+    expect(css.match(/--zen-settings-landing-pad/g)).toHaveLength(1)
   })
 })

@@ -7,6 +7,7 @@ import {
   net,
   session,
   shell,
+  systemPreferences,
   type IpcMainEvent,
   type Session,
   type WebContents
@@ -29,6 +30,7 @@ import {
   type NotificationPermissionStatus
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
+import { macTitleBarDoubleClickAction } from '../../core/captionDoubleClick'
 import { permissionSite } from '../../core/permissions'
 import type {
   AppHost,
@@ -48,6 +50,8 @@ import type {
   ThemeHost
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
+import type { WindowSwitches } from '../cli'
+import { MediaAccessGate, mediaRefusedMessage } from './mediaAccess'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import {
@@ -87,6 +91,7 @@ import { ElectronShortcuts } from './shortcuts'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
 import { createPasswordsHost } from './passwords'
 import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webauthn'
+import { attachBluetoothChoosers, attachDeviceHandlers } from './devices'
 import {
   attachSecurityHandlers,
   permissionCheckDetails,
@@ -143,6 +148,7 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   darkenSites: true,
   // Private browsing is a window of its own on desktop (`windows`).
   privateTabs: false,
+  inactiveTabs: false,
   secureDns: true,
   quitsThroughCore: true,
   // `zen://newtab` is served by the zen protocol and bridged by the page preload.
@@ -230,10 +236,26 @@ export class ElectronPlatform implements Platform {
   downloadsShell: ElectronDownloadsShell | null = null
   browser!: Browser
   private readonly profileDir: string
+  /**
+   * macOS's own camera / microphone consent (os-59, `mediaAccess.ts`), asked before the first
+   * site prompt for a device; a refusal is told to the user once per device per run.
+   */
+  private readonly mediaAccess = new MediaAccessGate({
+    platform: process.platform,
+    system: systemPreferences,
+    onRefused: (kind, status) => {
+      console.warn(`[zen] media: the system withholds the ${kind} (${status})`)
+      this.browser?.toast(mediaRefusedMessage(kind), 'error')
+    }
+  })
 
   constructor(
     private readonly userDataDir: string,
-    options: { holdBackgroundWork?: boolean } = {}
+    options: {
+      holdBackgroundWork?: boolean
+      /** The launch's `--kiosk` / `--start-maximized` (`cli.ts`), for every browser window. */
+      windowSwitches?: WindowSwitches
+    } = {}
   ) {
     this.info = {
       os: process.platform as PlatformOs,
@@ -253,7 +275,7 @@ export class ElectronPlatform implements Platform {
     this.shortcuts = new ElectronShortcuts(join(this.profileDir, 'webapps'), (id, details) =>
       this.browser.webApps.onPinned(id, details)
     )
-    this.windows = new ElectronWindowFactory()
+    this.windows = new ElectronWindowFactory(options.windowSwitches)
     this.translate = new ElectronTranslateHost(userDataDir, () =>
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
     )
@@ -453,7 +475,17 @@ export class ElectronPlatform implements Platform {
       isDefaultBrowser: () => this.defaultBrowser.isDefault(),
       requestDefaultBrowser: () => this.defaultBrowser.request(),
       // Windows and macOS have a system emoji picker; Linux has none (Chrome shows no item there).
-      ...(app.isEmojiPanelSupported() ? { showEmojiPanel: () => app.showEmojiPanel() } : {})
+      ...(app.isEmojiPanelSupported() ? { showEmojiPanel: () => app.showEmojiPanel() } : {}),
+      // macOS lets the user choose what a title bar's double-click does; read live, so a change
+      // in System Settings takes effect on the next double-click.
+      ...(process.platform === 'darwin'
+        ? {
+            titleBarDoubleClickAction: () =>
+              macTitleBarDoubleClickAction(
+                systemPreferences.getUserDefault('AppleActionOnDoubleClick', 'string')
+              )
+          }
+        : {})
     }
     this.theme = {
       systemDark: () => nativeTheme.shouldUseDarkColors,
@@ -500,9 +532,10 @@ export class ElectronPlatform implements Platform {
 
   /**
    * Build the browser, wire IPC and sessions, and restore the windows (`windows: false` holds
-   * the browser windows back for a run that begins on an app window alone, `Browser.start`).
+   * the browser windows back for a run that begins on an app window alone,
+   * `restoreLastSession` is the `--restore-last-session` switch; both `Browser.start`'s).
    */
-  start(options: { windows?: boolean } = {}): Browser {
+  start(options: { windows?: boolean; restoreLastSession?: boolean } = {}): Browser {
     const browser = new Browser(this)
     this.browser = browser
     this.windows.bind(browser)
@@ -589,12 +622,14 @@ export class ElectronPlatform implements Platform {
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
-      this.attachPermissions(ses, (target, origin) =>
+      this.attachPermissions(ses, containerId, (target, origin) =>
         extensionApi.tabCapture.allowsMediaRequest(target, origin)
       )
       // `getDisplayMedia` goes to the core's picker instead of Electron's flat refusal.
       this.screenCapture.attach(ses)
       attachWebAuthnHandlers(browser, this.views, ses)
+      // WebUSB / Web Serial / WebHID choosers and per-device grants (Web Bluetooth's is per view).
+      attachDeviceHandlers(browser, this.views, ses)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)
       )
@@ -608,6 +643,7 @@ export class ElectronPlatform implements Platform {
     this.attachChromePermissions()
     this.registerIpc(browser)
     attachSecurityHandlers(browser, this.views, extensionApi.webRequest)
+    attachBluetoothChoosers(browser, this.views)
     configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
     browser.start(options)
     // The engine has its persisted rule sets now: the ones of extensions removed or disabled
@@ -649,13 +685,14 @@ export class ElectronPlatform implements Platform {
    */
   private attachPermissions(
     ses: Session,
+    containerId: string,
     captureAllows: (target: WebContents, securityOrigin: string | undefined) => boolean
   ): void {
     const { permissions, external } = this.browser
     ses.setPermissionRequestHandler((webContents, rawPermission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
       const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
-      const request = permissionRequestDetails(webContents, details, tabId)
+      const request = permissionRequestDetails(webContents, details, tabId, containerId)
       // A `getDisplayMedia` call arrives as `media` without devices: the screen-sharing row,
       // whose Allow puts the picker up right here – the picker is the consent, and only a
       // refusal at this stage reads as Chrome's `NotAllowedError` to the page. Its answer waits
@@ -693,6 +730,19 @@ export class ElectronPlatform implements Platform {
       // A page locking the keyboard keeps Esc: the fullscreen hint says to hold it instead.
       if (permission === 'keyboardLock' && tabId)
         this.browser.fullscreen.keyboardLockRequested(tabId)
+      // The camera and the microphone are the system's to give first on macOS (os-59): its
+      // dialog comes before the site's prompt, and its refusal answers the request in the
+      // engine's stead – no site prompt whose Allow the system would not honour, and nothing
+      // remembered against the site. Off macOS the gate lets every request through.
+      if (permission === 'media' && request.mediaTypes && request.mediaTypes.length > 0) {
+        void this.mediaAccess
+          .allows(request.mediaTypes)
+          .then((systemAllows) =>
+            systemAllows ? permissions.decide(permission, url, request) : false
+          )
+          .then(callback)
+        return
+      }
       void permissions.decide(permission, url, request).then(callback)
     })
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>

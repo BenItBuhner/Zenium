@@ -53,6 +53,7 @@ export function SiteDataViewer(): JSX.Element {
   return (
     <div className="zen-settings-groups zen-settings-sheet-rows" data-testid="site-data-viewer">
       <section
+        role="group"
         className="zen-settings-group"
         data-group="site-data-origins"
         aria-label={SITE_DATA_TEXT.viewer.sites}

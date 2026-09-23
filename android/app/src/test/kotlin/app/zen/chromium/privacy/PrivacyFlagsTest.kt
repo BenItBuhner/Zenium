@@ -103,6 +103,56 @@ class PrivacyFlagsTest {
         assertTrue(excepted.acceptsThirdPartyCookies("default", "https://news.example/"))
     }
 
+    /**
+     * INC-03: the private new tab page's switch, applied to every open tab as the core pushes each
+     * new policy, changes the answer of the private tabs' WebViews alone. `TabWebView` sets the
+     * per-view switch only when its answer changes, so the regular tabs – whose answer this table
+     * shows unmoved across every flip – have `setAcceptThirdPartyCookies` called on them not once.
+     */
+    @Test
+    fun `the private switch moves the private views' answer alone, whatever the regular tabs show`() {
+        val views = listOf(
+            Triple("regular on a site", "default", "https://news.example/story"),
+            Triple("regular new tab", "default", null),
+            Triple("a work container's tab", "work", "https://intranet.corp/"),
+            Triple("regular on an excepted site", "default", "https://shop.example/cart"),
+            Triple("private on a site", PrivacyFlags.PRIVATE_CONTAINER, "https://news.example/"),
+            Triple("private new tab", PrivacyFlags.PRIVATE_CONTAINER, null),
+            Triple("private on an excepted site", PrivacyFlags.PRIVATE_CONTAINER, "https://checkout.shop.example/")
+        )
+        fun answers(mode: String, private: String): Map<String, Boolean> {
+            val flags = PrivacyFlags.parse(
+                JSONObject("""{"thirdPartyCookies":"$mode","thirdPartyCookiesPrivate":"$private","thirdPartyCookieExceptions":["shop.example"]}""")
+            )
+            return views.associate { (name, container, document) -> name to flags.acceptsThirdPartyCookies(container, document) }
+        }
+        for (mode in listOf("allow", "block-private")) {
+            val before = answers(mode, "default")
+            val blocked = answers(mode, "block")
+            val allowed = answers(mode, "allow")
+            val back = answers(mode, "default")
+            // The regular and the work container's views: the same answer at every step, so no call.
+            for (name in listOf("regular on a site", "regular new tab", "a work container's tab", "regular on an excepted site")) {
+                assertTrue("$mode: $name accepts", before.getValue(name))
+                assertEquals("$mode: $name under block", before[name], blocked[name])
+                assertEquals("$mode: $name under allow", before[name], allowed[name])
+                assertEquals("$mode: $name back to default", before[name], back[name])
+            }
+            // The private views follow the switch: on blocks, off allows, default follows the mode.
+            assertFalse("$mode: private on a site under block", blocked.getValue("private on a site"))
+            assertFalse("$mode: private new tab under block", blocked.getValue("private new tab"))
+            assertTrue("$mode: private on an excepted site under block (the related-sites exception)", blocked.getValue("private on an excepted site"))
+            assertTrue("$mode: private on a site under allow", allowed.getValue("private on a site"))
+            assertTrue("$mode: private new tab under allow", allowed.getValue("private new tab"))
+            assertEquals("$mode: private under default follows the mode", mode == "allow", back.getValue("private on a site"))
+            assertEquals("$mode: the flip back restores the first answers", before, back)
+        }
+        // The global block leaves every view blocked whatever the switch says: no answer moves.
+        assertEquals(answers("block", "default"), answers("block", "block"))
+        assertEquals(answers("block", "default"), answers("block", "allow"))
+        assertTrue(answers("block", "allow").filterKeys { !it.contains("excepted") }.values.none { it })
+    }
+
     @Test
     fun `the private choice parses tolerantly, defaults to following the mode, and rides the stored copy`() {
         val d = PrivacyFlags.DEFAULT

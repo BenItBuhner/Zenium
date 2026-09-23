@@ -237,18 +237,36 @@ describe('scoreHistoryMatch (omnibox-02: HistoryURL + HistoryQuick)', () => {
     )
   })
 
-  it('a term at a word start in the title or a path segment outranks one inside a word', () => {
+  it('a term inside a word is no match: Chrome finds "docs" in "Team docs", never in "Googledocs" (history-03)', () => {
     const wordStart = entry({ url: 'https://x.example/docs/', title: 'Team docs', ...base })
     const midWord = entry({ url: 'https://y.example/googledocs', title: 'Googledocs', ...base })
-    expect(scoreHistoryMatch(wordStart, ['docs'], NOW)!).toBeGreaterThan(
-      scoreHistoryMatch(midWord, ['docs'], NOW)!
-    )
-    // Every term must sit at a word start for the bonus.
+    expect(scoreHistoryMatch(wordStart, ['docs'], NOW)).not.toBeNull()
+    expect(scoreHistoryMatch(midWord, ['docs'], NOW)).toBeNull()
+    // Every term must start a word somewhere; one inside a word fails the whole query.
     const oneMid = entry({ url: 'https://z.example/googledocs', title: 'Team pages', ...base })
     const bothStart = entry({ url: 'https://z.example/google/docs', title: 'Team pages', ...base })
-    expect(scoreHistoryMatch(oneMid, ['google', 'docs'], NOW)!).toBeLessThan(
-      scoreHistoryMatch(bothStart, ['google', 'docs'], NOW)!
-    )
+    expect(scoreHistoryMatch(oneMid, ['google', 'docs'], NOW)).toBeNull()
+    expect(scoreHistoryMatch(bothStart, ['google', 'docs'], NOW)).not.toBeNull()
+  })
+
+  it('terms found in the title outrank the same terms found in the address alone, by their share', () => {
+    const inTitle = entry({ url: 'https://a.example/', title: 'React docs', ...base })
+    const inUrl = entry({ url: 'https://b.example/react/docs', title: 'Home', ...base })
+    const half = entry({ url: 'https://c.example/react', title: 'The docs', ...base })
+    const title = scoreHistoryMatch(inTitle, ['react', 'docs'], NOW)!
+    const url = scoreHistoryMatch(inUrl, ['react', 'docs'], NOW)!
+    const mixed = scoreHistoryMatch(half, ['react', 'docs'], NOW)!
+    expect(title).toBeGreaterThan(mixed)
+    expect(mixed).toBeGreaterThan(url)
+    expect(title - url).toBeCloseTo(1)
+  })
+
+  it('reads the address without its scheme and www., so "https" and "www" find nothing', () => {
+    const e = entry({ url: 'https://www.example.org/path', title: 'Example', ...base })
+    expect(scoreHistoryMatch(e, ['https'], NOW)).toBeNull()
+    expect(scoreHistoryMatch(e, ['www'], NOW)).toBeNull()
+    expect(scoreHistoryMatch(e, ['example'], NOW)).not.toBeNull()
+    expect(scoreHistoryMatch(e, ['path'], NOW)).not.toBeNull()
   })
 
   it('the start of the address (scheme and www. aside) counts on top of a word start', () => {
@@ -300,6 +318,35 @@ describe('searchVisits', () => {
       'https://other.test/guide'
     ])
     expect(searchVisits(visits, { text: 'nothing here', limit: 10 })).toEqual([])
+  })
+
+  it('matches a term where it starts a word, never inside one – Chrome’s history search (history-03)', () => {
+    const pages = [
+      visit({ url: 'https://docs.google.com/document/d/1', title: 'Googledocs', visitTime: 50 }),
+      visit({ url: 'https://example.com/my-docs_v2/intro', title: 'Intro', visitTime: 40 }),
+      visit({ url: 'https://other.test/', title: 'Über docs für alle', visitTime: 30 }),
+      visit({ url: 'https://camel.test/', title: 'ReactDocs', visitTime: 20 })
+    ]
+    const found = (text: string): number[] =>
+      searchVisits(pages, { text, limit: 10 }).map((v) => v.visitTime)
+    // The host's word, a path segment after `/`, a piece after `-` or `_`: word starts all.
+    expect(found('docs')).toEqual([50, 40, 30])
+    expect(found('v2')).toEqual([40])
+    // A prefix of a word is enough (Chrome's prefix match); the middle of a word is not.
+    expect(found('goo')).toEqual([50])
+    expect(found('ogle')).toEqual([])
+    // camelCase is one word.
+    expect(found('reactdocs')).toEqual([20])
+    expect(found('Docs')).not.toContain(20)
+    // Every term must match, anywhere between title and address.
+    expect(found('docs intro')).toEqual([40])
+    expect(found('docs nowhere')).toEqual([])
+    // Case folding across scripts; a term typed in another normalisation form still matches.
+    expect(found('über')).toEqual([30])
+    expect(found('ÜBER')).toEqual([30])
+    expect(found('u\u0308ber')).toEqual([30])
+    // The scheme and www. are not words of the address.
+    expect(found('https')).toEqual([])
   })
 
   it('filters by host including subdomains, by time range, and pages with offset/limit', () => {

@@ -10,7 +10,9 @@ import { TOOLBAR_STROKE } from './v2/controls'
  * window family (design language v2 §9.29): the 28 box, a 16 glyph at `TOOLBAR_STROKE`, the
  * window's hover fill on each – Close included, as the GTK title bars they stand in for draw it;
  * a danger fill would be a page colour on the window, and status colours are ink alone (§9.29).
- * 4 apart like the toolbar row's buttons (§5).
+ * 4 apart like the toolbar row's buttons (§5). Each is named for the tree and carries the same
+ * word as its chrome tooltip (`data-tooltip`, lib/tooltip.ts; a11y-26) in place of a native
+ * `title`.
  */
 export function WindowControls({ compact = false }: { compact?: boolean }): JSX.Element | null {
   const state = useBrowser()
@@ -22,7 +24,8 @@ export function WindowControls({ compact = false }: { compact?: boolean }): JSX.
         <button
           type="button"
           className="zen-toolbar-button"
-          title="Close"
+          aria-label="Close"
+          data-tooltip="Close"
           onClick={() => run('window.close', undefined)}
         >
           <X className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
@@ -35,7 +38,8 @@ export function WindowControls({ compact = false }: { compact?: boolean }): JSX.
       <button
         type="button"
         className="zen-toolbar-button"
-        title="Minimize"
+        aria-label="Minimize"
+        data-tooltip="Minimize"
         onClick={() => run('window.minimize', undefined)}
       >
         <Minus className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
@@ -43,7 +47,8 @@ export function WindowControls({ compact = false }: { compact?: boolean }): JSX.
       <button
         type="button"
         className="zen-toolbar-button"
-        title={state.window.maximized ? 'Restore' : 'Maximize'}
+        aria-label={state.window.maximized ? 'Restore' : 'Maximize'}
+        data-tooltip={state.window.maximized ? 'Restore' : 'Maximize'}
         onClick={() => run('window.toggleMaximize', undefined)}
       >
         {state.window.maximized ? (
@@ -55,7 +60,8 @@ export function WindowControls({ compact = false }: { compact?: boolean }): JSX.
       <button
         type="button"
         className="zen-toolbar-button"
-        title="Close"
+        aria-label="Close"
+        data-tooltip="Close"
         onClick={() => run('window.close', undefined)}
       >
         <X className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />

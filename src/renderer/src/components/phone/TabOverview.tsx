@@ -1,6 +1,7 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
+  Archive,
   Ellipsis,
   Group,
   PanelLeft,
@@ -12,8 +13,8 @@ import {
   X
 } from 'lucide-react'
 import type {
+  ArchivedTabSummary,
   Folder,
-  FolderColor,
   PhoneBarPosition,
   Rect,
   Space,
@@ -38,8 +39,9 @@ import {
   type OverviewState
 } from '@renderer/lib/gestures/stage'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
-import { groupColorVars, groupsOf, nextGroupColor } from '@renderer/lib/groups'
+import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
+import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
@@ -96,6 +98,7 @@ import {
 } from '@renderer/lib/selectors'
 import { browserStore, openOverlay, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { CloseAllSheet } from './CloseAllSheet'
@@ -110,13 +113,15 @@ import {
   type Departure,
   type GroupDeparture
 } from './departureStore'
-import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
+import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
+import { InactiveTabsSheet } from './InactiveTabsSheet'
 import { CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
+import { PhoneEmptyNote } from './PhoneList'
 import { noteSheetOpener } from './phonePanel'
 import { PrivateLockCover } from './PrivateLockCover'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
@@ -177,7 +182,8 @@ interface Props {
 /**
  * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
  * closed list as the menu read it), the close-all question, the recently closed list, the
- * select-tabs mode's group picker, a Groups pane row's menu and the delete-group question.
+ * inactive tabs list (as the segment row's entry read it), the select-tabs mode's group picker,
+ * a Groups pane row's menu and the delete-group question.
  */
 type Sheet =
   | { kind: 'tab'; tabId: string }
@@ -185,6 +191,7 @@ type Sheet =
   | { kind: 'menu'; closed: ClosedEntrySummary[] }
   | { kind: 'close-all' }
   | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
+  | { kind: 'inactive-tabs'; entries: ArchivedTabSummary[] }
   | { kind: 'group-picker' }
   | { kind: 'group-row'; folderId: string }
   | { kind: 'delete-group'; folderId: string }
@@ -246,7 +253,7 @@ interface ShownGroups {
  * ones whose tabs have closed but whose pages the group kept, to be opened again; and, on a host
  * with private tabs, the private ones – the private session is one across the spaces, so that
  * pane lists every private tab, as loose cards on the private theme's backdrop (the window
- * surfaces blend to it while the pane is up, §9.29), with an explainer when there are none. A
+ * surfaces blend to it while the pane is up, §9.29), with §9.17's sentence when there are none. A
  * private card never shows in the regular pane, nor a regular one in the private pane
  * (`tabsOnPane`); the overview opens on the pane of the tab in view.
  *
@@ -317,7 +324,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 
   // The last private tab closing ends the session, and the overview returns to the Tabs pane
   // whether the Private pane was picked or followed (Chrome's switcher does the same); the
-  // empty explainer stays a pick away, for whoever picks Private with none open.
+  // empty pane's sentence stays a pick away, for whoever picks Private with none open.
   const privateCount = hasPrivate ? privateTabsOf(state).length : 0
   const privateCountBefore = useRef(privateCount)
   useEffect(() => {
@@ -1030,17 +1037,32 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     setSheet({ kind: 'menu', closed: closed.filter((entry) => entry.kind === 'tab') })
   }
   /**
-   * A recently closed tab picked from the sheet comes back into its place and the overview
-   * leaves on it: the tab is a new record, so the leave waits for the browser to show it.
+   * A tab brought back – a recently closed one into its place, an inactive one to the start of
+   * its space – is a new record, and the overview leaves on it once the browser shows it.
    */
-  const restoreClosed = (entry: ClosedEntrySummary): void => {
+  const leaveOnRestored = (restore: () => void): void => {
     const known = new Set(Object.keys(state.tabs))
-    void historyAdapter.restoreClosed(entry.id)
+    restore()
     void whenState(
       (s) => Object.keys(s.tabs).find((id) => !known.has(id)) ?? null,
       RESTORE_TIMEOUT_MS
     ).then((tabId) => closeOverview(tabId ?? undefined))
   }
+  /** A recently closed tab picked from the sheet comes back into its place. */
+  const restoreClosed = (entry: ClosedEntrySummary): void =>
+    leaveOnRestored(() => void historyAdapter.restoreClosed(entry.id))
+  /**
+   * The segment row's Inactive tabs entry (TAB-20): it reads the archive first, so the sheet
+   * opens full; the private pane has no such entry, a private tab being never archived.
+   */
+  const openInactiveTabs = async (): Promise<void> => {
+    noteSheetOpener()
+    const entries = await inactiveTabsAdapter.list().catch(() => [])
+    setSheet({ kind: 'inactive-tabs', entries })
+  }
+  /** An inactive tab picked from the sheet comes back at the start of its space, in front. */
+  const restoreArchived = (entry: ArchivedTabSummary): void =>
+    leaveOnRestored(() => void inactiveTabsAdapter.restore(entry.id))
   /**
    * A search row from another device leaves the overview on the tab it brings to the front: the
    * device's page in a new tab of this space, or the tab this device already holds. Either way
@@ -1521,10 +1543,34 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               onClose={closeSearch}
             />
           )}
-          <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
+          <div className="flex shrink-0 items-center pr-1">
+            <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
+            <span className="flex-1" />
+            {!privatePane && state.archivedTabCount > 0 && (
+              // The Inactive tabs entry (TAB-20): the segment row's trailing control – never a
+              // fourth segment (v2 §9.34) – a §9.3 icon button with the §9.19 count badge
+              // after its glyph, there only while the archive holds something, as Chrome's
+              // card at the top of its grid is; the private pane has none (§9.29's family
+              // aside, a private tab is never archived).
+              <button
+                type="button"
+                className="zen-v2-icon-button zen-overview-inactive"
+                aria-label={`Inactive tabs, ${state.archivedTabCount}`}
+                aria-haspopup="dialog"
+                aria-expanded={sheet?.kind === 'inactive-tabs'}
+                data-testid="overview-inactive-tabs"
+                onClick={() => void openInactiveTabs()}
+              >
+                <Archive aria-hidden />
+                <span className="zen-v2-badge" aria-hidden>
+                  {state.archivedTabCount}
+                </span>
+              </button>
+            )}
+          </div>
           <PaneSlot
             // Each pane is a slot's worth of its own – the space strip, the grid, the groups'
-            // rows or the empty explainer – coming up fresh on a 120 ms fade in while the still
+            // rows or the empty pane's note – coming up fresh on a 120 ms fade in while the still
             // of the pane before fades out over the same slot (v2 §11.4); the cells start fresh
             // with it.
             pane={pane}
@@ -1602,7 +1648,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                   </div>
                 )}
                 <div
-                  className="grid gap-3"
+                  // Positioned: the box a dissolving group's shell is placed in. `GroupCard`
+                  // takes the shell out of the flow at its `offsetTop`, which is read against
+                  // the nearest positioned ancestor and ignores the scroller's scroll – against
+                  // this grid, which scrolls with the cells, the shell stands where the card
+                  // stood; against the pane outside the scroller it landed `scrollTop` px too
+                  // low, and the tracker held only the cells drawn under that lower box (#355's
+                  // finding, seed 49).
+                  className="relative grid gap-3"
                   style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
                 >
                   {pinned.map(card)}
@@ -1756,6 +1809,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           initial={sheet.closed}
           onClose={() => leaveSheet('recently-closed')}
           onRestore={restoreClosed}
+        />
+      )}
+      {interactive && sheet?.kind === 'inactive-tabs' && (
+        <InactiveTabsSheet
+          initial={sheet.entries}
+          archiveDays={state.settings.inactiveTabsArchiveDays}
+          onClose={() => leaveSheet('inactive-tabs')}
+          onRestore={restoreArchived}
         />
       )}
     </>
@@ -2031,7 +2092,7 @@ function GroupPickerSheet({
     ...groups.map(({ folder, count: held }): SheetAction => ({
       id: `group-${folder.id}`,
       label: `Add to ${folder.name} (${held})`,
-      icon: <GroupDot color={folder.color} />,
+      icon: <GroupGlyph folder={folder} />,
       onPick: () => onPick(folder.id)
     }))
   ]
@@ -2114,7 +2175,7 @@ function TabSheet({
       actions.push({
         id: `group-${g.id}`,
         label: current ? `Move to ${g.name}` : `Add to ${g.name}`,
-        icon: <GroupDot color={g.color} />,
+        icon: <GroupGlyph folder={g} />,
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: g.id })
       })
     }
@@ -2202,17 +2263,6 @@ function GroupSheet({
   )
 }
 
-/** A sheet row's leading dot in the group's colour – the scheme's set (§9.14's pair), following a theme flip live. */
-function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Element {
-  return (
-    <span
-      className="h-2.5 w-2.5 rounded-full bg-[rgb(var(--zen-group-rgb))]"
-      data-group-rgb=""
-      style={groupColorVars(color) as CSSProperties}
-    />
-  )
-}
-
 /**
  * The last card of the grid, a cell like the others (`data-cell`): when cards are rearranged,
  * closed or grouped it glides to its new place on the same spring as they do. On the private
@@ -2295,35 +2345,26 @@ function PaneSegment({
 }
 
 /**
- * The private pane with nothing in it (TAB-03): a page's empty state (v2 §9.17 – title 22/600,
- * one 15 description at 69%, one button, the block centred with its middle at 45% of the
- * pane), in the window family on the private theme's backdrop.
+ * The private pane with nothing in it (TAB-03): a standing state, not a message – a list's
+ * empty room as §9.34 writes it for this pane. §9.17's one sentence, "No private tabs", on the
+ * phone panels' note (`PhoneEmptyNote`: 15/400 at 69%, centred in the 32 gutter, top-anchored),
+ * its first line 48 under the segment as the Groups pane's is (`.zen-overview-private-empty` in
+ * main.css, the same rule), with New private tab as its one follow-up – the note's secondary
+ * button 16 beneath, 88 minimum at 40 – never a message card, no title-plus-description pair.
+ * What private browsing keeps and does not keep is the private new tab page's to say (§9.29,
+ * NTP-31), not the empty pane's. In the window family the private theme paints (§9.29): a
+ * child of the pane's flow, so it stands under the segment whatever the pane's height.
  */
 function PrivateEmpty(): JSX.Element {
   return (
     <div
-      className="relative min-h-0 flex-1"
+      className="zen-overview-private-empty relative min-h-0 flex-1"
       data-pane="private"
       data-testid="overview-private-empty"
     >
-      <div
-        className="absolute inset-x-0 flex -translate-y-1/2 flex-col items-center px-8 text-center"
-        style={{ top: '45%' }}
-      >
-        <h2 className="text-[22px] font-semibold leading-7 tracking-[-0.012em]">No private tabs</h2>
-        <p className="mt-2 max-w-[360px] text-[15px] leading-5 text-[rgb(var(--zen-fg-rgb)/0.69)]">
-          Pages you open here leave no history, cookies or site data once the last private tab
-          closes
-        </p>
-        <button
-          type="button"
-          className="zen-v2-button mt-4"
-          data-testid="overview-private-empty-new"
-          onClick={() => newTabOn('private')}
-        >
-          New private tab
-        </button>
-      </div>
+      <PhoneEmptyNote action={{ label: 'New private tab', onSelect: () => newTabOn('private') }}>
+        No private tabs
+      </PhoneEmptyNote>
     </div>
   )
 }

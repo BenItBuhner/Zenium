@@ -20,8 +20,10 @@ import {
   dissolveSplitGroup,
   essentialsForSpace,
   folderOpened,
+  folderTabs,
   getSpace,
   insertTabIntoSpace,
+  isSavedFolder,
   loadProgressAfter,
   MAX_SPLIT_TABS,
   moveTab,
@@ -76,7 +78,7 @@ import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
 import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
-import { safeOrigin } from './permissions'
+import { permissionSite, safeOrigin } from './permissions'
 import { certificateSiteOf } from './security'
 import { openedWindowKind, planWindowOpen } from './windowOpen'
 import { parseDropKey } from './tabDrag'
@@ -159,6 +161,11 @@ export class TabManager {
    * not narrow them to itself (the rule for members closed one by one, `closeTab`).
    */
   private readonly closingFolders = new Set<string>()
+  /**
+   * Where the next close's "Recently closed" entry goes instead of the session's list: set for
+   * the span of `archiveTab`, whose close files the entry in the inactive-tabs archive (TAB-20).
+   */
+  private divertClosed: ((entry: ClosedTabEntry) => void) | null = null
   /**
    * Every frame's live capture report per tab, by the frame's reporter id (tabs-43): the tab's
    * `alert` is the highest any frame asks for, so a call in an iframe lights the row and a
@@ -549,6 +556,7 @@ export class TabManager {
           }, true)
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
+          this.browser.devices.cancelForTab(tabId)
           this.browser.permissions.onTabNavigated(tabId, url)
           // Whatever the PDF viewer reported was about the document before this one.
           this.browser.pdf.onNavigated(tabId)
@@ -1200,6 +1208,7 @@ export class TabManager {
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
+    this.browser.devices.cancelForTab(tabId)
     this.browser.permissions.onTabGone(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.autofill.onTabGone(tabId)
@@ -1359,7 +1368,10 @@ export class TabManager {
       }
       insertTabIntoSpace(m, space, tab, index)
     }
-    // Made in a group: the group is open (a saved one no longer), and used now (TAB-16). A
+    // Made in a group: the group is open, and used now (TAB-16). The user's joins into a SAVED
+    // group bring its pages back first (`restoreSavedFolder`: New Tab in Folder, a move or a
+    // drop into it) and reach here with the group open; a tab made in one by any other path – a
+    // live folder's refresh repopulating it – takes it as open, the pages it kept let go. A
     // private tab is no member of it for the regular profile: it leaves the group as it was.
     if (!this.isPrivate(tab)) folderOpened(m, tab.folderId, tab.createdAt)
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
@@ -1468,6 +1480,7 @@ export class TabManager {
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
+    this.browser.devices.cancelForTab(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
@@ -1823,7 +1836,10 @@ export class TabManager {
     this.browser.print.onTabRemoved(tabId)
     this.browser.pdf.onTabRemoved(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
-    if (closed) this.browser.session.pushTab(closed)
+    if (closed) {
+      if (this.divertClosed) this.divertClosed(closed)
+      else this.browser.session.pushTab(closed)
+    }
     for (const { w, s, next } of reselect) {
       w.select(s, next)
       if (w.activeSpaceId === s.id && next) this.activateTab(next, w, w === source ? opts : {})
@@ -1839,6 +1855,26 @@ export class TabManager {
     this.browser.updateMedia()
     if (this.isPrivate(tab)) this.browser.onPrivateTabClosed()
     this.browser.state.commit()
+  }
+
+  /**
+   * Close `tabId` the way the inactive-tabs pass does (TAB-20): the tab leaves the grid exactly
+   * as a close does – document gone, navigation stack kept – but its entry comes back to the
+   * caller for the archive instead of joining "Recently closed". Null when the close produced no
+   * entry (a never-visited blank tab, a private tab, a pinned tab held by `pinnedCloseBehavior`),
+   * in which case the tab is simply closed or left as it was.
+   */
+  archiveTab(tabId: string, win?: ZenWindow): ClosedTabEntry | null {
+    let entry: ClosedTabEntry | null = null
+    this.divertClosed = (closed) => {
+      entry = closed
+    }
+    try {
+      this.closeTab(tabId, false, win)
+    } finally {
+      this.divertClosed = null
+    }
+    return entry
   }
 
   /**
@@ -2080,45 +2116,75 @@ export class TabManager {
     this.browser.state.commit()
   }
 
-  /** Whether the user chose "Mute Site" for the host of `url`. */
+  /**
+   * Whether the site of `url` is muted: its `sound` content setting resolves to block (the one
+   * source of "Mute Site", Settings › Site settings › Sound and the site-information row alike).
+   * Pages without a site (`zen://`, `about:blank`) are never muted by a setting, as Chrome's
+   * internal pages are allowed every content whatever the default.
+   */
   siteMuted(url: string): boolean {
-    const host = domainOf(url)
-    return host !== '' && this.settings.mutedHosts.includes(host)
+    return permissionSite(url) !== null && this.browser.permissions.resolve('sound', url) === 'deny'
   }
 
   /**
-   * Chrome's "Mute Site": every tab of the host goes quiet (and stays so on later visits) until
-   * the site is unmuted again. Tabs that leave the host regain their sound.
+   * Chrome's "Mute Site": every tab of the site goes quiet (and stays so on later visits) until
+   * the site is unmuted again. Tabs that leave the site regain their sound. Writes the site's
+   * `sound` setting – as Chrome, an exception equal to the default is cleared rather than kept –
+   * and `followSoundSetting` mutes the tabs when the change lands.
    */
   toggleMuteSite(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    const host = domainOf(tab.url)
-    if (!host) return
-    const muted = !this.settings.mutedHosts.includes(host)
-    this.settings.mutedHosts = muted
-      ? [...this.settings.mutedHosts, host]
-      : this.settings.mutedHosts.filter((h) => h !== host)
+    const site = permissionSite(tab.url)
+    if (!site) return
+    const wanted: 'allow' | 'deny' = this.siteMuted(tab.url) ? 'allow' : 'deny'
+    const permissions = this.browser.permissions
+    permissions.set('sound', site, wanted === permissions.effectiveDefault('sound') ? null : wanted)
+  }
+
+  /**
+   * A `sound` decision changed (Mute Site, a Settings row, a reset): every tab of the site – of
+   * every site, for the default – takes the setting's answer, as Chrome mutes and unmutes on the
+   * spot. Wired by the browser once the permission store exists.
+   */
+  followSoundSetting(origin: string | null): void {
+    let changed = false
     for (const t of Object.values(this.model.tabs)) {
-      if (domainOf(t.url) !== host || t.muted === muted) continue
+      if (origin !== null && permissionSite(t.url) !== origin) continue
+      const muted = this.siteMuted(t.url)
+      if (t.muted === muted) continue
       t.muted = muted
       this.view(t.id)?.setMuted(muted)
+      changed = true
     }
+    if (changed) this.browser.state.commit()
+  }
+
+  /**
+   * Before the `sound` setting was the source, "Mute Site" kept bare hosts (`www.` stripped) in
+   * `settings.mutedHosts`. Each host becomes a `sound` block for the origins the old rule
+   * covered (`soundSitesOfMutedHost`) and the list is emptied; a profile that carries hosts
+   * again later (an older device syncing them in) is migrated the same way.
+   */
+  migrateMutedHosts(): void {
+    const hosts = this.settings.mutedHosts
+    if (hosts.length === 0) return
+    for (const host of hosts)
+      for (const origin of soundSitesOfMutedHost(host))
+        this.browser.permissions.set('sound', origin, 'deny')
+    this.settings.mutedHosts = []
     this.browser.state.commit()
   }
 
-  /** A navigation crossed a site boundary: pick up or drop the host's mute with it. */
+  /** A navigation crossed a site boundary: pick up or drop the site's mute with it. */
   private followSiteMute(tab: Tab, view: TabView, fromUrl: string, toUrl: string): void {
-    const from = domainOf(fromUrl)
-    const to = domainOf(toUrl)
-    if (from === to) return
-    const muted = this.settings.mutedHosts
-    if (to && muted.includes(to)) {
+    if (permissionSite(fromUrl) === permissionSite(toUrl)) return
+    if (this.siteMuted(toUrl)) {
       if (!tab.muted) {
         tab.muted = true
         view.setMuted(true)
       }
-    } else if (from && muted.includes(from) && tab.muted) {
+    } else if (this.siteMuted(fromUrl) && tab.muted) {
       tab.muted = false
       view.setMuted(false)
     }
@@ -2371,18 +2437,81 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /**
+   * A tab joins a folder – a drop on its header, the tab menu's Move to Folder, an extension's
+   * `tabs.group` – or leaves one (`null`). A regular tab joining a SAVED group opens it first:
+   * the pages it kept come back as its tabs, as Open Folder brings them, and the tab takes its
+   * place behind them (open-then-add: the join loses nothing the group kept); joining an open
+   * group it keeps its slot. Either way the group is unfolded and used now. A private tab is no
+   * member of the group for the regular profile and leaves it as it was.
+   */
   moveToFolder(tabId: string, folderId: string | null): void {
     const tab = this.tab(tabId)
     if (!tab || tab.essential || tab.pinned) return
     if (folderId && !this.model.folders[folderId]) return
     const previous = tab.folderId
+    const joining = folderId !== null && folderId !== previous && !this.isPrivate(tab)
+    const restored = joining ? this.restoreSavedFolder(folderId, this.windowFor(tabId)) : []
     tab.folderId = folderId
     if (previous && previous !== folderId) this.browser.liveFolders.onTabLeftFolder(tabId, previous)
-    // A regular tab joining opens the group (a saved one's pages go, stale) and marks it used; a
-    // private tab is no member of it for the regular profile and leaves it as it was.
-    if (folderId && folderId !== previous && !this.isPrivate(tab))
+    if (joining) {
+      const last = restored[restored.length - 1]
+      const space = last ? getSpace(this.model, tab.spaceId) : undefined
+      if (last && space && space.id === last.spaceId) {
+        // Behind the pages that came back: the slot after the last of them, in the space's
+        // regular run without the joiner (the move lifts it out before it lands).
+        const others = regularTabs(this.model, space).filter((t) => t.id !== tabId)
+        moveTab(
+          this.model,
+          tab,
+          { spaceId: space.id, section: 'regular', index: others.indexOf(last) + 1 },
+          this.settings.essentialsMax
+        )
+      }
       folderOpened(this.model, folderId, Date.now())
+    }
     this.browser.state.commit()
+  }
+
+  /**
+   * A SAVED group's pages back as its tabs (TAB-16): in the order they were kept, at the end of
+   * the space's regular tabs – the first there, each next behind the one before – unloaded, none
+   * made active (Open Folder activates the first; a join adds its tab behind them), the group
+   * unfolded and used now. The pages are let go before the first is made, so its own join finds
+   * nothing left to bring back. Returns the tabs in order: none for a group that is not saved
+   * (open, empty, gone) or whose space is.
+   */
+  restoreSavedFolder(folderId: string, win: ZenWindow = this.browser.focusedWindow()): Tab[] {
+    const m = this.model
+    const folder = m.folders[folderId]
+    if (!folder || !isSavedFolder(m, folder)) return []
+    const space = getSpace(m, folder.spaceId)
+    if (!space) return []
+    const pages = folder.savedTabs ?? []
+    folder.savedTabs = null
+    const restored: Tab[] = []
+    for (const page of pages) {
+      const last = restored[restored.length - 1]
+      const tab = this.createTab(
+        {
+          url: page.url,
+          spaceId: space.id,
+          active: false,
+          load: false,
+          index: last ? undefined : Number.MAX_SAFE_INTEGER,
+          afterTabId: last?.id,
+          containerId: space.containerId,
+          folderId
+        },
+        win
+      )
+      // The row and the card read as the page did until it loads again.
+      tab.title = page.title || tab.title
+      tab.favicon = page.favicon ?? null
+      restored.push(tab)
+    }
+    folderOpened(m, folderId, Date.now())
+    return restored
   }
 
   // ---------------------------------------------------------------------------
@@ -2810,6 +2939,92 @@ export class TabManager {
     }
     this.activateTab(tabId, win)
     this.showNeighbour(source, leaving, tabId)
+    this.closeIfEmptied(source)
+    this.browser.state.commit()
+    return win
+  }
+
+  /**
+   * The folder menu's "Move Folder to New Window" (context-menus-107; Chrome's "Move group to
+   * new window"): the folder's tabs go to a window of their own beside this one, the folder
+   * with them – its name, colour and fold. Which kind of window is the tab's rule
+   * (`moveTabToNewWindow`): a folder of a private window gets another private window; under
+   * "sync only pinned tabs" a folder of unpinned members gets a synced window that owns them,
+   * the folder staying in its space; every other folder – its tabs shared across synced windows
+   * – gets a blank window, the one kind that can hold them alone, and follows them into its
+   * space (the window's own, so the folder is that window's until it closes). A SAVED folder
+   * opens first – its pages back as its tabs – and goes whole; a member's split view is left
+   * behind (a split lives in one space of one window). Every window showing a member moves on
+   * past the folder (Firefox's rule over the folder as one: the next tab beyond it, else the one
+   * before it); the new window shows the member the source was showing, else the first. Returns
+   * the new window, or null with nothing to move (an empty folder, none) or no windows on this
+   * host.
+   */
+  moveFolderToNewWindow(
+    folderId: string,
+    source: ZenWindow = this.browser.focusedWindow()
+  ): ZenWindow | null {
+    const m = this.model
+    const folder = m.folders[folderId]
+    if (!folder) return null
+    if (!this.browser.state.capabilities.windows) {
+      this.browser.toast('Multiple windows are not available on this device.', 'info', source)
+      return null
+    }
+    this.restoreSavedFolder(folderId, source)
+    const members = folderTabs(m, folderId)
+    const from = getSpace(m, folder.spaceId)
+    if (members.length === 0 || !from) return null
+    const member = (tabId: string | null): tabId is string =>
+      tabId !== null && members.some((t) => t.id === tabId)
+    const outside = (t: Tab): boolean => t.folderId !== folderId
+    const showing = this.browser
+      .allWindows()
+      .map((w) => ({ w, selected: w.selectedTabIn(from) }))
+      .filter((s): s is { w: ZenWindow; selected: string } => member(s.selected))
+      .map(({ w, selected }) => {
+        const ordered = orderedTabsForSpace(
+          m,
+          from,
+          this.settings.containerSpecificEssentials,
+          w.id
+        )
+        const at = ordered.findIndex((t) => t.id === selected)
+        const next =
+          ordered.slice(at + 1).find(outside) ??
+          ordered.slice(0, Math.max(0, at)).reverse().find(outside) ??
+          null
+        return { w, selected, next: next?.id ?? null }
+      })
+    const shown = showing.find((s) => s.w === source)?.selected ?? members[0].id
+    const ownsAlone =
+      !from.windowId && this.settings.windowSync === 'pinned' && members.every((t) => !t.pinned)
+    const kind: WindowKind = source.isPrivate ? 'private' : ownsAlone ? 'synced' : 'unsynced'
+    const win = this.browser.createWindow({ kind, from: source, bounds: null, empty: true })
+    for (const tab of members) removeTabFromSplit(m, tab.id)
+    if (win.localSpace) {
+      const space = win.localSpace
+      for (const tab of members) {
+        // The model's move (not the manager's): the folder is not left, it comes along.
+        moveTab(
+          m,
+          tab,
+          {
+            spaceId: space.id,
+            section: tab.pinned ? 'pinned' : 'regular',
+            index: Number.MAX_SAFE_INTEGER
+          },
+          this.settings.essentialsMax
+        )
+        tab.folderId = folderId
+      }
+      folder.spaceId = space.id
+    } else {
+      for (const tab of members) tab.windowId = win.id
+      win.activeSpaceId = from.id
+    }
+    this.activateTab(shown, win)
+    for (const s of showing) this.showNeighbour(s.w, { space: from, next: s.next }, s.selected)
     this.closeIfEmptied(source)
     this.browser.state.commit()
     return win
@@ -3372,6 +3587,13 @@ export class TabManager {
         removeTabFromLists(m, id)
         delete m.tabs[id]
       }
+      // A folder in the window's own space – moved here with its tabs (`moveFolderToNewWindow`)
+      // – is no window's once this one closes: it goes with the space, its saved pages with it.
+      for (const folder of Object.values(m.folders))
+        if (folder.spaceId === win.localSpace.id) {
+          this.browser.liveFolders.onFolderDeleted(folder.id)
+          delete m.folders[folder.id]
+        }
       delete m.localSpaces[win.localSpace.id]
     } else if (!quitting) {
       for (const tab of Object.values(m.tabs)) {
@@ -3494,4 +3716,17 @@ function domainOf(url: string): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * The origins a pre-migration "Mute Site" host stood for: the old rule matched the hostname with
+ * `www.` stripped, so a site name covers its https origin and its `www.` one; an address or a
+ * single-label name (`localhost`, a LAN box) has no `www.` and is as likely plain http.
+ */
+export function soundSitesOfMutedHost(host: string): string[] {
+  const name = host.trim().toLowerCase()
+  if (!name || /[\s/|]/.test(name)) return []
+  const address = /^[\d.]+$/.test(name) || name.includes(':') || !name.includes('.')
+  if (address) return [`https://${name}`, `http://${name}`]
+  return [`https://${name}`, `https://www.${name}`]
 }

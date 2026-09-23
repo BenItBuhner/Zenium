@@ -16,6 +16,7 @@ import type {
   LongCapture,
   LongCaptureCrop,
   MenuDescriptor,
+  MenuItemDescriptor,
   OverlayKind,
   Rect,
   ScreenshotSaved,
@@ -370,6 +371,8 @@ export interface UiState {
   permissionPromptOpen: boolean
   /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
   clearBrowsingDataOpen: boolean
+  /** Chrome's Name window prompt (`windowName/NameWindowDialog`) is up over the page. */
+  nameWindowOpen: boolean
   /**
    * Chrome's "Import bookmarks and settings" dialog is up over Settings (or the page); `source`
    * is the `ImportSource.id` it opens on (the first-run offer's pick), else the first browser.
@@ -589,6 +592,7 @@ export const uiStore = createStore<UiState>(
     barMenuOpen: false,
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
+    nameWindowOpen: false,
     importDialog: null,
     printPreview: null,
     autofillPrompt: null,
@@ -1126,6 +1130,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.capture &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.nameWindowOpen &&
     !ui.importDialog &&
     !ui.printPreview &&
     !ui.autofillPrompt &&
@@ -1190,6 +1195,7 @@ export function invalidateSnapshot(): void {
     !ui.capture &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.nameWindowOpen &&
     !ui.importDialog &&
     !ui.printPreview &&
     !ui.autofillPrompt &&
@@ -1661,12 +1667,29 @@ export function closeMenu(notifyHost = true, { keepKeyboard = false } = {}): voi
   if (!keepKeyboard) returnFocusToPage()
 }
 
+/** The descriptor item `itemId` names, at any depth of `items`; undefined when none. */
+function menuItemById(items: MenuItemDescriptor[], itemId: string): MenuItemDescriptor | undefined {
+  for (const item of items) {
+    if (item.id === itemId) return item
+    const inner = item.submenu ? menuItemById(item.submenu, itemId) : undefined
+    if (inner) return inner
+  }
+  return undefined
+}
+
+/**
+ * Pick an item of the open menu. The page gets the focus back as after any overlay – except for an
+ * item that says it keeps the keyboard (`keepsKeyboard`: Rename Group…, Rename Tab…), whose action
+ * mounts a field of the chrome's own: the host's focus move would land on the page while that
+ * field is mounting and blur it away before the user could type (the tablet's rename, nightly
+ * `tablet-groups` §6), so for it the focus stays where the field is about to take it.
+ */
 export function pickMenuItem(itemId: string): void {
   const menu = uiStore.get().menu
   if (!menu) return
   uiStore.set({ menu: null })
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!menuItemById(menu.items, itemId)?.keepsKeyboard) returnFocusToPage()
   const local = localMenus.get(menu.id)
   localMenus.delete(menu.id)
   // Run the action once the sheet has been unpainted: hosts that snapshot the window for the
@@ -1893,6 +1916,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.install !== null ||
     ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||
+    ui.nameWindowOpen ||
     ui.importDialog !== null ||
     ui.printPreview !== null ||
     ui.autofillPrompt !== null ||
@@ -2120,6 +2144,26 @@ export async function openClearBrowsingData(activeTabId: string | null): Promise
 export function closeClearBrowsingData(): void {
   if (!uiStore.get().clearBrowsingDataOpen) return
   uiStore.set({ clearBrowsingDataOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * Chrome's Name window prompt (`windowName/NameWindowDialog`, shortcuts-menus-121): a §9.23
+ * dialog through the frame dialog host over the page's picture, which has to exist first for
+ * the scrim to dim; the keyboard goes to the chrome for its field.
+ */
+export async function openNameWindow(activeTabId: string | null): Promise<void> {
+  if (uiStore.get().nameWindowOpen) return
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ nameWindowOpen: true })
+}
+
+/** The prompt is gone (answered or cancelled): the page's picture is dropped and the keyboard goes back. */
+export function closeNameWindow(): void {
+  if (!uiStore.get().nameWindowOpen) return
+  uiStore.set({ nameWindowOpen: false })
   invalidateSnapshot()
   returnFocusToPage()
 }

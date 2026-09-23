@@ -6,6 +6,7 @@ import type {
   Bookmark,
   BookmarkNode,
   BookmarkTreeData,
+  ArchivedTabEntry,
   Boost,
   ClosedEntry,
   ImportProgress,
@@ -14,6 +15,9 @@ import type {
   Container,
   CrashRestoreOffer,
   DefaultBrowserStatus,
+  DeviceChooser,
+  DeviceGrant,
+  DevicePairingPrompt,
   DownloadItem,
   DownloadsProgress,
   ExtensionInfo,
@@ -133,7 +137,12 @@ import {
   sanitizeNewTabSettings
 } from '../shared/newTab'
 import { defer, type StoreIO } from './platform'
-import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
+import {
+  sanitizeArchivedEntries,
+  sanitizeClosedEntries,
+  sanitizeSnapshot,
+  summarizeClosed
+} from './session'
 import { defaultScope } from './sync/records'
 import {
   closedNavigationOf,
@@ -157,6 +166,8 @@ export interface PersistedWindow {
   /** Per-space selected tab. */
   selection: Record<string, string>
   compact: boolean
+  /** The name the user gave the window (`ZenWindow.name`); absent in profiles written before it. */
+  name?: string | null
 }
 
 /**
@@ -185,6 +196,12 @@ export interface Persisted {
   windows?: PersistedWindow[]
   /** v3: recently closed tabs and windows (newest first, 25 deep). */
   recentlyClosed?: ClosedEntry[]
+  /**
+   * The Inactive tabs archive (TAB-20): the tabs the archive pass took out of the grid, newest
+   * first, each as a closed-tab entry with its `archivedAt`. Additive: a profile without it has
+   * none. Never with a stack's `hostState` (`navigation/`, as the recently closed entries).
+   */
+  archivedTabs?: ArchivedTabEntry[]
   /**
    * v3: the back/forward stack of every open tab, by tab id, so a restored tab has its history
    * and (through each entry's page state) its scroll position back. Refreshed on every commit
@@ -251,6 +268,9 @@ export interface StateExtras {
   lastSafetyCheck: SafetyCheckResult | null
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
+  deviceChoosers: DeviceChooser[]
+  devicePairings: DevicePairingPrompt[]
+  deviceGrants: DeviceGrant[]
   pageDialogs: PageDialog[]
   /** Tabs whose `requestClose` is in flight, their pages asked "Leave site?" (`TabManager.closingTabIds`). */
   closingTabIds: string[]
@@ -314,6 +334,8 @@ export class BrowserState {
   })
   /** Newest first; the `SessionService` owns the list, this is where it persists. */
   recentlyClosed: ClosedEntry[] = []
+  /** The Inactive tabs archive, newest first; the `InactiveTabsService` owns it, this is where it persists. */
+  archivedTabs: ArchivedTabEntry[] = []
   /**
    * What loading the profile changed under the user (a migration that moved settings): shown as
    * toasts once a window is ready, then forgotten. Never persisted.
@@ -402,6 +424,9 @@ export class BrowserState {
     lastSafetyCheck: null,
     permissionPrompts: [],
     securityPrompts: [],
+    deviceChoosers: [],
+    devicePairings: [],
+    deviceGrants: [],
     pageDialogs: [],
     closingTabIds: [],
     screenCaptureRequests: [],
@@ -527,13 +552,17 @@ export class BrowserState {
     // The blobs' folder hears which ids the session refers to; the documents of the others go at
     // the store's first fire (nothing is read here).
     this.navigationState.load(
-      new Set([...this.tabNavigation.keys(), ...closedTabIds(this.recentlyClosed)])
+      new Set([
+        ...this.tabNavigation.keys(),
+        ...closedTabIds(this.recentlyClosed),
+        ...closedTabIds(this.archivedTabs)
+      ])
     )
   }
 
   /**
    * What `navigation/<tabId>.json` is to hold: the open tab's stack (a private tab's never),
-   * else the stack a recently-closed entry keeps for the id, else nothing.
+   * else the stack a recently-closed or an Inactive tabs entry keeps for the id, else nothing.
    */
   private navigationFor(tabId: string): NavigationSnapshot | null {
     const tab = this.model.tabs[tabId]
@@ -541,7 +570,9 @@ export class BrowserState {
       if (tab.containerId === PRIVATE_CONTAINER_ID) return null
       return this.tabNavigation.get(tabId) ?? null
     }
-    return closedNavigationOf(this.recentlyClosed, tabId)
+    return (
+      closedNavigationOf(this.recentlyClosed, tabId) ?? closedNavigationOf(this.archivedTabs, tabId)
+    )
   }
 
   /** The app is shutting down gracefully: the next write marks the profile as cleanly exited. */
@@ -568,6 +599,7 @@ export class BrowserState {
   private applyPersisted(data: Persisted): void {
     // Before v3 the recently closed list was in memory only: it starts empty.
     this.recentlyClosed = data.version >= 3 ? sanitizeClosedEntries(data.recentlyClosed) : []
+    this.archivedTabs = sanitizeArchivedEntries(data.archivedTabs)
     this.tabNavigation.clear()
     if (data.navigation && typeof data.navigation === 'object') {
       for (const [tabId, raw] of Object.entries(data.navigation)) {
@@ -893,7 +925,12 @@ export class BrowserState {
         tabs[tab.id] = tab
       }
       essentialTabIds = m.essentialTabIds
-      folders = m.folders
+      // A blank or private window's folders and split views stay its own, as its tabs do; a
+      // folder whose space is gone (moved with its tabs into a blank window since closed) is
+      // no window's until the next load drops it, as load drops any folder without a space.
+      folders = {}
+      const persisted = new Set(m.spaces.map((s) => s.id))
+      for (const f of Object.values(m.folders)) if (persisted.has(f.spaceId)) folders[f.id] = f
       splitGroups = {}
       for (const g of Object.values(m.splitGroups))
         if (!m.localSpaces[g.spaceId]) splitGroups[g.id] = g
@@ -903,7 +940,10 @@ export class BrowserState {
       tabs = {}
       for (const id of space.tabIds) if (m.tabs[id]) tabs[id] = m.tabs[id]
       essentialTabIds = []
+      // The window's own folders: a folder moved into it with its tabs (`moveFolderToNewWindow`)
+      // lives in its space, as the window's split views do.
       folders = {}
+      for (const f of Object.values(m.folders)) if (f.spaceId === space.id) folders[f.id] = f
       splitGroups = {}
       for (const g of Object.values(m.splitGroups))
         if (g.spaceId === space.id) splitGroups[g.id] = g
@@ -935,6 +975,7 @@ export class BrowserState {
       newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,
       recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
+      archivedTabCount: this.archivedTabs.length,
       media: this.media,
       findResult: win.findResult,
       devtoolsOpenFor: [...this.devtoolsOpenFor],
@@ -1040,6 +1081,7 @@ export class BrowserState {
       windows: persistedWindows,
       // The stacks travel without their host-state blobs, which `navigation/` holds.
       recentlyClosed: withoutClosedHostState(this.recentlyClosed),
+      archivedTabs: withoutClosedHostState(this.archivedTabs),
       navigation: this.persistedNavigation(m.tabs),
       cleanExit: this.exiting,
       newTabDevice: this.newTabDevice,

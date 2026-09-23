@@ -174,6 +174,8 @@ export function androidCapabilities({
     reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,
+    // Chrome for Android's Inactive tabs: the archive pass and the overview's entry (TAB-20).
+    inactiveTabs: true,
     secureDns: false,
     quitsThroughCore: false,
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
@@ -1859,8 +1861,15 @@ export class AndroidPlatform implements Platform {
       }
       case 'permission.request': {
         const p = payload as HostEventPayloads['permission.request']
+        // A private tab's answers stay with the private session (Chrome's Incognito rule).
+        const asking = browser.tabs.tab(p.tabId)
         void browser.permissions
-          .decide(p.permission, p.url, { tabId: p.tabId, mediaTypes: p.mediaTypes })
+          .decide(p.permission, p.url, {
+            tabId: p.tabId,
+            mediaTypes: p.mediaTypes,
+            privateContainerId:
+              asking && browser.tabs.isPrivate(asking) ? PRIVATE_CONTAINER_ID : undefined
+          })
           .then((allow) =>
             this.bridge.send('permission.respond', { requestId: p.requestId, allow })
           )

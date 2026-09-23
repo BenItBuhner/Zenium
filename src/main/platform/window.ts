@@ -26,6 +26,8 @@ import { TitleThrottle } from '../../shared/windowTitle'
 import { windowIcon } from './appIcon'
 import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
 import { placeWindow, type DisplayArea } from './windowPlacement'
+import { showWhenReady } from './windowShow'
+import { NO_WINDOW_SWITCHES, windowLaunchState, type WindowSwitches } from '../cli'
 
 const MIN_WIDTH = 640
 const MIN_HEIGHT = 420
@@ -72,6 +74,11 @@ export interface ChromeContentsRegistry {
  */
 export class ElectronWindow implements WindowHost {
   readonly win: BrowserWindow
+  /**
+   * `--kiosk` (`cli.ts`): the window is fullscreen for its life. Requests to leave (F11, Esc
+   * held) are refused here, and the hidden strips never come back on the cursor's edge.
+   */
+  readonly kiosk: boolean
   private boundsTimer: ReturnType<typeof setTimeout> | null = null
   private compactTimer: ReturnType<typeof setInterval> | null = null
   private readonly sidebarEdge = new EdgeTracker()
@@ -88,8 +95,11 @@ export class ElectronWindow implements WindowHost {
     private readonly registry: ChromeContentsRegistry = {
       add: () => undefined,
       remove: () => undefined
-    }
+    },
+    switches: WindowSwitches = NO_WINDOW_SWITCHES
   ) {
+    const launch = windowLaunchState(switches, init)
+    this.kiosk = launch.kiosk
     let initial = init.bounds
     let displayId = init.displayId
     if (!initial && init.cascadeFrom?.alive) {
@@ -109,6 +119,9 @@ export class ElectronWindow implements WindowHost {
       minWidth: compactChrome ? POPUP_MIN_WIDTH : MIN_WIDTH,
       minHeight: compactChrome ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
       show: false,
+      // Chrome's kiosk mode: fullscreen from the first frame (on macOS also without the Dock and
+      // the menu bar); the layout below hides the chrome for a fullscreen browser window.
+      kiosk: launch.kiosk,
       frame: false,
       titleBarStyle: isMac ? 'hiddenInset' : CAPTION_OVERLAY ? 'hidden' : undefined,
       // Centred on the 38px header row (12px lights: 16 + 6 = 22 = 6 + 32 / 2); a toolbar-only
@@ -162,9 +175,12 @@ export class ElectronWindow implements WindowHost {
         relaunchDisplayName: init.app.name
       })
     }
-    if (init.maximized) win.maximize()
+    // Saved maximised, or `--start-maximized` for a browser window (never a kiosk's fullscreen).
+    if (launch.maximize) win.maximize()
 
-    win.once('ready-to-show', () => win.show())
+    // Shown once the chrome has painted – or after a bounded wait when Electron never says so
+    // (`windowShow.ts`): a window that stays hidden is worse than one that paints a beat late.
+    showWhenReady(win)
     win.on('maximize', () => zen.onWindowStateChanged())
     win.on('unmaximize', () => zen.onWindowStateChanged())
     win.on('enter-full-screen', () => zen.onWindowStateChanged())
@@ -319,6 +335,8 @@ export class ElectronWindow implements WindowHost {
   }
 
   setFullScreen(fullscreen: boolean): void {
+    // A kiosk window never leaves fullscreen (F11, Esc held: `Browser.toggleFullscreen`).
+    if (this.kiosk && !fullscreen) return
     if (this.alive) this.win.setFullScreen(fullscreen)
   }
 
@@ -512,7 +530,8 @@ export class ElectronWindow implements WindowHost {
   }
 
   private pollCompactCursor(): void {
-    if (!this.alive || !this.win.isVisible()) return
+    // A kiosk shows the page alone: no strip comes back at the screen's edge.
+    if (!this.alive || !this.win.isVisible() || this.kiosk) return
     const state = this.browser.state
     const zen = this.zen
     const cm = state.settings.compactMode
@@ -568,16 +587,25 @@ export class ElectronWindowFactory implements WindowHostFactory {
   private readonly byWebContentsId = new Map<number, ZenWindow>()
   private browser!: Browser
 
+  /** `switches`: the run's `--kiosk` / `--start-maximized`, for every window it creates. */
+  constructor(private readonly switches: WindowSwitches = NO_WINDOW_SWITCHES) {}
+
   bind(browser: Browser): void {
     this.browser = browser
   }
 
   create(win: ZenWindow, init: WindowCreateInit): WindowHost {
     // The popup surface's document sends commands for the window like the chrome does.
-    const host = new ElectronWindow(this.browser, win, init, {
-      add: (id) => this.byWebContentsId.set(id, win),
-      remove: (id) => this.byWebContentsId.delete(id)
-    })
+    const host = new ElectronWindow(
+      this.browser,
+      win,
+      init,
+      {
+        add: (id) => this.byWebContentsId.set(id, win),
+        remove: (id) => this.byWebContentsId.delete(id)
+      },
+      this.switches
+    )
     const id = host.win.webContents.id
     this.byWebContentsId.set(id, win)
     host.win.on('closed', () => this.byWebContentsId.delete(id))

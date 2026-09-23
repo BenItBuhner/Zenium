@@ -317,14 +317,21 @@ describe('phonePillChips: the chips as data', () => {
     expect(off.find((c) => c.id === 'blocked')?.row?.value).toBe('Blocking off')
   })
 
-  it('has no chips for an internal page, no lock on an http page, nothing without a tab', () => {
+  it('has no chips for an internal page, the Not secure glyph on an http page, nothing without a tab', () => {
     expect(phonePillChips(state(tab('zen://settings')), tab('zen://settings'), ctx)).toEqual([])
     const plain = tab('http://example.com/')
-    expect(phonePillChips(state(plain), plain, ctx).map((c) => c.id)).toEqual(['blocked'])
+    const chips = phonePillChips(state(plain), plain, ctx)
+    expect(chips.map((c) => [c.id, c.fold])).toEqual([
+      ['not-secure', 'glyph'],
+      ['blocked', 'sheet']
+    ])
+    // The glyph says nothing of its own at the address: the address already speaks "Not secure".
+    expect(chips[0]!.spoken).toBe('')
+    expect(chips[0]!.row).toBeUndefined()
     expect(phonePillChips(state(page), null, ctx)).toEqual([])
   })
 
-  it('draws no lock over a certificate that failed verification, proceeded past or not; the shield keeps its row', () => {
+  it('draws the danger triangle, not a lock, over a certificate that failed verification, proceeded past or not; the shield keeps its row', () => {
     const failed = {
       code: -201,
       url: 'https://expired.badssl.com/',
@@ -337,10 +344,31 @@ describe('phonePillChips: the chips as data', () => {
         certificateError: { ...failed, bypassed }
       })
       const chips = phonePillChips(state(t), t, ctx)
-      expect(chips.map((c) => c.id)).toEqual(['blocked'])
-      expect(chips[0].row?.label).toBe('Requests blocked')
-      expect(pillChipsDrawn(chips)).toEqual([])
+      expect(chips.map((c) => c.id)).toEqual(['certificate-error', 'blocked'])
+      expect(chips[1]!.row?.label).toBe('Requests blocked')
+      expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['certificate-error'])
     }
+    // A certificate error the core reports by its net error code alone reads the same.
+    const coded = tab('https://expired.badssl.com/', { errorCode: -201 })
+    expect(pillChipsDrawn(phonePillChips(state(coded), coded, ctx)).map((c) => c.id)).toEqual([
+      'certificate-error'
+    ])
+  })
+
+  it('the interstitials carry the verdict the address speaks; a plain error page, the private lock, nothing', () => {
+    // The Safe Browsing and HTTPS-only interstitials stand at the address they block (the pill
+    // shows that host): the shield in the danger ink, the open lock in the warn ink, as Chrome's
+    // omnibox marks its interstitials.
+    const blocked = tab('zen://error?kind=safebrowsing&url=https%3A%2F%2Fevil.example%2F')
+    expect(phonePillChips(state(blocked), blocked, ctx).map((c) => c.id)).toEqual(['dangerous'])
+    const upgrade = tab('zen://error?kind=https-only&url=http%3A%2F%2Fexample.com%2F')
+    expect(phonePillChips(state(upgrade), upgrade, ctx).map((c) => c.id)).toEqual(['not-secure'])
+    // A page that did not load is an internal page: no site, no verdict.
+    const failed = tab('zen://error?code=-105&url=http%3A%2F%2Fexample.com%2F', { errorCode: -105 })
+    expect(phonePillChips(state(failed), failed, ctx)).toEqual([])
+    // Under the private lock nothing of the page is said (INC-05).
+    const plain = tab('http://example.com/')
+    expect(phonePillChips(state(plain), plain, { ...ctx, locked: true })).toEqual([])
   })
 
   it('the translate row still offers, and the sheet goes for the bar', async () => {
@@ -498,12 +526,77 @@ describe('PillContent at rest', () => {
     ])
   })
 
-  it('has no chip run at all on an http page: the shield went to the sheet and there is no lock', () => {
+  it('draws the open lock in the warn ink on an http page, named Not secure, in the lock’s own room (ERR-09)', () => {
     const plain = tab('http://example.com/')
     const el = render(<PillContent state={state(plain)} tab={plain} space={space} interactive />)
-    expect(shown(el)).toEqual([])
-    expect(el.querySelector('[data-testid="pill-chips"]')).toBeNull()
-    expect(labels(el)).toEqual(['Address, example.com, Not secure', 'Site information'])
+    expect(shown(el)).toEqual(['not-secure'])
+    // The address speaks the state once (A11Y-01); the chip is its own stop under the same word.
+    expect(labels(el)).toEqual([
+      'Address, example.com, Not secure',
+      'Site information',
+      'Not secure'
+    ])
+    const chip = el.querySelector<HTMLElement>('[data-chip="not-secure"] > [data-pill-chip]')!
+    expect(chip.getAttribute('data-verdict')).toBe('warn')
+    expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(chip.hasAttribute('data-site-info')).toBe(true)
+    expect(chip.querySelector('svg.lucide-lock-open')).not.toBeNull()
+    // Status ink only, no fill (§9.19, §1): the warn ink where the lock has the quiet ink.
+    expect(chip.classList.contains('text-[var(--v2-warn)]')).toBe(true)
+    expect(chip.classList.contains('zen-pill-quiet')).toBe(false)
+    // The lock's chassis exactly – the same 44 box over the 28 pitch (Bennett's OMN-02 ruling on the room).
+    const box = (c: HTMLElement): string[] =>
+      Array.from(c.classList).filter((k) => k !== 'zen-pill-quiet' && !k.startsWith('text-['))
+    const chipBox = box(chip)
+    act(() =>
+      root!.render(<PillContent state={state(page)} tab={page} space={space} interactive />)
+    )
+    const lock = el.querySelector<HTMLElement>('[data-chip="lock"] > [data-pill-chip]')!
+    expect(box(lock)).toEqual(chipBox)
+    expect(lock.querySelector('svg.lucide-lock')).not.toBeNull()
+    expect(lock.classList.contains('zen-pill-quiet')).toBe(true)
+    expect(lock.getAttribute('data-verdict')).toBe('neutral')
+  })
+
+  it('draws the triangle in the danger ink over a failed certificate; the secure lock stays quiet and wordless', () => {
+    const failed = tab('https://expired.badssl.com/', {
+      certificateError: {
+        code: -201,
+        url: 'https://expired.badssl.com/',
+        certificate: null,
+        bypassed: true
+      }
+    })
+    const el = render(<PillContent state={state(failed)} tab={failed} space={space} interactive />)
+    expect(shown(el)).toEqual(['certificate-error'])
+    const chip = el.querySelector<HTMLElement>(
+      '[data-chip="certificate-error"] > [data-pill-chip]'
+    )!
+    expect(chip.getAttribute('aria-label')).toBe('Not secure')
+    expect(chip.getAttribute('data-verdict')).toBe('danger')
+    expect(chip.classList.contains('text-[var(--v2-danger)]')).toBe(true)
+    expect(chip.querySelector('svg.lucide-triangle-alert')).not.toBeNull()
+    expect(addressLabel(el)).toBe('Address, expired.badssl.com, Not secure')
+  })
+
+  it('a navigation from http to https swaps the glyph in place: the open lock out, the lock in, on the run’s 120 ms cross-fade', () => {
+    const plain = tab('http://example.com/')
+    const el = render(<PillContent state={state(plain)} tab={plain} space={space} interactive />)
+    expect(shown(el)).toEqual(['not-secure'])
+    const secure = tab('https://example.com/')
+    act(() =>
+      root!.render(<PillContent state={state(secure)} tab={secure} space={space} interactive />)
+    )
+    expect(shown(el)).toEqual(['lock'])
+    // The ghost of the run it showed – the open lock – over the new one, for the fade (§11.4).
+    const ghost = el.querySelector<HTMLElement>('.zen-pill-run-ghost')
+    expect(ghost).not.toBeNull()
+    expect(ghost!.querySelector('svg.lucide-lock-open')).not.toBeNull()
+    expect(labels(el)).toEqual([
+      'Address, example.com, Connection is secure',
+      'Site information',
+      'Connection is secure'
+    ])
   })
 
   it('the carried pill draws the same run inert', () => {
@@ -766,5 +859,117 @@ describe('the site-information sheet lists the chips as rows', () => {
       'Requests blocked, 5',
       'Translate this page, German to English'
     ])
+  })
+
+  /*
+   * ERR-09: the sheet explains the verdict the pill's glyph gave. On an http page its title
+   * block carries the same open lock in the warn ink under "Not secure", the Connection row
+   * reads the state, and the Connection level says what it means and what not to enter – two
+   * lines at 13, Chrome's page-info advice in Zenium's words.
+   */
+  it('explains Not secure on an http page: the open lock in the title block, the Connection row, the level’s two lines', async () => {
+    const plain = tab('http://example.com/')
+    await open(state(plain))
+    const block = document.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    expect(block.textContent).toContain('Not secure')
+    const glyph = block.querySelector<SVGElement>('p svg')!
+    expect(glyph.classList.contains('lucide-lock-open')).toBe(true)
+    expect(glyph.classList.contains('text-[var(--v2-warn)]')).toBe(true)
+    const items = (): HTMLElement[] =>
+      Array.from(document.querySelectorAll<HTMLElement>('.zen-sheet .zen-sheet-item'))
+    const connection = items().find((el) =>
+      el.getAttribute('aria-label')?.startsWith('Connection')
+    )!
+    expect(connection.getAttribute('aria-label')).toBe('Connection, Not secure')
+    act(() => connection.click())
+    await vi.waitFor(() => {
+      // The level's state row is static (no action): its two lines are its text.
+      const level = items().find((el) => el.textContent?.startsWith('Connection is not secure'))
+      expect(level).not.toBeUndefined()
+      expect(level!.querySelector('.zen-sheet-item-secondary')?.textContent).toBe(
+        "Anyone on the way can read what you send to this site. Don't enter passwords or card details here."
+      )
+      expect(level!.querySelector('svg.lucide-lock-open')).not.toBeNull()
+      expect(level!.querySelector('.zen-sheet-item-glyph')?.getAttribute('data-tone')).toBe('warn')
+    })
+  })
+
+  it('draws the triangle for a failed certificate in the title block and on the Connection level, the same glyph as the pill’s', async () => {
+    const failed = tab('https://expired.badssl.com/', {
+      certificateError: {
+        code: -201,
+        url: 'https://expired.badssl.com/',
+        certificate: null,
+        bypassed: true
+      }
+    })
+    await open(state(failed))
+    const block = document.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    const glyph = block.querySelector<SVGElement>('p svg')!
+    expect(glyph.classList.contains('lucide-triangle-alert')).toBe(true)
+    expect(glyph.classList.contains('text-[var(--v2-danger)]')).toBe(true)
+    expect(block.textContent).toContain('Not secure')
+  })
+
+  /*
+   * The title block's line under the host names what is wrong with a failed certificate, never
+   * its issuer: an invalid certificate's issuer offered like a credential says nothing true. The
+   * issuer stays where the certificate is described – the Connection level's detail.
+   */
+  it('names the certificate’s fault under the host, not its issuer, which the Connection level’s detail keeps', async () => {
+    const issuer = 'COMODO RSA Domain Validation Secure Server CA'
+    const failed = tab('https://expired.badssl.com/', {
+      certificateError: {
+        code: -201,
+        url: 'https://expired.badssl.com/',
+        certificate: {
+          subjectName: '*.badssl.com',
+          issuerName: issuer,
+          validStart: 1_427_846_400_000,
+          validExpiry: 1_428_883_200_000,
+          fingerprint: 'sha256/abc'
+        },
+        bypassed: true
+      }
+    })
+    await open(state(failed))
+    const block = document.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    expect(block.querySelector('p')!.textContent).toBe('Not secure · Certificate expired')
+    expect(block.textContent).not.toContain(issuer)
+    const items = (): HTMLElement[] =>
+      Array.from(document.querySelectorAll<HTMLElement>('.zen-sheet .zen-sheet-item'))
+    const connection = items().find((el) =>
+      el.getAttribute('aria-label')?.startsWith('Connection')
+    )!
+    act(() => connection.click())
+    await vi.waitFor(() => {
+      const issued = Array.from(document.querySelectorAll<HTMLElement>('.zen-sheet *')).find(
+        (el) => el.children.length === 0 && el.textContent === issuer
+      )
+      expect(issued).not.toBeUndefined()
+    })
+  })
+
+  it('the fault follows the code: the wrong site for a name mismatch', async () => {
+    const mismatch = tab('https://wrong.host.badssl.com/', {
+      certificateError: {
+        code: -200,
+        url: 'https://wrong.host.badssl.com/',
+        certificate: null,
+        bypassed: false
+      }
+    })
+    await open(state(mismatch))
+    expect(document.querySelector('.zen-sheet-title-block p')!.textContent).toBe(
+      'Not secure · Certificate not valid for this site'
+    )
+  })
+
+  it('the fault reads off the failed load’s code alone when the core reports no more: not trusted for an unknown authority', async () => {
+    const untrusted = tab('https://self-signed.badssl.com/', { errorCode: -202 })
+    await open(state(untrusted))
+    expect(document.querySelector('.zen-sheet-title-block p')!.textContent).toBe(
+      'Not secure · Certificate not trusted'
+    )
   })
 })

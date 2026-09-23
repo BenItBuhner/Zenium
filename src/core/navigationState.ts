@@ -95,9 +95,13 @@ export function withoutHostState(snapshot: NavigationSnapshot | null): Navigatio
   return copy
 }
 
-/** The closed entries as `state.json` carries them: every tab's stack without its blob. */
-export function withoutClosedHostState(entries: ClosedEntry[]): ClosedEntry[] {
-  let out: ClosedEntry[] | null = null
+/**
+ * The closed entries as `state.json` carries them: every tab's stack without its blob. The
+ * Inactive tabs archive's entries (`ArchivedTabEntry`, tab entries with an `archivedAt`) go
+ * through the same, keeping their type.
+ */
+export function withoutClosedHostState<E extends ClosedEntry>(entries: E[]): E[] {
+  let out: E[] | null = null
   for (let i = 0; i < entries.length; i++) {
     const stripped = withoutClosedEntryHostState(entries[i])
     if (stripped === entries[i]) continue
@@ -107,7 +111,7 @@ export function withoutClosedHostState(entries: ClosedEntry[]): ClosedEntry[] {
   return out ?? entries
 }
 
-function withoutClosedEntryHostState(entry: ClosedEntry): ClosedEntry {
+function withoutClosedEntryHostState<E extends ClosedEntry>(entry: E): E {
   if (entry.kind === 'tab') {
     const navigation = withoutHostState(entry.navigation)
     return navigation === entry.navigation ? entry : { ...entry, navigation }
