@@ -492,7 +492,7 @@ describe('the worker lifecycle events', () => {
     const self = workerSelf(page)
     expect('postMessage' in self).toBe(false)
     expect((self as Any).postMessage).toBeUndefined()
-    expect(typeof (self as Any).serviceWorker.postMessage).toBe('function')
+    expect(typeof ((self as Any).serviceWorker as Any).postMessage).toBe('function')
     // The tail of JSONVue's js/workers/linter.js as it spells it: inline where no bare
     // `postMessage` exists (defining `globalThis.linter` for background.js:133), a worker body
     // where one does. Run as the script would, on the worker page's global.
@@ -502,7 +502,7 @@ describe('the worker lifecycle events', () => {
       'if (typeof postMessage == "undefined") { globalThis.linter = { lint: function () { return "inline" } } } else { addEventListener("message", function () {}) }',
       context
     )
-    expect(page.linter.lint()).toBe('inline')
+    expect((page.linter as { lint: () => string }).lint()).toBe('inline')
   })
 
   it("the global is a WorkerGlobalScope and a ServiceWorkerGlobalScope, through self too, and neither constructs (Google Dictionary's importScripts guard)", () => {
