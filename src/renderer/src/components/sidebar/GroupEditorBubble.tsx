@@ -67,8 +67,9 @@ export function GroupEditorLayer(): JSX.Element | null {
  * folder with its tab count (Chrome's Close group – the tabs close and the folder stays SAVED
  * with their pages, TAB-16, so the plain ink) and Delete folder in the danger ink, which asks
  * first when the folder holds anything (`requestFolderDelete`); a saved folder – its tabs
- * closed, its pages kept – has Open folder with its page count and Delete folder alone (New
- * tab in folder would forget its pages, so it waits for Open). It renders through
+ * closed, its pages kept – has Open folder with the count of the tabs it brings back (the
+ * menu's noun, one for one number), New tab in folder (the core opens the folder first) and
+ * Delete folder. It renders through
  * the chrome layer (`ChromePortal`) over a picture of the page (`holdFloatingChrome`) and the
  * layer's light dismiss puts it away: a press anywhere else closes it on `pointerdown` and
  * reaches nothing beneath – the header's own press closes it and does not fold the folder – and
@@ -203,15 +204,18 @@ function GroupEditorBubble({
 
   if (!ready) return null
   // A SAVED folder (TAB-16's desktop half): its tabs closed, its pages kept. Its actions are
-  // Open folder – the pages come back as its tabs – and Delete folder; an open folder's are
-  // New tab, Unpack, Close (the tabs close, the folder stays saved with their pages) and
-  // Delete. New tab in folder is the open folder's alone: on a saved one the first tab it
-  // holds again forgets its pages (the model's `folderOpened` rule), a loss no plain-ink row
-  // may carry (§5, §9.1) – Open folder brings them back first.
+  // Open folder – the pages come back as its tabs – New tab in folder and Delete folder; an
+  // open folder's are New tab, Unpack, Close (the tabs close, the folder stays saved with their
+  // pages) and Delete. New tab in a saved folder opens it first – its pages back as its tabs –
+  // and adds the tab behind them (the model's open-then-add, `newTabInFolder`), so the
+  // plain-ink row loses nothing (§5, §9.1). One noun for one number: the count beside Open
+  // folder and Close folder reads "N tabs" as the menu's Open Folder (N Tabs) and Close Folder
+  // (N Tabs) do – the tabs the folder brings back, or closes – in the bubble's lower-case
+  // register.
   const saved = count === 0 && Boolean(folder.savedTabs?.length)
-  const pages = folder.savedTabs?.length ?? 0
-  const tabsLabel = `${count} ${count === 1 ? 'tab' : 'tabs'}`
-  const pagesLabel = `${pages} ${pages === 1 ? 'page' : 'pages'}`
+  const countLabel = (n: number): string => `${n} ${n === 1 ? 'tab' : 'tabs'}`
+  const tabsLabel = countLabel(count)
+  const savedLabel = countLabel(folder.savedTabs?.length ?? 0)
   const deleteFolder = (): void => {
     // The prompt's Cancel hands the keyboard back to the header when the bubble had it (§9.22);
     // read before the bubble goes, since the prompt takes its place (§9.20).
@@ -282,20 +286,18 @@ function GroupEditorBubble({
               >
                 <FolderOpen className={V2_GLYPH} aria-hidden />
                 <span className="zen-v2-label truncate">Open folder</span>
-                <span className="zen-v2-description zen-group-editor-count">{pagesLabel}</span>
+                <span className="zen-v2-description zen-group-editor-count">{savedLabel}</span>
               </button>
             )}
-            {!saved && (
-              <button
-                type="button"
-                className="zen-v2-row zen-group-editor-action"
-                data-action="new-tab"
-                onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
-              >
-                <Plus className={V2_GLYPH} aria-hidden />
-                <span className="zen-v2-label truncate">New tab in folder</span>
-              </button>
-            )}
+            <button
+              type="button"
+              className="zen-v2-row zen-group-editor-action"
+              data-action="new-tab"
+              onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
+            >
+              <Plus className={V2_GLYPH} aria-hidden />
+              <span className="zen-v2-label truncate">New tab in folder</span>
+            </button>
             {count > 0 && (
               <>
                 <button

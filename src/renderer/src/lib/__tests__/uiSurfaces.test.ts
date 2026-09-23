@@ -14,11 +14,13 @@ import {
   closeClearBrowsingData,
   closeImportDialog,
   closeMediaSheet,
+  closeNameWindow,
   onboardingUp,
   openClearBrowsingData,
   openImportDialog,
   openInstallSheet,
   openMediaSheet,
+  openNameWindow,
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   overlayCoversContent,
@@ -37,6 +39,7 @@ afterEach(() => {
     siteInfoOpen: false,
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
+    nameWindowOpen: false,
     barMenuOpen: false,
     starDialog: null,
     snapshot: null,
@@ -143,6 +146,25 @@ describe('chrome surfaces over the content', () => {
     expect(run).toHaveBeenCalledWith('focus.content', undefined)
     vi.mocked(run).mockClear()
     closeClearBrowsingData()
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('the Name window prompt is a dialog over the page in the same way: opened once with the keyboard, covering and dimming, the keyboard back on close (shortcuts-menus-121)', async () => {
+    expect(overlayCoversContent(idle())).toBe(false)
+    await openNameWindow(null)
+    expect(idle().nameWindowOpen).toBe(true)
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(chromeNeedsKeyboard()).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(false)
+    vi.mocked(run).mockClear()
+    await openNameWindow(null)
+    expect(run).not.toHaveBeenCalled()
+    closeNameWindow()
+    expect(idle().nameWindowOpen).toBe(false)
+    expect(run).toHaveBeenCalledWith('focus.content', undefined)
+    vi.mocked(run).mockClear()
+    closeNameWindow()
     expect(run).not.toHaveBeenCalled()
   })
 

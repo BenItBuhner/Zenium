@@ -608,6 +608,18 @@ const DEFS: Def[] = [
     chrome: { key: 'm', mods: META, platforms: MAC }
   },
   {
+    // Chrome's More tools › Name window… has no chord in either browser: the row is in the
+    // table so Settings can bind one and the palette lists it. The desktop layout's alone, as
+    // the palette's row is: a phone or tablet window shows no name (no title bar, no window
+    // switcher), so their listings leave the row out rather than offer a chord that does nothing.
+    id: 'key_nameWindow',
+    action: 'window.name',
+    group: 'windowAndTabManagement',
+    label: 'Name Window…',
+    layouts: ['desktop'],
+    ...both(UNBOUND)
+  },
+  {
     // Chrome quits on Ctrl+Shift+Q (Linux) and Cmd+Q; Zen keeps Firefox's Ctrl+Q.
     id: 'key_quitApplication',
     action: 'app.quit',
@@ -1082,6 +1094,14 @@ const DEFS: Def[] = [
     group: 'historyAndBookmarks',
     label: 'Show History',
     ...both({ key: 'h', mods: ACCEL, perPlatform: { darwin: { key: 'y', mods: META } } })
+  },
+  {
+    // Chrome's and Firefox's one chord for it (Firefox's `key_sanitize`, "Clear recent history").
+    id: 'key_clearBrowsingData',
+    action: 'privacy.clearBrowsingData',
+    group: 'historyAndBookmarks',
+    label: 'Delete Browsing Data…',
+    ...both({ key: 'Delete', mods: ACCEL_SHIFT })
   },
   {
     id: 'key_openDownloads',
