@@ -216,8 +216,13 @@ export interface HoverCardState {
   tabId: string | null
   /** The row's box, viewport coordinates: the card is start-aligned with it. */
   anchor: Rect | null
-  /** The sidebar's box: the card sits flush against its edge (gap 0). */
+  /**
+   * The box the rows live in: the sidebar's – the card sits flush against its inner edge (gap
+   * 0) – or, with the tabs along the caption band (§9.37), the band's: the card hangs under it.
+   */
   sidebar: Rect | null
+  /** The rows' axis: `x` for the strip along the band (the card under it), the sidebar's otherwise. */
+  axis?: 'x'
   /** What put it up: the pointer resting on the row, or keyboard focus landing on it. */
   by: 'pointer' | 'focus' | null
 }

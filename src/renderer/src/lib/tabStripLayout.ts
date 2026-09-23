@@ -18,6 +18,8 @@ export const STRIP_TAB_MIN = 120
 export const STRIP_GAP = 4
 /** Under this width an inactive tab gives its trailing slot to the title (unless a glyph fills it). */
 export const STRIP_SLOT_THRESHOLD = 160
+/** The strip's leading inset on Linux and Windows: the window's 8 gutter (`--zen-padding`), the toolbar row's inset. */
+export const STRIP_LEADING_INSET = 8
 /** The trailing slot: the sidebar row's 24 box. */
 export const STRIP_SLOT = 24
 /** After a close the widths hold while the pointer is in the band, and re-lay out this long after it leaves. */

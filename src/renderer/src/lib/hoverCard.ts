@@ -62,7 +62,14 @@ export interface HoverCardStore {
   set(next: HoverCardState): void
 }
 
-type Measure = () => { anchor: Rect; sidebar: Rect } | null
+/** A row's box and its list's frame – the sidebar, or the strip's band (`axis: 'x'`). */
+export interface RowMeasure {
+  anchor: Rect
+  sidebar: Rect
+  axis?: 'x'
+}
+
+type Measure = () => RowMeasure | null
 
 export interface HoverCardOptions {
   /** Runs before a card shows (the app captures the page there); the card waits for it. */
@@ -196,7 +203,7 @@ export class HoverCardController {
           this.clear()
           return
         }
-        this.store.set({ tabId, anchor: box.anchor, sidebar: box.sidebar, by })
+        this.store.set({ tabId, anchor: box.anchor, sidebar: box.sidebar, axis: box.axis, by })
       },
       () => {
         if (seq === this.seq) this.pending = null
@@ -260,10 +267,22 @@ export const hoverCard = new HoverCardController(
   }
 )
 
-/** A row's box and its sidebar's, for the controller; null once the row has left the DOM. */
-export function measureRow(row: HTMLElement): { anchor: Rect; sidebar: Rect } | null {
+/**
+ * A row's box and its sidebar's – or, for a row of the strip along the caption band (§9.37),
+ * the band's, with the axis turned – for the controller; null once the row has left the DOM.
+ */
+export function measureRow(row: HTMLElement): RowMeasure | null {
+  if (!row.isConnected) return null
+  const band = row.closest<HTMLElement>('[data-tab-strip]')
+  if (band) {
+    return {
+      anchor: toRect(row.getBoundingClientRect()),
+      sidebar: toRect(band.getBoundingClientRect()),
+      axis: 'x'
+    }
+  }
   const aside = row.closest<HTMLElement>('aside')
-  if (!aside || !row.isConnected) return null
+  if (!aside) return null
   return {
     anchor: toRect(row.getBoundingClientRect()),
     sidebar: toRect(aside.getBoundingClientRect())
@@ -279,14 +298,29 @@ export function measureRow(row: HTMLElement): { anchor: Rect; sidebar: Rect } | 
  * there is more room above than below (or the room below is under `POPOVER_HEIGHT_FLOOR`);
  * otherwise it stays and shrinks to the room left. Either way it overlaps its row's box and is
  * never taller than the window minus 16. A card wider than the window minus 16 shrinks to that.
+ *
+ * With the rows along the caption band (`axis: 'x'`, §9.37) the same rule turned: the card
+ * hangs flush under the band (gap 0), start-aligned with its tab – left edges together – and
+ * slid back inside the window's margin when the tab is near the trailing edge; it takes the
+ * room down to the bottom margin.
  */
 export function placeHoverCard(
   anchor: Rect,
   sidebar: Rect,
   viewport: Size,
-  size: Size
+  size: Size,
+  axis?: 'x'
 ): PopoverBox {
   const width = Math.max(0, Math.min(size.width, viewport.width - 2 * POPOVER_MARGIN))
+  if (axis === 'x') {
+    const top = Math.max(POPOVER_MARGIN, sidebar.y + sidebar.height)
+    const left = Math.min(
+      Math.max(POPOVER_MARGIN, anchor.x),
+      Math.max(POPOVER_MARGIN, viewport.width - width - POPOVER_MARGIN)
+    )
+    const room = Math.max(0, viewport.height - POPOVER_MARGIN - top)
+    return { side: 'below', left, top, width, maxHeight: Math.min(size.height, room) }
+  }
   const onRight = sidebar.x + sidebar.width / 2 > viewport.width / 2
   const flush = onRight ? sidebar.x - width : sidebar.x + sidebar.width
   const left = Math.min(

@@ -51,8 +51,8 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
     el.style.maxHeight = 'none'
     const size = { width: el.offsetWidth, height: el.offsetHeight }
     el.style.maxHeight = capped
-    setBox(placeHoverCard(card.anchor, card.sidebar, viewportSize(), size))
-  }, [shown, card.anchor, card.sidebar, title, host, stateText])
+    setBox(placeHoverCard(card.anchor, card.sidebar, viewportSize(), size, card.axis))
+  }, [shown, card.anchor, card.sidebar, card.axis, title, host, stateText])
 
   // The page behind the card is a capture of the active tab; another tab coming to the front
   // (Enter on a focused row, a shortcut) would leave the frame blank under it. A drag (its own

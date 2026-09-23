@@ -26,6 +26,7 @@ import {
   STRIP_DRAG_SPRING,
   STRIP_FADE,
   STRIP_HOLD_MS,
+  STRIP_LEADING_INSET,
   STRIP_MAC_INSET,
   STRIP_TAB_MAX,
   hasStateGlyph,
@@ -77,11 +78,14 @@ interface Layout {
  * search at the trailing end; the + is a 28 toolbar button 4 after the last tab; a drag spring
  * of at least 24 keeps it off the window controls, which sit inline at the trailing end
  * (Linux's three §9.3 boxes inset 8; Windows' caption buttons drawn over the band, the strip
- * keeping their footprint clear; the macOS lights leading, the strip inset 84). After a close
- * the widths hold while the pointer stays in the band and re-lay out 120 ms after it leaves;
- * a width change runs on `SPRING_SNAPPY` (§11.4's FLIP set), reorders on the rows' slide. The
- * strip is the tab strip pane of the F6 rotation (`data-pane="tabs"`); the rail beside the
- * frame is the same pane's other root.
+ * keeping their footprint clear; the macOS lights leading, the strip inset 84 – and 8 at its
+ * start elsewhere, the window's gutter). After a close the widths hold while the pointer stays
+ * in the band and re-lay out 120 ms after it leaves; a width change runs on `SPRING_SNAPPY`
+ * (§11.4's FLIP set), reorders on the rows' slide. The rows' other interactions are the
+ * sidebar's with their axis turned: the hover card hangs under the band (`lib/hoverCard.ts`),
+ * a drag reorders along the strip with the caret upright in the gap, autoscrolls the region at
+ * its edges and tears off 16 past the band (`lib/drag.ts`). The strip is the tab strip pane of
+ * the F6 rotation (`data-pane="tabs"`); the rail beside the frame is the same pane's other root.
  */
 export function TabStrip({ state, trailing }: Props): JSX.Element {
   const space = activeSpace(state)
@@ -332,7 +336,7 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
     <StripAxisContext.Provider value="x">
       <div
         className="zen-tab-strip zen-drag relative flex shrink-0 items-stretch"
-        style={{ height: STRIP_BAND, paddingLeft: isMac ? STRIP_MAC_INSET : 0 }}
+        style={{ height: STRIP_BAND, paddingLeft: isMac ? STRIP_MAC_INSET : STRIP_LEADING_INSET }}
         data-tab-strip
         data-surface="window"
         data-pane="tabs"
