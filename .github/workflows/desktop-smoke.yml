@@ -8,7 +8,12 @@ name: Desktop smoke (Windows, macOS, Linux installers)
 # DPI and OS dark mode screenshots. Windows additionally installs the NSIS build silently, checks
 # the default-browser registration it wrote (RegisteredApplications, the StartMenuInternet client
 # and Capabilities, the http/https associations, the ProgID), boots the installed executable,
-# uninstalls it and checks that the registration went with it. The Linux job builds the two
+# uninstalls it and checks that the registration went with it. Windows also runs the smoke's
+# notifications scenario (a page's toast on the notification platform, the AppUserModelId
+# registration Settings lists the app under, the click that reveals the tab) and macOS its
+# default-browser scenario (Make default's setAsDefaultProtocolClient('http') call – the OS's
+# dialog that follows is the user's, so LaunchServices' handlers are read for the record only;
+# .github/smoke/README.md says which half of each is OS-confirmed). The Linux job builds the two
 # installers the Release workflow ships, boots the AppImage, installs the .deb, boots what it
 # installed, checks the desktop entry and icon it put down and removes it again. Every JS error,
 # crash and blocking dialog fails the run unless .github/smoke/known-failures.json names it.
@@ -88,7 +93,9 @@ jobs:
           $exe = Get-ChildItem dist -Directory -Filter '*unpacked*' | ForEach-Object { Join-Path $_.FullName 'zenium.exe' } | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $exe) { throw "no unpacked zenium.exe under dist ($((Get-ChildItem dist | Select-Object -ExpandProperty Name) -join ', '))" }
           "unpacked exe: $exe"
-          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios boot,restore,scale,dark
+          # notifications (os-27/28/30): the page's toast on the notification platform, the AUMID
+          # class key the build registers for itself, the click that reveals the tab.
+          node "$env:SMOKE\smoke.mjs" --exe "$exe" --label unpacked --out "$env:SMOKE_OUT" --scenarios boot,restore,scale,dark,notifications
       - name: Windows and processes left behind by the unpacked build
         if: always()
         run: |
@@ -117,8 +124,10 @@ jobs:
           if ($installExit -ne 0) { throw "win-install.ps1 exited with code $installExit" }
       - name: Boot the installed build and walk through it
         if: always() && steps.nsis.outputs.exe != ''
-        timeout-minutes: 12
-        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios boot,restore
+        timeout-minutes: 14
+        # notifications on the installed build also reads the shortcuts' System.AppUserModel.ID
+        # (the installer's WinShell::SetLnkAUMI): the id an installed build's toasts are grouped by.
+        run: node "$env:SMOKE\smoke.mjs" --exe "${{ steps.nsis.outputs.exe }}" --label installed --out "$env:SMOKE_OUT" --scenarios boot,restore,notifications
       - name: Windows and processes left behind by the installed build
         if: always()
         run: |
@@ -188,8 +197,11 @@ jobs:
       - name: Bundle facts (code signature, Gatekeeper, quarantine)
         run: bash "$SMOKE/mac-facts.sh" "${{ steps.app.outputs.app }}" "$SMOKE_OUT" bundle
       - name: Boot the unpacked build and walk through it
-        timeout-minutes: 20
-        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark
+        timeout-minutes: 22
+        # default-browser (os-07) runs last: Make default's setAsDefaultProtocolClient('http') may
+        # leave the OS's "change your default web browser?" dialog on screen, which no runner
+        # answers (mac-facts.sh after-run reads LaunchServices' handlers and the unified log).
+        run: node "$SMOKE/smoke.mjs" --exe "${{ steps.app.outputs.app }}/Contents/MacOS/Zenium" --label unpacked --out "$SMOKE_OUT" --scenarios boot,restore,scale,dark,default-browser
       - name: Bundle facts and crash reports after the run
         if: always()
         run: bash "$SMOKE/mac-facts.sh" "${{ steps.app.outputs.app }}" "$SMOKE_OUT" after-run
