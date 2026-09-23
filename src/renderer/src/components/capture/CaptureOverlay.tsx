@@ -1,6 +1,6 @@
 import type { JSX, PointerEvent as ReactPointerEvent, Ref } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Monitor, ScrollText, SquareDashedMousePointer, TriangleAlert, X } from 'lucide-react'
+import { Monitor, ScrollText, TriangleAlert, X } from 'lucide-react'
 import { regionFromChrome, type PageCaptureResult } from '@shared/capture'
 import { TOAST_SHOW_MS } from '@shared/toastCard'
 import type { Rect, UIState } from '@shared/types'
@@ -35,6 +35,8 @@ import { V2Button, V2IconButton, V2Row, V2TitleBlock } from '../extensions/v2'
 const HINT_ID = 'zen-capture-hint'
 const TITLE_ID = 'zen-capture-title'
 const DESCRIPTION_ID = 'zen-capture-description'
+/** The hint, and the two actions' title, where `page.viewport` gave the host nothing. */
+const NO_GEOMETRY = 'The page’s position could not be read'
 
 /** The toolbar's distance from the page's top edge, and the result card's picture from its frame. */
 const TOOLBAR_INSET = 12
@@ -67,10 +69,14 @@ export function CaptureLayer(): JSX.Element | null {
  * than by the host so the marquee can be a cut-out of it – the selected part of the page shows
  * undimmed inside a 2 px accent outline with its size, in the picture's device pixels, on a 13
  * px label at the marquee's bottom-right corner (above it when there is no room below). A
- * small §9.20 panel at the top centre of the page holds the three ways to capture (§9.3
- * buttons: Free select, on while a drag would draw the marquee – off, at .4, where the host
- * cannot say where the page is scrolled to – then Visible area and Full page, which capture at
- * once) and a Cancel. The cursor is a crosshair over the page. A release maps the marquee's
+ * §9.20 floating toolbar at the top centre of the page – 44 tall, on a whole pixel – tells the
+ * state the page is in as a 13/69 % hint in its leading run ("Drag to select an area": a state
+ * the surface cannot leave is never a pressed button), then, past a hairline, holds the two
+ * ways that capture at once as §9.3 buttons (Visible area, Full page) and a Cancel at its end.
+ * Where the host cannot say where the page is scrolled to, the hint says so instead and the
+ * two actions are `aria-disabled` (§9.30), their title the same reason: a paint without the
+ * page's geometry is a paint the engine cannot place. The cursor is a crosshair over the page
+ * while a drag would draw. A release maps the marquee's
  * chrome box to the page's document (`regionFromChrome`, §3 of the engine's contract) and asks
  * `page.capture`; the answer is the result card (`ResultCard`), a refusal the failed card
  * (`FailedCard`): the engine's budget refusal in its own sentence, "Nothing to capture" for a
@@ -340,7 +346,7 @@ function CaptureOverlay({
       <p id={HINT_ID} className="sr-only">
         {viewport
           ? 'Drag over the page to select an area, or take the visible area or the full page from the toolbar. Escape cancels.'
-          : 'Take the visible area or the full page from the toolbar. Escape cancels.'}
+          : `${NO_GEOMETRY}, so nothing can be captured. Escape cancels.`}
       </p>
       {marquee && (
         <>
@@ -358,23 +364,19 @@ function CaptureOverlay({
           aria-label="Capture"
           data-capture-toolbar
         >
+          {/* The leading run: the state the page is in, told, not a button (§9.20). */}
+          <span className="zen-capture-hint" data-capture-hint>
+            {viewport ? 'Drag to select an area' : NO_GEOMETRY}
+          </span>
+          <span className="zen-capture-toolbar-sep" aria-hidden />
           <button
             type="button"
             className="zen-v2-button zen-capture-mode"
-            aria-pressed={canSelect}
             // Off on `aria-disabled` (§9.30), not `disabled`: the button keeps the pointer and
-            // the keyboard, so its title – why a drag draws nothing – can be reached.
+            // the keyboard, so its title – why nothing can be captured – can be reached.
             aria-disabled={!viewport || undefined}
-            title={viewport ? undefined : 'The page’s position could not be read'}
-            data-capture-free
-          >
-            <SquareDashedMousePointer aria-hidden />
-            Free select
-          </button>
-          <button
-            type="button"
-            className="zen-v2-button zen-capture-mode"
-            onClick={() => dispatch({ type: 'pick', mode: 'viewport' })}
+            title={viewport ? undefined : NO_GEOMETRY}
+            onClick={viewport ? () => dispatch({ type: 'pick', mode: 'viewport' }) : undefined}
             data-capture-visible
           >
             <Monitor aria-hidden />
@@ -383,13 +385,14 @@ function CaptureOverlay({
           <button
             type="button"
             className="zen-v2-button zen-capture-mode"
-            onClick={() => dispatch({ type: 'pick', mode: 'fullPage' })}
+            aria-disabled={!viewport || undefined}
+            title={viewport ? undefined : NO_GEOMETRY}
+            onClick={viewport ? () => dispatch({ type: 'pick', mode: 'fullPage' }) : undefined}
             data-capture-full
           >
             <ScrollText aria-hidden />
             Full page
           </button>
-          <span className="zen-capture-toolbar-sep" aria-hidden />
           <V2IconButton
             icon={X}
             label="Cancel capture"

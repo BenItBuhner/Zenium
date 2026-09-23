@@ -5953,9 +5953,12 @@
    * outside its box, on the dimmed part, so the hole is exactly what the engine gets; its size
    * label is a 13 px pill (`--v2-panel`, the hairline, the control radius) at the marquee's
    * bottom-right corner, placed by `labelPlacement`. The cursor is a crosshair over the page
-   * while a drag would draw. The toolbar is a §9.20 panel at 4 padding holding §9.3 32 px
-   * buttons with 16 glyphs (`.zen-capture-mode`, unlayered below), a hairline, and a §9.3 icon
-   * button; it hangs from the page's top edge at its centre, on whole pixels. A stage is
+   * while a drag would draw. The toolbar is §9.20's floating toolbar: a panel of the page family
+   * at 6 padding – §9.16's control + 12, 44 tall – whose leading run is the 13/69 % hint (the
+   * state the page is in, `.zen-capture-hint`), then a 1 × 20 hairline at 8 / 8 (the 8 gap on
+   * both sides), the two §9.3 32 px action buttons with 16 glyphs (`.zen-capture-mode`,
+   * unlayered below) and the 28 icon close 8 after them; it hangs from the page's top edge at
+   * its centre, on whole pixels. A stage is
    * the page's own box laid over the overlay for what centres on the page (the cards) or sits
    * at its bottom edge (the toast): it takes no pointer of its own.
    */
@@ -6003,14 +6006,26 @@
     position: absolute;
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px;
+    gap: 8px;
+    padding: 6px;
     cursor: default;
   }
+  /*
+   * The hint (§9.20: a state the surface is in and cannot leave is told, never a pressed
+   * button): the small type at the deemphasised 69 %, its text 16 in from the panel's edge (the
+   * panel's 6 and its own 10), on one line; the hairline follows at the toolbar's 8.
+   */
+  .zen-capture-hint {
+    padding-left: 10px;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    white-space: nowrap;
+  }
   .zen-capture-toolbar-sep {
+    flex: none;
     width: 1px;
     height: 20px;
-    margin: 0 4px;
     background: var(--v2-border);
   }
   .zen-capture-stage {
@@ -6091,20 +6106,14 @@
 }
 
 /*
- * What the capture toolbar's buttons add to the shared v2 button (§9.34: a modifier beside the
- * primitive, unlayered like the scan sheet's torch chip above it): the 8 px between glyph and
- * label, and Free select's on state (`aria-pressed`) as §9.6 has a toggle that is on –
- * `--v2-selected` with the glyph and the label in the accent – while a drag would draw the
- * marquee; off and `aria-disabled` where the host cannot say where the page is scrolled to:
- * §9.30's .4 on the whole control with no fill on hover or press, the pointer kept so the
- * title that says why is reachable (the primitive's `:disabled` would take it).
+ * What the capture toolbar's action buttons add to the shared v2 button (§9.34: a modifier
+ * beside the primitive, unlayered like the scan sheet's torch chip above it): the 8 px between
+ * glyph and label, and the off state – `aria-disabled` where the host cannot say where the page
+ * is scrolled to: §9.30's .4 on the whole control with no fill on hover or press, the pointer
+ * kept so the title that says why is reachable (the primitive's `:disabled` would take it).
  */
 .zen-v2-button.zen-capture-mode {
   gap: 8px;
-}
-.zen-v2-button.zen-capture-mode[aria-pressed='true'] {
-  background: var(--v2-selected);
-  color: var(--v2-accent);
 }
 .zen-v2-button.zen-capture-mode[aria-disabled='true'] {
   opacity: 0.4;

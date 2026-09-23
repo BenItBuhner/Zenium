@@ -178,7 +178,7 @@ afterEach(async () => {
 })
 
 describe('the dimmed page (capture-02)', () => {
-  it('is a modal dialog over the frame with the §9.5 scrim, the toolbar’s three ways and Cancel, and the keyboard on its container', () => {
+  it('is a modal dialog over the frame with the §9.5 scrim, the toolbar’s hint, its two ways and Cancel, and the keyboard on its container', () => {
     const el = open()
     const dialog = overlay(el)!
     expect(dialog.getAttribute('role')).toBe('dialog')
@@ -189,11 +189,29 @@ describe('the dimmed page (capture-02)', () => {
     expect(el.querySelector('.zen-capture-scrim')).not.toBeNull()
     const toolbar = el.querySelector<HTMLElement>('[data-capture-toolbar]')!
     expect(toolbar.getAttribute('role')).toBe('toolbar')
-    const free = toolbar.querySelector<HTMLButtonElement>('[data-capture-free]')!
-    expect(free.getAttribute('aria-pressed')).toBe('true')
-    // On, with the geometry in hand: neither aria-disabled nor a title.
-    expect(free.hasAttribute('aria-disabled')).toBe(false)
-    expect(free.hasAttribute('title')).toBe(false)
+    // §9.20's floating toolbar: the state told as the leading run's hint (no pressed Free
+    // select), a hairline, the two actions with the geometry in hand (neither aria-disabled
+    // nor a title), the close at the end.
+    expect(toolbar.querySelector('[data-capture-hint]')?.textContent).toBe('Drag to select an area')
+    expect(toolbar.querySelector('[data-capture-free]')).toBeNull()
+    expect(toolbar.querySelectorAll('[aria-pressed]')).toHaveLength(0)
+    const run = [...toolbar.children].map(
+      (c) =>
+        [...c.attributes].map((a) => a.name).find((n) => n.startsWith('data-capture-')) ??
+        c.className
+    )
+    expect(run).toEqual([
+      'data-capture-hint',
+      'zen-capture-toolbar-sep',
+      'data-capture-visible',
+      'data-capture-full',
+      'data-capture-cancel'
+    ])
+    for (const key of ['visible', 'full']) {
+      const button = toolbar.querySelector<HTMLButtonElement>(`[data-capture-${key}]`)!
+      expect(button.hasAttribute('aria-disabled')).toBe(false)
+      expect(button.hasAttribute('title')).toBe(false)
+    }
     expect(toolbar.querySelector('[data-capture-visible]')?.textContent).toBe('Visible area')
     expect(toolbar.querySelector('[data-capture-full]')?.textContent).toBe('Full page')
     expect(toolbar.querySelector('[data-capture-cancel]')).not.toBeNull()
@@ -219,21 +237,33 @@ describe('the dimmed page (capture-02)', () => {
     expect(toolbar.style.translate).toBe('')
   })
 
-  it('a page whose geometry the host could not give has Free select off (aria-disabled, its title reachable) and only the visible area and the full page to offer', () => {
+  it('a page whose geometry the host could not give says so in the hint and has both actions off (aria-disabled, their title reachable); a press on one asks nothing', () => {
     const el = open(null)
-    const free = el.querySelector<HTMLButtonElement>('[data-capture-free]')!
-    // §9.30: off on aria-disabled, not disabled – the pointer and the keyboard still reach it,
-    // so the title that says why a drag draws nothing can be read.
-    expect(free.disabled).toBe(false)
-    expect(free.getAttribute('aria-disabled')).toBe('true')
-    expect(free.title).toBe('The page’s position could not be read')
-    expect(free.getAttribute('aria-pressed')).toBe('false')
+    const reason = 'The page’s position could not be read'
+    expect(el.querySelector('[data-capture-hint]')?.textContent).toBe(reason)
+    expect(document.getElementById('zen-capture-hint')?.textContent).toBe(
+      `${reason}, so nothing can be captured. Escape cancels.`
+    )
+    for (const key of ['visible', 'full']) {
+      const button = el.querySelector<HTMLButtonElement>(`[data-capture-${key}]`)!
+      // §9.30: off on aria-disabled, not disabled – the pointer and the keyboard still reach
+      // it, so the title that says why nothing can be captured can be read.
+      expect(button.disabled).toBe(false)
+      expect(button.getAttribute('aria-disabled')).toBe('true')
+      expect(button.title).toBe(reason)
+      click(button)
+    }
+    expect(invoke).not.toHaveBeenCalled()
+    expect(overlay(el)!.dataset.capture).toBe('selecting')
     expect(overlay(el)!.dataset.selecting).toBeUndefined()
     // A drag draws nothing.
     const dialog = overlay(el)!
     pointer(dialog, 'pointerdown', 100, 200)
     pointer(dialog, 'pointermove', 500, 500)
     expect(el.querySelector('[data-capture-marquee]')).toBeNull()
+    // Cancel is the way out that stays.
+    click(el.querySelector('[data-capture-cancel]'))
+    expect(overlay(el)).toBeNull()
   })
 
   it('a drag draws the marquee, cut out of the scrim, with the picture’s size at its corner', () => {
