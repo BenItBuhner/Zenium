@@ -15,10 +15,6 @@ name: Android Inactive tabs demo
 # this file only picks the driver and the demo it runs.
 on:
   workflow_dispatch:
-  # TEMPORARY (W5-5's verification run on the #384 branch; off before the PR is marked ready).
-  push:
-    branches:
-      - cursor/android-inactive-tabs-8e20
 
 permissions:
   contents: read
