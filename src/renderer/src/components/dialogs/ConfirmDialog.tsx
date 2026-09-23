@@ -245,12 +245,12 @@ export type PickerDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructi
  * The CONTAINER holds the focus as it opens (§9.22): a picker is a choice, not a form – no row
  * is preselected by the keyboard and no verb is – so the first Tab enters the list at the row
  * the consumer made tabbable, Shift+Tab lands on the verb, and between them the keys wrap at
- * the ends; a step within the list is the consumer's roving focus. Enter is the prompt's
- * throughout (§9.22): from the container or from a row – a row is not an `OWN_ENTER` control –
- * it is the verb once a pick has enabled it, as Chrome's chooser connects the highlighted device
- * on Return, and inert while `disabled` (consumed, answering nothing); so a row picks on click,
- * Space or the arrows, never on Enter. Escape and the scrim are Cancel, one hop; the return is
- * the primitive's.
+ * the ends; a step within the list is the consumer's roving focus. Enter from the container is
+ * the verb once a pick has enabled it and inert while `disabled` (consumed, answering nothing);
+ * a row is the consumer's control (a `button` with `role="radio"` or `"option"` – an
+ * `OWN_ENTER` control the hook steps aside for) and answers its own Enter: on an unpicked row
+ * it picks, on the picked row it is the verb, as Chrome's chooser connects the highlighted
+ * device on Return. Escape and the scrim are Cancel, one hop; the return is the primitive's.
  */
 export function PickerDialog(props: PickerDialogProps): JSX.Element {
   return (

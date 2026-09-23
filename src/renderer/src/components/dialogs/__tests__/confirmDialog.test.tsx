@@ -718,7 +718,8 @@ describe('the picker (PickerDialog, a list body on the primitive)', () => {
     expect(verb.hasAttribute('aria-busy')).toBe(false)
     expect(press(d, 'Enter').defaultPrevented).toBe(true)
     expect(onConfirm).not.toHaveBeenCalled()
-    // From a row too: a row is no own-Enter control, so its Enter is the prompt's – inert here.
+    // From a bare `li` row too: a row that is not a button is no own-Enter control, so its
+    // Enter is the prompt's – inert here. (A consumer's `button` row answers its own: below.)
     expect(press(rows()[0], 'Enter').defaultPrevented).toBe(true)
     expect(onConfirm).not.toHaveBeenCalled()
     click(verb)
@@ -758,6 +759,96 @@ describe('the picker (PickerDialog, a list body on the primitive)', () => {
     click(verb)
     expect(press(d, 'Enter').defaultPrevented).toBe(true)
     expect(onConfirm).toHaveBeenCalledTimes(3)
+  })
+
+  it('a row that is a button (role radio or option) is the consumer’s control and answers its own Enter – the hook steps aside (the lead’s #418 ruling 3): on an unpicked row it picks, on the picked row it is the verb; Enter from the container stays the prompt’s', async () => {
+    /*
+     * The consumers' shape (services' `DeviceChooserDialog`, the desktop's `ScreenPicker`):
+     * `<button role="radio">` rows whose own keydown picks on Enter when unpicked and connects
+     * when picked – so the prompt must leave the key to them, as `OWN_ENTER` names a button.
+     */
+    const onConfirm = vi.fn()
+    const rowEnter = vi.fn()
+    function Radios({
+      picked,
+      onPick
+    }: {
+      picked: string | null
+      onPick: (id: string) => void
+    }): JSX.Element {
+      return (
+        <div role="radiogroup" aria-label="Devices" data-radios>
+          {['Arduino Uno', 'Keyboard'].map((device, i) => (
+            <button
+              key={device}
+              type="button"
+              role="radio"
+              aria-checked={picked === device}
+              tabIndex={(picked ? picked === device : i === 0) ? 0 : -1}
+              data-device={device}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                rowEnter(device)
+                e.preventDefault()
+                if (picked === device) onConfirm()
+                else onPick(device)
+              }}
+            >
+              {device}
+            </button>
+          ))}
+        </div>
+      )
+    }
+    function Chooser(): JSX.Element {
+      const [picked, setPicked] = useState<string | null>(null)
+      return (
+        <FrameDialogHost frame>
+          <PickerDialog
+            {...pickBase}
+            disabled={picked === null}
+            onConfirm={onConfirm}
+            body={<Radios picked={picked} onPick={setPicked} />}
+          />
+        </FrameDialogHost>
+      )
+    }
+    render(<Chooser />)
+    await settle()
+    const d = picker()!
+    const radio = (device: string): HTMLButtonElement =>
+      d.querySelector<HTMLButtonElement>(`[role="radio"][data-device="${device}"]`)!
+    const verb = d.querySelector<HTMLButtonElement>('[data-action="confirm"]')!
+    expect(verb.getAttribute('aria-disabled')).toBe('true')
+
+    // Enter on an unpicked row: the row's own – it picks, and the prompt confirms nothing.
+    act(() => radio('Arduino Uno').focus())
+    const first = press(radio('Arduino Uno'), 'Enter')
+    expect(rowEnter).toHaveBeenCalledWith('Arduino Uno')
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(radio('Arduino Uno').getAttribute('aria-checked')).toBe('true')
+    expect(verb.hasAttribute('aria-disabled')).toBe(false)
+    // The key was the row's to prevent, not the hook's: a row that leaves it alone sees it
+    // reach the browser – no `preventDefault` of the prompt's on a button row.
+    expect(first.defaultPrevented).toBe(true)
+    const bare = document.createElement('button')
+    bare.type = 'button'
+    bare.setAttribute('role', 'option')
+    d.querySelector('[data-radios]')!.appendChild(bare)
+    expect(press(bare, 'Enter').defaultPrevented).toBe(false)
+    expect(onConfirm).not.toHaveBeenCalled()
+    bare.remove()
+
+    // Enter on the picked row: the row's own again – the verb, once, through the row.
+    press(radio('Arduino Uno'), 'Enter')
+    expect(rowEnter).toHaveBeenCalledTimes(2)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+
+    // Enter from the container is the prompt's: the verb once a pick has enabled it.
+    act(() => d.focus())
+    expect(press(d, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).toHaveBeenCalledTimes(2)
+    expect(rowEnter).toHaveBeenCalledTimes(2)
   })
 
   it('over another dialog it is the 320 notice even with its list (§9.5: place beats content), holds the focus on its own container, Escape is one hop – its Cancel, not the dialog’s under it – and the keyboard returns to that dialog’s control', async () => {
