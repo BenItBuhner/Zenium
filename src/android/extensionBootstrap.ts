@@ -34,7 +34,11 @@ import {
   type ShieldResult
 } from './extensionIsolation'
 import { installModuleChrome } from './extensionModuleChrome'
-import { createScriptRecovery, type ScriptRecovery } from './extensionScriptRecovery'
+import {
+  createScriptRecovery,
+  type ScriptRecovery,
+  type ViolationEventLike
+} from './extensionScriptRecovery'
 import {
   importScriptsFor,
   installServiceWorkerClient,
@@ -681,7 +685,11 @@ declare const __zenExtBoot: Boot
   // A page's CSP has no say over an extension's resources in Chrome; over the emulated origin it
   // has. A `<script src=<extension origin>/…>` the page's `script-src` refused runs in the main
   // world through the host instead; a `<link rel=stylesheet>` its `style-src` refused is read
-  // through the relay and adopted as a constructed sheet (`extensionScriptRecovery.ts`).
+  // through the relay and adopted as a constructed sheet; a module graph a content script's
+  // `import()` asked for, refused by the same policy, is fetched again under the page's own
+  // nonce where the host's bracket gives it the extension's `chrome` on the real global (the
+  // `with` fallback), and recorded where a world would have evaluated it
+  // (`extensionScriptRecovery.ts`).
   scriptRecovery = createScriptRecovery({
     attachedIds: () => attached.map((e) => e.id),
     request: (id, extId, url) =>
@@ -696,10 +704,18 @@ declare const __zenExtBoot: Boot
         })
       ),
     readText: (_extId, url) => relay.fetch(url).then((response) => response.text()),
-    error: primordials.error
+    error: primordials.error,
+    warn: primordials.warn,
+    document,
+    pageModules: content.extension.isolation !== 'world'
   })
   const recovery = scriptRecovery
   window.addEventListener('error', (event) => recovery.onError(event), true)
+  window.addEventListener(
+    'securitypolicyviolation',
+    (event) => recovery.onViolation(event as unknown as ViolationEventLike),
+    true
+  )
   const builtins = collectBuiltins(realWindow)
   // The window's operations at document start, for the `with` fallback's scope proxies; read
   // once per frame, on the first proxy (a frame with worlds never needs it).
