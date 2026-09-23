@@ -5,37 +5,42 @@ import { languageName } from '@shared/languageNames'
  * list (`l10n_util.cc`'s `kAcceptLanguageList`, less the handful no runtime has a name for) as
  * BCP 47 tags – the languages with their common regional variants – each named in the UI's
  * language with its own name beside it, as Chrome's picker writes "German – Deutsch". The
- * names come from `Intl.DisplayNames`; the English name each tag carries here (ICU's standard
- * form) is the fallback where a runtime's ICU has none – Android's WebView writes "as" for
- * Assamese – so a row is always a word and never a bare tag (§9.1). Nothing here is a string
- * to translate: an English UI reads the runtime's name and the fallback alike.
+ * UI-language names come from `Intl.DisplayNames`; the English name each tag carries here
+ * (ICU's standard form) is the fallback where a runtime's ICU has none – Android's WebView
+ * writes "as" for Assamese – so a row is always a word and never a bare tag (§9.1). The own
+ * names are the table's third column, shipped with the app (§10.2: every language or none,
+ * never what the runtime's ICU happens to hold – a WebView without a locale's data would write
+ * some rows in the UI's language and others in their own), in CLDR's standard form for the
+ * language's own locale; a language whose own name is its English name (English, Afrikaans,
+ * Hausa) carries none, and its row draws one line. Nothing here is a string to translate: an
+ * English UI reads the runtime's name and the fallback alike.
  */
-const CATALOGUE: readonly (readonly [tag: string, english: string])[] = [
+const CATALOGUE: readonly (readonly [tag: string, english: string, own?: string])[] = [
   ['af', 'Afrikaans'],
-  ['am', 'Amharic'],
-  ['ar', 'Arabic'],
-  ['as', 'Assamese'],
-  ['ast', 'Asturian'],
-  ['az', 'Azerbaijani'],
-  ['be', 'Belarusian'],
-  ['bg', 'Bulgarian'],
-  ['bn', 'Bangla'],
-  ['br', 'Breton'],
-  ['bs', 'Bosnian'],
-  ['ca', 'Catalan'],
+  ['am', 'Amharic', 'አማርኛ'],
+  ['ar', 'Arabic', 'العربية'],
+  ['as', 'Assamese', 'অসমীয়া'],
+  ['ast', 'Asturian', 'asturianu'],
+  ['az', 'Azerbaijani', 'azərbaycan'],
+  ['be', 'Belarusian', 'беларуская'],
+  ['bg', 'Bulgarian', 'български'],
+  ['bn', 'Bangla', 'বাংলা'],
+  ['br', 'Breton', 'brezhoneg'],
+  ['bs', 'Bosnian', 'bosanski'],
+  ['ca', 'Catalan', 'català'],
   ['ceb', 'Cebuano'],
-  ['chr', 'Cherokee'],
-  ['ckb', 'Central Kurdish'],
-  ['co', 'Corsican'],
-  ['cs', 'Czech'],
-  ['cy', 'Welsh'],
-  ['da', 'Danish'],
-  ['de', 'German'],
-  ['de-AT', 'German (Austria)'],
-  ['de-CH', 'German (Switzerland)'],
-  ['de-DE', 'German (Germany)'],
-  ['de-LI', 'German (Liechtenstein)'],
-  ['el', 'Greek'],
+  ['chr', 'Cherokee', 'ᏣᎳᎩ'],
+  ['ckb', 'Central Kurdish', 'کوردیی ناوەندی'],
+  ['co', 'Corsican', 'corsu'],
+  ['cs', 'Czech', 'čeština'],
+  ['cy', 'Welsh', 'Cymraeg'],
+  ['da', 'Danish', 'dansk'],
+  ['de', 'German', 'Deutsch'],
+  ['de-AT', 'German (Austria)', 'Deutsch (Österreich)'],
+  ['de-CH', 'German (Switzerland)', 'Deutsch (Schweiz)'],
+  ['de-DE', 'German (Germany)', 'Deutsch (Deutschland)'],
+  ['de-LI', 'German (Liechtenstein)', 'Deutsch (Liechtenstein)'],
+  ['el', 'Greek', 'Ελληνικά'],
   ['en', 'English'],
   ['en-AU', 'English (Australia)'],
   ['en-CA', 'English (Canada)'],
@@ -46,139 +51,142 @@ const CATALOGUE: readonly (readonly [tag: string, english: string])[] = [
   ['en-US', 'English (United States)'],
   ['en-ZA', 'English (South Africa)'],
   ['eo', 'Esperanto'],
-  ['es', 'Spanish'],
-  ['es-419', 'Spanish (Latin America)'],
-  ['es-AR', 'Spanish (Argentina)'],
-  ['es-CL', 'Spanish (Chile)'],
-  ['es-CO', 'Spanish (Colombia)'],
-  ['es-CR', 'Spanish (Costa Rica)'],
-  ['es-ES', 'Spanish (Spain)'],
-  ['es-HN', 'Spanish (Honduras)'],
-  ['es-MX', 'Spanish (Mexico)'],
-  ['es-PE', 'Spanish (Peru)'],
-  ['es-US', 'Spanish (United States)'],
-  ['es-UY', 'Spanish (Uruguay)'],
-  ['es-VE', 'Spanish (Venezuela)'],
-  ['et', 'Estonian'],
-  ['eu', 'Basque'],
-  ['fa', 'Persian'],
-  ['fi', 'Finnish'],
+  ['es', 'Spanish', 'español'],
+  ['es-419', 'Spanish (Latin America)', 'español (Latinoamérica)'],
+  ['es-AR', 'Spanish (Argentina)', 'español (Argentina)'],
+  ['es-CL', 'Spanish (Chile)', 'español (Chile)'],
+  ['es-CO', 'Spanish (Colombia)', 'español (Colombia)'],
+  ['es-CR', 'Spanish (Costa Rica)', 'español (Costa Rica)'],
+  ['es-ES', 'Spanish (Spain)', 'español (España)'],
+  ['es-HN', 'Spanish (Honduras)', 'español (Honduras)'],
+  ['es-MX', 'Spanish (Mexico)', 'español (México)'],
+  ['es-PE', 'Spanish (Peru)', 'español (Perú)'],
+  ['es-US', 'Spanish (United States)', 'español (Estados Unidos)'],
+  ['es-UY', 'Spanish (Uruguay)', 'español (Uruguay)'],
+  ['es-VE', 'Spanish (Venezuela)', 'español (Venezuela)'],
+  ['et', 'Estonian', 'eesti'],
+  ['eu', 'Basque', 'euskara'],
+  ['fa', 'Persian', 'فارسی'],
+  ['fi', 'Finnish', 'suomi'],
   ['fil', 'Filipino'],
-  ['fo', 'Faroese'],
-  ['fr', 'French'],
-  ['fr-CA', 'French (Canada)'],
-  ['fr-CH', 'French (Switzerland)'],
-  ['fr-FR', 'French (France)'],
-  ['fy', 'Western Frisian'],
-  ['ga', 'Irish'],
-  ['gd', 'Scottish Gaelic'],
-  ['gl', 'Galician'],
-  ['gn', 'Guarani'],
-  ['gu', 'Gujarati'],
+  ['fo', 'Faroese', 'føroyskt'],
+  ['fr', 'French', 'français'],
+  ['fr-CA', 'French (Canada)', 'français (Canada)'],
+  ['fr-CH', 'French (Switzerland)', 'français (Suisse)'],
+  ['fr-FR', 'French (France)', 'français (France)'],
+  ['fy', 'Western Frisian', 'Frysk'],
+  ['ga', 'Irish', 'Gaeilge'],
+  ['gd', 'Scottish Gaelic', 'Gàidhlig'],
+  ['gl', 'Galician', 'galego'],
+  ['gn', 'Guarani', 'avañeʼẽ'],
+  ['gu', 'Gujarati', 'ગુજરાતી'],
   ['ha', 'Hausa'],
-  ['haw', 'Hawaiian'],
-  ['he', 'Hebrew'],
-  ['hi', 'Hindi'],
-  ['hmn', 'Hmong'],
-  ['hr', 'Croatian'],
-  ['ht', 'Haitian Creole'],
-  ['hu', 'Hungarian'],
-  ['hy', 'Armenian'],
+  ['haw', 'Hawaiian', 'ʻŌlelo Hawaiʻi'],
+  ['he', 'Hebrew', 'עברית'],
+  ['hi', 'Hindi', 'हिन्दी'],
+  ['hmn', 'Hmong', 'Hmoob'],
+  ['hr', 'Croatian', 'hrvatski'],
+  ['ht', 'Haitian Creole', 'kreyòl ayisyen'],
+  ['hu', 'Hungarian', 'magyar'],
+  ['hy', 'Armenian', 'հայերեն'],
   ['ia', 'Interlingua'],
-  ['id', 'Indonesian'],
+  ['id', 'Indonesian', 'Indonesia'],
   ['ig', 'Igbo'],
-  ['is', 'Icelandic'],
-  ['it', 'Italian'],
-  ['it-CH', 'Italian (Switzerland)'],
-  ['it-IT', 'Italian (Italy)'],
-  ['ja', 'Japanese'],
-  ['jv', 'Javanese'],
-  ['ka', 'Georgian'],
-  ['kk', 'Kazakh'],
-  ['km', 'Khmer'],
-  ['kn', 'Kannada'],
-  ['ko', 'Korean'],
-  ['ku', 'Kurdish'],
-  ['ky', 'Kyrgyz'],
-  ['la', 'Latin'],
-  ['lb', 'Luxembourgish'],
-  ['ln', 'Lingala'],
-  ['lo', 'Lao'],
-  ['lt', 'Lithuanian'],
-  ['lv', 'Latvian'],
+  ['is', 'Icelandic', 'íslenska'],
+  ['it', 'Italian', 'italiano'],
+  ['it-CH', 'Italian (Switzerland)', 'italiano (Svizzera)'],
+  ['it-IT', 'Italian (Italy)', 'italiano (Italia)'],
+  ['ja', 'Japanese', '日本語'],
+  ['jv', 'Javanese', 'Jawa'],
+  ['ka', 'Georgian', 'ქართული'],
+  ['kk', 'Kazakh', 'қазақ тілі'],
+  ['km', 'Khmer', 'ខ្មែរ'],
+  ['kn', 'Kannada', 'ಕನ್ನಡ'],
+  ['ko', 'Korean', '한국어'],
+  ['ku', 'Kurdish', 'kurdî'],
+  ['ky', 'Kyrgyz', 'кыргызча'],
+  ['la', 'Latin', 'Latina'],
+  ['lb', 'Luxembourgish', 'Lëtzebuergesch'],
+  ['ln', 'Lingala', 'lingála'],
+  ['lo', 'Lao', 'ລາວ'],
+  ['lt', 'Lithuanian', 'lietuvių'],
+  ['lv', 'Latvian', 'latviešu'],
   ['mg', 'Malagasy'],
   ['mi', 'Māori'],
-  ['mk', 'Macedonian'],
-  ['ml', 'Malayalam'],
-  ['mn', 'Mongolian'],
-  ['mr', 'Marathi'],
-  ['ms', 'Malay'],
-  ['mt', 'Maltese'],
-  ['my', 'Burmese'],
-  ['nb', 'Norwegian Bokmål'],
-  ['ne', 'Nepali'],
-  ['nl', 'Dutch'],
-  ['nn', 'Norwegian Nynorsk'],
-  ['no', 'Norwegian'],
-  ['ny', 'Nyanja'],
+  ['mk', 'Macedonian', 'македонски'],
+  ['ml', 'Malayalam', 'മലയാളം'],
+  ['mn', 'Mongolian', 'монгол'],
+  ['mr', 'Marathi', 'मराठी'],
+  ['ms', 'Malay', 'Melayu'],
+  ['mt', 'Maltese', 'Malti'],
+  ['my', 'Burmese', 'မြန်မာ'],
+  ['nb', 'Norwegian Bokmål', 'norsk bokmål'],
+  ['ne', 'Nepali', 'नेपाली'],
+  ['nl', 'Dutch', 'Nederlands'],
+  ['nn', 'Norwegian Nynorsk', 'norsk nynorsk'],
+  ['no', 'Norwegian', 'norsk'],
+  ['ny', 'Nyanja', 'Chinyanja'],
   ['oc', 'Occitan'],
-  ['om', 'Oromo'],
-  ['or', 'Odia'],
-  ['pa', 'Punjabi'],
-  ['pl', 'Polish'],
-  ['ps', 'Pashto'],
-  ['pt', 'Portuguese'],
-  ['pt-BR', 'Portuguese (Brazil)'],
-  ['pt-PT', 'Portuguese (Portugal)'],
-  ['qu', 'Quechua'],
-  ['rm', 'Romansh'],
-  ['ro', 'Romanian'],
-  ['ru', 'Russian'],
+  ['om', 'Oromo', 'Oromoo'],
+  ['or', 'Odia', 'ଓଡ଼ିଆ'],
+  ['pa', 'Punjabi', 'ਪੰਜਾਬੀ'],
+  ['pl', 'Polish', 'polski'],
+  ['ps', 'Pashto', 'پښتو'],
+  ['pt', 'Portuguese', 'português'],
+  ['pt-BR', 'Portuguese (Brazil)', 'português (Brasil)'],
+  ['pt-PT', 'Portuguese (Portugal)', 'português (Portugal)'],
+  ['qu', 'Quechua', 'Runasimi'],
+  ['rm', 'Romansh', 'rumantsch'],
+  ['ro', 'Romanian', 'română'],
+  ['ru', 'Russian', 'русский'],
   ['rw', 'Kinyarwanda'],
-  ['sd', 'Sindhi'],
-  ['si', 'Sinhala'],
-  ['sk', 'Slovak'],
-  ['sl', 'Slovenian'],
-  ['sm', 'Samoan'],
-  ['sn', 'Shona'],
-  ['so', 'Somali'],
-  ['sq', 'Albanian'],
-  ['sr', 'Serbian'],
-  ['st', 'Southern Sotho'],
-  ['su', 'Sundanese'],
-  ['sv', 'Swedish'],
-  ['sw', 'Swahili'],
-  ['ta', 'Tamil'],
-  ['te', 'Telugu'],
-  ['tg', 'Tajik'],
-  ['th', 'Thai'],
-  ['ti', 'Tigrinya'],
-  ['tk', 'Turkmen'],
-  ['tn', 'Tswana'],
-  ['to', 'Tongan'],
-  ['tr', 'Turkish'],
-  ['tt', 'Tatar'],
-  ['ug', 'Uyghur'],
-  ['uk', 'Ukrainian'],
-  ['ur', 'Urdu'],
-  ['uz', 'Uzbek'],
-  ['vi', 'Vietnamese'],
-  ['wa', 'Walloon'],
+  ['sd', 'Sindhi', 'سنڌي'],
+  ['si', 'Sinhala', 'සිංහල'],
+  ['sk', 'Slovak', 'slovenčina'],
+  ['sl', 'Slovenian', 'slovenščina'],
+  ['sm', 'Samoan', 'Gagana Sāmoa'],
+  ['sn', 'Shona', 'chiShona'],
+  ['so', 'Somali', 'Soomaali'],
+  ['sq', 'Albanian', 'shqip'],
+  ['sr', 'Serbian', 'српски'],
+  ['st', 'Southern Sotho', 'Sesotho'],
+  ['su', 'Sundanese', 'Basa Sunda'],
+  ['sv', 'Swedish', 'svenska'],
+  ['sw', 'Swahili', 'Kiswahili'],
+  ['ta', 'Tamil', 'தமிழ்'],
+  ['te', 'Telugu', 'తెలుగు'],
+  ['tg', 'Tajik', 'тоҷикӣ'],
+  ['th', 'Thai', 'ไทย'],
+  ['ti', 'Tigrinya', 'ትግርኛ'],
+  ['tk', 'Turkmen', 'türkmen dili'],
+  ['tn', 'Tswana', 'Setswana'],
+  ['to', 'Tongan', 'lea fakatonga'],
+  ['tr', 'Turkish', 'Türkçe'],
+  ['tt', 'Tatar', 'татар'],
+  ['ug', 'Uyghur', 'ئۇيغۇرچە'],
+  ['uk', 'Ukrainian', 'українська'],
+  ['ur', 'Urdu', 'اردو'],
+  ['uz', 'Uzbek', 'oʻzbek'],
+  ['vi', 'Vietnamese', 'Tiếng Việt'],
+  ['wa', 'Walloon', 'walon'],
   ['wo', 'Wolof'],
-  ['xh', 'Xhosa'],
-  ['yi', 'Yiddish'],
-  ['yo', 'Yoruba'],
-  ['zh', 'Chinese'],
-  ['zh-CN', 'Chinese (China)'],
-  ['zh-HK', 'Chinese (Hong Kong SAR China)'],
-  ['zh-TW', 'Chinese (Taiwan)'],
-  ['zu', 'Zulu']
+  ['xh', 'Xhosa', 'isiXhosa'],
+  ['yi', 'Yiddish', 'ייִדיש'],
+  ['yo', 'Yoruba', 'Èdè Yorùbá'],
+  ['zh', 'Chinese', '中文'],
+  ['zh-CN', 'Chinese (China)', '中文（中国）'],
+  ['zh-HK', 'Chinese (Hong Kong SAR China)', '中文（中國香港特別行政區）'],
+  ['zh-TW', 'Chinese (Taiwan)', '中文（台灣）'],
+  ['zu', 'Zulu', 'isiZulu']
 ]
 
 /** The catalogue's tags in Chrome's order. */
 export const LANGUAGE_CATALOGUE: readonly string[] = CATALOGUE.map(([tag]) => tag)
 
 const ENGLISH = new Map(CATALOGUE.map(([tag, english]) => [tag.toLowerCase(), english]))
+const OWN = new Map(
+  CATALOGUE.flatMap(([tag, , own]) => (own ? [[tag.toLowerCase(), own] as const] : []))
+)
 
 /**
  * The name of `tag` in the UI's language: the runtime's (`languageName`) when it has one, the
@@ -198,23 +206,13 @@ export interface LanguageChoice {
   description?: string
 }
 
-const nativeNames = new Map<string, string | null>()
-
-/** The language's name in itself ("Deutsch (Deutschland)"); null when the runtime has none or it is the UI's name. */
+/**
+ * The language's name in itself from the shipped table ("Deutsch (Deutschland)"); null for a
+ * language whose own name is its English one (English) and for a tag outside the catalogue –
+ * never the runtime's ICU, whose coverage differs by device (§10.2).
+ */
 export function nativeLanguageName(tag: string): string | null {
-  let name = nativeNames.get(tag)
-  if (name === undefined) {
-    name = null
-    try {
-      const own = new Intl.DisplayNames([tag], { type: 'language', languageDisplay: 'standard' })
-      const candidate = own.of(tag)
-      if (candidate && candidate.toLowerCase() !== tag.toLowerCase()) name = candidate
-    } catch {
-      name = null
-    }
-    nativeNames.set(tag, name)
-  }
-  return name
+  return OWN.get(tag.toLowerCase()) ?? null
 }
 
 /**
@@ -239,6 +237,28 @@ export function languageChoices(except: readonly string[] = []): LanguageChoice[
     })
   }
   return out.sort((a, b) => a.label.localeCompare(b.label, 'en'))
+}
+
+/**
+ * The translator's languages (`state.translate.languages`, less a list's own) as picker rows
+ * of the same form: the runtime's name (`languageName`, the catalogue's English where it has
+ * none) over the shipped own name where that says something the label does not, sorted by
+ * label. A code the runtime and the catalogue both fail to name keeps the runtime's word for
+ * it, as the translate bar does.
+ */
+export function translateLanguageChoices(codes: readonly string[]): LanguageChoice[] {
+  return codes
+    .map((code): LanguageChoice => {
+      const label = catalogueLanguageName(code) ?? languageName(code)
+      const native = nativeLanguageName(code)
+      return {
+        value: code,
+        label,
+        description:
+          native && native.toLowerCase() !== label.toLowerCase() ? native : undefined
+      }
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, 'en'))
 }
 
 /** Letters and digits alone, accents stripped, lower-cased: what the filter compares. */

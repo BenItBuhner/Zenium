@@ -9,11 +9,10 @@ import {
 import { FontPickList, FontPreview } from './fontBlocks'
 import {
   DEFAULT_FAMILY,
-  FONT_SIZE_ENDS,
-  MINIMUM_FONT_SIZE_ENDS,
   SLOT_HINTS,
   SLOT_LABELS,
   familyOptions,
+  fontSizeOptions,
   formatFontSize,
   stepIndex
 } from './fontsModel'
@@ -22,29 +21,34 @@ import type { SectionContext } from './sections'
 
 /**
  * Settings › Appearance › Customise fonts (CT-25; Chrome's chrome://settings/fonts as one group
- * of the shared builder, §10.3): the font size and the minimum size as §9.21 slider rows over
- * Chrome's stops, applied when the thumb is let go with the live value beside the label and
- * Chrome's end labels under the track – a drag never re-lays the pages out per frame; the
- * family rows as §9.13 menulist rows whose picker shows each face (`RowOption.font`: the
- * desktop's popover draws an "Aa" specimen in the face after the name, which stays in the
- * chrome's type so a symbol face cannot write its own name as dingbats; the phone's own picker
- * sheet, `FontPickList`, draws the platform's word aliases each in its face, since the
- * chassis's radio rows take none); a Reset row once anything stands off the defaults; and the
+ * of the shared builder, §10.3): the font size and the minimum size over Chrome's stops – on
+ * the phone §10.4's slider row, the value on the label's line and the 44 px step buttons at
+ * the track's ends, applied on a step or when the thumb is let go, so a drag never re-lays the
+ * pages out per frame; on the desktop §10.5's menulist of the stops ("16 px", "None"), since a
+ * level on a desktop page is never a slider; the family rows as §9.13 menulist rows whose
+ * picker shows each face (`RowOption.font`: the desktop's popover draws an "Aa" specimen in the
+ * face after the name, which stays in the chrome's type so a symbol face cannot write its own
+ * name as dingbats; the phone's own picker sheet, `FontPickList`, draws the platform's word
+ * aliases each in its face, since the chassis's radio rows take none, and opens expanded on
+ * the checked face when its rows exceed the peek); a Reset row once anything stands off the
+ * defaults, plain and unconfirmed (§10.4: a reset to the defaults is no destruction); and the
  * preview as a static content row (§10.3: a 13/69 % label over content that grows with its
- * text) in the page fonts themselves, following each committed change. On a host whose engine ignores the
- * generic-family slots (`capabilities.genericFontFamilies` false: Android, where Blink resolves
- * `serif` / `sans-serif` / `monospace` through `fonts.xml` and never reads the settings) only
- * the standard family and the two sizes are rows – the honest list, as the interface note
- * records – and the standard family's options are the aliases WebView resolves by name.
+ * text) in the page fonts themselves, following each committed change. On a host whose engine
+ * ignores the generic-family slots (`capabilities.genericFontFamilies` false: Android, where
+ * Blink resolves `serif` / `sans-serif` / `monospace` through `fonts.xml` and never reads the
+ * settings) only the standard family and the two sizes are rows – the honest list, as the
+ * interface note records – and the standard family's options are the aliases WebView resolves
+ * by name.
  */
 
 /**
- * The group: sizes, families, preview, Reset. The family rows come in two forms by chrome
- * layout, one per row id, so a test walks both: the desktop and tablet shells' §9.13 value row,
- * whose menulist popover shows each option's face as a specimen (`RowOption.font`); the phone
- * shell's action row opening `FontPickList` in a sheet, since the chassis's picker sheet draws
- * no face (`sheets.tsx`) – the row shows the current family as its description like a value
- * row does.
+ * The group: sizes, families, preview, Reset. The size and family rows come in two forms by
+ * chrome layout, one per row id, so a test walks both: the desktop and tablet shells' §9.13
+ * value row – the sizes' menulist of stops, the families' menulist whose popover shows each
+ * option's face as a specimen (`RowOption.font`); the phone shell's §10.4 slider row for a
+ * size, and its action row opening `FontPickList` in a sheet for a family, since the chassis's
+ * picker sheet draws no face (`sheets.tsx`) – the row shows the current family as its
+ * description like a value row does.
  */
 export function fontsGroups({
   state,
@@ -56,41 +60,67 @@ export function fontsGroups({
   const patch = (change: Partial<PageFontSettings>): void => set({ fonts: { ...fonts, ...change } })
   const keywords = ['fonts', 'customize fonts', 'typeface', 'text size', 'font size']
 
-  const sizeIndex = stepIndex(FONT_SIZE_STEPS, fonts.size)
-  const minimumIndex = stepIndex(MINIMUM_FONT_SIZE_STEPS, fonts.minimumSize)
+  const setSize = (size: number): void => {
+    if (size !== fonts.size) patch({ size })
+  }
+  const setMinimumSize = (minimumSize: number): void => {
+    if (minimumSize !== fonts.minimumSize) patch({ minimumSize })
+  }
+  const minimumDescription = 'The smallest text a page may use.'
   const rows: SettingsRow[] = [
     {
       kind: 'slider',
-      id: 'fonts-size',
+      id: 'fonts-size-phone',
       label: 'Font size',
       keywords,
-      value: sizeIndex,
+      layouts: ['phone'],
+      value: stepIndex(FONT_SIZE_STEPS, fonts.size),
       min: 0,
       max: FONT_SIZE_STEPS.length - 1,
       step: 1,
-      ends: FONT_SIZE_ENDS,
       format: (i) => formatFontSize(FONT_SIZE_STEPS[i] ?? fonts.size),
       onChange: (i) => {
         const size = FONT_SIZE_STEPS[i]
-        if (size !== undefined && size !== fonts.size) patch({ size })
+        if (size !== undefined) setSize(size)
       }
     },
     {
-      kind: 'slider',
-      id: 'fonts-minimum-size',
-      label: 'Minimum font size',
-      description: 'The smallest text a page may use.',
+      kind: 'value',
+      id: 'fonts-size',
+      label: 'Font size',
       keywords,
-      value: minimumIndex,
+      layouts: ['desktop', 'tablet'],
+      value: String(fonts.size),
+      options: fontSizeOptions(FONT_SIZE_STEPS, fonts.size),
+      onChange: (v) => setSize(Number(v))
+    },
+    {
+      kind: 'slider',
+      id: 'fonts-minimum-size-phone',
+      label: 'Minimum font size',
+      description: minimumDescription,
+      keywords,
+      layouts: ['phone'],
+      value: stepIndex(MINIMUM_FONT_SIZE_STEPS, fonts.minimumSize),
       min: 0,
       max: MINIMUM_FONT_SIZE_STEPS.length - 1,
       step: 1,
-      ends: MINIMUM_FONT_SIZE_ENDS,
       format: (i) => formatFontSize(MINIMUM_FONT_SIZE_STEPS[i] ?? fonts.minimumSize),
       onChange: (i) => {
         const minimumSize = MINIMUM_FONT_SIZE_STEPS[i]
-        if (minimumSize !== undefined && minimumSize !== fonts.minimumSize) patch({ minimumSize })
+        if (minimumSize !== undefined) setMinimumSize(minimumSize)
       }
+    },
+    {
+      kind: 'value',
+      id: 'fonts-minimum-size',
+      label: 'Minimum font size',
+      description: minimumDescription,
+      keywords,
+      layouts: ['desktop', 'tablet'],
+      value: String(fonts.minimumSize),
+      options: fontSizeOptions(MINIMUM_FONT_SIZE_STEPS, fonts.minimumSize),
+      onChange: (v) => setMinimumSize(Number(v))
     }
   ]
 
@@ -125,6 +155,7 @@ export function fontsGroups({
         form: {
           title: label,
           description: SLOT_HINTS[slot],
+          body: 'picker',
           render: (close) => (
             <FontPickList
               label={label}

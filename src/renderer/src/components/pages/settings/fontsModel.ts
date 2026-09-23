@@ -10,9 +10,9 @@ import type { RowOption } from './model'
 
 /**
  * The Customise fonts group's model (CT-25; `fonts.tsx` builds the rows from it, `fontBlocks.tsx`
- * draws the preview and the phone's picker with it): the slots' labels and hints, the sliders'
- * end labels and their value format over Chrome's stops, the families a picker offers, and the
- * faces the preview draws for a slot the setting leaves to the platform.
+ * draws the preview and the phone's picker with it): the slots' labels and hints, the sizes'
+ * format and menulist options over Chrome's stops, the families a picker offers, and the faces
+ * the preview draws for a slot the setting leaves to the platform.
  */
 
 export const SLOT_LABELS: Record<FontFamilySlot, string> = {
@@ -43,10 +43,6 @@ const GENERIC_LABELS: Record<string, string> = {
   'sans-serif-condensed': 'Sans-serif condensed'
 }
 
-/** Chrome's end labels for the two sliders (its fonts page's `label-min` / `label-max`). */
-export const FONT_SIZE_ENDS: readonly [string, string] = ['Very small', 'Very large']
-export const MINIMUM_FONT_SIZE_ENDS: readonly [string, string] = ['Tiny', 'Huge']
-
 /** The index of the stop `value` sits on, or of the nearest stop for a value between them (a synced 19). */
 export function stepIndex(steps: readonly number[], value: number): number {
   let best = 0
@@ -59,6 +55,17 @@ export function stepIndex(steps: readonly number[], value: number): number {
 /** "16 px"; the minimum size's 0 is "None" (Chrome's slider stops at 0 or 6 and up). */
 export function formatFontSize(px: number): string {
   return px === 0 ? 'None' : `${px} px`
+}
+
+/**
+ * The desktop's menulist of a size's stops (§10.5: a level in Settings is a menulist of its
+ * stops, as Default zoom's): Chrome's ladder, each stop as `formatFontSize` writes it, its
+ * value the size in px as text. A current size off the ladder (a synced 19) is listed in its
+ * place, so the row never shows a value its list lacks.
+ */
+export function fontSizeOptions(steps: readonly number[], current: number): RowOption[] {
+  const sizes = steps.includes(current) ? [...steps] : [...steps, current].sort((a, b) => a - b)
+  return sizes.map((px) => ({ value: String(px), label: formatFontSize(px) }))
 }
 
 /**

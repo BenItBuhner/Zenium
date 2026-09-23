@@ -142,11 +142,14 @@ function MenulistSheet<T extends string>({
   })
   if (!ready) return null
   return createPortal(
+    // A §9.13 picker: options that exceed the peek open the sheet expanded and scrolled to the
+    // checked one; options that fit keep the peek.
     <BottomSheet
       ref={sheet}
       onDismissed={onClose}
       handleLabel="Resize"
       labelledBy={titleId}
+      openExpanded="overflow"
       header={
         <h2 id={titleId} className="zen-sheet-title">
           {label}

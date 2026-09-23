@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronLeft, Search, X } from 'lucide-react'
 import {
   INTERNAL_PAGES,
@@ -7,6 +7,7 @@ import {
   landingRuns,
   parseInternalPageUrl,
   type InternalPageDefinition,
+  type InternalPageQuery,
   type InternalPageSection,
   type InternalPageSubpage
 } from '@shared/internalPages'
@@ -27,7 +28,9 @@ import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { TWO_PANE_MIN_WIDTH } from '../PageFrame'
+import { AddLanguagePage } from './AddLanguagePage'
 import { DesktopSettings } from './desktop'
+import { DrillInBackContext } from './drillIn'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
 import { findRow, searchRows, type SectionModel } from './model'
 import { GroupList, RowView, type RowContext } from './rows'
@@ -45,9 +48,10 @@ import { useSheetStack } from './useSheetStack'
  * with the back chevron, then the section's groups of rows. The landing stays mounted (inert)
  * beneath the drill-in, so the predictive back gesture slides the pane off it; the chevron, the
  * bottom bar's back and the system back are all `tab.back`. A section's own drill-in page
- * (`InternalPageSection.pages`: Privacy's site-data viewer, Chrome's All sites) is a second pane
- * the same way, over the section it belongs to, reached from the row that names it
- * (`ActionRow.page`) and standing in the tab's history above the section. Search is the
+ * (`InternalPageSection.pages`: Privacy's site-data viewer, Chrome's All sites; Languages' Add
+ * language, the find-and-pick page) is a second pane the same way, over the section it belongs
+ * to, reached from the row that names it (`ActionRow.page`, its parameters in the address as
+ * `ActionRow.pageQuery`) and standing in the tab's history above the section. Search is the
  * landing's alone, and it never focuses on its own: on tap, or when the tab claims Ctrl+F /
  * "Find in Page" (`useChromeShortcut('find.open')`) as "Find in Settings".
  *
@@ -74,13 +78,21 @@ const SITE_ROW = 'tracking-site-current'
 /** A row id as `?row=` may carry it: the ids are words, colons and dashes (`sync-scope:openTabs`). */
 const ROW_ID_RE = /^[\w:-]+$/
 
+/** What a section's drill-in page is handed: the section's context, the address's parameters, the tab. */
+export interface SubpageProps {
+  ctx: SectionContext
+  query: InternalPageQuery
+  tab: Tab
+}
+
 /**
  * What draws each section's drill-in page (`InternalPageSection.pages`, §10.2), by
  * `<section>/<page>`: the phone's second pane over the section. A page the registry names and
  * this does not draw would be an address with nothing behind it, so the two are kept together.
  */
-const SUBPAGES: Record<string, () => JSX.Element> = {
-  'privacy/site-data': SiteDataPage
+const SUBPAGES: Record<string, (props: SubpageProps) => JSX.Element> = {
+  'privacy/site-data': SiteDataPage,
+  'languages/add': AddLanguagePage
 }
 
 interface Props {
@@ -139,6 +151,7 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
           sections={sections}
           current={current}
           subpage={subpage}
+          params={ref?.query ?? NO_QUERY}
           pointer={hover}
           formFactor={formFactor}
         />
@@ -146,6 +159,9 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
     </div>
   )
 }
+
+/** An address without parameters, the one object so a page's props do not change render to render. */
+const NO_QUERY: InternalPageQuery = {}
 
 // ---------------------------------------------------------------------------
 // Phone
@@ -158,6 +174,7 @@ function PhoneSettings({
   sections,
   current,
   subpage,
+  params,
   pointer,
   formFactor
 }: Props & {
@@ -166,6 +183,8 @@ function PhoneSettings({
   current: InternalPageSection | null
   /** The section's drill-in page the address names, over the section (§10.2). */
   subpage: InternalPageSubpage | null
+  /** The address's parameters, for the drill-in page (Add language's `?list=`). */
+  params: InternalPageQuery
   /** The host's primary pointer hovers (a mouse): rows may describe mouse gestures. */
   pointer: boolean
   formFactor: FormFactor
@@ -256,13 +275,14 @@ function PhoneSettings({
     sheetCtx.open({ kind: 'item', rowId })
   }, [reveal, sectionId, groups, sheetCtx])
   // A row that names its section's drill-in page (§10.2) leaves for it: the section shown, or –
-  // from the landing's search – the section whose row it is.
+  // from the landing's search – the section whose row it is; the row's parameters ride in the
+  // address (Add language's `?list=`).
   const rowCtx: RowContext = {
     ...sheetCtx,
-    openPage: (rowId, subpageId) => {
+    openPage: (rowId, subpageId, query) => {
       const section =
         current?.id ?? models.find((m) => findRow(m.groups, rowId) !== null)?.section.id
-      if (section) run('page.navigate', { tabId: tab.id, section, subpage: subpageId })
+      if (section) run('page.navigate', { tabId: tab.id, section, subpage: subpageId, query })
     }
   }
   const Subpage = current && subpage ? SUBPAGES[`${current.id}/${subpage.id}`] : undefined
@@ -304,7 +324,7 @@ function PhoneSettings({
           backLabel={`Back to ${current.label}`}
           tab={tab}
         >
-          <Subpage />
+          <Subpage ctx={ctx} query={params} tab={tab} />
         </DrillIn>
       )}
       <SheetStack
@@ -512,10 +532,10 @@ function DrillIn({
           onCancel: () => dismissal.current?.cancel()
         }
   )
-  const back = (): void => {
+  const back = useCallback((): void => {
     if (dismissal.current) dismissal.current.commit()
     else run('tab.back', { tabId: tab.id })
-  }
+  }, [tab.id])
   return (
     <section
       ref={pane}
@@ -540,7 +560,7 @@ function DrillIn({
         className="zen-settings-scroll"
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
       >
-        {children}
+        <DrillInBackContext.Provider value={back}>{children}</DrillInBackContext.Provider>
       </div>
     </section>
   )

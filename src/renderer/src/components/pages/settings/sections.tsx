@@ -76,6 +76,7 @@ import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { displayUrl, inputToUrl } from '@shared/url'
 import { homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
+import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
 import {
   TOOLBAR_LAYOUTS,
@@ -113,7 +114,7 @@ import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
 import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords'
 import { openOverlay } from '@renderer/lib/ui'
-import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
+import { pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
 import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -135,7 +136,12 @@ import {
 } from '../../overlays/settingsCopy'
 import { ModelPickList, PickList } from '../../translate/pickers'
 import { fontsGroups } from './fonts'
-import { preferredLanguagesGroups } from './languages'
+import {
+  addLanguageRow,
+  addLanguageTargets,
+  preferredLanguagesGroups,
+  type AddLanguageList
+} from './languages'
 import {
   AddRouteForm,
   AppIconGrid,
@@ -159,6 +165,7 @@ import {
   choice,
   onLayout,
   type FieldRow,
+  type InlineAction,
   type RowGroup,
   type SectionModel,
   type SettingsRow
@@ -301,7 +308,10 @@ function sorted<T>(map: Record<string, T>): Array<[string, T]> {
   return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
 }
 
-/** A row that only lists something: shows what it is, and holds the rows that act on it. */
+/**
+ * A row that only lists something: shows what it is, and holds the rows that act on it. A row
+ * with one action names it as `action` too, the desktop's inline button (`ItemRow.action`).
+ */
 function item(
   id: string,
   label: string,
@@ -312,6 +322,7 @@ function item(
     keywords?: readonly string[]
     sheetDescription?: string
     disabled?: boolean
+    action?: InlineAction
   } = {}
 ): SettingsRow {
   return {
@@ -322,6 +333,7 @@ function item(
     keywords: extra.keywords,
     leading: extra.leading,
     disabled: extra.disabled,
+    action: extra.action,
     sheet: {
       title: label,
       description: extra.sheetDescription ?? description,
@@ -2913,46 +2925,51 @@ function languagesSection({ state, dictionary, set: setSettings }: SectionContex
   const rule = (language: string, value: 'always' | 'never' | 'ask'): void =>
     run('translate.setLanguageRule', { language, rule: value })
 
-  /** The languages in `codes` as item rows, each opening the rows `actions` gives it. */
+  /**
+   * The languages in `codes` as item rows (§10.4: one object, one row in every list on the
+   * page), each opening the one Remove row `remove` describes – the row's one action, so on a
+   * mouse it is #322's inline Remove as well (§10.5: the count picks the form). A preference
+   * removed is plain ink and asks no confirmation.
+   */
   const languageRows = (
     prefix: string,
     codes: readonly string[],
-    actions: (code: string, index: number) => SettingsRow[]
+    remove: (code: string) => { description: string; onPress: () => void }
   ): SettingsRow[] =>
-    codes.map((code, index) =>
-      item(`${prefix}:${code}`, languageName(code), undefined, actions(code, index), {
-        keywords: [code]
-      })
-    )
+    codes.map((code) => {
+      const { description, onPress } = remove(code)
+      const name = catalogueLanguageName(code) ?? languageName(code)
+      return item(
+        `${prefix}:${code}`,
+        name,
+        undefined,
+        [
+          {
+            kind: 'action',
+            id: `${prefix}:${code}:ask`,
+            label: 'Remove',
+            description,
+            button: 'Remove',
+            onPress
+          }
+        ],
+        { keywords: [code], action: { label: 'Remove', onPress } }
+      )
+    })
 
-  /** The action row that adds to a list, in a group of its own after it; none when nothing is left. */
-  const addGroup = (
-    id: string,
-    title: string,
-    codes: readonly string[],
-    onAdd: (code: string) => void
-  ): RowGroup[] => {
-    const options = languageOptions(t.languages.filter((code) => !codes.includes(code)))
-    if (options.length === 0) return []
+  /**
+   * The Add language row of a translate list, in a group of its own after it; none when nothing
+   * is left. The same row as the preferred list's (`addLanguageRow`): the phone's find-and-pick
+   * page with the list in its address, the desktop's filtered dialog (§10.2).
+   */
+  const targets = addLanguageTargets({ state, set: setSettings })
+  const addGroup = (id: Exclude<AddLanguageList, 'preferred'>, title: string): RowGroup[] => {
+    if (targets[id].choices.length === 0) return []
     return [
       {
         id: `${id}-add`,
         heading: null,
-        rows: [
-          {
-            kind: 'action',
-            id: `languages-${id}-add`,
-            label: 'Add language',
-            keywords: [title],
-            button: 'Add…',
-            form: {
-              title,
-              render: (close) => (
-                <PickList label={title} options={options} onPick={onAdd} close={close} />
-              )
-            }
-          }
-        ]
+        rows: [addLanguageRow(`languages-${id}-add`, id, targets[id], { keywords: [title] })]
       }
     ]
   }
@@ -3016,56 +3033,49 @@ function languagesSection({ state, dictionary, set: setSettings }: SectionContex
       id: 'always',
       heading: 'Always translate',
       description: 'Pages in these languages are translated as soon as they load, without asking.',
-      rows: languageRows('languages-always', prefs.alwaysTranslate, (code) => [
-        {
-          kind: 'action',
-          id: `languages-always:${code}:ask`,
-          label: 'Remove',
-          description: 'Zenium asks before translating pages in this language again.',
-          button: 'Remove',
-          onPress: () => rule(code, 'ask')
-        }
-      ]),
+      rows: languageRows('languages-always', prefs.alwaysTranslate, (code) => ({
+        description: 'Zenium asks before translating pages in this language again.',
+        onPress: () => rule(code, 'ask')
+      })),
       empty: 'No languages yet'
     },
-    ...addGroup('always', 'Always translate', prefs.alwaysTranslate, (code) =>
-      rule(code, 'always')
-    ),
+    ...addGroup('always', 'Always translate'),
     {
       id: 'never',
       heading: 'Never translate',
       description: 'Zenium never offers to translate pages in these languages.',
-      rows: languageRows('languages-never', prefs.neverTranslate, (code) => [
-        {
-          kind: 'action',
-          id: `languages-never:${code}:ask`,
-          label: 'Remove',
-          description: 'Zenium offers to translate pages in this language again.',
-          button: 'Remove',
-          onPress: () => rule(code, 'ask')
-        }
-      ]),
+      rows: languageRows('languages-never', prefs.neverTranslate, (code) => ({
+        description: 'Zenium offers to translate pages in this language again.',
+        onPress: () => rule(code, 'ask')
+      })),
       empty: 'No languages yet'
     },
-    ...addGroup('never', 'Never translate', prefs.neverTranslate, (code) => rule(code, 'never')),
+    ...addGroup('never', 'Never translate'),
     {
       id: 'sites',
       heading: 'Sites never translated',
       description:
         'Zenium does not offer to translate these sites. Add one from the translation bar’s options while you are on the site.',
-      rows: prefs.neverTranslateSites.map((site) =>
-        item(`languages-site:${site}`, site, undefined, [
-          {
-            kind: 'action',
-            id: `languages-site:${site}:forget`,
-            label: 'Remove',
-            description: 'Zenium offers to translate this site again.',
-            button: 'Remove',
-            onPress: () =>
-              set({ neverTranslateSites: prefs.neverTranslateSites.filter((s) => s !== site) })
-          }
-        ])
-      ),
+      rows: prefs.neverTranslateSites.map((site) => {
+        const forget = (): void =>
+          set({ neverTranslateSites: prefs.neverTranslateSites.filter((s) => s !== site) })
+        return item(
+          `languages-site:${site}`,
+          site,
+          undefined,
+          [
+            {
+              kind: 'action',
+              id: `languages-site:${site}:forget`,
+              label: 'Remove',
+              description: 'Zenium offers to translate this site again.',
+              button: 'Remove',
+              onPress: forget
+            }
+          ],
+          { action: { label: 'Remove', onPress: forget } }
+        )
+      }),
       empty: 'No sites yet'
     },
     {

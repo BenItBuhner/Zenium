@@ -9983,11 +9983,13 @@
  * on the page's tokens (§9.29). The sample under it is body text scaled whole, its 15/20 line
  * box with it (§4: a fixed line-height, here the body's times the sample's factor).
  */
-.zen-settings-zoom-stepper {
+.zen-settings-zoom-stepper,
+.zen-settings-slider-stepper {
   margin-top: 8px;
   gap: 8px;
 }
-.zen-settings-zoom-stepper .zen-zoom-slider [role='slider'] {
+.zen-settings-zoom-stepper .zen-zoom-slider [role='slider'],
+.zen-settings-slider-stepper .zen-zoom-slider [role='slider'] {
   border-color: var(--v2-page);
 }
 .zen-settings-zoom-preview {
@@ -10459,10 +10461,14 @@
 }
 /*
  * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
- * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text.
- * On a phone the block is the row's text – label and value on the first line, the slider on
- * the control line under it; on the desktop the slider trails the text at 160 with the value
- * at its end, the row grown around the control as any control row.
+ * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text in
+ * `tabular-nums`. On a phone the block is the row's text – the label with the value on its
+ * line, the description, then the Default zoom block's stepper form (`.zen-settings-slider-
+ * stepper`, the rules above with `.zen-settings-zoom-stepper`): the §9.3 44 px − and + step
+ * buttons at the row's ends, the track between them, no labels under its ends. On the desktop
+ * a level on a page is §10.5's menulist of its stops (the fonts rows), so the trailing form –
+ * the slider at 160 with the value at its end, the row grown around it as any control row –
+ * stands only for the Resources budgets until that group moves.
  */
 .zen-settings-slider-row {
   cursor: default;
@@ -10499,30 +10505,7 @@
   border-color: var(--v2-page);
 }
 /*
- * A slider's end labels (`SliderRow.ends`; Chrome's fonts page has "Very small" … "Very large"
- * under the track's ends): 13/69 % like the value, `aria-hidden` – the value beside the label
- * is what the row says. On a phone the line follows the slider in the row's block; on the
- * desktop the slider and its labels stack in the trailing slot, the value at the stack's side,
- * the track 200 so its stops (Chrome's 25 sizes) are 8 apart under the thumb.
- */
-.zen-settings-slider-ends {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--v2-text-deemphasized);
-  font-size: var(--v2-font-small);
-  line-height: var(--v2-line-small);
-}
-.zen-settings-slider-stack {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.zen-settings-slider-control > .zen-settings-slider-stack > .zen-settings-slider {
-  width: 200px;
-}
-/*
- * A row's ⋯ (`InfoRow.menu`, `RowMenuButton` in rows.tsx) is the shared icon button, at its
+ * A row's ⋯ (`ItemRow.menu`, `RowMenuButton` in rows.tsx) is the shared icon button, at its
  * own size and in the row's ink as `V2IconButton` draws it (§9.3: a row's icon buttons in the
  * row's ink; §9.29 deemphasises supplementary text only, never a control's glyph), in the
  * trailing slot with its box ending at the row's gutter as a control row's button and the
@@ -10594,15 +10577,39 @@
   text-align: center;
 }
 /*
- * The reader's Translate into popup (`ReaderPreferencesPanel.tsx`, CT-36): the translate bar's
- * list width, 230, as its floor. `MenulistPopover` measures its width before `placeUnder` caps
- * its height at 60 % of the window; a list of 58 languages then scrolls and the desktop's 8 px
- * bar takes that much from the longest row ("Chinese (Simplifi…", §9.13 wants the popup grown
- * to its longest row) – a chassis item to measure with the bar; this floor keeps every option
- * whole here meanwhile, the anchor's width still counting when it is wider.
+ * Settings › Languages › Add language, the phone's find-and-pick page (`AddLanguagePage.tsx`,
+ * §10.2): the page fills the drill-in pane's body and owns the scrolling – the §9.12 field in
+ * the 16 gutter, 8 under the pane's bar, pinned; the languages scrolling under it in a list of
+ * the page's own – so the field keeps its place and §9.7's hairline, once the list has
+ * scrolled, is drawn under the field (`data-scrolled`, as the pane's bar draws its own), not
+ * the bar. The pane's body pads 24 under its content for a list that ends; a page that scrolls
+ * itself gives that back and pads its own list, so the rows run to the pane's edge.
  */
-.zen-v2-menulist-popup.zen-reader-translate-popup {
-  min-width: max(230px, var(--zen-anchor-width, 0px));
+.zen-settings-scroll:has(> .zen-settings-add-language) {
+  padding-bottom: 0;
+}
+.zen-settings-add-language {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.zen-settings-add-language-filter {
+  flex-shrink: 0;
+  padding: 0 16px 8px;
+  transition: box-shadow 120ms var(--zen-ease);
+}
+.zen-settings-add-language[data-scrolled] > .zen-settings-add-language-filter {
+  box-shadow: 0 1px 0 var(--v2-border);
+}
+.zen-settings-add-language-filter > .zen-v2-field {
+  width: 100%;
+}
+.zen-settings-add-language-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 24px;
 }
 /*
  * Resources › Live usage (`blocks.tsx`'s `ResourceMeter`): label and numbers on one line, the
@@ -12590,8 +12597,9 @@
   border: 2px solid var(--v2-panel);
   background: var(--v2-accent);
 }
+:root[data-form-factor='phone'] .zen-settings-zoom-stepper .zen-zoom-slider [role='slider']::before,
 :root[data-form-factor='phone']
-  .zen-settings-zoom-stepper
+  .zen-settings-slider-stepper
   .zen-zoom-slider
   [role='slider']::before {
   border-color: var(--v2-page);
