@@ -188,6 +188,8 @@ interface Harness {
   clipboardText: { value: string }
   /** The names of the events sent to the window's chrome, in order. */
   sent: string[]
+  /** The ids of the windows whose host was asked to come forward (`WindowHost.focus`), in order. */
+  focused: string[]
   /** Every `apply` the fake spellchecker host received (empty without `options.spellcheck`). */
   spellcheckApplied: SpellcheckApplied[]
 }
@@ -233,6 +235,7 @@ function harness(
   const viewCalls: string[] = []
   const clipboardText = { value: '' }
   const sent: string[] = []
+  const focused: string[] = []
   const spellcheckApplied: SpellcheckApplied[] = []
   const spellcheckHost = (): SpellcheckHost => {
     const words = new Set<string>()
@@ -288,7 +291,7 @@ function harness(
     capabilities,
     io: memoryIo({ ...opts.files }),
     windows: {
-      create: () =>
+      create: (win) =>
         stub<WindowHost>({
           alive: true,
           contentSize: () => ({ width: 1280, height: 800 }),
@@ -297,7 +300,8 @@ function harness(
           isMaximized: () => false,
           isFocused: () => true,
           isVisible: () => true,
-          send: (name) => void sent.push(name)
+          send: (name) => void sent.push(name),
+          focus: () => void focused.push(win.id)
         })
     },
     views: stub<TabViewHost>({ createView: () => recordingView() }),
@@ -349,6 +353,7 @@ function harness(
     viewCalls,
     clipboardText,
     sent,
+    focused,
     spellcheckApplied
   }
 }
@@ -2936,6 +2941,77 @@ describe('the history device heading menu', () => {
     const opened = openTabs(h).filter((url) => !before.includes(url))
     expect(opened).toEqual(['https://b.test/'])
     expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(held.id)
+    // Its window is this one: no other window is asked forward.
+    expect(h.focused).toEqual([])
+  })
+
+  it('a tab held in another window is held too (#314’s rule): it comes to the front there and that window comes forward; what opens here opens behind', () => {
+    const h = harness(DESKTOP)
+    const second = h.browser.openWindow('unsynced', h.win)
+    if (!second) throw new Error('no second window')
+    // The other window holds the phone's first tab under its own id, behind a tab of its own.
+    const held = h.browser.tabs.createTab(
+      { id: 'p1', url: 'https://a.test/', active: true },
+      second
+    )
+    const theirs = h.browser.tabs.createTab({ url: 'https://theirs.test/', active: true }, second)
+    expect(h.browser.tabs.activeTabFor(second)?.id).toBe(theirs.id)
+    const mine = h.browser.tabs.createTab({ url: 'https://mine.test/', active: true }, h.win)
+    vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([
+      phone([
+        remote('p1', 'https://a.test/'),
+        remote('p2', 'https://b.test/'),
+        remote('p3', 'https://c.test/')
+      ])
+    ])
+    const before = openTabs(h)
+    h.focused.length = 0
+    h.browser.handleCommand(h.win, 'history.deviceMenu', { deviceId: 'phone' })
+    h.shown().find((item) => item.label === 'Open All in Tabs')!.click!()
+    // Not opened a second time here; to the front in its own window, which comes forward.
+    const opened = openTabs(h).filter((url) => !before.includes(url))
+    expect(opened).toEqual(['https://b.test/', 'https://c.test/'])
+    expect(h.browser.tabs.activeTabFor(second)?.id).toBe(held.id)
+    expect(h.focused).toEqual([second.id])
+    // The held tab took the front: the tabs that opened here opened behind this window's own.
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(mine.id)
+    for (const url of opened) {
+      const tab = Object.values(h.browser.state.model.tabs).find((t) => t.url === url)!
+      expect(h.browser.tabs.windowShowing(tab, h.win)).toBe(h.win)
+    }
+  })
+
+  it('with several held tabs the first comes to the front and the others stay; an unheld tab listed before them still opens behind', () => {
+    const h = harness(DESKTOP)
+    const first = h.browser.tabs.createTab(
+      { id: 'p2', url: 'https://b.test/', active: false },
+      h.win
+    )
+    const other = h.browser.tabs.createTab(
+      { id: 'p3', url: 'https://c.test/', active: false },
+      h.win
+    )
+    const mine = h.browser.tabs.createTab({ url: 'https://mine.test/', active: true }, h.win)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(mine.id)
+    vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([
+      phone([
+        remote('p1', 'https://a.test/'),
+        remote('p2', 'https://b.test/'),
+        remote('p3', 'https://c.test/')
+      ])
+    ])
+    const before = openTabs(h)
+    const activated = vi.spyOn(h.browser.tabs, 'activateTab')
+    h.browser.handleCommand(h.win, 'history.deviceMenu', { deviceId: 'phone' })
+    h.shown().find((item) => item.label === 'Open All in Tabs')!.click!()
+    const opened = openTabs(h).filter((url) => !before.includes(url))
+    expect(opened).toEqual(['https://a.test/'])
+    // The first held tab has the front, not the unheld one listed above it; the second held
+    // stays where it is – one activation in all, the first held tab's.
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(first.id)
+    expect(activated.mock.calls.map((call) => call[0])).toEqual([first.id])
+    expect(h.browser.tabs.tab(other.id)?.id).toBe(other.id)
+    expect(h.focused).toEqual([])
   })
 
   it('Hide Device hides the device for the session, and a device the engine no longer lists still hides', () => {

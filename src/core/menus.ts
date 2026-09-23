@@ -2596,21 +2596,32 @@ export class Menus {
 
   /**
    * Open All in Tabs: each tab the device lists opens in this window as a new tab, the first in
-   * front and the rest behind it in the group's order (newest activity first). A tab this
-   * window already holds under the tab's own id (the Open tabs
-   * scope carries the records too, ID-10) is not opened a second time: it is the one brought to
-   * the front when it is first, as the row's click has it.
+   * front and the rest behind it in the group's order (newest activity first). A tab the browser
+   * already holds under the tab's own id – in this window or another; the Open tabs scope
+   * carries the records too (ID-10), and held anywhere is held, the rule the page's row follows
+   * (#314) – is not opened a second time. The first held tab comes to the front in the window
+   * that shows it, and that window comes forward when it is another (the shape of a reopened
+   * tab's return to its own window, `Session.showRestored`); the other held tabs stay where they
+   * are, and the tabs that do open all open behind – the first of them takes the front only when
+   * no held tab did. A held tab no window can show now (a space of a window that is gone) is
+   * left as it is too: the user has it.
    */
   private openRemoteTabs(remote: readonly SyncRemoteTab[], win: ZenWindow): void {
     const { tabs } = this.browser
     let front = true
     for (const tab of remote) {
       const held = tabs.tab(tab.tabId)
-      if (held && tabVisibleIn(held, win.id)) {
-        if (front) tabs.activateTab(held.id, win, { userSwitch: true })
-      } else {
-        tabs.createTab({ url: tab.url, active: front }, win)
-      }
+      if (!held) continue
+      const home = tabs.windowShowing(held, win)
+      if (!home) continue
+      tabs.activateTab(held.id, home, { userSwitch: true })
+      if (home !== win) home.host.focus()
+      front = false
+      break
+    }
+    for (const tab of remote) {
+      if (tabs.tab(tab.tabId)) continue
+      tabs.createTab({ url: tab.url, active: front }, win)
       front = false
     }
   }
