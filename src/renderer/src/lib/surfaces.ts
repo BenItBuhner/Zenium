@@ -27,8 +27,12 @@ export function barOf(chip: Element | null): Rect | null {
   return { x: r.left, y: r.top, width: r.width, height: r.height }
 }
 
-/** The site icon chip in the desktop address pill: what the site-control popovers hang under. */
-export const SITE_CHIP = '[data-pill-chip][aria-label="Site information"]'
+/**
+ * The site-information chip in the desktop address pill: what the site-control popovers hang
+ * under. Marked by its own attribute, since its name follows the state its slot shows ("Site
+ * information · Camera blocked", omnibox-38).
+ */
+export const SITE_CHIP = '[data-pill-chip][data-site-chip]'
 
 /** The site chip element, for the light-dismiss registry's anchor; null while the pill is hidden. */
 export function siteChip(): HTMLElement | null {

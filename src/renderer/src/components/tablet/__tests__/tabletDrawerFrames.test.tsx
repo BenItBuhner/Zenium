@@ -136,6 +136,7 @@ function stateOf(side: 'left' | 'right'): UIState {
     extensions: [],
     bookmarks: [],
     closingTabIds: [],
+    permissionRules: [],
     sync: { enabled: false, scope: { openTabs: false } }
   } as unknown as UIState
 }
