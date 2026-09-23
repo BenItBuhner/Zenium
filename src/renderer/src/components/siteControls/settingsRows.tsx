@@ -1,13 +1,21 @@
 import type { ReactNode } from 'react'
 import { ShieldCheck } from 'lucide-react'
-import type { PermissionRule, SafetyCheckResult, UIState } from '@shared/types'
+import type {
+  DeviceGrant,
+  DeviceKind,
+  PermissionRule,
+  SafetyCheckResult,
+  UIState
+} from '@shared/types'
 import {
   contentSettingId,
   contentSettingsFor,
+  isDeviceKind,
   type ContentDefault,
   type ContentSetting
 } from '@shared/contentSettings'
 import { run } from '@renderer/lib/api'
+import { grantDetail, grantsOf, sitesWithGrants } from '@renderer/lib/devices'
 import { headline, safetyRows, worstState, type SafetyAction } from '@renderer/lib/safetyCheck'
 import { openOverlay } from '@renderer/lib/ui'
 import {
@@ -25,6 +33,7 @@ import { V2_GLYPH } from '../v2/controls'
 import {
   choice,
   type ActionRow,
+  type DetailRow,
   type ItemRow,
   type RowGroup,
   type SettingsRow
@@ -436,7 +445,10 @@ export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
 /**
  * One content type: an item row with the default's meaning under it, opening a sheet with the
  * default as a value row and the type's per-site answers; a type whose only default is the
- * built-in one (USB, serial: never handed to sites) is an info row, nothing to choose.
+ * built-in one (VR, local fonts: never handed to sites) is an info row, nothing to choose. A device
+ * kind's answers are its blocks – a pick grants one device, never an allow – so the sites
+ * connected to devices of the kind stand among them as detail rows into their device lists
+ * (MW-32..35), the whole list alphabetical by host.
  */
 function contentTypeRow(
   setting: ContentSetting,
@@ -448,9 +460,19 @@ function contentTypeRow(
   if (setting.choices.length < 2) {
     return { kind: 'info', id, label: setting.label, description: meaning }
   }
-  const rules = state.permissionRules
+  const own: Array<{ host: string; row: SettingsRow }> = state.permissionRules
     .filter((rule) => contentSettingId(rule.permission) === setting.id)
-    .sort((a, b) => hostOf(a.origin).localeCompare(hostOf(b.origin)))
+    .map((rule) => ({ host: hostOf(rule.origin), row: ruleRow(id, rule) }))
+  if (isDeviceKind(setting.id)) {
+    const kind: DeviceKind = setting.id
+    for (const site of sitesWithGrants(state.deviceGrants, kind)) {
+      own.push({
+        host: hostOf(site.origin),
+        row: grantedSiteRow(id, kind, site.origin, grantsOf(state.deviceGrants, site.origin, kind))
+      })
+    }
+  }
+  const exceptions = own.sort((a, b) => a.host.localeCompare(b.host)).map((entry) => entry.row)
   return {
     kind: 'item',
     id,
@@ -482,8 +504,51 @@ function contentTypeRow(
         {
           id: `${id}:sites`,
           heading: 'Sites with their own answer',
-          rows: rules.map((rule) => ruleRow(id, rule)),
+          rows: exceptions,
           empty: 'No site has its own answer'
+        }
+      ]
+    }
+  }
+}
+
+/**
+ * A site connected to devices of one kind (its `DeviceGrant`s, the setting's data): a §10.4
+ * detail row with the count, opening the depth-two sheet of the devices – each its name, its
+ * vendor:product or serial under it, and Revoke in the danger ink without a confirmation (the
+ * sheet is depth two already, §9.24, and a revoked device is asked for again, not lost). The
+ * site-information panel's device level (`SiteInfoPopover`) is the same list for one site.
+ */
+function grantedSiteRow(
+  typeId: string,
+  kind: DeviceKind,
+  origin: string,
+  grants: readonly DeviceGrant[]
+): DetailRow {
+  const host = hostOf(origin)
+  const id = `${typeId}:${origin}:devices`
+  return {
+    kind: 'detail',
+    id,
+    label: host,
+    summary: count(grants.length, 'device'),
+    sheet: {
+      title: host,
+      description: 'What this site may connect to. Revoking a device makes the site ask again.',
+      groups: [
+        {
+          id: `${id}:list`,
+          heading: null,
+          rows: grants.map((grant): ActionRow => ({
+            kind: 'action',
+            id: `${id}:${grant.deviceId}`,
+            label: grant.name,
+            description: grantDetail(grant) || undefined,
+            button: 'Revoke',
+            destructive: true,
+            onPress: () => run('devices.forget', { origin, kind, deviceId: grant.deviceId })
+          })),
+          empty: 'No devices'
         }
       ]
     }
