@@ -554,13 +554,25 @@ export const ENGINE_SPEC: ApiSpec = {
     }
   },
   browsingData: {
+    // Routed to the host's `extensionBrowsingData.ts` (site data and the cache through the
+    // WebView's clearing, history and downloads through the models).
     methods: {
-      remove: stub(object('options'), object('dataToRemove')),
-      removeCache: stub(object('options')),
-      removeCookies: stub(object('options')),
-      removeHistory: stub(object('options')),
-      removeLocalStorage: stub(object('options')),
-      settings: stub()
+      remove: routed(object('options'), object('dataToRemove')),
+      removeAppcache: routed(object('options')),
+      removeCache: routed(object('options')),
+      removeCacheStorage: routed(object('options')),
+      removeCookies: routed(object('options')),
+      removeDownloads: routed(object('options')),
+      removeFileSystems: routed(object('options')),
+      removeFormData: routed(object('options')),
+      removeHistory: routed(object('options')),
+      removeIndexedDB: routed(object('options')),
+      removeLocalStorage: routed(object('options')),
+      removePasswords: routed(object('options')),
+      removePluginData: routed(object('options')),
+      removeServiceWorkers: routed(object('options')),
+      removeWebSQL: routed(object('options')),
+      settings: routed()
     },
     events: {}
   },

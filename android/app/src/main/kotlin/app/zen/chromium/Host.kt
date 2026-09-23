@@ -531,6 +531,34 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         return true
     }
 
+    /** The tab whose next `view.loadHtml` waits, and for how long ([debugHoldLoadHtml]); null when none. Main thread. */
+    private var heldLoadHtml: Pair<String, Long>? = null
+
+    /**
+     * The demo harness's hook ([DebugHooks]): the next `view.loadHtml` for `tabId` – the crash
+     * page's document, after [debugEndRenderer] and the rebuild – starts `delayMs` late, so a
+     * load the core set up ahead of it (the page's own, its fallback for a list not restored)
+     * commits first for certain: the order the crash page's mark has to survive
+     * (`crashPagePending`, `src/core/tabs.ts`), forced rather than left to the race. Debuggable
+     * builds alone act; the answer says whether it did. In-process, like [debugEndRenderer].
+     */
+    fun debugHoldLoadHtml(tabId: String, delayMs: Long): Boolean {
+        if (!DebugHooks.enabled(BuildConfig.DEBUG)) {
+            Log.w(TAG, "debugHoldLoadHtml: not a debuggable build; nothing done")
+            return false
+        }
+        heldLoadHtml = tabId to delayMs
+        return true
+    }
+
+    /** The hold on `tabId`'s next `view.loadHtml`, taken (it holds one load), or null. */
+    private fun debugLoadHtmlHold(tabId: String): Long? {
+        val held = heldLoadHtml ?: return null
+        if (held.first != tabId) return null
+        heldLoadHtml = null
+        return held.second
+    }
+
     /**
      * The word recorded for `tabId`'s page as the rebooted core loads it again: its `crashed`
      * event, after the load the core set up, so the crash page it answers with supersedes that
@@ -728,7 +756,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 if (tab != null) deliverRendererExit(tab.tabId)
             }
             "view.loadHtml" -> {
-                tab?.loadHtml(args.str("url"), args.str("html"), args.strOrNull("baseUrl"), args.optJSONObject("document")?.let(PdfViewer::documentOf))
+                val hold = tab?.let { debugLoadHtmlHold(it.tabId) }
+                if (tab != null && hold != null) {
+                    Log.w(TAG, "debugHoldLoadHtml: the document of ${tab.tabId} starts in $hold ms")
+                    postDelayed(hold) {
+                        tabs.get(tab.tabId)?.loadHtml(args.str("url"), args.str("html"), args.strOrNull("baseUrl"), args.optJSONObject("document")?.let(PdfViewer::documentOf))
+                    }
+                } else {
+                    tab?.loadHtml(args.str("url"), args.str("html"), args.strOrNull("baseUrl"), args.optJSONObject("document")?.let(PdfViewer::documentOf))
+                }
                 reply(null)
                 if (tab != null) deliverRendererExit(tab.tabId)
             }
@@ -741,7 +777,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // `{ restored: false }` leaves the load to the core (one path for every fallback, the
             // internal pages' document included): a `loadUrl` here would load the page twice.
             "view.restoreNavigation" -> {
-                val restored = tab?.restoreNavigation(args.arr("entries"), args.optInt("index", -1), args.strOrNull("hostState")) ?: false
+                // A page that comes back as the crash page (`deliverRendererExit` below) gets no
+                // list restored under it: `restoreState` starts loading the list's current entry,
+                // which can commit ahead of the crash page and pass for a load of the page's own.
+                // The crash page stands alone in the view, as after a first crash; the entries
+                // stay the core's.
+                val hostState = if (tab != null && rendererExits.willTake(tab.tabId)) {
+                    Log.i(TAG, "the list of ${tab.tabId} is not restored: its page comes back as the crash page")
+                    null
+                } else args.strOrNull("hostState")
+                val restored = tab?.restoreNavigation(args.arr("entries"), args.optInt("index", -1), hostState) ?: false
                 reply(json("restored" to restored))
                 // A restored list is loading its current entry; a refused one has the core load
                 // it next. Either way the crash page's word, when there is one, comes after.
