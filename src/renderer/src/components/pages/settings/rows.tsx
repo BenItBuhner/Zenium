@@ -88,8 +88,12 @@ export function GroupList({
   return (
     <div className={cn('zen-settings-groups', className)}>
       {groups.filter(groupShows).map((group) => (
+        // A group is not a landmark: named by its heading, it would be a `region` – one per
+        // group, and the Search section's first group, "Search", would double the pane's own
+        // (axe `landmark-unique`, the desktop's #358). `group` keeps the name off the landmarks.
         <section
           key={group.id}
+          role="group"
           className="zen-settings-group"
           data-group={group.id}
           aria-label={group.heading ?? undefined}
