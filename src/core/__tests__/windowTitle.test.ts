@@ -134,10 +134,10 @@ describe('native window title', () => {
       background: false
     })
     await tick()
-    expect(f.titles.get(win)?.at(-1)).toBe('example.com - Zenium')
+    expect(f.titles.get(win)?.at(-1)).toBe('example.com — Zenium')
     f.views[0].events.onTitleUpdated('Example Domain')
     await tick()
-    expect(f.titles.get(win)?.at(-1)).toBe('Example Domain - Zenium')
+    expect(f.titles.get(win)?.at(-1)).toBe('Example Domain — Zenium')
   })
 
   it('prefers a custom tab name and tracks the active tab across switches', async () => {
@@ -160,21 +160,21 @@ describe('native window title', () => {
     const second = win.selectedTabIn(win.activeSpace())
     f.views[1].events.onTitleUpdated('Second')
     await tick()
-    expect(f.titles.get(win)?.at(-1)).toBe('Second - Zenium')
+    expect(f.titles.get(win)?.at(-1)).toBe('Second — Zenium')
 
     f.browser.handleCommand(win, 'tab.rename', { tabId: second, title: 'Renamed' })
     await tick()
-    expect(f.titles.get(win)?.at(-1)).toBe('Renamed - Zenium')
+    expect(f.titles.get(win)?.at(-1)).toBe('Renamed — Zenium')
 
     f.browser.handleCommand(win, 'tab.activate', { tabId: first })
     await tick()
-    expect(f.titles.get(win)?.at(-1)).toBe('Example Domain - Zenium')
+    expect(f.titles.get(win)?.at(-1)).toBe('Example Domain — Zenium')
 
     f.browser.handleCommand(win, 'tab.close', { tabId: first, force: true })
     // The close runs the page's unload check first (a promise), then commits.
     await tick()
     await tick()
-    expect(f.titles.get(win)?.at(-1)).toBe('Renamed - Zenium')
+    expect(f.titles.get(win)?.at(-1)).toBe('Renamed — Zenium')
   })
 
   it('names a second synced window after the shared active tab, also once the first closes', async () => {
@@ -191,12 +191,12 @@ describe('native window title', () => {
     expect(second).not.toBeNull()
     if (!second) return
     await tick()
-    expect(f.titles.get(second)?.at(-1)).toBe('Example Domain - Zenium')
+    expect(f.titles.get(second)?.at(-1)).toBe('Example Domain — Zenium')
 
     first.onClosing()
     first.onClosed()
     await tick()
-    expect(f.titles.get(second)?.at(-1)).toBe('Example Domain - Zenium')
+    expect(f.titles.get(second)?.at(-1)).toBe('Example Domain — Zenium')
   })
 
   it('marks private windows', async () => {
@@ -207,7 +207,7 @@ describe('native window title', () => {
     if (!priv) return
     await tick()
     // A private window opens on an empty tab with the URL bar up.
-    expect(f.titles.get(priv)?.at(-1)).toBe('New Tab - Zenium (Private)')
+    expect(f.titles.get(priv)?.at(-1)).toBe('New Tab — Zenium (Private)')
     f.browser.handleCommand(priv, 'urlbar.submit', {
       input: 'https://example.com',
       newTab: true,
@@ -218,7 +218,7 @@ describe('native window title', () => {
     expect(view).toBeDefined()
     view?.events.onTitleUpdated('Example Domain')
     await tick()
-    expect(f.titles.get(priv)?.at(-1)).toBe('Example Domain - Zenium (Private)')
+    expect(f.titles.get(priv)?.at(-1)).toBe('Example Domain — Zenium (Private)')
     // The origin window is unaffected by the private one's tabs.
     expect(f.titles.get(origin)?.at(-1)).toBe('Zenium')
   })
@@ -236,7 +236,7 @@ describe('a named window (Name Window…, shortcuts-menus-121)', () => {
     })
     f.views[0].events.onTitleUpdated('Example Domain')
     await tick()
-    expect(f.titles.get(win)?.at(-1)).toBe('Example Domain - Zenium')
+    expect(f.titles.get(win)?.at(-1)).toBe('Example Domain — Zenium')
 
     f.browser.handleCommand(win, 'window.setName', { name: '  Work  ' })
     expect(win.name).toBe('Work')
@@ -252,7 +252,7 @@ describe('a named window (Name Window…, shortcuts-menus-121)', () => {
     f.browser.handleCommand(win, 'window.setName', { name: '   ' })
     expect(win.name).toBeNull()
     expect(win.windowState().name).toBeNull()
-    expect(f.titles.get(win)?.at(-1)).toBe('Something Else - Zenium')
+    expect(f.titles.get(win)?.at(-1)).toBe('Something Else — Zenium')
     f.browser.handleCommand(win, 'window.setName', { name: 'Again' })
     f.browser.handleCommand(win, 'window.setName', { name: null })
     expect(win.name).toBeNull()

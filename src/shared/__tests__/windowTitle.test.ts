@@ -2,18 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   formatWindowTitle,
   normalizeWindowName,
+  TITLE_JOINER,
   TITLE_UPDATE_INTERVAL_MS,
   TitleThrottle,
   WINDOW_NAME_MAX
 } from '../windowTitle'
 
 describe('formatWindowTitle', () => {
-  it('suffixes the active tab title with the product name', () => {
-    expect(formatWindowTitle('Example Domain', false)).toBe('Example Domain - Zenium')
+  it('suffixes the active tab title with the product name behind the one joiner, the spaced em dash (§9.1)', () => {
+    expect(formatWindowTitle('Example Domain', false)).toBe('Example Domain — Zenium')
+    expect(TITLE_JOINER).toBe(' — ')
+    expect(formatWindowTitle('Example Domain', false)).toBe(`Example Domain${TITLE_JOINER}Zenium`)
   })
 
   it('marks private windows', () => {
-    expect(formatWindowTitle('Example Domain', true)).toBe('Example Domain - Zenium (Private)')
+    expect(formatWindowTitle('Example Domain', true)).toBe('Example Domain — Zenium (Private)')
   })
 
   it('shows the bare product name with no active tab or an untitled one', () => {
@@ -25,10 +28,10 @@ describe('formatWindowTitle', () => {
   })
 
   it('trims whitespace around the tab title', () => {
-    expect(formatWindowTitle('  Docs \n', false)).toBe('Docs - Zenium')
+    expect(formatWindowTitle('  Docs \n', false)).toBe('Docs — Zenium')
   })
 
-  it('reads a named window as "<name> — Zenium" whatever its active tab (Name Window…), still marked private', () => {
+  it('reads a named window as "<name> — Zenium" whatever its active tab (Name Window…) – the tab form’s joiner, one for both – still marked private', () => {
     expect(formatWindowTitle('Example Domain', false, null, 'Work')).toBe('Work — Zenium')
     expect(formatWindowTitle(null, false, null, 'Work')).toBe('Work — Zenium')
     expect(formatWindowTitle('Example Domain', true, null, 'Work')).toBe('Work — Zenium (Private)')
@@ -36,8 +39,8 @@ describe('formatWindowTitle', () => {
       'Research — Zenium'
     )
     // A cleared or blank name falls back to the tab's title.
-    expect(formatWindowTitle('Example Domain', false, null, null)).toBe('Example Domain - Zenium')
-    expect(formatWindowTitle('Example Domain', false, null, '   ')).toBe('Example Domain - Zenium')
+    expect(formatWindowTitle('Example Domain', false, null, null)).toBe('Example Domain — Zenium')
+    expect(formatWindowTitle('Example Domain', false, null, '   ')).toBe('Example Domain — Zenium')
     // A web app's window is the app's: a window name does not reach its title.
     expect(formatWindowTitle('Inbox', false, 'Mail', 'Work')).toBe('Inbox')
   })
@@ -70,18 +73,18 @@ describe('TitleThrottle', () => {
 
   it('applies the first title at once', () => {
     const { applied, t } = throttle()
-    t.set('A - Zenium')
-    expect(applied).toEqual(['A - Zenium'])
+    t.set('A — Zenium')
+    expect(applied).toEqual(['A — Zenium'])
   })
 
   it('drops a title equal to the one the window already carries', () => {
     const { applied, t } = throttle('Zenium')
     t.set('Zenium')
     expect(applied).toEqual([])
-    t.set('A - Zenium')
+    t.set('A — Zenium')
     vi.advanceTimersByTime(TITLE_UPDATE_INTERVAL_MS)
-    t.set('A - Zenium')
-    expect(applied).toEqual(['A - Zenium'])
+    t.set('A — Zenium')
+    expect(applied).toEqual(['A — Zenium'])
   })
 
   it('coalesces a burst inside the interval into one trailing apply of the latest title', () => {

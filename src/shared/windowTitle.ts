@@ -2,18 +2,23 @@
  * The native window title (Alt+Tab, taskbar, Dock, window switcher). Kept platform neutral and
  * pure so it can be unit tested; hosts apply the result through `WindowHost.setTitle`.
  *
- * Format: `<active tab title> - Zenium`, with ` (Private)` appended for private windows. A window
+ * Format: `<active tab title> — Zenium`, with ` (Private)` appended for private windows. A window
  * with no active tab (or a blank/untitled one) shows the bare product name, still marked private.
  * A window the user named (Chrome's Name window…, `windowName`) reads `<name> — Zenium` whatever
- * its tabs: the name is the window's, so it stands where the tab's title would and is joined
- * with the design language's title–detail dash rather than the tab form's hyphen. A web app's
- * standalone window (`appName`) is titled as Chrome titles its app windows: the page's title
- * alone, the app's name while the page has none – the window is the app's, not the browser's.
+ * its tabs: the name is the window's, so it stands where the tab's title would. One joiner for
+ * both forms – the design language's spaced em dash, the title–detail dash Firefox's title bar
+ * uses (§9.1; the #396 review's ruling 4), not Chrome's hyphen: two joiners in one title bar
+ * read as two conventions. A web app's standalone window (`appName`) is titled as Chrome titles
+ * its app windows: the page's title alone, the app's name while the page has none – the window
+ * is the app's, not the browser's.
  */
 export const PRODUCT_NAME = 'Zenium'
 
 /** The longest name a window keeps (the prompt's field stops there too). */
 export const WINDOW_NAME_MAX = 120
+
+/** The one joiner between the window's lead – its name or its tab's title – and the product. */
+export const TITLE_JOINER = ' — '
 
 export function formatWindowTitle(
   activeTabTitle: string | null | undefined,
@@ -24,11 +29,8 @@ export function formatWindowTitle(
   const title = activeTabTitle?.trim()
   if (appName) return title || appName
   const name = normalizeWindowName(windowName)
-  const base = name
-    ? `${name} — ${PRODUCT_NAME}`
-    : title
-      ? `${title} - ${PRODUCT_NAME}`
-      : PRODUCT_NAME
+  const lead = name || title
+  const base = lead ? `${lead}${TITLE_JOINER}${PRODUCT_NAME}` : PRODUCT_NAME
   return isPrivate ? `${base} (Private)` : base
 }
 

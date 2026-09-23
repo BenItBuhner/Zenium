@@ -581,7 +581,7 @@ export class ZenWindow {
   }
 
   /**
-   * Push the native window title (`<active tab title> - Zenium`, or `<name> — Zenium` for a
+   * Push the native window title (`<active tab title> — Zenium`, or `<name> — Zenium` for a
    * window the user named) to the host; the host throttles.
    */
   updateTitle(): void {
