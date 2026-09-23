@@ -1696,6 +1696,35 @@
   }
 
   /*
+   * The collapsed rail's flyout (tabs-03; sidebar/useRailFlyout.ts, design language v2 §9.37,
+   * §11.4): the sidebar's own box flown out to the expanded width over the page's picture, the
+   * frame staying where it is. It is the window's chrome, not a panel – no radius, no blur, no
+   * border: the window's gradient (`--zen-bg`, fixed to the viewport so the flyout's stretch of
+   * it is the very stretch the window would paint there) under the window's grain, and the
+   * frame's shadow rule (§9.20, `--zen-frame-shadow`) at its one visible edge: the box runs the
+   * window's full height at the window's edge, so the shadow's other three sides fall outside
+   * the window, where the root's `overflow: hidden` clips them, and the hairline plus the 14 px
+   * fall lie on the frame alone – the frame's own outline, lifted onto the flyout. Above the
+   * frame at 40 with the compact sidebar's reveal, under the hover card (80) and the chrome
+   * layer's popovers and menus (100), which its rows raise. `data-flyout` is on from the open's
+   * first frame to the fold's rest; while the width moves (`data-flyout-moving`) a title is cut
+   * at the edge rather than re-ellipsised every frame – the ellipsis is the resting form's.
+   */
+  .zen-rail-flyout[data-flyout] {
+    z-index: 40;
+    background: var(--zen-bg);
+    background-attachment: fixed;
+    box-shadow: var(--zen-frame-shadow);
+    transition: background 600ms var(--zen-ease);
+  }
+  .zen-rail-flyout[data-flyout] > .zen-texture {
+    background-attachment: fixed;
+  }
+  .zen-rail-flyout[data-flyout-moving] .zen-tab-title {
+    text-overflow: clip;
+  }
+
+  /*
    * The overlay header (design language v2 §9.7; overlays/OverlayShell.tsx, every overlay on the
    * shell inheriting): a title block, no line at rest – the title 17/600 on 22 for a panel (the
    * `dock` and `dialog` variants) or 22/600 on 28 for a page (`full`) – 16 from the panel's top

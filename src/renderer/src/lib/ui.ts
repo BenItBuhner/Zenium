@@ -283,6 +283,11 @@ export interface UiState {
   compactHover: boolean
   /** The hidden top toolbar (compact mode, fullscreen) is out over a picture of the page. */
   toolbarHover: boolean
+  /**
+   * The collapsed rail's flyout (tabs-03, `useRailFlyout`) is out over a picture of the page:
+   * from the capture that stands in for the page until the fold back to the rail rests.
+   */
+  railFlyout: boolean
   renamingTabId: string | null
   renamingFolderId: string | null
   /** Tab whose pinned URL is being edited in the small prompt. */
@@ -570,6 +575,7 @@ export const uiStore = createStore<UiState>(
     drag: null,
     compactHover: false,
     toolbarHover: false,
+    railFlyout: false,
     renamingTabId: null,
     renamingFolderId: null,
     editingPinnedUrlTabId: null,
@@ -994,8 +1000,15 @@ export const coverBandStore = createStore<ContentCover>({ top: 0, bottom: 0 }, '
 /** Captures in flight, per tab: a sheet and the dialog it hosts asking together pay for one. */
 const captures = new Map<string, Promise<void>>()
 
-/** Capture the active tab before a chrome overlay hides it. */
-export async function captureActiveTab(tabId: string | null): Promise<void> {
+/**
+ * Capture the active tab before a chrome overlay hides it. `fresh` captures a page whose view is
+ * hidden already – a tab activated under chrome that keeps the page under its picture (the
+ * rail's flyout), which would otherwise show only what it looked like the last time it was seen.
+ */
+export async function captureActiveTab(
+  tabId: string | null,
+  { fresh = false }: { fresh?: boolean } = {}
+): Promise<void> {
   if (!tabId) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
     return
@@ -1004,7 +1017,9 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
   const pending = captures.get(tabId)
   if (pending) return pending
   const capture = (async (): Promise<void> => {
-    const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
+    const data = await cmd('overlay.snapshot', fresh ? { tabId, fresh } : { tabId }).catch(
+      () => null
+    )
     if (data) rememberThumbnail(tabId, data)
     // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
     // looked like the last time it was.
@@ -1167,6 +1182,7 @@ export function invalidateSnapshot(): void {
     !ui.drag &&
     !ui.compactHover &&
     !ui.toolbarHover &&
+    !ui.railFlyout &&
     !ui.drawerOpen &&
     !ui.menu &&
     !ui.siteInfoOpen &&
@@ -1291,11 +1307,18 @@ if (!snapshotFlags.__zenSnapshotWired) {
 /**
  * Whether the page views are hidden under the chrome right now – what `useLayoutReporter`
  * reports as `contentHidden`: a chrome overlay covers the content, a compact sidebar or the
- * toolbar is revealed over it, or a frame dialog host keeps the page under its picture for a
- * panel's way out (`holdFrameDialogCover`).
+ * toolbar is revealed over it, the collapsed rail's flyout is out over it (`useRailFlyout`), or
+ * a frame dialog host keeps the page under its picture for a panel's way out
+ * (`holdFrameDialogCover`).
  */
 export function pageHidden(ui: UiState): boolean {
-  return overlayCoversContent(ui) || ui.compactHover || ui.toolbarHover || ui.frameDialogCover > 0
+  return (
+    overlayCoversContent(ui) ||
+    ui.compactHover ||
+    ui.toolbarHover ||
+    ui.railFlyout ||
+    ui.frameDialogCover > 0
+  )
 }
 
 /**

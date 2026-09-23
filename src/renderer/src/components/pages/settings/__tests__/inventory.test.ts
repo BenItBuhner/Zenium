@@ -357,6 +357,8 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Layout',
     'Tabs on the right',
     'Expanded sidebar',
+    // The Collapsed sidebar layout's dependent row (tabs-03, W4-8).
+    'Expand on hover',
     'Remove browser padding',
     'Use Windows transparency effects',
     'Page zoom',
