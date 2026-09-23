@@ -465,4 +465,131 @@ describe('the ± rows coalesce (the Android performance gate’s ruling for #350
     expect(valueOf(id)).toBe('24 px')
     expect(set).toHaveBeenCalledTimes(1)
   })
+
+  /*
+   * The single-press case the ruling's clarification (perf-program.md, RULING 4, 07:49) accepts
+   * on a unit test in place of an emulator run: one press through the production coalescer
+   * under a fake clock – no apply at 399 ms, exactly one at 400 ms, still one at 1000 ms – and
+   * the hold's end as the window's start. `set` is the apply here: it is the one write the
+   * commit makes (`settings.update`), and the host's `fonts.apply` follows each write once.
+   */
+  it('one press – a finger’s tap on Font size’s + – moves the row and the preview on the press itself and applies once: none at 399 ms from the tap’s end, one at 400 ms, still one at 1000 ms', () => {
+    vi.useFakeTimers()
+    const set = vi.fn()
+    render(<Fonts fonts={DEFAULT_FONT_SETTINGS} set={set} />)
+    const id = 'fonts-size-phone'
+    const plus = plusOf(id)
+    // The down is the step: the row's value and the preview move here, before any commit.
+    act(() => pointer(plus, 'pointerdown'))
+    expect(valueOf(id)).toBe('17 px')
+    expect(previewSize()).toBe('17px')
+    expect(set).not.toHaveBeenCalled()
+    // The finger lifts 60 ms on: the press's hold ends, and the quiet window starts here.
+    act(() => {
+      vi.advanceTimersByTime(60)
+      pointer(plus, 'pointerup')
+      plus.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+    })
+    expect(valueOf(id)).toBe('17 px')
+    expect(set).not.toHaveBeenCalled()
+    // 400 ms from the down is 340 from the release: the window runs from the hold's end, not
+    // from the step under the finger.
+    act(() => {
+      vi.advanceTimersByTime(340)
+    })
+    expect(set).not.toHaveBeenCalled()
+    // 399 ms from the release: no apply.
+    act(() => {
+      vi.advanceTimersByTime(59)
+    })
+    expect(set).not.toHaveBeenCalled()
+    // 400 ms: the one apply, with the press's value.
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, size: 17 } })
+    // 1000 ms: still the one.
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(valueOf(id)).toBe('17 px')
+    expect(previewSize()).toBe('17px')
+  })
+
+  it('one press from the keyboard – Minimum font size’s +, a click with no pointer under it – applies once: none at 399 ms from the step, one at 400 ms, still one at 1000 ms', () => {
+    vi.useFakeTimers()
+    const set = vi.fn()
+    render(<Fonts fonts={DEFAULT_FONT_SETTINGS} set={set} />)
+    const id = 'fonts-minimum-size-phone'
+    const plus = plusOf(id)
+    // Enter or Space on the focused button: the click with `detail` 0 is the step, and with no
+    // hold around it the window runs from the step.
+    act(() => {
+      plus.focus()
+      plus.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }))
+    })
+    expect(valueOf(id)).toBe('6 px')
+    expect(set).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(399)
+    })
+    expect(set).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, minimumSize: 6 } })
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(valueOf(id)).toBe('6 px')
+  })
+
+  it('a hold’s end starts the window: a hold on Font size’s + steps to 20 px, and from the release none at 399 ms, one apply at 400 ms with the hold’s last step, still one at 1000 ms', () => {
+    vi.useFakeTimers()
+    const set = vi.fn()
+    render(<Fonts fonts={DEFAULT_FONT_SETTINGS} set={set} />)
+    const id = 'fonts-size-phone'
+    const plus = plusOf(id)
+    act(() => pointer(plus, 'pointerdown'))
+    expect(valueOf(id)).toBe('17 px')
+    // The hold's 400 ms delay: the first step's own quiet passes under the finger, no commit.
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    expect(valueOf(id)).toBe('17 px')
+    expect(set).not.toHaveBeenCalled()
+    for (const value of ['18 px', '20 px']) {
+      act(() => {
+        vi.advanceTimersByTime(100)
+      })
+      expect(valueOf(id)).toBe(value)
+      expect(previewSize()).toBe(value.replace(' ', ''))
+      expect(set).not.toHaveBeenCalled()
+    }
+    // The release, 600 ms after the down: the hold's end, and the window's start.
+    act(() => {
+      pointer(plus, 'pointerup')
+      plus.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+    })
+    expect(valueOf(id)).toBe('20 px')
+    expect(set).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(399)
+    })
+    expect(set).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, size: 20 } })
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(valueOf(id)).toBe('20 px')
+  })
 })
