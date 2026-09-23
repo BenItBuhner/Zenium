@@ -50,22 +50,42 @@ class PrivateSession(private val host: Host) {
         }
         if (!manager.areNotificationsEnabled()) return
         ensureChannel(context)
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val card = card(openTabs)
+        val notification = NotificationCompat.Builder(context, card.channelId)
             .setSmallIcon(R.drawable.ic_stat_private)
-            .setContentTitle(TITLE)
-            .setContentText(if (openTabs == 1) "1 private tab is open" else "$openTabs private tabs are open")
+            .setContentTitle(card.title)
+            .setContentText(card.text)
             .setContentIntent(closeAllIntent(context))
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setShowWhen(false)
-            .setLocalOnly(true)
-            // Not on the lock screen: what is private stays out of sight there, as Chrome keeps it.
-            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
-            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setOngoing(card.ongoing)
+            .setOnlyAlertOnce(card.onlyAlertOnce)
+            .setSilent(card.silent)
+            .setShowWhen(card.showWhen)
+            .setLocalOnly(card.localOnly)
+            .setVisibility(card.visibility)
+            .setCategory(card.category)
             .build()
         runCatching { manager.notify(NOTIFICATION_ID, notification) }
     }
+
+    /**
+     * The card as plain values the builder reads (NOT-07; JVM-pinned in `PrivateSessionTest`):
+     * what the shade shows and how the card behaves – on its own low-importance channel,
+     * ongoing and silent, never alerting twice, this device's alone, without a time, and
+     * [NotificationCompat.VISIBILITY_SECRET] so that nothing of it is on the lock screen, as
+     * Chrome keeps its Incognito card.
+     */
+    data class Card(
+        val title: String,
+        val text: String,
+        val channelId: String,
+        val visibility: Int,
+        val ongoing: Boolean,
+        val silent: Boolean,
+        val onlyAlertOnce: Boolean,
+        val localOnly: Boolean,
+        val showWhen: Boolean,
+        val category: String
+    )
 
     /** The card's button: the core closes every private tab, and the count coming back takes the card down. */
     fun closeAll() {
@@ -83,7 +103,23 @@ class PrivateSession(private val host: Host) {
         /** Chrome's channel for it is "Incognito", low importance. */
         const val CHANNEL_ID = "zenium.private"
         const val CHANNEL_NAME = "Private browsing"
+        const val CHANNEL_IMPORTANCE = NotificationManager.IMPORTANCE_LOW
         const val TITLE = "Close all private tabs"
+
+        /** The card for `openTabs` private tabs (at least one); see [Card]. */
+        fun card(openTabs: Int): Card = Card(
+            title = TITLE,
+            text = if (openTabs == 1) "1 private tab is open" else "$openTabs private tabs are open",
+            channelId = CHANNEL_ID,
+            // Not on the lock screen: what is private stays out of sight there, as Chrome keeps it.
+            visibility = NotificationCompat.VISIBILITY_SECRET,
+            ongoing = true,
+            silent = true,
+            onlyAlertOnce = true,
+            localOnly = true,
+            showWhen = false,
+            category = NotificationCompat.CATEGORY_STATUS
+        )
         /** The card's id (the extensions' use 1, the media notification 2, the pages' 3). */
         const val NOTIFICATION_ID = 4
         const val ACTION_CLOSE_ALL = "app.zen.chromium.PRIVATE_CLOSE_ALL"
@@ -98,7 +134,7 @@ class PrivateSession(private val host: Host) {
             val system = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (system.getNotificationChannel(CHANNEL_ID) != null) return
             system.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW).apply {
+                NotificationChannel(CHANNEL_ID, CHANNEL_NAME, CHANNEL_IMPORTANCE).apply {
                     description = "Shows while private tabs are open, to close them all at once"
                     setShowBadge(false)
                     enableVibration(false)

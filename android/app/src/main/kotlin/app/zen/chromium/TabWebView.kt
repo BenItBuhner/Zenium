@@ -147,6 +147,8 @@ class TabWebView(
     /** The privacy signals' document-start script (`navigator.globalPrivacyControl`, `doNotTrack`) and its registration. */
     private var signalScript: String? = null
     private var signalScriptHandler: ScriptHandler? = null
+    /** The third-party cookie switch as last set on this view (`applyCookiePolicy`); null before the first policy. */
+    private var acceptsThirdPartyCookies: Boolean? = null
     private var currentFlags: JSONObject = json("glanceEnabled" to true, "glanceTrigger" to "alt", "thirdParty" to null)
     private var pendingFlags = false
     private var zoomFactor = 1.0
@@ -386,7 +388,15 @@ class TabWebView(
         // The jar of this tab's container: a WebView on another profile is not the default jar's.
         val jar = Profiles.cookieManager(containerId)
         jar.setAcceptCookie(!flags.siteData.blockAll)
-        jar.setAcceptThirdPartyCookies(this, flags.acceptsThirdPartyCookies(containerId, documentUrl))
+        // The switch is this view's own, and set only when its answer changes: a policy the core
+        // pushes to every open tab that leaves this container's answer as it was – the private
+        // new tab page's third-party cookies choice, which is the private container's alone
+        // (INC-03) – asks nothing of a regular tab's WebView.
+        val accepts = flags.acceptsThirdPartyCookies(containerId, documentUrl)
+        if (accepts != acceptsThirdPartyCookies) {
+            acceptsThirdPartyCookies = accepts
+            jar.setAcceptThirdPartyCookies(this, accepts)
+        }
     }
 
     /**
