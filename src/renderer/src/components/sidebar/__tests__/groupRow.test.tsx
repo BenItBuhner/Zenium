@@ -36,6 +36,7 @@ vi.mock('@renderer/lib/motion/spring', async (original) => {
 
 import { run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
+import { SlideMotion } from '@renderer/lib/motion/slide'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { SpacePanel } from '../SpacePanel'
 import { StripAxisContext, type StripAxis } from '../stripAxis'
@@ -48,7 +49,12 @@ import { StripAxisContext, type StripAxis } from '../stripAxis'
  * with the rows it had kept drawn until the spring rests; a hold brings the group's menu at the
  * finger; a SAVED group – its tabs closed, its pages kept (TAB-16) – as a row with the ring and
  * the count of its pages whose tap opens it; the desktop's row on its own contract (TAB-16's
- * desktop half – desktopGroups.test.tsx), its fold no spring.
+ * desktop half – desktopGroups.test.tsx), its fold the same spring (W4-2): the block's height
+ * on SPRING_GENTLE with the rows it had – its tabs, or a saved folder's pages – kept drawn
+ * until the spring rests, and the cut under reduced motion (§11.3); the strip's chip (§9.37)
+ * the same fold along `x`. The rows below the block are kept honest: the list's FLIP baseline
+ * follows every frame of the fold, and the block holds the header's height at a shut rest until
+ * the commit that removes the kept rows, so no frame paints it open.
  */
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
@@ -65,16 +71,32 @@ function rule(selector: string): string {
 const ROW = 44
 const GAP = 2
 
+/** The strip's chip along `x`, and a member tab's width beside it. */
+const CHIP = 120
+const STRIP_TAB = 180
+
 // happy-dom lays nothing out: the fold reads the block's and the header's `offsetHeight`, so
-// the block answers with the rows it holds and the header with the row.
+// the block answers with the rows it holds – its tabs, or a saved folder's pages – and the
+// header with the row; along the strip's `x` the same by `offsetWidth`, the chip and the tabs.
 Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
   configurable: true,
   get(this: HTMLElement): number {
     if (this.classList.contains('zen-group-fold')) {
-      const rows = this.querySelectorAll('[data-tab-id]').length
+      const rows = this.querySelectorAll('[data-tab-id], [data-saved-page]').length
       return ROW + rows * (ROW + GAP)
     }
     if (this.classList.contains('zen-tab')) return ROW
+    return 0
+  }
+})
+Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+  configurable: true,
+  get(this: HTMLElement): number {
+    if (this.classList.contains('zen-group-fold')) {
+      const rows = this.querySelectorAll('[data-tab-id]').length
+      return CHIP + rows * (STRIP_TAB + GAP)
+    }
+    if (this.classList.contains('zen-strip-group-chip')) return CHIP
     return 0
   }
 })
@@ -199,8 +221,21 @@ const grouped = (): Tab[] => [
 const q = <T extends HTMLElement>(selector: string): T | null => document.querySelector<T>(selector)
 const header = (): HTMLElement => q<HTMLElement>('[data-tab-folder="g"]')!
 const shell = (): HTMLElement => q<HTMLElement>('.zen-group-fold')!
+/** The fold's progress the hook writes on the shell for the chevron ('' where the state binds). */
+const progress = (): string => shell().style.getPropertyValue('--zen-fold-progress')
 const memberRows = (): string[] =>
   [...shell().querySelectorAll<HTMLElement>('[data-tab-id]')].map((el) => el.dataset.tabId!)
+/** A saved folder's page rows in the block (the desktop's, TAB-16), by title. */
+const pageRows = (): string[] =>
+  [...shell().querySelectorAll<HTMLElement>('[data-saved-page]')].map((el) =>
+    el.getAttribute('aria-label')!
+  )
+
+const PAGES = [
+  { url: 'https://alpha.example/', title: 'ALPHA' },
+  { url: 'https://beta.example/', title: 'BETA' },
+  { url: 'https://delta.example/', title: 'DELTA' }
+]
 
 const frames = new Map<number, (t: number) => void>()
 let nextFrame = 1
@@ -322,15 +357,18 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(count).toContain('font-size: 13px')
     expect(count).toContain('font-variant-numeric: tabular-nums')
     expect(count).toContain('color: var(--v2-control-text-deemphasized')
-    const chevron = rule('.zen-group-row-chevron')
+    // The tablet row's chevron box, on the tablet row; the bare class is the turn (below).
+    const chevron = rule('.zen-group-row .zen-group-row-chevron')
     expect(chevron).toContain('width: 16px')
     expect(chevron).toContain('margin-right: 14px')
+    expect(chevron).toContain('opacity: 0.69')
     expect(
       rule(
         ":root[data-form-factor='tablet'] .zen-group-fold > .zen-group-rows > .zen-tab:not(.justify-center)"
       )
     ).toContain('margin-left: 24px')
-    expect(rule('.zen-group-fold[data-folding]')).toContain('overflow: hidden')
+    // `clip`, not `hidden`: the folding shell is no scroll container a focus could scroll.
+    expect(rule('.zen-group-fold[data-folding]')).toContain('overflow: clip')
     expect(rule(":root[data-form-factor='tablet'] .zen-tab.zen-group-row input")).toContain(
       'font-size: 14px'
     )
@@ -636,7 +674,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(memberRows()).toEqual(['one', 'two'])
   })
 
-  it('leaves the desktop’s folder row on its own contract: Zen’s 32 header with the group’s glyph and no bar, the fold the state’s alone', () => {
+  it('leaves the desktop’s folder row on its own contract: Zen’s 32 header with the group’s glyph and no bar, its fold the same spring', () => {
     // Stale `savedTabs` beside live members are no saved group: the row is an open folder's.
     panel(
       grouped(),
@@ -658,11 +696,391 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(shell().dataset.groupKind).toBe('open')
     expect(row.querySelector('[data-testid="group-count"]')?.textContent).toBe('2')
     expect(row.querySelector('[data-testid="group-row-count"]')).toBeNull()
-    // The desktop's fold is the state's alone: no spring, the rows gone with the state.
+    // The desktop's fold is the tablet's spring (W4-2): the rows kept for the commit that folds,
+    // the block clipped, its height run from the whole to the header alone on SPRING_GENTLE…
+    const whole = ROW + 2 * (ROW + GAP)
     panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    expect(shell().hasAttribute('data-folding')).toBe(true)
+    expect(shell().style.height).toBe(`${whole}px`)
+    expect(folds()).toEqual([{ from: whole, to: ROW }])
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    act(() => {
+      frame()
+      frame()
+    })
+    const mid = parseFloat(shell().style.height)
+    expect(mid).toBeLessThan(whole)
+    expect(mid).toBeGreaterThan(ROW)
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    // …and at rest the clip lifts, the layout holds the header's height, the kept rows go.
+    settle()
+    expect(shell().style.height).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(memberRows()).toEqual([])
+  })
+
+  it('keeps the rows below honest (W4-2): the list’s baseline follows every frame of the fold, and the block holds the header’s height at a shut rest until the kept rows go', () => {
+    const record = vi.spyOn(SlideMotion.prototype, 'record')
+    panel(grouped(), [folder()], 'desktop')
+    expect(record).not.toHaveBeenCalled()
+    // The folding commit records nothing itself: the panel's FLIP measures there, the block
+    // set to its whole. Each frame after moves the layout under the rows below with no commit
+    // between – and re-records where they are, so the commit after finds them there rather
+    // than a block's height away.
+    panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    expect(record).not.toHaveBeenCalled()
+    act(() => {
+      frame()
+      frame()
+    })
+    expect(record).toHaveBeenCalledTimes(2)
+    // The spring rests on a frame while the kept rows are still in the DOM. Were the layout to
+    // hold the height there, the frame before their removal commits would paint the block
+    // whole: the shell stands at the header's height, clipped, until that commit lets go.
+    let rested: { height: string; folding: boolean; rows: string[] } | null = null
+    act(() => {
+      for (let i = 0; i < 600 && frames.size; i++) {
+        frame()
+        if (!frames.size)
+          rested = {
+            height: shell().style.height,
+            folding: shell().hasAttribute('data-folding'),
+            rows: memberRows()
+          }
+      }
+    })
+    expect(rested).toEqual({ height: `${ROW}px`, folding: true, rows: ['alpha', 'beta'] })
+    expect(shell().style.height).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(memberRows()).toEqual([])
+    // The baseline was recorded on every frame and at the rest.
+    const foldFrames = record.mock.calls.length
+    expect(foldFrames).toBeGreaterThan(3)
+    // A commit at rest records nothing more.
+    panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    expect(record).toHaveBeenCalledTimes(foldFrames)
+    // Resting open, the layout holds the whole in that very frame: nothing to hold for.
+    record.mockClear()
+    panel(grouped(), [folder()], 'desktop')
+    expect(record).not.toHaveBeenCalled()
+    let open: { height: string; folding: boolean; rows: string[] } | null = null
+    act(() => {
+      for (let i = 0; i < 600 && frames.size; i++) {
+        frame()
+        if (!frames.size)
+          open = {
+            height: shell().style.height,
+            folding: shell().hasAttribute('data-folding'),
+            rows: memberRows()
+          }
+      }
+    })
+    expect(open).toEqual({ height: '', folding: false, rows: ['alpha', 'beta'] })
+    expect(record.mock.calls.length).toBeGreaterThan(3)
+  })
+
+  it('keeps a saved folder’s pages through the desktop’s fold (W4-2, #360’s F5): the block measures whole as it shuts, the pages drawn until the spring rests, and back in the commit that unfolds', () => {
+    // A SAVED folder unfolded on the desktop: its pages under the header as rows of the block.
+    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES })], 'desktop')
+    const row = header()
+    expect(row.hasAttribute('data-saved')).toBe(true)
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+    expect(shell().dataset.groupKind).toBe('saved')
+    expect(memberRows()).toEqual([])
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
     expect(folds()).toEqual([])
+    // Folded: the pages stay for the folding commit – so the shell measures the whole block,
+    // header and three page rows, not the header alone – clipped, the height on SPRING_GENTLE
+    // from that whole to the header. (Before W4-2 the pages went with the state and the fold
+    // measured `whole == alone`: a cut shut and a spring open.)
+    const whole = ROW + PAGES.length * (ROW + GAP)
+    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES, collapsed: true })], 'desktop')
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    expect(shell().hasAttribute('data-folding')).toBe(true)
+    expect(shell().style.height).toBe(`${whole}px`)
+    expect(folds()).toEqual([{ from: whole, to: ROW }])
+    expect(header().getAttribute('aria-expanded')).toBe('false')
+    expect(header().querySelector('[data-testid="group-count"]')?.textContent).toBe('3')
+    act(() => {
+      frame()
+      frame()
+    })
+    const mid = parseFloat(shell().style.height)
+    expect(mid).toBeLessThan(whole)
+    expect(mid).toBeGreaterThan(ROW)
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    // At rest the pages go and the clip lifts; the loose rows were never touched.
+    settle()
+    expect(pageRows()).toEqual([])
+    expect(shell().querySelector('[data-saved-pages]')).toBeNull()
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(shell().style.height).toBe('')
+    expect(q('[data-tab-id="gamma"]')).not.toBeNull()
+    // Unfolded: the pages back in that commit, the height from the header to the whole.
+    starts.length = 0
+    panel([tab('home'), tab('gamma')], [folder({ savedTabs: PAGES })], 'desktop')
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    expect(shell().hasAttribute('data-folding')).toBe(true)
+    expect(shell().style.height).toBe(`${ROW}px`)
+    expect(folds()).toEqual([{ from: ROW, to: whole }])
+    act(() => {
+      frame()
+      frame()
+    })
+    expect(parseFloat(shell().style.height)).toBeGreaterThan(ROW)
+    expect(parseFloat(shell().style.height)).toBeLessThan(whole)
+    settle()
+    expect(shell().style.height).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    expect(header().getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('turns the chevron on the fold’s progress (§9.36 as amended, §11.1): one glyph, the shell’s --zen-fold-progress written from the height on every frame, off at the open rest, 0 through the shut hold and gone at release', () => {
+    // The desktop's open folder: ONE glyph – the › with the turning class – and no ⌄ to swap
+    // in. At the open rest nothing is inline: the header's state (`aria-expanded`) binds the
+    // rest angle through the stylesheet, 1 for open.
+    panel(grouped(), [folder()], 'desktop')
+    const glyph = header().querySelector<SVGElement>('svg.zen-group-row-chevron')!
+    expect(glyph).not.toBeNull()
+    expect(glyph.classList.contains('lucide-chevron-right')).toBe(true)
+    expect(header().querySelector('svg.lucide-chevron-down')).toBeNull()
+    expect(header().querySelectorAll('.zen-group-row-chevron')).toHaveLength(1)
+    expect(header().getAttribute('aria-expanded')).toBe('true')
+    expect(progress()).toBe('')
+    // The folding commit: the header's state has already turned to the rest the fold heads
+    // for (0), so the hook writes the start's progress, 1, with the start's height – the glyph
+    // reads the folded state no earlier than the first frame does. The very same element.
+    const whole = ROW + 2 * (ROW + GAP)
+    const share = (h: number): number => (h - ROW) / (whole - ROW)
+    panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    expect(header().getAttribute('aria-expanded')).toBe('false')
+    expect(shell().style.height).toBe(`${whole}px`)
+    expect(parseFloat(progress())).toBe(1)
+    expect(header().querySelector('svg.zen-group-row-chevron')).toBe(glyph)
+    expect(header().querySelector('svg.lucide-chevron-down')).toBeNull()
+    // Every frame: the progress is the height's place between the header alone and the whole –
+    // the one value (§11.1) – falling with it, 0.5 where the height is halfway.
+    const down: Array<{ h: number; p: number }> = []
+    let rested: { height: string; folding: boolean; progress: string; rows: string[] } | null = null
+    act(() => {
+      for (let i = 0; i < 600 && frames.size; i++) {
+        frame()
+        if (frames.size)
+          down.push({ h: parseFloat(shell().style.height), p: parseFloat(progress()) })
+        else
+          rested = {
+            height: shell().style.height,
+            folding: shell().hasAttribute('data-folding'),
+            progress: progress(),
+            rows: memberRows()
+          }
+      }
+    })
+    expect(down.length).toBeGreaterThan(3)
+    for (const { h, p } of down) expect(p).toBeCloseTo(share(h), 3)
+    for (let i = 1; i < down.length; i++) expect(down[i]!.p).toBeLessThanOrEqual(down[i - 1]!.p)
+    expect(down[0]!.p).toBeGreaterThan(0.9)
+    expect(down[down.length - 1]!.p).toBeLessThan(0.1)
+    const midpoint = ROW + (whole - ROW) / 2
+    const nearest = down.reduce((a, b) =>
+      Math.abs(b.h - midpoint) < Math.abs(a.h - midpoint) ? b : a
+    )
+    expect(nearest.p).toBeCloseTo(0.5 + (nearest.h - midpoint) / (whole - ROW), 3)
+    // At the shut rest, the kept rows still in the DOM: the height held at the header's, the
+    // progress held at exactly 0 (the last frame stood a hair off), the clip on…
+    expect(rested).toEqual({
+      height: `${ROW}px`,
+      folding: true,
+      progress: '0.0000',
+      rows: ['alpha', 'beta']
+    })
+    // …and gone with the height in the commit that removes them: the header's state binds 0.
+    expect(shell().style.height).toBe('')
+    expect(progress()).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(memberRows()).toEqual([])
+    expect(header().getAttribute('aria-expanded')).toBe('false')
+    expect(header().querySelector('svg.zen-group-row-chevron')).toBe(glyph)
+    // Unfolding: the start's progress, 0, with the header's height in the commit (the state
+    // already says open), then up the frames with the height, off at the open rest.
+    panel(grouped(), [folder()], 'desktop')
+    expect(header().getAttribute('aria-expanded')).toBe('true')
+    expect(shell().style.height).toBe(`${ROW}px`)
+    expect(parseFloat(progress())).toBe(0)
+    const up: Array<{ h: number; p: number }> = []
+    act(() => {
+      for (let i = 0; i < 600 && frames.size; i++) {
+        frame()
+        if (frames.size) up.push({ h: parseFloat(shell().style.height), p: parseFloat(progress()) })
+      }
+    })
+    expect(up.length).toBeGreaterThan(3)
+    for (const { h, p } of up) expect(p).toBeCloseTo(share(h), 3)
+    for (let i = 1; i < up.length; i++) expect(up[i]!.p).toBeGreaterThanOrEqual(up[i - 1]!.p)
+    expect(shell().style.height).toBe('')
+    expect(progress()).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(header().querySelector('svg.zen-group-row-chevron')).toBe(glyph)
+    // A fold reversed mid-flight: the run measures its ends again and the spring goes on
+    // writing the height's share from them, back up to the whole, monotone from where it was.
+    panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    act(() => {
+      frame()
+      frame()
+      frame()
+      frame()
+    })
+    const caught = { h: parseFloat(shell().style.height), p: parseFloat(progress()) }
+    expect(caught.h).toBeLessThan(whole)
+    expect(caught.p).toBeCloseTo(share(caught.h), 3)
+    panel(grouped(), [folder()], 'desktop')
+    expect(parseFloat(progress())).toBeCloseTo(share(parseFloat(shell().style.height)), 3)
+    const back: Array<{ h: number; p: number }> = []
+    act(() => {
+      for (let i = 0; i < 600 && frames.size; i++) {
+        frame()
+        if (frames.size)
+          back.push({ h: parseFloat(shell().style.height), p: parseFloat(progress()) })
+      }
+    })
+    expect(back.length).toBeGreaterThan(3)
+    for (const { h, p } of back) expect(p).toBeCloseTo(share(h), 3)
+    expect(back[back.length - 1]!.p).toBeGreaterThan(caught.p)
+    expect(progress()).toBe('')
+    expect(shell().style.height).toBe('')
+
+    // The stylesheet: the one rule turns the glyph 90° on the progress about its centre, with
+    // no transition of its own (the spring is the one clock, §11); the rest values stand on the
+    // SHELL from the header's state – declared there, not on the header, since an element's own
+    // declaration would beat the shell's inherited in-flight value – and the hook's inline value
+    // beats them on the same element while the fold runs.
+    const turn = rule('.zen-group-row-chevron')
+    expect(turn).toContain('transform: rotate(calc(var(--zen-fold-progress) * 90deg))')
+    expect(turn).toContain('transform-origin: center')
+    expect(turn).not.toContain('transition')
+    expect(css).not.toMatch(/\.zen-group-row-chevron[^{]*\{[^}]*transition/)
+    expect(rule(".zen-group-fold:has(> [aria-expanded='true'])")).toContain(
+      '--zen-fold-progress: 1'
+    )
+    expect(rule(".zen-group-fold:has(> [aria-expanded='false'])")).toContain(
+      '--zen-fold-progress: 0'
+    )
+    expect(css).not.toMatch(/\[aria-expanded='(true|false)'\]\s*\{[^}]*--zen-fold-progress/)
+  })
+
+  it('turns the tablet row’s chevron the same way: the shared hook writes the progress on its shell, the one glyph on the row', () => {
+    panel(grouped(), [folder()])
+    const glyph = header().querySelector<SVGElement>('svg.zen-group-row-chevron')!
+    expect(glyph).not.toBeNull()
+    expect(glyph.classList.contains('lucide-chevron-right')).toBe(true)
+    expect(header().querySelector('svg.lucide-chevron-down')).toBeNull()
+    expect(progress()).toBe('')
+    const whole = ROW + 2 * (ROW + GAP)
+    panel(grouped(), [folder({ collapsed: true })])
+    expect(parseFloat(progress())).toBe(1)
+    expect(header().querySelector('svg.zen-group-row-chevron')).toBe(glyph)
+    const down: Array<{ h: number; p: number }> = []
+    act(() => {
+      for (let i = 0; i < 600 && frames.size; i++) {
+        frame()
+        if (frames.size)
+          down.push({ h: parseFloat(shell().style.height), p: parseFloat(progress()) })
+      }
+    })
+    expect(down.length).toBeGreaterThan(3)
+    for (const { h, p } of down) expect(p).toBeCloseTo((h - ROW) / (whole - ROW), 3)
+    for (let i = 1; i < down.length; i++) expect(down[i]!.p).toBeLessThanOrEqual(down[i - 1]!.p)
+    // Rested shut and the kept rows gone: the property off, the row's state binding 0.
+    expect(progress()).toBe('')
+    expect(memberRows()).toEqual([])
+    expect(header().getAttribute('aria-expanded')).toBe('false')
+    expect(header().querySelector('svg.zen-group-row-chevron')).toBe(glyph)
+  })
+
+  it('cuts under reduced motion (§11.3): the height jumps, the block never clipped, the rows gone in the folding commit', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined
+    }))
+    // The desktop's open folder…
+    panel(grouped(), [folder()], 'desktop')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    panel(grouped(), [folder({ collapsed: true })], 'desktop')
+    // The spring is asked for the fold and jumps to its target in the same breath: no frame
+    // scheduled, the clip on and off within the commit, the kept rows released with it.
+    expect(folds()).toEqual([{ from: ROW + 2 * (ROW + GAP), to: ROW }])
+    expect(frames.size).toBe(0)
     expect(memberRows()).toEqual([])
     expect(shell().hasAttribute('data-folding')).toBe(false)
     expect(shell().style.height).toBe('')
+    expect(header().getAttribute('aria-expanded')).toBe('false')
+    // The chevron's cut is the same cut: the hook writes no progress – not the start's, not a
+    // frame's, not the hold's – so the header's state binds the rest angle in the folding
+    // commit itself (the ruled cut: no frame at a fractional angle).
+    expect(progress()).toBe('')
+    // …and its saved folder, the same cut over its pages (the unfold that opens it here is a
+    // jump of its own; the recorder is cleared after it).
+    panel([tab('home')], [folder({ savedTabs: PAGES })], 'desktop')
+    expect(pageRows()).toEqual(['ALPHA', 'BETA', 'DELTA'])
+    expect(frames.size).toBe(0)
+    expect(progress()).toBe('')
+    starts.length = 0
+    panel([tab('home')], [folder({ savedTabs: PAGES, collapsed: true })], 'desktop')
+    expect(folds()).toEqual([{ from: ROW + PAGES.length * (ROW + GAP), to: ROW }])
+    expect(frames.size).toBe(0)
+    expect(pageRows()).toEqual([])
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(shell().style.height).toBe('')
+    expect(progress()).toBe('')
+    // The tablet's row takes the same cut.
+    panel(grouped(), [folder()])
+    starts.length = 0
+    panel(grouped(), [folder({ collapsed: true })])
+    expect(folds()).toEqual([{ from: ROW + 2 * (ROW + GAP), to: ROW }])
+    expect(frames.size).toBe(0)
+    expect(memberRows()).toEqual([])
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(progress()).toBe('')
+  })
+
+  it('folds the strip’s chip along `x` (§9.37): the block’s width on SPRING_GENTLE from the chip with its members to the chip alone, the members kept until it rests', () => {
+    panel(grouped(), [folder()], 'desktop', 'synced', 'x')
+    expect(header().className).toContain('zen-strip-group-chip')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    // The chip draws no chevron (§9.37): nothing along the band turns with the fold.
+    expect(header().querySelector('.zen-group-row-chevron')).toBeNull()
+    expect(header().querySelector('svg.lucide-chevron-right, svg.lucide-chevron-down')).toBeNull()
+    const whole = CHIP + 2 * (STRIP_TAB + GAP)
+    panel(grouped(), [folder({ collapsed: true })], 'desktop', 'synced', 'x')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    expect(shell().hasAttribute('data-folding')).toBe(true)
+    expect(shell().style.width).toBe(`${whole}px`)
+    expect(shell().style.height).toBe('')
+    expect(folds()).toEqual([{ from: whole, to: CHIP }])
+    act(() => {
+      frame()
+      frame()
+    })
+    const mid = parseFloat(shell().style.width)
+    expect(mid).toBeLessThan(whole)
+    expect(mid).toBeGreaterThan(CHIP)
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    settle()
+    expect(shell().style.width).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
+    expect(memberRows()).toEqual([])
+    // Unfolded: the members back, the width from the chip to the whole.
+    starts.length = 0
+    panel(grouped(), [folder()], 'desktop', 'synced', 'x')
+    expect(memberRows()).toEqual(['alpha', 'beta'])
+    expect(shell().style.width).toBe(`${CHIP}px`)
+    expect(folds()).toEqual([{ from: CHIP, to: whole }])
+    settle()
+    expect(shell().style.width).toBe('')
+    expect(shell().hasAttribute('data-folding')).toBe(false)
   })
 })
