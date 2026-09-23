@@ -30,6 +30,7 @@ import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -40,6 +41,7 @@ import androidx.webkit.WebViewRenderProcess
 import androidx.webkit.WebViewRenderProcessClient
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.ext.ExtensionPromptFallback
 import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.privacy.Privacy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -88,6 +90,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     var chrome = ChromeWebView(activity, this)
         private set
     override val tabs = TabHost(root, this)
+    /**
+     * Page-to-chrome Tab traversal for a hardware keyboard (A11Y-09): the chrome's WebView and
+     * every page's are wired into it ([TabHost.create]); a Tab run off one document lands in
+     * the other, [onFocusLanding].
+     */
+    override val focusHandoff = FocusHandoff(root) { landing -> onFocusLanding(landing) }
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
     val translate = Translate(activity, this)
@@ -102,6 +110,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val touchExploration: Boolean get() = accessibility?.isTouchExplorationEnabled == true
 
     init {
+        focusHandoff.wireChrome(chrome)
         // A private session the last run did not get to end (a crash, the system killing the app)
         // ends now, before any tab exists and while its profile is free to be deleted; the card
         // that offered to close its tabs goes with the PrivateSession below.
@@ -219,6 +228,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     @Volatile var syncTreeOverride: ((String) -> SyncTree)? = null
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
+    /** The store's install and permission prompt when no live window can show the chrome's sheet (the native chassis). */
+    val extPrompt = ExtensionPromptFallback(this)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
     val shortcuts = Shortcuts(activity, io)
     /** Voice search: the device's speech recogniser behind the chrome's mic buttons (OMN-19). */
@@ -274,6 +285,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** Settings → Passwords → autofill provider, applied to every page WebView (`autofill.setProvider`). */
     override var autofillProvider = SystemAutofill.PROVIDER_SYSTEM
         private set
+    /** The pages' dialogs and their "Leave site?" are Zenium's own sheet (PUI-27, PUI-28); a custom tab keeps the WebView's. */
+    override val pageDialogs: Boolean get() = true
+    /** The chrome's `--v2-accent` / `--v2-on-accent` (ARGB) for a native primary control, once it has sent them. */
+    override var themeAccent = ContextCompat.getColor(activity, R.color.v2_accent_light)
+        private set
+    override var themeOnAccent = ContextCompat.getColor(activity, R.color.v2_on_accent_light)
+        private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
     /** The tab cards' pictures, one JPEG per tab under the cache dir (`thumbnail.*`, [TabWebView.captureThumbnail]). */
@@ -318,6 +336,35 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
     override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)
+
+    /**
+     * A hardware keyboard's Tab ran off one WebView's document ([FocusHandoff], A11Y-09). Into
+     * the chrome: its WebView takes the keyboard the way Chromium's own Tab into a document
+     * does – `needInitialFocus` on for the one `requestFocus()`, so Blink's initial focus lands
+     * on the document's first tabbable *as a keyboard focus* (`FocusThroughTabTraversal`): that
+     * is what makes the landing match `:focus-visible` and draw the ring; a focus placed by
+     * script after a touch would not, since Blink counts a document's last user focus type and
+     * keydowns, never a script's `focus()`. Then the `focus.fromPage` event (`lib/panes.ts`)
+     * confirms the first control forward or moves to the last one backward – WebView has no
+     * reverse traversal to offer, so a backward landing rests on the first control for the one
+     * frame before the chrome moves it. Into the page: the core is asked (`focus.toPage`) – it
+     * knows which tab is the active one – and answers with `view.focusEdge` for it
+     * ([TabWebView.focusEdge]).
+     */
+    private fun onFocusLanding(landing: FocusHandoff.Landing) {
+        val forward = landing == FocusHandoff.Landing.CHROME_FIRST || landing == FocusHandoff.Landing.PAGE_FIRST
+        val direction = if (forward) "forward" else "backward"
+        val toChrome = landing == FocusHandoff.Landing.CHROME_FIRST || landing == FocusHandoff.Landing.CHROME_LAST
+        Log.d(TAG, "keyboard Tab $direction off the ${if (toChrome) "page: the chrome takes it" else "chrome: the active page takes it"}")
+        if (toChrome) {
+            chrome.settings.setNeedInitialFocus(true)
+            chrome.requestFocus()
+            chrome.settings.setNeedInitialFocus(false)
+            chrome.hostEvent("focus.fromPage", json("direction" to direction))
+        } else {
+            chrome.hostEvent("focus.toPage", json("direction" to direction))
+        }
+    }
 
     // --- the shared renderer: gone (ERR-15), or not answering (ERR-16) -------------------------------
 
@@ -643,6 +690,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.stop" -> { tab?.stopLoading(); reply(null) }
+            // --- the page's beforeunload (PUI-28; `TabWebView.confirmUnload`) ---
+            // Whether the page may be unloaded (the core's `TabView.confirmUnload`, before a tab
+            // close or the app's exit): true once its `beforeunload` handlers let it go or the user
+            // chose to leave, false when they chose to stay. A view already gone may go.
+            "view.confirmUnload" -> if (tab == null) reply(true) else tab.confirmUnload { leave -> reply(leave) }
             "view.setMuted" -> { tab?.setMuted(args.bool("muted")); reply(null) }
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
             "view.setDesktopMode" -> { tab?.setDesktopMode(args.bool("on")); reply(null) }
@@ -676,6 +728,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.focus" -> { tab?.requestFocus(); reply(null) }
+            "view.focusEdge" -> { tab?.focusEdge(args.str("edge", "first")); reply(null) }
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
@@ -718,7 +771,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
-            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim")); reply(null) }
+            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
             "chrome.setPullToRefresh" -> {
                 pullToRefresh = args.bool("enabled", true)
                 for (view in tabs.all()) view.applyPullToRefreshMode()
@@ -913,7 +966,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "extStore.prune" -> extStore.prune(args.str("id"), args.str("keep"), reply)
             "extStore.sweep" -> extStore.sweep(reply)
             "extStore.pick" -> extStore.pick(reply)
-            "extStore.takeSideloads" -> reply(extStore.takeSideloads())
+            "extStore.takeSideloads" -> extStore.takeSideloads(reply)
+            "extStore.prompt" -> extPrompt.show(args, reply)
             // --- end of the extension store block -------------------------------------------------------
 
             // --- page translation models ----------------------------------------------------------
@@ -1307,9 +1361,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         refreshGuard()
     }
 
-    private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String) {
+    private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String, accent: String, onAccent: String) {
         themeDark = dark
         if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
+        // The primary control's colours for what is drawn natively (the page dialog sheet's OK):
+        // the chrome's own, or the draft's defaults for the scheme when it sent none.
+        themeAccent = if (accent.isNotEmpty()) parseColor(accent) else ContextCompat.getColor(activity, if (dark) R.color.v2_accent_dark else R.color.v2_accent_light)
+        themeOnAccent = if (onAccent.isNotEmpty()) parseColor(onAccent) else ContextCompat.getColor(activity, if (dark) R.color.v2_on_accent_dark else R.color.v2_on_accent_light)
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
         root.setBackgroundColor(color)
         activity.window.decorView.setBackgroundColor(color)
@@ -1844,6 +1902,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         runCatching { dead.destroy() }
         val fresh = ChromeWebView(activity, this)
         root.addView(fresh, if (index >= 0) index else 0, params)
+        focusHandoff.wireChrome(fresh)
         chrome = fresh
         val delay = lifecycle.chromeRebuildDelayMs()
         if (delay > 0) Log.w(TAG, "the rebuilt chrome died again (${lifecycle.consecutiveRapidRebuilds}x in a row); loading it in $delay ms")

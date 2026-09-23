@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BACK_PEEK, SHEET_CLOSED, SheetMotion, type SheetState } from '../motion/sheet'
 import {
   SHEET_FIELD_MARGIN,
+  SHEET_LIST_MAX_SHARE,
   SHEET_MIN_DETENT_GAP,
   SHEET_OVERDRAG,
   SHEET_PEEK_FRACTION,
@@ -465,6 +466,33 @@ describe('computeDetents', () => {
   it('never asks for more than the layer minus the inset and margin', () => {
     expect(computeDetents(5000, layer, insetTop).expanded).toBe(sheetMaxHeight(layer, insetTop))
     expect(sheetMaxHeight(100, 200)).toBe(0)
+  })
+})
+
+describe('computeDetents for a list body (§9.20)', () => {
+  it('a sheet whose body is a list stands at most 80 % of the layer, under the top margin', () => {
+    expect(SHEET_LIST_MAX_SHARE).toBe(0.8)
+    const list = computeDetents(5000, layer, insetTop, 0, 'list')
+    expect(list.expanded).toBe(Math.round(layer * 0.8))
+    expect(list.expanded).toBeLessThan(sheetMaxHeight(layer, insetTop))
+    expect(sheetMaxHeight(layer, insetTop, 'list')).toBe(Math.round(layer * 0.8))
+    // The peek is the same peek: the cap is on the expanded detent alone.
+    expect(list.collapsed).toBe(two.collapsed)
+  })
+
+  it('a list that fits under the cap stands at its own height, and a content body keeps the top margin', () => {
+    expect(computeDetents(600, layer, insetTop, 0, 'list')).toEqual(
+      computeDetents(600, layer, insetTop)
+    )
+    expect(computeDetents(5000, layer, insetTop, 0, 'content').expanded).toBe(
+      sheetMaxHeight(layer, insetTop)
+    )
+  })
+
+  it('on a short layer the top margin is the tighter bound and still holds', () => {
+    // 300 tall under 24 of status bar: the margin leaves 236; 80 % would be 240.
+    expect(sheetMaxHeight(300, insetTop, 'list')).toBe(236)
+    expect(sheetMaxHeight(300, insetTop)).toBe(236)
   })
 })
 

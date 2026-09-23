@@ -49,11 +49,29 @@ interface PageHost {
      * [ContentCover]) is handed to: the browser window's chrome WebView. A custom tab has none.
      */
     val underlay: View? get() = null
+    /**
+     * Page-to-chrome Tab traversal for a hardware keyboard ([FocusHandoff], A11Y-09): the browser
+     * window wires every page view into it; a custom tab has no chrome to hand the keyboard to,
+     * so its page wraps within itself as WebView does.
+     */
+    val focusHandoff: FocusHandoff? get() = null
     /** The colour scheme and scrim of the surrounding chrome, for what is drawn natively. */
     val themeDark: Boolean
     val themeScrim: Int
+    /**
+     * The chrome's accent for a native primary control (`--v2-accent`) and the ink on it
+     * (`--v2-on-accent`); the v2 draft's defaults until the chrome has sent its theme's.
+     */
+    val themeAccent: Int get() = androidx.core.content.ContextCompat.getColor(activity, if (themeDark) R.color.v2_accent_dark else R.color.v2_accent_light)
+    val themeOnAccent: Int get() = androidx.core.content.ContextCompat.getColor(activity, if (themeDark) R.color.v2_on_accent_dark else R.color.v2_on_accent_light)
     /** Whether `window.open` popups become tabs of their own (false: they navigate the one page). */
     val popupsAsTabs: Boolean get() = true
+    /**
+     * Whether the pages' `alert` / `confirm` / `prompt` and their `beforeunload` question are
+     * Zenium's own sheet ([PageDialogSheet], drawn natively over the page: PUI-27, PUI-28) rather
+     * than the WebView's own dialogs, which a host without a chrome (a custom tab) keeps.
+     */
+    val pageDialogs: Boolean get() = false
     /**
      * Whether a drag down from the top of a page may become a pull-to-refresh (the browser's
      * Look and Feel setting; the chrome draws the disc, so a host without one leaves it off).

@@ -644,7 +644,10 @@ export function createEmulatedEngine(
       }
     }
     // `system.display`, `system.storage`, `system.cpu` and `system.memory` are the table's, for
-    // the extensions that declared them (`engineSpec.ts`); the host answers each.
+    // the extensions that declared them (`engineSpec.ts`); the host answers each. The holder
+    // `chrome.system` is the table's too, made once one of those permissions is held, as Chrome
+    // defines it (Coinbase Wallet's worker feature-detects `chrome.system?.cpu?.getInfo` before
+    // it reads the CPU load; run 35787391495 had every extension's holder carry a rejecting `cpu`).
   }
 
   // --- the shim over the engine ------------------------------------------------------------------

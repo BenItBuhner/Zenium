@@ -53,8 +53,9 @@
   --zen-ok-rgb: 31 138 76;
   --zen-warn: #b45f06;
   --zen-warn-rgb: 180 95 6;
-  --zen-danger: #c43434;
-  --zen-danger-rgb: 196 52 52;
+  /* Danger ink (v2 §1): 4.82:1 on the secondary fill, 5.95:1 on the panel; #c43434 was 3.98. */
+  --zen-danger: #b02a2a;
+  --zen-danger-rgb: 176 42 42;
 
   /* Surfaces over the window: the space-tinted panel colour, blurred. The scrim under them is
      the v2 one, aliased in the v2 token block below. */
@@ -3653,7 +3654,13 @@
     line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
   }
-  /* The footer of a prompt (§9.11): peers split the width at an 8 px gap, the primary trailing. */
+  /*
+   * The footer of a prompt (§9.11): peers split the width at an 8 px gap, the primary trailing.
+   * Its 8 below stands over the chassis's own 8 + the host's bottom inset (`BottomSheet`'s
+   * `SHEET_EDGE_PAD`): §9.25's 16 + inset from the buttons to the sheet's bottom edge – 16 at no
+   * inset, 40 over a 24 gesture bar, 64 over a 48 three-button bar – the native chassis's
+   * `footerToEdge`, which `V2TokensPinTest` holds this rule to.
+   */
   .zen-sheet-footer {
     display: flex;
     gap: 8px;
@@ -4029,15 +4036,6 @@
     font-size: 13px;
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
-  }
-  .zen-siteinfo-footer {
-    display: flex;
-    flex-shrink: 0;
-    justify-content: flex-end;
-    gap: 8px;
-    margin: 0 16px;
-    padding: 12px 0;
-    border-top: 1px solid var(--v2-border);
   }
   /* The root level sits under the title block, whose own 16 below is the gap to the rows (§9.23). */
   .zen-siteinfo-under-title {
@@ -9687,10 +9685,16 @@
   corner-shape: inherit;
   pointer-events: none;
 }
+/*
+ * The body's 8 under its last row or its inline actions (`SheetActions` in a prompt or a field
+ * sheet) stands over the chassis's own 8 + inset (`BottomSheet`'s `SHEET_EDGE_PAD`), so the
+ * last control meets §9.25's one formula – 16 + the host's inset to the sheet's bottom edge –
+ * as the chassis's `.zen-sheet-footer` does; 16 here stacked a second 8 on it (24 at no inset).
+ */
 .zen-settings-sheet-body {
   display: flex;
   flex-direction: column;
-  padding-bottom: 16px;
+  padding-bottom: 8px;
   color: var(--v2-text);
 }
 .zen-settings-sheet-rows {
@@ -10150,9 +10154,9 @@
 /*
  * §9.20's second footer form, for a dialog whose body is a row list and ends in buttons (the
  * site-data viewer's Clear all under its list): a hairline in the gutter with the list's 4
- * inset above it (§6's separator margin) and the buttons at 12 above and below, 16 at the sides
- * – the site-information popover's form (`.zen-siteinfo-footer`). The list's own end inset is
- * the 4 above the line, so the body's 16 goes; the prompt form's 16 stays for a form's footer.
+ * inset above it (§6's separator margin) and the buttons at 12 above and below, 16 at the sides.
+ * The list's own end inset is the 4 above the line, so the body's 16 goes; the prompt form's 16
+ * stays for a form's footer.
  */
 .zen-settings-dialog[data-body='list']
   > .zen-settings-dialog-body:has(+ .zen-settings-dialog-footer) {
@@ -10479,6 +10483,17 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+/*
+ * Rows that stand outside any group (§10.3 as the lead amended it for #316: History's "Show
+ * hidden devices" after the last device's group while other devices are listed): the group
+ * beat's 20 above them, the separation a heading would have brought, so the row does not read
+ * as the last group's tab; the label stays at the headings' text edge through the row's own 16.
+ * The beat's one statement is the heading's (`v2Tokens.test.ts`); this is a consumer's modifier
+ * for a place with no heading, not a copy of the heading's numbers.
+ */
+.zen-page-rows-loose {
+  margin-top: 20px;
 }
 /*
  * A two-line row (§9.2, §9.21) on the shared primitive: the 16 favicon at the row's 16 on the

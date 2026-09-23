@@ -262,7 +262,7 @@ describe('dpkgStatus and isRemovedStatus', () => {
 })
 
 describe('parseDpkgInstallLog', () => {
-  // What ubuntu-latest (24.04) printed for the deb: two Depends the image does not carry, dpkg
+  // What the ubuntu-24.04 runner image printed for the deb: two Depends the image does not carry, dpkg
   // leaving the package unconfigured, apt-get install -f pulling the libraries in (libsecret's
   // -common with them) and configuring the package.
   const runnerLog = [

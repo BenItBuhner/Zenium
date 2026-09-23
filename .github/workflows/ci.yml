@@ -19,7 +19,7 @@ env:
 jobs:
   check:
     name: Typecheck, lint, test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -48,7 +48,7 @@ jobs:
 
   workflows:
     name: Workflow lint (actionlint)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -59,7 +59,7 @@ jobs:
 
   desktop-smoke-linux:
     name: Desktop boot smoke (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       SMOKE_OUT: ${{ github.workspace }}/smoke-out
@@ -83,7 +83,7 @@ jobs:
       - name: Boot the unpacked build under Xvfb and walk through it
         # Playwright for Electron drives dist/linux-unpacked/zenium (the devDependency ships no
         # browsers; nothing to download). --no-sandbox: the unpacked build's chrome-sandbox helper
-        # is not setuid and ubuntu-latest denies unprivileged user namespaces. Every profile lives
+        # is not setuid and ubuntu-24.04 denies unprivileged user namespaces. Every profile lives
         # under a temporary XDG_CONFIG_HOME; the scenarios, their screenshots and result.json land
         # in smoke-out/unpacked. boot and restore run on every platform; the crash pair (a killed
         # run, then "Restore pages?") and the Chrome-preset shortcut walkthrough run here only
@@ -151,7 +151,7 @@ jobs:
 
   android:
     name: Android debug APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

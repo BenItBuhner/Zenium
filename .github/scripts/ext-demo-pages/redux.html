@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Redux store page (Redux DevTools fixture)</title>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Redux store page</h1>
+    <p>
+      A store's first question: is <code>window.__REDUX_DEVTOOLS_EXTENSION__</code> there? The
+      extension's page-world script answers it before the page runs; the page then connects and
+      sends an init and one action.
+    </p>
+    <ul>
+      <li>hook: <span id="hook">pending</span></li>
+      <li>connect: <span id="connect">pending</span></li>
+      <li>counter: <span id="counter">0</span></li>
+    </ul>
+    <script>
+      window.__redux = { hook: false, compose: false, connected: false, sent: 0, error: null, messages: [] }
+      function set(id, text) {
+        document.getElementById(id).textContent = text
+      }
+      function probe() {
+        var ext = window.__REDUX_DEVTOOLS_EXTENSION__
+        if (!ext) return false
+        window.__redux.hook = typeof ext.connect === 'function'
+        window.__redux.compose = typeof window.__REDUX_DEVTOOLS_EXTENSION_COMPOSE__ === 'function'
+        set('hook', 'present (connect ' + typeof ext.connect + ')')
+        try {
+          var dev = ext.connect({ name: 'Zenium sweep store' })
+          window.__redux.connected = !!dev && typeof dev.send === 'function'
+          if (typeof dev.subscribe === 'function') {
+            dev.subscribe(function (message) {
+              window.__redux.messages.push(message && message.type ? message.type : String(message))
+            })
+          }
+          var state = { counter: 0 }
+          dev.init(state)
+          state = { counter: 1 }
+          dev.send({ type: 'INCREMENT' }, state)
+          window.__redux.sent = 2
+          set('connect', 'connected, init + 1 action sent')
+          set('counter', String(state.counter))
+        } catch (e) {
+          window.__redux.error = String((e && e.message) || e)
+          set('connect', 'error: ' + window.__redux.error)
+        }
+        return true
+      }
+      if (!probe()) {
+        var tries = 0
+        var timer = setInterval(function () {
+          if (probe() || ++tries > 60) clearInterval(timer)
+        }, 250)
+      }
+    </script>
+  </body>
+</html>

@@ -269,7 +269,7 @@ class SettingsTouchDemo : DemoHarness("settings-tab-demo-state.json", "android-s
             if (!awaitChrome("!!document.querySelector('.zen-sheet #$FIELD_ID')", 10_000)) error("the passphrase prompt did not come up")
             if (!awaitSheetAtRest(8_000)) error("the prompt did not settle")
             shot("06-prompt")
-            finding("  prompt up; focus: ${focusedElement()} (a phone form opens on its Cancel, not its field, §9.22)")
+            finding("  prompt up; focus: ${focusedElement()} (a phone form whose first control is a text field opens on its container, not its field and never its Cancel, §9.22)")
         }
         if (failures.size > before) return
 

@@ -35,6 +35,8 @@ class V2Ink(
     @ColorInt val panel: Int = color(R.color.v2_panel_light, R.color.v2_panel_dark)
     /** `--v2-border`: the hairline. */
     @ColorInt val border: Int = color(R.color.v2_border_light, R.color.v2_border_dark)
+    /** `--v2-card-border`: the opaque hairline between a list's rows (`.zen-v2-rows`, §9.21) and round a card. */
+    @ColorInt val cardBorder: Int = color(R.color.v2_card_border_light, R.color.v2_card_border_dark)
     /** `--v2-text`: the ink. */
     @ColorInt val text: Int = color(R.color.v2_text_light, R.color.v2_text_dark)
     /** `--v2-text-deemphasized`: the ink at 69 %. */

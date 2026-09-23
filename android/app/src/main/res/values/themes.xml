@@ -24,8 +24,13 @@
     </style>
 
     <!-- A phone sheet drawn natively per the v2 draft (§6): neutral panel, top radius 12, edge to
-         edge under the navigation bar, scrim black .4 light / .55 dark. The 1 px border is drawn
-         by the sheet's content view (CustomTabMenuSheet, ext/ExtensionSheet). -->
+         edge under the navigation bar, scrim black .4 light / .55 dark. The 1 dp hairline is drawn
+         by the sheet's content view (SheetEdge, under NativePromptSheet, ext/ExtensionSheet and
+         CustomTabMenuSheet):
+         its sides run through the navigation bar to the screen's bottom, so the sheet style pads
+         nothing for the bar – the content view takes the bar as its own bottom padding, through the
+         edge – where Material's would pad the container and stop the content view, and the
+         hairline's sides with it, a bar's height above the panel fill's edge. -->
     <style name="ThemeOverlay.Zen.Sheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
         <item name="bottomSheetStyle">@style/Widget.Zen.Sheet</item>
         <item name="android:backgroundDimAmount">0.4</item>
@@ -40,6 +45,7 @@
         <item name="backgroundTint">@color/v2_panel_light</item>
         <item name="shapeAppearance">@style/ShapeAppearance.Zen.Sheet</item>
         <item name="shapeAppearanceOverlay">@null</item>
+        <item name="paddingBottomSystemWindowInsets">false</item>
     </style>
     <style name="Widget.Zen.Sheet.Dark">
         <item name="backgroundTint">@color/v2_panel_dark</item>
@@ -52,7 +58,10 @@
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
 
-    <!-- The custom tab's menu: the same sheet under its own name. -->
+    <!-- The custom tab's menu: the same sheet under its own name. Its content view (CustomTabMenuSheet)
+         draws the edge and takes the navigation bar as its own bottom padding through it, like the
+         prompt sheet's and the extension sheet's, so the sheet style pads nothing for the bar here
+         either: the hairline's sides run through the bar to the screen's bottom. -->
     <style name="ThemeOverlay.Zen.CustomTabSheet" parent="ThemeOverlay.Zen.Sheet" />
     <style name="ThemeOverlay.Zen.CustomTabSheet.Dark" parent="ThemeOverlay.Zen.Sheet.Dark" />
 

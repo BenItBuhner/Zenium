@@ -11,7 +11,9 @@ import { PhoneSheet } from './PhoneSheet'
  * for good (`settings.confirmCloseAll`) – switched off only by an answer that goes ahead, as
  * the window prompt's checkbox is. Escape, the scrim, the back gesture and Cancel keep the tabs;
  * Close all, in the danger ink (§10.4), closes them once the sheet is gone, so the cards leave
- * in the open. Focus starts on Cancel so a stray Enter does no harm. From the private pane the
+ * in the open. The focus starts on the checkbox row – §9.22: a sheet whose first control is a
+ * checkbox opens on it, the chassis's own order; landing on Cancel is the failure the section
+ * names – so a stray Enter does no harm. From the private pane the
  * question is the same sheet about the private tabs (TAB-03): closing them ends the session and
  * wipes its data (INC-04), and nothing is filed for an undo, so the description says so.
  */
@@ -46,7 +48,6 @@ export function CloseAllSheet({
           ? 'Every private tab closes and the private session ends; its history, cookies and site data go with it. There is no undo.'
           : `Every open tab in ${spaceName} closes; pinned tabs and Essentials stay. Undo on the toast brings the tabs back.`
       }}
-      focus="first"
       onClose={onClose}
       // One detent: a drag on the grip only sends the prompt away (as the security prompt's).
       handleLabel="Dismiss"
