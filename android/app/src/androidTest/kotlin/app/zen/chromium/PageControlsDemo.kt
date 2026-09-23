@@ -71,8 +71,13 @@ open class PageControlsDemo protected constructor(
     /** Screenshots count up in the order they are taken, whatever sections a demo is made of. */
     private var shots = 0
 
+    /**
+     * Open so a composed demo can wrap the run (a server of its own around it, its findings'
+     * failures asserted once the recording is done, as [FontsLanguagesUiDemo] does); an
+     * override with `@Test` shadows this one, so the runner still sees one test.
+     */
     @Test
-    fun record() = runDemo()
+    open fun record() = runDemo()
 
     override fun patchState(json: String): String =
         patchTheme(json).replace(LOCKED_PAGE_PLACEHOLDER, lockedPage.url)

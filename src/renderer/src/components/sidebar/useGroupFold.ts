@@ -15,6 +15,8 @@ import { useListMotion } from './listMotion'
  * (`SlideMotion.placeNext`) – their arrival is this motion's, not a row's entry. A fold caught
  * mid-flight retargets from where it is. Under reduced motion the spring jumps (§11.3). Off
  * (`enabled` false, the desktop) the block is as it was: the rows come and go with the state.
+ * The horizontal strip (v2 §9.37) runs the same fold along its `axis`, `x`: the block's width
+ * between the chip alone and the chip with its members, the fold clipped the same way.
  * Returns the member rows to draw: the live ones while open, the ones it had while it folds shut.
  */
 export function useGroupFold(
@@ -22,7 +24,8 @@ export function useGroupFold(
   header: RefObject<HTMLDivElement | null>,
   collapsed: boolean,
   tabs: Tab[],
-  enabled: boolean
+  enabled: boolean,
+  axis: 'x' | 'y' = 'y'
 ): Tab[] {
   const motion = useListMotion()
 
@@ -36,13 +39,13 @@ export function useGroupFold(
 
   const fold = useRef<GroupFold | null>(null)
   useLayoutEffect(() => {
-    const f = new GroupFold(shell, header, () => setKept(null))
+    const f = new GroupFold(shell, header, axis, () => setKept(null))
     fold.current = f
     return () => {
       f.dispose()
       fold.current = null
     }
-  }, [shell, header])
+  }, [shell, header, axis])
 
   // Runs before the panel's FLIP (a child's layout effect precedes its parent's): the shell is
   // at its start height when the rows below are measured, so they wait for the spring instead
@@ -59,26 +62,32 @@ export function useGroupFold(
   return drawn
 }
 
-/** The fold's motion: the shell's height on the spring, the shell clipped while it runs. */
+/**
+ * The fold's motion: the shell's extent along the list's axis – its height in the sidebar, its
+ * width in the strip – on the spring, the shell clipped while it runs.
+ */
 class GroupFold {
   private readonly spring: SpringAnimation
+  private readonly property: 'height' | 'width'
 
   constructor(
     private readonly shell: RefObject<HTMLDivElement | null>,
     private readonly header: RefObject<HTMLDivElement | null>,
+    axis: 'x' | 'y',
     onRest: () => void
   ) {
+    this.property = axis === 'x' ? 'width' : 'height'
     this.spring = new SpringAnimation(
       SPRING_GENTLE,
-      (h) => {
+      (extent) => {
         const el = this.shell.current
-        if (el) el.style.height = `${Math.max(0, h)}px`
+        if (el) el.style[this.property] = `${Math.max(0, extent)}px`
       },
       () => {
-        // At rest the layout holds the height: the header's alone once the kept rows go.
+        // At rest the layout holds the extent: the header's alone once the kept rows go.
         const el = this.shell.current
         if (el) {
-          el.style.height = ''
+          el.style[this.property] = ''
           delete el.dataset.folding
         }
         onRest()
@@ -86,20 +95,22 @@ class GroupFold {
     )
   }
 
-  /** The block has just been committed folded (`collapsed`) or unfolded: run the height there. */
+  /** The block has just been committed folded (`collapsed`) or unfolded: run the extent there. */
   run(collapsed: boolean): void {
     const el = this.shell.current
     const head = this.header.current
     if (!el || !head) return
     const anim = this.spring
     const flying = anim.running ? anim.current.x : null
-    el.style.height = ''
-    const whole = el.offsetHeight
-    const alone = head.offsetHeight
+    el.style[this.property] = ''
+    const measure = (node: HTMLElement): number =>
+      this.property === 'width' ? node.offsetWidth : node.offsetHeight
+    const whole = measure(el)
+    const alone = measure(head)
     const to = collapsed ? alone : whole
     const from = flying ?? (collapsed ? whole : alone)
     el.dataset.folding = ''
-    el.style.height = `${from}px`
+    el.style[this.property] = `${from}px`
     if (flying === null) anim.start(from, 0, to)
     else anim.retarget(to)
   }

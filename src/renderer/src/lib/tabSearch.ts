@@ -22,9 +22,10 @@ import { closeUrlbar, type TabPickRequest, uiStore } from './ui'
  * Open the popover, or close it when it is up already – Chrome's Ctrl+Shift+A toggles its tab
  * search. `keyboard` is whether a chrome control had the focus (the popover leaves the keyboard
  * in the chrome on close then, §9.22); from the page the core focused the chrome first, so
- * nothing has it.
+ * nothing has it. `from` `'strip'` is the horizontal strip's All tabs button (§9.37): the
+ * popover hangs from it, end-aligned under the band, rather than from the sidebar's row.
  */
-export function toggleTabSearch(): void {
+export function toggleTabSearch(from?: 'strip'): void {
   if (uiStore.get().tabSearch) {
     closeTabSearch()
     return
@@ -35,7 +36,7 @@ export function toggleTabSearch(): void {
   // it would be put away again at once.
   closeUrlbar()
   run('focus.chrome', undefined)
-  uiStore.set({ tabSearch: { keyboard }, drawerOpen: false })
+  uiStore.set({ tabSearch: from ? { keyboard, from } : { keyboard }, drawerOpen: false })
 }
 
 /**

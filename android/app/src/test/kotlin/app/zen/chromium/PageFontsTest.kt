@@ -2,7 +2,9 @@ package app.zen.chromium
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PageFontsTest {
@@ -66,5 +68,36 @@ class PageFontsTest {
         assertEquals(fonts, PageFonts.fromJson(JSONObject(fonts.toJson().toString())))
         val defaults = PageFonts.DEFAULT
         assertEquals(defaults, PageFonts.fromJson(JSONObject(defaults.toJson().toString())))
+    }
+
+    @Test
+    fun `a family moving alone has the open document asked to restyle, a size moving does not`() {
+        // What the settings hold: the defaults as applyTo wrote them (serif, 16 / 13, floor 1, logical 6).
+        val held = PageFonts.DEFAULT
+        fun familiesMove(next: PageFonts) = next.familiesMoveFrom(held.standardFamily, held.serifFamily, held.sansSerifFamily, held.fixedFamily)
+        fun sizesMove(next: PageFonts) = next.sizesMoveFrom(held.size, held.fixedSize, held.minimumFontSize, PageFonts.MINIMUM_LOGICAL_SIZE)
+        fun asked(next: PageFonts) = familiesMove(next) && !sizesMove(next)
+
+        assertFalse(asked(held))
+        // The phone's standard family alone: the case Blink's own invalidation leaves as it was.
+        assertTrue(asked(held.copy(standard = "cursive")))
+        // An inert generic slot moving is still a family move (harmless to ask).
+        assertTrue(asked(held.copy(fixed = "serif-monospace")))
+        // A size with the family: the size restyles everything, the family rides along.
+        assertFalse(asked(held.copy(standard = "cursive", size = 20)))
+        assertTrue(sizesMove(held.copy(size = 20)))
+        // The floor is a size too.
+        assertFalse(asked(held.copy(standard = "cursive", minimumSize = 12)))
+        assertTrue(sizesMove(held.copy(minimumSize = 12)))
+        // A size alone: nothing asked, nothing to ask.
+        assertFalse(asked(held.copy(size = 24)))
+        // Settings a WebView was made with (WebView's own sans-serif, 16): the first applyTo on a
+        // fresh page reads as a family move – TabWebView asks only once a document is open.
+        assertTrue(PageFonts.DEFAULT.familiesMoveFrom("sans-serif", "serif", "sans-serif", "monospace"))
+
+        // The script: a fresh unused custom property registered, nothing rendered, nothing thrown.
+        assertTrue(PageFonts.RESTYLE_SCRIPT.startsWith("(() => { try { CSS.registerProperty({ name: '--zenium-fonts-'"))
+        assertTrue(PageFonts.RESTYLE_SCRIPT.contains("syntax: '*', inherits: false"))
+        assertTrue(PageFonts.RESTYLE_SCRIPT.endsWith("catch {} })()"))
     }
 }

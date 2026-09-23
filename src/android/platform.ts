@@ -421,7 +421,11 @@ export function windowInsetsOf(payload: unknown): WindowInsets {
   return insets
 }
 
-/** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
+/**
+ * Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). Beside `pause`,
+ * `teardown` is sent by Android alone: the desktop's quit destroys its views itself and never
+ * sends it.
+ */
 export interface HostEventPayloads {
   /**
    * The window's safe-area insets, and whether the system bars are still on their way back from
@@ -461,6 +465,14 @@ export interface HostEventPayloads {
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
+  /**
+   * The Activity is being destroyed under the running browser (`Host.destroy`: a relaunch, a
+   * configuration change the manifest does not handle) and its page views are going with it,
+   * without a word. The core that boots in the next Activity reads the profile `pause` wrote;
+   * this one must write nothing more, and must not read its views' going as page closes. Sent
+   * after `pause`, always; the last event this core hears.
+   */
+  teardown: void
   /**
    * The demo harness's scenes are over (`Host.releaseBackgroundWork`): the startup sweeps held
    * by `BootInfo.holdBackgroundWork` may run – the same as the `performance.releaseBackgroundWork`
@@ -1154,7 +1166,11 @@ export class AndroidPlatform implements Platform {
    * keeps it for a custom tab (`PageFonts.kt`). The standard family and the sizes take effect
    * there; the generic-family slots do not (`capabilities.genericFontFamilies` is off: Blink's
    * Android font selection never reads them). The preferred languages have no host here:
-   * WebView sends the system's languages (`capabilities.pageLanguages` is off).
+   * WebView sends the system's languages (`capabilities.pageLanguages` is off). Each push is
+   * marked in the chrome document's performance timeline (`performance.mark('fonts.apply')`,
+   * the `blink.user_timing` category the demo harness's trace records, whose names WebView's
+   * tracing keeps), so a run's trace shows how often the pages were restyled: the Android
+   * performance gate's ruling for #350 reads one per sequence of ± presses.
    */
   readonly pageFonts: PageFontsHost
   /**
@@ -1252,7 +1268,12 @@ export class AndroidPlatform implements Platform {
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
     this.privacy = new AndroidPrivacyHost(bridge)
-    this.pageFonts = { apply: (fonts) => bridge.send('fonts.apply', { ...fonts }) }
+    this.pageFonts = {
+      apply: (fonts) => {
+        performance.mark('fonts.apply')
+        bridge.send('fonts.apply', { ...fonts })
+      }
+    }
     const holdBackgroundWork = boot.holdBackgroundWork === true
     this.performance = {
       createBackgroundWorker: () => spawnBackgroundWorker(),
@@ -1723,6 +1744,9 @@ export class AndroidPlatform implements Platform {
         // Re-apply the last layout, so every page view is placed and shown for the window the
         // chrome returns to; Kotlin asks its WebViews for a fresh frame alongside.
         this.zenWindow?.relayout()
+        return
+      case 'teardown':
+        browser.onHostTeardown()
         return
       case 'memoryPressure': {
         const p = payload as HostEventPayloads['memoryPressure']
