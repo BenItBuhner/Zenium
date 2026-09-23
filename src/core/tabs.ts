@@ -3474,7 +3474,8 @@ export class TabManager {
   setDevtoolsDock(dock: DevtoolsDock, win: ZenWindow, options: { move?: boolean } = {}): void {
     const state = this.browser.state
     if (!state.capabilities.devtools) return
-    if (state.settings.devtoolsDock !== dock) this.browser.updateSettings({ devtoolsDock: dock }, win)
+    if (state.settings.devtoolsDock !== dock)
+      this.browser.updateSettings({ devtoolsDock: dock }, win)
     if (options.move === false) return
     for (const tabId of state.devtoolsOpenFor) this.view(tabId)?.setDevtoolsDock?.(dock)
   }

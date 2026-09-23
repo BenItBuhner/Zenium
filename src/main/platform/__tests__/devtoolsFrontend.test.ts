@@ -11,10 +11,7 @@ import {
 } from '../devtoolsFrontend'
 
 /** The chrome's stylesheet, where `--v2-border` is declared for light and for dark. */
-const MAIN_CSS = readFileSync(
-  join(__dirname, '../../../renderer/src/assets/main.css'),
-  'utf8'
-)
+const MAIN_CSS = readFileSync(join(__dirname, '../../../renderer/src/assets/main.css'), 'utf8')
 
 describe('the DevTools frontend scripts (v2 §9.29)', () => {
   it('mirrors the chrome’s --v2-border for the seam, light and dark, as main.css declares them', () => {

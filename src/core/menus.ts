@@ -3225,14 +3225,12 @@ export class Menus {
     // fourth button (left) has no row here, so none is checked while it stands there.
     const devtoolsDock = when(
       caps.devtools,
-      ...DEVTOOLS_DOCK_ROWS.map(
-        ({ dock, label }): MenuItemTemplate => ({
-          label,
-          type: 'radio',
-          checked: state.settings.devtoolsDock === dock,
-          click: () => tabs.setDevtoolsDock(dock, win)
-        })
-      )
+      ...DEVTOOLS_DOCK_ROWS.map(({ dock, label }): MenuItemTemplate => ({
+        label,
+        type: 'radio',
+        checked: state.settings.devtoolsDock === dock,
+        click: () => tabs.setDevtoolsDock(dock, win)
+      }))
     )
     const about: MenuItemTemplate = { label: `About Zenium ${state.version}`, enabled: false }
     // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a

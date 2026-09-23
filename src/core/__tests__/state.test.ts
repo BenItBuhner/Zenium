@@ -450,9 +450,7 @@ describe('state.json v5 (new tab page)', () => {
     for (const dock of ['right', 'left', 'undocked'] as const) {
       const chosen = structuredClone(DEFAULT_SETTINGS)
       chosen.devtoolsDock = dock
-      expect(state(fakeIo(legacyProfile(5, { settings: chosen }))).settings.devtoolsDock).toBe(
-        dock
-      )
+      expect(state(fakeIo(legacyProfile(5, { settings: chosen }))).settings.devtoolsDock).toBe(dock)
     }
   })
 

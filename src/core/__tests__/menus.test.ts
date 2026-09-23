@@ -835,9 +835,7 @@ describe('the app menu', () => {
     // nothing the two rows did is lost, and More Tools is two rows and a separator shorter.
     const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
     for (const label of before)
-      expect(everywhere, label).toContain(
-        foldedIntoWebCapture.has(label) ? 'Web Capture…' : label
-      )
+      expect(everywhere, label).toContain(foldedIntoWebCapture.has(label) ? 'Web Capture…' : label)
     for (const label of foldedIntoWebCapture) expect(everywhere).not.toContain(label)
     expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
     expect(separators(h.shown())).toBe(3)
