@@ -1,4 +1,4 @@
-name: Desktop smoke (Windows, macOS)
+name: Desktop smoke (Windows, macOS, Linux installers)
 
 # Boots the packaged desktop app on GitHub-hosted Windows and macOS runners with Playwright for
 # Electron (.github/smoke/smoke.mjs) and keeps to the basics so the jobs stay short: first launch
@@ -6,11 +6,12 @@ name: Desktop smoke (Windows, macOS)
 # server (127.0.0.1; the smoke needs no internet) through the URL bar, a graceful quit that marks
 # the profile cleanly exited, the profile coming back without a "Restore pages?" bar, plus 1.5x
 # DPI and OS dark mode screenshots. Windows additionally installs the NSIS
-# build silently, boots the installed executable and uninstalls it. Every JS error, crash and
-# blocking dialog fails the run unless .github/smoke/known-failures.json names it. Screenshots,
-# logs and result.json per build are uploaded as artifacts. The Linux smoke in ci.yml runs on
-# every push and pull request and carries the long walkthrough (Chrome-preset shortcuts, window
-# questions, the crash-restore pair).
+# build silently, boots the installed executable and uninstalls it. The Linux job builds the two
+# installers the Release workflow ships and boots the AppImage. Every JS error,
+# crash and blocking dialog fails the run unless .github/smoke/known-failures.json names it.
+# Screenshots, logs and result.json per build are uploaded as artifacts. The Linux smoke in ci.yml
+# runs on every push and pull request against the unpacked build and carries the long walkthrough
+# (Chrome-preset shortcuts, window questions, the crash-restore pair).
 
 on:
   workflow_dispatch:
@@ -182,6 +183,76 @@ jobs:
         if: always()
         with:
           name: desktop-smoke-${{ matrix.name }}
+          path: smoke-out
+          if-no-files-found: warn
+          retention-days: 7
+
+  linux-installers:
+    name: linux-x64-installers
+    # The two Linux installers the Release workflow ships, built with the same electron-builder
+    # configuration; the AppImage booted as a file through the smoke's `boot` scenario under
+    # Xvfb. ci.yml's Linux job stays the per-commit boot of the unpacked build; this one runs
+    # where the other installer-level smokes (the Windows NSIS install) run, on the packaging
+    # inputs' path filter above.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SMOKE_OUT: ${{ github.workspace }}/smoke-out
+      SMOKE: ${{ github.workspace }}/.github/smoke
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Bundle main, preload and renderer
+        run: npx electron-vite build
+      - name: Package the AppImage and the .deb
+        run: npx electron-builder --linux AppImage deb --x64 --publish never
+      - name: Display tools (Xvfb; ffmpeg grabs the screenshots) and desktop-file-utils (desktop-file-validate)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends xvfb ffmpeg x11-utils xdotool desktop-file-utils
+      - name: Locate the installers
+        id: dist
+        run: |
+          mkdir -p "$SMOKE_OUT"
+          find dist -maxdepth 1 -mindepth 1 -printf '%10s  %p\n' | sort -k2 | tee "$SMOKE_OUT/dist-listing.txt"
+          appimages=(dist/*.AppImage)
+          debs=(dist/*.deb)
+          if [[ ${#appimages[@]} -ne 1 || ! -f "${appimages[0]}" ]]; then
+            echo "::error::expected exactly one AppImage under dist, found: ${appimages[*]}"; exit 1
+          fi
+          if [[ ${#debs[@]} -ne 1 || ! -f "${debs[0]}" ]]; then
+            echo "::error::expected exactly one .deb under dist, found: ${debs[*]}"; exit 1
+          fi
+          echo "appimage=$PWD/${appimages[0]}" >> "$GITHUB_OUTPUT"
+          echo "deb=$PWD/${debs[0]}" >> "$GITHUB_OUTPUT"
+      - name: Boot the AppImage under Xvfb
+        # No FUSE on the runner: APPIMAGE_EXTRACT_AND_RUN=1 makes the type-2 runtime extract the
+        # image to $TMPDIR, run AppRun from there and remove the directory when the app exits.
+        # The environment variable, not --appimage-extract-and-run: the runtime reads only the
+        # first argument, and Playwright puts --inspect=0 and --remote-debugging-port=0 first.
+        # The extraction (some 450 MB) counts toward the first launch's render budget.
+        # --no-sandbox --disable-gpu as in ci.yml (no setuid helper, no GPU under Xvfb).
+        timeout-minutes: 12
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node "$SMOKE/smoke.mjs" --exe "${{ steps.dist.outputs.appimage }}" --label appimage
+          --out "$SMOKE_OUT" --scenarios boot --extra-args="--no-sandbox --disable-gpu"
+      - name: AppImage facts (extract; AppRun, the embedded desktop entry and icon)
+        if: always() && steps.dist.outputs.appimage != ''
+        run: node "$SMOKE/linux-install.mjs" appimage --file "${{ steps.dist.outputs.appimage }}" --out "$SMOKE_OUT" --label appimage
+      - name: Verdict (log and step summary)
+        if: always()
+        run: node "$SMOKE/verdict.mjs" --out "$SMOKE_OUT" --expect appimage --title linux-x64-installers
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: desktop-smoke-linux-x64-installers
           path: smoke-out
           if-no-files-found: warn
           retention-days: 7
