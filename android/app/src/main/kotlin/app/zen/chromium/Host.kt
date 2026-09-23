@@ -1001,6 +1001,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val inline = tabs.frameOf(tab.tabId)
         fullscreenTab = tab
         fullscreenCallback = callback
+        // A fullscreen entered while the last one's exit is still landing ends that landing's
+        // hold on the chrome's frames ([TabHost.landingOn]); the layer is over the page anyway.
+        tabs.landed()
         tab.invalidate()
         fullscreenLayer.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         fullscreenLayer.visibility = View.VISIBLE
@@ -1022,6 +1025,21 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     override fun exitFullscreen(tab: TabWebView) {
         if (fullscreenTab !== tab) return
+        // The screen the exit lands on is the fullscreen's own ([landing]'s window) when the host
+        // turned the screen for the video and the release turns it back: the device still the
+        // other way (HELD), or followed under the user's rotation lock (FOLLOWING, auto-rotate
+        // off). The system's turn comes some hundred ms after the release, and the chrome's
+        // frames until then – its layout under the layer, its first inline one – are the turned
+        // screen's and fit the container as it still stands: the tab host holds them to the
+        // landing's screen while the bars settle (BH-32, [TabHost.landingOn]).
+        val turnsBack = rotation.phase == FullscreenRotation.Phase.HELD ||
+            (rotation.phase == FullscreenRotation.Phase.FOLLOWING && !autoRotate())
+        val landsOnPortrait = landing.landsOnPortrait()
+        if (turnsBack && landsOnPortrait != null) {
+            val short = minOf(root.width, root.height)
+            val long = maxOf(root.width, root.height)
+            tabs.landingOn(if (landsOnPortrait) PageFrameFit.Screen(short, long) else PageFrameFit.Screen(long, short))
+        }
         // The orientation goes back to the system's as the layer goes, so the chrome that returns
         // is laid out for the screen the system settles on.
         releaseFullscreenOrientation()
@@ -1110,6 +1128,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun deviceTurned(angle: Int) {
         rotation.onDevice(FullscreenRotation.deviceLandscape(angle, naturalLandscape()))
     }
+
+    /** Whether the screen follows the device (the system's auto-rotate on); off, an orientation given back goes to the user's rotation. */
+    private fun autoRotate(): Boolean =
+        runCatching { Settings.System.getInt(activity.contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1 }.getOrDefault(false)
 
     /** Whether the device's natural way up is landscape (a tablet's): the display's rotation against the configuration. */
     private fun naturalLandscape(): Boolean {

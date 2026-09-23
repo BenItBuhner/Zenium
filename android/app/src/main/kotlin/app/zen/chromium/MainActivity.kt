@@ -202,7 +202,11 @@ class MainActivity : BrowserActivity() {
     /** The insets as last measured, with the landing's word as it stands now; judged again when the landing asks. */
     private fun sendInsets() {
         val now = SystemClock.uptimeMillis()
+        val wasSettling = host.landing.settling
         val settling = host.landing.settle(landingWindow(), now)
+        // The bars settled: the frames the tab host held back for the landing – the chrome's
+        // layouts for the screen the exit turned away from (BH-32) – are applied or dropped.
+        if (wasSettling && !settling) host.tabs.landed()
         val payload = JSONObject(insets.toString()).put("settling", settling)
         host.chrome.hostEvent("insets", payload)
         root.removeCallbacks(landingCheck)

@@ -16,6 +16,13 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     private val views = HashMap<String, TabWebView>()
     /** The frame the chrome last laid each page out at (device px), what [place] works from. */
     private val reported = HashMap<String, Rect>()
+    /**
+     * The screen a fullscreen's exit is landing on while the bars settle after it ([landingOn]
+     * from [Host.exitFullscreen], cleared by [landed]), and the frames held back meanwhile for
+     * fitting the container the screen still is but not that screen ([PageFrameFit.judge]).
+     */
+    private var landingScreen: PageFrameFit.Screen? = null
+    private val heldBack = HashMap<String, Rect>()
     private var popupSeq = 0
     private val density: Float get() = container.resources.displayMetrics.density
 
@@ -48,6 +55,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     fun release(tabId: String): TabWebView? {
         val view = views.remove(tabId) ?: return null
         reported.remove(tabId)
+        heldBack.remove(tabId)
         host.exitFullscreen(view)
         view.backTransition?.abort()
         host.snapshots.forget(tabId)
@@ -93,6 +101,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.tabId = tabId
         views[tabId] = view
         reported.remove(viewId)?.let { reported[tabId] = it }
+        heldBack.remove(viewId)?.let { heldBack[tabId] = it }
         // Whatever the popup loaded before the core knew its tab id is reported now: the list
         // first, as at a commit, so the core records it as it handles the `navigated`.
         view.pushHistory(force = true)
@@ -106,6 +115,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // pictured first: the card an undo brings back shows the page as it was left.
         view.captureThumbnail()
         reported.remove(tabId)
+        heldBack.remove(tabId)
         drop(view)
         host.viewEvent(tabId, "destroyed", null)
     }
@@ -123,6 +133,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         for (view in views.values.toList()) drop(view)
         views.clear()
         reported.clear()
+        heldBack.clear()
         host.snapshots.clear()
     }
 
@@ -178,10 +189,46 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         // A frame that does not fit the container is a stale measurement of a window that is
         // gone (the chrome behind a rotation, BH-32): it would lay the page out cropped until the
         // chrome's next report, which lays it out right. Refused, the last good frame stands.
-        if (!PageFrameFit.fits(w, h, container.width, container.height, d)) return
+        // One that fits the container but not the screen a fullscreen's exit is landing on is
+        // the same measurement caught early, before the system has turned the container: held
+        // back until the bars have settled ([landed]).
+        val frame = Rect(x, y, x + w, y + h)
+        when (PageFrameFit.judge(w, h, container.width, container.height, landingScreen, d)) {
+            PageFrameFit.Verdict.REFUSE -> return
+            PageFrameFit.Verdict.HOLD -> {
+                heldBack[tabId] = frame
+                return
+            }
+            PageFrameFit.Verdict.APPLY -> heldBack.remove(tabId)
+        }
         // Recorded for a view filling the window too ([fillWindow]): the frame it is put back to.
-        reported[tabId] = Rect(x, y, x + w, y + h)
+        reported[tabId] = frame
         place(view)
+    }
+
+    /**
+     * A fullscreen's exit is landing on a screen of this size (device px): the frames the chrome
+     * reports for another screen meanwhile are held back ([setBounds]) until [landed].
+     */
+    fun landingOn(screen: PageFrameFit.Screen) {
+        landingScreen = screen
+    }
+
+    /**
+     * The bars have settled after a fullscreen's exit (or a fullscreen begins again): the frames
+     * held back for the landing are applied where they fit the container as it stands now – the
+     * screen stayed the one they were laid out for – and dropped where they do not.
+     */
+    fun landed() {
+        landingScreen = null
+        if (heldBack.isEmpty()) return
+        for ((tabId, frame) in heldBack) {
+            val view = views[tabId] ?: continue
+            if (!PageFrameFit.fits(frame.width(), frame.height(), container.width, container.height, density)) continue
+            reported[tabId] = frame
+            place(view)
+        }
+        heldBack.clear()
     }
 
     /** Where the bar that hides on scroll is, per the chrome's last `chrome.setBarHide`; null: it may not hide. */
