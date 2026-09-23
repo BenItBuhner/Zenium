@@ -1416,10 +1416,11 @@ class Extensions(private val host: Host) {
             return response(mime, 200, "OK", ExtensionFiles.localizeCss(text, ext.cssMessages).toByteArray())
         }
         // Streamed from disk, the module bracket on either side (ExtensionFiles.servedBody); the
-        // prologue is chosen by the file's head (a webpack chunk binds its own `chrome` / `self`).
+        // prologue is chosen by the file's head (a webpack chunk binds its own `chrome` / `self`,
+        // a module declaring `chrome` itself keeps the bare entry), read up to a MiB, never whole.
         val body = ExtensionFiles.servedBody(
             file,
-            moduleChromeFor?.let { ExtensionScripts.moduleChromeOpen(it, ExtensionFiles.head(file, ExtensionScripts.WEBPACK_CHUNK_HEAD)) },
+            moduleChromeFor?.let { ExtensionScripts.moduleChromeOpen(it, ExtensionFiles.head(file, ExtensionScripts.MODULE_SCAN_HEAD)) },
             moduleChromeFor?.let(ExtensionScripts::moduleChromeClose)
         ) ?: return notFound()
         return response(mime, 200, "OK", body.stream, body.length)

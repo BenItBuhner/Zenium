@@ -169,7 +169,9 @@ class ExtensionFilesTest {
         assertEquals("export const s = \"h", ExtensionFiles.head(file, 19))
         assertEquals("export const s = \"h\uFFFD", ExtensionFiles.head(file, 20))
         assertEquals(text, ExtensionFiles.head(file, text.toByteArray(Charsets.UTF_8).size + 10))
+        assertEquals(text, ExtensionFiles.head(file, ExtensionScripts.MODULE_SCAN_HEAD))
         assertEquals("", ExtensionFiles.head(missing, 512))
+        assertEquals("", ExtensionFiles.head(File(dir, "empty.js").apply { writeBytes(ByteArray(0)) }, 512))
     }
 
     // --- unpacking -------------------------------------------------------------------------------

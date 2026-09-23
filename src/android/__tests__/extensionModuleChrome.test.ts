@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MODULE_SCAN_HEAD,
+  declaresChrome,
   installModuleChrome,
   isWebpackChunk,
   moduleOpen,
@@ -9,6 +11,7 @@ import {
 const LT = 'oldceeleldhonbafppcapldpdifcinji'
 const OTHER = 'abcdefghijklmnopabcdefghijklmnop'
 const MOTE = 'ajphlblkfpppdpkgokiejbjfohfohhmk'
+const BH = 'ojplmecpdpgccookcobabopnaifgidhf'
 
 /** A page global with WebView's own `chrome` object on it, and the extensions attached to the page. */
 function page(): {
@@ -188,6 +191,72 @@ describe('a chrome for the module graph on a one-realm WebView', () => {
     expect(module.exports).toBe(scope)
   })
 
+  it("binds the extension's chrome in a Vite chunk's own scope for the handlers it runs later (Buyhatke's content chunks)", () => {
+    const { win, chromes, evaluate } = page()
+    const installed = installModuleChrome(win, (id) => chromes.get(id))
+    const sent: unknown[] = []
+    const bhChrome = {
+      runtime: { id: BH, sendMessage: (message: unknown) => sent.push(message) },
+      storage: { local: { get: (keys: string[]) => Promise.resolve({ [keys[0]!]: 1 }) } }
+    }
+    chromes.set(BH, bhChrome)
+    // utility_all2 / bootstrap.ts chunks, as Vite writes them: `chrome` read from arrow functions
+    // and async handlers, none at the top level, and nothing named `chrome` declared.
+    const chunk =
+      'const F=e=>chrome.runtime.sendMessage(e),Ke=e=>F({type:"GOODIE_SPIN_LIST",goodieId:e}),' +
+      'de=async e=>{const a=await chrome.storage.local.get([e]);return a[e]};' +
+      'globalThis.__bh={spin:Ke,read:de,chrome:()=>chrome};'
+    expect(isWebpackChunk(chunk)).toBe(false)
+    expect(declaresChrome(chunk)).toBe(false)
+    evaluate(wrapModuleText(chunk, BH))
+    expect(installed.current()).toBeNull()
+    // The page's own `chrome` is back; the chunk's handlers keep the extension's.
+    expect((win.chrome as { loadTimes?: unknown }).loadTimes).toBeTypeOf('function')
+    const bh = win.__bh as {
+      spin: (e: number) => void
+      read: (e: string) => Promise<number>
+      chrome: () => unknown
+    }
+    bh.spin(7)
+    expect(sent).toEqual([{ type: 'GOODIE_SPIN_LIST', goodieId: 7 }])
+    expect(bh.chrome()).toBe(bhChrome)
+    return bh.read('k').then((value) => expect(value).toBe(1))
+  })
+
+  it('leaves a module that declares chrome itself to the bare bracket, reading the first MiB for one', () => {
+    for (const text of [
+      'let chrome = globalThis.chrome;',
+      'var chrome=browser;',
+      'class chrome {}',
+      'function chrome(){}',
+      'async function chrome(){}',
+      'function* chrome(){}',
+      'import chrome from "./polyfill.js";',
+      'import * as chrome from "./polyfill.js";',
+      'import{x as chrome}from"./polyfill.js";',
+      'import{a,chrome}from"./polyfill.js";',
+      'const{chrome}=globalThis;',
+      'const {runtime, chrome = browser} = globalThis;',
+      // Conservative: a match inside a string or a function body costs only the binding.
+      'const s = "let chrome";',
+      'function f(){const chrome=1;return chrome}'
+    ])
+      expect(declaresChrome(text), text).toBe(true)
+    for (const text of [
+      'chrome.runtime.getURL("x");',
+      'const c = window.chrome, d = globalThis.chrome;',
+      'const o = {chrome: 1, chromeVersion: 2};',
+      'let chromeX = 1, unchrome = 2;',
+      'if (chrome === browser) {}',
+      'import{c as F,a6 as Be}from"./utility_all2-CnXvRtz4.js";import"./preload-helper-DwIMeJeZ.js";'
+    ])
+      expect(declaresChrome(text), text).toBe(false)
+    // Beyond the first MiB the host does not look: a declaration there is the documented limit.
+    expect(declaresChrome(`${'x'.repeat(MODULE_SCAN_HEAD)};let chrome = 1;`)).toBe(false)
+    expect(declaresChrome(`${'x'.repeat(MODULE_SCAN_HEAD - 16)};let chrome = 1;`)).toBe(true)
+    expect(MODULE_SCAN_HEAD).toBe(1048576)
+  })
+
   it('answers the scope as self while any bracketed module evaluates, the page otherwise, and globalThis stays the page', () => {
     const { win, chromes, scopes, evaluate } = page()
     installModuleChrome(
@@ -197,14 +266,14 @@ describe('a chrome for the module graph on a one-realm WebView', () => {
     )
     const scope: Record<string, unknown> = {}
     scopes.set(LT, scope)
-    // A bundle of another shape (Rollup's `self.__lt = ...` at its top level): the plain
-    // bracket, the accessor answers the scope as `self` at evaluation time; `globalThis` is the
+    // A bundle of another shape (Rollup's `self.__lt = ...` at its top level): no `self` of its
+    // own, the accessor answers the scope as `self` at evaluation time; `globalThis` is the
     // page's real global, as the bracket's own epilogue reaches it through that name.
     const text = 'self.__lt = 1; globalThis.__ltToo = 2; self.__seenSelf = self;'
     expect(isWebpackChunk(text)).toBe(false)
     expect(
       wrapModuleText(text, LT).startsWith(
-        `globalThis.__zenExtModule&&globalThis.__zenExtModule("${LT}");self.__lt`
+        `let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule("${LT}"):globalThis.chrome;self.__lt`
       )
     ).toBe(true)
     evaluate(wrapModuleText(text, LT))
@@ -249,14 +318,16 @@ describe('a chrome for the module graph on a one-realm WebView', () => {
     expect(
       isWebpackChunk(`${'/'.repeat(600)}(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);`)
     ).toBe(false)
-    // The chunk's prologue binds the module's own `chrome` and `self`; a plain module's does not.
+    // The chunk's prologue binds the module's own `chrome` and `self`; any other module's binds
+    // `chrome` alone, unless the module declares one itself.
+    const chrome = `let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule("${MOTE}"):globalThis.chrome`
     expect(moduleOpen(MOTE, '(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);')).toBe(
-      `let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule("${MOTE}"):globalThis.chrome,` +
-        `self=globalThis.__zenExtModuleSelf?globalThis.__zenExtModuleSelf("${MOTE}"):globalThis.self;`
+      `${chrome},self=globalThis.__zenExtModuleSelf?globalThis.__zenExtModuleSelf("${MOTE}"):globalThis.self;`
     )
-    expect(moduleOpen(MOTE, 'export const a = 1;')).toBe(
-      `globalThis.__zenExtModule&&globalThis.__zenExtModule("${MOTE}");`
-    )
+    expect(moduleOpen(MOTE, 'export const a = 1;')).toBe(`${chrome};`)
+    expect(
+      moduleOpen(MOTE, 'const chrome = globalThis.chrome ?? browser; export { chrome };')
+    ).toBe(`globalThis.__zenExtModule&&globalThis.__zenExtModule("${MOTE}");`)
     // Without the brackets (isolated worlds, a page without the bootstrap) the chunk's prologue
     // binds the page's own values and the text runs as it was.
     const bare: Record<string, unknown> = { chrome: 'pages', registry: [] }
@@ -277,10 +348,12 @@ describe('a chrome for the module graph on a one-realm WebView', () => {
       wrapped
         .split('\n')
         .slice(0, 3)
-        .map((line) => line.replace(/^globalThis\.__zenExtModule[^;]*;/, ''))
+        .map((line) => line.replace(/^let chrome=[^;]*;/, ''))
     ).toEqual(text.split('\n'))
     expect(
-      wrapped.startsWith(`globalThis.__zenExtModule&&globalThis.__zenExtModule("${LT}");import x`)
+      wrapped.startsWith(
+        `let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule("${LT}"):globalThis.chrome;import x`
+      )
     ).toBe(true)
     expect(
       wrapped.endsWith(`\n;globalThis.__zenExtModuleEnd&&globalThis.__zenExtModuleEnd("${LT}");`)

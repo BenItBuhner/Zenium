@@ -218,12 +218,19 @@ class ExtensionFiles(val root: File) {
         /**
          * The first [bytes] bytes of a file as text (a multi-byte character cut at the end reads
          * as U+FFFD), or "" when the file cannot be read: what the module bracket looks at to
-         * tell a webpack chunk (`ExtensionScripts.isWebpackChunk`) without reading the file whole.
+         * tell a webpack chunk (`ExtensionScripts.isWebpackChunk`) and a module declaring
+         * `chrome` itself (`declaresChrome`) without reading the file whole. The buffer is the
+         * smaller of [bytes] and the file, read until it is full or the file ends.
          */
         fun head(file: File, bytes: Int): String = runCatching {
             FileInputStream(file).use { stream ->
-                val buffer = ByteArray(bytes)
-                val read = stream.read(buffer)
+                val buffer = ByteArray(minOf(bytes.toLong(), file.length()).toInt().coerceAtLeast(0))
+                var read = 0
+                while (read < buffer.size) {
+                    val n = stream.read(buffer, read, buffer.size - read)
+                    if (n <= 0) break
+                    read += n
+                }
                 if (read <= 0) "" else String(buffer, 0, read, Charsets.UTF_8)
             }
         }.getOrDefault("")

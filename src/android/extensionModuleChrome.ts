@@ -26,13 +26,19 @@
  * the page's: the brackets themselves are reached through it (`globalThis.__zenExtModuleEnd`),
  * and a `globalThis` answering the scope would never close one.
  *
- * A webpack chunk is one `push` expression and declares nothing at its top level, so for one
- * (`isWebpackChunk`) the prologue also binds `chrome` and `self` in the module's own scope: a
- * `let` there shadows the global for every closure the chunk creates, and its factories, run
- * later by the content script's runtime, find the extension's `chrome.runtime.connect` and its
- * `self` as Chrome's isolated world has them, not the page's. Any other module keeps the plain
- * bracket: a module of its own shape may declare those names itself, and a second declaration
- * would be a SyntaxError for the whole file.
+ * A module that reads `chrome` later, from a function of its own, would find the page's value
+ * by then: Buyhatke's Vite chunks (`chrome.storage.local.get`, `chrome.runtime.sendMessage`
+ * from their handlers, compat round 9, row 7) did. So the prologue also binds `chrome` in the
+ * module's own scope, `let chrome = <the bracket's entry>`: a module-scoped `let` shadows the
+ * global for every closure the module creates, and its functions, run later, find the
+ * extension's `chrome` as Chrome's isolated world has them. A webpack chunk
+ * (`isWebpackChunk`) binds `self` the same way, for the registry its factories read. The one
+ * module that keeps the plain bracket is one that declares `chrome` itself
+ * (`declaresChrome`: a `let` / `const` / `var` / `function` / `class` of that name, or an
+ * `import` binding it), since a second declaration would be a SyntaxError for the whole file;
+ * the host looks for one in the first `MODULE_SCAN_HEAD` of the text (a file is never read
+ * whole into the heap for it), which is where a minified chunk keeps every top-level name it
+ * did not rename.
  */
 
 export interface ModuleChrome {
@@ -187,20 +193,37 @@ export function isWebpackChunk(head: string): boolean {
   return WEBPACK_CHUNK.test(head.slice(0, WEBPACK_CHUNK_HEAD))
 }
 
+/** How far into a served module the host looks for a declaration of `chrome` of its own. */
+export const MODULE_SCAN_HEAD = 1 << 20
+
+/**
+ * A binding named `chrome` the module may declare itself: a declaration keyword before the
+ * name, an `import` of it (default, namespace or `as chrome`), or the name alone between the
+ * braces or commas of a destructuring pattern or an import list. Read conservatively: a match
+ * inside a function body or a string costs the module only the module-scoped binding, a miss
+ * would cost it its whole text. The same expression is `ExtensionScripts.OWN_CHROME` on the host.
+ */
+const OWN_CHROME =
+  /(?:^|[^\w$.])(?:(?:let|const|var|class|function)\s+chrome|function\s*\*\s*chrome|import\s+chrome|import\s*\*\s*as\s+chrome|as\s+chrome)(?![\w$])|[{,]\s*chrome\s*(?=[,}]|=(?!=))/
+
+/** Whether the head of a served module declares a `chrome` of its own (see `OWN_CHROME`). */
+export function declaresChrome(head: string): boolean {
+  return OWN_CHROME.test(head.slice(0, MODULE_SCAN_HEAD))
+}
+
 /**
  * The prologue ahead of a served module's text, as the host writes it
- * (`ExtensionScripts.moduleChromeOpen`): the bracket's entry, and for a webpack chunk the
- * module-scoped `chrome` and `self` too. Guarded, so the same text also runs where the brackets
- * were never installed.
+ * (`ExtensionScripts.moduleChromeOpen`): the bracket's entry as the module-scoped `chrome`, for
+ * a webpack chunk the module-scoped `self` too, and for a module declaring `chrome` itself the
+ * bare entry. Guarded, so the same text also runs where the brackets were never installed.
  */
 export function moduleOpen(extensionId: string, head = ''): string {
   const id = JSON.stringify(extensionId)
-  const enter = `globalThis.${ENTER}&&globalThis.${ENTER}(${id});`
-  if (!isWebpackChunk(head)) return enter
-  return (
-    `let chrome=globalThis.${ENTER}?globalThis.${ENTER}(${id}):globalThis.chrome,` +
-    `self=globalThis.${SELF}?globalThis.${SELF}(${id}):globalThis.self;`
-  )
+  const chrome = `let chrome=globalThis.${ENTER}?globalThis.${ENTER}(${id}):globalThis.chrome`
+  if (isWebpackChunk(head))
+    return `${chrome},self=globalThis.${SELF}?globalThis.${SELF}(${id}):globalThis.self;`
+  if (declaresChrome(head)) return `globalThis.${ENTER}&&globalThis.${ENTER}(${id});`
+  return `${chrome};`
 }
 
 /** The epilogue after a served module's text, on a line of its own. */
