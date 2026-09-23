@@ -669,18 +669,22 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
     private fun canvasFullscreenHints() {
         note("\n11. the canvas into fullscreen (no video: the exit hint every time, MED-03)")
         check("the once-key stands set from the videos before it (no reset: the canvas needs none)", hintDone())
+        // Timed from the finger, as scene 1 is: the tap's poll returns once the fullscreen is
+        // seen (the poll's step inside), so the hint's time is from the touch, the fullscreen's
+        // moment a bound on it – the cue's 500 ms after the view lies between the two.
+        val tappedAt = SystemClock.uptimeMillis()
         check("the canvas is touched", tapPageButton("stage", "Canvas", "the canvas goes fullscreen", 15_000) {
             host.fullscreenTab?.tabId == TAB && field("el") == "stage"
         })
-        val enteredAt = SystemClock.uptimeMillis()
+        val fullscreenBy = SystemClock.uptimeMillis() - tappedAt
         val first = awaitHint(6_000, present = true)
-        val seenAt = SystemClock.uptimeMillis() - enteredAt
+        val seenAt = SystemClock.uptimeMillis() - tappedAt
         // Its spring in is short (a bounded wait: the finger below must come inside the stand); a
         // still is ~100 ms, its encode on another thread.
         val seen = if (first == null) null else awaitHintAtRest(800) ?: first
         shot("22-canvas-fullscreen-hint")
         shot("design-exit-hint-canvas-light")
-        note("  host fullscreenTab=${host.fullscreenTab?.tabId}; page fs=${field("fs")} el=${field("el")}; hint $seenAt ms after the fullscreen: $seen")
+        note("  host fullscreenTab=${host.fullscreenTab?.tabId}; page fs=${field("fs")} el=${field("el")}; fullscreen seen by $fullscreenBy ms after the touch; hint $seenAt ms after the touch: $seen")
         check("the exit hint stands for a fullscreen with no video in it, the once-key set (MED-03)", seen != null)
         check("the once-key stays as it was (the canvas's hint is not the once)", hintDone())
         if (seen != null) {
@@ -689,7 +693,7 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
             check("the hint wears the light palette", paletteOf(seen) == "light")
             // The toast stands 2.8 s from its showing; a finger on the page inside that time takes
             // it away at once – the touch is the page's, so the finger lands on the canvas itself.
-            val standing = SystemClock.uptimeMillis() - enteredAt - seenAt
+            val standing = SystemClock.uptimeMillis() - tappedAt - seenAt
             if (standing < HINT_STAND_MS - 600) {
                 Finger().tap(width / 2f, height / 2f)
                 val gone = awaitHint(1_500, present = false) == null

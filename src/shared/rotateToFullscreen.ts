@@ -25,6 +25,18 @@
  * The host keeps its half of Chrome's rule (`FullscreenRotation.kt`): the screen a landscape
  * video's fullscreen turned is held there until the device has itself turned to landscape, then
  * follows the device again, so the turn back is a turn of the screen that this exits on.
+ *
+ * Blink's own delegate runs in a phone's WebView too (content turns
+ * `video_rotate_to_fullscreen_enabled` on for the phone form factor, and nothing in the WebView
+ * layer turns it off), so on a phone that reports device orientation there are two requesters
+ * per turn – Blink's and this script's, the same gates, the same `change` event. They are
+ * idempotent: a second `requestFullscreen()` on the video already fullscreen is a no-op, and the
+ * two exits are one `exitFullscreen()`; one transition either way. This script stays because
+ * Blink's delegate is gated on the `deviceorientation` sensor as well, which a device without
+ * one (the recipe's emulator among them) never satisfies, and because the decision is then
+ * readable and testable here. Chrome runs neither on a tablet (`device_is_phone`); this script
+ * is switched on by the Android page script for every form factor for now – the tablet's gate is
+ * a lead ruling (parity says phone-only), a one-line flag from the host when it comes.
  */
 
 export type SimpleOrientation = 'portrait' | 'landscape' | 'unknown'

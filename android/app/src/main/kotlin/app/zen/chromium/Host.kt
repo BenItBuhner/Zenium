@@ -253,10 +253,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private var fullscreenVideoTab: TabWebView? = null
     private var fullscreenVideoSize: Pair<Int, Int>? = null
     private var fullscreenVideoFromFrame = false
+    /** The device's own orientation, read while the screen is held for a video ([rotation]); speaks through [deviceTurned]. */
+    private val orientationSensor = DeviceOrientationSensor(activity) { angle -> deviceTurned(angle) }
     /**
      * The activity's orientation is the fullscreen video's ([FullscreenOrientation]) until the
      * device turns to match it, then the device's again ([FullscreenRotation], MED-02); given back
-     * on exit. The sensor speaks through [deviceTurned] while the screen is held.
+     * on exit. The sensor speaks through [deviceTurned] while the screen is held. The apply lambda
+     * runs only from [FullscreenRotation]'s methods, after this initializer: its reads of
+     * [orientationSensor] (declared above) and of `rotation` itself are deferred, and the type is
+     * stated so the self-reference infers.
      */
     private val rotation: FullscreenRotation = FullscreenRotation(
         schedule = ::postDelayed,
@@ -265,7 +270,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             orientationSensor.follow(rotation.phase == FullscreenRotation.Phase.HELD)
         }
     )
-    private val orientationSensor = DeviceOrientationSensor(activity) { angle -> deviceTurned(angle) }
     /**
      * The exit hint's cue to the chrome (`fullscreen.entered`): after the view's reveal, with the
      * page's word on whether the fullscreen element shows a video – the first time for a video
@@ -1042,7 +1046,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // off). The system's turn comes some hundred ms after the release, and the chrome's
         // frames until then – its layout under the layer, its first inline one – are the turned
         // screen's and fit the container as it still stands: the tab host holds them to the
-        // landing's screen while the bars settle (BH-32, [TabHost.landingOn]).
+        // landing's screen while the bars settle (BH-32, [TabHost.landingOn]). One edge: HELD with
+        // auto-rotate on and the device already turned landscape for less than the hand-over's
+        // 400 ms – the screen stays landscape, so the held landscape frame waits for the settle's
+        // quiet (500 ms) before [TabHost.landed] applies it; bounded and cosmetic, no frame lost.
         val turnsBack = rotation.phase == FullscreenRotation.Phase.HELD ||
             (rotation.phase == FullscreenRotation.Phase.FOLLOWING && !autoRotate())
         val landsOnPortrait = landing.landsOnPortrait()

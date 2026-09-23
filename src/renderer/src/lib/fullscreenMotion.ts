@@ -2,9 +2,11 @@ import { SPRING_SNAPPY, SpringAnimation } from './motion/spring'
 import { createStore } from './store'
 
 /**
- * The phone chrome around a page's fullscreen (MOT-32; design language v2 §11.5, the bars
- * that slide with the system's). The chrome stays mounted, with its state, for the whole of a
- * fullscreen; what moves is the bar – the row of controls with the pill and, while the active
+ * The phone chrome around a page's fullscreen (MOT-32: the bar translates off and back on one
+ * spring, in design language v2 §11.5's register for chrome that slides – pushed, not faded.
+ * §11.5's first bullet still describes the return before MOT-32, a fade with no translate; the
+ * brief supersedes it and the amendment is the lead's). The chrome stays mounted, with its state,
+ * for the whole of a fullscreen; what moves is the bar – the row of controls with the pill and, while the active
  * tab is grouped, the group strip inside it – which translates off its edge as the system bars
  * slide away and back onto it as they return, on one spring (`SPRING_SNAPPY`, the bar hide's
  * snap), by `--zen-fullscreen-away`: 0 with the bar in place, 1 with it fully off (its own

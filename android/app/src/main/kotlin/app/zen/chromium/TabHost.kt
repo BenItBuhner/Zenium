@@ -311,7 +311,9 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
     /**
      * Where `tabId`'s view stands on screen right now – laid out, with the slide a pull or a
      * hiding bar has it on – in the container's device px; null for a view not showing or not
-     * laid out yet. What the fullscreen layer's reveal starts from ([FullscreenReveal]).
+     * laid out yet. What the fullscreen layer's reveal starts from ([FullscreenReveal]). Only
+     * `translationY` is folded in: a tab's view is slid on Y alone (the pull, the hiding bar) and
+     * never translated on X or scaled – a transform added there would need adding here.
      */
     fun frameOf(tabId: String): Rect? {
         val view = views[tabId] ?: return null
