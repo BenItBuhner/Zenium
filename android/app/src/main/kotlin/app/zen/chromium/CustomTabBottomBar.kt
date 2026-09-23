@@ -52,6 +52,8 @@ class CustomTabBottomBar(
         fun onSwipeUp()
         /** The bar's own height changed (new views from the caller); the page's viewport follows. */
         fun onBarHeightChanged()
+        /** A [revealGrowth] came to rest: the bar stands at its new height. */
+        fun onBarSettled()
     }
 
     private val density = resources.displayMetrics.density
@@ -83,11 +85,29 @@ class CustomTabBottomBar(
     private val swipeThreshold = dp(CustomTabBottomBarRules.SWIPE_UP_DP).toFloat()
     private var downX = 0f
     private var downY = 0f
+    /** The travel a bar caught mid-settle already stands for (see [grab]). */
+    private var travelBase = 0f
     private var dragging = false
     private var fired = false
     private var velocity: VelocityTracker? = null
-    /** The settle after a drag: `x` is the bar's upward offset, so `translationY = -x`. */
-    private val spring = Spring(SPRING_STIFFNESS, SPRING_DAMPING, onFrame = { translationY = -it }, onRest = { translationY = 0f })
+    /**
+     * The bar's place is two offsets summed, each with one writer: the finger's [drag] (upward;
+     * the settle spring brings it home) and the [reveal] of a height change (the new rows start
+     * where the old edge was and spring into place), so a caller's answer landing under a held
+     * finger neither jumps nor fights the settle.
+     */
+    private var drag = 0f
+    private var reveal = 0f
+    private val spring = Spring(SPRING_STIFFNESS, SPRING_DAMPING, onFrame = { drag = it; place() }, onRest = { drag = 0f; place() })
+    private val revealSpring = Spring(
+        SPRING_STIFFNESS, SPRING_DAMPING,
+        onFrame = { reveal = it; place() },
+        onRest = {
+            reveal = 0f
+            place()
+            listener.onBarSettled()
+        }
+    )
 
     init {
         setBackgroundColor(scheme.secondaryToolbar)
@@ -177,15 +197,7 @@ class CustomTabBottomBar(
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
         if (!swipeUpEnabled) return false
         when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                downX = ev.x
-                downY = ev.y
-                dragging = false
-                fired = false
-                spring.stop()
-                velocity?.recycle()
-                velocity = VelocityTracker.obtain().also { it.addMovement(ev) }
-            }
+            MotionEvent.ACTION_DOWN -> grab(ev)
             MotionEvent.ACTION_MOVE -> {
                 velocity?.addMovement(ev)
                 if (!dragging && CustomTabBottomBarRules.claimsDrag(ev.x - downX, ev.y - downY, slop)) {
@@ -202,20 +214,15 @@ class CustomTabBottomBar(
         velocity?.addMovement(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = event.x
-                downY = event.y
-                dragging = false
-                fired = false
-                spring.stop()
-                velocity?.recycle()
-                velocity = VelocityTracker.obtain().also { it.addMovement(event) }
+                grab(event)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!dragging && CustomTabBottomBarRules.claimsDrag(event.x - downX, event.y - downY, slop)) dragging = true
                 if (dragging) {
-                    val travelUp = downY - event.y
-                    translationY = -CustomTabBottomBarRules.dragOffset(travelUp, barHeight.toFloat())
+                    val travelUp = travelBase + (downY - event.y)
+                    drag = CustomTabBottomBarRules.dragOffset(travelUp, barHeight.toFloat())
+                    place()
                     if (!fired && CustomTabBottomBarRules.swipeFires(travelUp, swipeThreshold)) {
                         fired = true
                         listener.onSwipeUp()
@@ -231,6 +238,21 @@ class CustomTabBottomBar(
         return super.onTouchEvent(event)
     }
 
+    /**
+     * A finger lands on the bar: a settle in flight stops where it is and the drag continues
+     * from there (the travel that offset stands for), so nothing snaps under the finger.
+     */
+    private fun grab(event: MotionEvent) {
+        downX = event.x
+        downY = event.y
+        dragging = false
+        fired = false
+        spring.stop()
+        travelBase = CustomTabBottomBarRules.travelFor(drag, barHeight.toFloat())
+        velocity?.recycle()
+        velocity = VelocityTracker.obtain().also { it.addMovement(event) }
+    }
+
     /** The bar returns to its place on the spring, carrying the finger's velocity; snaps with animators off. */
     private fun settle() {
         val tracker = velocity
@@ -242,18 +264,48 @@ class CustomTabBottomBar(
             velocity = null
         }
         dragging = false
-        val offset = -translationY
-        if (offset == 0f) return
+        if (drag == 0f) return
         if (!ValueAnimator.areAnimatorsEnabled()) {
-            translationY = 0f
+            drag = 0f
+            place()
             return
         }
-        spring.animate(offset, upward, 0f)
+        spring.animate(drag, upward, 0f)
     }
 
-    /** A hide or show from the activity cancels a settle in flight. */
+    /**
+     * The bar just grew or shrank by `deltaPx` (a positive delta is growth): its new edge starts
+     * where the old one was and springs into place (§11's snappy spring), whatever a finger is
+     * doing to it; [Listener.onBarSettled] follows at the rest. Snaps with animators off.
+     */
+    fun revealGrowth(deltaPx: Int) {
+        reveal += deltaPx
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            reveal = 0f
+            place()
+            listener.onBarSettled()
+            return
+        }
+        place()
+        revealSpring.animate(reveal, 0f, 0f)
+    }
+
+    /** A reveal is riding the spring. */
+    val revealing: Boolean get() = revealSpring.running
+
+    /**
+     * A hide or show from the activity takes the bar's place over: the springs stop and their
+     * offsets are dropped (the activity writes `translationY` itself from here).
+     */
     fun stopSettling() {
         spring.stop()
+        revealSpring.stop()
+        drag = 0f
+        reveal = 0f
+    }
+
+    private fun place() {
+        translationY = reveal - drag
     }
 
     // --- drawing and measure -------------------------------------------------------------------------

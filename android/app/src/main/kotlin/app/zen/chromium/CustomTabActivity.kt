@@ -1,6 +1,5 @@
 package app.zen.chromium
 
-import android.animation.ValueAnimator
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.content.ClipData
@@ -80,7 +79,6 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
     private var remoteClickIntent: PendingIntent? = null
     /** The bottom bar's height the page was last laid out for, so a change can slide instead of jump. */
     private var laidOutBarHeight = 0
-    private val barSlide = Spring(SPRING_STIFFNESS, SPRING_DAMPING, onFrame = { bottomBar.translationY = it }, onRest = { bottomBar.translationY = 0f; layoutPage() })
     /** Minimize's card, in the shell only while the tab is in picture-in-picture. */
     private var minimizedCard: CustomTabMinimizedCard? = null
     private var minimized = false
@@ -286,7 +284,6 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
         pageContainer.translationY = h
         toolbar.animate().translationY(-h).setDuration(TOOLBAR_MS).start()
         if (bar > 0) {
-            barSlide.stop()
             bottomBar.stopSettling()
             bottomBar.animate().translationY(CustomTabBottomBarRules.hiddenTranslation(bar, bottomInset).toFloat()).setDuration(TOOLBAR_MS).start()
         }
@@ -324,8 +321,9 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
     /**
      * The bar's own height changed (the caller's later `setSecondaryToolbarViews`, typically the
      * secondary toolbar it reveals after a swipe up). Shown, the bar's edge slides from where it
-     * was to where it is on §11's spring and the page takes the new height at the rest; hidden,
-     * it simply parks the bar further off. The first layout is not a change.
+     * was to where it is on §11's spring (the bar's own reveal, so it rides along under a finger
+     * still holding the bar) and the page takes a taller bar at the rest, a shorter one at once;
+     * hidden, it simply parks the bar further off. The first layout is not a change.
      */
     override fun onBarHeightChanged() {
         if (minimized) return
@@ -341,12 +339,11 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
             return
         }
         if (now < was) layoutPage()
-        if (!ValueAnimator.areAnimatorsEnabled()) {
-            bottomBar.translationY = 0f
-            layoutPage()
-            return
-        }
-        barSlide.animate((now - was).toFloat(), 0f, 0f)
+        bottomBar.revealGrowth(now - was)
+    }
+
+    override fun onBarSettled() {
+        if (!minimized && toolbarShown && !toolbarAnimating) layoutPage()
     }
 
     /**
@@ -602,7 +599,7 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
 
     override fun onDestroy() {
         CustomTabSessions.detach(config.session, this)
-        barSlide.stop()
+        bottomBar.stopSettling()
         host.destroy()
         super.onDestroy()
     }
@@ -623,8 +620,5 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
         private const val TOOLBAR_MS = 200L
         /** Scroll distance in one direction before the toolbar moves. */
         private const val SCROLL_THRESHOLD_DP = 40
-        /** §11 SPRING_SNAPPY, for the bottom toolbar's edge when the caller changes its height. */
-        private const val SPRING_STIFFNESS = 420f
-        private const val SPRING_DAMPING = 40f
     }
 }

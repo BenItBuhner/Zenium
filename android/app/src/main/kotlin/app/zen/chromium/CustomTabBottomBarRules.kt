@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.tanh
 
 /**
@@ -39,6 +40,19 @@ object CustomTabBottomBarRules {
         if (travelUp <= 0f || barHeight <= 0f) return 0f
         val cap = barHeight * DRAG_CAP
         return cap * tanh(travelUp / cap)
+    }
+
+    /**
+     * [dragOffset] inverted: the upward travel that would have put the bar at `offset`, so a
+     * finger landing on a bar still settling from the last drag picks it up where it is rather
+     * than snapping it home. An offset at or past the cap (which the band never reaches) reads as
+     * the travel that brings the band to within a thousandth of it.
+     */
+    fun travelFor(offset: Float, barHeight: Float): Float {
+        if (offset <= 0f || barHeight <= 0f) return 0f
+        val cap = barHeight * DRAG_CAP
+        val ratio = (offset / cap).coerceAtMost(0.999f)
+        return cap * 0.5f * ln((1f + ratio) / (1f - ratio))
     }
 
     /** Whether an upward travel of `travelUp` pixels has become the swipe (fires once, at the crossing). */
