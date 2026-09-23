@@ -4,9 +4,11 @@ import java.net.URI
 
 /**
  * The pages' own dialogs on the phone (PUI-27, PUI-28), the part that is not a view: what a
- * dialog says and offers ([PageDialogSpec]) and what a page has done with dialogs during one
- * visit of its tab ([PageDialogVisit]). The sheet itself is [PageDialogSheet] on the §9.23
- * chassis ([NativePromptSheet]); [TabWebView] holds the WebView's `JsResult` while it is up.
+ * dialog is and offers ([PageDialogSpec]), Chrome's words for it as `strings.xml` has them
+ * ([PageDialogWords]) and what a page has done with dialogs during one visit of its tab
+ * ([PageDialogVisit]). The sheet itself is [PageDialogSheet] on the §9.23 chassis
+ * ([NativePromptSheet]), which reads the words from the host's resources; [TabWebView] holds the
+ * WebView's `JsResult` while it is up. Nothing here touches Android, so all of it is under JUnit.
  *
  * Drawn natively because the WebView's renderer, which every tab and the chrome share, waits
  * inside `alert()` / `confirm()` / `prompt()` and inside a `beforeunload` objection until the
@@ -21,15 +23,20 @@ import java.net.URI
 enum class PageDialogKind { ALERT, CONFIRM, PROMPT, LEAVE, RELOAD }
 
 /**
- * One dialog as the sheet shows it: the title line, the message, the prompt's initial text,
- * whether "Don't let this page create more dialogs" is offered, and the words on its buttons.
+ * One dialog as the sheet shows it: its kind, the site its title names and whether the asking
+ * frame is an embedded one of another origin, the page's message, the prompt's initial text and
+ * whether "Don't let this page create more dialogs" is offered. The words themselves – the
+ * title line, our `beforeunload` sentence, the buttons – are [PageDialogWords]'s ([title],
+ * [acceptLabel]), so a spec carries nothing in English of its own.
  */
 class PageDialogSpec(
     val kind: PageDialogKind,
-    /** Chrome's title line: "example.com says", "Leave site?", … ([title]). */
-    val title: String,
-    /** The page's message as it wrote it; "Changes you made may not be saved." for a `beforeunload`. */
-    val message: String,
+    /** The site the title names, as [site] reads it: the host with its port, "" for a page without one. */
+    val site: String = "",
+    /** The asking frame is of another origin than the page's top document ([embedded]). */
+    val embedded: Boolean = false,
+    /** The page's message as it wrote it; "" for a `beforeunload`, whose sentence is ours ([PageDialogWords.leaveMessage]). */
+    val message: String = "",
     /** `prompt`: the field's initial text. */
     val defaultValue: String = "",
     /** The page's second dialog of the visit on: the checkbox is offered (never on "Leave site?"). */
@@ -38,20 +45,24 @@ class PageDialogSpec(
     /** An alert has nothing to cancel: it is dismissed; every other dialog has Cancel. */
     val cancellable: Boolean get() = kind != PageDialogKind.ALERT
 
-    /** The label of the button that accepts the dialog (Chrome's wording). */
-    val acceptLabel: String
-        get() = when (kind) {
-            PageDialogKind.LEAVE -> "Leave"
-            PageDialogKind.RELOAD -> "Reload"
-            else -> "OK"
-        }
+    /** A `beforeunload` question is ours – its sentence and its title are Chrome's words, not the page's. */
+    val ours: Boolean get() = kind == PageDialogKind.LEAVE || kind == PageDialogKind.RELOAD
+
+    /** Chrome's title line: "example.com says", "An embedded page at … says", "Leave site?", … */
+    fun title(words: PageDialogWords): String = when (kind) {
+        PageDialogKind.LEAVE -> words.leaveTitle
+        PageDialogKind.RELOAD -> words.reloadTitle
+        else -> words.title(site, embedded)
+    }
+
+    /** The label of the button that accepts the dialog: OK, or Leave / Reload on a `beforeunload`. */
+    fun acceptLabel(words: PageDialogWords): String = when (kind) {
+        PageDialogKind.LEAVE -> words.leave
+        PageDialogKind.RELOAD -> words.reload
+        else -> words.ok
+    }
 
     companion object {
-        /** Chrome's line under "Leave site?" / "Reload site?". */
-        const val LEAVE_MESSAGE = "Changes you made may not be saved."
-        /** Chrome's checkbox from a page's second dialog on. */
-        const val SUPPRESS_LABEL = "Don't let this page create more dialogs"
-
         /** An `alert` / `confirm` / `prompt` from the frame at `frameUrl` on the page at `pageUrl`. */
         fun page(
             kind: PageDialogKind,
@@ -62,18 +73,16 @@ class PageDialogSpec(
             suppressible: Boolean
         ): PageDialogSpec = PageDialogSpec(
             kind,
-            title(site(frameUrl), embedded(frameUrl, pageUrl)),
+            site(frameUrl),
+            embedded(frameUrl, pageUrl),
             message,
             if (kind == PageDialogKind.PROMPT) defaultValue else "",
             suppressible
         )
 
         /** The page's `beforeunload` objection: "Leave site?", or "Reload site?" for a reload. */
-        fun beforeUnload(reload: Boolean): PageDialogSpec = PageDialogSpec(
-            if (reload) PageDialogKind.RELOAD else PageDialogKind.LEAVE,
-            if (reload) "Reload site?" else "Leave site?",
-            LEAVE_MESSAGE
-        )
+        fun beforeUnload(reload: Boolean): PageDialogSpec =
+            PageDialogSpec(if (reload) PageDialogKind.RELOAD else PageDialogKind.LEAVE)
 
         /**
          * The site a dialog is titled after, as Chrome shows it: the host of an http(s) page (the
@@ -100,14 +109,49 @@ class PageDialogSpec(
         }
 
         private fun origin(uri: URI): String = "${uri.scheme}://${uri.host}:${uri.port}"
+    }
+}
 
-        /** Chrome's title line for a page's own dialog. */
-        fun title(site: String, embedded: Boolean): String = when {
-            embedded && site.isNotEmpty() -> "An embedded page at $site says"
-            embedded -> "An embedded page says"
-            site.isNotEmpty() -> "$site says"
-            else -> "This page says"
-        }
+/**
+ * Chrome's words for a page's dialog as `strings.xml` has them (`page_dialog_*`): the title
+ * formats, the `beforeunload` question, the checkbox and the buttons. A plain bag of strings so
+ * the composition ([title], [PageDialogSheet.content]) stays under JUnit, where the test builds
+ * one from the resource file itself and pins each line to Chrome's; on the device
+ * [PageDialogSheet.words] reads it from the host's resources, so a translation is a `values-xx`
+ * file and nothing in Kotlin. The two formats take the site as `%1$s`, as `getString` would.
+ */
+class PageDialogWords(
+    /** "%1$s says" (Chrome's IDS_JAVASCRIPT_MESSAGEBOX_TITLE). */
+    val titleSite: String,
+    /** "An embedded page at %1$s says": a frame of another origin (…_TITLE_IFRAME). */
+    val titleEmbedded: String,
+    /** "An embedded page on this page says": a frame of another, opaque origin (…_TITLE_NONSTANDARD_URL_IFRAME). */
+    val titleEmbeddedNoSite: String,
+    /** "This page says": a file, `data:` or `about:` document (…_TITLE_NONSTANDARD_URL). */
+    val titleNoSite: String,
+    /** "Leave site?" */
+    val leaveTitle: String,
+    /** "Reload site?" */
+    val reloadTitle: String,
+    /** "Changes you made may not be saved." – ours, under either question. */
+    val leaveMessage: String,
+    /** "Don't let this page create more dialogs" – the checkbox from a page's second dialog on. */
+    val suppress: String,
+    /** The secondary peer. */
+    val cancel: String,
+    /** The primary of an alert, a confirm and a prompt. */
+    val ok: String,
+    /** The primary of "Leave site?". */
+    val leave: String,
+    /** The primary of "Reload site?". */
+    val reload: String
+) {
+    /** Chrome's title line for a page's own dialog, from the frame's [PageDialogSpec.site] and whether it is embedded. */
+    fun title(site: String, embedded: Boolean): String = when {
+        embedded && site.isNotEmpty() -> String.format(titleEmbedded, site)
+        embedded -> titleEmbeddedNoSite
+        site.isNotEmpty() -> String.format(titleSite, site)
+        else -> titleNoSite
     }
 }
 

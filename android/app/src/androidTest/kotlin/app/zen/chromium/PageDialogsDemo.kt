@@ -983,7 +983,7 @@ class PageDialogsDemo : DemoHarness("page-dialogs-demo-state.json", "page-dialog
         private const val ORIGIN = "http://$SITE"
         private const val DEMO = "tab_demo"
         private const val OTHER = "tab_other"
-        /** Chrome's words, as PageDialogSpec has them: the titles and the lines the sheet is read by. */
+        /** Chrome's words, as strings.xml's `page_dialog_*` has them (PageDialogsTest pins them): the titles and the lines the sheet is read by. */
         private const val SAYS = "$SITE says"
         private const val EMBEDDED_SAYS = "An embedded page at $FRAME_SITE says"
         private const val LEAVE = "Leave site?"

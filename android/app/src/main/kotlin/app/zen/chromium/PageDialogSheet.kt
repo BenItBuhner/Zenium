@@ -1,9 +1,12 @@
 package app.zen.chromium
 
+import android.content.Context
+
 /**
  * A page's dialog as Zenium's sheet (PUI-27, PUI-28): one [PageDialogSpec] on the §9.23 chassis,
  * [NativePromptSheet] – the numbers, the inks, the fade, the scrim / back / grip as the
- * secondary and the TalkBack pose are the chassis's; this class only says what goes in its slots.
+ * secondary and the TalkBack pose are the chassis's; this class only says what goes in its slots,
+ * in Chrome's words read from the host's resources ([words]: `strings.xml`'s `page_dialog_*`).
  * See [PageDialogSpec] for why the chrome's own `PageDialog` cannot draw it here (v2 §9.23 names
  * the page's dialogs as the chassis's second consumer, on that proof).
  *
@@ -33,7 +36,7 @@ class PageDialogSheet(
         host.activity,
         // The theme in force, with the accent the chrome handed over for the primary (`chrome.setTheme`).
         V2Ink(host.activity, host.themeDark, host.themeAccent, host.themeOnAccent),
-        content(spec)
+        content(spec, words(host.activity))
     ) { answer ->
         val value = if (answer.accepted && spec.kind == PageDialogKind.PROMPT) answer.text ?: "" else null
         onAnswer(answer.accepted, value, answer.checked)
@@ -45,22 +48,34 @@ class PageDialogSheet(
     fun dismiss() = sheet.dismiss()
 
     companion object {
-        /** Chrome's secondary peer. */
-        const val CANCEL_LABEL = "Cancel"
+        /** Chrome's words from `strings.xml` (`page_dialog_*`), in the locale in force. */
+        fun words(context: Context): PageDialogWords = PageDialogWords(
+            titleSite = context.getString(R.string.page_dialog_title_site),
+            titleEmbedded = context.getString(R.string.page_dialog_title_embedded),
+            titleEmbeddedNoSite = context.getString(R.string.page_dialog_title_embedded_no_site),
+            titleNoSite = context.getString(R.string.page_dialog_title_no_site),
+            leaveTitle = context.getString(R.string.page_dialog_leave_title),
+            reloadTitle = context.getString(R.string.page_dialog_reload_title),
+            leaveMessage = context.getString(R.string.page_dialog_leave_message),
+            suppress = context.getString(R.string.page_dialog_suppress),
+            cancel = context.getString(R.string.page_dialog_cancel),
+            ok = context.getString(R.string.page_dialog_ok),
+            leave = context.getString(R.string.page_dialog_leave),
+            reload = context.getString(R.string.page_dialog_reload)
+        )
 
-        /** What of `spec` goes into which slot of the chassis (pure; see the class comment). */
-        fun content(spec: PageDialogSpec): NativePromptSheet.Content {
-            val ours = spec.kind == PageDialogKind.LEAVE || spec.kind == PageDialogKind.RELOAD
+        /** What of `spec` goes into which slot of the chassis, in `words` (pure; see the class comment). */
+        fun content(spec: PageDialogSpec, words: PageDialogWords): NativePromptSheet.Content {
             val prompt = spec.kind == PageDialogKind.PROMPT
             val message = spec.message.takeIf { it.isNotEmpty() }
             return NativePromptSheet.Content(
-                title = spec.title,
-                description = if (ours) message else null,
-                body = if (ours || prompt) null else message,
+                title = spec.title(words),
+                description = if (spec.ours) words.leaveMessage else null,
+                body = if (spec.ours || prompt) null else message,
                 field = if (prompt) NativePromptSheet.Field(text = spec.defaultValue, label = message) else null,
-                check = if (spec.suppressible) PageDialogSpec.SUPPRESS_LABEL else null,
-                secondary = if (spec.cancellable) CANCEL_LABEL else null,
-                primary = NativePromptSheet.Peer(spec.acceptLabel)
+                check = if (spec.suppressible) words.suppress else null,
+                secondary = if (spec.cancellable) words.cancel else null,
+                primary = NativePromptSheet.Peer(spec.acceptLabel(words))
             )
         }
     }
