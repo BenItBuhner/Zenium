@@ -142,7 +142,7 @@ export function ClearBrowsingDataForm({ close }: { close: () => void }): JSX.Ele
           )}
           {form.error && !passphraseShown && <ValidationMessage message={form.error} />}
           <div className="zen-settings-sheet-actions">
-            <button type="button" className="zen-v2-button" disabled={busy} onClick={close}>
+            <button type="button" className="zen-v2-button" disabled={busy} onClick={() => close()}>
               Cancel
             </button>
             <BusyButton
