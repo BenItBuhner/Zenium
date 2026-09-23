@@ -3,8 +3,19 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
+//        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
+//                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
+//                                 – Electron's --no-sandbox from the environment – is kept out
+//                                 of the launch; on Linux the build's chrome-sandbox helper has
+//                                 to be setuid root where the kernel denies unprivileged user
+//                                 namespaces – ci.yml's step does that to the unpacked build.
+//                                 What the leg is for: Electron runs
+//                                 service-worker preload scripts in sandboxed renderers only, so
+//                                 a --no-sandbox leg cannot observe Zenium's chrome.* layer in an
+//                                 MV3 worker; the mv3-worker scenario expects it present here and
+//                                 absent under --no-sandbox)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
@@ -31,13 +42,18 @@
 //                failed: that profile is not past onboarding; scenario-deps.mjs)
 //   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
 //                the accessibility tree of the resting window, the open app menu, the open URL
-//                bar and a hosted Settings dialog against the aria snapshots checked in under
-//                .github/smoke/aria/ with axe-core's verdict on each (no serious or critical
-//                violation; .github/smoke/aria/axe-known.json names the tolerated ones on
-//                surfaces the chrome does not own), Ctrl+F (the field takes the keyboard,
-//                Escape closes the bar and hands it back to
-//                the page), Ctrl+plus/minus/0 with the zoom bubble, F11, Ctrl+N, Ctrl+Shift+N,
-//                Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu, the page context menu, a
+//                bar, a hosted Settings dialog and the Web capture overlay against the aria
+//                snapshots checked in under .github/smoke/aria/ with axe-core's verdict on each
+//                (no serious or critical violation; .github/smoke/aria/axe-known.json names the
+//                tolerated ones on surfaces the chrome does not own), Ctrl+F (the field takes
+//                the keyboard, Escape closes the bar and hands it back to the page),
+//                Ctrl+plus/minus/0 with the zoom bubble, Ctrl+Shift+S's Web capture overlay
+//                over the page's picture (its toolbar, the chrome inert, the view hidden) and
+//                Escape taking it down whole, F11, Ctrl+N, Ctrl+Shift+N,
+//                Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu with its Layout card
+//                flipping the rows into the horizontal strip, a tab put in a new folder from
+//                its row's menu, the folder closed into a SAVED group with its page listed and
+//                opened again, the page context menu, a
 //                second instance handing its URL over, Ctrl+Shift+W's "Close N tabs?" cancelled,
 //                Ctrl+W, a pop-up opened by a real click on a button inside a cross-origin iframe
 //                (a local fixture: the frame's gesture reaches the pop-up blocker, the pop-up is
@@ -60,9 +76,44 @@
 //                clear-on-exit-owed-launch)
 //   scale        --force-device-scale-factor=1.5 renders at devicePixelRatio 1.5
 //   dark         OS dark mode (or nativeTheme where the OS has no switch) reaches the chrome
+//   mv3-worker   Zenium's chrome.* layer for MV3 background workers (the service-worker preload
+//                of src/preload/extension.ts): a profile past onboarding installs the unpacked
+//                fixture extension under fixtures/mv3-worker through the management page's drop
+//                path (the install prompt accepted), whose worker logs the `chrome` surface it
+//                starts with; the line is read off the session's ServiceWorkers console events.
+//                Under --sandbox the layer must be there (`chrome.permissions`, `windows`,
+//                `contextMenus` defined); under --no-sandbox it must be absent – Electron evaluates
+//                service-worker preloads in sandboxed renderers only – which is what makes the
+//                sandboxed leg necessary. The run has to say which it is (--sandbox, or
+//                --no-sandbox among the extra args); a worker console error from an extension
+//                is a failure (Linux job: one leg each way)
+//   pip          picture-in-picture (pip-02): a profile past onboarding (sidebar at 320, where
+//                the media hub's toolbar button stands in the row) opens video-fixture.mjs's
+//                page, whose `<video>` plays its own canvas with a tone – the views' autoplay
+//                policy refuses the page's gesture-less play(), one real click plays it – and
+//                the hub's popover lists the tab's player as playing with the Picture in picture
+//                button. That button puts the video in its small window
+//                (`document.pictureInPictureElement` set; on Linux the X server shows exactly
+//                one "Picture in picture" window with a size); the page.pip chord
+//                (Ctrl+Shift+]) brings it back (the element cleared, `leavepictureinpicture`
+//                seen, the window gone, the video still playing) (Linux job)
+//   split        a split view's life (ci-07), on a profile past onboarding with the fixture's
+//                pages: two tabs, Toggle Split View Vertical (Ctrl+Alt+V in the Chrome preset)
+//                makes one vertical split of both in halves – the model's group, both tabs
+//                pointing at it, the panes' views side by side to the sizes, the sidebar's group
+//                row; a third tab's row dragged from the sidebar onto the content area's right
+//                edge zone (a real pointer drag on the chrome page; the zone lights up under the
+//                pointer) joins as the right pane, in thirds; its header's un-split button with
+//                Shift held leaves a two-pane split in halves with the third tab still open; the
+//                divider dragged right by 15 % of the area moves the ratio to 0.65 / 0.35 and the
+//                views with it; a graceful quit persists the group; the relaunch (split-restore)
+//                shows the same group, tabs and ratio without "Restore pages?"; Unsplit View
+//                (Ctrl+Alt+U) dissolves it, the active tab's view has the whole area, all three
+//                tabs stay (Linux job; two launches: split and split-restore)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore); the walkthrough, the crash pair and clear-on-exit run on Linux under Xvfb only.
+// restore); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs, pip and the
+// split pair run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -117,6 +168,7 @@ import {
   sessionClearsSince,
   withOwedClear
 } from './site-data.mjs'
+import { startVideoFixture } from './video-fixture.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -127,6 +179,10 @@ const ACCEL = IS_MAC ? 'Meta' : 'Control'
 const QUIT_COMBO = IS_MAC ? 'Meta+q' : 'Control+Shift+q'
 const PRIVATE_WINDOW_COMBO = `${ACCEL}+Shift+n`
 const FULLSCREEN_COMBO = IS_MAC ? 'Control+Meta+f' : 'F11'
+// Web capture (`capture.start`, the Chrome preset's Ctrl+Shift+S; Edge's chord) and the desktop's
+// overlay for it, a modal dialog over the content frame (components/capture/CaptureOverlay.tsx).
+const CAPTURE_COMBO = `${ACCEL}+Shift+s`
+const CAPTURE_OVERLAY = '[role="dialog"][aria-label="Web capture"]'
 
 const opts = parseArgs(process.argv.slice(2))
 if (!opts.exe || !opts.label || !opts.out) {
@@ -140,6 +196,21 @@ const scenarios = String(opts.scenarios ?? 'boot,restore')
   .filter(Boolean)
 const EXTRA_ARGS =
   typeof opts['extra-args'] === 'string' ? opts['extra-args'].split(' ').filter(Boolean) : []
+// The run is a sandboxed leg (--sandbox): Chromium's sandbox stays on for every launch. The lib
+// of the store's drives has the same opt-in (`sandbox: true`, which leaves --no-sandbox out of
+// the launch); here the caller keeps --no-sandbox out of --extra-args, and the flag says so.
+const SANDBOX = opts.sandbox === true
+const NO_SANDBOX_ARG = EXTRA_ARGS.includes('--no-sandbox')
+if (SANDBOX && NO_SANDBOX_ARG) {
+  console.error('--sandbox contradicts --no-sandbox in --extra-args: pick one')
+  process.exit(2)
+}
+if (scenarios.includes('mv3-worker') && !SANDBOX && !NO_SANDBOX_ARG) {
+  // The scenario's expectation follows the sandbox (present under it, absent without): a run
+  // that says neither could pass by accident on a machine whose kernel sandboxes the renderers.
+  console.error('mv3-worker needs --sandbox or --no-sandbox in --extra-args to know what to expect')
+  process.exit(2)
+}
 const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
 // The first time this run launches the executable is a cold launch: the build was packaged (or
 // installed) moments ago and nothing has mapped its pages yet. On macos-15-intel that first
@@ -194,6 +265,45 @@ const isolationEnv = IS_LINUX
 for (const dir of Object.values(isolationEnv)) fs.mkdirSync(dir, { recursive: true })
 
 const context = { platform: process.platform, arch: process.arch, label: opts.label }
+
+/**
+ * The sandbox the run launches with, for the result: whether the leg is sandboxed and, on Linux,
+ * the state of the build's `chrome-sandbox` helper beside the executable – Chromium's way into
+ * the sandbox where the kernel denies unprivileged user namespaces (ubuntu-24.04's AppArmor
+ * default) is that helper, root-owned and setuid (mode 4755); electron-builder's installers
+ * leave it so, an unpacked build does not. A sandboxed leg without it is left to the launch:
+ * Chromium refuses to start and says why, which the launch step reports.
+ *
+ * Two more ways --no-sandbox reaches the app without the leg passing it. Playwright's Electron
+ * launcher adds it on Linux unless asked not to (1.63; the launch asks, `chromiumSandbox`). And
+ * Electron reads ELECTRON_DISABLE_SANDBOX in the environment as the switch, whatever the command
+ * line says (Electron 44.4.5, measured), so a sandboxed leg drops it from the launch's
+ * environment (Session.launchEnv) and says here whether the run's environment carried it.
+ */
+function sandboxFacts() {
+  const envDisable = process.env.ELECTRON_DISABLE_SANDBOX
+  const facts = {
+    sandboxed: !NO_SANDBOX_ARG && (SANDBOX || envDisable === undefined),
+    requested: SANDBOX,
+    envDisableSandbox: envDisable ?? null,
+    envDisableSandboxDropped: SANDBOX && envDisable !== undefined
+  }
+  if (!IS_LINUX) return facts
+  const helper = path.join(path.dirname(path.resolve(opts.exe)), 'chrome-sandbox')
+  try {
+    const st = fs.statSync(helper)
+    facts.helper = {
+      path: helper,
+      uid: st.uid,
+      mode: (st.mode & 0o7777).toString(8),
+      setuidRoot: st.uid === 0 && (st.mode & 0o4000) !== 0
+    }
+  } catch (e) {
+    facts.helper = { path: helper, error: String(e.message) }
+  }
+  return facts
+}
+
 const result = {
   label: opts.label,
   exe: opts.exe,
@@ -206,6 +316,7 @@ const result = {
     firstLaunchRenderMs: FIRST_LAUNCH_RENDER_BUDGET_MS,
     quitMs: QUIT_BUDGET_MS
   },
+  sandbox: sandboxFacts(),
   scenarios: {},
   screenshots: [],
   failures: [],
@@ -613,6 +724,41 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
     }
     sessionProto.__smokeWrapped = true
   }
+  // What service workers log, per session: an MV3 background worker's console has no
+  // webContents, so its lines come through the session's ServiceWorkers `console-message`
+  // (the mv3-worker scenario reads its fixture's probe off these; a worker error from an
+  // extension is a failure). Wired for the partitions named in the options – the default
+  // container's, which exists from the app's start (src/main/platform/sessions.ts partitionFor)
+  // – and for every session created from here on. Electron 44's details: `message`, `level`
+  // (0–3: verbose, info, warning, error), `sourceUrl`, `lineNumber`, `versionId`.
+  const workerPartitions = []
+  const hookWorkers = (ses, partition) => {
+    const workers = safe(() => ses.serviceWorkers, null)
+    if (!workers || workers.__smokeHooked) return
+    workers.__smokeHooked = true
+    workerPartitions.push(partition)
+    workers.on('console-message', (_e, d) => {
+      const detail = d && typeof d === 'object' ? d : {}
+      emit({
+        type: 'worker-console',
+        partition,
+        level: detail.level,
+        message: clip(detail.message),
+        sourceUrl: detail.sourceUrl,
+        line: detail.lineNumber,
+        versionId: detail.versionId
+      })
+    })
+  }
+  for (const partition of options.workerPartitions || []) {
+    hookWorkers(
+      safe(() => session.fromPartition(partition), null),
+      partition
+    )
+  }
+  app.on('session-created', (ses) =>
+    hookWorkers(ses, safe(() => ses.storagePath, null) || `session-${workerPartitions.length}`)
+  )
   app.on('browser-window-created', (_e, w) =>
     emit({ type: 'window-created', window: w.id, windows: BrowserWindow.getAllWindows().length })
   )
@@ -718,8 +864,12 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
   wrapDialog('showOpenDialogSync', 'file-sync')
   wrapDialog('showSaveDialog', 'file')
   wrapDialog('showSaveDialogSync', 'file-sync')
-  return { hooked: true, transport: smoke.transport, sessionClears }
+  return { hooked: true, transport: smoke.transport, sessionClears, workerPartitions }
 }
+
+// The persistent session every extension loads into (src/main/platform/sessions.ts partitionFor:
+// the default container's), whose service workers' console the hook listens to.
+const DEFAULT_CONTAINER_PARTITION = 'persist:zen-default'
 
 // ---------------------------------------------------------------------------------------------
 // Event classification: every hook event that counts as a failure becomes a failure record
@@ -750,6 +900,20 @@ function failureFromEvent(e, scenario) {
         source,
         url: e.url,
         info: true
+      }
+    }
+    case 'worker-console': {
+      // An extension's background worker logging an error (Zenium's own layer failing to
+      // install says so here, as `[zenium] …`) gates; a site's worker is the site's business.
+      if (e.level !== 3) return null
+      const source = [e.sourceUrl, e.line].filter((v) => v !== undefined && v !== '').join(':')
+      return {
+        ...base,
+        kind: 'worker-console-error',
+        message: e.message,
+        source,
+        url: e.sourceUrl,
+        info: !/^chrome-extension:\/\//.test(e.sourceUrl || '')
       }
     }
     case 'render-process-gone':
@@ -814,7 +978,11 @@ class Session {
   }
 
   launchEnv() {
-    return { ...process.env, ELECTRON_ENABLE_LOGGING: '1', ...isolationEnv, ...this.extraEnv }
+    const env = { ...process.env, ELECTRON_ENABLE_LOGGING: '1', ...isolationEnv, ...this.extraEnv }
+    // Electron's --no-sandbox from the environment: a sandboxed leg launches without it (the
+    // result's `sandbox` facts say whether the run's environment carried it).
+    if (SANDBOX) delete env.ELECTRON_DISABLE_SANDBOX
+    return env
   }
 
   async launch() {
@@ -828,6 +996,11 @@ class Session {
       executablePath: opts.exe,
       args: this.launchArgs(),
       env: this.launchEnv(),
+      // Playwright 1.63's Electron launcher puts --no-sandbox in front of the arguments on Linux
+      // unless told not to (up to 1.62 it did so only for root). The leg's own arguments decide
+      // here: ci.yml's --no-sandbox legs pass the switch themselves, a --sandbox leg passes none
+      // (run 35851382792's sandboxed leg saw the switch it never passed).
+      chromiumSandbox: true,
       // Playwright would otherwise emulate prefers-color-scheme: light on every page it attaches
       // to; null means the pages follow the OS / nativeTheme like they do for a user.
       colorScheme: null,
@@ -850,7 +1023,10 @@ class Session {
     })
     this.app.on('window', (page) => this.attachPage(page))
     for (const p of this.app.windows()) this.attachPage(p)
-    this.hookResult = await this.app.evaluate(hookMain, { eventsFile: this.eventsFile })
+    this.hookResult = await this.app.evaluate(hookMain, {
+      eventsFile: this.eventsFile,
+      workerPartitions: [DEFAULT_CONTAINER_PARTITION]
+    })
     this.timings.launchMs = Date.now() - t0
     this.chrome = await this.waitForChromePage(RENDER_WAIT_MS)
     await this.chrome.locator('[data-testid="chrome-root"]').waitFor({
@@ -1874,8 +2050,17 @@ async function runScenario(name, userData, sessionOptions, body) {
           name: app.getName(),
           userData: app.getPath('userData'),
           electron: process.versions.electron,
-          chrome: process.versions.chrome
+          chrome: process.versions.chrome,
+          // Whether the renderers run without Chromium's sandbox (the mv3-worker scenario's
+          // expectation turns on it; a --sandbox leg must read false here).
+          noSandbox: app.commandLine.hasSwitch('no-sandbox')
         }))
+        if (SANDBOX && facts.noSandbox) {
+          throw new Error('the app runs with --no-sandbox on a --sandbox leg')
+        }
+        if (NO_SANDBOX_ARG && !facts.noSandbox) {
+          throw new Error('the app does not see the --no-sandbox the leg passed')
+        }
         // Resolved on both sides: macOS reports /private/var/... for the /var/... tmpdir.
         if (!realPath(facts.userData).startsWith(realPath(profileRoot))) {
           throw new Error(`profile not isolated: userData is ${facts.userData}`)
@@ -2167,6 +2352,60 @@ async function closeExtraWindows(s) {
     for (const w of BrowserWindow.getAllWindows()) if (w.id !== keep) w.close()
   }, s.mainWindowId)
   await waitFor(async () => (await s.windowCount()) === 1, 10000, 'extra windows closed')
+}
+
+/**
+ * The next native menu `trigger` opens, with the item labelled `label` picked: the main-process
+ * hook (`autoPickMenuItem`) closes the popup and runs the item's click, as a user's choice would,
+ * since nobody is there to click on a native menu under Xvfb. Resolves with the menu's labels
+ * and the pick; throws, with the labels the menu had, when no item bore the label.
+ */
+async function pickFromNextMenu(s, label, trigger) {
+  const before = await s.app.evaluate(() => globalThis.__smoke.menus.length)
+  await s.app.evaluate((_electron, l) => {
+    globalThis.__smoke.autoPickMenuItem = l
+  }, label)
+  try {
+    await trigger()
+    const entry = await waitFor(
+      () =>
+        s.app.evaluate((_electron, n) => {
+          const m = globalThis.__smoke.menus
+          if (m.length <= n) return null
+          const e = m[m.length - 1]
+          if (!e.picked && !e.pickError) return null
+          const labels = []
+          const walk = (items) => {
+            for (const i of items || []) {
+              if (i.label) labels.push(i.label)
+              if (i.submenu) walk(i.submenu)
+            }
+          }
+          walk(e.items)
+          return { picked: e.picked ?? null, pickError: e.pickError ?? null, labels }
+        }, before),
+      10000,
+      `a menu with "${label}" picked`
+    )
+    if (entry.pickError) {
+      throw new Error(`${entry.pickError}; the menu read: ${entry.labels.join(' | ')}`)
+    }
+    return entry
+  } finally {
+    await s.app
+      .evaluate(() => {
+        globalThis.__smoke.autoPickMenuItem = null
+      })
+      .catch(() => undefined)
+  }
+}
+
+/** The sidebar row of the tab titled `title`. */
+function sidebarRow(s, title) {
+  return s.chrome
+    .locator('[data-testid="tab"]')
+    .filter({ has: s.chrome.locator('[data-testid="tab-title"]', { hasText: title }) })
+    .first()
 }
 
 /**
@@ -2681,12 +2920,13 @@ async function scenarioWalkthrough() {
     })
 
     await s.step('accessibility', async () => {
-      // The chrome's accessibility tree and axe's verdict in four states (ci-13; the roles of
+      // The chrome's accessibility tree and axe's verdict in five states (ci-13; the roles of
       // a11y-02): what a screen reader gets of the window at rest – the sidebar's landmarks, the
       // toolbar, the tablists with the two fixture tabs, the active one selected – of the app
-      // menu, of the URL bar over the active tab, and of a hosted dialog with the chrome inert
-      // around it. Each snapshot is compared with its baseline under .github/smoke/aria/
-      // (`AriaAudit`); every state also runs axe over the whole document.
+      // menu, of the URL bar over the active tab, of a hosted dialog with the chrome inert
+      // around it, and of the Web capture overlay over the page. Each snapshot is compared with
+      // its baseline under .github/smoke/aria/ (`AriaAudit`); every state also runs axe over the
+      // whole document.
       await s.reset()
       const audit = new AriaAudit(s, { origin: bootSite.origin })
       const rowsBefore = await s.sidebarTabCount()
@@ -2694,6 +2934,7 @@ async function scenarioWalkthrough() {
       const menu = s.chrome.locator('.zen-v2-menu[role="menu"]').first()
       const page = s.chrome.locator('[data-testid="settings-page"]').first()
       const form = s.chrome.locator('[data-dialog="form:add-search-engine"]').first()
+      const capture = s.chrome.locator(CAPTURE_OVERLAY).first()
       try {
         await audit.state('resting-window', s.chrome.locator('[data-testid="chrome-root"]'))
 
@@ -2750,17 +2991,35 @@ async function scenarioWalkthrough() {
           8000,
           `the Settings row gone (${rowsBefore} rows before)`
         )
+
+        // The Web capture overlay over the active tab (the Chrome preset's Ctrl+Shift+S): the
+        // modal dialog with its toolbar – the hint, Visible area, Full page, Cancel – as it
+        // stands over the page's picture; Escape takes it down (the web-capture step is the
+        // surface's behaviour, this its tree).
+        await s.press(CAPTURE_COMBO)
+        await capture.waitFor({ state: 'visible', timeout: 8000 })
+        await capture
+          .locator('[data-capture-toolbar]')
+          .first()
+          .waitFor({ state: 'visible', timeout: 5000 })
+        await audit.state('web-capture', capture)
+        await s.press('Escape')
+        await capture.waitFor({ state: 'hidden', timeout: 8000 })
       } catch (e) {
         // The failure keeps what was read up to it (a state's verdict is its own detail).
         if (e && typeof e === 'object' && !e.detail) e.detail = audit.summary()
         throw e
       } finally {
         // Whatever failed, the window is left as the step found it, so the steps after start
-        // from the same window: the dialog cancelled, the menu or bar closed, the Settings tab
-        // gone (a reset closes no tab).
+        // from the same window: the dialog cancelled, the overlay down, the menu or bar closed,
+        // the Settings tab gone (a reset closes no tab).
         if (await form.isVisible().catch(() => false)) {
           await s.press('Escape')
           await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
+        }
+        if (await capture.isVisible().catch(() => false)) {
+          await s.press('Escape')
+          await capture.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
         }
         await s.reset().catch(() => undefined)
         if (await page.isVisible().catch(() => false)) {
@@ -2858,6 +3117,94 @@ async function scenarioWalkthrough() {
       // Left alone the bubble goes on its own (1.5 s; up to 5 s once its buttons were used).
       await bubble.first().waitFor({ state: 'hidden', timeout: 8000 })
       return { z0, z1, z2, z3, z4, bubbleGone: true }
+    })
+
+    // Web capture (Edge's; the desktop's overlay of components/capture/CaptureOverlay.tsx over
+    // services' engine): the Chrome preset's Ctrl+Shift+S puts the overlay over the active tab –
+    // the page's picture standing in for the live view, which the chrome hides under it, the
+    // toolbar with the hint that the page's geometry is known and the two whole-page captures
+    // beside Cancel, a field for the marquee's drag, the keyboard on the overlay and the window
+    // chrome inert around it (§9.5, §9.22) – and Escape takes it down whole (capture-16: no half
+    // state): the overlay gone, the chrome free, the view shown again. The paint itself is the
+    // engine's (shared/capture.ts, its own tests); this is the surface's way in and out.
+    await s.step('web-capture', async () => {
+      await s.reset()
+      const tab = (await s.tabs()).find((t) => t.url.startsWith(page.url))
+      if (!tab) throw new Error('the fixture tab is missing')
+      const overlay = s.chrome.locator(CAPTURE_OVERLAY).first()
+      const inertChrome = s.chrome.locator('[data-surface="window"][inert]')
+      /** Whether the window shows the fixture tab's view (null: no such view in the window). */
+      const viewShown = async () => {
+        const facts = await s.keyboardFacts()
+        const view = (facts?.views ?? []).find((v) => v.wc === tab.id)
+        return view ? view.visible : null
+      }
+      if ((await viewShown()) !== true) {
+        throw new Error("the fixture tab's view is not shown before the capture")
+      }
+      if (await overlay.count()) throw new Error('the capture overlay is up before the chord')
+      if (await inertChrome.count()) throw new Error('window chrome inert before the chord')
+      await s.press(CAPTURE_COMBO)
+      await overlay.waitFor({ state: 'visible', timeout: 8000 })
+      const phase = await overlay.getAttribute('data-capture')
+      if (phase !== 'selecting') {
+        throw new Error(`the overlay opened in phase "${phase}", expected "selecting"`)
+      }
+      const toolbar = overlay.locator('[data-capture-toolbar]').first()
+      await toolbar.waitFor({ state: 'visible', timeout: 5000 })
+      const hint = ((await toolbar.locator('[data-capture-hint]').textContent()) ?? '').trim()
+      if (hint !== 'Drag to select an area') {
+        throw new Error(`the toolbar's hint reads "${hint}" (the page's geometry unknown?)`)
+      }
+      const controls = {}
+      for (const name of ['visible', 'full', 'cancel']) {
+        const control = toolbar.locator(`[data-capture-${name}]`).first()
+        if (!(await control.isVisible()))
+          throw new Error(`the toolbar's ${name} control is missing`)
+        if ((await control.getAttribute('aria-disabled')) === 'true') {
+          throw new Error(`the toolbar's ${name} control is disabled on a page with geometry`)
+        }
+        controls[name] = (
+          (await control.textContent()) ??
+          (await control.getAttribute('aria-label')) ??
+          ''
+        ).trim()
+      }
+      if (!(await overlay.locator('[data-capture-field]').count())) {
+        throw new Error('no field for the marquee: the overlay takes no drag')
+      }
+      // The keyboard is the overlay's (§9.22: focus lands on its container), the window chrome
+      // around it inert, the page behind its picture.
+      const focused = await s.chrome.evaluate(() => {
+        const el = document.activeElement
+        return el && el !== document.body
+          ? { role: el.getAttribute('role'), label: el.getAttribute('aria-label') }
+          : null
+      })
+      if (focused?.label !== 'Web capture') {
+        throw new Error(`the focus is on ${JSON.stringify(focused)}, not the overlay`)
+      }
+      const inert = await inertChrome.count()
+      if (inert === 0) throw new Error('the window chrome is not inert under the overlay')
+      await waitFor(
+        async () => ((await viewShown()) === false ? true : null),
+        5000,
+        "the page's view hidden behind its picture"
+      )
+      await s.shot('03c-web-capture')
+      await s.press('Escape')
+      await overlay.waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () => ((await inertChrome.count()) === 0 ? true : null),
+        5000,
+        'the window chrome free of its inert'
+      )
+      await waitFor(
+        async () => ((await viewShown()) === true ? true : null),
+        8000,
+        "the page's view shown again"
+      )
+      return { phase, hint, controls, inertRoots: inert, keyboard: await s.keyboardOwner() }
     })
 
     // A page that never answers (BUG-009): the fixture takes the request and writes nothing, so
@@ -3501,6 +3848,188 @@ async function scenarioWalkthrough() {
         `the Settings row gone (${rowsBefore} rows before)`
       )
       return { before, captions, stripRows, checked }
+    })
+
+    // A tab group's saved form (TAB-16's desktop half, tabs-15): a folder whose tabs were closed
+    // as one keeps their pages and stays in the sidebar as a SAVED group – the folder's row with
+    // "saved" in its description, its pages listed under the unfolded header – and its Open
+    // brings them back as its tabs. Driven the way a user does it, through the native menus the
+    // hook picks from: the second fixture tab's row menu puts the tab in a new folder (the group
+    // editor bubble opens on the new folder and Escape closes it), the folder's own menu closes
+    // the folder (the tab goes, the folder stays saved with the page), a press on the header
+    // unfolds the kept page and a press on the page opens the folder again (the tab is back in
+    // it); Unpack Folder then leaves the tab loose and the first fixture tab is made active
+    // again, so the steps after find the sidebar with the rows it had.
+    await s.step('saved-group', async () => {
+      await s.reset()
+      const second = bootSite.second
+      const rowsBefore = await s.sidebarTabCount()
+      const activeBefore = await s.activeTabId()
+      const headers = s.chrome.locator('[data-tab-folder]')
+      if (await headers.count()) {
+        throw new Error(`${await headers.count()} folder(s) in the sidebar before the step`)
+      }
+      const row = sidebarRow(s, second.title)
+      await row.waitFor({ state: 'visible', timeout: 5000 })
+      const tabIdBefore = await row.getAttribute('data-tab-id')
+      /** The folder as the app state has it: its live members and the pages it keeps. */
+      const folderState = (folderId) =>
+        s.chrome.evaluate(async (id) => {
+          const state = await window.zen.invoke('app.getState')
+          const folder = state.folders?.[id]
+          if (!folder) return null
+          const members = Object.values(state.tabs)
+            .filter((t) => t.folderId === id)
+            .map((t) => ({ id: t.id, url: t.url }))
+          const space = state.spaces.find((sp) => sp.id === state.activeSpaceId)
+          return {
+            name: folder.name,
+            collapsed: folder.collapsed,
+            savedTabs: (folder.savedTabs ?? []).map((p) => ({ url: p.url, title: p.title })),
+            members,
+            activeTabId: space?.activeTabId ?? null
+          }
+        }, folderId)
+
+      // 1. The row's menu: Add Tab to New Folder (the space has no folder yet, so the item is
+      // the plain one; with folders it is Move to Folder › New Folder…).
+      const added = await pickFromNextMenu(s, 'Add Tab to New Folder', () =>
+        row.click({ button: 'right', timeout: 5000 })
+      )
+      const header = headers.first()
+      await header.waitFor({ state: 'visible', timeout: 8000 })
+      const folderId = await header.getAttribute('data-tab-folder')
+      const editor = s.chrome.locator(`[data-group-editor="${folderId}"]`).first()
+      await editor.waitFor({ state: 'visible', timeout: 5000 })
+      await s.press('Escape')
+      await editor.waitFor({ state: 'hidden', timeout: 5000 })
+      const shell = s.chrome.locator('.zen-group-fold').filter({ has: header }).first()
+      // The tab's row stands under the header, in the folder's own tablist.
+      await waitFor(
+        async () =>
+          (await shell.locator(`[data-tab-id="${tabIdBefore}"]`).count()) === 1 ? true : null,
+        5000,
+        "the tab's row under the folder's header"
+      )
+      const open = await folderState(folderId)
+      if (!open || open.members.length !== 1 || open.members[0].id !== tabIdBefore) {
+        throw new Error(`the new folder does not hold the tab: ${JSON.stringify(open)}`)
+      }
+      const openDescription = await header.getAttribute('aria-description')
+      if (openDescription !== 'Folder, 1 tab') {
+        throw new Error(`the open folder's description reads "${openDescription}"`)
+      }
+      if (await header.getAttribute('data-saved')) {
+        throw new Error('the folder reads as saved while its tab is open')
+      }
+
+      // 2. The folder's menu: Close Folder (1 Tab) – the tab closes, the folder stays SAVED
+      // with the page, folded (Chrome's saved-group chip).
+      await pickFromNextMenu(s, 'Close Folder (1 Tab)', () =>
+        header.click({ button: 'right', timeout: 5000 })
+      )
+      await waitFor(
+        async () => ((await header.getAttribute('data-saved')) !== null ? true : null),
+        8000,
+        'the folder header marked saved'
+      )
+      await waitFor(
+        async () => ((await s.sidebarTabCount()) === rowsBefore - 1 ? true : null),
+        8000,
+        `the closed tab's row gone (${rowsBefore} rows before)`
+      )
+      const saved = await folderState(folderId)
+      if (
+        !saved ||
+        saved.members.length !== 0 ||
+        saved.savedTabs.length !== 1 ||
+        saved.savedTabs[0].url !== second.url ||
+        !saved.collapsed
+      ) {
+        throw new Error(`the closed folder is not saved with the page: ${JSON.stringify(saved)}`)
+      }
+      const savedDescription = await header.getAttribute('aria-description')
+      if (savedDescription !== 'Folder, saved, 1 tab') {
+        throw new Error(`the saved folder's description reads "${savedDescription}"`)
+      }
+      const kind = await shell.getAttribute('data-group-kind')
+      if (kind !== 'saved') throw new Error(`the folder's row kind is "${kind}", expected "saved"`)
+      if ((await s.tabs()).some((t) => t.url.startsWith(second.url))) {
+        throw new Error("the folder's tab is still open after Close Folder")
+      }
+      await s.shot('08d-saved-group')
+
+      // 3. The header unfolds the kept page; the page opens the folder: the tab is back in it,
+      // active, the folder open again.
+      await header.click({ timeout: 5000 })
+      const pages = s.chrome.locator(`[data-saved-pages="${folderId}"] [data-saved-page]`)
+      await pages.first().waitFor({ state: 'visible', timeout: 5000 })
+      const pageTitle = (
+        (await pages.first().locator('[data-testid="saved-page-title"]').textContent()) ?? ''
+      ).trim()
+      if ((await pages.count()) !== 1 || pageTitle !== second.title) {
+        throw new Error(`the saved pages read ${await pages.count()} row(s), "${pageTitle}"`)
+      }
+      await s.shot('08e-saved-group-pages')
+      await pages.first().click({ timeout: 5000 })
+      const back = await s.waitForTab(second.url, 15000)
+      await waitFor(
+        async () => ((await header.getAttribute('data-saved')) === null ? true : null),
+        8000,
+        'the folder header open again'
+      )
+      await waitFor(
+        async () => ((await s.sidebarTabCount()) === rowsBefore ? true : null),
+        8000,
+        `the page's row back (${rowsBefore} rows before)`
+      )
+      const reopened = await folderState(folderId)
+      if (
+        !reopened ||
+        reopened.members.length !== 1 ||
+        reopened.members[0].url !== second.url ||
+        reopened.savedTabs.length !== 0 ||
+        reopened.activeTabId !== reopened.members[0].id
+      ) {
+        throw new Error(
+          `Open did not bring the page back as the folder's active tab: ${JSON.stringify(reopened)}`
+        )
+      }
+      if ((await shell.locator(`[data-tab-id="${reopened.members[0].id}"]`).count()) !== 1) {
+        throw new Error("the reopened tab's row is not under the folder's header")
+      }
+
+      // 4. Unpack Folder: the folder goes, the tab stays loose; the first fixture tab active
+      // again, as the step found it.
+      await pickFromNextMenu(s, 'Unpack Folder', () =>
+        header.click({ button: 'right', timeout: 5000 })
+      )
+      await headers.first().waitFor({ state: 'hidden', timeout: 8000 })
+      if ((await s.sidebarTabCount()) !== rowsBefore) {
+        throw new Error(`${await s.sidebarTabCount()} rows after Unpack, ${rowsBefore} before`)
+      }
+      if (!(await s.tabs()).some((t) => t.url.startsWith(second.url))) {
+        throw new Error('the unpacked tab is gone')
+      }
+      await sidebarRow(s, page.title).click({ timeout: 5000 })
+      await waitFor(
+        async () => {
+          const active = await s.activeTabId()
+          return active && active !== reopened.members[0].id ? active : null
+        },
+        8000,
+        'the first fixture tab active again'
+      )
+      return {
+        menu: added.labels,
+        folderId,
+        tabBefore: tabIdBefore,
+        tabAfter: back.id,
+        saved,
+        reopened,
+        activeBefore,
+        activeAfter: await s.activeTabId()
+      }
     })
 
     await s.step('context-menu', async () => {
@@ -4325,6 +4854,775 @@ async function scenarioDark() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// mv3-worker: Zenium's chrome.* layer in an MV3 background worker – present under the sandbox,
+// absent without it (the sandboxed leg's reason to exist).
+// ---------------------------------------------------------------------------------------------
+
+const MV3_FIXTURE_DIR = path.join(here, 'fixtures', 'mv3-worker')
+const MV3_FIXTURE_NAME = 'Smoke: MV3 worker probe'
+const WORKER_PROBE_PREFIX = 'ZENIUM_SMOKE_WORKER_PROBE '
+// What the fixture's worker finds under the sandbox – the preload's namespaces: `permissions`
+// and `windows` for every extension, `contextMenus` for the permission the manifest holds – and
+// must not find without it: Electron's engine defines none of the three in a worker (its own
+// set there, for this manifest, is dom, extension, i18n, management, runtime, storage, tabs –
+// Electron 44.4.5 under --no-sandbox; `alarms` and the rest of the sandboxed set are the layer's).
+const WORKER_LAYER_NAMESPACES = ['permissions', 'windows', 'contextMenus']
+
+/** The fixture's probe, once its worker has logged it: the parsed line and the event it came in. */
+async function workerProbe(s, timeoutMs) {
+  const event = await waitFor(
+    () =>
+      s
+        .readEvents()
+        .find(
+          (e) =>
+            e.type === 'worker-console' &&
+            typeof e.message === 'string' &&
+            e.message.startsWith(WORKER_PROBE_PREFIX)
+        ) || null,
+    timeoutMs,
+    "the fixture worker's probe line on the session's ServiceWorkers console",
+    200
+  )
+  return { event, probe: JSON.parse(event.message.slice(WORKER_PROBE_PREFIX.length)) }
+}
+
+async function scenarioMv3Worker() {
+  const userData = freshProfile('profile-mv3-worker', { onboardingDone: true })
+  return runScenario('mv3-worker', userData, {}, async (s, out) => {
+    out.sandboxed = SANDBOX
+    out.hookedPartitions = s.hookResult?.workerPartitions ?? []
+    await s.step('install-fixture', async () => {
+      // The management page's drop path (extension.installFromDrop) from the chrome page: an
+      // unpacked folder is confirmed like a store install, so the prompt's accepting button is
+      // clicked; the engine then loads the folder into every persistent session and starts the
+      // worker for runtime.onInstalled. The fixture's name is read back from the app state.
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(MV3_FIXTURE_DIR, 'manifest.json'), 'utf8')
+      )
+      if (manifest.name !== MV3_FIXTURE_NAME) {
+        throw new Error(`fixtures/mv3-worker/manifest.json names "${manifest.name}"`)
+      }
+      if (!out.hookedPartitions.includes(DEFAULT_CONTAINER_PARTITION)) {
+        throw new Error(
+          `the hook listens to no ${DEFAULT_CONTAINER_PARTITION} service workers (${JSON.stringify(out.hookedPartitions)})`
+        )
+      }
+      await s.chrome.evaluate(
+        ([name, args]) => {
+          void window.zen.invoke(name, args)
+          return true
+        },
+        ['extension.installFromDrop', { paths: [MV3_FIXTURE_DIR] }]
+      )
+      const accept = s.chrome.locator('.zen-ext-dialog [data-accept]').first()
+      await accept.waitFor({ state: 'visible', timeout: 10000 })
+      const t0 = Date.now()
+      await accept.click({ timeout: 5000 })
+      const ext = await waitFor(
+        async () => {
+          const state = await s.chrome.evaluate(() => window.zen.invoke('app.getState'))
+          return (state.extensions || []).find((e) => e.name === MV3_FIXTURE_NAME) || null
+        },
+        15000,
+        'the fixture extension in the app state',
+        200
+      )
+      if (!ext.enabled || ext.error) {
+        throw new Error(
+          `the fixture loaded ${ext.error ? `with an error: ${ext.error}` : 'but is disabled'}`
+        )
+      }
+      await s.shot('01-mv3-fixture-installed')
+      return { id: ext.id, version: ext.version, loadedMs: Date.now() - t0 }
+    })
+    await s.step('worker-probe', async () => {
+      const { event, probe } = await workerProbe(s, 20000)
+      const defined = WORKER_LAYER_NAMESPACES.filter((ns) => probe[ns] === 'object')
+      const missing = WORKER_LAYER_NAMESPACES.filter((ns) => probe[ns] !== 'object')
+      const running = await s.app.evaluate(
+        ({ session }, partition) =>
+          Object.values(session.fromPartition(partition).serviceWorkers.getAllRunning()).map(
+            (w) => ({ scriptUrl: w.scriptUrl, versionId: w.versionId })
+          ),
+        DEFAULT_CONTAINER_PARTITION
+      )
+      const detail = {
+        sandboxed: SANDBOX,
+        probe,
+        source: event.sourceUrl,
+        partition: event.partition,
+        running
+      }
+      if (SANDBOX) {
+        if (missing.length || probe.getAll !== 'function') {
+          throw Object.assign(
+            new Error(
+              `the worker preload's layer is missing from the sandboxed worker: ${missing.length ? missing.join(', ') : 'permissions.getAll'} undefined (chrome keys: ${probe.keys.join(', ')})`
+            ),
+            { detail }
+          )
+        }
+      } else if (defined.length) {
+        // The negative leg: were this to fail, Electron would be running service-worker
+        // preloads in unsandboxed renderers, and the sandboxed leg would have lost its reason.
+        throw Object.assign(
+          new Error(
+            `the worker preload's layer is present under --no-sandbox (${defined.join(', ')} defined): this Electron runs service-worker preloads without the sandbox`
+          ),
+          { detail }
+        )
+      }
+      return detail
+    })
+    await s.step('quit', async () => s.quitGracefully())
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
+// pip: the media hub's Picture in picture button puts the page's video into its small window,
+// the page.pip chord brings it back (pip-02).
+// ---------------------------------------------------------------------------------------------
+
+// The title Chromium gives a video's picture-in-picture window (its own top-level X11 window
+// under Xvfb, not a BrowserWindow: read off the X server, `xwininfo -root -tree`).
+const PIP_WINDOW_TITLE = 'Picture in picture'
+// The page.pip toggle's chord in both presets (shared/shortcuts.ts key_togglePictureInPicture).
+const PIP_COMBO = `${ACCEL}+Shift+]`
+
+/**
+ * The picture-in-picture windows on the X display right now – the ones on screen (`IsViewable`;
+ * Chromium keeps the window's X handle around unmapped once the video has left it) – each with
+ * its geometry in device pixels: `xwininfo -root -tree` lists every top-level window with its
+ * title and `WxH+X+Y`, `xwininfo -id` says whether it is mapped. Linux only; null elsewhere,
+ * where the run has no X server to ask.
+ */
+function pipWindows() {
+  if (!IS_LINUX) return null
+  const r = sh('xwininfo', ['-root', '-tree'], 15000)
+  if (r.status !== 0) throw new Error(`xwininfo failed: ${r.error || r.stderr || r.stdout}`)
+  const out = []
+  for (const line of r.stdout.split('\n')) {
+    if (!line.includes(`"${PIP_WINDOW_TITLE}"`)) continue
+    const id = line.trim().split(' ')[0]
+    const state = /Map State:\s+(\S+)/.exec(sh('xwininfo', ['-id', id], 15000).stdout)
+    if (!state || state[1] !== 'IsViewable') continue
+    const m = /(\d+)x(\d+)\+(-?\d+)\+(-?\d+)\s+\+(-?\d+)\+(-?\d+)\s*$/.exec(line)
+    out.push({
+      id,
+      width: m ? Number(m[1]) : null,
+      height: m ? Number(m[2]) : null,
+      x: m ? Number(m[5]) : null,
+      y: m ? Number(m[6]) : null
+    })
+  }
+  return out
+}
+
+/** What the fixture's page says about its video (video-fixture.mjs `window.__smoke`, plus the element). */
+const VIDEO_PROBE = `(() => {
+  const v = document.getElementById('video')
+  return {
+    ...window.__smoke,
+    readyState: v ? v.readyState : -1,
+    paused: v ? v.paused : null,
+    videoWidth: v ? v.videoWidth : 0,
+    videoHeight: v ? v.videoHeight : 0,
+    currentTime: v ? v.currentTime : null,
+    inPip: document.pictureInPictureElement === v && v !== null
+  }
+})()`
+
+async function scenarioPip() {
+  // The hub's toolbar button needs the row's width: at the default 240 sidebar it folds into the
+  // app menu's "Now Playing…" row (SidebarTop.tsx hubUp); at 320 it stands in the row.
+  const userData = freshProfile('profile-pip', {
+    onboardingDone: true,
+    settings: { sidebarWidth: 320 }
+  })
+  return runScenario('pip', userData, {}, async (s, out) => {
+    const fixture = await startVideoFixture()
+    out.fixture = { origin: fixture.origin, url: fixture.url }
+    let tab = null
+    try {
+      await s.step('video-playing', async () => {
+        ;({ tab } = await openUrlInNewTab(s, fixture.url))
+        const probe = () => s.tabEval(tab.id, VIDEO_PROBE).catch(() => null)
+        const isPlaying = (st) =>
+          st && st.played && !st.paused && st.readyState > 0 && st.videoWidth > 0
+        // The page's own play() on load answers first: the views' autoplay policy refuses it
+        // (document-user-activation-required; the detail keeps the refusal), so the page gets
+        // one real click – its handler calls play() again with the gesture – and plays.
+        const first = await waitFor(
+          async () => {
+            const st = await probe()
+            return st && (st.played || st.playError) ? st : null
+          },
+          15000,
+          "the fixture page's first play() answered",
+          200
+        )
+        let clicked = false
+        if (!isPlaying(first)) {
+          const view = await s.tabViewScreenRect(tab.id)
+          if (!view) throw new Error('no screen rect for the video tab to click into')
+          await s.bringToFront()
+          xdotoolClick(
+            Math.round((view.x + view.width / 2) * view.scale),
+            Math.round((view.y + 40) * view.scale)
+          )
+          clicked = true
+        }
+        const playing = await waitFor(
+          async () => {
+            const st = await probe()
+            return isPlaying(st) ? st : null
+          },
+          15000,
+          "the fixture's canvas video playing (played, frames, a width)",
+          250
+        )
+        return {
+          ...playing,
+          autoplayRefused: first.firstPlayError,
+          clickedToPlay: clicked,
+          tab: tab.id
+        }
+      })
+      await s.step('hub-card', async () => {
+        // The page's media report reaches the chrome: the hub's toolbar button comes up, its
+        // popover lists the tab's player as playing, video, with the Picture in picture button.
+        const button = s.chrome.locator('[data-zen-media-hub-button]')
+        await button.waitFor({ state: 'visible', timeout: 15000 })
+        await button.click({ timeout: 5000 })
+        const card = s.chrome.locator('[data-media-player]').first()
+        await card.waitFor({ state: 'visible', timeout: 8000 })
+        const pip = s.chrome.locator('[data-media-pip]').first()
+        await pip.waitFor({ state: 'visible', timeout: 5000 })
+        await s.settle()
+        await s.shot('01-pip-hub')
+        const detail = {
+          players: await s.chrome.locator('[data-media-player]').count(),
+          playing: (await card.getAttribute('data-playing')) !== null,
+          title: await card.getAttribute('aria-label')
+        }
+        // Playing on the card is the engine's audibility (isCurrentlyAudible), measured on the
+        // rendered tone: a card in its paused form means the page's audio never rendered.
+        if (!detail.playing) {
+          throw new Error(`the hub's card is in its paused form: ${JSON.stringify(detail)}`)
+        }
+        if (detail.title !== fixture.title) {
+          throw new Error(`the hub's card is not the fixture tab's: ${JSON.stringify(detail)}`)
+        }
+        return detail
+      })
+      await s.step('pip-enter', async () => {
+        const before = pipWindows()
+        if (before && before.length) {
+          throw new Error(
+            `a ${PIP_WINDOW_TITLE} window is up before the click: ${JSON.stringify(before)}`
+          )
+        }
+        await s.chrome.locator('[data-media-pip]').first().click({ timeout: 5000 })
+        const t0 = Date.now()
+        const st = await waitFor(
+          async () => {
+            const p = await s.tabEval(tab.id, VIDEO_PROBE).catch(() => null)
+            return p && p.inPip ? p : null
+          },
+          10000,
+          'document.pictureInPictureElement set to the video',
+          200
+        )
+        const inPipMs = Date.now() - t0
+        // The small window itself, on the X server: one, with a size (Linux; elsewhere the
+        // element's state is all the run can read).
+        const windows = IS_LINUX
+          ? await waitFor(
+              () => {
+                const w = pipWindows()
+                return w && w.length ? w : null
+              },
+              10000,
+              `the ${PIP_WINDOW_TITLE} X11 window`,
+              250
+            )
+          : null
+        if (windows && windows.length !== 1) {
+          throw new Error(
+            `${windows.length} ${PIP_WINDOW_TITLE} windows: ${JSON.stringify(windows)}`
+          )
+        }
+        if (windows && !(windows[0].width > 0 && windows[0].height > 0)) {
+          throw new Error(`the ${PIP_WINDOW_TITLE} window has no size: ${JSON.stringify(windows)}`)
+        }
+        // The hub closes with the click (the window shrinks to the video): the button is back to rest.
+        await s.chrome
+          .locator('[data-media-player]')
+          .first()
+          .waitFor({ state: 'hidden', timeout: 5000 })
+        await s.settle()
+        await s.shot('02-pip-window')
+        return { inPipMs, pipEvents: st.pipEvents, window: windows ? windows[0] : null }
+      })
+      await s.step('pip-exit', async () => {
+        // The toggle (page.pip's chord): a video in the small window leaves it.
+        await s.press(PIP_COMBO)
+        const t0 = Date.now()
+        const st = await waitFor(
+          async () => {
+            const p = await s.tabEval(tab.id, VIDEO_PROBE).catch(() => null)
+            return p && !p.inPip && p.pipEvents.includes('leave') ? p : null
+          },
+          10000,
+          'document.pictureInPictureElement cleared and leavepictureinpicture seen',
+          200
+        )
+        const gone = IS_LINUX
+          ? await waitFor(
+              () => {
+                const w = pipWindows()
+                return w && w.length === 0 ? true : null
+              },
+              10000,
+              `the ${PIP_WINDOW_TITLE} X11 window gone`,
+              250
+            )
+          : null
+        if (st.paused) throw new Error('the video paused on leaving picture-in-picture')
+        return { outMs: Date.now() - t0, pipEvents: st.pipEvents, windowGone: gone }
+      })
+      await s.step('quit', async () => s.quitGracefully())
+    } finally {
+      out.fixture.requests = fixture.requests
+      await fixture.close()
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
+// split: a split view's life on the chrome (ci-07) – made with the chord, a third tab dropped on
+// the content's edge, one pane un-split from its header, the divider dragged, the split restored
+// on relaunch with its ratio, unsplit with the chord.
+// ---------------------------------------------------------------------------------------------
+
+// The Chrome preset's chords for Zen's own features (shared/shortcuts.ts zenFeature): Ctrl+Alt
+// on Windows and Linux, Cmd+Ctrl on macOS.
+const ZEN_FEATURE_MODS = IS_MAC ? 'Meta+Control' : 'Control+Alt'
+const SPLIT_VERTICAL_COMBO = `${ZEN_FEATURE_MODS}+v`
+const UNSPLIT_COMBO = `${ZEN_FEATURE_MODS}+u`
+// The un-split button on a pane's header strip (SplitChrome.tsx), by its title.
+const UNSPLIT_BUTTON = 'button[title^="Un-split this tab"]'
+// A vertical split's divider (SplitChrome.tsx Gutter): the chrome's one element with the class.
+const GUTTER = '.cursor-col-resize'
+// The sidebar row a split's tabs share (SplitGroupRow.tsx).
+const SPLIT_ROW = '[data-split-row]'
+// How far along the content area the divider is dragged, as a share of the area's width.
+const RESIZE_SHARE = 0.15
+
+/** The split groups, the tabs and the active tab as the chrome's state has them. */
+function splitState(s) {
+  return s.chrome.evaluate(async () => {
+    const st = await window.zen.invoke('app.getState')
+    const space = st.spaces.find((sp) => sp.id === st.activeSpaceId)
+    return {
+      groups: Object.values(st.splitGroups || {}).map((g) => ({
+        id: g.id,
+        layout: g.layout,
+        tabIds: g.tabIds,
+        sizes: g.sizes
+      })),
+      activeTabId: space ? space.activeTabId : null,
+      tabs: Object.values(st.tabs).map((t) => ({
+        id: t.id,
+        url: t.url,
+        title: t.title,
+        splitGroupId: t.splitGroupId || null
+      }))
+    }
+  })
+}
+
+/**
+ * Where the panes of `group` are on the screen: each tab's view, by the tab's URL (the model's
+ * tab ids and the views' webContents ids are two names for a tab), in the group's order.
+ */
+async function paneRects(s, group, tabs) {
+  const views = await s.tabs()
+  const out = []
+  for (const id of group.tabIds) {
+    const tab = tabs.find((t) => t.id === id)
+    const view = tab ? views.find((v) => v.url === tab.url) : null
+    const rect = view ? await s.tabViewScreenRect(view.id) : null
+    out.push({ tabId: id, url: tab ? tab.url : null, webContentsId: view ? view.id : null, rect })
+  }
+  return out
+}
+
+/**
+ * A vertical split's panes on screen as its sizes say: every pane has a view placed, they stand
+ * in the group's order left to right on one row without overlapping, and each one's share of the
+ * views' width is its size (within `tolerance`: the gaps and the outline's band between them are
+ * a few pixels each). Returns the panes with their shares.
+ */
+function assertVerticalPanes(panes, sizes, tolerance = 0.04) {
+  const missing = panes.filter((p) => !p.rect || !(p.rect.width > 0 && p.rect.height > 0))
+  if (missing.length) {
+    throw new Error(`panes without a view on screen: ${JSON.stringify(missing)}`)
+  }
+  const total = panes.reduce((sum, p) => sum + p.rect.width, 0)
+  const shares = panes.map((p) => p.rect.width / total)
+  for (let i = 0; i < panes.length; i++) {
+    const r = panes[i].rect
+    if (i > 0) {
+      const prev = panes[i - 1].rect
+      if (r.x < prev.x + prev.width) {
+        throw new Error(`pane ${i} overlaps pane ${i - 1}: ${JSON.stringify(panes)}`)
+      }
+      if (Math.abs(r.y - prev.y) > 2 || Math.abs(r.height - prev.height) > 2) {
+        throw new Error(`panes ${i - 1} and ${i} are not on one row: ${JSON.stringify(panes)}`)
+      }
+    }
+    if (Math.abs(shares[i] - sizes[i]) > tolerance) {
+      throw new Error(
+        `pane ${i} takes ${shares[i].toFixed(3)} of the width, its size is ${sizes[i].toFixed(3)}: ${JSON.stringify(panes)}`
+      )
+    }
+  }
+  return panes.map((p, i) => ({ ...p, share: Number(shares[i].toFixed(3)) }))
+}
+
+/**
+ * The state once it holds exactly one vertical split of `n` panes, every one of its tabs pointing
+ * back at it, and the panes' views placed as its sizes say – a change of the model reaches the
+ * chrome's state a broadcast later and the views a layout after that, so both are polled. The
+ * group, the state and the panes with their shares; on the timeout, the last thing wrong.
+ */
+async function waitForVerticalPanes(s, n, what, timeoutMs = 10000) {
+  let last = null
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      const state = await splitState(s)
+      const [group] = state.groups
+      if (state.groups.length !== 1 || group.tabIds.length !== n) {
+        throw new Error(
+          `the split groups: ${JSON.stringify(state.groups)} (one of ${n} panes expected)`
+        )
+      }
+      if (group.layout !== 'vertical') {
+        throw new Error(`the split's layout is ${group.layout}, not vertical`)
+      }
+      const tabs = group.tabIds.map((id) => state.tabs.find((t) => t.id === id) ?? null)
+      if (tabs.some((t) => !t || t.splitGroupId !== group.id)) {
+        throw new Error(`the group's tabs do not all point back at it: ${JSON.stringify(state)}`)
+      }
+      const panes = assertVerticalPanes(await paneRects(s, group, state.tabs), group.sizes)
+      return { group, state, panes }
+    } catch (e) {
+      last = e
+    }
+    if (Date.now() >= deadline) break
+    await delay(250)
+  }
+  throw new Error(`${what} (not within ${timeoutMs} ms): ${last ? last.message : 'no reading'}`)
+}
+
+/**
+ * A mouse drag on the chrome page: down at `from`, `steps` moves to `to`, a moment, up –
+ * Playwright's mouse dispatches through CDP into the chrome's renderer as pointer events of type
+ * mouse, which is what the sidebar's tab drag and the split's divider listen for. `before(up)`
+ * runs with the button still down at `to`, for a check the drop depends on.
+ */
+async function mouseDrag(page, from, to, { steps = 12, before = null } = {}) {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps })
+  if (before) await before()
+  await page.mouse.up()
+}
+
+const centre = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 })
+
+async function scenarioSplit() {
+  const userData = freshProfile('profile-split', { onboardingDone: true })
+  const pages = { a: bootSite.first, b: bootSite.second, c: bootSite.handoff }
+  const first = await runScenario('split', userData, {}, async (s, out) => {
+    out.fixture = {
+      origin: bootSite.origin,
+      pages: { a: pages.a.url, b: pages.b.url, c: pages.c.url }
+    }
+    await s.step('two-tabs', async () => {
+      // The fresh window past onboarding opens with no tab: two pages into two tabs, the second
+      // one active, no split anywhere.
+      await openUrlInNewTab(s, pages.a.url)
+      const second = await openUrlInNewTab(s, pages.b.url)
+      const st = await splitState(s)
+      if (st.groups.length) throw new Error(`a split before any was made: ${JSON.stringify(st)}`)
+      return { sidebarTabs: second.sidebarTabs, tabs: st.tabs.map((t) => t.url) }
+    })
+    await s.step('create', async () => {
+      // Toggle Split View Vertical: the active tab with its neighbour in the list, side by side,
+      // in equal halves; the sidebar shows the group's row.
+      await s.press(SPLIT_VERTICAL_COMBO)
+      const { group, panes } = await waitForVerticalPanes(
+        s,
+        2,
+        'one vertical split of the two tabs, its panes side by side in halves'
+      )
+      const urls = panes.map((p) => p.url)
+      if (!urls.includes(pages.a.url) || !urls.includes(pages.b.url)) {
+        throw new Error(`the split holds ${JSON.stringify(urls)}`)
+      }
+      const row = s.chrome.locator(SPLIT_ROW)
+      await row.first().waitFor({ state: 'visible', timeout: 5000 })
+      const rows = await row.count()
+      const rowGroup = await row.first().getAttribute('data-split-row')
+      const rowLayout = await row.first().getAttribute('data-split-layout')
+      if (rows !== 1 || rowGroup !== group.id || rowLayout !== 'vertical') {
+        throw new Error(
+          `the sidebar's split rows: ${rows}, for group ${rowGroup} (${rowLayout}); the split is ${group.id}`
+        )
+      }
+      await s.settle()
+      await s.shot('01-split-created')
+      return { group, panes, sizes: group.sizes }
+    })
+    await s.step('drag-to-edge', async () => {
+      // A third tab, opened (so shown alone), then the split brought back with a click on one
+      // pane's row; the third tab's row dragged from the sidebar onto the content area's right
+      // edge zone – the zones mount once the pointer is over the page, the zone under it lights
+      // up – joins the split as its right pane, in thirds.
+      await openUrlInNewTab(s, pages.c.url)
+      const before = await splitState(s)
+      const thirdTab = before.tabs.find((t) => t.url === pages.c.url)
+      if (!thirdTab) throw new Error(`no tab on ${pages.c.url} in ${JSON.stringify(before.tabs)}`)
+      if (thirdTab.splitGroupId) throw new Error('the new tab opened into the split')
+      await s.sidebarTab(pages.a.title).first().click({ timeout: 5000 })
+      await waitFor(
+        async () => {
+          const st = await splitState(s)
+          const g = st.groups[0]
+          return g && g.tabIds.includes(st.activeTabId) ? st : null
+        },
+        5000,
+        'a pane of the split active again',
+        200
+      )
+      const row = s.chrome.locator(`[data-tab-id="${thirdTab.id}"]`).first()
+      const rowBox = await row.boundingBox()
+      const page = await s.chrome.locator('[data-tear-zone]').first().boundingBox()
+      if (!rowBox || !page) {
+        throw new Error(
+          `no box for the row (${JSON.stringify(rowBox)}) or the page (${JSON.stringify(page)})`
+        )
+      }
+      // The right edge zone: the area's right 22 % inside a 16 px frame, its middle 60 % in height.
+      const inner = page.width - 32
+      const target = { x: page.x + 16 + inner - inner * 0.11, y: page.y + page.height / 2 }
+      const zone = s.chrome.locator('[data-drop="split:right"]').first()
+      let lit = null
+      await mouseDrag(s.chrome, centre(rowBox), target, {
+        steps: 16,
+        before: async () => {
+          await zone.waitFor({ state: 'visible', timeout: 5000 })
+          // One more move with the zone there: the drag resolves it as the target.
+          await s.chrome.mouse.move(target.x + 1, target.y)
+          await waitFor(
+            async () => ((await zone.getAttribute('class')) ?? '').includes('border-white') || null,
+            5000,
+            'the right edge zone lit under the pointer'
+          )
+          lit = await zone.textContent()
+          await s.shot('02-drag-over-right-edge')
+        }
+      })
+      const { group, panes, state } = await waitForVerticalPanes(
+        s,
+        3,
+        'the split with the third tab as its right pane, in thirds'
+      )
+      if (panes[2].url !== pages.c.url) {
+        throw new Error(
+          `the panes are ${JSON.stringify(panes.map((p) => p.url))}: the dropped tab is not the right one`
+        )
+      }
+      if (state.activeTabId !== thirdTab.id) {
+        throw new Error(`the dropped tab is not the active one: ${state.activeTabId}`)
+      }
+      const windows = await s.windowCount()
+      if (windows !== 1) throw new Error(`${windows} windows after the drop: the tab tore off`)
+      await s.settle()
+      await s.shot('03-three-panes')
+      return { zone: (lit ?? '').trim(), group, panes, target, rowBox }
+    })
+    await s.step('close-pane', async () => {
+      // The right pane's un-split button on its header, Shift held (the split keeps the focus):
+      // the third tab leaves the split, stays open in the strip, the split is two halves again.
+      const buttons = s.chrome.locator(UNSPLIT_BUTTON)
+      const boxes = []
+      for (let i = 0, n = await buttons.count(); i < n; i++) {
+        const box = await buttons.nth(i).boundingBox()
+        if (box) boxes.push({ i, box })
+      }
+      if (boxes.length !== 3)
+        throw new Error(`${boxes.length} un-split buttons on the headers, not 3`)
+      boxes.sort((p, q) => q.box.x - p.box.x)
+      await buttons.nth(boxes[0].i).click({ modifiers: ['Shift'], timeout: 5000 })
+      const { group, panes, state } = await waitForVerticalPanes(
+        s,
+        2,
+        'the split back to two panes in halves'
+      )
+      if (panes.some((p) => p.url === pages.c.url)) {
+        throw new Error(`the third tab is still a pane: ${JSON.stringify(panes.map((p) => p.url))}`)
+      }
+      const thirdTab = state.tabs.find((t) => t.url === pages.c.url)
+      if (!thirdTab || thirdTab.splitGroupId) {
+        throw new Error(`the third tab after the un-split: ${JSON.stringify(thirdTab)}`)
+      }
+      if (!group.tabIds.includes(state.activeTabId)) {
+        throw new Error(`the active tab left the split with Shift held: ${state.activeTabId}`)
+      }
+      const rows = await s.sidebarTabCount()
+      if (rows !== 3) throw new Error(`${rows} sidebar rows, the third tab should stay open`)
+      return { group, panes, sidebarTabs: rows, buttons: boxes.length }
+    })
+    await s.step('resize', async () => {
+      // The divider dragged right by RESIZE_SHARE of the area: the left pane grows by that
+      // share (the gutter reads the pointer's travel against the area's width), the views follow.
+      const gutters = s.chrome.locator(GUTTER)
+      const count = await gutters.count()
+      if (count !== 1) throw new Error(`${count} dividers for a two-pane split`)
+      const gutter = await gutters.first().boundingBox()
+      const page = await s.chrome.locator('[data-tear-zone]').first().boundingBox()
+      if (!gutter || !page) throw new Error('no box for the divider or the page')
+      const before = (await splitState(s)).groups[0]
+      const dx = Math.round(page.width * RESIZE_SHARE)
+      const from = centre(gutter)
+      await mouseDrag(s.chrome, from, { x: from.x + dx, y: from.y }, { steps: 10 })
+      const expected = [before.sizes[0] + dx / page.width, before.sizes[1] - dx / page.width]
+      // The model's sizes first (the gutter commits them on the release), then the placement.
+      await waitFor(
+        async () => {
+          const g = (await splitState(s)).groups[0]
+          return g && Math.abs(g.sizes[0] - expected[0]) <= 0.02 ? g : null
+        },
+        10000,
+        `the left pane at ${expected[0].toFixed(3)} of the split after the drag`,
+        200
+      )
+      const { group, panes } = await waitForVerticalPanes(
+        s,
+        2,
+        'the split placed to the dragged ratio'
+      )
+      await s.settle()
+      await s.shot('04-resized')
+      return {
+        dx,
+        areaWidth: page.width,
+        before: before.sizes,
+        expected,
+        after: group.sizes,
+        panes
+      }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      const state = assertCleanState(userData, pages.a.url)
+      const raw = JSON.parse(fs.readFileSync(path.join(userData, 'zen', 'state.json'), 'utf8'))
+      const groups = raw.splitGroups ?? []
+      if (groups.length !== 1 || groups[0].tabIds.length !== 2) {
+        throw new Error(`state.json holds the split as ${JSON.stringify(groups)}`)
+      }
+      out.persisted = { group: groups[0], tabs: state.tabs }
+      return { ...r, state, split: groups[0] }
+    })
+  })
+  if (first.fatal) return first
+
+  const persisted = first.persisted
+  return runScenario('split-restore', userData, {}, async (s, out) => {
+    out.persisted = persisted
+    await s.step('restored', async () => {
+      // The relaunch shows the split as it was left: the same group, the same two tabs in the
+      // same order, the dragged ratio; both pages loaded, the panes placed to the ratio.
+      await s.waitForTab(pages.a.url, 30000)
+      await s.waitForTab(pages.b.url, 30000)
+      const { group, panes, state } = await waitForVerticalPanes(
+        s,
+        2,
+        'the split restored with its two panes placed to the persisted ratio'
+      )
+      if (group.id !== persisted.group.id) {
+        throw new Error(`the split came back as ${group.id}, it was saved as ${persisted.group.id}`)
+      }
+      if (JSON.stringify(group.tabIds) !== JSON.stringify(persisted.group.tabIds)) {
+        throw new Error(
+          `the split's tabs came back as ${JSON.stringify(group.tabIds)}, saved as ${JSON.stringify(persisted.group.tabIds)}`
+        )
+      }
+      if (group.sizes.some((v, i) => Math.abs(v - persisted.group.sizes[i]) > 0.001)) {
+        throw new Error(
+          `the split's ratio came back as ${JSON.stringify(group.sizes)}, saved as ${JSON.stringify(persisted.group.sizes)}`
+        )
+      }
+      if (!group.tabIds.includes(state.activeTabId)) {
+        throw new Error(`the active tab ${state.activeTabId} is not a pane of the restored split`)
+      }
+      const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+      if (restoreBar) throw new Error('"Restore pages?" offered after a clean quit')
+      await s.settle()
+      await s.shot('05-restored-split')
+      return { group, panes, sidebarTabs: await s.sidebarTabCount() }
+    })
+    await s.step('unsplit', async () => {
+      // Unsplit View: the group is gone, both tabs stay open on their own, the active tab's view
+      // has the whole area again, the sidebar's group row is gone.
+      const before = await paneRects(s, persisted.group, (await splitState(s)).tabs)
+      await s.press(UNSPLIT_COMBO)
+      const st = await waitFor(
+        async () => {
+          const state = await splitState(s)
+          return state.groups.length === 0 && state.tabs.every((t) => !t.splitGroupId)
+            ? state
+            : null
+        },
+        10000,
+        'no split group left and no tab in one',
+        200
+      )
+      await s.chrome.locator(SPLIT_ROW).first().waitFor({ state: 'hidden', timeout: 5000 })
+      const active = st.tabs.find((t) => t.id === st.activeTabId)
+      const view = active ? (await s.tabs()).find((v) => v.url === active.url) : null
+      const rect = view ? await s.tabViewScreenRect(view.id) : null
+      const wide = before.reduce((sum, p) => sum + (p.rect ? p.rect.width : 0), 0)
+      if (!rect || rect.width < wide) {
+        throw new Error(
+          `the active tab's view after the unsplit: ${JSON.stringify(rect)}; the panes spanned ${wide}`
+        )
+      }
+      const rows = await s.sidebarTabCount()
+      if (rows !== 3)
+        throw new Error(`${rows} sidebar rows after the unsplit, the tabs should stay`)
+      await s.settle()
+      await s.shot('06-unsplit')
+      return { active: active?.url ?? null, view: rect, panesBefore: before, sidebarTabs: rows }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      const state = assertCleanState(userData, pages.a.url)
+      const raw = JSON.parse(fs.readFileSync(path.join(userData, 'zen', 'state.json'), 'utf8'))
+      if ((raw.splitGroups ?? []).length) {
+        throw new Error(`state.json still holds a split: ${JSON.stringify(raw.splitGroups)}`)
+      }
+      return { ...r, state }
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
 
 function finish(exitCode) {
   const failures = []
@@ -4389,6 +5687,7 @@ function finish(exitCode) {
 async function main() {
   log(`smoke ${opts.label}: exe=${opts.exe} scenarios=${scenarios.join(',')} out=${outDir}`)
   log(`allowlist ${allowlistFile}; profiles under ${profileRoot}`)
+  log(`sandbox ${JSON.stringify(result.sandbox)}`)
   const watchdog = setTimeout(() => {
     const where = `${currentSession?.scenario ?? '-'}/${currentSession?.steps.at(-1)?.name ?? '-'}`
     result.fatal = `watchdog: run exceeded ${WATCHDOG_MS / 60000} min (at ${where})`
@@ -4432,7 +5731,10 @@ async function main() {
       crash: scenarioCrash,
       'clear-on-exit': scenarioClearOnExit,
       scale: scenarioScale,
-      dark: scenarioDark
+      dark: scenarioDark,
+      'mv3-worker': scenarioMv3Worker,
+      pip: scenarioPip,
+      split: scenarioSplit
     }[name]
     if (!run) {
       result.scenarios[name] = { fatal: `unknown scenario ${name}` }
