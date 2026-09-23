@@ -643,14 +643,16 @@ export interface SearchEngineFormValues {
  * `@history`, `@tabs`), which `matchKeywordWord` answers before any engine, so an engine given
  * one could never be reached. Empty is no problem of the word's – whether the form takes it is
  * the form's (adding, yes: the engine derives a keyword from the name, `uniqueEngineKeyword`;
- * editing, no: the engine's own word is shown, and it never holds an empty one); another
- * engine's word is the caller's to refuse (`problem`), since the form does not hold the list.
+ * editing, no: the engine's own word is shown, and it never holds an empty one); a bare `@` is
+ * a word missing, not a word too long, and says so; another engine's word is the caller's to
+ * refuse (`problem`), since the form does not hold the list.
  */
 function searchShortcutProblem(shortcut: string): string | null {
   const word = shortcut.trim().toLowerCase()
   if (!word) return null
   if (/\s/.test(word)) return 'A shortcut is one word, with no spaces'
   const keyword = word.startsWith('@') ? word : `@${word}`
+  if (keyword === '@') return 'Type a word after the @'
   if (!/^@\S{1,64}$/.test(keyword)) return 'The shortcut is too long'
   if (SEARCH_SCOPES.some((s) => s.keyword === keyword))
     return `${keyword} is one of Zenium’s own shortcuts`
@@ -660,8 +662,11 @@ function searchShortcutProblem(shortcut: string): string | null {
 /**
  * Search › Add search engine and › Edit search engine, one form (Chrome's, W4-10): a name, the
  * shortcut typed in the address bar before a space (Chrome's Shortcut column) and the search URL
- * with `%s` where the terms go, each checked once left or on Enter (`searchShortcutProblem`,
- * `searchTemplateProblem`), the button held until the name and the template are in. `initial`
+ * with `%s` where the terms go, each checked once it is left or on Enter (§9.12's leave-then-
+ * check; `searchShortcutProblem`, `searchTemplateProblem`) – each field by its own leaving, so
+ * leaving the shortcut does not set the URL speaking as it is typed – the button held until the
+ * name and the template are in. The line a field shows is its description (`aria-describedby`)
+ * for a reader on the field, the sheet's own pattern (`FieldSheet`). `initial`
  * fills the fields from the engine being edited; the verb is the caller's – "Add" for a new
  * engine, "Save" for an edit – as the sheet's title is. The shortcut is the one field that may
  * be left empty, and only when adding: the engine derives a keyword from the name then, and the
@@ -694,7 +699,10 @@ export function SearchEngineForm({
   const [shortcut, setShortcut] = useState(initial?.shortcut ?? '')
   const [url, setUrl] = useState(initial?.url ?? '')
   const [error, setError] = useState<string | null>(null)
-  const [touched, setTouched] = useState(false)
+  // One flag a field: the shortcut's leaving speaks for the shortcut alone, the URL's for the URL
+  // (§9.12 – a field is checked once it is left, not as the next one is typed); Enter sets both.
+  const [touchedShortcut, setTouchedShortcut] = useState(false)
+  const [touchedUrl, setTouchedUrl] = useState(false)
   const shortcutProblem = searchShortcutProblem(shortcut) ?? problem?.(shortcut.trim()) ?? null
   const urlProblem = searchTemplateProblem(url)
   // Adding, an empty shortcut is the engine's to derive; editing, the engine's word stays a word.
@@ -702,7 +710,8 @@ export function SearchEngineForm({
   const ready = Boolean(name.trim()) && shortcutIn && !shortcutProblem && !urlProblem
   const submit = (): void => {
     if (!ready) {
-      setTouched(true)
+      setTouchedShortcut(true)
+      setTouchedUrl(true)
       return
     }
     void Promise.resolve(
@@ -716,8 +725,8 @@ export function SearchEngineForm({
   const onEnter = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') submit()
   }
-  const shownShortcut = touched && shortcut.trim() ? shortcutProblem : null
-  const shownUrl = error ?? (touched && url.trim() ? urlProblem : null)
+  const shownShortcut = touchedShortcut && shortcut.trim() ? shortcutProblem : null
+  const shownUrl = error ?? (touchedUrl && url.trim() ? urlProblem : null)
   return (
     <div className="zen-settings-form" data-testid="search-engine-form">
       <Field id="search-engine-name" label="Name">
@@ -751,15 +760,18 @@ export function SearchEngineForm({
           autoCorrect="off"
           spellCheck={false}
           aria-invalid={shownShortcut ? true : undefined}
+          aria-describedby={shownShortcut ? 'search-engine-shortcut-error' : undefined}
           value={shortcut}
           onChange={(e) => {
             setShortcut(e.target.value)
             setError(null)
           }}
-          onBlur={() => setTouched(true)}
+          onBlur={() => setTouchedShortcut(true)}
           onKeyDown={onEnter}
         />
-        {shownShortcut && <ValidationMessage message={shownShortcut} />}
+        {shownShortcut && (
+          <ValidationMessage id="search-engine-shortcut-error" message={shownShortcut} />
+        )}
       </Field>
       <Field
         id="search-engine-url"
@@ -777,15 +789,16 @@ export function SearchEngineForm({
           autoCorrect="off"
           spellCheck={false}
           aria-invalid={shownUrl ? true : undefined}
+          aria-describedby={shownUrl ? 'search-engine-url-error' : undefined}
           value={url}
           onChange={(e) => {
             setUrl(e.target.value)
             setError(null)
           }}
-          onBlur={() => setTouched(true)}
+          onBlur={() => setTouchedUrl(true)}
           onKeyDown={onEnter}
         />
-        {shownUrl && <ValidationMessage message={shownUrl} />}
+        {shownUrl && <ValidationMessage id="search-engine-url-error" message={shownUrl} />}
       </Field>
       <SheetActions action={action} disabled={!ready} onCancel={close} onAction={submit} />
     </div>

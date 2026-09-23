@@ -7,7 +7,7 @@ import type { SwitchRow } from '../model'
 import { RowView } from '../rows'
 
 /*
- * The switch row's `leading` slot (W4-10, the desktop's Customize toolbar rows: the control's
+ * The switch row's `leading` slot (W4-10, the desktop's Customise toolbar rows: the control's
  * own glyph beside the box): the glyph sits in the other kinds' `.zen-settings-leading` span –
  * on the label's line (§9.2), `aria-hidden` – before the label on the phone's `role="switch"`
  * row and between the box and the label on the desktop's check row (§10.5, "the control's 16
