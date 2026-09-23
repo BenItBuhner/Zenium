@@ -392,7 +392,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Ctrl+Tab stays within Essentials or regular tabs',
     'Restore previous session on startup',
     'Restore pages after a crash',
-    'Warn before closing a window with multiple tabs',
+    'Confirm before closing multiple tabs',
     'Tabs across windows',
     'Open a blank window',
     'When closing a pinned tab',
