@@ -163,6 +163,13 @@ class ExtensionFilesTest {
 
         val missing = File(dir, "gone.js")
         assertEquals(null, ExtensionFiles.servedBody(missing))
+
+        // The head the bracket's prologue is chosen by: the first bytes as text, a cut character
+        // reading as U+FFFD, and "" for a file that is not there.
+        assertEquals("export const s = \"h", ExtensionFiles.head(file, 19))
+        assertEquals("export const s = \"h\uFFFD", ExtensionFiles.head(file, 20))
+        assertEquals(text, ExtensionFiles.head(file, text.toByteArray(Charsets.UTF_8).size + 10))
+        assertEquals("", ExtensionFiles.head(missing, 512))
     }
 
     // --- unpacking -------------------------------------------------------------------------------

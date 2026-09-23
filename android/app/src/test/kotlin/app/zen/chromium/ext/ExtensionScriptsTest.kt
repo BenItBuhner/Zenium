@@ -255,4 +255,31 @@ class ExtensionScriptsTest {
         assertFalse(ExtensionScripts.isScriptPath("content.json"))
         assertFalse(ExtensionScripts.isScriptPath("styles.css"))
     }
+
+    @Test
+    fun aWebpackChunkGetsTheModuleScopedChromeAndSelfInItsPrologueAndAnyOtherModuleThePlainEntry() {
+        val id = "ajphlblkfpppdpkgokiejbjfohfohhmk"
+        // Mote's sidebar.bundle.js: a polyfill line, a directive, then the registration.
+        val mote = "\"undefined\"!=typeof browser&&(chrome=browser);\"use strict\";(self.webpackChunk_mote_plugin=self.webpackChunk_mote_plugin||[]).push([[6380],{83325(e,t,i){}}]);"
+        assertTrue(ExtensionScripts.isWebpackChunk(mote))
+        assertTrue(ExtensionScripts.isWebpackChunk("/*! chunk */\n(globalThis.webpackChunk=globalThis.webpackChunk||[]).push([[1],{}]);"))
+        assertTrue(ExtensionScripts.isWebpackChunk("(window.webpackChunkapp = window.webpackChunkapp || []).push([[2], {}]);"))
+        assertFalse(ExtensionScripts.isWebpackChunk("(self.webpackChunkA=self.webpackChunkB||[]).push([[1],{}]);"))
+        assertFalse(ExtensionScripts.isWebpackChunk("import x from \"./x.js\";\nexport const y = x + 1;"))
+        assertFalse(ExtensionScripts.isWebpackChunk("/".repeat(600) + "(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);"))
+
+        val chunkOpen = ExtensionScripts.moduleChromeOpen(id, mote)
+        assertEquals(
+            "let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule(\"$id\"):globalThis.chrome," +
+                "self=globalThis.__zenExtModuleSelf?globalThis.__zenExtModuleSelf(\"$id\"):globalThis.self;",
+            chunkOpen
+        )
+        assertEquals("globalThis.__zenExtModule&&globalThis.__zenExtModule(\"$id\");", ExtensionScripts.moduleChromeOpen(id, "export const a = 1;"))
+        assertEquals("globalThis.__zenExtModule&&globalThis.__zenExtModule(\"$id\");", ExtensionScripts.moduleChromeOpen(id))
+        // The wrap chooses by the text, on the first line either way; ASCII, as the file's prefix.
+        val wrapped = ExtensionScripts.moduleChromeWrap(mote, id)
+        assertTrue(wrapped.startsWith(chunkOpen + "\"undefined\"!=typeof browser"))
+        assertEquals(mote.lines().size + 1, wrapped.lines().size)
+        assertTrue(chunkOpen.all { it.code < 128 })
+    }
 }

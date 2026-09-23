@@ -215,6 +215,19 @@ class ExtensionFiles(val root: File) {
             return runCatching { file.readText() }.getOrNull()
         }
 
+        /**
+         * The first [bytes] bytes of a file as text (a multi-byte character cut at the end reads
+         * as U+FFFD), or "" when the file cannot be read: what the module bracket looks at to
+         * tell a webpack chunk (`ExtensionScripts.isWebpackChunk`) without reading the file whole.
+         */
+        fun head(file: File, bytes: Int): String = runCatching {
+            FileInputStream(file).use { stream ->
+                val buffer = ByteArray(bytes)
+                val read = stream.read(buffer)
+                if (read <= 0) "" else String(buffer, 0, read, Charsets.UTF_8)
+            }
+        }.getOrDefault("")
+
         /** A served file's body: a stream the WebView drains, and the `Content-Length` it is told. */
         class ServedBody(val stream: InputStream, val length: Long)
 

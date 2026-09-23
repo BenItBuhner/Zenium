@@ -318,17 +318,45 @@ object ExtensionScripts {
      * A served module's text bracketed for a one-realm WebView: `globalThis.__zenExtModule(id)`
      * shares the text's first line (line numbers, and so source maps, stay) and
      * `__zenExtModuleEnd(id)` takes a line of its own after whatever the file ended in. While
-     * the module's body evaluates, the page's real `chrome` answers with the extension's (the
-     * bootstrap's accessor, `extensionModuleChrome.ts`); both calls are guarded, so the same
-     * text also runs where the brackets were never installed. The TypeScript twin is
-     * `wrapModuleText`; `extensionModuleChrome.test.ts` and `ExtensionScriptsTest` pin the shape.
+     * the module's body evaluates, the page's real `chrome`, `self` and `globalThis` answer with
+     * the extension's (the bootstrap's accessors, `extensionModuleChrome.ts`); both calls are
+     * guarded, so the same text also runs where the brackets were never installed. For a webpack
+     * chunk ([isWebpackChunk]) the prologue also binds `chrome` and `self` in the module's own
+     * scope, so the chunk's factories, run later by the content script's runtime, keep the
+     * extension's. The TypeScript twin is `wrapModuleText`; `extensionModuleChrome.test.ts` and
+     * `ExtensionScriptsTest` pin the shape.
      */
     fun moduleChromeWrap(text: String, extensionId: String): String =
-        moduleChromeOpen(extensionId) + text + moduleChromeClose(extensionId)
+        moduleChromeOpen(extensionId, text) + text + moduleChromeClose(extensionId)
 
-    /** The bracket ahead of a served module's text; ASCII, so it prefixes the file's UTF-8 bytes as it is. */
-    fun moduleChromeOpen(extensionId: String): String =
-        "globalThis.__zenExtModule&&globalThis.__zenExtModule(${JSONObject.quote(extensionId)});"
+    /** How far into a served script the host looks for a webpack chunk's registration. */
+    const val WEBPACK_CHUNK_HEAD = 512
+
+    /**
+     * A webpack chunk's registration, as webpack writes it at the top of every non-entry chunk
+     * of a `web`-like target: `(self.webpackChunk<name>=self.webpackChunk<name>||[]).push([...`,
+     * the global spelled `self`, `globalThis` or `window` by `output.globalObject`; a directive,
+     * a comment or a one-line polyfill (`"undefined"!=typeof browser&&(chrome=browser);`) may
+     * come first. The same expression is `WEBPACK_CHUNK` in `extensionModuleChrome.ts`.
+     */
+    private val WEBPACK_CHUNK = Regex("""\((self|globalThis|window)\.(webpackChunk\w*)\s*=\s*\1\.\2\s*\|\|\s*\[\]\)\s*\.push\s*\(""")
+
+    /** Whether the head of a served script is a webpack chunk's registration ([WEBPACK_CHUNK]). */
+    fun isWebpackChunk(head: String): Boolean = WEBPACK_CHUNK.containsMatchIn(head.take(WEBPACK_CHUNK_HEAD))
+
+    /**
+     * The bracket ahead of a served module's text, given the text's head ([WEBPACK_CHUNK_HEAD]
+     * chars are enough); ASCII, so it prefixes the file's UTF-8 bytes as it is. A webpack chunk
+     * is one `push` expression and declares nothing at its top level, so its prologue may bind
+     * `chrome` and `self` with a `let`; any other module keeps the plain entry, since a second
+     * declaration of a name the module declares itself would be a SyntaxError for the file.
+     */
+    fun moduleChromeOpen(extensionId: String, head: String = ""): String {
+        val id = JSONObject.quote(extensionId)
+        if (!isWebpackChunk(head)) return "globalThis.__zenExtModule&&globalThis.__zenExtModule($id);"
+        return "let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule($id):globalThis.chrome," +
+            "self=globalThis.__zenExtModuleSelf?globalThis.__zenExtModuleSelf($id):globalThis.self;"
+    }
 
     /** The bracket after a served module's text, on a line of its own. */
     fun moduleChromeClose(extensionId: String): String =

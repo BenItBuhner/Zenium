@@ -859,9 +859,15 @@ declare const __zenExtBoot: Boot
       if (typeof realWindow.URL === 'function')
         root.URL = scopedUrlClass(realWindow.URL as typeof URL)
       // A module the content script imports evaluates on the real global, not in the proxy's
-      // scope: the host brackets the served module text, and this accessor answers the
-      // extension's `chrome` there while the module's body runs (extensionModuleChrome.ts).
-      installModuleChrome(realWindow, (id) => scopes.get(`${id}/with/content`)?.chrome)
+      // scope: the host brackets the served module text, and these accessors answer the
+      // extension's `chrome` and, as `self`, its scope there while the module's body runs, so
+      // a webpack chunk registers on the content script's own registry
+      // (extensionModuleChrome.ts).
+      installModuleChrome(
+        realWindow,
+        (id) => scopes.get(`${id}/with/content`)?.chrome,
+        (id) => scopes.get(`${id}/with/content`)?.window as object | undefined
+      )
     }
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
     const engine = messaging ? makeEngine(ext, context, frame, root, isolation === 'world') : null
