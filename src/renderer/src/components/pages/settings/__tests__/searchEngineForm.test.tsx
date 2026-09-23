@@ -1,21 +1,25 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, type ReactElement } from 'react'
+import { act, type ComponentProps, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { customSearchEngine, DEFAULT_SEARCH_ENGINES } from '@shared/search'
+import type { SearchEngine } from '@shared/types'
 import { SearchEngineForm } from '../blocks'
 
 /*
  * Search › Add search engine and › Edit search engine as one form (W4-10, #409's ask): `initial`
  * fills the fields for an edit and the verb is the caller's; the Shortcut field (Chrome's
- * Shortcut column) is checked by the engine's own keyword rules from `shared/search.ts` – one
- * word, no spaces, at most 64 characters after the `@` the engine adds, a word after the `@`,
- * not one of Zenium's own scopes – in §9.12's validation form, each field once it is left (its
- * own leaving, not the other field's) or on Enter, the line named as the field's description;
- * the button is held until the name and the template are in – and, editing, the shortcut too:
- * an engine never holds an empty word, so an emptied one says "Give the engine a shortcut" once
- * left or on Enter, the focus moved to it on Enter (§9.12's line on submit, the #419 lead check's
- * ruling 1), where adding leaves it the engine's to derive (the core's `search.addEngine` takes
- * none yet) – and submit hands the caller the three values.
+ * Shortcut column) is checked by the engine's own keyword rules – the shared
+ * `engineKeywordProblem` of `shared/search.ts` against the caller's `engines`, the engine being
+ * edited (`engineId`) excepted: one word, no spaces, at most 64 characters after the `@` the
+ * engine adds, a word after the `@`, not one of Zenium's own scopes, not a word another engine
+ * answers to – in §9.12's validation form, each field once it is left (its own leaving, not the
+ * other field's) or on Enter, the line named as the field's description; the button is held
+ * until the name and the template are in – and, editing, the shortcut too: an engine never holds
+ * an empty word, so an emptied one says "Give the engine a shortcut" once left or on Enter, the
+ * focus moved to it on Enter (§9.12's line on submit, the #419 lead check's ruling 1), where
+ * adding leaves it the engine's to derive (the core's `search.addEngine` takes none yet) – and
+ * submit hands the caller the three values.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -89,9 +93,47 @@ const WIKI = {
   shortcut: '@wiki'
 }
 
+/** The shipped engines (`@google`, `@ddg`, `@ecosia`, `@bing`, `@wikipedia`): the Add form's list. */
+const SHIPPED: readonly SearchEngine[] = DEFAULT_SEARCH_ENGINES
+/** The engine `WIKI` edits, as the profile holds it – its own word `@wiki`. */
+const WIKI_ENGINE: SearchEngine = {
+  ...customSearchEngine(WIKI.name, WIKI.url, SHIPPED),
+  keyword: WIKI.shortcut
+}
+/** The Edit form's list: the shipped engines and the one being edited. */
+const ENGINES: readonly SearchEngine[] = [...SHIPPED, WIKI_ENGINE]
+
+type FormProps = ComponentProps<typeof SearchEngineForm>
+
+/** The Add form over the shipped engines: no `engineId`, every engine's word another's. */
+function addForm(props: Partial<Pick<FormProps, 'onSubmit' | 'close'>> = {}): HTMLElement {
+  return render(
+    <SearchEngineForm
+      action="Add"
+      engines={SHIPPED}
+      onSubmit={props.onSubmit ?? vi.fn()}
+      close={props.close ?? vi.fn()}
+    />
+  )
+}
+
+/** The Edit form on `WIKI_ENGINE`, its list the shipped engines and itself. */
+function editForm(props: Partial<Pick<FormProps, 'onSubmit' | 'close'>> = {}): HTMLElement {
+  return render(
+    <SearchEngineForm
+      initial={WIKI}
+      action="Save"
+      engines={ENGINES}
+      engineId={WIKI_ENGINE.id}
+      onSubmit={props.onSubmit ?? vi.fn()}
+      close={props.close ?? vi.fn()}
+    />
+  )
+}
+
 describe('the search-engine form: Add and Edit from one component', () => {
   it('Add: empty fields, the three of them in Chrome’s order, the caller’s verb, the button held', () => {
-    const el = render(<SearchEngineForm action="Add" onSubmit={vi.fn()} close={vi.fn()} />)
+    const el = addForm()
     const ids = Array.from(el.querySelectorAll('input')).map((i) => i.id)
     expect(ids).toEqual(['search-engine-name', 'search-engine-shortcut', 'search-engine-url'])
     expect(input(el, 'search-engine-name').value).toBe('')
@@ -107,10 +149,8 @@ describe('the search-engine form: Add and Edit from one component', () => {
     expect(el.querySelector('button[aria-busy]')).toBeNull()
   })
 
-  it('Edit: `initial` fills the fields and the caller’s verb is Save, the button ready at once', () => {
-    const el = render(
-      <SearchEngineForm initial={WIKI} action="Save" onSubmit={vi.fn()} close={vi.fn()} />
-    )
+  it('Edit: `initial` fills the fields and the caller’s verb is Save, the button ready at once – the engine’s own word is no collision with itself', () => {
+    const el = editForm()
     expect(input(el, 'search-engine-name').value).toBe('Wikipedia')
     expect(input(el, 'search-engine-shortcut').value).toBe('@wiki')
     expect(input(el, 'search-engine-url').value).toBe(WIKI.url)
@@ -121,7 +161,7 @@ describe('the search-engine form: Add and Edit from one component', () => {
   it('submit hands the caller the three values, trimmed, and closes once it settles', async () => {
     const onSubmit = vi.fn(async () => undefined)
     const close = vi.fn()
-    const el = render(<SearchEngineForm action="Add" onSubmit={onSubmit} close={close} />)
+    const el = addForm({ onSubmit, close })
     type(input(el, 'search-engine-name'), '  Wikipedia ')
     type(input(el, 'search-engine-shortcut'), ' wiki ')
     type(input(el, 'search-engine-url'), ` ${WIKI.url} `)
@@ -135,7 +175,7 @@ describe('the search-engine form: Add and Edit from one component', () => {
   it('Add: the shortcut may be left empty – the button is not held by it, and submit hands the caller shortcut: "" for the engine to derive its own', async () => {
     const onSubmit = vi.fn()
     const close = vi.fn()
-    const el = render(<SearchEngineForm action="Add" onSubmit={onSubmit} close={close} />)
+    const el = addForm({ onSubmit, close })
     type(input(el, 'search-engine-name'), 'Wikipedia')
     type(input(el, 'search-engine-url'), WIKI.url)
     const shortcut = input(el, 'search-engine-shortcut')
@@ -154,7 +194,7 @@ describe('the search-engine form: Add and Edit from one component', () => {
   })
 
   it('Add: a typed shortcut is checked all the same – a space holds the button, the message shows once left', () => {
-    const el = render(<SearchEngineForm action="Add" onSubmit={vi.fn()} close={vi.fn()} />)
+    const el = addForm()
     type(input(el, 'search-engine-name'), 'Wikipedia')
     type(input(el, 'search-engine-url'), WIKI.url)
     const shortcut = input(el, 'search-engine-shortcut')
@@ -173,9 +213,7 @@ describe('the search-engine form: Add and Edit from one component', () => {
   it('Edit: Save hands the edited values back, the shortcut as typed', async () => {
     const onSubmit = vi.fn()
     const close = vi.fn()
-    const el = render(
-      <SearchEngineForm initial={WIKI} action="Save" onSubmit={onSubmit} close={close} />
-    )
+    const el = editForm({ onSubmit, close })
     type(input(el, 'search-engine-shortcut'), '@wp')
     act(() => button(el, 'Save').click())
     await settle()
@@ -188,9 +226,7 @@ describe('the search-engine form: Add and Edit from one component', () => {
       throw new Error('Bing already answers to @b')
     })
     const close = vi.fn()
-    const el = render(
-      <SearchEngineForm initial={WIKI} action="Save" onSubmit={onSubmit} close={close} />
-    )
+    const el = editForm({ onSubmit, close })
     act(() => button(el, 'Save').click())
     await settle()
     expect(close).not.toHaveBeenCalled()
@@ -199,15 +235,9 @@ describe('the search-engine form: Add and Edit from one component', () => {
   })
 })
 
-describe('the Shortcut field’s validation (the engine’s keyword rules)', () => {
-  function form(initial = WIKI): HTMLElement {
-    return render(
-      <SearchEngineForm initial={initial} action="Save" onSubmit={vi.fn()} close={vi.fn()} />
-    )
-  }
-
+describe('the Shortcut field’s validation (the engine’s keyword rules, `engineKeywordProblem`)', () => {
   it('a space inside is refused once the field is left: §9.12’s message under the field, aria-invalid, the button held', () => {
-    const el = form()
+    const el = editForm()
     const shortcut = input(el, 'search-engine-shortcut')
     type(shortcut, 'wi ki')
     // Not yet left: the button is held, the message waits.
@@ -233,7 +263,7 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
   })
 
   it('leaving the Shortcut does not set the URL speaking as it is typed – each field is checked by its own leaving (§9.12), the URL once it is left', () => {
-    const el = render(<SearchEngineForm action="Add" onSubmit={vi.fn()} close={vi.fn()} />)
+    const el = addForm()
     type(input(el, 'search-engine-name'), 'Wikipedia')
     const shortcut = input(el, 'search-engine-shortcut')
     type(shortcut, 'wiki')
@@ -261,7 +291,7 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
 
   it('Enter on a held form marks both fields at once, each with its own line, and submits nothing', () => {
     const onSubmit = vi.fn()
-    const el = render(<SearchEngineForm action="Add" onSubmit={onSubmit} close={vi.fn()} />)
+    const el = addForm({ onSubmit })
     const name = input(el, 'search-engine-name')
     type(name, 'Wikipedia')
     type(input(el, 'search-engine-shortcut'), 'wi ki')
@@ -280,8 +310,8 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
     )
   })
 
-  it('a bare @ is a word missing, not a word too long: its own line once left, the button held', () => {
-    const el = form()
+  it('a bare @ is a word missing, not a word too long: its own line once left, the button held (the shared helper’s line, so #409’s Edit form and the core’s refusal say it too)', () => {
+    const el = editForm()
     const shortcut = input(el, 'search-engine-shortcut')
     type(shortcut, '@')
     expect(button(el, 'Save').disabled).toBe(true)
@@ -301,7 +331,7 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
   })
 
   it('editing, an emptied shortcut is refused – an engine never holds an empty word: the button held and nothing said while typing; left, "Give the engine a shortcut" under the field', () => {
-    const el = form()
+    const el = editForm()
     const shortcut = input(el, 'search-engine-shortcut')
     const block = fieldBlock(el, 'search-engine-shortcut')
     type(shortcut, '')
@@ -321,9 +351,7 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
   it('editing, Enter with the shortcut emptied (§9.12’s line on submit, the lead check’s ruling 1): the line under the field, aria-invalid, the focus moved to it, nothing submitted – a word typed and Enter again submits', async () => {
     const onSubmit = vi.fn()
     const close = vi.fn()
-    const el = render(
-      <SearchEngineForm initial={WIKI} action="Save" onSubmit={onSubmit} close={close} />
-    )
+    const el = editForm({ onSubmit, close })
     const name = input(el, 'search-engine-name')
     const shortcut = input(el, 'search-engine-shortcut')
     const block = fieldBlock(el, 'search-engine-shortcut')
@@ -350,7 +378,7 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
   })
 
   it('the engine’s cap: more than 64 characters after the @ is too long', () => {
-    const el = form()
+    const el = editForm()
     const shortcut = input(el, 'search-engine-shortcut')
     type(shortcut, `@${'w'.repeat(64)}`)
     blur(shortcut)
@@ -365,7 +393,7 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
   })
 
   it('Zenium’s own scopes (@bookmarks, @history, @tabs) answer before any engine, so none can be a shortcut – with or without the @, any case', () => {
-    const el = form()
+    const el = editForm()
     const shortcut = input(el, 'search-engine-shortcut')
     type(shortcut, 'Tabs')
     blur(shortcut)
@@ -384,31 +412,54 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
     expect(button(el, 'Save').disabled).toBe(false)
   })
 
-  it('the caller’s `problem` – another engine’s word, which only its list can tell – is the field’s message too', () => {
-    const el = render(
-      <SearchEngineForm
-        initial={WIKI}
-        action="Save"
-        problem={(s) => (s.toLowerCase() === '@ddg' ? 'DuckDuckGo already answers to @ddg' : null)}
-        onSubmit={vi.fn()}
-        close={vi.fn()}
-      />
-    )
+  it('editing, a word another engine answers to is refused once left – the shared helper against the caller’s `engines`, the engine’s own word (`engineId`) excepted', () => {
+    const el = editForm()
     const shortcut = input(el, 'search-engine-shortcut')
+    const block = fieldBlock(el, 'search-engine-shortcut')
     type(shortcut, '@ddg')
-    blur(shortcut)
-    expect(shortcut.getAttribute('aria-invalid')).toBe('true')
-    expect(fieldBlock(el, 'search-engine-shortcut').textContent).toContain(
-      'DuckDuckGo already answers to @ddg'
-    )
+    // Typing, nothing yet; the button is held by the collision all the same.
+    expect(block.querySelector('.zen-settings-validation')).toBeNull()
     expect(button(el, 'Save').disabled).toBe(true)
+    blur(shortcut)
+    const message = block.querySelector('.zen-settings-validation')
+    expect(message?.textContent).toContain('DuckDuckGo already answers to @ddg')
+    expect(shortcut.getAttribute('aria-invalid')).toBe('true')
+    expect(shortcut.getAttribute('aria-describedby')).toBe(message?.id)
+    expect(button(el, 'Save').disabled).toBe(true)
+    // The @ left off, the same word; the engine's other names too (its id, its name).
+    type(shortcut, 'ddg')
+    expect(block.textContent).toContain('DuckDuckGo already answers to @ddg')
+    type(shortcut, 'DuckDuckGo')
+    expect(block.textContent).toContain('DuckDuckGo already answers to @duckduckgo')
+    // Its own word, in any case, is its own – no collision with itself.
+    type(shortcut, ' @Wiki ')
+    expect(shortcut.getAttribute('aria-invalid')).toBeNull()
+    expect(block.querySelector('.zen-settings-validation')).toBeNull()
+    expect(button(el, 'Save').disabled).toBe(false)
+  })
+
+  it('adding, no engine is this one – every engine’s word is another’s, the one being edited elsewhere included', () => {
+    const el = render(
+      <SearchEngineForm action="Add" engines={ENGINES} onSubmit={vi.fn()} close={vi.fn()} />
+    )
+    type(input(el, 'search-engine-name'), 'Wiki mirror')
+    type(input(el, 'search-engine-url'), 'https://wiki.example/?q=%s')
+    const shortcut = input(el, 'search-engine-shortcut')
+    const block = fieldBlock(el, 'search-engine-shortcut')
+    type(shortcut, 'wiki')
+    blur(shortcut)
+    expect(block.textContent).toContain('Wikipedia already answers to @wiki')
+    expect(shortcut.getAttribute('aria-invalid')).toBe('true')
+    expect(button(el, 'Add').disabled).toBe(true)
+    // A word of its own, and the form is ready.
+    type(shortcut, 'mirror')
+    expect(shortcut.getAttribute('aria-invalid')).toBeNull()
+    expect(button(el, 'Add').disabled).toBe(false)
   })
 
   it('Enter with a problem marks the fields instead of submitting', () => {
     const onSubmit = vi.fn()
-    const el = render(
-      <SearchEngineForm initial={WIKI} action="Save" onSubmit={onSubmit} close={vi.fn()} />
-    )
+    const el = editForm({ onSubmit })
     const shortcut = input(el, 'search-engine-shortcut')
     type(shortcut, 'no spaces allowed')
     act(() => {

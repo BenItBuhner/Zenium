@@ -20,7 +20,7 @@ import {
 } from '@shared/appIcon'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
-import { SEARCH_SCOPES, searchTemplateProblem } from '@shared/search'
+import { engineKeywordProblem, searchTemplateProblem } from '@shared/search'
 import { inputToUrl } from '@shared/url'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -636,53 +636,34 @@ export interface SearchEngineFormValues {
 }
 
 /**
- * Why `shortcut` cannot be an engine's keyword, or null when it can – the engine's own rule
- * (`shared/search.ts`: a stored keyword is `@` and one word of at most 64 characters,
- * `/^@\S{1,64}$/`, lower case; `matchEngineWord` takes no word with a space) with `@` allowed
- * off, since the engine adds it – and Zenium's own scopes (`SEARCH_SCOPES`: `@bookmarks`,
- * `@history`, `@tabs`), which `matchKeywordWord` answers before any engine, so an engine given
- * one could never be reached. Empty is no problem of the word's – whether the form takes it is
- * the form's (adding, yes: the engine derives a keyword from the name, `uniqueEngineKeyword`;
- * editing, no: the engine's own word is shown, and it never holds an empty one); a bare `@` is
- * a word missing, not a word too long, and says so; another engine's word is the caller's to
- * refuse (`problem`), since the form does not hold the list.
- */
-function searchShortcutProblem(shortcut: string): string | null {
-  const word = shortcut.trim().toLowerCase()
-  if (!word) return null
-  if (/\s/.test(word)) return 'A shortcut is one word, with no spaces'
-  const keyword = word.startsWith('@') ? word : `@${word}`
-  if (keyword === '@') return 'Type a word after the @'
-  if (!/^@\S{1,64}$/.test(keyword)) return 'The shortcut is too long'
-  if (SEARCH_SCOPES.some((s) => s.keyword === keyword))
-    return `${keyword} is one of Zenium’s own shortcuts`
-  return null
-}
-
-/**
  * Search › Add search engine and › Edit search engine, one form (Chrome's, W4-10): a name, the
  * shortcut typed in the address bar before a space (Chrome's Shortcut column) and the search URL
  * with `%s` where the terms go, each checked once it is left or on Enter (§9.12's leave-then-
- * check; `searchShortcutProblem`, `searchTemplateProblem`) – each field by its own leaving, so
- * leaving the shortcut does not set the URL speaking as it is typed – the button held until the
- * name and the template are in. The line a field shows is its description (`aria-describedby`)
- * for a reader on the field, the sheet's own pattern (`FieldSheet`). `initial`
- * fills the fields from the engine being edited; the verb is the caller's – "Add" for a new
- * engine, "Save" for an edit – as the sheet's title is. The shortcut is the one field that may
- * be left empty, and only when adding: the engine derives a keyword from the name then, and the
- * core's `search.addEngine` takes none yet, so a word the form insisted on would be typed to be
- * dropped; a typed word is checked whichever the form is. Editing, the engine's own word stands
- * in the field and an empty one is refused – an engine never holds one (#409's edit path, where
- * the word is kept): "Give the engine a shortcut" once the field is left or the form is
- * submitted, and on submit the focus goes to the field (§9.12's line on submit – a held button
- * that answers Enter with nothing is the failure the section names; the #419 lead check's
- * ruling 1). The caller adds or saves, and the sheet closes; what it refuses shows as the
- * form's validation line.
+ * check) by the engine's own rules in `shared/search.ts` – the shortcut through
+ * `engineKeywordProblem` against `engines`, the list the caller holds (one word, `@` or not,
+ * at most 64 characters as `normalizeEngineKeyword` keeps it, not one of Zenium's own scopes,
+ * not a word another engine answers to – the engine being edited, `engineId`, excepted, its
+ * own word being its own), the template through `searchTemplateProblem` – each field by its
+ * own leaving, so leaving the shortcut does not set the URL speaking as it is typed – the
+ * button held until the name and the template are in. The line a field shows is its
+ * description (`aria-describedby`) for a reader on the field, the sheet's own pattern
+ * (`FieldSheet`). `initial` fills the fields from the engine being edited; the verb is the
+ * caller's – "Add" for a new engine, "Save" for an edit – as the sheet's title is. The
+ * shortcut is the one field that may be left empty, and only when adding: the engine derives a
+ * keyword from the name then, and the core's `search.addEngine` takes none yet, so a word the
+ * form insisted on would be typed to be dropped; a typed word is checked whichever the form
+ * is. Editing, the engine's own word stands in the field and an empty one is refused – an
+ * engine never holds one (#409's edit path, where the word is kept): "Give the engine a
+ * shortcut" once the field is left or the form is submitted, and on submit the focus goes to
+ * the field (§9.12's line on submit – a held button that answers Enter with nothing is the
+ * failure the section names; the #419 lead check's ruling 1). The caller adds or saves, and
+ * the sheet closes; what it refuses shows as the form's validation line.
  */
 export function SearchEngineForm({
   initial,
   action,
-  problem,
+  engines,
+  engineId,
   onSubmit,
   close
 }: {
@@ -690,11 +671,13 @@ export function SearchEngineForm({
   initial?: SearchEngineFormValues
   /** The primary button's verb: "Add" for a new engine, "Save" for an edit. */
   action: string
+  /** Every engine of the profile, for the shortcut's uniqueness (`engineKeywordProblem`). */
+  engines: readonly SearchEngine[]
   /**
-   * Why the typed shortcut cannot be this engine's, beyond the engine's own rules – another
-   * engine already answering to it, which only the caller's list can tell; or nothing.
+   * The id of the engine being edited, whose own word is no collision; absent when adding –
+   * the engine has no id yet, and every engine's word is another's.
    */
-  problem?: (shortcut: string) => string | null | undefined
+  engineId?: string
   onSubmit: (values: SearchEngineFormValues) => Promise<unknown> | void
   close: () => void
 }): JSX.Element {
@@ -707,7 +690,9 @@ export function SearchEngineForm({
   const [touchedShortcut, setTouchedShortcut] = useState(false)
   const [touchedUrl, setTouchedUrl] = useState(false)
   const shortcutInput = useRef<HTMLInputElement>(null)
-  const shortcutProblem = searchShortcutProblem(shortcut) ?? problem?.(shortcut.trim()) ?? null
+  // Adding, the engine has no id: the helper is given one no engine has (`sanitizeSearchEngine`
+  // keeps none empty), and every engine's word is another's.
+  const shortcutProblem = engineKeywordProblem(shortcut, engineId ?? '', engines)
   const urlProblem = searchTemplateProblem(url)
   // Adding, an empty shortcut is the engine's to derive; editing, the engine's word stays a word.
   const shortcutMissing = initial !== undefined && !shortcut.trim()
@@ -732,12 +717,9 @@ export function SearchEngineForm({
     if (e.key === 'Enter') submit()
   }
   // The shortcut's line once the field is left or the form submitted: the word's problem while
-  // there is a word; editing, "Give the engine a shortcut" for none – the one empty that speaks.
-  const shortcutLine = shortcutMissing
-    ? 'Give the engine a shortcut'
-    : shortcut.trim()
-      ? shortcutProblem
-      : null
+  // there is a word (`engineKeywordProblem` has none for an empty field); editing, "Give the
+  // engine a shortcut" for none – the one empty that speaks.
+  const shortcutLine = shortcutMissing ? 'Give the engine a shortcut' : shortcutProblem
   const shownShortcut = touchedShortcut ? shortcutLine : null
   const shownUrl = error ?? (touchedUrl && url.trim() ? urlProblem : null)
   return (

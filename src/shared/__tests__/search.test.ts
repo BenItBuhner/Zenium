@@ -222,6 +222,24 @@ describe('search engines: the shortcut and the active flag (omnibox-09, settings
     )
   })
 
+  it('a bare @ is a word missing, not a word too long: its own line, spaces around it or not', () => {
+    // `normalizeEngineKeyword('@')` is null as a 65-character word's is; the reason differs.
+    expect(engineKeywordProblem('@', own.id, all)).toBe('Type a word after the @')
+    expect(engineKeywordProblem(' @ ', own.id, all)).toBe('Type a word after the @')
+    expect(engineKeywordProblem('@w', own.id, all)).toBeNull()
+    // The long word keeps its line.
+    expect(engineKeywordProblem(`@${'x'.repeat(65)}`, own.id, all)).toBe('The shortcut is too long')
+  })
+
+  it('an engine being added has no id: given one no engine has, every engine’s word is another’s', () => {
+    // `sanitizeSearchEngine` keeps no engine with an empty id, so '' names none of them.
+    expect(engineKeywordProblem('ddg', '', all)).toBe('DuckDuckGo already answers to @ddg')
+    expect(engineKeywordProblem(own.keyword, '', all)).toBe(
+      `${own.name} already answers to ${own.keyword}`
+    )
+    expect(engineKeywordProblem('fresh', '', all)).toBeNull()
+  })
+
   it('edits name, shortcut and template; an empty shortcut derives from the new name, unique', () => {
     const edited = editedSearchEngine(
       own,
