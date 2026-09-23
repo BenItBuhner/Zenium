@@ -7,7 +7,8 @@ name: Desktop smoke (Windows, macOS, Linux installers)
 # the profile cleanly exited, the profile coming back without a "Restore pages?" bar, plus 1.5x
 # DPI and OS dark mode screenshots. Windows additionally installs the NSIS
 # build silently, boots the installed executable and uninstalls it. The Linux job builds the two
-# installers the Release workflow ships and boots the AppImage. Every JS error,
+# installers the Release workflow ships, boots the AppImage, installs the .deb, boots what it
+# installed, checks the desktop entry and icon it put down and removes it again. Every JS error,
 # crash and blocking dialog fails the run unless .github/smoke/known-failures.json names it.
 # Screenshots, logs and result.json per build are uploaded as artifacts. The Linux smoke in ci.yml
 # runs on every push and pull request against the unpacked build and carries the long walkthrough
@@ -190,10 +191,11 @@ jobs:
   linux-installers:
     name: linux-x64-installers
     # The two Linux installers the Release workflow ships, built with the same electron-builder
-    # configuration; the AppImage booted as a file through the smoke's `boot` scenario under
-    # Xvfb. ci.yml's Linux job stays the per-commit boot of the unpacked build; this one runs
-    # where the other installer-level smokes (the Windows NSIS install) run, on the packaging
-    # inputs' path filter above.
+    # configuration, each booted through the smoke's `boot` scenario under Xvfb: the AppImage as
+    # a file, the .deb after `dpkg -i` from where it installed the binary, plus the desktop entry
+    # and icon the deb put down and, after `dpkg -r`, everything gone again. ci.yml's Linux job
+    # stays the per-commit boot of the unpacked build; this one runs where the other installer-level
+    # smokes (the Windows NSIS install) run, on the packaging inputs' path filter above.
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -246,9 +248,45 @@ jobs:
       - name: AppImage facts (extract; AppRun, the embedded desktop entry and icon)
         if: always() && steps.dist.outputs.appimage != ''
         run: node "$SMOKE/linux-install.mjs" appimage --file "${{ steps.dist.outputs.appimage }}" --out "$SMOKE_OUT" --label appimage
+      - name: Install the .deb (dpkg -i) and check what it put down
+        id: deb
+        if: always() && steps.dist.outputs.deb != ''
+        # The desktop entry (/usr/share/applications/zenium.desktop: LINUX_DESKTOP_ID in
+        # src/main/platform/defaultBrowser.ts; Exec, MimeType with x-scheme-handler/http and
+        # https, Actions, Icon), the hicolor icon, /usr/bin/zenium through update-alternatives,
+        # mimeinfo.cache. A dpkg -i that stops on an unmet Depends of the runner image is
+        # completed with apt-get install -f and recorded in deb-install.json (dpkgExit).
+        run: |
+          set +e
+          sudo dpkg -i "${{ steps.dist.outputs.deb }}" 2>&1 | tee "$SMOKE_OUT/deb-dpkg-i.log"
+          dpkg_exit=${PIPESTATUS[0]}
+          set -e
+          if [[ $dpkg_exit -ne 0 ]]; then
+            echo "::warning::dpkg -i exited $dpkg_exit (unmet Depends on the runner image?); completing with apt-get install -f"
+            sudo apt-get install -f -y -qq 2>&1 | tee -a "$SMOKE_OUT/deb-dpkg-i.log"
+          fi
+          set +e
+          node "$SMOKE/linux-install.mjs" deb-installed --out "$SMOKE_OUT" --label deb --dpkg-exit "$dpkg_exit"
+          facts_exit=$?
+          set -e
+          # The path the installed build must have, whether or not it is there: the smoke names the miss.
+          echo "exe=$(node -p "require('$SMOKE_OUT/deb-install.json').exe")" >> "$GITHUB_OUTPUT"
+          exit "$facts_exit"
+      - name: Boot the installed build under Xvfb
+        if: always() && steps.deb.outputs.exe != ''
+        timeout-minutes: 12
+        run: >
+          xvfb-run -a -s '-screen 0 1600x1000x24'
+          node "$SMOKE/smoke.mjs" --exe "${{ steps.deb.outputs.exe }}" --label deb
+          --out "$SMOKE_OUT" --scenarios boot --extra-args="--no-sandbox --disable-gpu"
+      - name: Remove the .deb (dpkg -r) and wait for its files to be gone
+        if: always()
+        run: |
+          sudo dpkg -r zenium 2>&1 | tee "$SMOKE_OUT/deb-dpkg-r.log"
+          node "$SMOKE/linux-install.mjs" deb-removed --out "$SMOKE_OUT" --label deb
       - name: Verdict (log and step summary)
         if: always()
-        run: node "$SMOKE/verdict.mjs" --out "$SMOKE_OUT" --expect appimage --title linux-x64-installers
+        run: node "$SMOKE/verdict.mjs" --out "$SMOKE_OUT" --expect appimage,deb --title linux-x64-installers
       - uses: actions/upload-artifact@v7
         if: always()
         with:

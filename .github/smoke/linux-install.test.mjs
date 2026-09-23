@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   DESKTOP_ACTIONS,
+  REMOVED_PATHS,
   SCHEME_HANDLERS,
   checkDesktopEntry,
+  dpkgStatus,
+  isRemovedStatus,
+  mimeinfoHandlers,
   parseArgs,
   parseDesktopEntry,
   pngSize,
-  splitList
+  readLinuxDesktopId,
+  splitList,
+  waitForGone
 } from './linux-install.mjs'
 
 // The entry electron-builder 26 writes into the deb from electron-builder.yml (the MimeType
@@ -177,6 +183,18 @@ describe('checkDesktopEntry', () => {
   })
 })
 
+describe('readLinuxDesktopId', () => {
+  it('finds the constant however it is quoted', () => {
+    expect(readLinuxDesktopId("export const LINUX_DESKTOP_ID = 'zenium.desktop'\n")).toBe(
+      'zenium.desktop'
+    )
+    expect(readLinuxDesktopId('export const LINUX_DESKTOP_ID = "zenium.desktop"')).toBe(
+      'zenium.desktop'
+    )
+    expect(readLinuxDesktopId('// no such constant\nexport const OTHER = 1\n')).toBeNull()
+  })
+})
+
 describe('pngSize', () => {
   const png = (width, height) => {
     const b = Buffer.alloc(33)
@@ -200,5 +218,105 @@ describe('pngSize', () => {
     const wrongChunk = png(1, 1)
     wrongChunk.write('IDAT', 12, 'latin1')
     expect(pngSize(wrongChunk)).toBeNull()
+  })
+})
+
+describe('mimeinfoHandlers', () => {
+  const cache =
+    '[MIME Cache]\n' +
+    'text/html=google-chrome.desktop;zenium.desktop;\n' +
+    'x-scheme-handler/http=google-chrome.desktop;zenium.desktop;\n' +
+    'x-scheme-handler/https=zenium.desktop;\n'
+
+  it('lists the desktop ids registered for a type', () => {
+    expect(mimeinfoHandlers(cache, 'x-scheme-handler/http')).toEqual([
+      'google-chrome.desktop',
+      'zenium.desktop'
+    ])
+    expect(mimeinfoHandlers(cache, 'x-scheme-handler/https')).toEqual(['zenium.desktop'])
+  })
+
+  it('is empty for a type nobody handles', () => {
+    expect(mimeinfoHandlers(cache, 'x-scheme-handler/mailto')).toEqual([])
+    expect(mimeinfoHandlers('', 'text/html')).toEqual([])
+  })
+})
+
+describe('dpkgStatus and isRemovedStatus', () => {
+  it('normalises what dpkg-query says', () => {
+    expect(dpkgStatus('installed\n', 0)).toBe('installed')
+    expect(dpkgStatus('config-files', 0)).toBe('config-files')
+    expect(dpkgStatus('', 1)).toBe('unknown')
+    expect(dpkgStatus('installed', 1)).toBe('unknown')
+  })
+
+  it('treats the states after dpkg -r, --purge and never-installed as removed', () => {
+    expect(isRemovedStatus('config-files')).toBe(true)
+    expect(isRemovedStatus('not-installed')).toBe(true)
+    expect(isRemovedStatus('unknown')).toBe(true)
+    expect(isRemovedStatus('installed')).toBe(false)
+    expect(isRemovedStatus('half-installed')).toBe(false)
+    expect(isRemovedStatus('unpacked')).toBe(false)
+  })
+})
+
+describe('waitForGone', () => {
+  const clock = () => {
+    let t = 0
+    return {
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms
+      }
+    }
+  }
+
+  it('returns at once when nothing is there', async () => {
+    const { now, sleep } = clock()
+    const r = await waitForGone(['/a', '/b'], { exists: () => false, now, sleep })
+    expect(r).toEqual({ left: [], waitedMs: 0 })
+  })
+
+  it('polls until the paths disappear', async () => {
+    const { now, sleep } = clock()
+    let polls = 0
+    const exists = (p) => {
+      polls++
+      return p === '/slow' && now() < 1000
+    }
+    const r = await waitForGone(['/gone', '/slow'], {
+      exists,
+      now,
+      sleep,
+      intervalMs: 250,
+      timeoutMs: 5000
+    })
+    expect(r).toEqual({ left: [], waitedMs: 1000 })
+    expect(polls).toBe(10)
+  })
+
+  it('gives up at the deadline and names what is left', async () => {
+    const { now, sleep } = clock()
+    const r = await waitForGone(['/stuck', '/fine'], {
+      exists: (p) => p === '/stuck',
+      now,
+      sleep,
+      intervalMs: 300,
+      timeoutMs: 1000
+    })
+    expect(r.left).toEqual(['/stuck'])
+    expect(r.waitedMs).toBe(1200)
+  })
+
+  it('covers every footprint of the deb and its maintainer scripts', () => {
+    expect(REMOVED_PATHS).toEqual([
+      '/opt/Zenium',
+      '/usr/share/applications/zenium.desktop',
+      '/usr/share/icons/hicolor/512x512/apps/zenium.png',
+      '/usr/bin/zenium',
+      '/etc/alternatives/zenium',
+      '/usr/bin/zen-chromium',
+      '/etc/apparmor.d/zenium'
+    ])
   })
 })
