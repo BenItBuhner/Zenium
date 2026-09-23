@@ -917,7 +917,7 @@ export class TabManager {
     tab.bookmarked = this.browser.bookmarks.has(url)
     this.browser.pageControls.onNavigated(tab, view)
     view.setBackgroundColor(this.backgroundFor(url))
-    view.setPopupsAllowed?.(this.browser.popups.siteAllowed(url))
+    view.setPopupsAllowed?.(this.browser.popups.siteAllowed(url, tabId))
     const transition = this.pendingTransition.get(tabId) ?? 'link'
     this.pendingTransition.delete(tabId)
     if (!this.isPrivate(tab))
@@ -1125,7 +1125,7 @@ export class TabManager {
     for (const [id, view] of this.views) {
       const tab = this.tab(id)
       if (tab && safeOrigin(tab.url) === origin)
-        view.setPopupsAllowed?.(this.browser.popups.siteAllowed(tab.url))
+        view.setPopupsAllowed?.(this.browser.popups.siteAllowed(tab.url, id))
     }
   }
 

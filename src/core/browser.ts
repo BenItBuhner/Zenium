@@ -424,6 +424,12 @@ export class Browser {
       platform.permissionPrompts ?? this.permissionPrompts
     )
     this.permissions.subscribe(() => this.state.commitVolatile())
+    // A private tab's answers stay with the private session (hosts name their private session's
+    // requests themselves; the core's own services name only the tab).
+    this.permissions.setPrivateTabs((tabId) => {
+      const tab = this.tabs.tab(tabId)
+      return tab !== undefined && this.tabs.isPrivate(tab)
+    })
     this.popups = new PopupBlocker(this)
     this.external = new ExternalLaunches(this)
     this.security = new SecurityPromptService(this)
@@ -1024,8 +1030,10 @@ export class Browser {
     if (this.allWindows().some((w) => w.isPrivate)) return
     if (this.tabs.privateTabs().length > 0) return
     this.downloads.endPrivateSession()
-    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome.
+    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome,
+    // and so are the permissions its pages were allowed or refused.
     this.security.certificateExceptions.forgetContainer(PRIVATE_CONTAINER_ID)
+    this.permissions.endPrivateSession()
     void this.platform.sessions.clearPrivate()
   }
 

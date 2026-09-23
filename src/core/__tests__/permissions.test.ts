@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { PermissionPromptHost, StoreIO } from '../platform'
 import type { PermissionPrompt, PermissionPromptAnswer } from '../../shared/types'
 import {
+  DISMISSALS_BEFORE_BLOCK,
   PermissionService,
   decisionKey,
   displayOrigin,
@@ -499,6 +500,145 @@ function service(answer = true): {
   }
   return { permissions: new PermissionService(io, host), io, prompts }
 }
+
+/** What `permissions.json` holds once pending writes landed. */
+async function persisted(
+  permissions: PermissionService,
+  io: ReturnType<typeof memoryIo>
+): Promise<Record<string, string>> {
+  await (permissions as unknown as { store: { flush(): Promise<void> } }).store.flush()
+  return JSON.parse(io.files.get('permissions.json') ?? '{}').decisions ?? {}
+}
+
+describe('PermissionService: private windows and tabs (session-12)', () => {
+  const SITE = 'https://meet.example'
+  const inPrivate: PermissionRequestDetails = { tabId: 'p1', private: true }
+  const inRegular: PermissionRequestDetails = { tabId: 'r1' }
+
+  it("keeps a private window's allow for the session and out of the persisted file", async () => {
+    const { permissions, io, prompts } = service(true)
+    expect(await permissions.decide('camera', `${SITE}/room`, inPrivate)).toBe(true)
+    // The private session remembers: the same site asks no second time.
+    expect(await permissions.decide('camera', `${SITE}/other`, inPrivate)).toBe(true)
+    expect(permissions.check('camera', SITE, { private: true })).toBe(true)
+    expect(permissions.stored('camera', SITE, { private: true })).toBe('allow')
+    expect(prompts).toEqual(['Allow meet.example to use your camera?'])
+    expect(await persisted(permissions, io)).toEqual({})
+    expect(permissions.rules()).toEqual([])
+    // A regular window knows nothing of it: it is asked, and its answer is the one written.
+    expect(permissions.check('camera', SITE)).toBe(false)
+    expect(await permissions.decide('camera', `${SITE}/room`, inRegular)).toBe(true)
+    expect(prompts).toHaveLength(2)
+    expect(await persisted(permissions, io)).toEqual({ 'https://meet.example|camera': 'allow' })
+  })
+
+  it('forgets what the private session was answered when it ends', async () => {
+    const { permissions, prompts } = service(true)
+    const changes: PermissionChange[] = []
+    permissions.subscribe((c) => changes.push(c))
+    expect(await permissions.decide('geolocation', `${SITE}/map`, inPrivate)).toBe(true)
+    expect(changes).toEqual([{ permission: 'geolocation', origin: SITE }])
+    permissions.endPrivateSession()
+    expect(changes).toHaveLength(2)
+    expect(permissions.stored('geolocation', SITE, { private: true })).toBeNull()
+    expect(await permissions.decide('geolocation', `${SITE}/map`, inPrivate)).toBe(true)
+    expect(prompts).toHaveLength(2)
+  })
+
+  it("inherits the regular profile's block list but not its allows for prompted permissions", async () => {
+    const { permissions, io, prompts } = service(true)
+    permissions.set('camera', SITE, 'deny')
+    permissions.set('geolocation', SITE, 'allow')
+    permissions.set('popups', SITE, 'allow')
+    permissions.setDefault('notifications', 'allow')
+    // A refusal holds in the private window without a question.
+    expect(await permissions.decide('camera', `${SITE}/room`, inPrivate)).toBe(false)
+    expect(permissions.check('camera', SITE, { private: true })).toBe(false)
+    expect(prompts).toEqual([])
+    // An allow the user gave a regular window is asked for again (Chrome: inherited only if
+    // less permissive); the private answer is the private session's.
+    expect(permissions.check('geolocation', SITE, { private: true })).toBe(false)
+    expect(permissions.stored('geolocation', SITE, { private: true })).toBeNull()
+    expect(await permissions.decide('geolocation', `${SITE}/map`, inPrivate)).toBe(true)
+    expect(prompts).toEqual(['Allow meet.example to know your location?'])
+    // So is an allow chosen as the permission's default in Settings.
+    expect(permissions.resolve('notifications', SITE, { private: true })).toBe('ask')
+    expect(permissions.resolve('notifications', SITE)).toBe('allow')
+    // Rows never prompted for (pop-ups, blocking) are inherited whole, as Chrome inherits them.
+    expect(permissions.stored('popups', SITE, { private: true })).toBe('allow')
+    expect(permissions.check('fullscreen', SITE, { private: true })).toBe(true)
+    // The regular store is as the user left it.
+    expect(await persisted(permissions, io)).toEqual({
+      'https://meet.example|camera': 'deny',
+      'https://meet.example|geolocation': 'allow',
+      'https://meet.example|popups': 'allow',
+      '*|notifications': 'allow'
+    })
+  })
+
+  it("keeps a private window's block and its dismissal embargo out of the file too", async () => {
+    let answer: PermissionPromptAnswer = 'block'
+    const io = memoryIo()
+    const asked: string[] = []
+    const permissions = new PermissionService(io, {
+      show: async (request) => {
+        asked.push(request.message)
+        return answer
+      },
+      cancel: () => undefined
+    })
+    expect(await permissions.decide('microphone', `${SITE}/room`, inPrivate)).toBe(false)
+    expect(await permissions.decide('microphone', `${SITE}/room`, inPrivate)).toBe(false)
+    expect(asked).toHaveLength(1)
+    expect(permissions.stored('microphone', SITE, { private: true })).toBe('deny')
+    // The regular window still gets its own question.
+    expect(permissions.stored('microphone', SITE)).toBeNull()
+    answer = 'dismiss'
+    for (let i = 0; i < DISMISSALS_BEFORE_BLOCK; i++)
+      expect(await permissions.decide('camera', `${SITE}/room`, inPrivate)).toBe(false)
+    expect(permissions.stored('camera', SITE, { private: true })).toBe('deny')
+    expect(asked).toHaveLength(1 + DISMISSALS_BEFORE_BLOCK)
+    // Private dismissals never counted towards the regular embargo.
+    expect(permissions.stored('camera', SITE)).toBeNull()
+    expect(await persisted(permissions, io)).toEqual({})
+  })
+
+  it('tells a private tab from its id when a request names only the tab', async () => {
+    const { permissions, io, prompts } = service(true)
+    permissions.setPrivateTabs((tabId) => tabId.startsWith('private-'))
+    expect(await permissions.decide('notifications', `${SITE}/`, { tabId: 'private-7' })).toBe(true)
+    expect(prompts).toHaveLength(1)
+    expect(permissions.check('notifications', SITE, { tabId: 'private-7' })).toBe(true)
+    expect(permissions.check('notifications', SITE, { tabId: 'regular-1' })).toBe(false)
+    expect(await persisted(permissions, io)).toEqual({})
+    // "Always allow pop-ups on this site" from the private tab is the private session's alone.
+    permissions.remember('popups', `${SITE}/`, 'allow', { tabId: 'private-7' })
+    expect(permissions.stored('popups', SITE, { tabId: 'private-7' })).toBe('allow')
+    expect(permissions.stored('popups', SITE)).toBeNull()
+    permissions.forget('popups', `${SITE}/`, { tabId: 'private-7' })
+    expect(permissions.stored('popups', SITE, { tabId: 'private-7' })).toBeNull()
+    expect(await persisted(permissions, io)).toEqual({})
+  })
+
+  it('lets the site-information sheet and a clear reset a private answer', async () => {
+    const { permissions, io } = service(true)
+    const changes: PermissionChange[] = []
+    permissions.subscribe((c) => changes.push(c))
+    expect(await permissions.decide('camera', `${SITE}/room`, inPrivate)).toBe(true)
+    expect(await permissions.decide('camera', 'https://other.example/', inPrivate)).toBe(true)
+    permissions.resetOrigin(SITE, 'camera')
+    expect(permissions.stored('camera', SITE, { private: true })).toBeNull()
+    expect(permissions.stored('camera', 'https://other.example', { private: true })).toBe('allow')
+    expect(changes).toHaveLength(3)
+    // Nothing of the shared store changed, so nothing was written for it.
+    expect(await persisted(permissions, io)).toEqual({})
+    permissions.resetSites()
+    expect(permissions.stored('camera', 'https://other.example', { private: true })).toBeNull()
+    expect(await permissions.decide('camera', `${SITE}/room`, inPrivate)).toBe(true)
+    permissions.reset()
+    expect(permissions.stored('camera', SITE, { private: true })).toBeNull()
+  })
+})
 
 describe('PermissionService content settings', () => {
   it('stores per-origin decisions without prompting, keyed origin|permission', async () => {

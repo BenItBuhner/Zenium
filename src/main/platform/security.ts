@@ -47,15 +47,18 @@ export function permissionName(permission: string, details: RequestDetails): str
 /**
  * What the core's prompt needs to know about an Electron permission request: the tab it queues
  * under, the embedding page for requests from frames, the capture devices of a media request,
- * the external URL of a protocol launch, the file of a File System Access request.
+ * the external URL of a protocol launch, the file of a File System Access request, and whether
+ * the request comes from the private session (its answers stay in memory, see the core).
  */
 export function permissionRequestDetails(
   webContents: WebContents | null,
   details: RequestDetails,
-  tabId?: string
+  tabId?: string,
+  isPrivate = false
 ): PermissionRequestDetails {
   const out: PermissionRequestDetails = {}
   if (tabId) out.tabId = tabId
+  if (isPrivate) out.private = true
   const top = webContents && !webContents.isDestroyed() ? webContents.getURL() : ''
   if (!details.isMainFrame && top) out.embedderUrl = top
   if ('mediaTypes' in details && details.mediaTypes && details.mediaTypes.length > 0)
@@ -74,15 +77,19 @@ export function permissionRequestDetails(
  * Access handle, the entry and direction plus two facts Electron does not pass on – whether a
  * page of the site has seen a gesture (the check may then ask) and whether the file was just
  * chosen in a save dialog (Chromium empties it on the spot, before the page can touch it).
+ * `isPrivate`: the check comes from the private session, whose pages read the shared store the
+ * way Chrome's Incognito does (the core's rule).
  */
 export function permissionCheckDetails(
   permission: string,
   requestingOrigin: string,
   details: CheckDetails,
   browser: Browser,
-  freshlyEmptied: (path: string) => boolean = isFreshlyEmptied
+  freshlyEmptied: (path: string) => boolean = isFreshlyEmptied,
+  isPrivate = false
 ): PermissionRequestDetails {
   const out: PermissionRequestDetails = {}
+  if (isPrivate) out.private = true
   if (details.embeddingOrigin) out.embedderUrl = details.embeddingOrigin
   if (permission === 'media' && (details.mediaType === 'video' || details.mediaType === 'audio'))
     out.mediaTypes = [details.mediaType]
