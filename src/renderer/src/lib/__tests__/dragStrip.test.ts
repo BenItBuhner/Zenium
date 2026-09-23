@@ -325,3 +325,40 @@ describe('a tab dragged along the strip', () => {
     expect(dropStore.get()).toMatchObject({ key: null, ghost: 'row' })
   })
 })
+
+describe('under reduced motion (v2 §11.3) the strip’s motion along x is a jump', () => {
+  beforeEach(() => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }))
+  })
+
+  it('the neighbour is in the dragged row’s hole in the same call – the spring rests at once', () => {
+    grab('b')
+    pointer('pointermove', 8 + 2 * TAB + TAB * 0.75, 22)
+    expect(dropStore.get()).toMatchObject({ key: 'tab:c:after', ghost: 'row' })
+    // No frame has run: c is already translated the row's width along the strip, and stays.
+    expect(translateX(layout.rows['c']!)).toBeCloseTo(-TAB, 3)
+    expect(layout.rows['a']!.style.transform).toBe('')
+    frame()
+    expect(translateX(layout.rows['c']!)).toBeCloseTo(-TAB, 3)
+  })
+
+  it('a row laid out elsewhere at a commit is placed there, not glided: no translation, no frame', () => {
+    // The first commit records where the rows lie; then a and b trade places in the layout, and
+    // the next commit's flip along x places them where they are.
+    motion.flip()
+    rowBox(layout.rows['a']!, 8 + TAB, 6, TAB, ROW)
+    rowBox(layout.rows['b']!, 8, 6, TAB, ROW)
+    frames = []
+    motion.flip()
+    expect(layout.rows['a']!.style.transform).toBe('')
+    expect(layout.rows['b']!.style.transform).toBe('')
+    expect(frames).toHaveLength(0)
+    // With motion, the same commit would have drawn a a row's width back and asked for a frame.
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    rowBox(layout.rows['a']!, 8, 6, TAB, ROW)
+    rowBox(layout.rows['b']!, 8 + TAB, 6, TAB, ROW)
+    motion.flip()
+    expect(translateX(layout.rows['a']!)).toBeCloseTo(TAB, 3)
+    expect(frames.length).toBeGreaterThan(0)
+  })
+})
