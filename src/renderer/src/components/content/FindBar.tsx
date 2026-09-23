@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { announce, findAnnouncement } from '@renderer/lib/announce'
+import { findAnnouncement } from '@renderer/lib/announce'
 import { run } from '@renderer/lib/api'
 import { hint } from '@renderer/lib/shortcuts'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -97,14 +97,6 @@ export function FindBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs per request; the rest is read as it stands then
   }, [request?.seq])
 
-  // Each count the page reports is said through the chrome's status region ("3 of 12 matches",
-  // "No matches"), as Chrome's find bar announces its count; the count in the field is plain text.
-  useEffect(() => {
-    const words = findAnnouncement(text, result)
-    if (words) announce(words)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- per result; the query is read as it stands then
-  }, [result?.activeMatchOrdinal, result?.matches, result === null])
-
   // Under a fullscreen page the view is drawn by the main process; it makes room for the bar.
   useEffect(() => {
     if (docked !== 'fullscreen') return
@@ -122,6 +114,27 @@ export function FindBar({
   const count = findCounter(text, result)
   // A tally still growing (the viewer reading its pages) is not "nothing found" yet.
   const noMatch = result !== null && result.matches === 0 && !result.searching
+  // The count is the bar's own status region (a11y-35; Chrome's find bar's is one): polite, so
+  // it waits for what the reader is saying, atomic, so it is read whole, and its words ("3 of 12
+  // matches", "No matches") its accessible text, the figures the eye reads hidden from it. A
+  // reader hears the region when its text changes, so it hears each count once: a keystroke
+  // whose result reads the same (a miss after a miss, a lone match narrowed to a lone match)
+  // leaves the node as it was, and nothing repeats. Nothing goes through the chrome's general
+  // announcer for it, which would say the same words twice.
+  const words = findAnnouncement(text, result) ?? ''
+  const counter = (className: string): JSX.Element => (
+    <span
+      className={className}
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-testid="find-count"
+      data-no-match={noMatch ? 'true' : undefined}
+    >
+      <span aria-hidden="true">{count}</span>
+      {words && <span className="sr-only">{words}</span>}
+    </span>
+  )
   // The desktop's buttons are the shared §9.3 icon button (28, the 16 glyph at stroke 1.5); the
   // phone's are 44 boxes beside the 40 field (§9.12) in the bar's 56 (§9.21); the keyboard hints
   // stay with the desktop's tooltips (§9.31).
@@ -176,21 +189,13 @@ export function FindBar({
           data-no-match={noMatch ? 'true' : undefined}
         >
           {input}
-          <span className="shrink-0 pl-2 text-[13px] tabular-nums text-[var(--zen-muted)]">
-            {count}
-          </span>
+          {counter('shrink-0 pl-2 text-[13px] tabular-nums text-[var(--zen-muted)]')}
         </div>
       ) : (
         // The desktop's row (§9.32): the 320 field, then the count – the miss shows there alone.
         <>
           {input}
-          <span
-            className="zen-find-count"
-            data-testid="find-count"
-            data-no-match={noMatch ? 'true' : undefined}
-          >
-            {count}
-          </span>
+          {counter('zen-find-count')}
         </>
       )}
       <button
