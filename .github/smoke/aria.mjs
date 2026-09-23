@@ -5,9 +5,10 @@
 
 /**
  * The states the walkthrough snapshots, in order; one baseline file per state under `aria/`.
- * The first four are surfaces at rest; the last four (a11y pass 2, W4-6) are the chrome's
- * accessibility wiring the snapshot alone does not show, so each carries facts under it
- * ({@link formatAriaFacts}): `dialog-cover` the inert chrome and frame behind the hosted dialog
+ * The first five are surfaces at rest (`web-capture` W4-4's overlay); the last four (a11y pass
+ * 2, W4-6) are the chrome's accessibility wiring the snapshot alone does not show, so each
+ * carries facts under it ({@link formatAriaFacts}): `dialog-cover` the inert chrome and frame
+ * behind the hosted dialog
  * (a11y-32), `tooltip-focus` the tooltip a toolbar control shows on keyboard focus and the
  * `aria-describedby` that ties it to the control (a11y-26), `tab-row` the tab rows' places in
  * their list and the states a reader hears – muted, pinned, sleeping (a11y-31), `find-status`
@@ -18,6 +19,7 @@ export const ARIA_STATES = [
   'app-menu',
   'urlbar',
   'hosted-dialog',
+  'web-capture',
   'dialog-cover',
   'tooltip-focus',
   'tab-row',

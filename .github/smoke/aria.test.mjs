@@ -258,6 +258,7 @@ describe('the checked-in baselines (.github/smoke/aria)', () => {
       'app-menu',
       'urlbar',
       'hosted-dialog',
+      'web-capture',
       'dialog-cover',
       'tooltip-focus',
       'tab-row',
@@ -303,6 +304,15 @@ describe('the checked-in baselines (.github/smoke/aria)', () => {
     expect(dialog).toMatch(/- heading "Add search engine"/)
     expect(dialog).toMatch(/- textbox "Name"/)
     expect(dialog).toMatch(/- button "Add"/)
+    // The Web capture overlay: the modal dialog with its toolbar – the hint that the page's
+    // geometry is known, the two whole-page captures and Cancel (capture-01, capture-16).
+    const capture = readFileSync(join(ariaDir, ariaBaselineName('web-capture')), 'utf8')
+    expect(capture).toMatch(/^- dialog "Web capture"/)
+    expect(capture).toMatch(/- toolbar "Capture":/)
+    expect(capture).toMatch(/Drag to select an area/)
+    expect(capture).toMatch(/- button "Visible area"/)
+    expect(capture).toMatch(/- button "Full page"/)
+    expect(capture).toMatch(/- button "Cancel capture"/)
   })
 
   it('the pass-2 baselines carry the facts the snapshot leaves out, each about its own claim', () => {
