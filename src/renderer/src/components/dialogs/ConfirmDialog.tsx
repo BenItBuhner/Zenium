@@ -9,12 +9,16 @@ import { V2TitleBlock } from '../extensions/v2'
 
 /**
  * Where the keyboard goes as a prompt leaves (§9.5, §9.22): the control that had it as the
- * prompt opened (the default, `undefined`), an element or a function read at the leave (a
- * consumer that decides by the answer – a keyboard's Cancel to the row it came from, a Delete
- * whose row goes with it to nothing), or `false` for no return of the prompt's own (a consumer
- * that hands the keyboard to the page itself).
+ * prompt opened (the OPENER – the default, `undefined`), an element, or `false` for no return
+ * of the prompt's own (a consumer that hands the keyboard to the page itself); or a function
+ * read at the leave, for a consumer that decides by the answer – a keyboard's Cancel to the row
+ * it came from, a Delete whose row goes with it. What the function yields reads the same way:
+ * an element is the target, `false` is nowhere, and `null` or `undefined` – a row control looked
+ * up after its row was removed (#401's `rowControl`) – FALLS BACK TO THE OPENER (one hop down,
+ * unless the opener is gone too), never to nowhere: a getter that means nowhere says `false`.
  */
-export type ConfirmReturnFocus = HTMLElement | (() => HTMLElement | null | undefined) | false
+export type ConfirmReturnFocus =
+  HTMLElement | (() => HTMLElement | null | undefined | false) | false
 
 export interface ConfirmDialogProps {
   /** The prompt's name on its root, `data-confirm="<name>"`: a test's and a drive's handle. */
@@ -244,14 +248,10 @@ function ConfirmPanel({
     root.focus({ preventScroll: true })
     return () => {
       const wanted = latest.current.returnFocus
-      const target =
-        wanted === false
-          ? null
-          : wanted === undefined
-            ? opener
-            : typeof wanted === 'function'
-              ? wanted()
-              : wanted
+      // A getter's element is the target and its `false` is nowhere, as a plain value's; its
+      // null – the row it names gone – is the opener, as `undefined` is.
+      const named = typeof wanted === 'function' ? wanted() : wanted
+      const target = named === false ? null : (named ?? opener)
       if (!target?.isConnected) return
       // Only a focus the prompt's leave loses is given back: one still on the prompt (kept in
       // the slot on its way out), fallen to `body`, or under an `inert`; one the user or a

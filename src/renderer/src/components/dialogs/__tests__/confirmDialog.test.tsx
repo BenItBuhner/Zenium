@@ -599,6 +599,67 @@ describe('the way back (§9.5, §9.22)', () => {
     expect(document.activeElement).toBe(other)
   })
 
+  it('a getter’s null falls back to the opener – #401’s rowControl, the row’s control looked up after the verb removed its row – unless the opener is gone too; a getter’s false is nowhere, as a plain false is', async () => {
+    // A settings page's row with its confirmation; the keyboard stood on a toolbar button as the
+    // prompt came (the row was reached by pointer), so that button is the opener.
+    const opener = chromeControl()
+    opener.focus()
+    const list = document.createElement('div')
+    const row = document.createElement('button')
+    row.setAttribute('data-row', 'clear')
+    list.appendChild(row)
+    document.body.appendChild(list)
+    const rowControl = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-row="clear"]')
+    render(<Prompt returnFocus={rowControl} />)
+    await settle()
+    expect(document.activeElement).toBe(dialog())
+    // The verb removed the row: the getter yields null as the prompt leaves – one hop down to
+    // the opener (once the chrome's inert lifts), never nowhere.
+    row.remove()
+    render(<Prompt open={false} returnFocus={rowControl} />)
+    await settle()
+    endExit()
+    await settle()
+    expect(document.activeElement).toBe(opener)
+
+    // While the row stands it is the target, whatever the opener.
+    list.appendChild(row)
+    render(<Prompt returnFocus={rowControl} />)
+    await settle()
+    render(<Prompt open={false} returnFocus={rowControl} />)
+    await settle()
+    endExit()
+    await settle()
+    expect(document.activeElement).toBe(row)
+
+    // The row gone and the opener with it (an item dialog's control, closed under the prompt):
+    // nowhere – that dialog's own return governs.
+    act(() => opener.focus())
+    render(<Prompt returnFocus={rowControl} />)
+    await settle()
+    row.remove()
+    opener.remove()
+    render(<Prompt open={false} returnFocus={rowControl} />)
+    await settle()
+    endExit()
+    await settle()
+    expect(document.activeElement).toBe(document.body)
+
+    // A getter that means nowhere says so: its `false` is not the opener's fallback.
+    const again = chromeControl()
+    again.focus()
+    render(<Prompt returnFocus={() => false} />)
+    await settle()
+    expect(document.activeElement).toBe(dialog())
+    render(<Prompt open={false} returnFocus={() => false} />)
+    await settle()
+    endExit()
+    await settle()
+    expect(document.activeElement).not.toBe(again)
+    expect(again.isConnected).toBe(true)
+  })
+
   it('leaves a focus the user has already placed elsewhere alone', async () => {
     const opener = chromeControl()
     opener.focus()
