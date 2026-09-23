@@ -244,6 +244,38 @@ describe('the macOS menu bar', () => {
     expect(h.browser.allWindows()).toHaveLength(1)
   })
 
+  it('carries Close Private Window – Close 2 Private Windows for more – in the Window menu’s first group while a private window is up, closing every private window (profiles-25)', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = harness()
+      const labels = (): string[] =>
+        submenu(last(h), 'Window').map((i) => (i.type === 'separator' ? '-' : (i.label ?? '')))
+      expect(labels().slice(0, 3)).toEqual(['Minimize', 'Zoom', '-'])
+      const priv = h.browser.openWindow('private', h.win)!
+      vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+      expect(labels().slice(0, 4)).toEqual(['Minimize', 'Zoom', 'Close Private Window', '-'])
+      const other = h.browser.openWindow('private', h.win)!
+      vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+      const row = item(submenu(last(h), 'Window'), 'Close 2 Private Windows')
+      expect(row.action).toBeUndefined()
+      row.click?.()
+      // The close checks are promises: let them settle (no timer of the chain is longer).
+      await vi.advanceTimersByTimeAsync(MENU_BAR_SETTLE_MS)
+      expect(priv.closeApproved).toBe(true)
+      expect(other.closeApproved).toBe(true)
+      expect(h.win.closeApproved).toBe(false)
+      // Gone with the private windows: the regular window's bar has no such row.
+      priv.onClosing()
+      priv.onClosed()
+      other.onClosing()
+      other.onClosed()
+      vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+      expect(labels().slice(0, 3)).toEqual(['Minimize', 'Zoom', '-'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reflects the front window: compact mode is a checkbox that follows it', () => {
     vi.useFakeTimers()
     try {

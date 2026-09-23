@@ -66,7 +66,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     private var seq = 0
     private var askedNotifications = false
 
-    enum class Kind { HTTP, DATA, BLOB }
+    /** `CONTENT`: a document on the device another app opened with Zenium (`content:` / `file:`; LocalDocuments), copied into Downloads. */
+    enum class Kind { HTTP, DATA, BLOB, CONTENT }
     enum class Control { RUN, PAUSE, CANCEL }
 
     sealed class Destination {
@@ -148,6 +149,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
             url.startsWith("blob:") -> Kind.BLOB
             url.startsWith("data:") -> Kind.DATA
             url.startsWith("http://") || url.startsWith("https://") -> Kind.HTTP
+            LocalDocuments.isLocal(url) -> Kind.CONTENT
             else -> {
                 toast("Zenium cannot download this kind of link")
                 return
@@ -541,6 +543,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
                 Kind.HTTP -> pausedExit = transferHttp(l)
                 Kind.DATA -> transferData(l)
                 Kind.BLOB -> transferBlob(l)
+                Kind.CONTENT -> transferContent(l)
             }
         } catch (e: Cancelled) {
             l.sink?.delete()
@@ -761,6 +764,35 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
             }
         }
         l.data = null
+        main.post { completed(l) }
+    }
+
+    /**
+     * A document another app handed the browser (`content:` / `file:`; LocalDocuments, reached
+     * from `TabWebView.loadUrl` for a PDF): copied into Downloads as Chrome's Android flow copies
+     * a PDF a tab navigates to, so the viewer, "Open with", the share sheet and the row's own
+     * file are the download's and never the other app's. The read grant an intent carries lasts
+     * the activity's life: a retry after a restart fails as a missing file.
+     */
+    private fun transferContent(l: Live) {
+        val input = activity.contentResolver.openInputStream(Uri.parse(l.url)) ?: throw java.io.FileNotFoundException(l.url)
+        input.use { stream ->
+            if (l.sink == null) l.sink = createSink(l)
+            l.received = 0
+            report(l, "progressing", force = true)
+            l.sink!!.open(false).use { out ->
+                val buffer = ByteArray(256 * 1024)
+                while (true) {
+                    if (l.control == Control.CANCEL) throw Cancelled()
+                    val n = stream.read(buffer)
+                    if (n < 0) break
+                    out.write(buffer, 0, n)
+                    l.received += n
+                    report(l, "progressing")
+                }
+            }
+        }
+        if (l.total < 0) l.total = l.received
         main.post { completed(l) }
     }
 
