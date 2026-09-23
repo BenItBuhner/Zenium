@@ -98,7 +98,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         check("the group is a row of the sidebar", row != null, "row $row")
         check("the row is 44 tall", row?.let { abs(it.height() - 44) <= 1 } == true, "height ${row?.height()}")
         check("the row runs the sidebar's full width, on the tab rows' edges", row != null && home != null && abs(row.left - home.left) <= 1 && abs(row.width() - home.width()) <= 1, "row $row, Home's row $home")
-        check("the glyph slot holds a dot of the group's colour", inDom("$GLYPH:not([data-saved]) .zen-group-row-dot") && dotColour() == BLUE_RGB, "dot ${dotColour()}")
+        check("the glyph slot holds a dot of the group's colour (the ${chromeScheme()} set)", inDom("$GLYPH:not([data-saved]) .zen-group-row-dot") && dotColour() == blueRgb(), "dot ${dotColour()}, expected ${blueRgb()}")
         check("the name reads Research at 14", textOf(NAME) == "Research" && abs(fontSize(NAME) - 14.0) < 0.5, "name '${textOf(NAME)}' at ${fontSize(NAME)}")
         check("the count reads 2 as the 13 aside", textOf(COUNT) == "2" && abs(fontSize(COUNT) - 13.0) < 0.5, "count '${textOf(COUNT)}' at ${fontSize(COUNT)}")
         check("the chevron points down on the open group", inDom("$GROUP_ROW svg.zen-group-row-chevron") && attrOf(GROUP_ROW, "aria-expanded") == "true", "expanded '${attrOf(GROUP_ROW, "aria-expanded")}'")
@@ -198,7 +198,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         val recoloured = touchUntil("Green", { textRect(RADIO, "Green") }, { folderColor() == "green" }, waitMs = 3_000)
         check("a touch on Green recolours the group at once", recoloured, "colour ${folderColor()}")
         check("picking a colour closes the menu", awaitJs(MENU_OPEN, false, 3_000), "menu ${jsText(MENU_OPEN)}")
-        check("the row's dot follows the colour", awaitJs("(function(){var d=document.querySelector('$GLYPH .zen-group-row-dot');return !!d&&getComputedStyle(d).backgroundColor==='$GREEN_RGB'})()", true, 3_000), "dot ${dotColour()}")
+        check("the row's dot follows the colour", awaitJs("(function(){var d=document.querySelector('$GLYPH .zen-group-row-dot');return !!d&&getComputedStyle(d).backgroundColor==='${greenRgb()}'})()", true, 3_000), "dot ${dotColour()}, expected ${greenRgb()}")
         SystemClock.sleep(800)
         still("recoloured")
     }
@@ -262,7 +262,7 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         betaId = tabIdAt(BETA_URL) ?: betaId
         finding("  (the kept pages are tabs again: Alpha $alphaId, Beta $betaId)")
         check("the rows stand under it again", awaitDom(row(alphaId), 4_000) && awaitDom(row(betaId), 1_000), "alpha ${inDom(row(alphaId))}, beta ${inDom(row(betaId))}")
-        check("the dot is back, in the group's colour", dotColour() == GREEN_RGB, "dot ${dotColour()}")
+        check("the dot is back, in the group's colour", dotColour() == greenRgb(), "dot ${dotColour()}, expected ${greenRgb()}")
         SystemClock.sleep(1_500)
         still("reopened")
     }

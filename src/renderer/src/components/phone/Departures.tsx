@@ -2,7 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
-import { groupColorChannels } from '@renderer/lib/groups'
+import { groupColorVars } from '@renderer/lib/groups'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { departed, departStore, releaseDepartures, type Departure } from './departureStore'
@@ -147,11 +147,12 @@ function Exit({
     <div
       ref={ref}
       className="zen-group pointer-events-none fixed z-30 flex flex-col overflow-hidden"
+      data-group-rgb=""
       style={
         {
           ...place(item.rect),
           willChange: 'transform, opacity',
-          '--zen-group-rgb': groupColorChannels(item.folder.color)
+          ...groupColorVars(item.folder.color)
         } as CSSProperties
       }
     >

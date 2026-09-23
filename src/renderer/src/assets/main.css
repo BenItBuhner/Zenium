@@ -365,6 +365,26 @@
 }
 
 /*
+ * A tab group's colour is a pair (design language v2 §9.14: one set a scheme, every value 3:1 on
+ * the window fill it sits on). The element that wears it carries both schemes' channels –
+ * `--zen-group-rgb-light` and `--zen-group-rgb-dark`, `lib/groups.ts`'s `groupColorVars` – and
+ * is marked `data-group-rgb`; these two rules pick the set the theme's fills are drawn for, so
+ * every rule below goes on reading `rgb(var(--zen-group-rgb) / α)` and a flip of the root's
+ * `data-theme` recolours every dot, ring, swatch, chip and line in the frame the tokens flip,
+ * with no component reading the theme. The pick has to stand on the carrier, not on the root: a
+ * `var()` is substituted on the element that declares it and inherits as what it resolved to,
+ * and `light-dark()` hands back a colour, never the channels the alphas need. The pair stands
+ * after the token blocks above, which `shared/newTabPage.ts` copies to the new tab page as one
+ * run and stops at the first rule that is not a token block.
+ */
+[data-group-rgb] {
+  --zen-group-rgb: var(--zen-group-rgb-light);
+}
+:root[data-theme='dark'] [data-group-rgb] {
+  --zen-group-rgb: var(--zen-group-rgb-dark);
+}
+
+/*
  * One focus ring for every v2 control (§1, §9.6): 2 px in `--v2-ring`, at `--v2-ring-offset`
  * from the control's edge, on any element whose class starts with zen-v2-. The offset is the
  * control's, the same in both themes (§1; the #247 chassis note): 2 outside – the token's
@@ -2793,7 +2813,7 @@
     transform: scale(0.92);
   }
   .zen-group-swatch-selected {
-    box-shadow: inset 0 0 0 2px var(--zen-swatch);
+    box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
   }
 
   /*
@@ -8325,8 +8345,8 @@
  * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
  * gutter's end; the first heading stands under the segment (or the space strip), which already
  * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
- * open group, the same as a 2 px ring for a saved one, whose tabs are closed (`--zen-group-color`
- * on the glyph). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
+ * open group, the same as a 2 px ring for a saved one, whose tabs are closed (the §9.14 pair on
+ * the glyph, `--zen-group-rgb` the theme's pick). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
  * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
  * own 40 is for a list whose field carries 8 under it, and the segment carries none.
  */
@@ -8357,10 +8377,10 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--zen-group-color);
+  background: rgb(var(--zen-group-rgb));
 }
 .zen-overview-group-glyph[data-saved] {
-  border: 2px solid var(--zen-group-color);
+  border: 2px solid rgb(var(--zen-group-rgb));
   background: transparent;
 }
 /* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
@@ -8418,7 +8438,7 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--zen-swatch);
+  background: rgb(var(--zen-group-rgb));
   transition: box-shadow 120ms var(--zen-ease);
 }
 .zen-group-editor-swatch[aria-checked='true'] > .zen-group-editor-swatch-disc {

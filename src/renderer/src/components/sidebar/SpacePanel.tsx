@@ -10,7 +10,7 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
-import { groupColorChannels, groupsOf } from '@renderer/lib/groups'
+import { groupColorVars, groupsOf } from '@renderer/lib/groups'
 import { groupRowOf, isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
@@ -749,7 +749,8 @@ function GroupRowGlyph({ folder, saved }: { folder: Folder; saved: boolean }): J
       className="zen-group-row-glyph"
       data-saved={saved || undefined}
       data-testid="group-row-glyph"
-      style={{ '--zen-group-rgb': groupColorChannels(folder.color) } as CSSProperties}
+      data-group-rgb=""
+      style={groupColorVars(folder.color) as CSSProperties}
       aria-hidden
     >
       {own ? (
