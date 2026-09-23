@@ -832,9 +832,14 @@ describe('Escape gives the focus back down the stack one hop at a time (§9.22, 
  * and the desktop host runs `after` at once – so it runs only a function, the two hosts alike.
  */
 describe('a desktop dialog’s dismiss runs only a function as its after', () => {
-  /** A form whose Cancel binds the sheet dismiss itself to the click, the hazard as written. */
+  /**
+   * A form whose Cancel binds the sheet dismiss itself to the click, the hazard as written. The
+   * types refuse it (`after` is no `MouseEvent`), which is how a form gets there: through a
+   * `close` retyped as `() => void` on the way (`FormBody` did that on the phone); the cast
+   * stands in for that retyping so the test drives the runtime shape.
+   */
   function Cancel(): JSX.Element {
-    const dismiss = useSheetDismiss()
+    const dismiss = useSheetDismiss() as unknown as () => void
     return (
       <button type="button" onClick={dismiss}>
         Cancel
