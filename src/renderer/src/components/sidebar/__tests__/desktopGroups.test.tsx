@@ -404,6 +404,14 @@ describe('the group’s colour (M2) and the folded count badge (M3)', () => {
     expect(bar).toContain('background: rgb(var(--zen-group-rgb))')
     expect(bar).toContain('pointer-events: none')
     expect(bar).toContain('z-index: 1')
+    // The bar shares the header's first 3 px, where the §1 ring (2 px, 2 inside the edge) would
+    // stand under it: the header rises over the bar while it wears the ring, so the ring paints
+    // whole (§9.20) – a positioned `.zen-tab`, one level above the bar's, and only then.
+    expect(rule('.zen-tab')).toContain('position: relative')
+    const ringed = rule('.zen-group-fold[data-group-bar] > .zen-tab:focus-visible')
+    expect(ringed).toContain('z-index: 2')
+    expect(ringed).not.toContain('outline')
+    expect(css).not.toMatch(/\.zen-group-fold\[data-group-bar\] > \.zen-tab \{/)
     // A colourless folder's bar is the grey default, never none.
     panel([tab('home'), tab('a', { folderId: 'g' })], [folder({ color: undefined })])
     expect(shell().hasAttribute('data-group-bar')).toBe(true)
