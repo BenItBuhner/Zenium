@@ -21,6 +21,8 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Records the private and security surfaces of W5-7 on the phone (ERR-09, TAB-03, INC-03,
@@ -41,8 +43,10 @@ import java.io.File
  *
  * The http page is served on the device's own network address (`DemoServer.siteAddress`), which
  * Chromium's rules call insecure where the loopback is as trustworthy as https; nothing of the
- * chip's scene touches the network. The tracker is a second server on the loopback: a different
- * host, so its frame in the page is a third party's.
+ * chip's scene touches the network. The cookies probe is read on the loopback, `127.0.0.1`, with
+ * the tracker's frame from `127.0.0.2`, a second server on another loopback host: a different
+ * site, so its frame in the page is a third party's, and the frame's own reading of its cookies
+ * (up to the page by `postMessage`) is the evidence; the jars are on record beside it.
  *
  * Driven by the `android-private-security-demo` workflow. See [DemoHarness] for the plumbing.
  * The recorder sees the private surface because `PrivateBrowsing.captureForRecording` is on for
@@ -67,8 +71,10 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         val address = DemoServer.siteAddress()
             ?: error("the device has no network address besides the loopback: no insecure origin to serve the http page from")
         siteOrigin = "http://$address:$SITE_PORT"
+        // Both on every interface: the site answers on the device's address (the chip's page) and
+        // on 127.0.0.1 (the cookies probe); the tracker on 127.0.0.2, another loopback host.
         site = DemoServer(SITE_PORT, siteRoutes(), address = "0.0.0.0").also { it.start() }
-        tracker = DemoServer(TRACKER_PORT, trackerRoutes()).also { it.start() }
+        tracker = DemoServer(TRACKER_PORT, trackerRoutes(), address = "0.0.0.0").also { it.start() }
         var fault: Throwable? = null
         try {
             runDemo()
@@ -107,34 +113,50 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
     // --- the pages -------------------------------------------------------------------------------
 
     /**
-     * The http site: a page that bakes a first-party cookie of its own and embeds the tracker's
-     * frame (a third party's document, which tries to bake one in its own jar), and a second
-     * page for the other regular tab.
+     * The http site: the plain page for the chip (on the device's own address: insecure), a second
+     * page for the other regular tab, and the cookies probe – read on the loopback, `127.0.0.1`,
+     * where it bakes a first-party cookie of its own and embeds the tracker's frame from another
+     * loopback host, `127.0.0.2`: a different site, so the frame is a third party's. The frame
+     * reports its own cookies up by `postMessage`; the page keeps the word in `window.__trk`.
      */
     private fun siteRoutes(): Map<String, Pair<String, ByteArray>> = mapOf(
         "/" to ("text/html; charset=utf-8" to (
             "<!doctype html><html><head><meta charset=utf-8>" +
                 "<meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Plain http site</title>" +
-                "<style>body{margin:0;font-family:sans-serif;color:#15141a;background:#fff}main{padding:36px 24px}" +
-                "h1{font-size:28px;margin:0 0 16px}p{font-size:18px;line-height:1.5;color:#3b3a44;margin:0 0 20px}" +
-                "iframe{width:100%;height:96px;border:1px solid #d9d8df;border-radius:12px}</style></head>" +
+                "<style>$PAGE_STYLE</style></head>" +
                 "<body><main><h1>Plain http site</h1>" +
                 "<p>This page is served over plain http on the device's own network address, so the address is not secure.</p>" +
-                "<p>Below is a frame from another site: a third party that tries to set a cookie of its own.</p>" +
-                "<iframe src=\"$TRACKER_ORIGIN/tracker.html\" title=\"Tracker frame\"></iframe>" +
-                "</main><script>document.cookie='first=here; path=/; max-age=86400';</script></body></html>"
+                "<p>Anything typed here travels in the open: the pill says so with the open lock.</p>" +
+                "</main></body></html>"
             ).toByteArray()),
-        "/notes.html" to DemoServer.page("Notes", "<p>A second regular tab, so the Tabs pane has two cards.</p>")
+        "/notes.html" to DemoServer.page("Notes", "<p>A second regular tab, so the Tabs pane has two cards.</p>"),
+        "/cookies.html" to ("text/html; charset=utf-8" to (
+            "<!doctype html><html><head><meta charset=utf-8>" +
+                "<meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Cookies probe</title>" +
+                "<style>${PAGE_STYLE}iframe{width:100%;height:96px;border:1px solid #d9d8df;border-radius:12px}</style></head>" +
+                "<body><main><h1>Cookies probe</h1>" +
+                "<p>This page bakes a cookie of its own and embeds a frame from another site: a third party that tries to bake one in its own jar.</p>" +
+                "<p id=r>Waiting for the frame\u2026</p>" +
+                "<iframe src=\"$TRACKER_ORIGIN/tracker.html\" title=\"Tracker frame\"></iframe>" +
+                "</main><script>document.cookie='first=here; path=/; max-age=86400';window.__trk=null;" +
+                "window.addEventListener('message',function(e){if(e.origin!=='$TRACKER_ORIGIN')return;var c=String(e.data);window.__trk=c;" +
+                "document.getElementById('r').textContent='The frame says: cookie '+(c?'set ('+c+')':'refused')});</script></body></html>"
+            ).toByteArray())
     )
 
-    /** The tracker's frame: bakes a cookie in its own jar from script, the way a third party would. */
+    /**
+     * The tracker's frame: bakes a cookie in its own jar from script, the way a third party
+     * would – `SameSite=None; Secure`, the only shape a cookie may take in a cross-site frame
+     * (the loopback counts as trustworthy for `Secure`) – then tells the page what it reads back.
+     */
     private fun trackerRoutes(): Map<String, Pair<String, ByteArray>> = mapOf(
         "/tracker.html" to ("text/html; charset=utf-8" to (
             "<!doctype html><html><head><meta charset=utf-8><style>body{margin:0;padding:16px;font-family:sans-serif;" +
                 "font-size:15px;color:#5b5a63;background:#f2f1f5}</style></head><body>" +
                 "<div id=t>Tracker frame</div><script>" +
-                "document.cookie='trk='+Math.random().toString(36).slice(2,8)+'; path=/; max-age=86400';" +
-                "document.getElementById('t').textContent='Tracker frame: cookie '+(document.cookie?'set':'refused');" +
+                "document.cookie='trk='+Math.random().toString(36).slice(2,8)+'; path=/; max-age=86400; SameSite=None; Secure';" +
+                "var c=document.cookie;document.getElementById('t').textContent='Tracker frame: cookie '+(c?'set':'refused');" +
+                "parent.postMessage(c,'*');" +
                 "</script></body></html>"
             ).toByteArray())
     )
@@ -275,8 +297,10 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             }
             coreInvoke("tab.navigate", json("tabId" to NOTES_TAB, "input" to "$siteOrigin/notes.html").toString())
             awaitLoaded(NOTES_TAB, "$siteOrigin/notes.html", 15_000)
+            expect("the seeded regular tabs are both still open", tabExists(SITE_TAB) && tabExists(NOTES_TAB))
             coreInvoke("tab.activate", json("tabId" to SITE_TAB).toString())
-            awaitActiveTab(SITE_TAB)
+            expect("the site tab is in front again", awaitActiveTab(SITE_TAB))
+            finding("  active tab ${activeCoreTab()?.optString("id")}; tabs ${coreState().optJSONObject("tabs")?.keys()?.asSequence()?.toList()}")
             closeSheets()
         }
 
@@ -331,21 +355,35 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             shot("14-ntp-switch-dark")
             setScheme("light")
 
-            // The private tab visits the site: the tracker's frame is refused a cookie, the
-            // site's own is kept; the regular tab's views were never asked.
-            val regularBefore = viewAccepts(SITE_TAB)
-            coreInvoke("tab.navigate", json("tabId" to private1, "input" to "$siteOrigin/").toString())
-            expect("the private tab loads the http page", awaitLoaded(private1, "$siteOrigin/"))
-            SystemClock.sleep(1_500)
+            // The probe. A regular tab first: its WebView accepts third parties, so the tracker's
+            // frame bakes its cookie and says so; the regular views are never asked to change.
+            val regularBefore = regularViewsAccept()
+            finding("  views before the probe: ${viewsNote()}")
+            coreInvoke("tab.activate", json("tabId" to NOTES_TAB).toString())
+            expect("set-up: the regular tab comes in front for its visit", awaitActiveTab(NOTES_TAB))
+            coreInvoke("tab.navigate", json("tabId" to NOTES_TAB, "input" to COOKIES_URL).toString())
+            expect("a regular tab loads the cookies page", awaitLoaded(NOTES_TAB, COOKIES_URL))
+            val regularReport = awaitTrackerReport(NOTES_TAB)
+            finding("  the frame in the regular tab: '$regularReport'; default jar: tracker '${jarOf(Profiles.DEFAULT_CONTAINER, TRACKER_ORIGIN)}', site '${jarOf(Profiles.DEFAULT_CONTAINER, COOKIES_ORIGIN)}'")
+            expect("in a regular tab the tracker's cookie is set (third parties allowed there, as before)", regularReport.contains("trk="))
+            SystemClock.sleep(1_200)
+
+            // Then the private tab, the switch on: the frame is refused its cookie, the page's own
+            // is kept, and the regular views answer as before.
+            coreInvoke("tab.activate", json("tabId" to private1).toString())
+            expect("set-up: the private tab is in front again", awaitActiveTab(private1))
+            coreInvoke("tab.navigate", json("tabId" to private1, "input" to COOKIES_URL).toString())
+            expect("the private tab loads the cookies page", awaitLoaded(private1, COOKIES_URL))
+            val blockedReport = awaitTrackerReport(private1)
+            SystemClock.sleep(1_000)
             expect("the private view refuses third-party cookies", viewAccepts(private1) == false)
-            expect("the regular views accept them, unchanged", viewAccepts(SITE_TAB) == true && viewAccepts(NOTES_TAB) == true && regularBefore == true)
+            expect("the regular views accept them, unchanged", regularBefore == true && regularViewsAccept() == true)
             val privateTracker = jarOf(Profiles.PRIVATE_CONTAINER, TRACKER_ORIGIN)
-            val privateSite = jarOf(Profiles.PRIVATE_CONTAINER, siteOrigin)
-            val defaultTracker = jarOf(Profiles.DEFAULT_CONTAINER, TRACKER_ORIGIN)
-            expect("the tracker's cookie never reaches the private jar", !privateTracker.contains("trk="))
+            val privateSite = jarOf(Profiles.PRIVATE_CONTAINER, COOKIES_ORIGIN)
+            finding("  the frame in the private tab, switch on: '$blockedReport'; private jar: tracker '$privateTracker', site '$privateSite'; views: ${viewsNote()}")
+            expect("the tracker's cookie is refused in the private tab (the frame's own reading)", blockedReport == "")
             expect("the site's own cookie is in the private jar (first party is not blocked)", privateSite.contains("first="))
-            expect("the default jar has the tracker's cookie (the regular tab's third parties are allowed)", defaultTracker.contains("trk="))
-            finding("  private jar: tracker '$privateTracker', site '$privateSite'; default jar: tracker '$defaultTracker', site '${jarOf(Profiles.DEFAULT_CONTAINER, siteOrigin)}'")
+            expect("nothing of the tracker's reaches the private jar", !privateTracker.contains("trk="))
             finding("  pill on the private page: ${readPill().toString().take(400)}")
             shot("15-private-page-blocked")
 
@@ -353,14 +391,23 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             // private view's answer moves alone, and a reload lets the tracker's cookie in.
             coreInvoke("privacy.setThirdPartyCookiesPrivate", """{"mode":"allow"}""")
             expect("the private view accepts third-party cookies once the switch is off", poll(8_000) { viewAccepts(private1) == true })
-            expect("the regular views are untouched by the private switch", viewAccepts(SITE_TAB) == true && viewAccepts(NOTES_TAB) == true)
-            coreInvoke("tab.navigate", json("tabId" to private1, "input" to "$siteOrigin/").toString())
-            expect("the private tab reloads the page", awaitLoaded(private1, "$siteOrigin/"))
-            expect("with the switch off the tracker's cookie lands in the private jar", poll(6_000) { jarOf(Profiles.PRIVATE_CONTAINER, TRACKER_ORIGIN).contains("trk=") })
-            finding("  switch off: private jar tracker '${jarOf(Profiles.PRIVATE_CONTAINER, TRACKER_ORIGIN)}', default jar tracker '${jarOf(Profiles.DEFAULT_CONTAINER, TRACKER_ORIGIN)}'")
+            expect("the regular views are untouched by the private switch", regularViewsAccept() == true)
+            coreInvoke("tab.navigate", json("tabId" to private1, "input" to "$COOKIES_URL?again").toString())
+            expect("the private tab reloads the page", awaitLoaded(private1, "$COOKIES_URL?again"))
+            val allowedReport = awaitTrackerReport(private1)
+            finding("  the frame in the private tab, switch off: '$allowedReport'; private jar: tracker '${jarOf(Profiles.PRIVATE_CONTAINER, TRACKER_ORIGIN)}'; default jar: tracker '${jarOf(Profiles.DEFAULT_CONTAINER, TRACKER_ORIGIN)}'")
+            expect("with the switch off the tracker's cookie is set in the private tab", allowedReport.contains("trk="))
             coreInvoke("privacy.setThirdPartyCookiesPrivate", """{"mode":"block"}""")
-            expect("the switch on again: the private view refuses, the regular views still accept", poll(8_000) { viewAccepts(private1) == false } && viewAccepts(SITE_TAB) == true && viewAccepts(NOTES_TAB) == true)
+            expect("the switch on again: the private view refuses, the regular views still accept", poll(8_000) { viewAccepts(private1) == false } && regularViewsAccept() == true)
             finding("  switch on again: ${cookieSwitchState(private1)}")
+
+            // The regular tab back on its own page, for the Tabs pane's card; the private tab in front again.
+            coreInvoke("tab.activate", json("tabId" to NOTES_TAB).toString())
+            awaitActiveTab(NOTES_TAB)
+            coreInvoke("tab.navigate", json("tabId" to NOTES_TAB, "input" to "$siteOrigin/notes.html").toString())
+            awaitLoaded(NOTES_TAB, "$siteOrigin/notes.html", 15_000)
+            coreInvoke("tab.activate", json("tabId" to private1).toString())
+            awaitActiveTab(private1)
         }
 
         // 6. NOT-07: the session's card while private tabs are open.
@@ -424,8 +471,10 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         scene("8. The lock cover on the pane's own entry (TAB-03, #250)") {
             coreInvoke("private.setLockOnLeave", """{"enabled":true}""")
             expect("set-up: the lock-on-leave switch is on", poll(6_000) { lockOnLeave() && host.privateLock.enabled })
+            expect("set-up: the seeded site tab is still open", tabExists(SITE_TAB))
             coreInvoke("tab.activate", json("tabId" to SITE_TAB).toString())
             expect("set-up: a regular tab is in front", awaitActiveTab(SITE_TAB))
+            finding("  active tab ${activeCoreTab()?.optString("id")}; views ${viewsNote()}")
             SystemClock.sleep(1_000)
             home()
             expect("Home puts Zenium in the background", awaitFront(ours = false))
@@ -451,9 +500,10 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             expect("the pane was covered on every frame of its entry, its grid inert, every card masked", watch.optInt("frames", 0) > 0 && watch.optInt("panes", 0) > 0 && leaks == 0)
             expect("the covered grid is inert and hidden from accessibility", gridInert())
             // The covered grid is aria-hidden: no card (a masked one reads "Private tab, tab 1 of 2",
-            // its close "Close Private tab") and nothing of the pages reaches the tree.
+            // its close "Close Private tab") and nothing of the pages reaches the tree. The pill's
+            // own "Private tab locked" is the cover's word, not a card's.
             val labels = a11yLabels()
-            expect("no card and no card control reaches the accessibility tree under the cover", labels.none { it.startsWith("Private tab") || it == "Close Private tab" || it.contains(siteOrigin) })
+            expect("no card and no card control reaches the accessibility tree under the cover", labels.none { it.startsWith("Private tab, ") || it == "Close Private tab" || it == "Cookies probe" })
             finding("  a11y labels (${labels.size}): ${labels.take(30)}")
             shot("19-pane-locked-light")
             setScheme("dark")
@@ -498,10 +548,14 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         recover()
     }
 
-    /** Whatever a scene left standing goes: the shade, a chrome surface, the light scheme back. */
+    /** Whatever a scene left standing goes: the shade, a chrome surface, an overview a thrown scene left open, the light scheme back. */
     private fun recover() {
         if (frontPackage() == SYSTEM_UI) closeShade()
         closeSheets()
+        if (overviewOpen()) {
+            back()
+            awaitOverviewGone()
+        }
         if (chromeSchemeSetting() != "light") setScheme("light")
     }
 
@@ -560,20 +614,51 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             return false
         }
         if (!touchTap(chip)) return false
-        val up = poll(10_000) { chromeSurfaceUp() && awaitChrome("document.querySelector('[data-testid=\"siteinfo-pill-chips\"]')", 500) }
+        val up = poll(10_000) { sheetUp() }
         if (!up) touchFault("a finger on '$label' did not bring the site-information sheet up")
         SystemClock.sleep(1_500)
         return up
     }
 
-    /** Back while the chrome reports a surface, so nothing of a step's is left over the page. */
+    /** A sheet with a title block stands on the chrome's dialog host, and is not on its way down. */
+    private fun sheetUp(): Boolean =
+        dialogHostState() == "up" && jsString("(function(){return document.querySelector('.zen-sheet')&&document.querySelector('.zen-sheet-title-block')?'yes':''})()") == "yes"
+
+    /**
+     * What the chrome's dialog host shows: `up` (a sheet or the quick menu on top), `leaving`
+     * (the last one on its way down), "" (clear). Read in the chrome's document, not from the
+     * host's word on it: `chromeSurfaceUp` follows the chrome's `back.update` and lags a close.
+     */
+    private fun dialogHostState(): String = jsString(
+        "(function(){var h=document.querySelector('.zen-frame-dialogs');" +
+            "if(h&&h.getAttribute('data-leaving')==='true')return 'leaving';" +
+            "if(h&&h.getAttribute('data-open')==='true')return 'up';" +
+            "var s=document.querySelector('.zen-sheet, .zen-quick-menu');if(!s)return '';" +
+            "return s.closest('[data-leaving]')?'leaving':'up'})()"
+    )
+
+    /** The surface on top, for telling one back's effect from the next: the sheet's header and the host's slot count. */
+    private fun surfaceSignature(): String =
+        jsString("(function(){var h=document.querySelector('.zen-sheet-title');return (h?h.textContent.trim():'')+'|'+document.querySelectorAll('.zen-frame-dialogs-slot > *').length})()")
+
+    /**
+     * Back once per surface the chrome's document shows, waiting each time for the host to clear
+     * (or to show the surface beneath) before the next press. Never a back while the host is
+     * leaving or clear: a back the chrome has nothing for goes to the page, and with no history
+     * to ROOT, which closes the tab (run 1 lost the seeded site tab this way).
+     */
     private fun closeSheets() {
-        var count = 0
-        while (chromeSurfaceUp() && count < 4) {
+        var presses = 0
+        while (presses < 4) {
+            poll(4_000) { dialogHostState() != "leaving" }
+            if (dialogHostState() != "up") return
+            val before = surfaceSignature()
             back()
-            count++
-            SystemClock.sleep(900)
+            presses++
+            poll(5_000) { dialogHostState() != "up" || surfaceSignature() != before }
+            SystemClock.sleep(500)
         }
+        poll(4_000) { dialogHostState() == "" }
     }
 
     // --- the overview, through the chrome's DOM --------------------------------------------------
@@ -650,9 +735,17 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         return false
     }
 
-    /** The pane the overview shows: the `data-pane` of its grid, or of its empty explainer, inside the live slot. */
-    private fun pane(): String =
-        jsString("(function(){var p=document.querySelector('.zen-overview-pane [data-pane]');return p?(p.getAttribute('data-pane')||''):''})()")
+    /**
+     * The pane the live overview shows: the `data-pane` of its grid, its empty explainer or its
+     * cover in the live slot. The still a leaving pane is kept as (`pane-still`, ahead of the live
+     * slot in the document while the switch plays) and the segment tabs are not read; the selected
+     * segment is the fallback with nothing live.
+     */
+    private fun pane(): String = jsString(
+        "(function(){var all=document.querySelectorAll('.zen-overview-pane [data-pane]');" +
+            "for(var i=0;i<all.length;i++){var e=all[i];if(e.getAttribute('role')==='tab'||e.closest('[data-testid=\"pane-still\"]'))continue;return e.getAttribute('data-pane')||''}" +
+            "var t=document.querySelector('.zen-overview [role=\"tab\"][aria-selected=\"true\"][data-pane]');return t?(t.getAttribute('data-pane')||''):''})()"
+    )
 
     private fun awaitPane(pane: String, timeoutMs: Long = 6_000): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -663,11 +756,11 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         return pane() == pane
     }
 
-    /** The tab ids of the cards on the pane shown, in grid order. */
+    /** The tab ids of the cards on the live pane, in grid order (a leaving pane's still is not read). */
     private fun cards(): List<String> {
         val raw = jsString(
-            "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-overview-pane [data-tab-id]')," +
-                "function(e){return e.getAttribute('data-tab-id')}))"
+            "JSON.stringify(Array.prototype.filter.call(document.querySelectorAll('.zen-overview-pane [data-tab-id]')," +
+                "function(e){return !e.closest('[data-testid=\"pane-still\"]')}).map(function(e){return e.getAttribute('data-tab-id')}))"
         )
         return runCatching { JSONArray(raw) }.getOrNull().toStringList()
     }
@@ -746,6 +839,8 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
 
     private fun anyPrivateTab(): Boolean = privateTabIds().isNotEmpty()
 
+    private fun tabExists(tabId: String): Boolean = coreState().optJSONObject("tabs")?.has(tabId) == true
+
     private fun awaitNoPrivateTabs(timeoutMs: Long = 8_000): Boolean = poll(timeoutMs) { !anyPrivateTab() }
 
     private fun awaitActiveTab(tabId: String, timeoutMs: Long = 8_000): Boolean =
@@ -785,12 +880,59 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
     /** Whether the tab's WebView accepts third-party cookies, per the engine (`CookieManager.acceptThirdPartyCookies`); null without a view. */
     private fun viewAccepts(tabId: String): Boolean? {
         val view = host.tabs.get(tabId) ?: return null
-        return onMain { runCatching { Profiles.cookieManager(view.containerId).acceptThirdPartyCookies(view) }.getOrNull() }
+        return onMain { accepts(view) }
     }
+
+    private fun accepts(view: TabWebView): Boolean? =
+        runCatching { Profiles.cookieManager(view.containerId).acceptThirdPartyCookies(view) }.getOrNull()
+
+    /** Every regular (default-container) WebView's answer: true when all accept, false when one refuses, null with no regular view held. */
+    private fun regularViewsAccept(): Boolean? {
+        val answers = onMain { host.tabs.all().filter { it.containerId == Profiles.DEFAULT_CONTAINER }.map { accepts(it) } }
+        return if (answers.isEmpty()) null else answers.all { it == true }
+    }
+
+    /** The WebViews the host holds, each with its container and its answer on third-party cookies. */
+    private fun viewsNote(): String = onMain {
+        host.tabs.all().map { "${it.tabId} (${it.containerId}): accepts ${accepts(it)}" }
+    }.joinToString(", ").ifEmpty { "none" }
 
     /** The cookies a container's jar holds for `origin`; "" without a jar (or a cookie). */
     private fun jarOf(containerId: String, origin: String): String = onMain {
         runCatching { Profiles.cookieManager(containerId).getCookie(origin) }.getOrNull().orEmpty()
+    }
+
+    /**
+     * The tracker frame's report in the tab's cookies page (`window.__trk`): what the frame read
+     * back from `document.cookie` after baking its cookie – "" when refused, "?" before it spoke.
+     */
+    private fun trackerReport(tabId: String): String {
+        val raw = pageJs(tabId, "(function(){var t=window.__trk;return t===null||t===undefined?'?':String(t)})()")
+        return (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: "?"
+    }
+
+    private fun awaitTrackerReport(tabId: String, timeoutMs: Long = 10_000): String {
+        poll(timeoutMs) { trackerReport(tabId) != "?" }
+        return trackerReport(tabId)
+    }
+
+    /** Evaluate in the tab's own WebView (the page's world); the raw JSON-encoded result, "" without a view or an answer. */
+    private fun pageJs(tabId: String, code: String): String {
+        var result = ""
+        val latch = CountDownLatch(1)
+        instrumentation.runOnMainSync {
+            val view = host.tabs.get(tabId)
+            if (view == null) {
+                latch.countDown()
+            } else {
+                view.evaluateJavascript(code) { value ->
+                    result = value ?: ""
+                    latch.countDown()
+                }
+            }
+        }
+        latch.await(10, TimeUnit.SECONDS)
+        return result
     }
 
     /** A real touch on the middle of the Block third-party cookies row (the whole row is the switch), scrolled into view first. */
@@ -1009,9 +1151,14 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
 
         /** The http site, on every interface: the device's own address is the one the seeded tabs name. */
         const val SITE_PORT = 18175
-        /** The tracker, on the loopback: another host, so its frame is a third party's. */
+        /** The tracker, on the second loopback host: another site, so its frame in the probe is a third party's. */
         const val TRACKER_PORT = 18176
-        const val TRACKER_ORIGIN = "http://127.0.0.1:$TRACKER_PORT"
+        const val TRACKER_ORIGIN = "http://127.0.0.2:$TRACKER_PORT"
+        /** The cookies probe, read on the first loopback host (both loopbacks are the same, trustworthy, address space). */
+        const val COOKIES_ORIGIN = "http://127.0.0.1:$SITE_PORT"
+        const val COOKIES_URL = "$COOKIES_ORIGIN/cookies.html"
+        const val PAGE_STYLE = "body{margin:0;font-family:sans-serif;color:#15141a;background:#fff}main{padding:36px 24px}" +
+            "h1{font-size:28px;margin:0 0 16px}p{font-size:18px;line-height:1.5;color:#3b3a44;margin:0 0 20px}"
         /** The seeded regular tabs (`private-security-demo-state.json`). */
         const val SITE_TAB = "tab_site"
         const val NOTES_TAB = "tab_notes"
