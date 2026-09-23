@@ -116,9 +116,11 @@ import {
   extensionPageOf,
   getDomain,
   inputToUrl,
+  isBlankTabUrl,
   isEmptyTabUrl,
   isWebPageUrl,
-  presentedUrl
+  presentedUrl,
+  titleForUrl
 } from '../shared/url'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { QrStartOutcome } from '../shared/qrScan'
@@ -353,6 +355,8 @@ export class Browser {
    * (`start({ windows: false })`), and they come up the first time a browser window is needed.
    */
   private startupWindowsPending = false
+  /** `start({ restoreLastSession: true })`: the last session comes back over the setting. */
+  private restoreLastSessionForced = false
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -1065,7 +1069,23 @@ export class Browser {
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
     if (!tab || !view) return
-    if (view.hasDocument()) return
+    // What the tab keeps: nothing when no document ever committed (a link's new tab that went
+    // straight to the download), and nothing of the user's when it is the blank page a new tab
+    // holds until an address is typed into it – the address typed there turned into this
+    // download, and the tab would stay behind titled with the download's host over an empty
+    // page (BUG-030 / downloads-01). Chrome's rule for both: a tab opened for the download alone
+    // closes; one with a past keeps it.
+    const kept = view.getURL()
+    if (view.hasDocument() && !isBlankTabUrl(kept)) {
+      // The document stays, the new tab page's included (Chrome keeps that tab too). The typed
+      // address never became the tab's: its row and address bar go back to the document.
+      if (kept && tab.url !== kept) {
+        tab.url = kept
+        tab.title = view.getTitle() || titleForUrl(kept)
+        this.state.commit()
+      }
+      return
+    }
     if (!tab.pinned && !tab.essential && !view.canGoBack()) {
       this.tabs.closeTab(tab.id)
     } else {
@@ -1076,9 +1096,12 @@ export class Browser {
   /**
    * Bring the browser up. `windows: false` leaves the session's browser windows unopened – a run
    * that begins with `--app=<url>` shows the app's window alone, as Chrome does, and opens the
-   * browser proper the first time something asks for a browser window.
+   * browser proper the first time something asks for a browser window. `restoreLastSession`
+   * (the desktop's `--restore-last-session`) brings the last session back on this launch
+   * whatever "Restore previous session" says, as the switch overrides Chrome's startup setting.
    */
-  start(options: { windows?: boolean } = {}): void {
+  start(options: { windows?: boolean; restoreLastSession?: boolean } = {}): void {
+    this.restoreLastSessionForced = options.restoreLastSession === true
     if (this.state.settings.pinnedResetOnStartup) {
       for (const tab of Object.values(this.state.model.tabs)) {
         if ((tab.pinned || tab.essential) && tab.pinnedUrl) tab.url = tab.pinnedUrl
@@ -1113,7 +1136,7 @@ export class Browser {
     this.pageFonts.start()
     // With "restore previous session" off, the last session's tabs are forgotten at once, whether
     // or not a window opens now.
-    if (!this.state.settings.restoreSession) this.state.forgetSession()
+    if (!this.restoreSessionAtStartup()) this.state.forgetSession()
     if (options.windows === false) this.startupWindowsPending = true
     else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
@@ -1142,7 +1165,7 @@ export class Browser {
    */
   private openStartupWindows(): ZenWindow[] {
     this.startupWindowsPending = false
-    const { restoreSession } = this.state.settings
+    const restoreSession = this.restoreSessionAtStartup()
     const restore =
       restoreSession && this.state.capabilities.windows
         ? this.state.restoredWindows
@@ -1158,6 +1181,11 @@ export class Browser {
       this.session.onUncleanStart()
     }
     return opened
+  }
+
+  /** "Restore previous session", or the launch's `--restore-last-session` over it. */
+  private restoreSessionAtStartup(): boolean {
+    return this.restoreLastSessionForced || this.state.settings.restoreSession
   }
 
   // ---------------------------------------------------------------------------
@@ -2477,6 +2505,10 @@ export class Browser {
     }
     if (message.type === 'focus') {
       this.revealTab(tabId)
+      return
+    }
+    if (message.type === 'editing') {
+      this.keys.setEditing(tabId, message.editing === true)
       return
     }
     if (message.type === 'pdf') {
