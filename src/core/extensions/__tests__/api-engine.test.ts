@@ -658,9 +658,7 @@ describe('createEmulatedEngine', () => {
 
     // runtime.sendMessage: Chrome's synchronous TypeError, no promise, no callback, nothing posted.
     expect(() => (h.chrome.runtime.sendMessage as Fn)(store)).toThrow(TypeError)
-    expect(() => (h.chrome.runtime.sendMessage as Fn)(store)).toThrow(
-      MESSAGE_TOO_LONG
-    )
+    expect(() => (h.chrome.runtime.sendMessage as Fn)(store)).toThrow(MESSAGE_TOO_LONG)
     let called = false
     expect(() =>
       (h.chrome.runtime.sendMessage as Fn)(store, () => {

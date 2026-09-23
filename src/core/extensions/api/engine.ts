@@ -427,7 +427,11 @@ export function createEmulatedEngine(
    * reported to it as an error, as Chrome reports it ("The message port closed before a response
    * was received."); the promise form resolves with undefined there.
    */
-  const sendMessage = (target: MessageTarget, data: unknown, callback: boolean): Promise<unknown> => {
+  const sendMessage = (
+    target: MessageTarget,
+    data: unknown,
+    callback: boolean
+  ): Promise<unknown> => {
     const id = ++seq
     const reply = new Promise<unknown>((resolve, reject) => {
       pending.set(id, { resolve, reject })
