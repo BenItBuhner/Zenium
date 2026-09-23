@@ -32,8 +32,10 @@
 //                              the one yes) and resolve the request true – the app's
 //                              follow-through, asserted; a second scan tells whether a claim put
 //                              another dialog up
-//   handlers-after             LSHandlers again, and whether http and https are now held –
-//                              recorded (held only when the click above went through)
+//   handlers-after             LSHandlers again (given up to 20 s to catch up with the API once
+//                              http is held: lsd writes the file late), and whether http and
+//                              https are now held – recorded (held only when the click above
+//                              went through)
 import path from 'node:path'
 
 export const DEFAULT_BROWSER_SCENARIO = 'default-browser'
@@ -740,21 +742,41 @@ export async function scenarioDefaultBrowser(h) {
 
     await s.step('handlers-after', async () => {
       if (!isMac) return skip
-      const facts = readHandlers()
+      // LSHandlers names the bundle id in lower case, as LaunchServices writes it.
+      const namesAppIn = (facts) =>
+        Object.fromEntries(
+          WEB_SCHEMES.map((scheme) => [
+            scheme,
+            String(facts.web[scheme] ?? '').toLowerCase() === String(bundleId ?? '').toLowerCase()
+          ])
+        )
+      const held = await heldNow()
+      let facts = readHandlers()
+      let rounds = 1
+      if (held.http) {
+        // The API answers before lsd has written the preferences file (seen seconds to minutes
+        // behind on the runners): when the app holds http, the file is given a moment to name
+        // it – recorded either way, the API's answer being the OS's.
+        await waitFor(
+          () => {
+            if (namesAppIn(facts).http) return facts
+            rounds++
+            facts = readHandlers()
+            return null
+          },
+          20000,
+          'LSHandlers naming the app for http',
+          1000
+        ).catch(() => undefined)
+      }
       writeJson(path.join(outDir, `${DEFAULT_BROWSER_SCENARIO}-handlers-after.json`), facts)
       const calls = await lsCalls()
-      const held = await heldNow()
       const request = await s.chrome.evaluate(READ_REQUEST)
-      // LSHandlers names the bundle id in lower case, as LaunchServices writes it.
-      const namesApp = Object.fromEntries(
-        WEB_SCHEMES.map((scheme) => [
-          scheme,
-          String(facts.web[scheme] ?? '').toLowerCase() === String(bundleId ?? '').toLowerCase()
-        ])
-      )
+      const namesApp = namesAppIn(facts)
       const detail = {
         ...facts,
         namesApp,
+        rounds,
         held,
         request,
         sets: calls.filter((c) => c.method === 'setAsDefaultProtocolClient')

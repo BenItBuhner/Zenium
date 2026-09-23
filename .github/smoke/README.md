@@ -87,7 +87,8 @@ where the session lets a script answer the dialog the app's follow-through on th
 asserted too: `bundle-claims-web` reads the bundle's `CFBundleURLTypes` for `http` and `https`
 (electron-builder's `protocols`; gates); `handlers-before` and `handlers-after` read
 `LSHandlers` out of `com.apple.launchservices.secure` (who holds `http`/`https`; no entry means
-Safari; after a yes both should name the bundle id – recorded as `namesApp`);
+Safari; after a yes both should name the bundle id – recorded as `namesApp`, the file given up
+to 20 s to catch up with the API, which `lsd` writes it behind);
 `make-default-calls-ls` wraps `app.setAsDefaultProtocolClient` in the main process, fires
 `defaultBrowser.request` (the Settings row's source, not awaited: it polls for the user's answer
 for two minutes) and requires the request for `http` first and alone – `https` only once `http`
