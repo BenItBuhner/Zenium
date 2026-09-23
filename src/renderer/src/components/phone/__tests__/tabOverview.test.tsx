@@ -160,6 +160,13 @@ const measured = HTMLElement.prototype.getBoundingClientRect
 HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
   if (this.classList.contains('zen-overview-grid')) return layout.get(GRID)!
   if (this.classList.contains('zen-overview-pane')) return layout.get(SLOT)!
+  if (
+    this.classList.contains('grid') &&
+    this.parentElement?.classList.contains('zen-overview-grid')
+  )
+    return cellsGridBox(this.parentElement)
+  if (this.classList.contains('zen-group') && this.style.position === 'absolute')
+    return placedBox(this)
   const key = this.closest('[data-cell]')?.getAttribute('data-cell')
   return (key ? layout.get(key) : undefined) ?? measured.call(this)
 }
@@ -173,6 +180,75 @@ Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
     return this.getBoundingClientRect().height
   }
 })
+
+/*
+ * The dissolving shell's placement, modelled (seed 49). `GroupCard` takes a group's shell out of
+ * the flow at its `offsetTop` and places it by `top:`; the browser reads the one and applies
+ * the other against the shell's nearest POSITIONED ancestor. happy-dom resolves no stylesheet,
+ * so that ancestor is found here by Tailwind's position classes or an inline `position`. An
+ * offset is a layout distance – no transform in it, and no scroll: a box inside the scroller
+ * is `scrollTop` px further down the content than its box on screen says – so against an
+ * ancestor outside the scroller (the pane) the shell measures `scrollTop` px more than against
+ * one inside it (the cells' grid), and a shell with an inline `position: absolute` answers
+ * `getBoundingClientRect` from its inline box against that ancestor, as the browser would draw
+ * it. The cells' grid stands at the scroller's content origin, scrolled with it: the table's
+ * cells are laid out from there.
+ */
+const CONTENT_HEIGHT = 10_000
+const positioned = (el: HTMLElement): boolean =>
+  el.style.position
+    ? el.style.position !== 'static'
+    : ['relative', 'absolute', 'fixed', 'sticky'].some((c) => el.classList.contains(c))
+const containingBlockOf = (el: HTMLElement): HTMLElement => {
+  let node = el.parentElement
+  while (node && !positioned(node)) node = node.parentElement
+  return node ?? document.body
+}
+/** The scroll a box's layout position leaves out: the scroller's, for a box in its content. */
+const scrolledBy = (el: HTMLElement): number =>
+  el.parentElement?.closest<HTMLElement>('.zen-overview-grid')?.scrollTop ?? 0
+const cellsGridBox = (scroller: HTMLElement): DOMRect => {
+  const g = layout.get(GRID)!
+  return new DOMRect(g.left, g.top - scroller.scrollTop, g.width, CONTENT_HEIGHT)
+}
+/** Where a shell placed `absolute` at its inline `left` / `top` is drawn. */
+const placedBox = (shell: HTMLElement): DOMRect => {
+  const block = containingBlockOf(shell)
+  const origin = block.getBoundingClientRect()
+  // The scroller's own padding box is its content's origin, and the content has scrolled.
+  const scrolled = block.classList.contains('zen-overview-grid') ? block.scrollTop : 0
+  const key = shell.getAttribute('data-cell')
+  const own = key ? layout.get(key) : undefined
+  const height = parseFloat(shell.style.height)
+  return new DOMRect(
+    origin.left + parseFloat(shell.style.left),
+    origin.top - scrolled + parseFloat(shell.style.top),
+    parseFloat(shell.style.width),
+    Number.isFinite(height) ? height : (own?.height ?? 0)
+  )
+}
+/** A shell's `offsetTop` / `offsetLeft`: its layout distance from its positioned ancestor's box. */
+const layoutOffset = (shell: HTMLElement, own: DOMRect, axis: 'top' | 'left'): number => {
+  const block = containingBlockOf(shell)
+  const box = block.getBoundingClientRect()
+  const scroll = (el: HTMLElement): number => (axis === 'top' ? scrolledBy(el) : 0)
+  return own[axis] + scroll(shell) - (box[axis] + scroll(block))
+}
+for (const [name, read] of [
+  ['offsetTop', (shell: HTMLElement, own: DOMRect) => layoutOffset(shell, own, 'top')],
+  ['offsetLeft', (shell: HTMLElement, own: DOMRect) => layoutOffset(shell, own, 'left')],
+  ['offsetWidth', (_shell: HTMLElement, own: DOMRect) => own.width]
+] as const) {
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)!
+  Object.defineProperty(HTMLElement.prototype, name, {
+    configurable: true,
+    get(this: HTMLElement): number {
+      const key = this.classList.contains('zen-group') ? this.getAttribute('data-cell') : null
+      const own = key ? layout.get(key) : undefined
+      return own ? read(this, own) : (original.get!.call(this) as number)
+    }
+  })
+}
 
 const at = (key: string, fx: number, fy: number): { x: number; y: number } => {
   const r = layout.get(key)!
@@ -1006,6 +1082,122 @@ describe('a group changing height', () => {
     expect(m1.style.transform).toBe('')
     expect(b.style.transform).toBe('')
     expect(plus.style.transform).toBe('')
+  })
+
+  it('its last card dragged out of a scrolled grid: the shell shrinks where the card stood, and every cell below waits for it – one wave', () => {
+    // A group of one at the top-left, a loose card beside it and two rows of loose cards under
+    // it (the New Tab card the last), laid out 100 px down the content – and then the grid
+    // scrolled those 100 px, so the group's box is at the top of the viewport: the pane the
+    // shell used to be placed against is 100 px further from it than the grid it stands in
+    // (seed 49; the mechanism #355 found and #373 fixed for the leave).
+    const SCROLL = 100
+    const ROW = 142
+    const grouped = stateOf([
+      tab('m1', 'https://one.example/', { folderId: GROUP }),
+      tab('a', 'https://a.example/'),
+      tab('b', 'https://b.example/'),
+      tab('c', 'https://c.example/'),
+      tab('d', 'https://d.example/')
+    ])
+    bodyHeights.set(`group:${GROUP}`, bodyOf(1))
+    const rows = (top: number): void => {
+      place(`group:${GROUP}`, 0, top, 100, groupOf(1))
+      place('m1', 6, top + ROW_1)
+      place('a', 110, top)
+      place('b', 0, top + groupOf(1) + 12)
+      place('c', 110, top + groupOf(1) + 12)
+      place('d', 0, top + groupOf(1) + 12 + ROW)
+      place(NEW_TAB_CELL, 110, top + groupOf(1) + 12 + ROW)
+    }
+    rows(SCROLL)
+    render(grouped)
+    // The scroll: every box 100 px up the screen, the scroller 100 px into its content – the
+    // same content positions, so the tracker's baseline stands and nothing glides.
+    rows(0)
+    grid().scrollTop = SCROLL
+    render(grouped)
+    const group = cellOf(`group:${GROUP}`)
+    for (const key of ['m1', 'a', 'b', 'c', 'd', NEW_TAB_CELL])
+      expect(cellOf(key).style.transform).toBe('')
+    expect(group.style.position).toBe('')
+
+    // m1 is picked up and carried to the left edge of a; the finger rests there, and the
+    // stand-in takes the slot before a: m1 is loose in this very commit, first in the row, and
+    // the group has lost its last card. Out of the flow, the shell leaves the loose cards laid
+    // out a row higher (rows of 130 and a 12 gap in place of the group's height).
+    pickUp('m1')
+    const edge = at('a', 0.1, 0.5)
+    drag(edge.x, edge.y)
+    const lift = groupOf(1) + 12 - ROW
+    place('m1', 0, 0)
+    place('b', 0, ROW)
+    place('c', 110, ROW)
+    place('d', 0, 2 * ROW)
+    place(NEW_TAB_CELL, 110, 2 * ROW)
+    act(() => elapse(SLOT_DWELL_MS))
+    expect(liftStore.get().slot).toEqual({ folderId: null, index: 0 })
+    expect(groupAround('m1')).toBeNull()
+    expect(group.dataset.dissolving).toBe('true')
+    expect(group.style.position).toBe('absolute')
+    // Placed against the grid it stands in: its `top` is its distance down the content, and
+    // the box is drawn where the card stood – not 100 px lower, against the pane.
+    expect(group.style.top).toBe(`${SCROLL}px`)
+    expect(group.style.left).toBe('0px')
+    expect(group.style.width).toBe('100px')
+    expect(group.getBoundingClientRect().top).toBe(0)
+    expect(group.style.height).toBe(`${groupOf(1)}px`)
+    expect(layoutAnimations.has(`group:${GROUP}`)).toBe(true)
+    // m1 glides out of the group from the first frame. Every cell below the group is held where
+    // it was drawn – the row right under it as much as the row 142 px further – at the full
+    // offset of the row the shell's height still takes up.
+    const m1 = cellOf('m1')
+    const below = ['b', 'c', 'd', NEW_TAB_CELL].map(cellOf)
+    expect(translate(m1)).toEqual({ x: 6, y: ROW_1 })
+    for (const el of below) expect(translate(el)).toEqual({ x: 0, y: lift })
+    const shrank = framesUntil(() => parseFloat(group.style.height) < groupOf(1) - 40)
+    expect(shrank).toBeGreaterThan(0)
+    // Mid-shrink: the box is still where the card stood, and nothing below has moved. (Placed
+    // against the pane, the box was 100 px low: the tracker held only the cells drawn under
+    // that lower box – d and the New Tab card – and b and c glided at once, under the frame.)
+    expect(group.getBoundingClientRect().top).toBe(0)
+    expect(translate(m1).y).toBeLessThan(ROW_1)
+    for (const el of below) expect(translate(el)).toEqual({ x: 0, y: lift })
+    // The settle releases the hold: everything below sets off together, on the one spring (a
+    // frame in, every cell is the same way along).
+    const settledAt = framesUntil(() => !layoutAnimations.has(`group:${GROUP}`))
+    expect(settledAt).toBeGreaterThan(0)
+    for (const el of below) expect(translate(el)).toEqual({ x: 0, y: lift })
+    act(() => frame())
+    for (const el of below) {
+      expect(translate(el).y).toBeGreaterThan(0)
+      expect(translate(el).y).toBeLessThan(lift)
+      expect(translate(el).y).toBe(translate(below[0]!).y)
+    }
+    act(() => settleSprings())
+    expect(grid().querySelector(`[data-cell="group:${GROUP}"]`)).toBeNull()
+    for (const el of [m1, ...below]) expect(el.style.transform).toBe('')
+
+    // The release lands m1 where the finger is, first among the loose tabs, out of the group.
+    letGo(edge.x, edge.y)
+    expect(commands()).toEqual([
+      ['tab.move', { tabId: 'm1', spaceId: SPACE, section: 'regular', index: 0 }],
+      ['tab.moveToFolder', { tabId: 'm1', folderId: null }]
+    ])
+    land(
+      stateOf(
+        [
+          tab('m1', 'https://one.example/'),
+          tab('a', 'https://a.example/'),
+          tab('b', 'https://b.example/'),
+          tab('c', 'https://c.example/'),
+          tab('d', 'https://d.example/')
+        ],
+        []
+      )
+    )
+    expect(liftStore.get()).toMatchObject({ phase: 'idle', tabId: null })
+    expect(groupAround('m1')).toBeNull()
+    expect(grid().querySelector('[data-dissolving]')).toBeNull()
   })
 
   it('a group being made: it grows on its spring with its chrome off until the glide ends', () => {

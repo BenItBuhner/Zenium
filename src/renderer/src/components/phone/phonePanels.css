@@ -342,11 +342,21 @@
   .zen-phone-form > .zen-sheet-footer {
     padding-top: 0;
   }
-  .zen-phone-field-label {
+  .zen-phone-field-label,
+  .zen-phone-form-copy {
     font-size: var(--v2-font-body);
     font-weight: var(--v2-weight-body);
     line-height: var(--v2-line-body);
     color: var(--v2-text);
+  }
+  /*
+   * Body copy under the 48 header (9.23): a paragraph that introduces the form – "3 pages go
+   * into a new folder" – at 15/400 in the text ink, in the gutter, the form's 16 to what it
+   * introduces; never a title block's description, which is a prompt's.
+   */
+  .zen-phone-form-copy {
+    margin: 0;
+    padding: 0 16px;
   }
 }
 
