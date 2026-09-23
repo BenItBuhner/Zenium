@@ -1040,8 +1040,10 @@ export class Browser {
     if (this.allWindows().some((w) => w.isPrivate)) return
     if (this.tabs.privateTabs().length > 0) return
     this.downloads.endPrivateSession()
-    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome.
+    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome,
+    // and so are the permission prompts answered in them.
     this.security.certificateExceptions.forgetContainer(PRIVATE_CONTAINER_ID)
+    this.permissions.forgetContainer(PRIVATE_CONTAINER_ID)
     void this.platform.sessions.clearPrivate()
   }
 
