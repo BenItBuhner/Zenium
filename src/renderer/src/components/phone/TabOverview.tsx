@@ -121,6 +121,7 @@ import { cardHeaderHeight } from './overviewCardHeader'
 import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
+import { PhoneEmptyNote } from './PhoneList'
 import { noteSheetOpener } from './phonePanel'
 import { PrivateLockCover } from './PrivateLockCover'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
@@ -252,7 +253,7 @@ interface ShownGroups {
  * ones whose tabs have closed but whose pages the group kept, to be opened again; and, on a host
  * with private tabs, the private ones – the private session is one across the spaces, so that
  * pane lists every private tab, as loose cards on the private theme's backdrop (the window
- * surfaces blend to it while the pane is up, §9.29), with an explainer when there are none. A
+ * surfaces blend to it while the pane is up, §9.29), with §9.17's sentence when there are none. A
  * private card never shows in the regular pane, nor a regular one in the private pane
  * (`tabsOnPane`); the overview opens on the pane of the tab in view.
  *
@@ -323,7 +324,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 
   // The last private tab closing ends the session, and the overview returns to the Tabs pane
   // whether the Private pane was picked or followed (Chrome's switcher does the same); the
-  // empty explainer stays a pick away, for whoever picks Private with none open.
+  // empty pane's sentence stays a pick away, for whoever picks Private with none open.
   const privateCount = hasPrivate ? privateTabsOf(state).length : 0
   const privateCountBefore = useRef(privateCount)
   useEffect(() => {
@@ -1569,7 +1570,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           </div>
           <PaneSlot
             // Each pane is a slot's worth of its own – the space strip, the grid, the groups'
-            // rows or the empty explainer – coming up fresh on a 120 ms fade in while the still
+            // rows or the empty pane's note – coming up fresh on a 120 ms fade in while the still
             // of the pane before fades out over the same slot (v2 §11.4); the cells start fresh
             // with it.
             pane={pane}
@@ -2344,35 +2345,26 @@ function PaneSegment({
 }
 
 /**
- * The private pane with nothing in it (TAB-03): a page's empty state (v2 §9.17 – title 22/600,
- * one 15 description at 69%, one button, the block centred with its middle at 45% of the
- * pane), in the window family on the private theme's backdrop.
+ * The private pane with nothing in it (TAB-03): a standing state, not a message – a list's
+ * empty room as §9.34 writes it for this pane. §9.17's one sentence, "No private tabs", on the
+ * phone panels' note (`PhoneEmptyNote`: 15/400 at 69%, centred in the 32 gutter, top-anchored),
+ * its first line 48 under the segment as the Groups pane's is (`.zen-overview-private-empty` in
+ * main.css, the same rule), with New private tab as its one follow-up – the note's secondary
+ * button 16 beneath, 88 minimum at 40 – never a message card, no title-plus-description pair.
+ * What private browsing keeps and does not keep is the private new tab page's to say (§9.29,
+ * NTP-31), not the empty pane's. In the window family the private theme paints (§9.29): a
+ * child of the pane's flow, so it stands under the segment whatever the pane's height.
  */
 function PrivateEmpty(): JSX.Element {
   return (
     <div
-      className="relative min-h-0 flex-1"
+      className="zen-overview-private-empty relative min-h-0 flex-1"
       data-pane="private"
       data-testid="overview-private-empty"
     >
-      <div
-        className="absolute inset-x-0 flex -translate-y-1/2 flex-col items-center px-8 text-center"
-        style={{ top: '45%' }}
-      >
-        <h2 className="text-[22px] font-semibold leading-7 tracking-[-0.012em]">No private tabs</h2>
-        <p className="mt-2 max-w-[360px] text-[15px] leading-5 text-[rgb(var(--zen-fg-rgb)/0.69)]">
-          Pages you open here leave no history, cookies or site data once the last private tab
-          closes
-        </p>
-        <button
-          type="button"
-          className="zen-v2-button mt-4"
-          data-testid="overview-private-empty-new"
-          onClick={() => newTabOn('private')}
-        >
-          New private tab
-        </button>
-      </div>
+      <PhoneEmptyNote action={{ label: 'New private tab', onSelect: () => newTabOn('private') }}>
+        No private tabs
+      </PhoneEmptyNote>
     </div>
   )
 }

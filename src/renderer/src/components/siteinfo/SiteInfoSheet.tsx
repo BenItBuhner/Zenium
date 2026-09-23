@@ -14,14 +14,12 @@ import {
   ExternalLink,
   Globe,
   Loader2,
-  Lock,
   LockOpen,
   MapPin,
   Mic,
   Music2,
   Puzzle,
   Settings,
-  ShieldAlert,
   ShieldCheck,
   Trash2,
   type LucideIcon
@@ -30,6 +28,7 @@ import type { Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import {
   certificateErrorDetail,
+  certificateFault,
   cookieBytes,
   describeSite,
   formatBytes,
@@ -56,6 +55,11 @@ import { LevelMotion, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
 import { useFrameDialog } from '@renderer/lib/portals'
 import { privateLockStore } from '@renderer/lib/privateLock'
+import {
+  securityToneClass,
+  securityVerdict,
+  type SecurityTone
+} from '@renderer/lib/securityVerdict'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   SITE_DATA_TEXT,
@@ -159,7 +163,7 @@ function useSiteInfo(tab: Tab): { info: SiteInfo | null; loading: boolean } {
 // Security, as words: the pill's real state (#124) and the certificate exception (#136)
 // ---------------------------------------------------------------------------
 
-type Tone = 'ok' | 'warn' | 'danger' | 'neutral'
+type Tone = SecurityTone
 
 interface Security {
   indicator: IndicatorState
@@ -174,7 +178,22 @@ interface Security {
   certificate: SiteCertificate | null
   /** The certificate failed verification and the connection reports as not secure. */
   certificateError: boolean
+  /**
+   * What is wrong with the certificate, in a word or two, for the title block's line under the
+   * host ("Certificate expired"); only on a certificate error, whose issuer the line never names.
+   */
+  fault?: string
 }
+
+/**
+ * What "not secure" means and asks of the user (ERR-09), on the Connection level's status row:
+ * why in one sentence, then Chrome's page-info advice – "You should not enter any sensitive
+ * information on this site (for example, passwords or credit cards), because it could be stolen
+ * by attackers" – in Zenium's voice. Two lines at 13 on a phone: the status row's description
+ * clamps there (§9.33), and a screen reader hears the whole of it on the row's name.
+ */
+const NOT_SECURE_DETAIL =
+  "Anyone on the way can read what you send to this site. Don't enter passwords or card details here."
 
 function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Security {
   const error = info?.security.certificateError ?? tab.certificateError ?? null
@@ -219,7 +238,10 @@ function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Sec
           ? `${certificateErrorDetail(error)} ${describeNetError(error.code, '')}`.trim()
           : 'The certificate this site sent could not be verified.',
         certificate: cert,
-        certificateError: true
+        certificateError: true,
+        // The fault by the error's code, or by the failed load's when the core reported the code
+        // alone; the certificate's dates tell expired from not yet valid.
+        fault: certificateFault(error?.code ?? tab.errorCode, error?.certificate ?? null)
       }
     case 'dangerous':
       return {
@@ -238,7 +260,7 @@ function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Sec
         tone: 'warn',
         short: 'Not secure',
         headline: 'Connection is not secure',
-        detail: 'What you send to this site can be read by anyone along the way.',
+        detail: NOT_SECURE_DETAIL,
         certificate: null,
         certificateError: false
       }
@@ -288,31 +310,25 @@ function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Sec
   }
 }
 
-/** The connection's glyph: a shield for a dangerous site, a puzzle piece for an extension's page, a globe off the web, else the lock. */
+/**
+ * The connection's glyph: a puzzle piece for an extension's page, a globe off the web, else the
+ * verdict's own (`securityVerdict`, the glyph the phone pill's slot draws for the same state,
+ * ERR-09): the closed lock for an encrypted connection with nothing mixed in (its tone is
+ * neutral, §9.19), the open lock for partly secure and insecure, the triangle for a certificate
+ * that failed, the shield for a dangerous site.
+ */
 function securityGlyph(
   security: Security,
   props: { className?: string; strokeWidth?: number } = {}
 ): JSX.Element {
-  if (security.indicator === 'dangerous') return <ShieldAlert {...props} aria-hidden />
   if (security.indicator === 'extension') return <Puzzle {...props} aria-hidden />
   if (security.indicator === 'internal' || security.indicator === 'local')
     return <Globe {...props} aria-hidden />
-  // The closed lock for an encrypted connection with nothing mixed in (its tone is neutral,
-  // §9.19); open for partly secure, insecure and a certificate that failed.
-  return security.indicator === 'secure' && security.tone !== 'warn' ? (
-    <Lock {...props} aria-hidden />
-  ) : (
-    <LockOpen {...props} aria-hidden />
-  )
+  const Glyph = securityVerdict(security.indicator, security.tone === 'warn')?.glyph ?? LockOpen
+  return <Glyph {...props} aria-hidden />
 }
 
-function toneClass(tone: Tone): string | false {
-  return (
-    (tone === 'ok' && 'text-[var(--v2-ok)]') ||
-    (tone === 'warn' && 'text-[var(--v2-warn)]') ||
-    (tone === 'danger' && 'text-[var(--v2-danger)]')
-  )
-}
+const toneClass = securityToneClass
 
 /** A permission's glyph, from the catalogue the browser prompts for. */
 function permissionGlyph(permission: string, props: { className?: string } = {}): JSX.Element {
@@ -742,9 +758,12 @@ function SheetTitle({
     tab.containerId !== DEFAULT_CONTAINER_ID && tab.containerId !== PRIVATE_CONTAINER_ID
       ? state.containers.find((c) => c.id === tab.containerId)?.name
       : undefined
+  // Under the verdict, who vouches for a valid certificate – or, when the certificate failed
+  // verification, what is wrong with it: an invalid certificate's issuer is no credential to
+  // offer here (the Connection level's certificate detail still lists it).
   const line = [
     extension ? extensionPageLine(extension) : security.short,
-    security.certificate?.issuer || null,
+    security.fault ?? (security.certificate?.issuer || null),
     container
   ].filter((p): p is string => Boolean(p))
   return (

@@ -10,7 +10,16 @@ import { JsonStore } from './store/JsonStore'
 import { getDomain, getHost, isInternalUrl } from '../shared/url'
 import { dayKeyOf, dayStart } from '../shared/dayKey'
 import { newId } from '../shared/ids'
+import {
+  countTitleHits,
+  matchableText,
+  matchesAtWordStart,
+  matchesEveryTerm,
+  queryTerms
+} from '../shared/wordMatch'
 import type { StoreIO } from './platform'
+
+export { matchesAtWordStart, queryTerms }
 
 /** Aggregates (one per URL) kept at most. */
 export const MAX_ENTRIES = 10_000
@@ -299,54 +308,33 @@ export function selectRange(visits: HistoryVisit[], fromMs: number, toMs: number
 }
 
 /**
- * Does `term` occur in `hay` at the start of a word – the start of the text, or after a
- * character that is not a letter or digit (a space, a `/`, a `.`, a `-`, a `?`)? Case-insensitive.
- * Chrome's HistoryQuick idea (omnibox-02): "docs" at the start of a path segment or a title word
- * outranks "docs" inside "Googledocs".
- */
-export function matchesAtWordStart(hay: string, term: string): boolean {
-  const h = hay.toLowerCase()
-  const t = term.toLowerCase()
-  if (!t) return false
-  let from = 0
-  for (;;) {
-    const at = h.indexOf(t, from)
-    if (at === -1) return false
-    if (at === 0 || !/[\p{L}\p{N}]/u.test(h[at - 1] ?? '')) return true
-    from = at + 1
-  }
-}
-
-/**
  * How well a history aggregate answers a typing (omnibox-02, HistoryURL + HistoryQuick): the
  * visits weighted by recency, typed visits counting three times (the address was wanted by
- * name), a start-of-address match on top, and every term at the start of a word in the title or
- * a path segment over a term inside a word. Not a match (a term missing) is null.
+ * name), a start-of-address match on top, and the share of the terms that start a word in the
+ * title over those found in the address alone (Chrome's HistoryQuick weighs title hits over URL
+ * hits). A term that starts no word in the title or the address is no match (null): Chrome's
+ * history providers find nothing inside a word (`shared/wordMatch.ts`), so "docs" does not bring
+ * up "Googledocs".
  */
 export function scoreHistoryMatch(
   entry: HistoryEntry,
   terms: readonly string[],
   nowMs: number
 ): number | null {
-  const shownUrl = entry.url.toLowerCase().replace(/^https?:\/\/(www\.)?/, '')
-  const hay = `${entry.title} ${entry.url}`.toLowerCase()
-  if (!terms.every((t) => hay.includes(t))) return null
+  const text = matchableText(entry.title, entry.url)
+  if (terms.length === 0 || !matchesEveryTerm(text, terms)) return null
   const ageDays = Math.max(0, nowMs - entry.lastVisit) / DAY_MS
   const recency = 1 / (1 + ageDays)
   const typed = entry.typedCount ?? 0
-  const hostMatch = shownUrl.startsWith(terms.join(' ')) ? 2 : 0
-  const wordStart = terms.every((t) => matchesAtWordStart(`${entry.title} ${shownUrl}`, t)) ? 1 : 0
-  return Math.log1p(entry.visitCount + 3 * typed) + recency * 2 + hostMatch + wordStart
-}
-
-/** Whitespace-separated terms of a query, lower-cased. */
-export function queryTerms(text: string | undefined): string[] {
-  return (text ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const hostMatch = text.url.startsWith(terms.join(' ')) ? 2 : 0
+  const titleHits = countTitleHits(text, terms) / terms.length
+  return Math.log1p(entry.visitCount + 3 * typed) + recency * 2 + hostMatch + titleHits
 }
 
 /**
- * Visits matching a query (every term in title or URL, host, time range), newest first, then
- * `offset` / `limit` applied.
+ * Visits matching a query (every term at the start of a word in the title or URL – Chrome's
+ * history page's rule, history-03; the host; the time range), newest first, then `offset` /
+ * `limit` applied.
  */
 export function searchVisits(visits: HistoryVisit[], query: HistoryQuery): HistoryVisit[] {
   const terms = queryTerms(query.text)
@@ -357,8 +345,7 @@ export function searchVisits(visits: HistoryVisit[], query: HistoryQuery): Histo
     if (v.visitTime < from || v.visitTime >= to) return false
     if (host !== null && !hostMatches(v.url, host)) return false
     if (terms.length === 0) return true
-    const hay = `${v.title} ${v.url}`.toLowerCase()
-    return terms.every((t) => hay.includes(t))
+    return matchesEveryTerm(matchableText(v.title, v.url), terms)
   })
   matched.sort((a, b) => b.visitTime - a.visitTime)
   const offset = Math.max(0, query.offset ?? 0)
@@ -755,13 +742,13 @@ export class HistoryService {
   }
 
   /**
-   * The pages a typing matches, best first (`scoreHistoryMatch`: typed and visit counts,
-   * recency, an address-start match, word-start matches over mid-word ones).
+   * The pages a typing matches – every term at the start of a word in the title or the address
+   * – best first (`scoreHistoryMatch`: typed and visit counts, recency, an address-start match,
+   * title hits over address hits).
    */
   search(query: string, limit: number): HistoryEntry[] {
-    const q = query.trim().toLowerCase()
-    if (!q) return this.recent(limit)
-    const terms = q.split(/\s+/)
+    const terms = queryTerms(query)
+    if (terms.length === 0) return this.recent(limit)
     const now = this.now()
     const scored: Array<{ e: HistoryEntry; score: number }> = []
     for (const e of this.entries.values()) {
