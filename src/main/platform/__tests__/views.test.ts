@@ -550,16 +550,23 @@ describe('ElectronTabView and the developer tools dock', () => {
     view: ElectronTabView
     wc: DevtoolsContents
     docks: string[]
+    /** The dock each `onDevtoolsOpened` named (undefined where the host could not say). */
+    openedAt: Array<string | undefined>
     opened: () => number
     closed: () => number
   } => {
     const docks: string[] = []
+    const openedAt: Array<string | undefined> = []
     let opened = 0
     let closed = 0
     const events = new Proxy({} as TabViewEvents, {
       get: (_t, name) => {
         if (name === 'onDevtoolsDockChanged') return (dock: string): void => void docks.push(dock)
-        if (name === 'onDevtoolsOpened') return (): void => void opened++
+        if (name === 'onDevtoolsOpened')
+          return (dock?: string): void => {
+            opened++
+            openedAt.push(dock)
+          }
         if (name === 'onDevtoolsClosed') return (): void => void closed++
         return (): undefined => undefined
       }
@@ -571,7 +578,7 @@ describe('ElectronTabView and the developer tools dock', () => {
       detachedWindow
     ) as ElectronTabView
     const wc = view.webContents as unknown as DevtoolsContents
-    return { view, wc, docks, opened: () => opened, closed: () => closed }
+    return { view, wc, docks, openedAt, opened: () => opened, closed: () => closed }
   }
 
   it('opens at the remembered dock with Electron’s own mode names, and toggles closed', () => {
@@ -639,6 +646,44 @@ describe('ElectronTabView and the developer tools dock', () => {
     frontend.emit('console-message', { message: 'zenium-devtools-dock:undocked' })
     frontend.emit('console-message', { message: 'zenium-devtools-dock:sideways' })
     expect(docks).toEqual(['right', 'undocked'])
+  })
+
+  it('names the dock each view’s toolbox opened at, and the one it stands at once moved – per view, not one for all', async () => {
+    // Tab A's toolbox at the bottom, tab B's undocked: each view reports its own.
+    const a = setup()
+    const b = setup()
+    a.view.openDevTools('toggle', 'bottom')
+    b.view.openDevTools('toggle', 'undocked')
+    await settle()
+    expect(a.openedAt).toEqual(['bottom'])
+    expect(b.openedAt).toEqual(['undocked'])
+    // B's own button docks it to the left: B's reading moves, A's stands.
+    b.wc.devToolsWebContents!.emit('console-message', { message: 'zenium-devtools-dock:left' })
+    expect(b.docks).toEqual(['left'])
+    expect(a.docks).toEqual([])
+    // Closed and opened again at another dock, A names the new one.
+    a.view.openDevTools('toggle', 'bottom')
+    expect(a.closed()).toBe(1)
+    a.view.openDevTools('toggle', 'right')
+    await settle()
+    expect(a.openedAt).toEqual(['bottom', 'right'])
+    // The element picker opens at its dock and names it too.
+    const c = setup()
+    c.view.inspectElementAt(10, 20, 'left')
+    await settle()
+    expect(c.openedAt).toEqual(['left'])
+    // A move the menu asked for is the view's reading at once, before the frontend's read-back.
+    const d = setup()
+    d.view.openDevTools('toggle', 'bottom')
+    await settle()
+    d.view.setDevtoolsDock('right')
+    await settle()
+    // The frontend without the module: closed and reopened at the dock – the reopening names it.
+    d.wc.devToolsWebContents!.rejecting = 'DockController'
+    d.view.setDevtoolsDock('undocked')
+    await settle()
+    await settle()
+    expect(d.openedAt).toEqual(['bottom', 'undocked'])
   })
 
   it('moves an open toolbox through the frontend’s own dock controller, and reopens at the dock when the frontend cannot', async () => {

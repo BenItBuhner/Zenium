@@ -129,8 +129,8 @@ export class ForwardingEvents implements TabViewEvents {
   onLeaveHtmlFullscreen(): void {
     this.target?.onLeaveHtmlFullscreen()
   }
-  onDevtoolsOpened(): void {
-    this.target?.onDevtoolsOpened()
+  onDevtoolsOpened(dock?: DevtoolsDock): void {
+    this.target?.onDevtoolsOpened(dock)
   }
   onDevtoolsClosed(): void {
     this.target?.onDevtoolsClosed()

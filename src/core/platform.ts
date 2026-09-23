@@ -600,13 +600,19 @@ export interface TabViewEvents {
   onRequestsBlocked(count: number): void
   onEnterHtmlFullscreen(): void
   onLeaveHtmlFullscreen(): void
-  onDevtoolsOpened(): void
+  /**
+   * The toolbox is up, at `dock` where the host knows it (the dock it opened the toolbox at;
+   * `Tab.devtools` takes it, and the frame's radius follows this tab's toolbox rather than the
+   * setting). A host that cannot say leaves it out and the core reads the setting's dock.
+   */
+  onDevtoolsOpened(dock?: DevtoolsDock): void
   onDevtoolsClosed(): void
   /**
    * The user moved the toolbox from inside it (its own dock buttons: bottom, right, left,
-   * undocked); the core remembers the dock as it remembers the app menu's choice (design
-   * language v2 §9.29: "the user's last choice remembered"). Hosts that cannot read the
-   * toolbox's dock need not call it.
+   * undocked), or the host moved it for the app menu's rows; the core notes where this tab's
+   * toolbox stands (`Tab.devtools`) and remembers the dock as it remembers the app menu's
+   * choice (design language v2 §9.29: "the user's last choice remembered"). Hosts that cannot
+   * read the toolbox's dock need not call it.
    */
   onDevtoolsDockChanged?(dock: DevtoolsDock): void
   onFoundInPage(result: FindResultInfo): void

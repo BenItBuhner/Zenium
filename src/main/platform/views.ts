@@ -285,6 +285,13 @@ export class ElectronTabView implements TabView {
    * `WebContents`, and a dock change must not dress the standing one twice.
    */
   private readonly dressedFrontends = new WeakSet<WebContents>()
+  /**
+   * Where this view's toolbox stands (§9.29): the dock it was last opened or moved at from
+   * here, then whatever the frontend's own buttons said (`dockFromConsoleMessage`). Reported
+   * to the core with `onDevtoolsOpened`, and it decides whether the toolbox has a picture in
+   * the frame's box (`snapshotDevtools`). Null before the first opening.
+   */
+  private devtoolsDock: DevtoolsDock | null = null
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -405,7 +412,7 @@ export class ElectronTabView implements TabView {
     wc.on('leave-html-full-screen', () => ev.onLeaveHtmlFullscreen())
     wc.on('devtools-opened', () => {
       this.dressDevtools()
-      ev.onDevtoolsOpened()
+      ev.onDevtoolsOpened(this.devtoolsDock ?? undefined)
     })
     wc.on('devtools-closed', () => ev.onDevtoolsClosed())
     wc.on('found-in-page', (_e, result) => ev.onFoundInPage(result))
@@ -904,6 +911,7 @@ export class ElectronTabView implements TabView {
       wc.closeDevTools()
       return
     }
+    if (!wc.isDevToolsOpened()) this.devtoolsDock = dock
     wc.openDevTools({ mode: dock, activate: true })
     if (mode === 'inspect') wc.inspectElement(0, 0)
   }
@@ -915,19 +923,24 @@ export class ElectronTabView implements TabView {
   inspectElementAt(x: number, y: number, dock: DevtoolsDock): void {
     const wc = this.wc
     if (wc.isDestroyed()) return
-    if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: dock, activate: true })
+    if (!wc.isDevToolsOpened()) {
+      this.devtoolsDock = dock
+      wc.openDevTools({ mode: dock, activate: true })
+    }
     wc.inspectElement(x, y)
   }
 
   /**
    * Move an open toolbox to `dock` (the app menu's rows): through the frontend's own
    * `DockController`, the path its buttons take, so the toolbox keeps its panel and drawer and
-   * persists the state as the user's. Should this Chromium keep the module elsewhere, the
+   * persists the state as the user's – and says the new dock on its console, the read-back the
+   * core hears (`onDevtoolsDockChanged`). Should this Chromium keep the module elsewhere, the
    * toolbox is closed and reopened at the dock instead.
    */
   setDevtoolsDock(dock: DevtoolsDock): void {
     const wc = this.wc
     if (wc.isDestroyed() || !wc.isDevToolsOpened()) return
+    this.devtoolsDock = dock
     const frontend = wc.devToolsWebContents
     const reopen = (): void => {
       if (wc.isDestroyed()) return
@@ -954,7 +967,9 @@ export class ElectronTabView implements TabView {
     this.dressedFrontends.add(frontend)
     frontend.on('console-message', (event) => {
       const dock = dockFromConsoleMessage(event.message)
-      if (dock) this.events?.onDevtoolsDockChanged?.(dock)
+      if (!dock) return
+      this.devtoolsDock = dock
+      this.events?.onDevtoolsDockChanged?.(dock)
     })
     frontend.executeJavaScript(DEVTOOLS_DOCK_HOOK_SCRIPT, true).catch(() => undefined)
     frontend.executeJavaScript(DEVTOOLS_SEAM_SCRIPT, true).catch(() => undefined)
