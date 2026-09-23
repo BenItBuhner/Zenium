@@ -985,12 +985,8 @@ describe('the v2 primitives (§9.34)', () => {
     expect(css).not.toMatch(/\.zen-v2-field\[aria-invalid='true'\]:focus-visible/)
     // The token is the one the ring forms draw with, declared once for the chrome and once here.
     expect(css.match(/--v2-ring:/g)).toHaveLength(2)
-    expect(
-      block(
-        "[class^='zen-v2-']:focus-visible,\n[class*=' zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible"
-      )
-    ).toMatch(/outline: 2px solid var\(--v2-ring\)/)
-    expect(block(':focus-visible', css.indexOf('@layer base {'))).toMatch(
+    expect(block(RING_RULE)).toMatch(/outline: 2px solid var\(--v2-ring\)/)
+    expect(block(FLOOR_RULE, css.indexOf('@layer base {'))).toMatch(
       /outline: 2px solid var\(--v2-ring\)/
     )
     // The phone field (phonePanels.css) reads the same two states off the input it wraps, where
@@ -1314,9 +1310,20 @@ describe('the v2 primitives (§9.34)', () => {
   })
 })
 
-/** The shared `zen-v2-` ring rule's selector, as main.css writes it. */
+/**
+ * The shared `zen-v2-` ring rule's selector, as main.css writes it: each `:focus-visible` form
+ * and, beside it, its twin for the pane chord's `data-keyboard-focus` mark (§1 as amended with
+ * #400; lib/panes.ts) – the ring's second trigger, in the same rule so it draws the same ring.
+ */
 const RING_RULE =
-  "[class^='zen-v2-']:focus-visible,\n[class*=' zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible"
+  "[class^='zen-v2-']:focus-visible,\n[class*=' zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible,\n[class^='zen-v2-'][data-keyboard-focus]:focus,\n[class*=' zen-v2-'][data-keyboard-focus]:focus,\n:root[data-pointer='coarse'] [class^='zen-v2-'][data-keyboard-focus]:focus,\n:root[data-pointer='coarse'] [class*=' zen-v2-'][data-keyboard-focus]:focus"
+
+/** The base-layer floor's selector (§1): the same two triggers, under every control. */
+const FLOOR_RULE = ':focus-visible,\n  [data-keyboard-focus]:focus'
+
+/** The URL field's ring – the pill the address button fills – for both triggers. */
+const PILL_RULE =
+  '.zen-pill:has(> button:focus-visible),\n.zen-pill:has(> button[data-keyboard-focus]:focus)'
 
 describe('the focus ring (§1, §4)', () => {
   const panels = readFileSync(
@@ -1372,7 +1379,7 @@ describe('the focus ring (§1, §4)', () => {
     // re-ink beside it is the same seam (§9.12, #247).
     expect(block('.zen-v2-field')).toMatch(/^ {2}--v2-ring-offset: -2px;$/m)
     // The URL field – the pill the address button fills – in both themes.
-    expect(block('.zen-pill:has(> button:focus-visible)').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+    expect(block(PILL_RULE).match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
       '  outline: 2px solid var(--v2-ring);',
       '  outline-offset: -2px;'
     ])
