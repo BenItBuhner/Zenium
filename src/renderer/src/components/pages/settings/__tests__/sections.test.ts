@@ -27,6 +27,7 @@ import {
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
+  INACTIVE_TAB_AUTO_CLOSE_DAYS,
   emptyAgentServerStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
@@ -58,7 +59,7 @@ import { emptyUpdateStatus } from '@shared/updates'
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
-const { buildSection, buildSections } = await import('../sections')
+const { buildSection, buildSections, autoCloseDescription } = await import('../sections')
 const {
   allRows,
   currentOptionLabel,
@@ -4713,6 +4714,11 @@ describe('TAB-20 / SET-34: inactive tabs in Tab Management on a phone, beside sl
     if (autoClose.kind !== 'switch') throw new Error('not a switch')
     expect(autoClose.label).toBe('Automatically close inactive tabs')
     expect(autoClose.description).toBe('Inactive tabs are closed after 3 months')
+    // The period is the core's constant (Chrome 152's 90 days) read in months as Chrome counts
+    // them, not a second copy of the number.
+    expect(autoClose.description).toBe(autoCloseDescription(INACTIVE_TAB_AUTO_CLOSE_DAYS))
+    expect(autoCloseDescription(60)).toBe('Inactive tabs are closed after 2 months')
+    expect(autoCloseDescription(30)).toBe('Inactive tabs are closed after 1 month')
     expect(autoClose.checked).toBe(true)
     expect(autoClose.disabled).toBe(false)
     autoClose.onChange(false)

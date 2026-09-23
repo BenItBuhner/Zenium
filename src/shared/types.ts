@@ -4277,7 +4277,11 @@ export interface Commands {
   'inactiveTabs.restoreAll': { args: void; result: void }
   /** Close one archived tab: it goes to the recently closed list, where History finds it. */
   'inactiveTabs.close': { args: { id: string }; result: void }
-  /** The sheet's "Close all": every archived tab to the recently closed list (the newest 25 stay there). */
+  /**
+   * The sheet's "Close all" (behind its confirmation): every archived tab closed for good, as
+   * Chrome's. None goes to the recently closed list – a bulk close would flush that 25-entry undo
+   * list – and History keeps their pages, which is what the prompt promises.
+   */
   'inactiveTabs.closeAll': { args: void; result: void }
   /**
    * Run the archive pass and the auto-close sweep now, as if the clock read `now` (the default is

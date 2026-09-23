@@ -5,20 +5,23 @@ import type {
   Platform as PlatformOs,
   Tab
 } from '../../shared/types'
+import { INACTIVE_TAB_AUTO_CLOSE_DAYS } from '../../shared/defaults'
 import { Browser } from '../browser'
 import {
   DAY_MS,
-  INACTIVE_TAB_AUTO_CLOSE_DAYS,
   INACTIVE_TABS_FIRST_PASS_DELAY_MS,
   INACTIVE_TABS_MAX_PER_PASS,
   sanitizeArchiveDays
 } from '../inactiveTabs'
+import { NAVIGATION_STATE_INDEX, navigationDocumentName } from '../navigationState'
 import type { AppHost, Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
 import type { ZenWindow } from '../window'
 
-function memoryIo(): StoreIO {
+/** A profile folder in memory; without `remove`, so a removed document is the tombstone `{}`. */
+function memoryIo(): StoreIO & { files: Record<string, string> } {
   const files: Record<string, string> = {}
   return {
+    files,
     readSync: (name) => files[name] ?? null,
     write: async (name, text) => {
       files[name] = text
@@ -37,18 +40,25 @@ function stub<T extends object>(overrides: Partial<T> = {}): T {
   })
 }
 
-/** The Android shape: one window, private tabs, the archive; pages that only record being alive. */
-function fakePlatform(
-  io: StoreIO,
-  inactiveTabs = true
-): Platform & {
+/** What the fake host records and what it is told to report. */
+interface FakeHost {
   live: Set<string>
   sent: Array<[string, string]>
+  /** Each `restoreNavigation`: the tab and the URLs of the stack replayed. */
   restores: Array<[string, string[]]>
-} {
+  /** Each `restoreNavigation`'s host-state blob (the WebView bundle), by tab. */
+  restoredHostState: Map<string, string | undefined>
+  /** A page's saved-state bundle, reported with its stack (`navigationEntries`) once set here. */
+  blobs: Map<string, string>
+}
+
+/** The Android shape: one window, private tabs, the archive; pages that only record being alive. */
+function fakePlatform(io: StoreIO, inactiveTabs = true): Platform & FakeHost {
   const live = new Set<string>()
   const sent: Array<[string, string]> = []
   const restores: Array<[string, string[]]> = []
+  const restoredHostState = new Map<string, string | undefined>()
+  const blobs = new Map<string, string>()
   const capabilities = stub<HostCapabilities>({
     windows: false,
     updates: false,
@@ -63,6 +73,8 @@ function fakePlatform(
     live,
     sent,
     restores,
+    restoredHostState,
+    blobs,
     info: { os: 'android' as PlatformOs, version: '0.0.0' },
     capabilities,
     io,
@@ -98,18 +110,24 @@ function fakePlatform(
           canGoForward: () => false,
           restoreNavigation: async (snapshot: NavigationSnapshot) => {
             restores.push([tab.id, snapshot.entries.map((e) => e.url)])
+            restoredHostState.set(tab.id, snapshot.hostState)
           },
-          // A page that came from somewhere: a two-entry stack; a blank tab has only itself.
-          navigationEntries: () =>
-            tab.url.startsWith('zen://')
-              ? { entries: [{ url: tab.url, title: '' }], index: 0 }
-              : {
-                  entries: [
-                    { url: 'https://example.com/start', title: 'Start' },
-                    { url: tab.url, title: tab.title }
-                  ],
-                  index: 1
-                }
+          // A page that came from somewhere: a two-entry stack (with the host's bundle when the
+          // test gave the page one); a blank tab has only itself.
+          navigationEntries: (): NavigationSnapshot => {
+            if (tab.url.startsWith('zen://'))
+              return { entries: [{ url: tab.url, title: '' }], index: 0 }
+            const snapshot: NavigationSnapshot = {
+              entries: [
+                { url: 'https://example.com/start', title: 'Start' },
+                { url: tab.url, title: tab.title }
+              ],
+              index: 1
+            }
+            const blob = blobs.get(tab.id)
+            if (blob !== undefined) snapshot.hostState = blob
+            return snapshot
+          }
         })
       }
     }),
@@ -121,11 +139,7 @@ function fakePlatform(
     downloads: stub(),
     sessions: stub(),
     app: stub<AppHost>()
-  } as unknown as Platform & {
-    live: Set<string>
-    sent: Array<[string, string]>
-    restores: Array<[string, string[]]>
-  }
+  } as unknown as Platform & FakeHost
 }
 
 const T0 = new Date('2026-09-19T12:00:00Z').getTime()
@@ -217,10 +231,12 @@ describe('the inactive tabs archive (TAB-20)', () => {
     browser.handleCommand(win, 'settings.update', { inactiveTabsArchiveDays: 0 })
     expect(browser.inactiveTabs.runPasses()).toEqual({ archived: 0, closed: 0 })
     browser.handleCommand(win, 'settings.update', { inactiveTabsArchiveDays: 14 })
-    // A change applies at once (the startup pass has run): the 15-day tab goes, the 8-day one stays.
+    // Before the startup pass a change waits for it (a value synced in during boot): nothing
+    // moves until the first pass, which takes the 15-day tab and leaves the 8-day one.
     expect(archivedUrls(browser)).toEqual([])
     vi.advanceTimersByTime(INACTIVE_TABS_FIRST_PASS_DELAY_MS)
     expect(archivedUrls(browser)).toEqual(['https://fifteen.example/'])
+    // Once the startup pass has run, a change applies at once: at 7 the 8-day tab goes too.
     browser.handleCommand(win, 'settings.update', { inactiveTabsArchiveDays: 7 })
     expect(archivedUrls(browser)).toEqual(['https://eight.example/', 'https://fifteen.example/'])
   })
@@ -342,6 +358,24 @@ describe('the inactive tabs archive (TAB-20)', () => {
     expect(gridUrls(browser, win)).toEqual(['https://shown.example/'])
   })
 
+  it('leaves an ordinary close on its way to "Recently closed" after a pass: the archive’s divert is the pass’s alone', async () => {
+    const { browser, win } = start()
+    browser.tabs.createTab({ url: 'https://shown.example/', active: true }, win)
+    const kept = idleTab(browser, win, 'https://kept.example/', 5)
+    idleTab(browser, win, 'https://old.example/', 22)
+    expect(browser.inactiveTabs.runPasses()).toEqual({ archived: 1, closed: 0 })
+    expect(archivedUrls(browser)).toEqual(['https://old.example/'])
+    expect(browser.session.summaries()).toEqual([])
+
+    // The user closes a tab the pass left in the grid (`tab.close`, the switcher's X): its entry
+    // is the undo list's, not the archive's – `archiveTab` hands the close's entry to the pass
+    // for that one close only.
+    await expect(browser.tabs.requestClose(kept.id, false, win)).resolves.toBe(true)
+    expect(browser.tabs.tab(kept.id)).toBeUndefined()
+    expect(browser.session.summaries().map((s) => s.url)).toEqual(['https://kept.example/'])
+    expect(archivedUrls(browser)).toEqual(['https://old.example/'])
+  })
+
   it('closes archived tabs 90 days after archiving when the switch is on, by archive time', () => {
     const { browser, win } = start()
     browser.tabs.createTab({ url: 'https://shown.example/', active: true }, win)
@@ -410,6 +444,55 @@ describe('the inactive tabs archive (TAB-20)', () => {
     expect(second.platform.restores).toEqual([
       [old.id, ['https://example.com/start', 'https://old.example/']]
     ])
+  })
+
+  it('keeps an archived page’s host state across a restart: its document outlives the sweep and the restore replays it', async () => {
+    const io = memoryIo()
+    const first = start(io)
+    first.browser.tabs.createTab({ url: 'https://shown.example/', active: true }, first.win)
+    const old = idleTab(first.browser, first.win, 'https://old.example/', 22)
+    // The page's saved-state bundle (a WebView's `saveState`, base64 on the host): the one part
+    // of a stack that lives in `navigation/<tabId>.json` and never in `state.json`.
+    const BLOB = 'YnVuZGxlOnNjcm9sbCwgZm9ybSBzdGF0ZSwgaGlzdG9yeQ=='
+    first.platform.blobs.set(old.id, BLOB)
+    first.browser.tabs.load(old.id, first.win)
+    first.browser.tabs.rememberNavigation(old.id)
+    await first.browser.state.navigationState.flush()
+    const document = navigationDocumentName(old.id)
+    const written = (): unknown => JSON.parse(io.files[document] ?? 'null')
+    expect(written()).toMatchObject({ version: 1, hostState: BLOB })
+
+    // Archived: the tab is no tab any more, and the store asks what its document is to hold now
+    // – the archive entry's stack, so the document stays (a document no entry speaks for goes).
+    expect(first.browser.inactiveTabs.runPasses()).toEqual({ archived: 1, closed: 0 })
+    await first.browser.state.navigationState.flush()
+    expect(written()).toMatchObject({ version: 1, hostState: BLOB })
+    first.browser.state.flushSync()
+    expect(io.files['state.json']).not.toContain(BLOB)
+
+    // A document the index lists for a tab nothing refers to any more: the next run's sweep.
+    io.files[navigationDocumentName('tab_stray')] = JSON.stringify({
+      version: 1,
+      list: '0',
+      hostState: 'stray'
+    })
+    io.files[NAVIGATION_STATE_INDEX] = JSON.stringify({ version: 1, ids: [old.id, 'tab_stray'] })
+
+    const second = start(io)
+    await second.browser.state.navigationState.flush()
+    // The sweep takes the stray (the tombstone: this host has no `remove`) and leaves the
+    // archived tab's alone – `state.json` refers to it through the archive.
+    expect(io.files[navigationDocumentName('tab_stray')]).toBe('{}')
+    expect(written()).toMatchObject({ version: 1, hostState: BLOB })
+
+    const [entry] = second.browser.inactiveTabs.list()
+    second.browser.inactiveTabs.restore(entry.id, second.win)
+    // The restore replays the stack with the bundle read back from the document, that being the
+    // very list it describes.
+    expect(second.platform.restores).toEqual([
+      [old.id, ['https://example.com/start', 'https://old.example/']]
+    ])
+    expect(second.platform.restoredHostState.get(old.id)).toBe(BLOB)
   })
 
   it('runs its first pass off the boot path and never on a host without the archive', () => {

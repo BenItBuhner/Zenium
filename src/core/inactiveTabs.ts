@@ -30,15 +30,13 @@ import type {
   InactiveTabsArchiveDays,
   Tab
 } from '../shared/types'
-import { INACTIVE_TABS_ARCHIVE_DAYS } from '../shared/defaults'
+import { INACTIVE_TAB_AUTO_CLOSE_DAYS, INACTIVE_TABS_ARCHIVE_DAYS } from '../shared/defaults'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { closedTabIds } from './navigationState'
 import { summarizeArchived } from './session'
 
 export const DAY_MS = 24 * 60 * 60 * 1000
-/** Days an archived tab waits in the archive before the sweep closes it (Chrome: 90). */
-export const INACTIVE_TAB_AUTO_CLOSE_DAYS = 90
 /** Tabs one archive pass moves at most (Chrome: 150). */
 export const INACTIVE_TABS_MAX_PER_PASS = 150
 /**

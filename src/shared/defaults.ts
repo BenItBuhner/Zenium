@@ -186,6 +186,13 @@ export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
  */
 export const INACTIVE_TABS_ARCHIVE_DAYS: readonly InactiveTabsArchiveDays[] = [0, 7, 14, 21]
 
+/**
+ * How long an archived tab waits before the auto-close sweep takes it, in days: Chrome 152's
+ * `DEFAULT_AUTODELETE_TIME_HOURS` (90 days). Settings words it in months the way Chrome's
+ * `getAutoDeleteTimeDeltaMonths` does (days / 30, so "3 months").
+ */
+export const INACTIVE_TAB_AUTO_CLOSE_DAYS = 90
+
 export function emptyResourceSnapshot(): ResourceSnapshot {
   const gauge = { used: 0, budget: 0, configured: 0 }
   return {
