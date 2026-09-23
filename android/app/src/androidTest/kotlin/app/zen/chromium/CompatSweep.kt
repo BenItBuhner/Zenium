@@ -5808,8 +5808,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Picker), the fixture host blocked in a popup (StayFocusd), WOT's slider frame mounted by
         // the action click, eJOY's lookup on a double-tapped word. Six rows declare a
         // `minimum_chrome_version` above WebView 113's (Text Blaze 147, KeePassXC-Browser 124,
-        // Buster 123, Tampermonkey BETA 120, Send from Gmail 116, CyberGhost 116): the runtime
-        // refuses them at install on the API 34 image as Chrome would; the 156 column measures them.
+        // Buster 123, Tampermonkey BETA 120, Send from Gmail 116, CyberGhost 116): the runtime holds
+        // the field against Zenium's platform version (the store's 152), installs them, and warns
+        // once on the error console where the WebView's engine is below it
+        // (`extensionHost.warnEngineBelowMinimum`); the 113 column measures them on that engine.
         // The five largest downloads last, so a run that dies keeps the rest.
         Row("cifnddnffldieaamihfkhkdgnbhfmaci", "Foxit PDF Creator", "foxit-pdf-creator", core = serviceBacked("Foxit PDF Creator", "it converts the page to PDF through the Foxit PDF Editor desktop host over native messaging; without the host, connectNative disconnects as Chrome's does", native = true)),
         Row("opcgpfmipidbgpenhmajoajpbobppdil", "Slush - A Sui wallet", "slush", core = domMarker("Slush's Wallet Standard registration in the page world", "wallet.html?slush", WALLET_STANDARD.replace("__RE__", "/slush|sui wallet/i").replace("__GLOBALS__", "o.suiWallet!=='undefined'||o.slush!=='undefined'"), settleMs = 30_000)),
