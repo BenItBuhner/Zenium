@@ -27,7 +27,7 @@ import { toolbarTiering } from '@renderer/lib/toolbarPins'
  * Look and Feel › Appearance's toolbar rows (settings-36; Chrome's toolbar customisation): the
  * "Show forward button" switch, the "Customize toolbar" row and its 400 form dialog – the
  * lead's spec in design language v2 §10.5: §6 check rows, one per optional control in the
- * bar's order, each leading with the control's glyph after the box, "Hidden at this width" on
+ * bar's order, each leading with the control's glyph after the box, "Hidden at this width." on
  * a pinned control the width tier folded, Done alone in the footer – and the "Reset to
  * default" row. All three are the desktop's (`layouts: ['desktop']`); the switch and the
  * dialog's Forward row are one setting, `toolbarPins.forward`.
@@ -383,11 +383,21 @@ describe('the Customize toolbar dialog (the lead’s spec, §10.5)', () => {
       })
     )
     expect(lines(flipped.h)).toEqual(atRest)
-    // The Downloads line is one sentence, true in both states, in the list's convention.
-    expect(DOWNLOADS_UNCHECKED).toMatch(/\.$/)
+    act(() => root?.unmount())
+    host?.remove()
+    // One convention per list (§9.1): every line the rows can carry is a sentence with its
+    // full stop – the width line, on the pinned controls the tier has folded, included.
+    const narrow = openDialog(state())
+    act(() => toolbarTiering.set({ hidden: ['forward', 'reader', 'translate', 'star', 'media'] }))
+    const atWidth = lines(narrow.h)
+    expect(atWidth.forward).toBe(HIDDEN_AT_THIS_WIDTH)
+    expect(atWidth.downloads).toBe(DOWNLOADS_UNCHECKED)
+    for (const line of [...Object.values(atWidth), ...Object.values(atRest)]) {
+      if (line !== null) expect(line, line).toMatch(/[a-z]\.$/)
+    }
   })
 
-  it('a pinned control the width tier hid says "Hidden at this width" and stays checked and live; a folded one says nothing of the width', () => {
+  it('a pinned control the width tier hid says "Hidden at this width." and stays checked and live; a folded one says nothing of the width', () => {
     const { h } = openDialog(state({ toolbarPins: { star: false } }))
     const description = (control: string): string | null =>
       h.querySelector(`[data-row="toolbar-control:${control}"] .zen-settings-description`)

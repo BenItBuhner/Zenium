@@ -19,7 +19,7 @@ import { RowText } from './rows'
  * address pill, Back, Reload and the ⋯ menu are the bar, not its options, and have no row.
  * No preview: the bar over the dialog is the preview and every change applies as it is made.
  * A control the window's width has tiered away (§9.29, `toolbarTiering`) stays checked and
- * says "Hidden at this width" as its 13/69 % description, never disabled; a control the page
+ * says "Hidden at this width." as its 13/69 % description, never disabled; a control the page
  * has to earn (an article's Reader View, media playing, a download running) says when it
  * shows. A row's description is the same in both of its states, so a toggle never moves the
  * rows under the pointer (§9.2: a row keeps its height). The footer is Done alone, a hugging
@@ -96,7 +96,7 @@ export function CustomizeToolbarForm({
 }
 
 /** The lead's description for a pinned control the width tier has folded (§9.29). */
-export const HIDDEN_AT_THIS_WIDTH = 'Hidden at this width'
+export const HIDDEN_AT_THIS_WIDTH = 'Hidden at this width.'
 
 /**
  * The Downloads row's line in both states: unchecked, the button is not in the menu as the
