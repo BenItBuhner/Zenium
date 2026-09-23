@@ -409,7 +409,7 @@ export async function appimageFacts(opts) {
     }
     facts.payload = payload
   } finally {
-    fs.rmSync(workDir, { recursive: true, force: true })
+    fs.rmSync(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
   return finish(out, facts, startedAt)
 }

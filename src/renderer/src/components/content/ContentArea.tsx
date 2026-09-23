@@ -281,10 +281,18 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
                  * The tablet's core menus are popovers too (v2 §9.36, `TabletMenu`): no dim
                  * under them either. Web capture draws the frame's §9.5 scrim itself, with
                  * the marquee cut out of it (`CaptureOverlay`): no dim under it, or the
-                 * cut-out would show the page dimmed.
+                 * cut-out would show the page dimmed. A frame dialog – a window prompt, a
+                 * folder's delete prompt, the print preview, any dialog the frame host
+                 * places over a web page – holds the page under its picture
+                 * (`holdFrameDialogCover`, from its open to the end of its way out), and the
+                 * host's §9.5 scrim is the ONE dim over that picture (#294: `.zen-frame-scrim`
+                 * at .45 / .55); this layer under it as well read 96 where the scrim alone
+                 * reads 144 (pr-392 A2). The security prompt and the leak warning said the same
+                 * by their own flags (`panelAloneOverContent`); the cover says it for every one.
                  */}
                 {!phone &&
                   !ui.capture &&
+                  ui.frameDialogCover === 0 &&
                   !panelAloneOverContent(ui) &&
                   !extensionChromeAloneOverContent(ui) &&
                   !(tablet && menuAloneOverContent(ui)) && (
