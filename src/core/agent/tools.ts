@@ -1730,7 +1730,9 @@ const zenHistory: AgentTool = {
     name: 'zen_history',
     title: 'Search history',
     description:
-      "Search the user's browsing history by title or URL (empty query: most recent pages).",
+      "Search the user's browsing history by title or URL (empty query: most recent pages). " +
+      'Every word of the query matches at word starts, as Chrome\'s history search does: "docs" ' +
+      'finds "Team docs" and "/docs/intro", not "Googledocs".',
     inputSchema: schema({ query: { type: 'string' }, limit: { type: 'number' } }),
     annotations: { readOnlyHint: true, openWorldHint: false }
   },
