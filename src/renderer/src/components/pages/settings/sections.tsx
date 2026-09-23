@@ -2635,6 +2635,7 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
     isActiveSearchEngine(e) || e.id === s.searchEngineId
   const active = engines.filter(isActive)
   const splitInactive = formFactor === 'desktop'
+  const inactiveOwn = splitInactive ? own.filter((e) => !isActive(e)) : []
   const glyph = (e: SearchEngine): ReactNode => <EngineGlyph engine={e} />
   /**
    * The picker's heading for the user's engines; the shipped ones (no `source`) sit above any
@@ -2717,17 +2718,19 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
       empty: 'No search engines added yet'
     },
     // The engines taken out of the omnibox (settings-43; Chrome's Inactive shortcuts): kept
-    // with their shortcut, answering to nothing until activated. No empty state: the heading
-    // appears with the first engine deactivated and goes with the last activated.
-    {
-      id: 'inactive-search-engines',
-      heading: 'Inactive',
-      description: 'Engines kept but not offered in the address bar until you activate them.',
-      layouts: ['desktop'],
-      rows: (splitInactive ? own.filter((e) => !isActive(e)) : []).map((e) =>
-        searchEngineItem(e, state, set, glyph(e))
-      )
-    },
+    // with their shortcut, answering to nothing until activated. No empty state: the group
+    // comes with the first engine deactivated and goes with the last activated.
+    ...(inactiveOwn.length > 0
+      ? [
+          {
+            id: 'inactive-search-engines',
+            heading: 'Inactive',
+            description: 'Engines kept but not offered in the address bar until you activate them.',
+            layouts: ['desktop'] as const,
+            rows: inactiveOwn.map((e) => searchEngineItem(e, state, set, glyph(e)))
+          } satisfies RowGroup
+        ]
+      : []),
     {
       id: 'add-search-engine',
       heading: null,

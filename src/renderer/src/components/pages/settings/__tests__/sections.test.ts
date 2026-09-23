@@ -3120,9 +3120,11 @@ describe('what a row does', () => {
         searchEngineId: 'custom:mine'
       })
       const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
-      const inactive = model.groups.find((g) => g.id === 'inactive-search-engines')!
-      expect(inactive.rows).toEqual([])
-      expect(groupShows(inactive)).toBe(false)
+      expect(model.groups.map((g) => g.id)).toEqual([
+        'search',
+        'search-engines',
+        'add-search-engine'
+      ])
     })
 
     it('Edit is a form row over the Add form pre-filled – name, shortcut, URL – saving through search.updateEngine', () => {
