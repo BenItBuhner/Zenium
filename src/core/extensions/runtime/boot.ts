@@ -1,3 +1,4 @@
+import type { FlowStats } from '../api/engine'
 import type { LocaleMessages, RunAt, RuntimeManifest, ScriptWorld } from './manifest'
 import { planInjection, resolveDotSegments, type RegisteredContentScript } from './plan'
 
@@ -129,6 +130,11 @@ export interface BootStats {
    * budget reads the two around a scroll for the messages per second the runtime moved.
    */
   bridge: { hostBound: number; pageBound: number }
+  /**
+   * The flow bound's counters of every engine this copy runs, by endpoint id (`FlowStats`:
+   * posted, read, held, dropped, fences): what a page's burst of messages met at the page.
+   */
+  flow?: Record<string, FlowStats>
   /**
    * The first uncaught errors of the document after the bootstrap ran (a debug world's
    * capturing `error` listener), with the stack and, for a script the page holds inline (an

@@ -16,6 +16,7 @@ import {
   createEmulatedEngine,
   type EmulatedEngine,
   type EngineContextKind,
+  type FlowStats,
   type Primordials
 } from '@core/extensions/api/engine'
 import { EXTENSION_ORIGIN_SUFFIX, extensionOrigin } from '@core/extensions/runtime/plan'
@@ -463,6 +464,23 @@ declare const __zenExtBoot: Boot
     const pageWindow = realWindow
     const origin = extensionOrigin(ext.id)
     const endpointId = endpointIdFor(ext.id)
+    if (boot.debug) {
+      // The page's debug stats (`__zenExtStats`, as a content world has): its engine's flow
+      // counters, for the compat sweep's reading of what a popup's burst met at the page.
+      const flow: Record<string, FlowStats> = {}
+      for (const [ep, running] of engines) flow[ep] = running.flow
+      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow'> & { page: EngineContextKind } = {
+        frame: frame.url,
+        world: 'page',
+        page: context,
+        flow
+      }
+      Object.defineProperty(g, '__zenExtStats', {
+        value: pageStats,
+        enumerable: false,
+        configurable: true
+      })
+    }
     // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
     // MV2 backgrounds are pages in Chrome too and get none of it.
     const background = ext.manifest.background as Record<string, unknown> | undefined
@@ -738,6 +756,16 @@ declare const __zenExtBoot: Boot
     Object.defineProperty(g, '__zenExtStats', {
       value: stats,
       enumerable: false,
+      configurable: true
+    })
+    // The engines' flow counters, read when the stats are: engines come with the units.
+    Object.defineProperty(stats, 'flow', {
+      get: (): Record<string, FlowStats> => {
+        const flow: Record<string, FlowStats> = {}
+        for (const [ep, engine] of engines) flow[ep] = engine.flow
+        return flow
+      },
+      enumerable: true,
       configurable: true
     })
     // The document's first uncaught errors, for the compat sweep: a console line gives an inline

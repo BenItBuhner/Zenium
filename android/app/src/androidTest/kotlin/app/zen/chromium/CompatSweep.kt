@@ -557,6 +557,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             detail.put("console", JSONArray(consoleOf(live).takeLast(20)))
             detail.put("dom", json(tabEval(live, DOM_REPORT)))
             detail.put("sheet", sheetSize(live))
+            // The popup's own sender-side counters (its store subscriptions' traffic to the host).
+            detail.put("flow", json(tabEval(live, FLOW_REPORT)))
         }
         when {
             view != null -> {
@@ -788,7 +790,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val table = JSONObject()
         for ((key, counts) in calls.toSortedMap()) table.put(key.substringAfter(' '), JSONArray().put(counts[0]).put(counts[1]).put(counts[2]))
         entry.put("calls", table)
-        backgroundView(row.id)?.let { entry.put("backgroundConsoleAtEnd", JSONArray(consoleOf(it).takeLast(30))) }
+        backgroundView(row.id)?.let { bg ->
+            entry.put("backgroundConsoleAtEnd", JSONArray(consoleOf(bg).takeLast(30)))
+            // The background's sender-side flow counters (Trust Wallet's store broadcasts to its
+            // popup go this way): what its bursts met at the page, before the Java side.
+            entry.put("backgroundFlow", json(tabEval(bg, FLOW_REPORT)))
+        }
     }
 
     /**
@@ -6308,6 +6315,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "scorecard" to "sb.scorecardresearch.com",
             "adnxs" to "acdn.adnxs.com"
         )
+        /**
+         * The shim's flow bound counters of a page's engines (`BootStats.flow`, by endpoint):
+         * what a burst of messages met at the page (posted, read, held, dropped, fences); `{}`
+         * where the page has no debug stats.
+         */
+        private const val FLOW_REPORT =
+            "JSON.stringify((window.__zenExtStats&&window.__zenExtStats.flow)||{})"
         /** A document's size and content, shadow roots included. */
         private const val DOM_REPORT =
             "(function(){var r=document.body?document.body.getBoundingClientRect():{width:0,height:0};var deep=function(root){var n=0;var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){n++;if(all[i].shadowRoot)n+=deep(all[i].shadowRoot)}return n};" +

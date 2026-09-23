@@ -113,9 +113,11 @@ class ExtensionScriptsTest {
     }
 
     @Test
-    fun `page bootstrap carries only the config`() {
+    fun `page bootstrap carries only the config, and the debug flag when asked`() {
         val script = ExtensionScripts.page("BOOT", """{"kind":"page","context":"popup"}""")
         assertEquals("""(function(){var __zenExtBoot={config:{"kind":"page","context":"popup"},debug:false,css:{},sources:{}};""" + "\nBOOT\n})();", script)
+        val debug = ExtensionScripts.page("BOOT", """{"kind":"page","context":"background"}""", debug = true)
+        assertEquals("""(function(){var __zenExtBoot={config:{"kind":"page","context":"background"},debug:true,css:{},sources:{}};""" + "\nBOOT\n})();", debug)
     }
 
     @Test

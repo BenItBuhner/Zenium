@@ -162,9 +162,13 @@ object ExtensionScripts {
     /** After the body and the mirror: the completion value returned. */
     private const val COMPLETION_RETURN = "\n;return $COMPLETION_PARAM"
 
-    /** The bootstrap for an extension page (background, popup, options): config only. */
-    fun page(bootstrap: String, configJson: String): String =
-        "(function(){var __zenExtBoot={config:$configJson,debug:false,css:{},sources:{}};\n$bootstrap\n})();"
+    /**
+     * The bootstrap for an extension page (background, popup, options): config only. While
+     * [debug], the page exposes its debug stats (`__zenExtStats`: its engine's flow counters)
+     * as a content world does; the compat sweep reads them off a background or a popup.
+     */
+    fun page(bootstrap: String, configJson: String, debug: Boolean = false): String =
+        "(function(){var __zenExtBoot={config:$configJson,debug:$debug,css:{},sources:{}};\n$bootstrap\n})();"
 
     /**
      * What the host evaluates in a tab for `scripting.executeScript` / `tabs.executeScript`: the

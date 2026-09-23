@@ -1727,7 +1727,7 @@ class Extensions(private val host: Host) {
     fun pageScript(ext: Served, context: String): String {
         val config = runCatching { JSONObject(ext.pageConfig) }.getOrDefault(JSONObject())
         config.put("context", context)
-        return ExtensionScripts.page(bootstrap, config.toString())
+        return ExtensionScripts.page(bootstrap, config.toString(), debug)
     }
 
     fun onBridgeMessageFromPage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy) =

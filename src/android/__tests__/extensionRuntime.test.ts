@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Space } from '@shared/types'
+import { WARN_FLOW_DROPPED } from '@core/extensions/api/engine'
+import type { ExtensionErrorReport } from '@core/extensions/errorConsole'
 import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
 import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
@@ -3152,5 +3154,63 @@ describe("AndroidExtensionRuntime: an extension's files come through the store's
     expect(packageRelativePath('/')).toBeNull()
     expect(packageRelativePath('../x.css')).toBeNull()
     expect(packageRelativePath('css/../../x.css')).toBeNull()
+  })
+})
+
+describe("AndroidExtensionRuntime: a context's console line", () => {
+  it("puts a shim's `console` post on the extension's error console through the store, attributed to the context's kind", async () => {
+    const h = harness()
+    const lines: { id: string; report: ExtensionErrorReport }[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async () => ({ status: 'no_update' }),
+      consoleLine: (id, report) => void lines.push({ id, report })
+    }
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'cs1', 'content')
+    hello(h, 'pop1', 'popup', { url: `https://${ID}.ext.zenium.invalid/popup.html` })
+    message(h, 'bg1', { t: 'console', level: 'warning', message: WARN_FLOW_DROPPED })
+    message(h, 'cs1', { t: 'console', level: 'warning', message: WARN_FLOW_DROPPED })
+    message(h, 'pop1', { t: 'console', level: 'error', message: 'boom' })
+    expect(lines).toEqual([
+      {
+        id: ID,
+        report: {
+          level: 'warning',
+          source: 'worker',
+          message: WARN_FLOW_DROPPED,
+          url: `https://${ID}.ext.zenium.invalid/bg.html`,
+          context: 'background'
+        }
+      },
+      {
+        id: ID,
+        report: {
+          level: 'warning',
+          source: 'content',
+          message: WARN_FLOW_DROPPED,
+          url: 'https://example.com/',
+          context: 'content'
+        }
+      },
+      {
+        id: ID,
+        report: {
+          level: 'error',
+          source: 'page',
+          message: 'boom',
+          url: `https://${ID}.ext.zenium.invalid/popup.html`,
+          context: 'popup'
+        }
+      }
+    ])
+    // An empty line and a post from no endpoint put nothing on the console.
+    message(h, 'bg1', { t: 'console', level: 'warning', message: '' })
+    message(h, 'nobody', { t: 'console', level: 'warning', message: 'x' })
+    expect(lines).toHaveLength(3)
   })
 })
