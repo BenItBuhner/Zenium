@@ -4213,8 +4213,19 @@ export interface Commands {
   }
   /** Move nodes (in the given order) so that the first lands at `index` of `parentId`. */
   'bookmark.move': { args: { ids: string[]; parentId: string; index?: number }; result: void }
-  /** Remove bookmarks and folders (folders with all their contents). */
+  /**
+   * Remove bookmarks and folders (folders with all their contents). Undoable: the window hears
+   * `bookmark.deleted` with the edit's token for its toast (bookmarks-31).
+   */
   'bookmark.remove': { args: { ids: string[] }; result: void }
+  /**
+   * Take back the newest delete, move or rename (the manager's Ctrl+Z), or the one edit `token`
+   * names (a delete's toast). What came back or moved, under its current ids; null for nothing.
+   */
+  'bookmark.undo': {
+    args: { token?: number }
+    result: { kind: 'remove' | 'move' | 'update'; ids: string[]; parentId: string | null } | null
+  }
   /**
    * Open a bookmark (records `dateLastUsed`); `background` with `newTab` is a tab behind the
    * current one (a middle or Ctrl click on a manager row, §10.1), as `urlbar.submit` has it.
@@ -5131,6 +5142,11 @@ export interface Events {
   'bookmark.star': { tabId: string; nodeId: string; created: boolean }
   /** The bookmark manager should edit a node, or create one (`id: null`) inside `parentId`. */
   'bookmark.edit': { id: string | null; parentId: string; type: BookmarkNodeType }
+  /**
+   * The user deleted bookmarks or folders in this window (bookmarks-31): `count` top-level
+   * nodes of `kind`; `bookmark.undo` with the `token` brings them back (the toast's Undo).
+   */
+  'bookmark.deleted': { token: number; count: number; kind: 'bookmark' | 'folder' | 'mixed' }
   /** Open the "Bookmark all tabs" dialog for these tabs. */
   'bookmark.allTabs': { tabIds: string[]; defaultTitle: string }
   'space.edit': { spaceId: string }

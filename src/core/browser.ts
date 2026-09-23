@@ -34,6 +34,7 @@ import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
+import { BookmarkUndoStack } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
@@ -221,6 +222,8 @@ export class Browser {
    */
   readonly newTab: NewTabService
   readonly bookmarks: BookmarkService
+  /** The user's bookmark edits that can be taken back (bookmarks-31). */
+  readonly bookmarkUndo: BookmarkUndoStack
   readonly downloads: DownloadService
   private readonly downloadListeners = new Set<DownloadChangeListener>()
   readonly permissions: PermissionService
@@ -379,6 +382,7 @@ export class Browser {
       if (kind === 'clear') this.omniboxShortcuts.clear()
     })
     this.bookmarks = new BookmarkService(this.state)
+    this.bookmarkUndo = new BookmarkUndoStack(this.bookmarks)
     this.downloads = new DownloadService(
       platform.io,
       platform.downloads,
@@ -1244,8 +1248,10 @@ export class Browser {
     const tab = this.tabs.tab(tabId)
     if (!tab || !this.bookmarkable(tab.url)) return
     if (this.bookmarks.has(tab.url)) {
-      this.bookmarks.removeByUrl(tab.url)
-      this.toast('Bookmark removed', 'info', win)
+      this.deleteBookmarks(
+        this.bookmarks.findByUrl(tab.url).map((n) => n.id),
+        win
+      )
       return
     }
     const node = this.bookmarks.create({
@@ -1372,7 +1378,17 @@ export class Browser {
   /** The bar folder menu's "Sort by name": folders first, then bookmarks, A to Z, in one move. */
   sortBookmarkFolder(folderId: string): boolean {
     const order = sortedByNameOrder(this.bookmarks.tree, folderId)
-    return order ? this.bookmarks.move(order, folderId, 0) : false
+    return order ? this.bookmarkUndo.move(order, folderId, 0) : false
+  }
+
+  /**
+   * Delete bookmarks and folders as the user asked (the manager, the bar, the star dialog's
+   * Remove, Ctrl+D on a bookmarked page): undoable, and the window hears of it for the toast
+   * whose Undo brings them back (bookmarks-31).
+   */
+  deleteBookmarks(ids: readonly string[], win: ZenWindow): void {
+    const removal = this.bookmarkUndo.remove(ids)
+    if (removal) this.emit('bookmark.deleted', removal, win)
   }
 
   /** Open the bookmarks below the given nodes in a new window (private when asked). */
@@ -2902,9 +2918,11 @@ export class Browser {
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
       'bookmark.create': ({ parentId, index, title, url, type, favicon }) =>
         this.bookmarks.create({ parentId, index, title, url, type, favicon }),
-      'bookmark.update': ({ id, title, url }) => void this.bookmarks.update(id, { title, url }),
-      'bookmark.move': ({ ids, parentId, index }) => void this.bookmarks.move(ids, parentId, index),
-      'bookmark.remove': ({ ids }) => void this.bookmarks.removeMany(ids),
+      'bookmark.update': ({ id, title, url }) => void this.bookmarkUndo.update(id, { title, url }),
+      'bookmark.move': ({ ids, parentId, index }) =>
+        void this.bookmarkUndo.move(ids, parentId, index),
+      'bookmark.remove': ({ ids }, win) => this.deleteBookmarks(ids, win),
+      'bookmark.undo': ({ token }) => this.bookmarkUndo.undo(token),
       'bookmark.open': ({ id, newTab, tabId, background }, win) =>
         this.openBookmark(id, newTab, tabId, win, Boolean(background)),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),

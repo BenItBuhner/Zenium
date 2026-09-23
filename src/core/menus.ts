@@ -2220,7 +2220,7 @@ export class Menus {
         {
           label: nodes.length > 1 ? `Delete ${nodes.length} Items` : 'Delete',
           enabled: editable,
-          click: () => void bookmarks.removeMany(ids)
+          click: () => this.browser.deleteBookmarks(ids, win)
         }
       )
     }
@@ -2308,7 +2308,7 @@ export class Menus {
         .getChildren(folderId)
         .filter((n) => n.type === 'folder' && !excluded.has(n.id))
       return [
-        { label: 'Move Here', click: () => void bookmarks.move(ids, folderId) },
+        { label: 'Move Here', click: () => void this.browser.bookmarkUndo.move(ids, folderId) },
         ...(subfolders.length ? [{ type: 'separator' as const }] : []),
         ...subfolders.map((f) => ({ label: f.title, submenu: build(f.id) }))
       ]
