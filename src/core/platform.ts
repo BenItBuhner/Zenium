@@ -830,9 +830,12 @@ export interface TabView {
   capture?(options: AgentCaptureOptions): Promise<AgentCapture | null>
   /**
    * The page's geometry for the chrome's capture overlay (`shared/capture.ts`, `page.viewport`):
-   * the scroll offset, the viewport and document sizes in the page's CSS pixels, the page zoom
-   * and the device pixels per CSS pixel. Null when the page cannot be read (nothing loaded, a
-   * renderer gone). Hosts without it leave the chrome to `Tab.zoom` and no scroll offset.
+   * the scroll offset, the viewport and document sizes in the page's CSS pixels, the viewport
+   * minus its scrollbar gutters (`clientWidth` × `clientHeight`, what a visible-area capture
+   * paints; the viewport itself where scrollbars overlay the page) and the direction, the page
+   * zoom and the device pixels per CSS pixel. Null when the page cannot be read (nothing
+   * loaded, a renderer gone). Hosts without it leave the chrome to `Tab.zoom` and no scroll
+   * offset.
    */
   viewport?(): Promise<PageViewport | null>
 
