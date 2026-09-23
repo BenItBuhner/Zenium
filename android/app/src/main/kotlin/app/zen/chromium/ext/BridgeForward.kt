@@ -35,7 +35,13 @@ import org.json.JSONObject
  *     answered with an error); any other arrival is refused: a `call` or `msg` hears an error, a
  *     port message is dropped with its port left as it is, the rest go silently – and the
  *     extension's error console gets a line ([Sink.warn], at most one per source per
- *     [Limits.warnEveryFrames] frames; the ring folds repeats).
+ *     [Limits.warnEveryFrames] frames; the ring folds repeats). The chars bounds weigh what an
+ *     arrival adds: a small one ([Limits.smallChars] or less – a `storage.set`, a `tabs.query`)
+ *     is never refused for the big messages waiting ahead of it, only the count bounds hold it
+ *     (Trust Wallet's background, compat round 11b: its store broadcasts of 144 K chars filled
+ *     the source's chars and its 200-char storage calls were refused in their shadow). The
+ *     small ones a source can have waiting are bounded by [Limits.sourceCount] times
+ *     [Limits.smallChars] on top of [Limits.sourceChars], so the heap's bound stands.
  *
  * Plain Kotlin, main-thread only: the frame scheduler, the ready check and the sink are the
  * caller's ([Extensions] hands a Choreographer, the chrome's ready flag and the `ext.message`,
@@ -60,14 +66,23 @@ class BridgeForward(
         val frameCount: Int = 256,
         /** `setIcon` pixel rewrites per frame (a parse of the pixels and a scale, main thread). */
         val iconsPerFrame: Int = 1,
-        /** Pending chars per source, checked when the source already has something waiting. */
+        /**
+         * Pending chars per source, checked when the source already has something waiting, for
+         * an arrival over [smallChars]; the small ones are held to [sourceCount] alone.
+         */
         val sourceChars: Int = 2 * 1024 * 1024,
-        /** Pending messages per source. */
-        val sourceCount: Int = 512,
-        /** Pending chars over every source, checked when something is already waiting. */
+        /** Pending messages per source (a small message's only bound; see [smallChars]). */
+        val sourceCount: Int = 2048,
+        /** Pending chars over every source, checked when something is already waiting, for an arrival over [smallChars]. */
         val totalChars: Int = 6 * 1024 * 1024,
         /** Pending messages over every source. */
-        val totalCount: Int = 2048,
+        val totalCount: Int = 4096,
+        /**
+         * A message this long or shorter adds no weight worth a refusal: it waits its turn behind
+         * whatever is pending, under the count bounds alone. At most [sourceCount] of them a
+         * source (2 M chars at the defaults), on top of [sourceChars] of bigger ones.
+         */
+        val smallChars: Int = 1024,
         /** Frames between two console lines of one source. */
         val warnEveryFrames: Int = 60
     )
@@ -245,9 +260,13 @@ class BridgeForward(
         schedule()
     }
 
-    /** Whether holding [chars] more for [queue] would pass a bound (the chars bounds apply once something waits). */
+    /**
+     * Whether holding [chars] more for [queue] would pass a bound: the count bounds for any
+     * arrival, the chars bounds (once something waits) for one over [Limits.smallChars].
+     */
     private fun overBound(queue: Queue, chars: Int): Boolean {
         if (queue.entries.size >= limits.sourceCount || pendingCount >= limits.totalCount) return true
+        if (chars <= limits.smallChars) return false
         if (queue.entries.isNotEmpty() && queue.chars + chars > limits.sourceChars) return true
         if (pendingCount > 0 && pendingChars + chars > limits.totalChars) return true
         return false

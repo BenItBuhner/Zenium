@@ -200,6 +200,59 @@ class BridgeForwardTest {
     }
 
     @Test
+    fun `a small call waits its turn behind a source's big messages instead of being refused for them`() {
+        val limits = BridgeForward.Limits(frameChars = 64 * 1024, sourceChars = 1024 * 1024)
+        val guard = guard(limits)
+        sink.keepTexts = true
+        // Trust Wallet's background (compat round 11b): store broadcasts of about 140 K chars
+        // over a port, many a second, and its storage calls of about 100 chars between them.
+        val payload = "x".repeat(140_000)
+        fun port(id: Int) = """{"t":"portMsg","portId":"p1","id":$id,"data":"$payload","token":"tok","ep":"$EP"}"""
+        for (id in 1..20) offer(guard, port(id))
+        // The first went at once; seven more fit the source's chars; the rest were dropped silent.
+        assertEquals(1L, guard.forwarded)
+        assertEquals(7, guard.pendingCount)
+        assertEquals(12L, guard.refused)
+        assertTrue(replies.isEmpty())
+        assertEquals(listOf(BridgeForward.WARN_MESSAGE_REFUSED), sink.warnings)
+        // The storage calls arrive in the flood's shadow: none is refused for the broadcasts
+        // ahead of it; each waits its turn.
+        for (id in 21..30) offer(guard, call(id, "storage", "set", """{"k":"v$id"}"""))
+        assertEquals(17, guard.pendingCount)
+        assertEquals(12L, guard.refused)
+        assertTrue(replies.isEmpty())
+        // Another broadcast is still over the source's chars.
+        offer(guard, port(31))
+        assertEquals(13L, guard.refused)
+        assertEquals(17, guard.pendingCount)
+        // Drained in arrival order: a 140 K broadcast every two or three frames of a 64 K bucket,
+        // the ten small calls together in the frame after the last broadcast.
+        var ticks = 0
+        while (guard.pendingCount > 0 && ticks < 200) {
+            frames.tick()
+            ticks++
+        }
+        assertEquals("drained over $ticks frames", 17, ticks)
+        assertEquals(listOf(1) + (2..8) + (21..30), forwardedIds())
+        assertEquals(0L, guard.pendingChars)
+    }
+
+    @Test
+    fun `the count bound is a small message's only bound`() {
+        val guard = guard(BridgeForward.Limits(sourceCount = 4))
+        ready = false
+        for (id in 1..6) offer(guard, call(id, "storage", "set", """{"k":"v$id"}"""))
+        assertEquals(4, guard.pendingCount)
+        assertEquals(2L, guard.refused)
+        assertEquals(listOf(5, 6), replies.map { it.getInt("id") })
+        assertTrue(replies.all { !it.getBoolean("ok") && it.getString("error") == BridgeForward.MESSAGE_REFUSED })
+        ready = true
+        frames.tick()
+        assertEquals(0, guard.pendingCount)
+        assertEquals(4L, guard.forwarded)
+    }
+
+    @Test
     fun `over the bound a coalescable arrival drops the oldest pending action state of its source`() {
         val guard = guard(BridgeForward.Limits(sourceCount = 3))
         sink.keepTexts = true
