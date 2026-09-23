@@ -387,6 +387,20 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     expect(rule('.zen-rail-flyout[data-flyout-moving] .zen-tab-title')).toContain(
       'text-overflow: clip'
     )
+    // The title's resting cut (the ellipsis) is the component's own rule in the same layer, not
+    // the `truncate` utility: under the cascade layers the moving rule could not outrank a
+    // utility, and the drive's held frame read `ellipsis` while the width moved.
+    const resting = rule('.zen-tab-title')
+    expect(resting).toContain('overflow: hidden')
+    expect(resting).toContain('text-overflow: ellipsis')
+    expect(resting).toContain('white-space: nowrap')
+    expect(css.indexOf('.zen-tab-title {')).toBeLessThan(
+      css.indexOf('.zen-rail-flyout[data-flyout-moving] .zen-tab-title {')
+    )
+    sidebar({ layout: 'single' })
+    const title = q<HTMLElement>('[data-testid="tab-title"]')!
+    expect(title.className).toContain('zen-tab-title')
+    expect(title.className).not.toContain('truncate')
   })
 
   it('lays each row across the seam (§9.20’s start alignment): the tile the compact row’s box in the rail, the panel’s row from the rail’s edge, the glyph centred in the tile and the title 10 into the panel, the parent row’s tile lit', () => {

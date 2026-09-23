@@ -1275,6 +1275,18 @@
   .zen-tab[data-active='true'] {
     background: var(--v2-window-fill);
   }
+  /*
+   * The row's title on one line, cut with an ellipsis (the `truncate` utility's three
+   * declarations) – stated here, in the components layer, rather than as the utility: the rail's
+   * flyout cuts the title plain while its width moves (`.zen-rail-flyout[data-flyout-moving]`,
+   * below), and under the cascade layers a components rule cannot outrank a utility whatever its
+   * specificity, so the resting form has to live in the same layer as the moving one.
+   */
+  .zen-tab-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   /* Multi-selected tabs (Ctrl / Shift+click) get the accent outline Zen uses. */
   .zen-tab[data-selected],
   .zen-essential[data-selected] {

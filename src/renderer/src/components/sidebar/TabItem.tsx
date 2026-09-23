@@ -376,7 +376,7 @@ export function TabItem({
               focusable child of a widget whose children are presentational (a11y-31, axe
               nested-interactive), so it stands beside the row instead. */}
           <span
-            className="zen-tab-title min-w-0 flex-1 truncate"
+            className="zen-tab-title min-w-0 flex-1"
             data-testid="tab-title"
             style={renaming && !masked ? { visibility: 'hidden' } : undefined}
           >

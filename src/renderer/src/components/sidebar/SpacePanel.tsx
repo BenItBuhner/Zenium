@@ -926,7 +926,7 @@ function SavedPageRow({
       <Favicon tab={source} />
       {!compact && (
         <>
-          <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="saved-page-title">
+          <span className="zen-tab-title min-w-0 flex-1" data-testid="saved-page-title">
             {title}
           </span>
           <span className="h-6 w-6 shrink-0" data-testid="saved-page-slot" aria-hidden />
