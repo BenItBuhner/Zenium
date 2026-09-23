@@ -468,6 +468,43 @@ describe('the worker lifecycle events', () => {
     expect(vm.runInContext('typeof SharedWorker', context)).toBe('undefined')
   })
 
+  it('takes the bare postMessage off the worker global too, so a script JSONVue runs inline picks its inline branch (formatter.js and linter.js)', () => {
+    // The page's global as the WebView has it: a Window's `postMessage`, writable and configurable.
+    const page = new EventTarget() as EventTarget & Any
+    Object.defineProperty(page, 'postMessage', {
+      value: () => {
+        throw new Error("the page's postMessage ran")
+      },
+      writable: true,
+      configurable: true
+    })
+    installServiceWorkerGlobals(page, {
+      origin: ORIGIN,
+      scriptUrl: SCRIPT,
+      version: '1.0.0',
+      send: () => undefined,
+      openTab: () => undefined,
+      prefix: 'w:'
+    })
+    expect(page.postMessage).toBeUndefined()
+    // Through `self`: absent, as in Chrome's ServiceWorkerGlobalScope (a client's or a port's
+    // `postMessage` is the worker's way out, and both stay).
+    const self = workerSelf(page)
+    expect('postMessage' in self).toBe(false)
+    expect((self as Any).postMessage).toBeUndefined()
+    expect(typeof (self as Any).serviceWorker.postMessage).toBe('function')
+    // The tail of JSONVue's js/workers/linter.js as it spells it: inline where no bare
+    // `postMessage` exists (defining `globalThis.linter` for background.js:133), a worker body
+    // where one does. Run as the script would, on the worker page's global.
+    const context = vm.createContext(page)
+    expect(vm.runInContext('typeof postMessage == "undefined"', context)).toBe(true)
+    vm.runInContext(
+      'if (typeof postMessage == "undefined") { globalThis.linter = { lint: function () { return "inline" } } } else { addEventListener("message", function () {}) }',
+      context
+    )
+    expect(page.linter.lint()).toBe('inline')
+  })
+
   it("the global is a WorkerGlobalScope and a ServiceWorkerGlobalScope, through self too, and neither constructs (Google Dictionary's importScripts guard)", () => {
     const { worker } = pair()
     const scope = worker.WorkerGlobalScope as (new () => never) & { prototype: object }
@@ -507,6 +544,19 @@ describe('the worker lifecycle events', () => {
     expect((self as Any).constructor).toBe(serviceScope)
     expect((self as Any).constructor.name).toBe('ServiceWorkerGlobalScope')
     expect(Object.prototype.toString.call(self)).toBe('[object ServiceWorkerGlobalScope]')
+    // The four interfaces carry their names as own, explicit `name` properties: the ext bundle
+    // is minified and a named function expression's name does not survive it (the built
+    // `WorkerGlobalScope` read `a` in round 12's after run, and uVPN's role read "page" still).
+    for (const name of [
+      'WorkerGlobalScope',
+      'ServiceWorkerGlobalScope',
+      'WorkerNavigator',
+      'WorkerLocation'
+    ]) {
+      const descriptor = Object.getOwnPropertyDescriptor(worker[name] as object, 'name')
+      expect(descriptor?.value, name).toBe(name)
+      expect(descriptor?.configurable, name).toBe(true)
+    }
     // The global itself keeps its own constructor and prototype: the interfaces answer
     // `instanceof`, and nothing of the page's chain moves.
     expect(worker.constructor).toBe(EventTarget)
