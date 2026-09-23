@@ -2772,7 +2772,9 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
             title: 'Add search engine',
             description: 'Put %s in the URL where the search terms go.',
             // `search.addEngine` takes the name and the template; the engine derives the
-            // shortcut from the name (`customSearchEngine`) until the command carries one.
+            // shortcut from the name (`customSearchEngine`) until the command carries one –
+            // which is why the form's Shortcut may be left empty when adding: a typed word is
+            // checked, and not yet sent.
             render: (close) => (
               <SearchEngineForm
                 action="Add"

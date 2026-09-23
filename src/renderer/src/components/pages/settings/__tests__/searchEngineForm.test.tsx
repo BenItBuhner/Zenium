@@ -9,8 +9,10 @@ import { SearchEngineForm } from '../blocks'
  * fills the fields for an edit and the verb is the caller's; the Shortcut field (Chrome's
  * Shortcut column) is checked by the engine's own keyword rules from `shared/search.ts` – one
  * word, no spaces, at most 64 characters after the `@` the engine adds, not one of Zenium's own
- * scopes – in §9.12's validation form; the button is held until name, shortcut and template are
- * in, and submit hands the caller the three values.
+ * scopes – in §9.12's validation form; the button is held until the name and the template are
+ * in – and, editing, the shortcut too: an engine never holds an empty word, where adding leaves
+ * it the engine's to derive (the core's `search.addEngine` takes none yet) – and submit hands
+ * the caller the three values.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -116,6 +118,44 @@ describe('the search-engine form: Add and Edit from one component', () => {
     expect(close).toHaveBeenCalledTimes(1)
   })
 
+  it('Add: the shortcut may be left empty – the button is not held by it, and submit hands the caller shortcut: "" for the engine to derive its own', async () => {
+    const onSubmit = vi.fn()
+    const close = vi.fn()
+    const el = render(<SearchEngineForm action="Add" onSubmit={onSubmit} close={close} />)
+    type(input(el, 'search-engine-name'), 'Wikipedia')
+    type(input(el, 'search-engine-url'), WIKI.url)
+    const shortcut = input(el, 'search-engine-shortcut')
+    expect(shortcut.value).toBe('')
+    blur(shortcut)
+    // Empty is no problem: no message, no aria-invalid, the button ready on name and template.
+    expect(shortcut.getAttribute('aria-invalid')).toBeNull()
+    expect(
+      fieldBlock(el, 'search-engine-shortcut').querySelector('.zen-settings-validation')
+    ).toBeNull()
+    expect(button(el, 'Add').disabled).toBe(false)
+    act(() => button(el, 'Add').click())
+    await settle()
+    expect(onSubmit).toHaveBeenCalledWith({ name: 'Wikipedia', url: WIKI.url, shortcut: '' })
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('Add: a typed shortcut is checked all the same – a space holds the button, the message shows once left', () => {
+    const el = render(<SearchEngineForm action="Add" onSubmit={vi.fn()} close={vi.fn()} />)
+    type(input(el, 'search-engine-name'), 'Wikipedia')
+    type(input(el, 'search-engine-url'), WIKI.url)
+    const shortcut = input(el, 'search-engine-shortcut')
+    type(shortcut, 'wi ki')
+    expect(button(el, 'Add').disabled).toBe(true)
+    blur(shortcut)
+    expect(shortcut.getAttribute('aria-invalid')).toBe('true')
+    expect(fieldBlock(el, 'search-engine-shortcut').textContent).toContain(
+      'A shortcut is one word, with no spaces'
+    )
+    type(shortcut, '')
+    expect(button(el, 'Add').disabled).toBe(false)
+    expect(shortcut.getAttribute('aria-invalid')).toBeNull()
+  })
+
   it('Edit: Save hands the edited values back, the shortcut as typed', async () => {
     const onSubmit = vi.fn()
     const close = vi.fn()
@@ -171,7 +211,7 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
     expect(button(el, 'Save').disabled).toBe(true)
   })
 
-  it('empty is not a shortcut: the button is held, with no message shouted before anything is typed', () => {
+  it('editing, an emptied shortcut is refused – an engine never holds an empty word: the button is held, with no message shouted', () => {
     const el = form()
     const shortcut = input(el, 'search-engine-shortcut')
     type(shortcut, '')

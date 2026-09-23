@@ -627,7 +627,11 @@ export interface SearchEngineFormValues {
   name: string
   /** The template, `%s` where the terms go (`searchTemplateProblem` has passed it). */
   url: string
-  /** The shortcut as typed, `@` or not; the engine keeps it as `@word`, lower case. */
+  /**
+   * The shortcut as typed, `@` or not; the engine keeps it as `@word`, lower case. Empty when
+   * an engine is added without one: the engine derives its keyword from the name
+   * (`customSearchEngine`), as the core does today for every engine it adds.
+   */
   shortcut: string
 }
 
@@ -637,9 +641,10 @@ export interface SearchEngineFormValues {
  * `/^@\S{1,64}$/`, lower case; `matchEngineWord` takes no word with a space) with `@` allowed
  * off, since the engine adds it – and Zenium's own scopes (`SEARCH_SCOPES`: `@bookmarks`,
  * `@history`, `@tabs`), which `matchKeywordWord` answers before any engine, so an engine given
- * one could never be reached. Empty is the caller's to hold the button on (an engine always has
- * a keyword: the one it derives from the name, `uniqueEngineKeyword`); another engine's word is
- * the caller's to refuse (`problem`), since the form does not hold the list.
+ * one could never be reached. Empty is no problem of the word's – whether the form takes it is
+ * the form's (adding, yes: the engine derives a keyword from the name, `uniqueEngineKeyword`;
+ * editing, no: the engine's own word is shown, and it never holds an empty one); another
+ * engine's word is the caller's to refuse (`problem`), since the form does not hold the list.
  */
 function searchShortcutProblem(shortcut: string): string | null {
   const word = shortcut.trim().toLowerCase()
@@ -656,10 +661,15 @@ function searchShortcutProblem(shortcut: string): string | null {
  * Search › Add search engine and › Edit search engine, one form (Chrome's, W4-10): a name, the
  * shortcut typed in the address bar before a space (Chrome's Shortcut column) and the search URL
  * with `%s` where the terms go, each checked once left or on Enter (`searchShortcutProblem`,
- * `searchTemplateProblem`), the button held until the three are in. `initial` fills the fields
- * from the engine being edited; the verb is the caller's – "Add" for a new engine, "Save" for an
- * edit – as the sheet's title is. The caller adds or saves, and the sheet closes; what it
- * refuses shows as the form's validation line.
+ * `searchTemplateProblem`), the button held until the name and the template are in. `initial`
+ * fills the fields from the engine being edited; the verb is the caller's – "Add" for a new
+ * engine, "Save" for an edit – as the sheet's title is. The shortcut is the one field that may
+ * be left empty, and only when adding: the engine derives a keyword from the name then, and the
+ * core's `search.addEngine` takes none yet, so a word the form insisted on would be typed to be
+ * dropped; a typed word is checked whichever the form is. Editing, the engine's own word stands
+ * in the field and an empty one is refused – an engine never holds one (#409's edit path, where
+ * the word is kept). The caller adds or saves, and the sheet closes; what it refuses shows as
+ * the form's validation line.
  */
 export function SearchEngineForm({
   initial,
@@ -687,7 +697,9 @@ export function SearchEngineForm({
   const [touched, setTouched] = useState(false)
   const shortcutProblem = searchShortcutProblem(shortcut) ?? problem?.(shortcut.trim()) ?? null
   const urlProblem = searchTemplateProblem(url)
-  const ready = Boolean(name.trim()) && Boolean(shortcut.trim()) && !shortcutProblem && !urlProblem
+  // Adding, an empty shortcut is the engine's to derive; editing, the engine's word stays a word.
+  const shortcutIn = Boolean(shortcut.trim()) || initial === undefined
+  const ready = Boolean(name.trim()) && shortcutIn && !shortcutProblem && !urlProblem
   const submit = (): void => {
     if (!ready) {
       setTouched(true)
