@@ -191,6 +191,7 @@ function emit(name: string, payload: unknown): void {
 }
 
 const { HistoryPage } = await import('../HistoryPage')
+const { syncScopeRowId } = await import('@renderer/lib/syncSetup')
 
 /** Each status a test hands in carries a version of its own: the reader asks the core once per version. */
 let version = 0
@@ -725,14 +726,16 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     expect(text(row)).toBe('Turn on sync')
     expect(row.closest('li')!.querySelector('.zen-page-row-chevron')).not.toBeNull()
     await act(async () => row.click())
+    // The section from its top: no row asked for (the way in is the section's own setup).
     expect(calls('page.open')).toEqual([{ id: 'settings', section: 'sync' }])
+    expect(calls('page.open')[0]).not.toHaveProperty('query')
     // Nothing was asked of the core while sync is off.
     expect(calls('sync.tabsFromDevices')).toEqual([])
     // No device group anywhere.
     expect(el.querySelector('[data-testid="history-remote-device"]')).toBeNull()
   })
 
-  it('with sync on but Open tabs off in What you sync, the line names the scope and the row chooses it', async () => {
+  it("with sync on but Open tabs off in What you sync, the line names the scope and the row chooses it, landing on Settings › Sync's Open tabs switch (?row=)", async () => {
     const el = await mountPage(tab(), state(sync(true, false)))
     const group = el.querySelector('[data-testid="history-remote-tabs"]')!
     expect(group.getAttribute('data-state')).toBe('scope-off')
@@ -743,8 +746,15 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
       '[data-testid="history-remote-tabs-settings"]'
     )!
     expect(text(row)).toBe('Choose what to sync')
+    expect(row.closest('li')!.querySelector('.zen-page-row-chevron')).not.toBeNull()
     await act(async () => row.click())
-    expect(calls('page.open')).toEqual([{ id: 'settings', section: 'sync' }])
+    // The phone's door (#316): the Sync section asked for the Open tabs switch's row, whose
+    // group `SettingsPage` scrolls to the top – `zen://settings/sync?row=sync-scope%3AopenTabs`.
+    expect(calls('page.open')).toEqual([
+      { id: 'settings', section: 'sync', query: { row: 'sync-scope:openTabs' } }
+    ])
+    // The id is the minter's, so the string lives in one place (`syncSetup.ts`).
+    expect(calls('page.open')[0]).toMatchObject({ query: { row: syncScopeRowId('openTabs') } })
     expect(calls('sync.tabsFromDevices')).toEqual([])
   })
 
