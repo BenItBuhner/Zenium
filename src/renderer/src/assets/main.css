@@ -616,8 +616,9 @@
  * tokens. The requesting host in the title wraps at its dots (`.zen-device-chooser-host`, as
  * the screen picker's origin does). The pairing prompt's PIN (`PromptDialog`'s field, six
  * digits) reads in `tabular-nums`, letter-spaced so six digits read as six; the PIN to compare
- * (`confirmPin`) is the one large figure the chassis draws: the heading weight at twice the
- * heading size in `tabular-nums`, centred.
+ * (`confirmPin`) is the title size of §4's scale (22 on 28 – the wordmark's 34 is the one size
+ * off the scale and stays the wordmark's) at the heading weight in `tabular-nums`, centred; six
+ * letter-spaced digits at 22 read across a room.
  */
 .zen-device-chooser {
   display: flex;
@@ -673,9 +674,9 @@
   padding: 0 16px;
   color: var(--v2-text);
   text-align: center;
-  font-size: calc(2 * var(--v2-font-heading));
+  font-size: var(--v2-font-title);
   font-weight: var(--v2-weight-heading);
-  line-height: calc(2 * var(--v2-line-heading));
+  line-height: var(--v2-line-title);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.25em;
 }

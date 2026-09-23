@@ -337,9 +337,9 @@ function Host({ host }: { host: string }): JSX.Element {
  * (`PromptDialog`, §9.12: the field takes the keyboard at the open, its name is the title's
  * and its `aria-label`, no placeholder) with the six digits its value – Pair `disabled` at .4
  * until they are in, and Enter in the field the verb once they are, the primitive's default
- * key; `confirmPin` shows the device's PIN large, in `tabular-nums`, to compare, as the body of
- * the picker form (`PickerDialog`, the chassis' one body slot; a `dialog`, since a comparison
- * is asked). Pair is the primary and the prompt's default: nothing here destroys anything.
+ * key; `confirmPin` shows the device's PIN at the title size (§4's 22 on 28), letter-spaced in
+ * `tabular-nums`, to compare, as the body of the picker form (`PickerDialog`, the chassis' one
+ * body slot; a `dialog`, since a comparison is asked). Pair is the primary and the prompt's default: nothing here destroys anything.
  * Cancel, Escape and the scrim send null.
  */
 export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.Element {

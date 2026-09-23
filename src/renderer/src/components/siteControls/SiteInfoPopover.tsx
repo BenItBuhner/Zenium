@@ -784,7 +784,7 @@ function DevicesLevel({
         scrolled={scrolled}
       />
       <Body onScrolled={setScrolled}>
-        {grants.length === 0 && <EmptyLine>No devices connected</EmptyLine>}
+        {grants.length === 0 && <EmptyLine>No devices</EmptyLine>}
         {grants.map((grant) => (
           <ListRow
             key={grant.deviceId}

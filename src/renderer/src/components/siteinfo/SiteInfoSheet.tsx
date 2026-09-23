@@ -931,9 +931,10 @@ function SheetMainRows({
 }
 
 /**
- * The Sound row as a switch (§10.4: the phone's form of a two-way setting): the chassis row
- * with the speaker glyph – crossed while the site is muted – "Sound" and the shared
- * `.zen-v2-switch` trailing, the whole row the target; on is the default (Allow), off blocks the
+ * The Sound row as a switch (§10.4: the phone's form of a two-way setting): the chassis row at
+ * its base 44 (§9.21: the 20 px switch asks for no more) with the speaker glyph – crossed while
+ * the site is muted – "Sound" and the shared `.zen-v2-switch` trailing, the whole row the
+ * target; on is the default (Allow), off blocks the
  * site's sound as "Mute Site" does. Busy while the core writes (§9.30): `aria-busy`, a second
  * press does nothing, the switch shows the value the core still holds.
  */
@@ -952,7 +953,7 @@ function SoundSwitchRow({
       role="switch"
       aria-checked={allowed}
       aria-busy={busy || undefined}
-      className="zen-sheet-item zen-sheet-item-control"
+      className="zen-sheet-item"
       data-permission="sound"
       onClick={busy ? undefined : () => onChange(!allowed)}
     >

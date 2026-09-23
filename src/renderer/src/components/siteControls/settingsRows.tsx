@@ -514,10 +514,12 @@ function contentTypeRow(
 
 /**
  * A site connected to devices of one kind (its `DeviceGrant`s, the setting's data): a §10.4
- * detail row with the count, opening the depth-two sheet of the devices – each its name, its
- * vendor:product or serial under it, and Revoke in the danger ink without a confirmation (the
- * sheet is depth two already, §9.24, and a revoked device is asked for again, not lost). The
- * site-information panel's device level (`SiteInfoPopover`) is the same list for one site.
+ * detail row with the count, opening the depth-two sheet of the devices – each an item row
+ * (its name, its vendor:product or serial under it) whose one action is Revoke: the trailing
+ * 32 button named for its device (§10.5), plain ink – a grant is the site's permission, not the
+ * user's data (§6, §10.4) – and no confirmation (the sheet is depth two already, §9.24, and a
+ * revoked device is asked for again, not lost). The site-information panel's device level
+ * (`SiteInfoPopover`) is the same list for one site.
  */
 function grantedSiteRow(
   typeId: string,
@@ -539,18 +541,37 @@ function grantedSiteRow(
         {
           id: `${id}:list`,
           heading: null,
-          rows: grants.map((grant): ActionRow => ({
-            kind: 'action',
-            id: `${id}:${grant.deviceId}`,
-            label: grant.name,
-            description: grantDetail(grant) || undefined,
-            button: 'Revoke',
-            destructive: true,
-            onPress: () => run('devices.forget', { origin, kind, deviceId: grant.deviceId })
-          })),
+          rows: grants.map((grant) => grantRow(id, kind, origin, grant)),
           empty: 'No devices'
         }
       ]
+    }
+  }
+}
+
+/** One granted device as an item row: Revoke trailing, named for the device, running at once. */
+function grantRow(listId: string, kind: DeviceKind, origin: string, grant: DeviceGrant): ItemRow {
+  const id = `${listId}:${grant.deviceId}`
+  const detail = grantDetail(grant) || undefined
+  const onPress = (): void => void run('devices.forget', { origin, kind, deviceId: grant.deviceId })
+  const revoke: ActionRow = {
+    kind: 'action',
+    id: `${id}:revoke`,
+    label: 'Revoke',
+    description: 'The site asks again the next time it needs the device.',
+    button: 'Revoke',
+    onPress
+  }
+  return {
+    kind: 'item',
+    id,
+    label: grant.name,
+    description: detail,
+    action: { label: 'Revoke', onPress },
+    sheet: {
+      title: grant.name,
+      description: detail,
+      groups: [{ id: `${id}:actions`, heading: null, rows: [revoke] }]
     }
   }
 }

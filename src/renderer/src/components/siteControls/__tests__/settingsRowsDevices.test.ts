@@ -199,7 +199,7 @@ describe('the device kinds (Permissions)', () => {
     expect(block).toMatchObject({ kind: 'action', description: 'Blocked', button: 'Forget…' })
   })
 
-  it('a site’s detail row opens the depth-two list of its devices – name, vendor:product or serial under it – each with Revoke in the danger ink and no confirmation, running devices.forget', () => {
+  it('a site’s detail row opens the depth-two list of its devices – name, vendor:product or serial under it – each an item row whose one action is Revoke, plain ink, named for its device, no confirmation, running devices.forget', () => {
     const all = groups({ deviceGrants: GRANTS })
     const site = row(all, 'sites:usb:https://web.flasher.example:devices')
     if (site.kind !== 'detail') throw new Error('not a detail row')
@@ -209,15 +209,35 @@ describe('the device kinds (Permissions)', () => {
     )
     const [list] = site.sheet.groups
     expect(list.heading).toBeNull()
+    expect(list.empty).toBe('No devices')
     expect(list.rows.map((r) => [r.kind, r.label, r.description])).toEqual([
-      ['action', 'Arduino Uno', '2341:0043'],
-      ['action', 'FT232R USB UART', '0403:6001']
+      ['item', 'Arduino Uno', '2341:0043'],
+      ['item', 'FT232R USB UART', '0403:6001']
     ])
-    const revoke = list.rows[0]!
+    const device = list.rows[0]!
+    if (device.kind !== 'item') throw new Error('not an item row')
+    // The desktop's trailing 32 button (§10.5): "Revoke", read as "Revoke Arduino Uno"; not the
+    // danger ink – a grant is the site's permission, not the user's data (§6, §10.4).
+    expect(device.action).toMatchObject({ label: 'Revoke' })
+    expect(device.action?.destructive).toBeUndefined()
+    expect(device.menu).toBeUndefined()
+    device.action?.onPress()
+    expect(run).toHaveBeenCalledWith('devices.forget', {
+      origin: 'https://web.flasher.example',
+      kind: 'usb',
+      deviceId: 'usb-1'
+    })
+    // The phone's form of the same row, its sheet: the one action as a plain row, no confirmation.
+    expect(device.sheet.title).toBe('Arduino Uno')
+    expect(device.sheet.description).toBe('2341:0043')
+    const [actions] = device.sheet.groups
+    expect(actions.rows.map((r) => [r.kind, r.label])).toEqual([['action', 'Revoke']])
+    const revoke = actions.rows[0]!
     if (revoke.kind !== 'action') throw new Error('not an action')
     expect(revoke.button).toBe('Revoke')
-    expect(revoke.destructive).toBe(true)
+    expect(revoke.destructive).toBeUndefined()
     expect(revoke.confirm).toBeUndefined()
+    vi.mocked(run).mockClear()
     revoke.onPress?.()
     expect(run).toHaveBeenCalledWith('devices.forget', {
       origin: 'https://web.flasher.example',

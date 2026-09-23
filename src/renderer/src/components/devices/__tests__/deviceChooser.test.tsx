@@ -568,7 +568,7 @@ describe('the pairing prompt', () => {
     ])
   })
 
-  it('confirmPin: the device’s PIN shown large to compare, read digit by digit, Cancel then Pair', async () => {
+  it('confirmPin: the device’s PIN shown at the title size to compare, read digit by digit, Cancel then Pair', async () => {
     render(layer(stateWith([], [{ ...PAIRING, kind: 'confirmPin', pin: '482913' }])))
     await settle()
     const p = pairing()!
