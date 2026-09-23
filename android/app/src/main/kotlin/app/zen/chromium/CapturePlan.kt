@@ -96,8 +96,8 @@ object CapturePlan {
      * `clientWidth` / `clientHeight` – the visible area minus the scrollbar gutters, what a
      * visible-area capture paints (the desktop's twin cuts a classic scrollbar's column off) –
      * are the visible area itself here: a WebView's scrollbars overlay the page and take no room
-     * of it, so `PageCapture`'s viewport copy is all page. `rtl` says which side a gutter would
-     * be on; the chrome reads it with the (zero) gutter.
+     * of it, so `PageCapture`'s viewport copy is all page. `rtl` is the document's direction, for
+     * the chrome's information (it does not move a gutter on either platform).
      */
     fun viewportJson(metrics: PageMetrics, viewWidthPx: Int, density: Double): JSONObject {
         val dp = if (density > 0) density else 1.0

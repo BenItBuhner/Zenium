@@ -1423,8 +1423,8 @@ export class ElectronTabView implements TabView {
    * (Linux, Windows; macOS's overlay scrollbars take no room); the visible-area picture – the
    * `viewport` mode and the fallback stand-in alike – is cut to the layout viewport minus the
    * gutters (`visibleAreaClip`), as Chrome's visible-area capture is, and a region's crop is
-   * measured from that area's origin (past the gutter in a right-to-left document) and cut at
-   * its edge. Without the page's geometry (it did not answer) the bitmap stands as it is.
+   * cut at that area's edge: the gutter is never part of a picture. Without the page's
+   * geometry (it did not answer) the bitmap stands as it is.
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
     const wc = this.wc
@@ -1453,15 +1453,15 @@ export class ElectronTabView implements TabView {
         ? visibleAreaClip(geometry, bitmap)
         : { x: 0, y: 0, width: bitmap.width, height: bitmap.height }
       if (options.mode === 'region' && options.region) {
-        // The region's CSS px minus the scroll offset, from the visible area's origin, cut at
-        // its edge: the gutter is never part of a region.
+        // The region's CSS px minus the scroll offset, cut at the visible area's edge: the
+        // gutter is never part of a region.
         const scroll = geometry ?? { scrollX: 0, scrollY: 0 }
         const ratio = geometry?.devicePixelRatio ?? wc.getZoomFactor()
         const r = options.region
-        const x = visible.x + Math.max(0, Math.round((r.x - scroll.scrollX) * ratio))
-        const y = visible.y + Math.max(0, Math.round((r.y - scroll.scrollY) * ratio))
-        const width = Math.min(visible.x + visible.width - x, Math.round(r.width * ratio))
-        const height = Math.min(visible.y + visible.height - y, Math.round(r.height * ratio))
+        const x = Math.max(0, Math.round((r.x - scroll.scrollX) * ratio))
+        const y = Math.max(0, Math.round((r.y - scroll.scrollY) * ratio))
+        const width = Math.min(visible.width - x, Math.round(r.width * ratio))
+        const height = Math.min(visible.height - y, Math.round(r.height * ratio))
         if (width <= 0 || height <= 0) return null
         image = image.crop({ x, y, width, height })
       } else if (visible.width < bitmap.width || visible.height < bitmap.height) {
@@ -1688,8 +1688,9 @@ const VIEWPORT_TIMEOUT_MS = 1500
  * size (`innerWidth` × `innerHeight`, the scrollbar gutters included), the same minus the
  * gutters (`cw` × `ch`: the scrolling element's `clientWidth` × `clientHeight` – the root's in
  * standards mode, the body's in quirks mode, either way the viewport less a rendered
- * scrollbar), whether the document runs right-to-left (the vertical scrollbar's gutter is on
- * the left then), `devicePixelRatio` (the display's scale times the page zoom in a Chromium
+ * scrollbar), whether the document runs right-to-left (`direction: rtl` on the root – for the
+ * chrome's information; the main frame's scrollbar stays on the right either way, see
+ * `visibleAreaClip`), `devicePixelRatio` (the display's scale times the page zoom in a Chromium
  * page) and the document's scrollable size (the larger of the root's and the body's, never
  * smaller than the viewport). One expression, so a single evaluation answers it.
  */
@@ -1751,10 +1752,13 @@ export function pageViewportFrom(raw: unknown, zoom: number): PageViewport | nul
  * The part of a `capturePage` bitmap that is page content – the layout viewport minus the
  * scrollbar gutters, as Chrome's visible-area capture paints it – in the bitmap's pixels: the
  * page's `clientWidth` × `clientHeight` at its device pixel ratio (the display's scale times
- * the zoom, which is what the bitmap is in), cut at the bitmap's edge. A classic vertical
- * scrollbar takes the right-hand columns, so the area is anchored at the left; in a
- * right-to-left document the scrollbar sits on the left and the area is anchored at the right.
- * A horizontal scrollbar takes the bottom rows in either direction. With overlay scrollbars
+ * the zoom, which is what the bitmap is in), cut at the bitmap's edge and anchored at the
+ * bitmap's top-left corner: Chromium draws the main frame's vertical scrollbar in the
+ * right-hand columns and a horizontal one in the bottom rows whatever the document's direction
+ * (Blink puts a right-to-left main frame's scrollbar on the left only under its
+ * `placeRTLScrollbarsOnLeftSideInMainFrame` setting, which Chrome and Electron leave off –
+ * measured on the packaged build with `dir="rtl"` on the root, on the body and by CSS; only
+ * an element's own scroller follows `direction`). With overlay scrollbars
  * (`clientWidth === width`) this is the whole bitmap.
  *
  * Floored, not rounded: `clientWidth` is an integer of CSS pixels, so at a fractional ratio
@@ -1765,7 +1769,7 @@ export function pageViewportFrom(raw: unknown, zoom: number): PageViewport | nul
  * ratio the cut is exact either way.
  */
 export function visibleAreaClip(
-  viewport: Pick<PageViewport, 'clientWidth' | 'clientHeight' | 'rtl' | 'devicePixelRatio'>,
+  viewport: Pick<PageViewport, 'clientWidth' | 'clientHeight' | 'devicePixelRatio'>,
   bitmap: { width: number; height: number }
 ): { x: number; y: number; width: number; height: number } {
   const ratio =
@@ -1774,7 +1778,7 @@ export function visibleAreaClip(
       : 1
   const width = Math.max(1, Math.min(bitmap.width, Math.floor(viewport.clientWidth * ratio)))
   const height = Math.max(1, Math.min(bitmap.height, Math.floor(viewport.clientHeight * ratio)))
-  return { x: viewport.rtl ? bitmap.width - width : 0, y: 0, width, height }
+  return { x: 0, y: 0, width, height }
 }
 
 /** The parts of `Security.visibleSecurityStateChanged` the site-information sheet uses. */

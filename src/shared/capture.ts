@@ -76,9 +76,13 @@ export interface PageViewport {
   clientWidth: number
   clientHeight: number
   /**
-   * The document's direction is right-to-left: the vertical scrollbar's gutter
-   * (`width - clientWidth`) sits on the LEFT of the visible area, not the right, and the layout
-   * viewport's origin is to its right.
+   * The document runs right-to-left (`direction: rtl` on the root). For the chrome's
+   * information only – a UI may mirror its own affordances by it. It does not move the gutter:
+   * Chromium draws the main frame's vertical scrollbar in the right-hand columns of the frame
+   * whatever the document's direction (Blink's `placeRTLScrollbarsOnLeftSideInMainFrame`
+   * setting, off in Chrome and Electron, is the only thing that would put it on the left;
+   * measured on the packaged build), so the capturable area always starts at the frame's
+   * top-left corner.
    */
   rtl: boolean
   /**

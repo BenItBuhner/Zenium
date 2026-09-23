@@ -356,7 +356,7 @@ describe('parsePageViewport', () => {
   })
 
   it('takes the area minus the scrollbar gutters and the direction, and without them has no gutter', () => {
-    // A desktop-like host answer: a 15 px classic scrollbar on the left of a right-to-left page.
+    // A desktop-like host answer: a 15 px classic scrollbar, on a right-to-left page.
     expect(
       parsePageViewport({ ...plain, clientWidth: 1265, clientHeight: 705, rtl: true })
     ).toEqual({ ...plain, clientWidth: 1265, clientHeight: 705, rtl: true })

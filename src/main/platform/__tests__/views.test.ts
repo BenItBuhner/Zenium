@@ -1323,16 +1323,20 @@ describe('ElectronTabView.capture', () => {
     expect(scaled.paint.crops).toEqual([{ x: 0, y: 0, width: 2530, height: 1410 }])
   })
 
-  it('anchors the cut at the right in a right-to-left document, whose scrollbar sits on the left', async () => {
+  // Measured on the packaged build: Chromium keeps the main frame's scrollbar on the right for
+  // a right-to-left document too (`dir="rtl"` on the root, on the body, or by CSS – Blink's
+  // `placeRTLScrollbarsOnLeftSideInMainFrame` is off), so the cut is anchored at the top-left in
+  // either direction; `rtl` is information for the chrome, not a rule for the cut.
+  it('cuts a right-to-left document from the top-left corner too: its scrollbar is on the right as well', async () => {
     const { view, paint } = tabView({ ...GEOMETRY, cw: 1265, ch: 720, rtl: true })
     await expect(view.capture({ mode: 'viewport', format: 'png' })).resolves.toMatchObject({
       width: 1265,
       height: 720
     })
-    expect(paint.crops).toEqual([{ x: 15, y: 0, width: 1265, height: 720 }])
+    expect(paint.crops).toEqual([{ x: 0, y: 0, width: 1265, height: 720 }])
   })
 
-  it('cuts the fallback stand-in the same way, and measures a region from the visible area’s origin, cut at its edge', async () => {
+  it('cuts the fallback stand-in the same way, and cuts a region at the visible area’s edge', async () => {
     // DevTools holds the debugger: a full page comes back as the visible area, minus the gutter.
     const { view, dbg, paint } = tabView({ ...GEOMETRY, cw: 1265, ch: 720 })
     dbg.taken = true
@@ -1351,7 +1355,7 @@ describe('ElectronTabView.capture', () => {
       format: 'png'
     })
     expect(paint.crops[1]).toEqual({ x: 1200, y: 600, width: 65, height: 120 })
-    // In a right-to-left document the region's origin is past the left-hand gutter.
+    // A right-to-left document measures the same: its scrollbar is on the right as well.
     const rtl = tabView({ ...GEOMETRY, cw: 1265, ch: 720, rtl: true })
     addForeignDebuggerOwner(rtl.wc.id)
     await expect(
@@ -1361,7 +1365,14 @@ describe('ElectronTabView.capture', () => {
         format: 'png'
       })
     ).resolves.toMatchObject({ width: 300, height: 200, fallback: 'viewport' })
-    expect(rtl.paint.crops).toEqual([{ x: 115, y: 100, width: 300, height: 200 }])
+    expect(rtl.paint.crops).toEqual([{ x: 100, y: 100, width: 300, height: 200 }])
+    // ... and a region reaching into its gutter is cut at the area's edge too.
+    await rtl.view.capture({
+      mode: 'region',
+      region: { x: 1200, y: 700, width: 300, height: 200 },
+      format: 'png'
+    })
+    expect(rtl.paint.crops[1]).toEqual({ x: 1200, y: 100, width: 65, height: 200 })
   })
 
   it('leaves a page with overlay scrollbars – the area minus the gutters is the whole viewport – as it is', async () => {
@@ -1383,17 +1394,11 @@ describe('ElectronTabView.capture', () => {
 
 /** The part of a `capturePage` bitmap that is page content, in its pixels. */
 describe('visibleAreaClip', () => {
-  const page = { clientWidth: 1265, clientHeight: 705, rtl: false, devicePixelRatio: 1 }
+  const page = { clientWidth: 1265, clientHeight: 705, devicePixelRatio: 1 }
 
-  it('is the area minus the gutters at the page’s device pixel ratio, anchored left, or right for a right-to-left page', () => {
+  it('is the area minus the gutters at the page’s device pixel ratio, anchored at the top-left corner', () => {
     expect(visibleAreaClip(page, { width: 1280, height: 720 })).toEqual({
       x: 0,
-      y: 0,
-      width: 1265,
-      height: 705
-    })
-    expect(visibleAreaClip({ ...page, rtl: true }, { width: 1280, height: 720 })).toEqual({
-      x: 15,
       y: 0,
       width: 1265,
       height: 705
@@ -1420,7 +1425,7 @@ describe('visibleAreaClip', () => {
     ).toEqual({ x: 0, y: 0, width: 1280, height: 720 })
     expect(
       visibleAreaClip(
-        { clientWidth: 1280, clientHeight: 720, rtl: true, devicePixelRatio: Number.NaN },
+        { clientWidth: 1280, clientHeight: 720, devicePixelRatio: Number.NaN },
         { width: 1280, height: 720 }
       )
     ).toEqual({ x: 0, y: 0, width: 1280, height: 720 })
