@@ -84,6 +84,7 @@ import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
 import { homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
+import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
 import {
@@ -109,7 +110,9 @@ import {
 import type { AutofillSettingsData, VaultGate } from '@renderer/lib/autofillSettings'
 import { requestDefaultBrowser } from '@renderer/lib/defaultBrowser'
 import { downloadLocationLabel } from '@renderer/lib/downloadText'
+import { versionLine } from '@renderer/lib/about'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
+import { openPage } from '@renderer/lib/pages'
 import {
   NEW_TAB_LAYOUT_HINT,
   NEW_TAB_PRESET_DESCRIPTIONS,
@@ -168,6 +171,7 @@ import {
   ZoomBlock
 } from './blocks'
 import { importGroups } from '../../import/importRows'
+import { AboutVersionBlock } from './AboutVersionBlock'
 import { CustomizeToolbarForm } from './CustomizeToolbarForm'
 import { extensionsGroups } from './extensions'
 import { LayoutCards } from './LayoutCards'
@@ -4647,31 +4651,72 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
 // About
 // ---------------------------------------------------------------------------
 
+/**
+ * About (settings-73, shortcuts-menus-164; Chrome's chrome://settings/help): the version block
+ * – wordmark, version with its channel, engine, copyright – then the update row in one of two
+ * states: "Check for updates" (or "Update to <version>") leading to the Updates page, or, once
+ * an update is downloaded (`phase: 'ready'`), "Relaunch to update" with the relaunch on the row
+ * itself, as Chrome's About turns into a Relaunch button. "Get help" and "Report an issue" go
+ * where the app menu's Help submenu goes (`shared/links.ts`); "Open-source licences" opens the
+ * `zen://licences` page tab.
+ */
 function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
   const engineHost = state.platform === 'android' ? 'Android System WebView' : 'Electron'
   const update = state.updates
   const newer = update.phase === 'available' || update.phase === 'ready' ? update.release : null
   const rows: SettingsRow[] = [
     {
-      kind: 'info',
+      kind: 'custom',
       id: 'version',
       label: 'Zenium',
-      description: `Version ${state.version} · running on Chromium via ${engineHost}${newer ? ` · ${newer.version} is available` : ''}`,
-      keywords: ['version', state.version]
+      description: versionLine(state.version, update.target),
+      keywords: ['version', state.version, 'channel', 'copyright', 'licence', engineHost],
+      render: () => (
+        <AboutVersionBlock version={state.version} target={update.target} engineHost={engineHost} />
+      )
     }
   ]
   if (state.capabilities.updates) {
-    rows.push({
-      kind: 'action',
-      id: 'check-updates',
-      label: newer ? `Update to ${newer.version}` : 'Check for updates',
-      leaves: 'chevron',
-      onPress: () => {
-        navigate('updates')
-        if (!newer) run('updates.check', undefined)
-      }
-    })
+    rows.push(
+      update.phase === 'ready'
+        ? {
+            kind: 'action',
+            id: 'relaunch-to-update',
+            label: 'Relaunch to update',
+            description: `${newer?.version ?? 'The update'} is downloaded and installs when Zenium relaunches.`,
+            button: 'Relaunch',
+            onPress: () => run('updates.install', undefined)
+          }
+        : {
+            kind: 'action',
+            id: 'check-updates',
+            label: newer ? `Update to ${newer.version}` : 'Check for updates',
+            leaves: 'chevron',
+            onPress: () => {
+              navigate('updates')
+              if (!newer) run('updates.check', undefined)
+            }
+          }
+    )
   }
+  rows.push(
+    {
+      kind: 'action',
+      id: 'get-help',
+      label: 'Get help',
+      description: 'Zenium’s guide on GitHub.',
+      leaves: 'external',
+      onPress: () => run('app.openExternal', { url: HELP_URL })
+    },
+    {
+      kind: 'action',
+      id: 'report-issue',
+      label: 'Report an issue',
+      description: 'Tell the project what went wrong, on GitHub.',
+      leaves: 'external',
+      onPress: () => run('app.openExternal', { url: ISSUES_URL })
+    }
+  )
   // The browser role has a category of its own on the desktop OSes (Default Browser, the
   // desktop's content); Android keeps the one row here.
   if (state.capabilities.defaultBrowser && state.platform === 'android') {
@@ -4713,6 +4758,15 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
       description: 'zen-browser.app – this port is not affiliated with the Zen team.',
       leaves: 'external',
       onPress: () => run('app.openExternal', { url: 'https://zen-browser.app' })
+    },
+    {
+      kind: 'action',
+      id: 'licences',
+      label: 'Open-source licences',
+      description: 'The software Zenium is built with, and the licence each part comes under.',
+      keywords: ['credits', 'licenses', 'open source', 'third party'],
+      leaves: 'chevron',
+      onPress: () => openPage('licences')
     }
   )
   return [{ id: 'about', heading: 'About', rows }]

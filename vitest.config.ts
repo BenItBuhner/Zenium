@@ -1,7 +1,11 @@
 import { resolve } from 'path'
 import { defineConfig } from 'vitest/config'
+import { licencesPlugin } from './scripts/licences'
 
 export default defineConfig({
+  // The Licences page's `virtual:zenium-licences` resolves to the real tree here, as in a build;
+  // a test that wants a short list mocks the module.
+  plugins: [licencesPlugin({ electron: true })],
   resolve: {
     alias: {
       '@shared': resolve('src/shared'),

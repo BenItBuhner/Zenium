@@ -10181,6 +10181,26 @@
   flex-direction: column;
   gap: 2px;
 }
+/*
+ * About's head (`AboutVersionBlock`, settings-73): the wordmark over the version line and two
+ * 13/20 lines – the engine, the copyright – in a custom row. The wordmark is §4's one display
+ * size, 34/600 on a 40 line tracked in a little; `.zen-firstrun-wordmark` and this block are its
+ * two places, so they share the numbers and nothing else says them.
+ */
+.zen-settings-about {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.zen-settings-about-wordmark {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--v2-text);
+  font-size: 34px;
+  font-weight: var(--v2-weight-heading);
+  letter-spacing: -0.02em;
+  line-height: 40px;
+}
 .zen-settings-progress {
   height: 4px;
   margin-top: 8px;
@@ -11757,6 +11777,52 @@
  * unlayered), the glyph at .4 from the piece itself, the controls whole.
  */
 .zen-v2-row.zen-dl-page-row:is([data-deleted], [data-state='cancelled']) .zen-dl-name {
+  color: var(--v2-text-deemphasized);
+}
+
+/*
+ * The Licences page (components/pages/licences/LicencesPage.tsx, §10.1; Chrome's
+ * chrome://credits): the page frame's rows, one per package, each a two-line row whose chevron
+ * turns as its licence folds open under it – the homepage link, then the licence file's text
+ * as it came (pre-wrapped at the small size, breaking anywhere so a long URL in a licence cannot
+ * widen the column), on the row's own 16 gutter and pad. Layout only; the row, the link and the
+ * mark are the `zen-v2-*` / `.zen-page-*` primitives.
+ */
+.zen-licences-entry {
+  display: flex;
+  flex-direction: column;
+}
+.zen-v2-row.zen-licences-row {
+  min-height: var(--v2-row-two-line);
+}
+/* The turn is a transition the reduced-motion remover at the foot of this sheet takes (§11.3). */
+.zen-licences-twisty {
+  transition: transform 120ms var(--zen-ease);
+}
+.zen-licences-twisty[data-open] {
+  transform: rotate(90deg);
+}
+.zen-licences-fold {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px var(--v2-row-pad);
+}
+.zen-licences-homepage {
+  align-self: flex-start;
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-licences-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+/* A package with no licence file: one note in the deemphasised ink where the text would stand. */
+.zen-licences-text-missing {
   color: var(--v2-text-deemphasized);
 }
 

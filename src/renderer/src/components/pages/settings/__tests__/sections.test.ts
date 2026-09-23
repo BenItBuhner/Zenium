@@ -39,6 +39,7 @@ import {
   GENERIC_FONT_FAMILIES,
   MINIMUM_FONT_SIZE_STEPS
 } from '@shared/fonts'
+import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
@@ -2809,6 +2810,116 @@ describe('what a row does', () => {
     if (r.kind !== 'action') throw new Error('not an action')
     r.onPress?.()
     expect(invoke).toHaveBeenCalledWith('defaultBrowser.request', { source: 'settings' })
+  })
+
+  describe('About (settings-73, shortcuts-menus-164)', () => {
+    it('heads the page with the wordmark, the version with its channel, the engine and the copyright line', () => {
+      const version = row(section('about'), 'version')
+      if (version.kind !== 'custom') throw new Error('not a custom row')
+      expect(version.label).toBe('Zenium')
+      // A pre-release tag in the version is the Beta channel (as the updater reads it).
+      expect(version.description).toBe('Version 0.3.0-test · Beta')
+      expect(version.keywords).toEqual(
+        expect.arrayContaining(['version', '0.3.0-test', 'channel', 'copyright'])
+      )
+      expect(version.keywords).toContain('Android System WebView')
+      const html = renderToStaticMarkup(createElement(() => version.render()))
+      expect(html).toContain('class="zen-settings-about-wordmark">Zenium<')
+      expect(html).toContain('Version 0.3.0-test · Beta')
+      expect(html).toContain('Running on Chromium via Android System WebView')
+      expect(html).toMatch(/© 2026(–\d{4})? Zenium contributors · Apache License 2.0/)
+
+      const stable = row(section('about', state({ version: '0.4.27' })), 'version')
+      expect(stable.description).toBe('Version 0.4.27 · Stable')
+      const dev = row(
+        section(
+          'about',
+          state({
+            version: '0.4.27',
+            updates: emptyUpdateStatus('0.4.27', { os: 'linux', arch: 'x64', kind: 'dev' })
+          })
+        ),
+        'version'
+      )
+      expect(dev.description).toBe('Version 0.4.27 · Development build')
+    })
+
+    it('turns the update row into Relaunch to update once an update is downloaded', () => {
+      const release = {
+        version: '0.3.1',
+        tag: 'v0.3.1',
+        prerelease: false,
+        publishedAt: '2026-03-01T00:00:00Z',
+        releaseUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v0.3.1',
+        notesUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v0.3.1',
+        asset: null
+      }
+      const ready = state({
+        updates: {
+          ...emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
+          phase: 'ready',
+          mode: 'in-place',
+          release
+        }
+      })
+      const about = section('about', ready)
+      expect(findRow(about.groups, 'check-updates')).toBeNull()
+      const relaunch = row(about, 'relaunch-to-update')
+      if (relaunch.kind !== 'action') throw new Error('not an action')
+      expect(relaunch).toMatchObject({
+        label: 'Relaunch to update',
+        description: '0.3.1 is downloaded and installs when Zenium relaunches.',
+        button: 'Relaunch'
+      })
+      relaunch.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('updates.install', undefined)
+
+      // An update found but not yet downloaded keeps the row that leads to the Updates page.
+      const available = section(
+        'about',
+        state({
+          updates: {
+            ...emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
+            phase: 'available',
+            release
+          }
+        })
+      )
+      expect(findRow(available.groups, 'relaunch-to-update')).toBeNull()
+      expect(row(available, 'check-updates').label).toBe('Update to 0.3.1')
+    })
+
+    it('offers Get help, Report an issue and the licences page, where the Help menu goes', () => {
+      const about = section('about')
+      expect(allRows(about.groups).map((r) => r.id)).toEqual([
+        'version',
+        'check-updates',
+        'get-help',
+        'report-issue',
+        'default-browser',
+        'engine',
+        'upstream',
+        'licences'
+      ])
+      const help = row(about, 'get-help')
+      if (help.kind !== 'action') throw new Error('not an action')
+      expect(help.leaves).toBe('external')
+      help.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('app.openExternal', { url: HELP_URL })
+      const issue = row(about, 'report-issue')
+      if (issue.kind !== 'action') throw new Error('not an action')
+      expect(issue.leaves).toBe('external')
+      issue.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('app.openExternal', { url: ISSUES_URL })
+      const licences = row(about, 'licences')
+      if (licences.kind !== 'action') throw new Error('not an action')
+      expect(licences.label).toBe('Open-source licences')
+      expect(licences.leaves).toBe('chevron')
+      licences.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('page.open', { id: 'licences', section: undefined })
+      // The search finds the page under Chrome's name for it too.
+      expect(searchRows([about], 'credits').map((h) => h.row.id)).toContain('licences')
+    })
   })
 
   it('a list item opens a sheet of rows about it; a destructive one confirms first', () => {

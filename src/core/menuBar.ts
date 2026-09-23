@@ -10,6 +10,7 @@ import type {
   Tab
 } from '../shared/types'
 import { BOOKMARKS_BAR_ID } from '../shared/bookmarks'
+import { HELP_URL, ISSUES_URL } from '../shared/links'
 import { displayUrl } from '../shared/url'
 import { clipLabel } from './menus'
 
@@ -57,9 +58,8 @@ export function splitViewSubmenu(
   }
 }
 
-/** Where the Help menu's entries go. */
-export const HELP_URL = 'https://github.com/BenItBuhner/Zenium#readme'
-export const ISSUES_URL = 'https://github.com/BenItBuhner/Zenium/issues'
+/** Where the Help menu's entries go (shared with Settings › About, `shared/links.ts`). */
+export { HELP_URL, ISSUES_URL }
 
 /** Bookmarks the Bookmarks menu lists per folder, and how deep it follows folders. */
 const BOOKMARK_MENU_MAX = 40
