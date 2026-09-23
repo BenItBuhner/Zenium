@@ -11,12 +11,14 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
  * "Delete <folder>?" (TAB-16's desktop half; components/sidebar/FolderDeleteDialog.tsx and
  * lib/folderDelete.ts): the desktop's folder menu and the group editor bubble both ask through
  * `requestFolderDelete` – an empty folder goes at once, one holding tabs or saved pages only
- * through the §9.23 prompt at §9.20's 320 on the frame's dialog host, the dialog itself holding
- * the focus as it opens (§9.22 as the #340 verdict reads it: no verb preselected, no ring; Tab
- * enters at Cancel, Shift+Tab at Delete, the keys wrap at the ends), Escape and the scrim as
- * Cancel, the danger verb running `folder.delete` without unpacking; a Cancel from the keyboard
- * hands the keyboard back to the folder's header (§9.5) – once the window chrome's `inert`, held
- * through the prompt's way out, lifts (lib/popover.ts `returnFocusTo`).
+ * through the §9.23 prompt (components/dialogs/ConfirmDialog.tsx) at §9.20's 320 on the frame's
+ * dialog host, the dialog itself holding the focus as it opens (§9.22 as the #340 verdict reads
+ * it: no verb preselected, no ring; Tab enters at Cancel, Shift+Tab at Delete, the keys wrap at
+ * the ends), Escape and the scrim as Cancel, the danger verb running `folder.delete` without
+ * unpacking; a Cancel from the keyboard hands the keyboard back to the folder's header (§9.5) –
+ * once the window chrome's `inert`, held through the prompt's way out, lifts (lib/popover.ts
+ * `returnFocusTo`). The primitive's own contract is confirmDialog.test.tsx's; this file holds
+ * the folder prompt's words, its wiring and its way back.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -225,22 +227,31 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(d).not.toBeNull()
     expect(d.getAttribute('aria-modal')).toBe('true')
     expect(d.dataset.folderDelete).toBe('g')
+    expect(d.dataset.confirm).toBe('folder-delete')
     expect(d.style.width).toBe('320px')
-    expect(d.classList.contains('zen-bm-dialog')).toBe(true)
-    const title = d.querySelector('.zen-bm-title')!
+    // The shared primitive, not a dialog of the folder's own.
+    expect(d.classList.contains('zen-confirm-dialog')).toBe(true)
+    expect(d.classList.contains('zen-v2-dialog')).toBe(true)
+    expect(d.closest('.zen-frame-dialogs-slot')).not.toBeNull()
+    const title = d.querySelector('.zen-v2-title-block-title')!
     expect(title.textContent).toBe('Delete Trip planning?')
     expect(title.querySelector('svg.lucide-trash-2')).not.toBeNull()
     expect(d.getAttribute('aria-labelledby')).toBe(title.id)
-    const detail = d.querySelector('.zen-bm-title-desc')!
+    const detail = d.querySelector('.zen-v2-title-block-description')!
     expect(detail.textContent).toBe('Its 2 tabs close with it; Recently Closed keeps their pages.')
     expect(d.getAttribute('aria-describedby')).toBe(detail.id)
+    // One paragraph and the footer: no body element of its own (no checkbox to ask with).
+    expect(d.querySelector('.zen-confirm-dialog-check')).toBeNull()
     const [cancel, del] = buttons(d)
     expect(buttons(d)).toHaveLength(2)
     expect(cancel.textContent).toBe('Cancel')
-    expect(cancel.hasAttribute('data-variant')).toBe(false)
+    expect(cancel.dataset.action).toBe('cancel')
+    expect(cancel.hasAttribute('data-danger')).toBe(false)
     expect(del.textContent).toBe('Delete')
-    expect(del.dataset.variant).toBe('danger')
-    expect(del.dataset.action).toBe('delete')
+    expect(del.dataset.action).toBe('confirm')
+    expect(del.hasAttribute('data-danger')).toBe(true)
+    expect(d.dataset.destructive).toBe('true')
+    // A destructive prompt has no primary (§6).
     expect(d.querySelector('[data-primary]')).toBeNull()
     // The container holds the focus, not Cancel (§9.22 as the #340 verdict reads it).
     expect(d.tabIndex).toBe(-1)
@@ -256,7 +267,8 @@ describe('the "Delete <folder>?" prompt', () => {
       ":root [role='dialog'][tabindex='-1']:focus-visible, :root [role='alertdialog'][tabindex='-1']:focus-visible { outline: none; }"
     )
     // And nothing of the prompt's own chrome draws one over it.
-    expect(css).not.toMatch(/\.zen-bm-dialog[^{,]*:focus/)
+    expect(css).not.toMatch(/\.zen-confirm-dialog[^{,]*:focus/)
+    expect(css).not.toMatch(/\.zen-v2-dialog[^{,]*:focus/)
   })
 
   it('Tab from the container enters at Cancel, Shift+Tab at Delete, and the keys wrap at the ends (lib/popover.ts wrapTab)', async () => {
@@ -301,7 +313,7 @@ describe('the "Delete <folder>?" prompt', () => {
     render(<Dialogs />)
     requestFolderDelete('g', false)
     await settle()
-    expect(dialog()!.querySelector('.zen-bm-title-desc')!.textContent).toBe(
+    expect(dialog()!.querySelector('.zen-v2-title-block-description')!.textContent).toBe(
       'Its 3 saved pages are forgotten with it. There is no undo.'
     )
   })
