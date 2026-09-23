@@ -36,3 +36,16 @@ xvfb-run -a -s '-screen 0 1600x1000x24' node .github/smoke/smoke.mjs \
 
 The fixture extension lives under `fixtures/mv3-worker` (its worker logs the `chrome` surface it
 starts with; the hook in `smoke.mjs` reads the line off the session's ServiceWorkers console).
+
+## Windows installer
+
+`win-install.ps1` installs the NSIS build silently and uninstalls it, and judges the
+default-browser registration `build/installer.nsh` writes for the user: after the install every
+key and value of the Chrome-style set (`Software\RegisteredApplications`, the
+`Clients\StartMenuInternet\Zenium` client and its `Capabilities` with the `http`/`https` and
+document-type associations, the `ZeniumHTML` ProgID and each type's `OpenWithProgids`) has to be
+there and point at the installed executable (`registrationProblems` in
+`installed-install.json`); after the uninstall none of it may be left and no document type may
+still name the ProgID (`registrationLeftovers` in `installed-uninstall.json`). Either list
+non-empty fails its step in `desktop-smoke.yml` with the lines. The user's own http/https choice
+(`UserChoice`) is Windows's and is neither written nor read.
