@@ -120,7 +120,8 @@ export function FindBar({
   // reader hears the region when its text changes, so it hears each count once: a keystroke
   // whose result reads the same (a miss after a miss, a lone match narrowed to a lone match)
   // leaves the node as it was, and nothing repeats. Nothing goes through the chrome's general
-  // announcer for it, which would say the same words twice.
+  // announcer for it, which would say the same words twice. The figures keep the `find-count`
+  // test id the desktop smoke reads ("1/2"); the region is `find-status`.
   const words = findAnnouncement(text, result) ?? ''
   const counter = (className: string): JSX.Element => (
     <span
@@ -128,16 +129,18 @@ export function FindBar({
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      data-testid="find-count"
+      data-testid="find-status"
       data-no-match={noMatch ? 'true' : undefined}
     >
-      <span aria-hidden="true">{count}</span>
+      <span aria-hidden="true" data-testid="find-count">
+        {count}
+      </span>
       {words && <span className="sr-only">{words}</span>}
     </span>
   )
   // The desktop's buttons are the shared §9.3 icon button (28, the 16 glyph at stroke 1.5); the
   // phone's are 44 boxes beside the 40 field (§9.12) in the bar's 56 (§9.21); the keyboard hints
-  // stay with the desktop's tooltips (§9.31).
+  // are the desktop's tooltips (§9.31, components/Tooltip.tsx: on hover and on keyboard focus).
   const buttonClass = phone ? 'zen-toolbar-button h-11 w-11 rounded-[12px]' : 'zen-v2-icon-button'
   const glyphClass = phone ? 'h-5 w-5' : undefined
   const input = (
@@ -201,7 +204,7 @@ export function FindBar({
       <button
         type="button"
         className={buttonClass}
-        title={phone ? undefined : hint('Previous match', state, 'find.prev')}
+        data-tooltip={phone ? undefined : hint('Previous match', state, 'find.prev')}
         aria-label="Previous match"
         onClick={() => search(text, false)}
         disabled={!text || noMatch}
@@ -211,7 +214,7 @@ export function FindBar({
       <button
         type="button"
         className={buttonClass}
-        title={phone ? undefined : hint('Next match', state, 'find.next')}
+        data-tooltip={phone ? undefined : hint('Next match', state, 'find.next')}
         aria-label="Next match"
         onClick={() => search(text, true)}
         disabled={!text || noMatch}
@@ -222,7 +225,7 @@ export function FindBar({
       <button
         type="button"
         className={buttonClass}
-        title={phone ? undefined : 'Close (Esc)'}
+        data-tooltip={phone ? undefined : 'Close (Esc)'}
         aria-label="Close find bar"
         onClick={() => closeFindBar()}
       >

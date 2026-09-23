@@ -62,7 +62,7 @@ const q = <T extends Element = HTMLElement>(selector: string): T => {
   if (!el) throw new Error(`missing ${selector}`)
   return el
 }
-const region = (): HTMLElement => q('[data-testid="find-count"]')
+const region = (): HTMLElement => q('[data-testid="find-status"]')
 /** What a reader hears of the region: its text less what is hidden from it. */
 const heard = (): string =>
   [...region().childNodes]
@@ -97,6 +97,21 @@ describe('the find bar’s count region (a11y-35)', () => {
     expect(q('[role="search"][aria-label="Find in page"]').contains(el)).toBe(true)
     // The region is the bar's own: the chrome's general announcer said nothing.
     expect(announcerStore.get().text).toBe('')
+    // The figures alone keep the test id the desktop smoke reads (.github/smoke/smoke.mjs).
+    expect(q('[data-testid="find-count"]').textContent).toBe('3/12')
+  })
+
+  it('names its buttons for the reader and hints them with the chrome tooltip, not a native title', () => {
+    bar({ tabId: 't1', activeMatchOrdinal: 3, matches: 12 })
+    for (const [label, tip] of [
+      ['Previous match', /^Previous match/],
+      ['Next match', /^Next match/],
+      ['Close find bar', /^Close \(Esc\)$/]
+    ] as const) {
+      const button = q(`button[aria-label="${label}"]`)
+      expect(button.hasAttribute('title')).toBe(false)
+      expect(button.getAttribute('data-tooltip')).toMatch(tip)
+    }
   })
 
   it('reads "No matches" for a miss, marked for the eye too, and nothing before the page answers', () => {
