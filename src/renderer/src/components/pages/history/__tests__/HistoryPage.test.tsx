@@ -1008,10 +1008,12 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
     // The menu's Hide Device ran in the core: its word reaches the page.
     await act(async () => emit('history.hiddenDevicesChanged', ['phone']))
     expect(ids()).toEqual(['work'])
-    // The way back is the row after the last device's group – no umbrella heading over it.
+    // The way back is the row after the last device's group – no umbrella heading over it, the
+    // group beat's 20 above it in the heading's stead (`.zen-page-rows-loose`, §10.3).
     const rows = el.querySelector<HTMLElement>('[data-testid="history-hidden-devices"]')!
     expect(rows.previousElementSibling!.getAttribute('data-device-id')).toBe('work')
     expect(rows.closest('.zen-page-group')).toBeNull()
+    expect(rows.classList.contains('zen-page-rows-loose')).toBe(true)
     const show = rows.querySelector<HTMLButtonElement>(
       '[data-testid="history-devices-show-hidden"]'
     )!
@@ -1052,8 +1054,10 @@ describe('Tabs from other devices (ID-28, §10.1)', () => {
       '[data-testid="history-devices-show-hidden"]'
     )!
     expect(text(show)).toBe('Show hidden devices')
-    // The row stays on the page: no chevron.
+    // The row stays on the page: no chevron. Under the umbrella heading it is a group's row, at
+    // the heading's 4 – the loose row's beat is for the row with no heading over it.
     expect(show.parentElement!.querySelector('.zen-page-row-chevron')).toBeNull()
+    expect(show.closest('ul')!.classList.contains('zen-page-rows-loose')).toBe(false)
     expect(headings(el).slice(0, 3)).toEqual([
       'Recently closed',
       'Tabs from other devices',

@@ -878,8 +878,10 @@ function RecentlyClosed({
  * the phone's `remoteTabsSection`): every device hidden through its heading's menu is the
  * umbrella group over "You've hidden every device" with "Show hidden devices" as its row; with
  * some hidden and the rest listed, that row alone follows the last device's group, as the
- * phone's follows its last device. While anything is searched the empty group steps aside too,
- * and the row with it – a search shows matches, not the state of a setting.
+ * phone's follows its last device – under the group beat's 20 (`.zen-page-rows-loose`), the
+ * separation a heading would have had, so the row does not read as the last device's tab; its
+ * label stays at the headings' text edge. While anything is searched the empty group steps
+ * aside too, and the row with it – a search shows matches, not the state of a setting.
  */
 function RemoteTabs({
   sync,
@@ -926,7 +928,7 @@ function RemoteTabs({
           />
         ))}
         {hiddenCount > 0 && !searching && (
-          <ul className="zen-page-rows" data-testid="history-hidden-devices">
+          <ul className="zen-page-rows zen-page-rows-loose" data-testid="history-hidden-devices">
             {showHidden}
           </ul>
         )}
