@@ -8,16 +8,19 @@ import {
 import { DEFAULT_SETTINGS } from '../defaults'
 
 describe('devtools dock (v2 §9.29)', () => {
-  it('defaults to the bottom, the menu offering bottom, right and undocked in that order', () => {
+  it('defaults to the bottom, the menu offering the toolbox’s four – bottom, right, left, undocked – in that order', () => {
     expect(DEFAULT_SETTINGS.devtoolsDock).toBe('bottom')
-    expect(DEVTOOLS_DOCK_ROWS.map((r) => r.dock)).toEqual(['bottom', 'right', 'undocked'])
+    expect(DEVTOOLS_DOCK_ROWS.map((r) => r.dock)).toEqual(['bottom', 'right', 'left', 'undocked'])
     expect(DEVTOOLS_DOCK_ROWS.map((r) => r.label)).toEqual([
       'Dock to Bottom',
       'Dock to Right',
+      'Dock to Left',
       'Undock'
     ])
-    // The toolbox's own fourth button is a dock too, so a choice made there is kept.
+    // Every dock the toolbox can stand in has its row (the lead's ruling 4 on #414): the rows
+    // and the docks are the same four.
     expect(DEVTOOLS_DOCKS).toEqual(['bottom', 'right', 'left', 'undocked'])
+    expect(DEVTOOLS_DOCK_ROWS.map((r) => r.dock)).toEqual([...DEVTOOLS_DOCKS])
   })
 
   it('keeps the four docks and falls anything else back to the default', () => {

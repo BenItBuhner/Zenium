@@ -463,6 +463,7 @@ const DESKTOP_APP_MENU = [
   'More Tools > Developer Tools',
   'More Tools > Dock to Bottom',
   'More Tools > Dock to Right',
+  'More Tools > Dock to Left',
   'More Tools > Undock',
   'Help',
   'Help > Zenium Help',
@@ -651,9 +652,11 @@ describe('the app menu', () => {
       return item(h.shown(), 'More Tools').submenu!
     }
     const dockRows = (h: Harness): MenuItemTemplate[] =>
-      moreTools(h).filter((i) => /^(Dock to Bottom|Dock to Right|Undock)$/.test(i.label ?? ''))
+      moreTools(h).filter((i) =>
+        /^(Dock to Bottom|Dock to Right|Dock to Left|Undock)$/.test(i.label ?? '')
+      )
 
-    it('follow Developer Tools as three radio rows – bottom, right, undocked – the remembered dock checked, the bottom to begin with', () => {
+    it('follow Developer Tools as the toolbox’s four radio rows – bottom, right, left, undocked – the remembered dock checked, the bottom to begin with', () => {
       const h = harness(DESKTOP)
       const rows = moreTools(h)
       const devtools = rows.findIndex((i) => i.label === 'Developer Tools')
@@ -661,6 +664,7 @@ describe('the app menu', () => {
         'Developer Tools',
         'Dock to Bottom',
         'Dock to Right',
+        'Dock to Left',
         'Undock'
       ])
       for (const row of dockRows(h)) {
@@ -669,12 +673,12 @@ describe('the app menu', () => {
         expect(row.enabled).not.toBe(false)
         expect(row.action).toBeUndefined()
       }
-      expect(dockRows(h).map((r) => r.checked)).toEqual([true, false, false])
+      expect(dockRows(h).map((r) => r.checked)).toEqual([true, false, false, false])
       // Every row Title Case (§9.1).
       for (const row of dockRows(h)) expect(row.label).toMatch(/^[A-Z]/)
     })
 
-    it('a row remembers its dock and moves every open toolbox there; the toolbox’s own left has no row and leaves none checked', () => {
+    it('a row remembers its dock and moves every open toolbox there; a choice made inside the toolbox – left included – checks its row', () => {
       const h = pageHarness()
       // A toolbox up on the page (its host said `onDevtoolsOpened`).
       h.browser.state.devtoolsOpenFor.add(h.tabId)
@@ -682,15 +686,21 @@ describe('the app menu', () => {
       dockRows(h)[1].click?.()
       expect(h.browser.state.settings.devtoolsDock).toBe('right')
       expect(h.viewCalls).toEqual(['setDevtoolsDock("right")'])
-      expect(dockRows(h).map((r) => r.checked)).toEqual([false, true, false])
+      expect(dockRows(h).map((r) => r.checked)).toEqual([false, true, false, false])
+      // Dock to Left goes the same way as Dock to Right (the lead's ruling 4 on #414).
       h.viewCalls.length = 0
       dockRows(h)[2].click?.()
+      expect(h.browser.state.settings.devtoolsDock).toBe('left')
+      expect(h.viewCalls).toEqual(['setDevtoolsDock("left")'])
+      expect(dockRows(h).map((r) => r.checked)).toEqual([false, false, true, false])
+      h.viewCalls.length = 0
+      dockRows(h)[3].click?.()
       expect(h.browser.state.settings.devtoolsDock).toBe('undocked')
       expect(h.viewCalls).toEqual(['setDevtoolsDock("undocked")'])
-      expect(dockRows(h).map((r) => r.checked)).toEqual([false, false, true])
+      expect(dockRows(h).map((r) => r.checked)).toEqual([false, false, false, true])
       // The same row again: nothing to store, the toolboxes still told where to stand.
       h.viewCalls.length = 0
-      dockRows(h)[2].click?.()
+      dockRows(h)[3].click?.()
       expect(h.viewCalls).toEqual(['setDevtoolsDock("undocked")'])
       // With no toolbox up the choice is kept for the next opening alone.
       h.browser.state.devtoolsOpenFor.clear()
@@ -698,10 +708,11 @@ describe('the app menu', () => {
       dockRows(h)[0].click?.()
       expect(h.browser.state.settings.devtoolsDock).toBe('bottom')
       expect(h.viewCalls).toEqual([])
-      // The toolbox's fourth button, read back through the host: kept, no row checked.
+      // The toolbox's own Dock to left, read back through the host: kept, and its row checked –
+      // the group never stands all unchecked.
       h.browser.tabs.setDevtoolsDock('left', h.win, { move: false })
       expect(h.browser.state.settings.devtoolsDock).toBe('left')
-      expect(dockRows(h).map((r) => r.checked)).toEqual([false, false, false])
+      expect(dockRows(h).map((r) => r.checked)).toEqual([false, false, true, false])
     })
 
     it('open the toolbox at the remembered dock from the row, the chords and the context menu alike', () => {
@@ -725,7 +736,13 @@ describe('the app menu', () => {
       const tablet = harness(ANDROID, 'tablet')
       appMenu(tablet)
       const everywhere = allItems(tablet.shown()).map((i) => i.label)
-      for (const label of ['Developer Tools', 'Dock to Bottom', 'Dock to Right', 'Undock'])
+      for (const label of [
+        'Developer Tools',
+        'Dock to Bottom',
+        'Dock to Right',
+        'Dock to Left',
+        'Undock'
+      ])
         expect(everywhere).not.toContain(label)
       // A profile whose dock is not one the host knows reads as the bottom (state.ts).
       const h = harness(DESKTOP)
@@ -741,10 +758,10 @@ describe('the app menu', () => {
     expect(everywhere).not.toContain('Take Screenshot')
     expect(everywhere).not.toContain('Capture Full Page')
     expect(desktopMenu).toContain('Save and Share > Web Capture…')
-    // More Tools: two rows and a separator fewer than the row had – eight of its own, the three
+    // More Tools: two rows and a separator fewer than the row had – eight of its own, the four
     // dock rows after them, two separators.
     const moreTools = item(desktop.shown(), 'More Tools').submenu!
-    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(11)
+    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(12)
     expect(separators(moreTools)).toBe(2)
     // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
     // in their own group before the resources.

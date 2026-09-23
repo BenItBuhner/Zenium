@@ -3229,9 +3229,9 @@ export class Menus {
       click: () => active && tabs.toggleDevtools(active.id)
     })
     // Where the toolbox stands (design language v2 §9.29: Chrome's and Zen's dock side – bottom
-    // or right, the last choice remembered, undocked on offer): three radio rows under Developer
-    // Tools, the current one checked. A choice made inside the toolbox is remembered too; its
-    // fourth button (left) has no row here, so none is checked while it stands there.
+    // or right, the last choice remembered, left and undocked on offer): the frontend's four as
+    // radio rows under Developer Tools, the current one checked. A choice made inside the toolbox
+    // is remembered too and checks its row here, so the group never stands all unchecked.
     const devtoolsDock = when(
       caps.devtools,
       ...DEVTOOLS_DOCK_ROWS.map(({ dock, label }): MenuItemTemplate => ({

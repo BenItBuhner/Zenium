@@ -2062,8 +2062,8 @@ export type SidebarSide = 'left' | 'right'
 /**
  * Where the developer tools stand (design language v2 §9.29; Chrome's and Zen's dock side):
  * docked in the frame's box under the page (`bottom`) or beside it (`right`, `left`), or in a
- * window of their own (`undocked`). The menu offers bottom, right and undocked; `left` is the
- * toolbox's own fourth button, kept when the user picks it there.
+ * window of their own (`undocked`). The menu offers all four – the toolbox's own – so a choice
+ * made inside the toolbox always has its row.
  */
 export type DevtoolsDock = 'bottom' | 'right' | 'left' | 'undocked'
 export type NewTabPosition = 'end' | 'after-current'

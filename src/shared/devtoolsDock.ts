@@ -1,15 +1,18 @@
 import type { DevtoolsDock } from './types'
 
-/** Every dock the toolbox can stand in – the menu's three and the toolbox's own `left`. */
+/** Every dock the toolbox can stand in – the frontend's four, each with a row in the menu. */
 export const DEVTOOLS_DOCKS: readonly DevtoolsDock[] = ['bottom', 'right', 'left', 'undocked']
 
 /**
  * The docks the app menu offers, in row order (design language v2 §9.29: bottom or right, the
- * last choice remembered, undocked on offer; §9.1 Title Case).
+ * last choice remembered, left and undocked on offer – the toolbox's own four, so no dock it can
+ * stand in is one the menu cannot show; §9.1 Title Case). Bottom and right lead as §9.29 names
+ * them; the toolbox's own Dock side row runs undock · left · bottom · right and is not followed.
  */
 export const DEVTOOLS_DOCK_ROWS: readonly { dock: DevtoolsDock; label: string }[] = [
   { dock: 'bottom', label: 'Dock to Bottom' },
   { dock: 'right', label: 'Dock to Right' },
+  { dock: 'left', label: 'Dock to Left' },
   { dock: 'undocked', label: 'Undock' }
 ]
 
