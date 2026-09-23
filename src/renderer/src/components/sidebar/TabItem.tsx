@@ -1,5 +1,5 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Bot,
   MonitorSmartphone,
@@ -23,8 +23,11 @@ import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { KEEPS_KEYBOARD_ATTR } from '@renderer/lib/panes'
+import { ChromePortal } from '@renderer/lib/portals'
 import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
+import { tabRowDescription, tabRowDescriptionId, tabRowStates } from '@renderer/lib/tabRowAria'
 import {
   browserStore,
   clearTabSelection,
@@ -40,6 +43,7 @@ import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon } from './Favicon'
 import { useListMotion } from './listMotion'
 import { useStripAxis } from './stripAxis'
+import { useTabPosition } from './TabSet'
 
 interface Props {
   tab: Tab
@@ -82,12 +86,17 @@ export function TabItem({
   const tabIndex = useStripTabIndex(`tab:${tab.id}`, active)
   const motion = useListMotion()
   const inSegment = Boolean(segment)
+  const row = useRef<HTMLDivElement | null>(null)
   const attach = useCallback(
     (el: HTMLDivElement | null) => {
+      row.current = el
       // The list's slot is the split row's, attached by `SplitGroupRow`; a segment is not one.
       const slot = inSegment ? null : motion
       slot?.attach(tab.id, el)
-      return () => slot?.attach(tab.id, null)
+      return () => {
+        row.current = null
+        slot?.attach(tab.id, null)
+      }
     },
     [motion, tab.id, inSegment]
   )
@@ -120,6 +129,15 @@ export function TabItem({
   const pinnedChanged = tab.pinned && tab.pinnedUrl !== null && tab.url !== tab.pinnedUrl
   // The indicator slot shows one state, Chrome's priority: recording > capturing > PiP > audio.
   const alert = !tab.discarded ? (tab.alert ?? null) : null
+  // What the row tells a screen reader beyond its name (a11y-31, lib/tabRowAria.ts): its pane
+  // of a split group and its states – recording, muted, playing, sleeping, pinned – as hidden
+  // text the row is described by, and its place in its list as `aria-posinset` / `aria-setsize`
+  // (the list's `TabSet`). Hidden text rather than `aria-description` because the hover card,
+  // when it stands, is the row's `aria-describedby` too, and a describedby replaces an
+  // aria-description outright: the two ids are read together, the states first.
+  const description = tabRowDescription(tabRowStates(tab, alert, masked), segment)
+  const descriptionId = tabRowDescriptionId(tab.id)
+  const position = useTabPosition(tab.id)
 
   // On the tablet a finger's hold lifts the row (TABLET-02: the menu on release, the reorder on
   // a move) and takes the browser's long-press menu; elsewhere the hook does nothing.
@@ -244,9 +262,8 @@ export function TabItem({
       role="tab"
       aria-selected={active}
       aria-label={title}
-      aria-description={
-        segment ? `Split view, pane ${segment.index + 1} of ${segment.count}` : undefined
-      }
+      aria-posinset={position?.pos}
+      aria-setsize={position?.size}
       data-active={active}
       data-selected={selected || undefined}
       data-discarded={tab.discarded}
@@ -261,7 +278,12 @@ export function TabItem({
       data-slot={horizontal ? slot : undefined}
       data-state={stateGlyph || undefined}
       tabIndex={tabIndex}
-      aria-describedby={cardUp ? 'zen-tab-hover-card' : undefined}
+      aria-describedby={
+        [description ? descriptionId : null, cardUp ? 'zen-tab-hover-card' : null]
+          .filter(Boolean)
+          .join(' ') || undefined
+      }
+      data-renaming={renaming || undefined}
       data-testid="tab"
       style={agent ? { boxShadow: `inset 0 0 0 1.5px ${agent.color}80` } : undefined}
       onPointerDown={onPointerDown}
@@ -277,6 +299,11 @@ export function TabItem({
       onAuxClick={onAuxClick}
       onContextMenu={onContextMenu}
     >
+      {description && (
+        <span id={descriptionId} hidden>
+          {description}
+        </span>
+      )}
       {showDropZones && horizontal && (
         <>
           <div
@@ -338,13 +365,18 @@ export function TabItem({
       )}
       {!compact && (
         <>
-          {renaming && !masked ? (
-            <RenameInput tab={tab} />
-          ) : (
-            <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="tab-title">
-              {title}
-            </span>
-          )}
+          {/* The title's box stays while the row is renamed, blank, and the field draws over it
+              from the chrome layer (`RenameInput`): a text field inside a tab would be a
+              focusable child of a widget whose children are presentational (a11y-31, axe
+              nested-interactive), so it stands beside the row instead. */}
+          <span
+            className="zen-tab-title min-w-0 flex-1 truncate"
+            data-testid="tab-title"
+            style={renaming && !masked ? { visibility: 'hidden' } : undefined}
+          >
+            {title}
+          </span>
+          {renaming && !masked && <RenameInput tab={tab} row={row} />}
           {trailing && agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
           {trailing && foreign && active && (
             <MonitorSmartphone
@@ -605,32 +637,175 @@ function AgentBadge({ agent, tabId }: { agent: AgentInfo; tabId: string }): JSX.
   )
 }
 
-function RenameInput({ tab }: { tab: Tab }): JSX.Element {
+/** The rename field's height: the row's 32 less the fill's 4 px inset each side. */
+const RENAME_FIELD_HEIGHT = 24
+
+/**
+ * How long after the field opens a loss of the document's focus may be the row's own doing. The
+ * first click of the pair that opened it activated the tab, and the core hands the keyboard to
+ * the page for a click (`tab.activate` without `keepFocus`, `win.focusContent()`); when the
+ * main process is slow that landing – the page's view taking the keyboard, `focus.page` – comes
+ * after the second click has opened the field, and would blur it shut before it was seen (the
+ * a11y-2 drive's finding: a double click 1 ms apart lost the field 2 ms after it opened). For
+ * this span the field carries {@link KEEPS_KEYBOARD_ATTR}: `pageTookKeyboard` (lib/panes.ts)
+ * leaves it the document's focused element and asks the chrome's keyboard back, which Chromium
+ * gives the field again with the frame's. A blur without a taker inside the span waits as long
+ * again for the keyboard to return before it commits; focus coming back cancels the commit.
+ * Past the span a blur is the user's, and commits at once.
+ */
+const RENAME_FOCUS_GRACE_MS = 300
+
+type RenameBox = { left: number; top: number; width: number }
+
+/** The field's box: on the title's, the row's height centred; null before the row has a layout. */
+function renameBox(row: RefObject<HTMLDivElement | null>): RenameBox | null {
+  const title = row.current?.querySelector<HTMLElement>('.zen-tab-title')
+  const rowBox = row.current?.getBoundingClientRect()
+  if (!title || !rowBox) return null
+  const titleBox = title.getBoundingClientRect()
+  return {
+    left: Math.round(titleBox.left),
+    top: Math.round(rowBox.top + (rowBox.height - RENAME_FIELD_HEIGHT) / 2),
+    width: Math.max(40, Math.round(titleBox.width))
+  }
+}
+
+const sameBox = (a: RenameBox | null, b: RenameBox | null): boolean =>
+  a === b || (!!a && !!b && a.left === b.left && a.top === b.top && a.width === b.width)
+
+/**
+ * The row's rename field (a11y-31). It draws over the row's title from the chrome layer,
+ * beside the row in the tree rather than inside it: a `tab`'s children are presentational, so a
+ * text field among them is a focusable element the keyboard cannot name (axe
+ * `nested-interactive`), and a tablist may hold nothing but tabs, so it cannot stand as the
+ * row's sibling either. The chrome layer is where every surface anchored to chrome goes
+ * (`ChromePortal`); the row's own keys stay the row's (the field's keys stop at the field), the
+ * field's press never lifts the row, and its click never activates the tab. The roving tabindex
+ * (lib/tabStrip.ts) is untouched: focus leaving the row for the field makes the active row the
+ * strip's stop, as leaving the strip does, and Enter or Escape hand focus back to the row that
+ * was renamed, which takes the stop again; a blur – the user went elsewhere – commits and
+ * leaves focus where it went (a blur to nowhere in the field's first moments, the opening
+ * pair's activation handing the keyboard to the page, excepted: `RENAME_FOCUS_GRACE_MS`).
+ */
+function RenameInput({
+  tab,
+  row
+}: {
+  tab: Tab
+  row: RefObject<HTMLDivElement | null>
+}): JSX.Element {
   const [value, setValue] = useState(tabTitle(tab))
+  // Measured before the first commit, so the field is visible when its focus effect runs: the
+  // browser refuses focus to an element under `visibility: hidden`, and the effect of the first
+  // commit runs before a layout effect's measurement can land (the a11y-2 drive's finding).
+  const [box, setBox] = useState<RenameBox | null>(() => renameBox(row))
   const ref = useRef<HTMLInputElement>(null)
+  const done = useRef(false)
+  const took = useRef(false)
+  // The field's first moments (`RENAME_FOCUS_GRACE_MS`): the mark is set on the element itself,
+  // not rendered, so its removal is no render of the field. `pendingCommit` is a blur to
+  // nowhere inside them, waiting for the keyboard to return.
+  const keeps = useRef(true)
+  const pendingCommit = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
+    const el = ref.current
+    el?.setAttribute(KEEPS_KEYBOARD_ATTR, '')
+    const grace = setTimeout(() => {
+      keeps.current = false
+      el?.removeAttribute(KEEPS_KEYBOARD_ATTR)
+    }, RENAME_FOCUS_GRACE_MS)
+    return () => {
+      clearTimeout(grace)
+      if (pendingCommit.current) clearTimeout(pendingCommit.current)
+    }
+  }, [])
+  useEffect(() => {
+    if (!box || took.current) return
+    took.current = true
+    // The field takes the keyboard: the chrome's – the opening pair's first click may have
+    // handed it to the page already – and its own.
+    run('focus.chrome', undefined)
     ref.current?.focus()
     ref.current?.select()
-  }, [])
-  const commit = (save: boolean): void => {
+  }, [box])
+  // The field sits on the title's box, the row's height centred; it follows the row through a
+  // scroll or a resize (rare mid-rename – a press anywhere commits – but never wrong).
+  useLayoutEffect(() => {
+    const measure = (): void => {
+      const next = renameBox(row)
+      setBox((old) => (!next || sameBox(old, next) ? old : next))
+    }
+    measure()
+    document.addEventListener('scroll', measure, { capture: true, passive: true })
+    window.addEventListener('resize', measure)
+    return () => {
+      document.removeEventListener('scroll', measure, { capture: true })
+      window.removeEventListener('resize', measure)
+    }
+  }, [row])
+  const commit = (save: boolean, byKey: boolean): void => {
+    if (done.current) return
+    done.current = true
     uiStore.set({ renamingTabId: null })
+    if (byKey) row.current?.focus()
     if (!save) return
     const trimmed = value.trim()
     run('tab.rename', { tabId: tab.id, title: trimmed && trimmed !== tab.title ? trimmed : null })
   }
+  const onBlur = (e: React.FocusEvent<HTMLInputElement>): void => {
+    // Focus left the document – no element in it took it – in the field's first moments: the
+    // pair's first click handing the keyboard to the page, which `pageTookKeyboard` asks back.
+    // The commit waits for it; focus returning (`onFocus`) cancels the wait.
+    if (e.relatedTarget === null && keeps.current) {
+      pendingCommit.current ??= setTimeout(() => {
+        pendingCommit.current = null
+        commit(true, false)
+      }, RENAME_FOCUS_GRACE_MS)
+      return
+    }
+    commit(true, false)
+  }
+  const onFocus = (): void => {
+    if (!pendingCommit.current) return
+    clearTimeout(pendingCommit.current)
+    pendingCommit.current = null
+  }
+  const stop = (e: { stopPropagation: () => void }): void => e.stopPropagation()
   return (
-    <input
-      ref={ref}
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => commit(true)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') commit(true)
-        if (e.key === 'Escape') commit(false)
-        e.stopPropagation()
-      }}
-      onPointerDown={(e) => e.stopPropagation()}
-      className="zen-no-drag zen-squircle min-w-0 flex-1 rounded-md bg-[var(--v2-control-fill)] px-1.5 py-0.5 outline-none ring-1 ring-[var(--v2-control-accent)]"
-    />
+    <ChromePortal>
+      <div
+        className="zen-tab-rename"
+        data-surface="window"
+        data-tab-rename={tab.id}
+        style={{
+          position: 'fixed',
+          left: box?.left ?? 0,
+          top: box?.top ?? 0,
+          width: box?.width ?? 0,
+          height: RENAME_FIELD_HEIGHT,
+          visibility: box ? 'visible' : 'hidden'
+        }}
+        onPointerDown={stop}
+        onPointerUp={stop}
+        onClick={stop}
+        onAuxClick={stop}
+        onContextMenu={stop}
+      >
+        <input
+          ref={ref}
+          value={value}
+          aria-label="Rename tab"
+          onChange={(e) => setValue(e.target.value)}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit(true, true)
+            if (e.key === 'Escape') commit(false, true)
+            e.stopPropagation()
+          }}
+          className="zen-no-drag zen-squircle box-border h-full w-full rounded-md bg-[var(--v2-control-fill)] px-1.5 text-[length:var(--zen-sidebar-font)] text-[var(--zen-fg)] outline-none ring-1 ring-[var(--v2-control-accent)]"
+        />
+      </div>
+    </ChromePortal>
   )
 }

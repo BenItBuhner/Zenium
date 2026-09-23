@@ -1,0 +1,19 @@
+- dialog "Add search engine":
+  - heading "Add search engine" [level=2]
+  - paragraph: Put %s in the URL where the search terms go.
+  - text: Name
+  - textbox "Name":
+    - /placeholder: Wikipedia
+  - text: URL with %s in place of query
+  - textbox "URL with %s in place of query":
+    - /placeholder: https://example.com/search?q=%s
+  - text: "Example: https://en.wikipedia.org/w/index.php?search=%s"
+  - button "Cancel"
+  - button "Add" [disabled]
+
+# facts
+- complementary "Sidebar" [inert]
+- button "Back (Alt+←)" [inert]
+- frame [inert]
+- dialog "Add search engine": Put %s in the URL where the search terms go.
+- textbox "Name" [focused]
