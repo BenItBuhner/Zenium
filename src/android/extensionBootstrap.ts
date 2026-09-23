@@ -366,7 +366,9 @@ declare const __zenExtBoot: Boot
     context: EngineContextKind,
     frame: FrameContext,
     root: object,
-    world: boolean
+    world: boolean,
+    /** The MV3 worker page's `self`: what its callbacks and listeners get as `this`, as in a worker of Chrome's. */
+    receiver?: object
   ): EmulatedEngine {
     const endpointId = endpointIdFor(ext.id, context)
     const engine = createEmulatedEngine(
@@ -393,7 +395,7 @@ declare const __zenExtBoot: Boot
       },
       engineTransport,
       primordials,
-      { root }
+      receiver ? { root, receiver } : { root }
     )
     engines.set(endpointId, engine)
     return engine
@@ -447,7 +449,21 @@ declare const __zenExtBoot: Boot
     const ext = boot.config.extension
     const context = boot.config.context
     const frame = frameContext()
-    const engine = makeEngine(ext, context, frame, realWindow, false)
+    const origin = extensionOrigin(ext.id)
+    // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
+    // MV2 backgrounds are pages in Chrome too and get none of it.
+    const background = ext.manifest.background as Record<string, unknown> | undefined
+    const workerScript =
+      background && typeof background.service_worker === 'string'
+        ? new URL('/' + background.service_worker.replace(/^\/+/, ''), origin + '/').href
+        : null
+    // On the worker page, `self` and `globalThis` answer as a worker's global does (`workerSelf`:
+    // no `window` or `document` until the script polyfills them, and its polyfills take); the
+    // page's own `self` is [Replaceable] and `globalThis` writable, so both can be redefined.
+    // Its callbacks and listeners are called with it as `this`, as Chrome calls a worker's.
+    const workerGlobal =
+      context === 'background' && workerScript ? workerSelf(realWindow) : undefined
+    const engine = makeEngine(ext, context, frame, realWindow, false, workerGlobal)
     // An extension page open as a tab shares its main world with every other document-start
     // copy of this script whose origin rule covers it – the units over `*` of this extension
     // (a `world: "MAIN"` group on a WebView with isolated worlds, every group without them) and
@@ -472,7 +488,6 @@ declare const __zenExtBoot: Boot
       })
     }
     const pageWindow = realWindow
-    const origin = extensionOrigin(ext.id)
     const endpointId = endpointIdFor(ext.id)
     if (boot.debug) {
       // The page's debug stats (`__zenExtStats`, as a content world has): its engine's flow
@@ -491,13 +506,6 @@ declare const __zenExtBoot: Boot
         configurable: true
       })
     }
-    // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
-    // MV2 backgrounds are pages in Chrome too and get none of it.
-    const background = ext.manifest.background as Record<string, unknown> | undefined
-    const workerScript =
-      background && typeof background.service_worker === 'string'
-        ? new URL('/' + background.service_worker.replace(/^\/+/, ''), origin + '/').href
-        : null
     const swSend = (message: ServiceWorkerMessage): void => engine.post({ t: 'sw', ...message })
     let lifecycle: (() => Promise<void>) | null = null
 
@@ -529,11 +537,7 @@ declare const __zenExtBoot: Boot
         listen: (event) => engine.post({ t: 'listen', event: `speechSynthesis.${event}`, on: true })
       })
 
-    if (context === 'background' && workerScript) {
-      // `self` and `globalThis` answer as a worker's global does (`workerSelf`: no `window`
-      // or `document` until the script polyfills them, and its polyfills take); the page's own
-      // `self` is [Replaceable] and `globalThis` writable, so both can be redefined.
-      const workerGlobal = workerSelf(pageWindow)
+    if (context === 'background' && workerScript && workerGlobal) {
       for (const name of ['self', 'globalThis']) {
         Object.defineProperty(pageWindow, name, {
           value: workerGlobal,

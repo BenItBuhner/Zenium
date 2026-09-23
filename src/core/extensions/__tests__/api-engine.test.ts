@@ -974,3 +974,65 @@ describe('the flow bound (a page bursting messages at the bridge faster than the
       expect(Object.keys(message).slice(0, 3)).toEqual(['token', 'ep', 't'])
   })
 })
+
+describe('the receiver of API callbacks and event listeners', () => {
+  // Strict-mode functions (this module is one) keep the receiver they are called with; Chrome
+  // runs a frame's callbacks with an undefined one and a service worker's with the worker's
+  // global (`ScriptContext::SafeCallFunction`).
+  it("calls them with undefined by default, as Chrome calls a frame's", async () => {
+    const h = harness()
+    const seen: unknown[] = []
+    ;(h.chrome.tabs.get as Fn)(4, function (this: unknown) {
+      seen.push(this)
+    })
+    h.reply(h.last().id, { id: 4 })
+    await flush()
+    ;(h.chrome.alarms.onAlarm as Listenable).addListener(function (this: unknown) {
+      seen.push(this)
+    })
+    h.engine.receive({ t: 'event', ns: 'alarms', name: 'onAlarm', args: [{ name: 'a' }] })
+    expect(seen).toEqual([undefined, undefined])
+  })
+
+  it("calls them with the receiver given, as Chrome calls a service worker's (ZeroOmega's unbound _proxyChangeListener)", async () => {
+    // ZeroOmega's worker, an ES module: `chrome.proxy.settings.get({}, impl._proxyChangeListener)`
+    // and the listener reads `this._proxyChangeWatchers`; with `this` the worker's global that
+    // is undefined and the loop runs over nothing, with `this` undefined it is a TypeError.
+    const self = { _proxyChangeWatchers: null }
+    const h = harness({}, { receiver: self })
+    const seen: unknown[] = []
+    // A routed method's callback (the shim's settle), on success and on failure.
+    ;(h.chrome.tabs.get as Fn)(4, function (this: unknown) {
+      seen.push(this)
+    })
+    h.reply(h.last().id, { id: 4 })
+    await flush()
+    ;(h.chrome.tabs.get as Fn)(5, function (this: unknown) {
+      seen.push(this)
+    })
+    h.fail(h.last().id, 'No tab with id: 5.')
+    await flush()
+    // An engine-owned event (runtime.onMessage) and a shim event (alarms.onAlarm).
+    ;(h.chrome.runtime.onMessage as Listenable).addListener(function (this: unknown) {
+      seen.push(this)
+    })
+    h.engine.receive({ t: 'deliver', id: 9, data: 'x', sender: { id: EXT } })
+    ;(h.chrome.alarms.onAlarm as Listenable).addListener(function (this: unknown) {
+      seen.push(this)
+    })
+    h.engine.receive({ t: 'event', ns: 'alarms', name: 'onAlarm', args: [{ name: 'a' }] })
+    expect(seen).toEqual([self, self, self, self])
+    // The listener as ZeroOmega spells it, unbound, run through the API: no throw.
+    const impl = {
+      _proxyChangeWatchers: null as null | Array<() => void>,
+      _proxyChangeListener(this: { _proxyChangeWatchers: null | Array<() => void> }) {
+        const watchers = this._proxyChangeWatchers != null ? this._proxyChangeWatchers : []
+        return watchers.length
+      }
+    }
+    let result: unknown = 'unset'
+    ;(h.chrome.alarms.onAlarm as Listenable).addListener(impl._proxyChangeListener as Fn)
+    result = (h.chrome.alarms.onAlarm as unknown as { dispatch: Fn }).dispatch({ name: 'b' })
+    expect(result).toEqual(expect.arrayContaining([0]))
+  })
+})

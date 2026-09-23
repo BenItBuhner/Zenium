@@ -155,6 +155,16 @@ export interface EngineOptions {
    * (`iconWire.ts`); the realm's own, captured at creation, by default. Tests hand in theirs.
    */
   iconWire?: IconWireEnv
+  /**
+   * The `this` an API callback or event listener is called with. Chrome runs a frame's through
+   * Blink with an undefined receiver (`ScriptContext::SafeCallFunction`, the frame branch) and
+   * a service worker's with the worker's global (its other branch), so a strict-mode listener
+   * that reads `this` – ZeroOmega's `chrome.proxy.settings.get({}, impl._proxyChangeListener)`,
+   * an ES module's unbound method reading `this._proxyChangeWatchers` – finds the global in a
+   * worker and throws in a page. Undefined by default (the frame's); the emulated worker page
+   * hands in what its script reads as `self`.
+   */
+  receiver?: object
 }
 
 /**
@@ -326,6 +336,8 @@ export function createEmulatedEngine(
   options: EngineOptions = {}
 ): EmulatedEngine {
   const root = (options.root ?? globalThis) as Record<string, unknown>
+  /** What callbacks and listeners are called with as `this` ([EngineOptions.receiver]). */
+  const receiver: object | undefined = options.receiver
   let seq = 0
   const pending = new Map<number, PendingCall>()
   const ports = new Map<string, { port: Port; connected: boolean }>()
@@ -594,7 +606,7 @@ export function createEmulatedEngine(
         const results: unknown[] = []
         for (const listener of [...listeners]) {
           try {
-            results.push(listener(...args))
+            results.push(Reflect.apply(listener, receiver, args))
           } catch (error) {
             results.push(undefined)
             primordials.error(`[Zenium] chrome.${fullName} listener threw`, error)
@@ -608,11 +620,11 @@ export function createEmulatedEngine(
       addRules: () => undefined,
       getRules: (...raw: unknown[]) => {
         const cb = takeCallback(raw)
-        if (cb) cb([])
+        if (cb) Reflect.apply(cb, receiver, [[]])
       },
       removeRules: (...raw: unknown[]) => {
         const cb = takeCallback(raw)
-        if (cb) cb()
+        if (cb) Reflect.apply(cb, receiver, [])
       }
     })
     events.set(fullName, event)
@@ -668,8 +680,7 @@ export function createEmulatedEngine(
     promise.then(
       (value) => {
         try {
-          if (value === undefined) callback()
-          else callback(value)
+          Reflect.apply(callback, receiver, value === undefined ? [] : [value])
         } catch (error) {
           rethrow(error)
         }
@@ -677,7 +688,7 @@ export function createEmulatedEngine(
       (error: unknown) => {
         withLastError(errorMessage(error), () => {
           try {
-            callback()
+            Reflect.apply(callback, receiver, [])
           } catch (thrown) {
             rethrow(thrown)
           }
@@ -1061,7 +1072,11 @@ export function createEmulatedEngine(
         manifestVersion: config.manifestVersion,
         context: contentScript ? 'content' : 'page'
       }),
-      optional.length > 0 ? { root, granted: config.permissions } : { root }
+      {
+        root,
+        ...(optional.length > 0 ? { granted: config.permissions } : {}),
+        ...(receiver ? { receiver } : {})
+      }
     )
     // The shim always builds `storage`; Chrome only exposes it with the permission.
     if (!granted('storage')) delete chrome.storage
