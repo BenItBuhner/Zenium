@@ -189,16 +189,6 @@ describe('permissionRequestDetails', () => {
       })
     ).toEqual({})
   })
-
-  it("marks the private session's requests so the core keeps their answers with the session", () => {
-    const request = { isMainFrame: true, requestingUrl: 'https://meet.example' }
-    expect(permissionRequestDetails(page, request, 't1', true)).toEqual({
-      tabId: 't1',
-      private: true
-    })
-    expect(permissionRequestDetails(page, request, 't1', false)).toEqual({ tabId: 't1' })
-    expect(permissionRequestDetails(null, request, undefined, true)).toEqual({ private: true })
-  })
 })
 
 describe('permissionName', () => {
@@ -262,20 +252,6 @@ describe('permissionCheckDetails', () => {
         browser
       )
     ).toEqual({ embedderUrl: 'https://top.example' })
-  })
-
-  it("marks the private session's checks (Notification.permission reads the private answer)", () => {
-    const browser = browserWith([])
-    expect(
-      permissionCheckDetails(
-        'notifications',
-        'https://top.example',
-        { isMainFrame: true },
-        browser,
-        undefined,
-        true
-      )
-    ).toEqual({ private: true })
   })
 
   it('adds what Electron leaves out of a File System Access check', () => {

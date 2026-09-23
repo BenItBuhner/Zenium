@@ -106,7 +106,7 @@ export class PopupBlocker {
     url: string,
     hostGesture: boolean | null
   ): 'allow' | 'blocked' {
-    const stored = this.browser.permissions.stored('popups', openerUrl, { tabId })
+    const stored = this.browser.permissions.stored('popups', openerUrl)
     if (stored === 'allow') return 'allow'
     const activation = this.activation(tabId)
     const active = hostGesture === true || activation.isActive(this.now())
@@ -160,12 +160,9 @@ export class PopupBlocker {
     if (this.blocked.delete(tabId)) this.browser.state.commitVolatile()
   }
 
-  /**
-   * Whether the site of `url` may open pop-ups without a gesture, as the page in `tabId` reads
-   * it (a private tab's "always allow" is the private session's alone).
-   */
-  siteAllowed(url: string, tabId?: string): boolean {
-    return this.browser.permissions.stored('popups', url, { tabId }) === 'allow'
+  /** Whether the site of `url` may open pop-ups without a gesture. */
+  siteAllowed(url: string): boolean {
+    return this.browser.permissions.stored('popups', url) === 'allow'
   }
 
   /**
@@ -177,8 +174,8 @@ export class PopupBlocker {
     if (!tab) return
     const origin = safeOrigin(tab.url)
     if (!origin || origin === 'null') return
-    if (allow) this.browser.permissions.remember('popups', tab.url, 'allow', { tabId })
-    else this.browser.permissions.forget('popups', tab.url, { tabId })
+    if (allow) this.browser.permissions.remember('popups', tab.url, 'allow')
+    else this.browser.permissions.forget('popups', tab.url)
     this.browser.tabs.syncPopupPolicy(origin)
     if (allow) {
       const list = this.blocked.get(tabId) ?? []

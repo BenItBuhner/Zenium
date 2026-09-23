@@ -69,13 +69,6 @@ export interface PermissionRequestDetails {
    * the file the engine emptied on the spot), which is the user's permission to write it.
    */
   pickedForSaving?: boolean
-  /**
-   * The page is in a private window or tab (hosts say so for their private session; a `tabId`
-   * of a private tab says so too). Chrome's Incognito rule: the shared store's refusals hold, an
-   * allow the user gave elsewhere is asked for again, and the answer is kept in memory for the
-   * private session – never written to `permissions.json`.
-   */
-  private?: boolean
 }
 
 export interface PermissionPromptCopy {
@@ -131,13 +124,6 @@ export class PermissionService {
   /** Requests answered from a stored allow this session, per key (the notification review). */
   private readonly hits = new Map<string, number>()
   private override: PermissionOverride | null = null
-  /**
-   * Answers given in private windows and tabs (Chrome's off-the-record provider): in memory
-   * only, read before the shared store by private pages, gone with `endPrivateSession`.
-   */
-  private readonly privateDecisions = new Map<string, PermissionDecision>()
-  private readonly privateDismissals = new Map<string, number>()
-  private privateTab: (tabId: string) => boolean = () => false
 
   constructor(
     io: StoreIO,
@@ -200,75 +186,10 @@ export class PermissionService {
     const overridden = this.overridden(permission, requestingUrl, details)
     if (overridden) return overridden
     const key = decisionKey(origin, permission, details)
-    const stored = this.siteDecision(key, permission, details)
+    const stored = this.decisions[key]
     if (stored) return stored
     if (details?.tabId && this.sessionAllows.get(details.tabId)?.has(key)) return 'allow'
-    return this.inherited(this.effectiveDefault(permission), permission, details) ?? 'ask'
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private windows and tabs: Chrome's Incognito reads the profile's settings, writes its own
-  // ---------------------------------------------------------------------------
-
-  /** Which tabs are private, for requests that name only their tab (the core's own services). */
-  setPrivateTabs(isPrivate: (tabId: string) => boolean): void {
-    this.privateTab = isPrivate
-  }
-
-  /** The private session ended (its last window or tab closed): its answers go with it. */
-  endPrivateSession(): void {
-    const keys = [...this.privateDecisions.keys()]
-    this.privateDecisions.clear()
-    this.privateDismissals.clear()
-    for (const key of keys) this.notify(changeFor(key))
-  }
-
-  private isPrivate(details?: PermissionRequestDetails): boolean {
-    if (details?.private !== undefined) return details.private
-    return details?.tabId !== undefined && this.privateTab(details.tabId)
-  }
-
-  /** The site's own decision for a request: a private page's own answer first, then the shared one as it inherits it. */
-  private siteDecision(
-    key: string,
-    permission: string,
-    details?: PermissionRequestDetails
-  ): PermissionDecision | undefined {
-    if (!this.isPrivate(details)) return this.decisions[key]
-    return (
-      this.privateDecisions.get(key) ?? this.inherited(this.decisions[key], permission, details)
-    )
-  }
-
-  /**
-   * A shared decision as a request reads it: whole for a regular page; for a private page, the
-   * refusals and only those allows the site would never be asked for (pop-ups, blocking), so a
-   * site allowed the camera or the location in a regular window is asked again in a private one
-   * – Chrome inherits the profile's settings into Incognito "if less permissive".
-   */
-  private inherited<T extends ContentDefault>(
-    decision: T | undefined,
-    permission: string,
-    details?: PermissionRequestDetails
-  ): T | undefined {
-    if (decision !== 'allow' || !this.isPrivate(details)) return decision
-    return promptLabelFor(permission) === null ? decision : undefined
-  }
-
-  /**
-   * Keep an answer for a request's site: in `permissions.json` for a regular page, in memory
-   * for the private session when the page is private. `null` forgets.
-   */
-  private keep(key: string, decision: Decision | null, details?: PermissionRequestDetails): void {
-    if (!this.isPrivate(details)) {
-      this.update(key, decision, changeFor(key))
-      return
-    }
-    for (const grants of this.sessionAllows.values()) grants.delete(key)
-    if ((this.privateDecisions.get(key) ?? null) === decision) return
-    if (decision === null) this.privateDecisions.delete(key)
-    else this.privateDecisions.set(key, decision)
-    this.notify(changeFor(key))
+    return this.effectiveDefault(permission)
   }
 
   /**
@@ -318,8 +239,8 @@ export class PermissionService {
     const overridden = this.overridden(permission, requestingUrl, details)
     if (overridden) return overridden === 'ask' ? null : overridden
     return (
-      this.siteDecision(decisionKey(origin, permission, details), permission, details) ??
-      this.inherited(this.defaultFor(permission), permission, details) ??
+      this.decisions[decisionKey(origin, permission, details)] ??
+      this.defaultFor(permission) ??
       null
     )
   }
@@ -333,14 +254,16 @@ export class PermissionService {
   ): void {
     const origin = permissionSite(requestingUrl)
     if (!origin) return
-    this.keep(decisionKey(origin, permission, details), decision, details)
+    const key = decisionKey(origin, permission, details)
+    this.update(key, decision, changeFor(key))
   }
 
   /** Forget one origin's answer for a permission: the site is asked (or blocked) again. */
   forget(permission: string, requestingUrl: string, details?: PermissionRequestDetails): void {
     const origin = permissionSite(requestingUrl)
     if (!origin) return
-    this.keep(decisionKey(origin, permission, details), null, details)
+    const key = decisionKey(origin, permission, details)
+    this.update(key, null, changeFor(key))
   }
 
   /** Every remembered per-site answer (Settings lists and revokes them); defaults are not sites. */
@@ -435,20 +358,18 @@ export class PermissionService {
       requestedAt: this.now()
     }
     const answer = await this.prompts.show(request)
-    // A private page's dismissals count towards its own embargo, kept with the private session.
-    const dismissals = this.isPrivate(details) ? this.privateDismissals : this.dismissals
     switch (answer) {
       // Withdrawn (the page navigated away): refused this once, nothing counted or remembered.
       case null:
         return false
       case 'allow':
         for (const key of keys) {
-          dismissals.delete(key)
-          this.keep(key, 'allow', details)
+          this.dismissals.delete(key)
+          this.update(key, 'allow', changeFor(key))
         }
         return true
       case 'allow-once':
-        for (const key of keys) dismissals.delete(key)
+        for (const key of keys) this.dismissals.delete(key)
         if (details.tabId) {
           const grants = this.sessionAllows.get(details.tabId) ?? new Set<string>()
           for (const key of keys) grants.add(key)
@@ -457,17 +378,17 @@ export class PermissionService {
         return true
       case 'block':
         for (const key of keys) {
-          dismissals.delete(key)
-          if (!ONE_SHOT_DENY.has(permission)) this.keep(key, 'deny', details)
+          this.dismissals.delete(key)
+          if (!ONE_SHOT_DENY.has(permission)) this.update(key, 'deny', changeFor(key))
         }
         return false
       case 'dismiss':
         for (const key of keys) {
-          const count = (dismissals.get(key) ?? 0) + 1
+          const count = (this.dismissals.get(key) ?? 0) + 1
           if (count >= DISMISSALS_BEFORE_BLOCK && !ONE_SHOT_DENY.has(permission)) {
-            dismissals.delete(key)
-            this.keep(key, 'deny', details)
-          } else dismissals.set(key, count)
+            this.dismissals.delete(key)
+            this.update(key, 'deny', changeFor(key))
+          } else this.dismissals.set(key, count)
         }
         return false
     }
@@ -500,7 +421,6 @@ export class PermissionService {
     this.dismissals.clear()
     this.store.write({ version: 1, decisions: this.decisions })
     for (const key of keys) this.notify(changeFor(key))
-    this.endPrivateSession()
   }
 
   /**
@@ -511,7 +431,6 @@ export class PermissionService {
     const removed = Object.keys(this.decisions).filter(
       (key) => key.slice(0, key.lastIndexOf('|')) !== DEFAULT_ORIGIN
     )
-    this.endPrivateSession()
     if (removed.length === 0 && this.savedFiles.size === 0 && this.sessionAllows.size === 0) return
     for (const key of removed) delete this.decisions[key]
     this.savedFiles.clear()
@@ -660,15 +579,16 @@ export class PermissionService {
       for (const file of this.savedFiles)
         if (file.startsWith(`${origin}|`)) this.savedFiles.delete(file)
     }
-    const ofOrigin = (key: string): boolean =>
-      key.startsWith(`${origin}|`) &&
-      (permission === undefined || key.slice(origin.length + 1) === permission)
-    for (const grants of this.sessionAllows.values())
-      for (const key of grants) if (ofOrigin(key)) grants.delete(key)
-    const forgotten = [...this.privateDecisions.keys()].filter(ofOrigin)
-    for (const key of forgotten) this.privateDecisions.delete(key)
-    if (removed.length > 0) this.store.write({ version: 1, decisions: this.decisions })
-    for (const key of [...removed, ...forgotten]) this.notify(changeFor(key))
+    for (const grants of this.sessionAllows.values()) {
+      for (const key of grants) {
+        if (!key.startsWith(`${origin}|`)) continue
+        if (permission === undefined || key.slice(origin.length + 1) === permission)
+          grants.delete(key)
+      }
+    }
+    if (removed.length === 0) return
+    this.store.write({ version: 1, decisions: this.decisions })
+    for (const key of removed) this.notify(changeFor(key))
   }
 }
 

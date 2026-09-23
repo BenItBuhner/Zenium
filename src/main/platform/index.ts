@@ -620,10 +620,8 @@ export class ElectronPlatform implements Platform {
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
-      this.attachPermissions(
-        ses,
-        (target, origin) => extensionApi.tabCapture.allowsMediaRequest(target, origin),
-        !this.sessions.isPersistent(containerId)
+      this.attachPermissions(ses, (target, origin) =>
+        extensionApi.tabCapture.allowsMediaRequest(target, origin)
       )
       // `getDisplayMedia` goes to the core's picker instead of Electron's flat refusal.
       this.screenCapture.attach(ses)
@@ -679,21 +677,16 @@ export class ElectronPlatform implements Platform {
    * request on the captured tab, or a `chrome.desktopCapture` pick the consuming document is
    * redeeming (`getUserMedia` with `chromeMediaSource: "desktop"`, which Electron parses natively
    * once this handler allows it).
-   *
-   * `isPrivate`: the session is the private one (in memory, wiped when the last private window
-   * closes). Its requests and checks say so, and the core keeps their answers with the private
-   * session instead of `permissions.json` (session-12).
    */
   private attachPermissions(
     ses: Session,
-    captureAllows: (target: WebContents, securityOrigin: string | undefined) => boolean,
-    isPrivate: boolean
+    captureAllows: (target: WebContents, securityOrigin: string | undefined) => boolean
   ): void {
     const { permissions, external } = this.browser
     ses.setPermissionRequestHandler((webContents, rawPermission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
       const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
-      const request = permissionRequestDetails(webContents, details, tabId, isPrivate)
+      const request = permissionRequestDetails(webContents, details, tabId)
       // A `getDisplayMedia` call arrives as `media` without devices: the screen-sharing row,
       // whose Allow puts the picker up right here – the picker is the consent, and only a
       // refusal at this stage reads as Chrome's `NotAllowedError` to the page. Its answer waits
@@ -750,14 +743,7 @@ export class ElectronPlatform implements Platform {
       permissions.check(
         permission,
         requestingOrigin,
-        permissionCheckDetails(
-          permission,
-          requestingOrigin,
-          details,
-          this.browser,
-          undefined,
-          isPrivate
-        )
+        permissionCheckDetails(permission, requestingOrigin, details, this.browser)
       )
     )
   }
