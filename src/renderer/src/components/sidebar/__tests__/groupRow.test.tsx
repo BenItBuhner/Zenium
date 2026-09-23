@@ -363,7 +363,8 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
         ":root[data-form-factor='tablet'] .zen-group-fold > .zen-group-rows > .zen-tab:not(.justify-center)"
       )
     ).toContain('margin-left: 24px')
-    expect(rule('.zen-group-fold[data-folding]')).toContain('overflow: hidden')
+    // `clip`, not `hidden`: the folding shell is no scroll container a focus could scroll.
+    expect(rule('.zen-group-fold[data-folding]')).toContain('overflow: clip')
     expect(rule(":root[data-form-factor='tablet'] .zen-tab.zen-group-row input")).toContain(
       'font-size: 14px'
     )
