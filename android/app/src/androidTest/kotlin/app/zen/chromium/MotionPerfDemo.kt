@@ -581,22 +581,27 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      *    magnifier, the field, the keyboard up, a rest for the window's insets), then ONE key,
      *    [LEAVE_QUERY] – a digit every seeded tab's address holds (`127.0.0.1:18170`) and the made
      *    group's do not – so the query drops that group's two cards and no other (the New Tab
-     *    card departs with any query); the scene is the key and [LEAVE_SETTLE_MS] after it.
+     *    card departs with any query); the scene is the key and [LEAVE_SETTLE_MS] after it, with
+     *    one look at the boxes [LEAVE_PEEK_MS] in ([leaveBox]).
      *  - off the record: the X twice (the query cleared – the group and the New Tab card come
      *    back – then the field closed, the keyboard down); one of the group's cards closed by its
      *    X – a group of one, in a single column.
      *  - `overview-group-leave-close`: the last card's close X; the scene is the tap and
-     *    [LEAVE_SETTLE_MS] after it.
+     *    [LEAVE_SETTLE_MS] after it, with the same look [LEAVE_PEEK_MS] in.
      *
-     * What stands, at 60 Hz on the preview host (the driver PR's local runs): no cut, and not the
-     * cards' leave either. The frame shrinks on the gentle spring (293 -> 0 px over ~430 ms; its
-     * rest and unmount ~490 ms after the key, ~575 after the tap) with its cards' exits fading over
-     * it (~370–400 ms) – but its shell, put out of the flow as `position: absolute` at its
-     * `offsetTop`, is placed against the pane outside the scroller, so the box lands a `scrollTop`
-     * lower than the card stood (121 px there) and the tracker glides it down as it shrinks; and
-     * the tracker holds only the cells drawn under that lower box, so the row just below the group
-     * glides at once, under the shrinking frame, and the rows after it wait for the rest and glide
-     * then – two waves ~470 ms apart, everything still ~900 ms after the key, ~1 s after the tap.
+     * What stands, at 60 Hz on the preview host (the driver PR's local runs, on main's product
+     * code): no cut, and not the cards' leave either. The frame shrinks on the gentle spring
+     * (293 -> 0 px over ~430 ms in the search scene, 285 -> 0 in the close's; its rest and unmount
+     * ~490 ms after the key, ~575 after the tap) with its cards' exits fading over it (~365 ms
+     * after the key, ~350 after the tap) – but its shell, put out of the flow as `position:
+     * absolute` at its `offsetTop`, is placed against the pane outside the scroller, so the box
+     * lands a `scrollTop` lower than the card stood (121 px there) and the tracker glides it down
+     * as it shrinks; and the tracker holds only the cells drawn under that lower box, so the row
+     * just below the group glides at once, under the shrinking frame, and the rows after it wait
+     * for the rest and glide then – two waves, the second starting ~445 ms after the first in the
+     * search scene and ~460 in the close's, everything still ~900 ms after the key, ~1 s after
+     * the tap. [leaveBox] reads the mechanism on the device: the grid's `scrollTop` against the
+     * shell's top before the input and one frame into the shrink.
      *
      * Each scene's line reads the frame against its cards' exits off the probe's timeline
      * ([leaveNumbers]). Afterwards the group's tabs are closed if any remain and the folder is
@@ -644,12 +649,15 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             val fieldUp = awaitDom(SEARCH_INPUT, 4_000)
             val imeUp = awaitIme(true, 8_000)
             SystemClock.sleep(SEARCH_REST_MS)
-            finding("overview-group-leave-search: the field ${if (fieldUp) "is up" else "did NOT come up"}, focus on ${activeElement()}, the keyboard ${if (imeUp) "up" else "NOT up"}; ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}")
+            finding("overview-group-leave-search: the field ${if (fieldUp) "is up" else "did NOT come up"}, focus on ${activeElement()}, the keyboard ${if (imeUp) "up" else "NOT up"}; ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; ${leaveBox(folderId)}")
+            var peek = ""
             scene("overview-group-leave-search", JankBudget.Kind.SPRING, profile = true) {
                 keys(LEAVE_QUERY)
-                SystemClock.sleep(LEAVE_SETTLE_MS)
+                SystemClock.sleep(LEAVE_PEEK_MS)
+                peek = leaveBox(folderId)
+                SystemClock.sleep(LEAVE_SETTLE_MS - LEAVE_PEEK_MS)
             }
-            finding("overview-group-leave-search: query '${searchValue()}'; ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; ${leaveLine()}")
+            finding("overview-group-leave-search: query '${searchValue()}'; ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; $LEAVE_PEEK_MS ms after the key: $peek; ${leaveLine()}")
             SystemClock.sleep(FOLD_REST_MS)
             // The X twice, off the record: the query goes (the cards and the New Tab card come
             // back, the group with them), then the empty field closes and the keyboard goes down.
@@ -662,7 +670,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             // One card closed off the record: a group of one, in a single column.
             closeCard(tabIds[0], "overview-group-leave (before the close scene)")
             SystemClock.sleep(LEAVE_REST_MS)
-            finding("overview-group-leave: ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}")
+            finding("overview-group-leave: ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; ${leaveBox(folderId)}")
             val closeX = domRect(cardClose(tabIds[1]))
             if (closeX == null) {
                 finding("overview-group-leave-close: no close X on the last card (${tabIds[1]}); the close scene is skipped")
@@ -671,9 +679,11 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             }
             scene("overview-group-leave-close", JankBudget.Kind.SPRING, profile = true) {
                 Finger().tap(closeX.exactCenterX(), closeX.exactCenterY())
-                SystemClock.sleep(LEAVE_SETTLE_MS)
+                SystemClock.sleep(LEAVE_PEEK_MS)
+                peek = leaveBox(folderId)
+                SystemClock.sleep(LEAVE_SETTLE_MS - LEAVE_PEEK_MS)
             }
-            finding("overview-group-leave-close: ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; ${leaveLine()}")
+            finding("overview-group-leave-close: ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; $LEAVE_PEEK_MS ms after the tap: $peek; ${leaveLine()}")
             SystemClock.sleep(FOLD_REST_MS)
             closeOverview()
         } finally {
@@ -708,6 +718,27 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             "if(e.style.display==='none')return 'hidden';" +
             "return (e.hasAttribute('data-dissolving')?'dissolving':e.hasAttribute('data-collapsed')?'collapsed':'open')+', '+e.querySelectorAll('[data-tab-id]').length+' cards'+" +
             "(e.hasAttribute('data-clip')?', clipped':'')+', '+Math.round(e.getBoundingClientRect().height)+' px tall'+(e.style.height?' (inline '+e.style.height+')':'')})()"
+    )
+
+    /**
+     * Where the group's box stands against the grid's scroll – the leave's mechanism read
+     * directly: `GroupCard`'s dissolving shell is `position: absolute` at its `offsetTop`, placed
+     * against the pane outside the scroller, so it lands `scrollTop` lower than the card stood and
+     * the tracker glides it down as it shrinks. The grid's `scrollTop`; the shell (the cell, or
+     * the dissolved shell after its cell attribute went): its top as drawn and, under a transform,
+     * untransformed (less the tracker's translateY), its height, its inline position; a group's
+     * exit where one stands (a group leaving as a card does: the ghost fading where the card stood),
+     * its top and opacity.
+     */
+    private fun leaveBox(folderId: String): String = jsString(
+        "(function(){var g=document.querySelector('.zen-overview-grid[data-pane=\"regular\"]')||document.querySelector('.zen-overview-grid'),s='scrollTop '+(g?Math.round(g.scrollTop*10)/10:'(no grid)');" +
+            "var e=document.querySelector(${JSONObject.quote(leaveShell(folderId))})||document.querySelector('.zen-overview .zen-group[data-dissolving]');" +
+            "if(e){var r=e.getBoundingClientRect(),tf=e.style.transform,k=tf.indexOf(','),ty=k<0?0:parseFloat(tf.slice(k+1));" +
+            "s+='; shell top '+Math.round(r.top*10)/10+(ty?' ('+Math.round((r.top-ty)*10)/10+' untransformed)':'')+', '+Math.round(r.height*10)/10+' px tall'+(e.style.position?', '+e.style.position:'')+(e.style.display==='none'?', hidden':'')}" +
+            "else s+='; no shell';" +
+            "var x=document.querySelector('.zen-group:not([data-cell]):not([data-dissolving])');" +
+            "if(x){var xr=x.getBoundingClientRect();s+='; a group exit at top '+Math.round(xr.top*10)/10+', opacity '+(x.style.opacity===''?'1':x.style.opacity)}" +
+            "return s})()"
     )
 
     private fun cardClose(tabId: String): String = ".zen-overview [data-tab-id=${JSONObject.quote(tabId)}] .zen-overview-card-close"
@@ -785,9 +816,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * written: the key or the tap did nothing.
      *
      *  - the exits (the ghosts): their first and last frame, their frames, the opacity they ran
-     *    from and to;
+     *    from (the highest written) and to (the last);
      *  - the frame: its height frames (the dissolve's shrink, when there are any: from and to,
-     *    the wall time and the spring's own at the 64 ms clamp), when it was hidden (`display:
+     *    the wall time and the spring's own at the 64 ms clamp; a height written again unchanged
+     *    – a commit's or the tracker's write on the shell – is no frame), when it was hidden (`display:
      *    none`, the dissolve's end) or removed (`gone`); its END is the first of those, else its
      *    last height write; `frame` names what it did: `shrink` (height frames, then the end),
      *    `cut` (the end with no height frame before it), `stayed` (neither in the window);
@@ -796,9 +828,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      *    it left under them (the ruling's "a frame that vanishes while its last card is still
      *    fading");
      *  - the cells below, in two waves: WITH the frame – the frames between the first height
-     *    write and the end that moved a cell (its translateY changed by half a px or more: the
-     *    cells the tracker did not hold, gliding while the frame shrinks), their count, the
-     *    travel and the last one's time; and AFTER it – the hold, from the key or the tap to the
+     *    write and the end that moved a cell (its translateY changed by half a px or more from
+     *    the last frame's that did; a re-write of the held cells' full offset, a commit's, is not
+     *    motion: the cells the tracker did not hold, gliding while the frame shrinks), their
+     *    count, the travel and the last one's time; and AFTER it – the hold, from the key or the tap to the
      *    glide's first frame (a frame writing cells after the frame's end – or, with no frame
      *    motion at all, the first cell frame), the release's lag after the frame's end, the
      *    glide's frames, length and travel (the cells the tracker held for the frame's rest);
@@ -836,7 +869,11 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             frames.isNotEmpty() -> frames.first()[0]
             else -> gone
         }
-        val heights = frames.filter { it[1] >= 0 }
+        // The shell is a tracked cell too: a commit's transform reset or the tracker's draw on it
+        // makes a `group` entry carrying the height as it stands, which is no frame of the
+        // spring – a height equal to the last kept one is dropped.
+        val heights = ArrayList<DoubleArray>()
+        for (f in frames) if (f[1] >= 0 && (heights.isEmpty() || Math.abs(f[1] - heights.last()[1]) > HEIGHT_REPEAT_PX)) heights += f
         val hidden = frames.firstOrNull { it[1] == -3.0 }?.get(0) ?: Double.NaN
         val ghosts = frames.filter { it[4] >= 0 }
         var wall = 0.0
@@ -858,10 +895,20 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         val glide = frames.filter { it[0] >= from && it[2] > 0 && it[1] == -1.0 }
         val travel = frames.filter { it[0] >= from }.maxOfOrNull { Math.abs(it[3]) } ?: 0.0
         // With the frame: the cell frames between the first height write and the end whose
-        // farthest translateY moved from the previous one's (the commit's re-writes of a held
-        // cell's offset are not motion).
+        // farthest translateY moved from the last one's that did. A commit's re-write of the held
+        // cells' full offset (the window's first frame is one; a re-render's later) is not
+        // motion, and the frame after it is read against the last moving one, not against it.
         val window = if (heights.isNotEmpty() && !end.isNaN()) frames.filter { it[0] >= heights.first()[0] && it[0] < end && it[2] > 0 } else emptyList()
-        val withFrame = window.filterIndexed { i, f -> i > 0 && Math.abs(Math.abs(f[3]) - Math.abs(window[i - 1][3])) >= 0.5 }
+        val fullOffset = window.firstOrNull()?.let { Math.abs(it[3]) } ?: 0.0
+        val withFrame = ArrayList<DoubleArray>()
+        var lastY = fullOffset
+        for ((i, f) in window.withIndex()) {
+            if (i == 0) continue
+            val y = Math.abs(f[3])
+            if (y >= fullOffset - 0.5) continue
+            if (Math.abs(y - lastY) >= 0.5) withFrame += f
+            lastY = y
+        }
         val settle = frames.lastOrNull { it[2] > 0 || it[4] >= 0 }?.get(0) ?: Double.NaN
         val o = JSONObject()
             .put("startedBy", if (!key.isNaN()) "key" else if (!down.isNaN()) "tap" else "none")
@@ -877,7 +924,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         if (ghosts.isNotEmpty()) {
             o.put("ghostFirstMs", r1(ghosts.first()[0] - t0))
                 .put("ghostLastMs", r1(ghosts.last()[0] - t0))
-                .put("ghostFrom", ghosts.first()[4])
+                .put("ghostFrom", ghosts.maxOf { it[4] })
                 .put("ghostTo", ghosts.last()[4])
         }
         if (heights.isNotEmpty()) {
@@ -1281,9 +1328,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             "if(c&&c.contains('zen-overview-hero'))p.hero++;else if(c&&c.contains('zen-stage-card'))p.card++;else if(c&&c.contains('zen-stage-dim'))p.dim++;" +
             "else if(c&&c.contains('zen-group-ribbon'))p.ribbon++;else if(c&&c.contains('zen-overview'))p.overview++;" +
             // A card's exit (a `.zen-overview-card` off the grid: the grid's own cards carry the
-            // class on a child of their cell, which is never written), a group's or the New Tab
-            // card's exit (their class off the grid): the opacity is the leave's progress.
-            "else if(c&&c.contains('zen-overview-card')){p.ovCard++;fg=ghostOpacity(t,fg)}" +
+            // class on a child of their cell – written once, to hide the card behind its exit,
+            // which is no exit frame), a group's or the New Tab card's exit (their class off the
+            // grid): the opacity is the leave's progress.
+            "else if(c&&c.contains('zen-overview-card')){p.ovCard++;if(!(t.closest&&t.closest('[data-cell]')))fg=ghostOpacity(t,fg)}" +
             "else if(c&&(c.contains('zen-group')||c.contains('zen-overview-new'))&&!isCell(t)&&!isShell(t)){p.ghost++;fg=ghostOpacity(t,fg)}" +
             "else if(t===document.documentElement)p.root++;else if(inPill(t))p.pill++;" +
             // A cell of the grid: the group card's shell (its height; hidden once dissolved) or a card (its transform).
@@ -1498,6 +1546,15 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         private const val LEAVE_QUERY = "1"
         /** The leave scene's window after the key or the tap: the exits, the frame's way out, the glide (generous, as the fold's). */
         private const val LEAVE_SETTLE_MS = 4_000L
+        /**
+         * A look at the boxes this long after the scene's input ([leaveBox]: the grid's scroll, the
+         * shell's top as drawn and untransformed, a group exit's) – on the emulator about one frame
+         * into the frame's way out. One `evaluateJavascript` inside the window, a layout the next
+         * frame would have forced anyway.
+         */
+        private const val LEAVE_PEEK_MS = 250L
+        /** A shell height written again within this of the last kept one is the same height, not a frame of the spring. */
+        private const val HEIGHT_REPEAT_PX = 0.05
         /** A rest after an off-record step of the leave scenes (an exit and a glide to land). */
         private const val LEAVE_REST_MS = 2_500L
         /** After the search opens off the record: the keyboard's own animation and the window's insets, the grid re-laid under them. */
