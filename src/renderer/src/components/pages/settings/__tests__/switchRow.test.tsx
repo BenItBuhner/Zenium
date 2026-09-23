@@ -52,14 +52,18 @@ function order(row: HTMLElement, ...selectors: string[]): number[] {
   })
 }
 
-const bookmarksBar: SwitchRow = {
+const plain: SwitchRow = {
   kind: 'switch',
   id: 'toolbar-bookmarks-bar',
   label: 'Show bookmarks bar',
   description: 'Under the address bar, on every tab.',
-  leading: <Bookmark data-testid="glyph" aria-hidden="true" />,
   checked: true,
   onChange: () => undefined
+}
+
+const bookmarksBar: SwitchRow = {
+  ...plain,
+  leading: <Bookmark data-testid="glyph" aria-hidden="true" />
 }
 
 describe('the switch row’s leading glyph', () => {
@@ -87,7 +91,6 @@ describe('the switch row’s leading glyph', () => {
   })
 
   it('phone: a row without a glyph renders no slot, as before', () => {
-    const { leading: _leading, ...plain } = bookmarksBar
     const el = render(<RowView row={plain} ctx={ctx} />)
     const row = rowOf(el, 'toolbar-bookmarks-bar')
     expect(row.querySelector('.zen-settings-leading')).toBeNull()
@@ -120,7 +123,6 @@ describe('the switch row’s leading glyph', () => {
   })
 
   it('desktop: a row without a glyph renders the box and the text alone', () => {
-    const { leading: _leading, ...plain } = bookmarksBar
     const el = render(<RowView row={plain} ctx={ctx} variant="desktop" />)
     const row = rowOf(el, 'toolbar-bookmarks-bar')
     expect(row.querySelector('.zen-settings-leading')).toBeNull()
