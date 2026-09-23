@@ -742,7 +742,7 @@ export function createPreviewBridge(): NativeBridge {
           void showDocument(frame, extensionPageDocument(page), entry)
         } else if (String(url).startsWith(PREVIEW_SAMPLE_ORIGIN)) {
           // A page this host can picture (same-origin): the frame reports it loaded like any other.
-          void showDocument(frame, samplePageDocument(), entry)
+          void showDocument(frame, samplePageDocument(String(url)), entry)
         } else {
           frame.src = String(url)
           entry.src = String(url)
@@ -1471,20 +1471,34 @@ export function extensionPageDocument(page: PreviewExtensionPage): string {
  * The origin of a page this host serves itself (`samplePageDocument`), so the page is same-origin
  * and a picture of it can be taken (`view.snapshot`), where a site's frame cannot be read: for
  * stills of the chrome over a page's picture – the lock cover's blurred page (`private=page&
- * url=https://sample.example/&lock=on`). Any path under it is the same page.
+ * url=https://sample.example/&lock=on`). Any path under it is the same article, titled after the
+ * path's last segment read as words (`/fuel-and-water` is "Fuel and water"), so a list of such
+ * pages (a sidebar's rows, the overview's cards) reads as pages of a site, without the network.
  */
 export const PREVIEW_SAMPLE_ORIGIN = 'https://sample.example'
+
+/** The stand-in article's title: the path's last segment as words; the root's is the tide tables'. */
+function samplePageTitle(url: string): string {
+  const slug = new URL(url).pathname.split('/').filter(Boolean).pop()
+  if (!slug) return 'Tide tables for the outer harbour'
+  const words = decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
 
 /**
  * The stand-in page under `PREVIEW_SAMPLE_ORIGIN`: an article of a few paragraphs with a heading,
  * a picture block and a list, following the system colour scheme, enough for a blurred picture
  * of it to read as a page.
  */
-export function samplePageDocument(): string {
+export function samplePageDocument(url: string = PREVIEW_SAMPLE_ORIGIN): string {
+  const title = samplePageTitle(url).replace(
+    /[&<>"]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!
+  )
   return (
     `<!doctype html><html><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<title>Tide tables for the outer harbour</title>` +
+    `<title>${title}</title>` +
     `<style>` +
     `:root{color-scheme:light dark;--fg:#1f1f24;--muted:#6b6b76;--bg:#fff;--card:#eef1f6;--accent:#2b6cb0}` +
     `@media(prefers-color-scheme:dark){:root{--fg:#ececf1;--muted:#9a9aa6;--bg:#141418;--card:#1e222c;--accent:#7fb2ff}}` +
@@ -1497,7 +1511,7 @@ export function samplePageDocument(): string {
     `.note{margin:0 16px 16px;padding:14px 16px;background:var(--card);border-radius:12px;font:15px/1.5 system-ui,Roboto,sans-serif}` +
     `</style></head><body>` +
     `<header>Harbour notices</header>` +
-    `<h1>Tide tables for the outer harbour</h1>` +
+    `<h1>${title}</h1>` +
     `<p class="by">Published by the harbour office · 4 min read</p>` +
     `<figure></figure>` +
     `<p>High water reaches the outer wall twice a day, and the second of the two runs higher through the spring months. Skippers leaving before dawn should plan on the ebb, which sets north along the breakwater until an hour after low water.</p>` +

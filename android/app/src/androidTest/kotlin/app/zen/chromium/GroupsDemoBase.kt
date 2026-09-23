@@ -19,17 +19,19 @@ import kotlin.math.roundToInt
 
 /**
  * What the two tab-group drivers share (TAB-16, TAB-15, TABLET-04; the `android-tab-groups-demo`
- * workflow's phone and tablet acts, [TabGroupsDemo] and [TabletGroupsDemo]): the profile
- * `tab-groups-demo-state.json` – the Work space with the group Research [Alpha, Beta] and the
- * loose tabs Home (active), Gamma, Delta, every page served by the driver's own [DemoServer]
- * (Alpha carries the link the link menu is held on) – the findings file (one `OK` or `FAIL` per
- * claim; a claim that does not hold fails the run at the end, the sequence running on so the
- * recording shows the rest), reads of the chrome's DOM and stores and of the core's state, and
- * the real touches: every press in a sheet or menu flow is a finger ([Finger]) on a box read
- * from the chrome's DOM – CSS px scaled by the chrome's device pixel ratio and offset by one
- * calibration against the accessibility tree – never an accessibility click, which bypasses hit
- * testing (the real-touch rule). The accessibility tree itself trails the emulator's software
- * GPU by seconds, so no claim is read off it.
+ * workflow's phone and tablet acts, [TabGroupsDemo] and [TabletGroupsDemo]) and the tablet
+ * private mode's driver takes as its workspace ([TabletPrivateDemo]: the same seeded space with
+ * a group in it, for the sidebar's regular pose): the profile `tab-groups-demo-state.json` – the
+ * Work space with the group Research [Alpha, Beta] and the loose tabs Home (active), Gamma,
+ * Delta, every page served by the driver's own [DemoServer] (Alpha carries the link the link
+ * menu is held on; a driver adds pages of its own to [recordDemo]) – the findings file (one `OK`
+ * or `FAIL` per claim; a claim that does not hold fails the run at the end, the sequence running
+ * on so the recording shows the rest), reads of the chrome's DOM and stores and of the core's
+ * state, and the real touches: every press in a sheet or menu flow is a finger ([Finger]) on a
+ * box read from the chrome's DOM – CSS px scaled by the chrome's device pixel ratio and offset
+ * by one calibration against the accessibility tree – never an accessibility click, which
+ * bypasses hit testing (the real-touch rule). The accessibility tree itself trails the
+ * emulator's software GPU by seconds, so no claim is read off it.
  */
 abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
     DemoHarness("tab-groups-demo-state.json", shotPrefix, handshakeDir) {
@@ -48,9 +50,12 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
     protected abstract val findingsFile: String
     protected abstract val title: String
 
-    /** The concrete driver's `@Test`: the server up, the recorded run, the findings written, a FAIL failing the test. */
-    protected fun recordDemo() {
-        server = DemoServer(PORT, PAGES).also { it.start() }
+    /**
+     * The concrete driver's `@Test`: the server up (the seeded pages, and `pages` of the driver's
+     * own beside them), the recorded run, the findings written, a FAIL failing the test.
+     */
+    protected fun recordDemo(pages: Map<String, Pair<String, ByteArray>> = emptyMap()) {
+        server = DemoServer(PORT, PAGES + pages).also { it.start() }
         try {
             runDemo()
         } finally {

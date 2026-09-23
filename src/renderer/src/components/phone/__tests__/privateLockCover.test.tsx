@@ -276,6 +276,29 @@ describe('the lock cover', () => {
     expect(cover()).toBeNull()
   })
 
+  it('the wait ending before the cover lands cuts the cover with it: LIFT_MAX_MS ran out on slow frames – the page comes back in the same flush, never under a cover still up', () => {
+    applyPrivateLock({ locked: true, screenLock: true })
+    render({ shown: true, tab: X1 })
+    act(() => applyPrivateLock({ locked: false }))
+    render({ shown: true, tab: X1 })
+    const el = cover()!
+    expect(el.dataset.leaving).toBe('true')
+    // The spring steps at most 64 ms a frame: on frames 300 ms apart the lift is at a quarter
+    // when the deadline's 600 ms are up (the emulator's rate under swiftshader; W4-11's run).
+    frames.run(2, 300)
+    const p = Number.parseFloat(el.style.getPropertyValue('--zen-lock-p'))
+    expect(p).toBeGreaterThan(0.1)
+    expect(privateLockStore.get().lifting).toBe(true)
+    // The deadline clears the wait (`privateLock.ts`), the frame stops asking for the cover: the
+    // cover is gone in the same flush, not left lifting over the page.
+    act(() => {
+      privateLockStore.set({ lifting: false })
+      root!.render(createElement(PrivateLockCover, { shown: false, tab: X1 }))
+    })
+    expect(cover()).toBeNull()
+    expect(privateLockStore.get()).toMatchObject({ locked: false, lifting: false })
+  })
+
   it('over the Private pane the lift runs the same way, though nothing waits on it', () => {
     browserStore.set({ state: stateOn('r-none') })
     applyPrivateLock({ locked: true, screenLock: true })

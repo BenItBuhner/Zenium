@@ -9,6 +9,7 @@ import {
   ScreenShare,
   Snowflake,
   Turtle,
+  VenetianMask,
   Volume2,
   VolumeX,
   X
@@ -22,6 +23,7 @@ import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -108,7 +110,13 @@ export function TabItem({
   const dropInto = dropStore.use((s) => s.key === `tab:${tab.id}:into`)
   const isDragSource = dragging?.tabId === tab.id
   const showDropZones = Boolean(dragging) && !isDragSource
-  const title = tabTitle(tab)
+  // A private row under the lock (INC-05, §9.19; the overview card's rule): nothing of the page
+  // shows – the mask stands in for the favicon, the row reads "Private tab", and the trailing
+  // slot is empty, its states and its close with it – until the cover has lifted. The row lies
+  // inert under the sidebar's veil meanwhile (`PrivatePanel`); the placeholder is for the reader
+  // that reaches it all the same.
+  const masked = useTabMasked(tab)
+  const title = masked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(tab)
   const pinnedChanged = tab.pinned && tab.pinnedUrl !== null && tab.url !== tab.pinnedUrl
   // The indicator slot shows one state, Chrome's priority: recording > capturing > PiP > audio.
   const alert = !tab.discarded ? (tab.alert ?? null) : null
@@ -195,7 +203,8 @@ export function TabItem({
   // or an overlay has the chrome. The row's buttons keep their own tooltips.
   const cardUp = uiStore.use((s) => s.hoverCard.tabId === tab.id)
   const onPointerEnter = (e: React.PointerEvent): void => {
-    if (e.pointerType !== 'mouse' || renaming || dragging) return
+    // The card would read the page's title and address: none for a masked row.
+    if (e.pointerType !== 'mouse' || renaming || dragging || masked) return
     const el = e.currentTarget as HTMLElement
     hoverCard.pointerEnter(tab.id, () => measureRow(el))
   }
@@ -203,7 +212,7 @@ export function TabItem({
   const onFocus = (e: React.FocusEvent<HTMLDivElement>): void => {
     stripFocusIn(e)
     const el = e.currentTarget
-    if (e.target !== el || !el.matches(':focus-visible')) return
+    if (e.target !== el || !el.matches(':focus-visible') || masked) return
     hoverCard.focus(tab.id, () => measureRow(el))
   }
   const onBlur = (e: React.FocusEvent<HTMLDivElement>): void => {
@@ -218,10 +227,11 @@ export function TabItem({
   // title, the close, a live audio or alert state – and not the trailing slot's other buttons,
   // whose room a segment does not have (§9.35); their states stay in the row's fade, its tooltip
   // and its context menu.
-  const trailing = !segment
+  const trailing = !segment && !masked
   // The strip's row shows one state at its trailing end (§9.37's slot), the sidebar's priority:
-  // what the user cannot otherwise see first (an alert, audio), then the page's own state.
-  const stateGlyph = horizontal && !compact && !renaming ? hasStateGlyph(tab) : false
+  // what the user cannot otherwise see first (an alert, audio), then the page's own state. A
+  // masked row shows none: nothing of the page, its states included.
+  const stateGlyph = horizontal && !compact && !renaming && !masked ? hasStateGlyph(tab) : false
   return (
     <div
       ref={attach}
@@ -242,6 +252,7 @@ export function TabItem({
       data-discarded={tab.discarded}
       data-frozen={tab.frozen}
       data-agent={agent ? true : undefined}
+      data-masked={masked || undefined}
       data-lifted={isDragSource || undefined}
       data-drop-into={dropInto || undefined}
       data-tab-id={tab.id}
@@ -294,15 +305,17 @@ export function TabItem({
           aria-hidden
         />
       )}
-      {tab.loading && !tab.discarded && <span className="zen-tab-progress" aria-hidden />}
-      {agent && compact && (
+      {tab.loading && !tab.discarded && !masked && (
+        <span className="zen-tab-progress" aria-hidden />
+      )}
+      {agent && compact && !masked && (
         <span
           className="pointer-events-none absolute right-0.5 top-0.5 h-2 w-2 rounded-full ring-1 ring-white/70"
           style={{ background: agent.color }}
           aria-hidden
         />
       )}
-      {compact && alert && (
+      {compact && alert && !masked && (
         <span
           className="zen-tab-audio-dot zen-tab-alert-dot"
           data-alert={alert}
@@ -310,17 +323,22 @@ export function TabItem({
           aria-label={tabAlertTooltip(alert)}
         />
       )}
-      {compact && !alert && (tab.audible || tab.muted) && (
+      {compact && !alert && !masked && (tab.audible || tab.muted) && (
         <span
           className="zen-tab-audio-dot"
           data-muted={tab.muted || undefined}
           aria-label={tab.muted ? 'Muted' : 'Playing audio'}
         />
       )}
-      <Favicon tab={tab} />
+      {masked ? (
+        // The private marker in the favicon's slot (§9.19), at the stand-in's 69% (§10.4).
+        <VenetianMask className="zen-tab-favicon h-4 w-4 shrink-0 opacity-[0.69]" aria-hidden />
+      ) : (
+        <Favicon tab={tab} />
+      )}
       {!compact && (
         <>
-          {renaming ? (
+          {renaming && !masked ? (
             <RenameInput tab={tab} />
           ) : (
             <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="tab-title">
@@ -335,7 +353,10 @@ export function TabItem({
             />
           )}
           {horizontal ? (
-            <StripTrailing tab={tab} active={active} trailing={trailing} renaming={renaming} />
+            // A masked row's trailing slot is empty: no state, no × (the lock's rule above).
+            !masked && (
+              <StripTrailing tab={tab} active={active} trailing={trailing} renaming={renaming} />
+            )
           ) : (
             <>
               {trailing && tab.discarded && !renaming && <SleepingButton tab={tab} />}
@@ -343,12 +364,14 @@ export function TabItem({
               {trailing && !tab.frozen && tab.cpuThrottle > 1 && !renaming && (
                 <ThrottledButton tab={tab} />
               )}
-              {alert && !renaming && <AlertIndicator alert={alert} />}
-              {!alert && (tab.audible || tab.muted) && !renaming && <AudioButton tab={tab} />}
+              {alert && !renaming && !masked && <AlertIndicator alert={alert} />}
+              {!alert && (tab.audible || tab.muted) && !renaming && !masked && (
+                <AudioButton tab={tab} />
+              )}
               {trailing && pinnedChanged ? (
                 <ResetPinnedButton tab={tab} />
               ) : (
-                <CloseButton tab={tab} />
+                !masked && <CloseButton tab={tab} />
               )}
             </>
           )}

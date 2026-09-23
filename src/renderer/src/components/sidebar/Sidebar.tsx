@@ -1,10 +1,11 @@
 import { useViewport } from '@renderer/lib/formFactor'
 import type { JSX } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { FolderInput, VenetianMask } from 'lucide-react'
 import type { UIState } from '@shared/types'
 import { forcesRail, hasTopToolbar } from '@shared/toolbarLayout'
 import { cmd, run } from '@renderer/lib/api'
+import { privateInTabs, sidebarPose, tabsOnPane } from '@renderer/lib/privateTabs'
 import {
   activeSpace,
   activeTab,
@@ -14,9 +15,11 @@ import {
 } from '@renderer/lib/selectors'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { PaneSlot, PaneStills, type PaneStill } from '../phone/PaneSlot'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { Essentials } from './Essentials'
+import { PrivatePanel } from './PrivatePanel'
 import { SidebarBottom } from './SidebarBottom'
 import { SidebarTop } from './SidebarTop'
 import { SpacePanel } from './SpacePanel'
@@ -69,11 +72,35 @@ export function Sidebar({
     0,
     state.spaces.findIndex((s) => s.id === state.activeSpaceId)
   )
-  const essentials = local ? [] : essentialsFor(state, space)
+  // The Essentials are the regular pose's, and regular tabs alone on a host that keeps private
+  // browsing in tabs (the overview's rule).
+  const essentials = local
+    ? []
+    : privateInTabs(state)
+      ? tabsOnPane(essentialsFor(state, space), 'tabs')
+      : essentialsFor(state, space)
   const showToolbar = navRow ?? !hasTopToolbar(state.settings.toolbarLayout)
   const side = state.settings.sidebarSide
   // Touch screens have no hover target for the resize handle; the width is a setting there.
   const { coarse } = useViewport()
+
+  // The sidebar's POSE (lib/privateTabs.ts, W4-11): REGULAR – the Essentials and the space's
+  // panels, regular tabs alone – or PRIVATE, the private session's rows under the mask
+  // (`PrivatePanel`), while a private tab is in view on a host that keeps private browsing in
+  // tabs. The pose follows the tab in view as the window's theme does (§11.6's 240 ms blend);
+  // its own switch is a pane switch (v2 §11.4): the pose leaving stays in view as a still of
+  // itself fading out over the slot while the next fades in – `PaneSlot` takes the still as the
+  // pose goes, `PaneStills` draws it until its 120 ms are up, as the overview's panes do. The
+  // hooks come before the rail's return below: the rail is the desktop's (§9.37), where private
+  // browsing is a window and the pose is always regular, but a hook's order is the component's.
+  const pose = sidebarPose(state)
+  const asideRef = useRef<HTMLElement>(null)
+  const [stills, setStills] = useState<PaneStill[]>([])
+  const leavePose = useCallback((still: PaneStill) => setStills((s) => [...s, still]), [])
+  const stillDone = useCallback(
+    (key: number) => setStills((s) => s.filter((still) => still.key !== key)),
+    []
+  )
 
   if (rail) {
     // Docked, the rail is a stretched item of the columns row with the window's 8 gutter above
@@ -114,6 +141,7 @@ export function Sidebar({
   return (
     // A window surface (design language v2 §9.29): the tab strip's chips draw in the window family.
     <aside
+      ref={asideRef}
       className={cn(
         'relative flex h-full shrink-0 flex-col',
         floating && 'zen-panel zen-animate-in'
@@ -125,39 +153,64 @@ export function Sidebar({
       // The tab strip pane of the F6 rotation (lib/panes.ts); the navigation row inside it, in
       // the single-toolbar layout, is the toolbar pane.
       data-pane="tabs"
+      data-pose={pose}
       aria-label="Sidebar"
     >
       <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
-      {/* The tab strip is the window's navigation landmark (a11y-02): the Essentials tablist and
-          the spaces' tablists, one region a reader jumps to by landmark. */}
-      <nav aria-label="Tabs" className="flex min-h-0 flex-1 flex-col">
-        {local ? (
-          <LocalWindowHeader state={state} compact={compact} />
-        ) : (
-          <Essentials essentials={essentials} activeTabId={space.activeTabId} compact={compact} />
-        )}
-        <div className="relative min-h-0 flex-1 overflow-hidden">
-          <div
-            className="zen-space-strip h-full"
-            style={{
-              transform: `translateX(-${activeIndex * 100}%)`,
-              width: `${state.spaces.length * 100}%`
-            }}
-          >
-            {state.spaces.map((s) => (
-              <div key={s.id} className="h-full" style={{ width: `${100 / state.spaces.length}%` }}>
-                <SpacePanel
-                  state={state}
-                  space={s}
-                  isActive={s.id === state.activeSpaceId}
+      <PaneSlot
+        pane={pose}
+        root={asideRef}
+        onLeave={leavePose}
+        switching={stills.length > 0}
+        className="zen-sidebar-pose relative flex min-h-0 flex-1 flex-col"
+      >
+        {/* The tab strip is the window's navigation landmark (a11y-02): the Essentials tablist and
+            the spaces' tablists – or, in the private pose, the private tabs' – one region a reader
+            jumps to by landmark, whichever pose the sidebar is in. */}
+        <nav aria-label="Tabs" className="flex min-h-0 flex-1 flex-col">
+          {pose === 'private' ? (
+            <PrivatePanel state={state} compact={compact} />
+          ) : (
+            <>
+              {local ? (
+                <LocalWindowHeader state={state} compact={compact} />
+              ) : (
+                <Essentials
+                  essentials={essentials}
+                  activeTabId={space.activeTabId}
                   compact={compact}
                 />
+              )}
+              <div className="relative min-h-0 flex-1 overflow-hidden">
+                <div
+                  className="zen-space-strip h-full"
+                  style={{
+                    transform: `translateX(-${activeIndex * 100}%)`,
+                    width: `${state.spaces.length * 100}%`
+                  }}
+                >
+                  {state.spaces.map((s) => (
+                    <div
+                      key={s.id}
+                      className="h-full"
+                      style={{ width: `${100 / state.spaces.length}%` }}
+                    >
+                      <SpacePanel
+                        state={state}
+                        space={s}
+                        isActive={s.id === state.activeSpaceId}
+                        compact={compact}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </nav>
-      <SidebarBottom state={state} compact={compact} isDark={isDark} />
+            </>
+          )}
+        </nav>
+        <SidebarBottom state={state} compact={compact} isDark={isDark} pose={pose} />
+      </PaneSlot>
+      <PaneStills stills={stills} onDone={stillDone} />
       {!compact && !floating && !coarse && <Resizer state={state} />}
     </aside>
   )

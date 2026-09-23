@@ -1,8 +1,8 @@
 import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Brush, ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { Brush, ChevronDown, ChevronRight, Plus, VenetianMask } from 'lucide-react'
 import type { Folder, SavedGroupTab, Space, Tab, UIState } from '@shared/types'
-import { DEFAULT_CONTAINER_ID } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { getHost } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
@@ -13,7 +13,7 @@ import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { groupColorVars, groupsOf } from '@renderer/lib/groups'
 import { groupRowOf, isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { SlideMotion } from '@renderer/lib/motion/slide'
-import { isPrivateTab } from '@renderer/lib/privateTabs'
+import { privateInTabs, tabsOnPane } from '@renderer/lib/privateTabs'
 import {
   isPrivateWindow,
   pinnedOf,
@@ -32,7 +32,7 @@ import { DEFAULT_FOLDER_ICON } from '../phone/GroupCard'
 import { useLongPress } from '../phone/useLongPress'
 import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon, type FaviconSource } from './Favicon'
-import { ListMotionContext } from './listMotion'
+import { ENTER_BATCH, ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
 import { useStripAxis } from './stripAxis'
 import { TabItem } from './TabItem'
@@ -45,35 +45,39 @@ interface Props {
   compact: boolean
 }
 
-/** More rows than this arriving in one commit is a restore, placed without motion. */
-const ENTER_BATCH = 6
-
 /** One space's tab list: space header, pinned tabs, separator, folders + regular tabs, new tab. */
 export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Element {
   const drag = uiStore.use((s) => s.drag)
   const dropKey = dropStore.use((s) => s.key)
   const zones = dropStore.use((s) => s.zones)
-  const pinned = pinnedOf(state, space)
-  const regular = regularOf(state, space)
-  // The space's groups as rows. On a host that keeps private browsing in tabs the space holds
-  // its private tabs among the regular ones, and this panel is a REGULAR surface (a private
-  // window's is private mode itself, and lists its own groups whole): a PRIVATE group
-  // (`isPrivateGroup` – private tabs alone live in it, nothing saved) is no row of it, so no
-  // private group's existence or name shows outside private mode, and a group's private members
-  // are not its rows or its count here (the Groups pane's rule); they list among the loose rows,
-  // where the panel lists the space's private tabs. The desktop's regular spaces hold no private
-  // tab (a private window's live in its own space), so its rows are as they were.
+  // On a host that keeps private browsing in tabs (the tablet) the space holds its private tabs
+  // among the regular ones, and this panel is the sidebar's REGULAR pose (`sidebarPose`): it
+  // lists the space's regular tabs and never a private one – no row, no title, no count, no
+  // hint that one exists (the project-context rule: private browsing leaks nothing outside its
+  // mode; W4-11). The private tabs are the private pose's (`PrivatePanel`), on while one is in
+  // view. The desktop's regular spaces hold no private tab (a private window's live in its own
+  // space, and that window's panel is private mode itself, listing them whole), so its rows
+  // are as they were.
+  const mixed = privateInTabs(state)
+  const pinned = mixed ? tabsOnPane(pinnedOf(state, space), 'tabs') : pinnedOf(state, space)
+  // The space's unpinned tabs as the space holds them, private ones included: what says which
+  // of its groups are private.
+  const live = regularOf(state, space)
+  const regular = mixed ? tabsOnPane(live, 'tabs') : live
+  // The space's groups as rows. This panel is a REGULAR surface (a private window's is private
+  // mode itself, and lists its own groups whole): a PRIVATE group (`isPrivateGroup` – private
+  // tabs alone live in it, nothing saved) is no row of it, so no private group's existence or
+  // name shows outside private mode, and a group's private members are not its rows or its
+  // count here (the Groups pane's rule).
   const regularSurface = !isPrivateWindow(state)
-  const liveOf = (folderId: string): Tab[] => regular.filter((t) => t.folderId === folderId)
+  const liveOf = (folderId: string): Tab[] => live.filter((t) => t.folderId === folderId)
   const membersOf = (folderId: string): Tab[] =>
     regularSurface ? regularMembers(liveOf(folderId)) : liveOf(folderId)
   const folders = groupsOf(state, space.id).filter(
     (f) => !regularSurface || !isPrivateGroup(f, liveOf(f.id))
   )
   const listed = new Set(folders.map((f) => f.id))
-  const loose = regular.filter(
-    (t) => !t.folderId || !listed.has(t.folderId) || (regularSurface && isPrivateTab(t))
-  )
+  const loose = regular.filter((t) => !t.folderId || !listed.has(t.folderId))
   const activeTabId = space.activeTabId
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
@@ -260,7 +264,8 @@ const tablistProps = (
 
 /**
  * One row of a tab list: a tab's own row, or a split group's row (§9.35). The horizontal strip
- * (§9.37) lays the same rows along the caption band and passes each its trailing `slot`.
+ * (§9.37) lays the same rows along the caption band and passes each its trailing `slot`; the
+ * sidebar's private pose (`PrivatePanel`) lists the private session's rows with it, flat.
  */
 export function StripRowItem({
   row,
@@ -390,21 +395,28 @@ function DropZone({
  * An address dragged from outside opens in a new tab at the end of the list when dropped on it
  * (lib/dnd.ts, `data-new-tab`), and the button shows it will (§9.4). In the horizontal strip
  * (§9.37) it is a 28 `zen-toolbar-button` 4 after the last tab (`button`), the same event, the
- * same menu and the same drop.
+ * same menu and the same drop. On the sidebar's private pose it is New Private Tab (the
+ * overview's private new-tab card, INC-01): the mask for its glyph, asking for a tab of the
+ * private container (`pane`). The strip passes its axis and the tablet its pane: the horizontal
+ * layout is the desktop's, the poses the tablet's, so no button is both.
  */
 export function NewTabButton({
   compact,
   spaced,
   dropInto,
-  button
+  button,
+  pane = 'tabs'
 }: {
   compact: boolean
   spaced: boolean
   dropInto: boolean
   /** The strip's 28 icon button rather than the sidebar's row. */
   button?: boolean
+  pane?: 'tabs' | 'private'
 }): JSX.Element {
-  const title = useHint('New Tab', 'tab.new')
+  const isPrivate = pane === 'private'
+  const label = isPrivate ? 'New Private Tab' : 'New Tab'
+  const hinted = useHint('New Tab', 'tab.new')
   return (
     <button
       type="button"
@@ -416,16 +428,26 @@ export function NewTabButton({
       data-new-tab
       data-strip-new-tab={button || undefined}
       data-drop-into={dropInto || undefined}
-      title={title}
-      aria-label={button ? 'New Tab' : undefined}
-      onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
+      title={isPrivate ? label : hinted}
+      aria-label={button ? label : undefined}
+      onClick={() =>
+        window.dispatchEvent(
+          new CustomEvent('zen-new-tab', {
+            detail: isPrivate ? { containerId: PRIVATE_CONTAINER_ID } : {}
+          })
+        )
+      }
       onContextMenu={(e) => {
         e.preventDefault()
         run('newtab.contextMenu', contextMenuAnchor(e))
       }}
     >
-      <Plus className="h-4 w-4 shrink-0" strokeWidth={button ? TOOLBAR_STROKE : undefined} />
-      {!compact && !button && <span>New Tab</span>}
+      {isPrivate ? (
+        <VenetianMask className="h-4 w-4 shrink-0" />
+      ) : (
+        <Plus className="h-4 w-4 shrink-0" strokeWidth={button ? TOOLBAR_STROKE : undefined} />
+      )}
+      {!compact && !button && <span>{label}</span>}
     </button>
   )
 }

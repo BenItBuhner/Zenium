@@ -41,6 +41,34 @@ export function activeTabIsPrivate(state: UIState): boolean {
 }
 
 /**
+ * The host keeps private browsing in TABS (`capabilities.privateTabs`: Android, one window): a
+ * space holds its private tabs among the regular ones, so every regular surface that lists a
+ * space's tabs – the tablet sidebar, the overview's Tabs pane – sets the private ones aside.
+ * The desktop keeps a private window instead, whose surfaces are private mode whole.
+ */
+export function privateInTabs(state: Partial<Pick<UIState, 'capabilities'>>): boolean {
+  // A snapshot without capabilities (a partial state in a component test) is a desktop's.
+  return state.capabilities?.privateTabs === true
+}
+
+/**
+ * The sidebar's two POSES on a host that keeps private browsing in tabs (the tablet; W4-11):
+ * REGULAR while a regular tab is in view – the space's regular tabs and never a private one, no
+ * row, no count, no hint that one exists – and PRIVATE while a private tab is, the window on
+ * the private theme (§9.29 / §11.6): the private session's tabs alone, across the spaces in the
+ * Private pane's order, under the mask. The phone's chrome re-inks the same way as the tab in
+ * view changes mode; on the tablet the sidebar changes what it lists with the ink, so a private
+ * tab is never a row of the regular sidebar (Chrome's own-window rule, kept in one window). The
+ * desktop's sidebar is regular always: its private tabs live in a private window, whose sidebar
+ * lists them whole under its own header.
+ */
+export type SidebarPose = 'regular' | 'private'
+
+export function sidebarPose(state: UIState): SidebarPose {
+  return privateInTabs(state) && activeTabIsPrivate(state) ? 'private' : 'regular'
+}
+
+/**
  * The private tabs of the window, in the order of the private pane: the private session is one
  * across the spaces (a private tab opens in the space it was asked for in), so the pane walks
  * the spaces in their order and each space's tabs in theirs.
