@@ -3694,8 +3694,9 @@
     background: var(--v2-border);
   }
   /*
-   * The phone app menu's icon row (TB-08; v2 §9.3): Chrome's Forward, star, Download, Page info
-   * and Reload / Stop as the sheet's first group – five shared `.zen-v2-icon-button`s (44 × 44,
+   * The phone app menu's icon row (TB-08; v2 §9.3): Chrome's Forward, Home, star, Download, Page
+   * info and Reload / Stop as the sheet's first group – §9.13's six, less what the user's bar
+   * carries (the core's menu model leaves those out) – shared `.zen-v2-icon-button`s (44 × 44,
    * 20 px glyphs at stroke 1.75, radius 8, the press fill, .4 when disabled) spread across the
    * sheet's width with the outer boxes on the 16 gutter (§9.25), one row tall. The star's fill is
    * a second, filled star over the outline whose opacity and scale the fill spring writes per
