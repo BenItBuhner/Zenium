@@ -976,6 +976,10 @@ export function createPreviewBridge(): NativeBridge {
     },
     'view.savePage': () => null,
     'view.screenshot': () => null,
+    // The preview's frames are the browser's own: no page geometry or capture to read, no
+    // Downloads collection to write (the capture UI's engine says so with null).
+    'view.viewport': () => null,
+    'download.saveFile': () => null,
     'view.certificate': () => null,
     // The preview has no cookie jar of its own to look into: without a `sitedata=` state the
     // sheet shows the connection only; with one, the sample it names (previewSiteData.ts) stands
