@@ -2981,20 +2981,13 @@ export class Menus {
       action: 'window.newPrivate',
       click: () => this.browser.openWindow('private', win)
     })
-    // A private window's menu says so (profiles-25; design language v2 §9.19): a note at its
-    // head, in sentence case as a note is cast (§9.1) – the `note` kind the other devices'
-    // header uses, greyed and no stop for the keys – and, closing the window group, Chrome's
-    // "Close Incognito windows" as Close Private Windows with the count of #360's `(N)` form:
-    // every private window, the private session ending with the last. A regular window's
-    // menu is as it was: nothing there says a private window is open.
-    const privateWindows = this.browser.allWindows().filter((w) => w.isPrivate).length
-    const privateNote = when(win.isPrivate, {
-      label: 'You are in private browsing',
-      enabled: false,
-      note: true
-    })
+    // A private window's menu closes the window group with Chrome's "Close Incognito windows"
+    // (profiles-25; design language v2 §6, §9.19): Firefox's counted verb – "Close Private
+    // Window" for one, "Close 2 Private Windows" for more – every private window, the private
+    // session ending with the last. A regular window's menu is as it was.
+    const count = this.browser.allWindows().filter((w) => w.isPrivate).length
     const closePrivateWindows = when(win.isPrivate, {
-      label: `Close Private Windows (${privateWindows})`,
+      label: count > 1 ? `Close ${count} Private Windows` : 'Close Private Window',
       click: () => void this.browser.closePrivateWindows(win)
     })
     const bookmarks: MenuItemTemplate = {
@@ -3312,10 +3305,7 @@ export class Menus {
         // row is where it goes; with the button up, the button is the hub). The phone has its
         // own chip and sheet (§9.33).
         ...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win)),
-        // The tabs and windows, under the private window's note where the window is one: the
-        // note heads its group as the other devices' header heads its rows, so the count of
-        // separators stands (§6's four at most, the Now Playing… row's included).
-        ...privateNote,
+        // The tabs and windows.
         newTab,
         searchTabs,
         ...privateTabs,

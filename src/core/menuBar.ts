@@ -331,13 +331,13 @@ export function applicationMenu(browser: Browser): Template {
 
   const local = Boolean(win?.localSpace)
   // The private window's app menu row (profiles-25), here while a private window is up: the
-  // window operations' group, with the count of #360's `(N)` form; the front window closes last.
-  const privateWindows = browser.allWindows().filter((w) => w.isPrivate).length
+  // window operations' group, Firefox's counted verb; the front window closes last.
+  const count = browser.allWindows().filter((w) => w.isPrivate).length
   const closePrivateWindows: Template =
-    privateWindows > 0
+    count > 0
       ? [
           {
-            label: `Close Private Windows (${privateWindows})`,
+            label: count > 1 ? `Close ${count} Private Windows` : 'Close Private Window',
             click: withWindow((w) => void browser.closePrivateWindows(w))
           }
         ]

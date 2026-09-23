@@ -882,9 +882,7 @@ describe('the app menu', () => {
       // A synced tab shows in every synced window and so does its row.
       h.browser.state.media = [media(h.tabId)]
       expect(appMenuFolded(h)[0]).toBe(ROW)
-      // The private window lists no synced tab: its menu heads with its own note (profiles-25).
-      expect(appMenuFolded(h, priv)).not.toContain(ROW)
-      expect(appMenuFolded(h, priv)[0]).toBe('You are in private browsing')
+      expect(appMenuFolded(h, priv)[0]).toBe('New Tab')
     })
 
     it('is the sidebar layouts’ row: the phone keeps its chip and sheet', () => {
@@ -1116,57 +1114,55 @@ describe('the app menu', () => {
   })
 
   describe('in a private window (profiles-25)', () => {
-    const NOTE = 'You are in private browsing'
     const top = (h: Harness, win: ZenWindow): string[] => {
       h.browser.handleCommand(win, 'app.menu', {})
       return topLabels(h.shown())
     }
 
-    it('heads with the private note and closes the window group with Close Private Windows (N); a regular window’s menu is as it was', () => {
+    it('closes the window group with Close Private Window – the counted verb for more – and carries no note; a regular window’s menu is as it was', () => {
       const h = harness(DESKTOP)
       const priv = h.browser.openWindow('private', h.win)!
       expect(priv.isPrivate).toBe(true)
       const menu = top(h, priv)
       expect(menu.slice(0, 6)).toEqual([
-        NOTE,
         'New Tab',
         'Search Tabs…',
         'New Window',
         'New Private Window',
-        'Close Private Windows (1)'
+        'Close Private Window',
+        '-'
       ])
-      expect(menu[6]).toBe('-')
-      // The note is the `note` kind: greyed, no stop for the keys, sentence case (§9.1).
-      const note = h.shown()[0]
-      expect(note).toMatchObject({ label: NOTE, enabled: false, note: true })
-      expect(note.click).toBeUndefined()
-      // Two rows more than the regular menu, no separator more (§6: four at most).
-      expect(menu.filter((l) => l !== '-')).toHaveLength(20)
+      // No note row says the state: the theme, the sidebar's header and the private new tab
+      // page's heading do (§6). One row more than the regular menu, no separator more.
+      expect(h.shown().some((i) => i.note)).toBe(false)
+      expect(menu.filter((l) => l !== '-')).toHaveLength(19)
       expect(separators(h.shown())).toBe(3)
-      // The count follows the private windows open.
+      // The count is in the verb, Firefox's way: no parentheses (§6).
       h.browser.openWindow('private', h.win)
-      expect(top(h, priv)).toContain('Close Private Windows (2)')
+      const two = top(h, priv)
+      expect(two).toContain('Close 2 Private Windows')
+      expect(two.some((l) => /Close Private Windows? \(\d+\)/.test(l))).toBe(false)
       // The regular window says nothing of them.
       expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
     })
 
-    it('keeps the Now Playing… row at the head with the media hub folded, the note under it: four separators', () => {
+    it('keeps the Now Playing… row at the head with the media hub folded: four separators, the window group under it', () => {
       const h = pageHarness(DESKTOP)
       const priv = h.browser.openWindow('private', h.win)!
       const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
       h.browser.state.media = [
         { tabId: theirs.id, playing: true, title: 'Nocturne', session: true }
       ]
-      expect(appMenuFolded(h, priv).slice(0, 4)).toEqual(['Now Playing…', '-', NOTE, 'New Tab'])
+      expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Now Playing…', '-', 'New Tab'])
       expect(separators(h.shown())).toBe(4)
     })
 
-    it('Close Private Windows closes every private window – the asking one last – and no other', async () => {
+    it('Close 2 Private Windows closes every private window – the asking one last – and no other', async () => {
       const h = harness(DESKTOP)
       const first = h.browser.openWindow('private', h.win)!
       const second = h.browser.openWindow('private', h.win)!
       h.browser.handleCommand(first, 'app.menu', {})
-      const row = deepItem(h.shown(), 'Close Private Windows (2)')
+      const row = deepItem(h.shown(), 'Close 2 Private Windows')
       expect(row.enabled).not.toBe(false)
       row.click?.()
       await settle()

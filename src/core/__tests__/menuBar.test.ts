@@ -244,7 +244,7 @@ describe('the macOS menu bar', () => {
     expect(h.browser.allWindows()).toHaveLength(1)
   })
 
-  it('carries Close Private Windows (N) in the Window menu’s first group while a private window is up, closing every private window (profiles-25)', async () => {
+  it('carries Close Private Window – Close 2 Private Windows for more – in the Window menu’s first group while a private window is up, closing every private window (profiles-25)', async () => {
     vi.useFakeTimers()
     try {
       const h = harness()
@@ -253,10 +253,10 @@ describe('the macOS menu bar', () => {
       expect(labels().slice(0, 3)).toEqual(['Minimize', 'Zoom', '-'])
       const priv = h.browser.openWindow('private', h.win)!
       vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
-      expect(labels().slice(0, 4)).toEqual(['Minimize', 'Zoom', 'Close Private Windows (1)', '-'])
+      expect(labels().slice(0, 4)).toEqual(['Minimize', 'Zoom', 'Close Private Window', '-'])
       const other = h.browser.openWindow('private', h.win)!
       vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
-      const row = item(submenu(last(h), 'Window'), 'Close Private Windows (2)')
+      const row = item(submenu(last(h), 'Window'), 'Close 2 Private Windows')
       expect(row.action).toBeUndefined()
       row.click?.()
       // The close checks are promises: let them settle (no timer of the chain is longer).
