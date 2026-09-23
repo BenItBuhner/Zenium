@@ -6,6 +6,7 @@ import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
+import { hasTopToolbar, isHorizontalTabs } from '@shared/toolbarLayout'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
 import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
@@ -40,6 +41,7 @@ import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
 import { PhoneShell } from './components/phone/PhoneShell'
 import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
+import { HorizontalChrome } from './components/strip/HorizontalChrome'
 import { TabDialogs } from './components/TabDialogs'
 import { TabHoverCard } from './components/TabHoverCard'
 import { TabletShell } from './components/tablet/TabletShell'
@@ -103,6 +105,10 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   // compact mode with both switches on, coming out at its edge under the cursor.
   const fullscreen = !popupChrome && state.window.fullscreen
 
+  // The horizontal layout (design language v2 §9.37): the tab strip along the caption band, the
+  // toolbar row under it, the 56 rail beside the frame. A one-row window keeps its one row.
+  const horizontal = !popupChrome && isHorizontalTabs(settings.toolbarLayout)
+
   const sidebarHidden =
     popupChrome ||
     fullscreen ||
@@ -112,22 +118,28 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
     (fullscreen || (compact.enabled && compact.hideToolbar)) &&
     settings.toolbarLayout !== 'single'
   const showToolbar = popupChrome || (settings.toolbarLayout === 'multiple' && !toolbarHidden)
+  // The strip and the toolbar row are the horizontal layout's top chrome: hidden together in
+  // compact mode and fullscreen, and revealed together at the top edge (`CompactToolbar`).
+  const topChrome = horizontal && !toolbarHidden
   const sidebarRevealed = !popupChrome && sidebarHidden && ui.compactHover
   // The bookmarks bar sits under the toolbar and hides with it in compact mode; popups never show it.
   const barWanted = !popupChrome && bookmarksBarVisible(settings.bookmarksBar, tab?.url ?? null)
   const showBar = barWanted && !fullscreen && !(compact.enabled && compact.hideToolbar)
   // Windows draws the caption buttons over the top trailing corner: whatever sits there keeps
-  // clear of them, and the content column starts below them when they land on it.
+  // clear of them, and the content column starts below them when they land on it. The strip
+  // holds the band while it is up, keeping their footprint clear at its trailing end itself.
   const overlay = useCaptionOverlay()
-  const captionBand = captionBandInMain({
-    overlayWidth: overlay.width,
-    sidebarSide,
-    sidebarWidth: sidebarHidden
-      ? null
-      : settings.sidebarExpanded
-        ? settings.sidebarWidth
-        : COLLAPSED_WIDTH
-  })
+  const captionBand =
+    !topChrome &&
+    captionBandInMain({
+      overlayWidth: overlay.width,
+      sidebarSide,
+      sidebarWidth: sidebarHidden
+        ? null
+        : settings.sidebarExpanded && !horizontal
+          ? settings.sidebarWidth
+          : COLLAPSED_WIDTH
+    })
   const captionInset = captionBand ? overlay.width : 0
   const macPopupInset = popupChrome && state.platform === 'darwin' ? 72 : 0
 
@@ -182,21 +194,11 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
     )
   }
 
-  return (
-    <div
-      className={cn(
-        'zen-window relative flex h-full w-full overflow-hidden',
-        sidebarSide === 'right' && 'flex-row-reverse'
-      )}
-      data-dark={theme.isDark}
-      data-window-kind={state.window.kind}
-      data-window-chrome={state.window.chrome}
-      data-caption-overlay={overlay.width > 0 ? 'true' : 'false'}
-      data-testid="chrome-root"
-    >
-      <ModStyles mods={state.mods} />
-      <div className="zen-texture" />
-      {!sidebarHidden && <Sidebar state={state} isDark={theme.isDark} />}
+  // The sidebar column and the content column: the window's row, or the row under the
+  // horizontal layout's top chrome.
+  const columns = (
+    <>
+      {!sidebarHidden && <Sidebar state={state} isDark={theme.isDark} rail={horizontal} />}
       <main
         className="relative flex min-w-0 flex-1 flex-col"
         style={{
@@ -246,7 +248,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
             />
           )
         )}
-        {showBar && <BookmarksBar state={state} tab={tab} />}
+        {showBar && !topChrome && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
           {/*
@@ -257,6 +259,32 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
           <TabDialogs state={state} />
         </div>
       </main>
+    </>
+  )
+
+  return (
+    <div
+      className={cn(
+        'zen-window relative flex h-full w-full overflow-hidden',
+        horizontal ? 'flex-col' : sidebarSide === 'right' && 'flex-row-reverse'
+      )}
+      data-dark={theme.isDark}
+      data-window-kind={state.window.kind}
+      data-window-chrome={state.window.chrome}
+      data-caption-overlay={overlay.width > 0 ? 'true' : 'false'}
+      data-layout={settings.toolbarLayout}
+      data-testid="chrome-root"
+    >
+      <ModStyles mods={state.mods} />
+      <div className="zen-texture" />
+      {topChrome && <HorizontalChrome state={state} tab={tab} showBar={showBar} />}
+      {horizontal ? (
+        <div className={cn('flex min-h-0 flex-1', sidebarSide === 'right' && 'flex-row-reverse')}>
+          {columns}
+        </div>
+      ) : (
+        columns
+      )}
 
       {sidebarHidden && !popupChrome && (
         <>
@@ -279,17 +307,24 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
               )}
               onPointerEnter={() => revealTimer.current && clearTimeout(revealTimer.current)}
             >
-              <Sidebar state={state} isDark={theme.isDark} floating onPointerLeave={unreveal} />
+              <Sidebar
+                state={state}
+                isDark={theme.isDark}
+                floating
+                rail={horizontal}
+                onPointerLeave={unreveal}
+              />
             </div>
           )}
         </>
       )}
-      {toolbarHidden && !showToolbar && settings.toolbarLayout === 'multiple' && (
+      {toolbarHidden && !showToolbar && hasTopToolbar(settings.toolbarLayout) && (
         <CompactToolbar
           state={state}
           showBar={barWanted}
           trailingInset={captionInset}
           fullscreen={fullscreen}
+          horizontal={horizontal}
         />
       )}
 
@@ -319,12 +354,15 @@ function CompactToolbar({
   state,
   showBar,
   trailingInset,
-  fullscreen
+  fullscreen,
+  horizontal
 }: {
   state: UIState
   showBar: boolean
   trailingInset: number
   fullscreen: boolean
+  /** The horizontal layout's top chrome – the strip and the toolbar row – comes out as one. */
+  horizontal: boolean
 }): JSX.Element {
   const tab = activeTab(state)
   const open = uiStore.use((s) => s.toolbarHover)
@@ -419,29 +457,42 @@ function CompactToolbar({
       <div className="h-1.5" />
       {open && (
         <SlideDown closing={closing}>
-          <Toolbar
-            state={state}
-            tab={tab}
-            floating
-            trailing={
-              fullscreen && (
-                <button
-                  type="button"
-                  className="zen-toolbar-button"
-                  title={`Exit full screen (${fullscreenBinding(state)})`}
-                  aria-label="Exit full screen"
-                  onClick={() => run('window.toggleFullscreen', undefined)}
-                >
-                  <Minimize className="h-4 w-4" />
-                </button>
-              )
-            }
-          >
-            {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
-          </Toolbar>
+          {horizontal ? (
+            <HorizontalChrome
+              state={state}
+              tab={tab}
+              showBar={showBar}
+              floating
+              trailing={fullscreen && <ExitFullscreenButton state={state} />}
+            />
+          ) : (
+            <Toolbar
+              state={state}
+              tab={tab}
+              floating
+              trailing={fullscreen && <ExitFullscreenButton state={state} />}
+            >
+              {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
+            </Toolbar>
+          )}
         </SlideDown>
       )}
     </div>
+  )
+}
+
+/** The hidden chrome's way out of the window's fullscreen, at its trailing end. */
+function ExitFullscreenButton({ state }: { state: UIState }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className="zen-toolbar-button"
+      title={`Exit full screen (${fullscreenBinding(state)})`}
+      aria-label="Exit full screen"
+      onClick={() => run('window.toggleFullscreen', undefined)}
+    >
+      <Minimize className="h-4 w-4" />
+    </button>
   )
 }
 

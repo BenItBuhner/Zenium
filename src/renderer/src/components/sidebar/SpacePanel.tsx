@@ -9,7 +9,7 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
-import { groupColorChannels, groupsOf } from '@renderer/lib/groups'
+import { groupColorChannels, groupColorHex, groupsOf } from '@renderer/lib/groups'
 import { isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
@@ -17,19 +17,22 @@ import {
   isPrivateWindow,
   pinnedOf,
   regularOf,
+  rowKey,
   stripRows,
   type StripRow
 } from '@renderer/lib/selectors'
 import { hint, useHint } from '@renderer/lib/shortcuts'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
+import type { StripSlot } from '@renderer/lib/tabStripLayout'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { DEFAULT_FOLDER_ICON } from '../phone/GroupCard'
 import { useLongPress } from '../phone/useLongPress'
-import { V2_TRAILING_GLYPH } from '../v2/controls'
+import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
 import { ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
+import { useStripAxis } from './stripAxis'
 import { TabItem } from './TabItem'
 import { useGroupFold } from './useGroupFold'
 
@@ -230,33 +233,38 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   )
 }
 
-/** A row's React key: the tab's id, or the split row's anchor (the slot it stands in). */
-const rowKey = (row: StripRow): string => (row.kind === 'tab' ? row.tab.id : row.anchor.id)
-
-/** One row of a tab list: a tab's own row, or a split group's row (§9.35). */
-function StripRowItem({
+/**
+ * One row of a tab list: a tab's own row, or a split group's row (§9.35). The horizontal strip
+ * (§9.37) lays the same rows along the caption band and passes each its trailing `slot`.
+ */
+export function StripRowItem({
   row,
   activeTabId,
   compact,
   indent,
-  parent
+  parent,
+  slot
 }: {
   row: StripRow
   activeTabId: string | null
   compact: boolean
   indent?: boolean
   parent?: string
+  slot?: (tab: Tab, active: boolean) => StripSlot
 }): JSX.Element {
-  if (row.kind === 'tab')
+  if (row.kind === 'tab') {
+    const active = row.tab.id === activeTabId
     return (
       <TabItem
         tab={row.tab}
-        active={row.tab.id === activeTabId}
+        active={active}
         compact={compact}
         indent={indent}
         parent={parent}
+        slot={slot?.(row.tab, active)}
       />
     )
+  }
   return (
     <SplitGroupRow
       group={row.group}
@@ -355,37 +363,44 @@ function DropZone({
 /**
  * The New Tab row under the list; `spaced` keeps the list's 2 px gap above it when it has rows.
  * An address dragged from outside opens in a new tab at the end of the list when dropped on it
- * (lib/dnd.ts, `data-new-tab`), and the button shows it will (§9.4).
+ * (lib/dnd.ts, `data-new-tab`), and the button shows it will (§9.4). In the horizontal strip
+ * (§9.37) it is a 28 `zen-toolbar-button` 4 after the last tab (`button`), the same event, the
+ * same menu and the same drop.
  */
-function NewTabButton({
+export function NewTabButton({
   compact,
   spaced,
-  dropInto
+  dropInto,
+  button
 }: {
   compact: boolean
   spaced: boolean
   dropInto: boolean
+  /** The strip's 28 icon button rather than the sidebar's row. */
+  button?: boolean
 }): JSX.Element {
   const title = useHint('New Tab', 'tab.new')
   return (
     <button
       type="button"
       className={cn(
-        'zen-tab text-[var(--zen-fg)]',
-        compact && 'justify-center px-0',
-        spaced && 'mt-0.5'
+        button
+          ? 'zen-toolbar-button zen-no-drag shrink-0'
+          : ['zen-tab text-[var(--zen-fg)]', compact && 'justify-center px-0', spaced && 'mt-0.5']
       )}
       data-new-tab
+      data-strip-new-tab={button || undefined}
       data-drop-into={dropInto || undefined}
       title={title}
+      aria-label={button ? 'New Tab' : undefined}
       onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       onContextMenu={(e) => {
         e.preventDefault()
         run('newtab.contextMenu', contextMenuAnchor(e))
       }}
     >
-      <Plus className="h-4 w-4 shrink-0" />
-      {!compact && <span>New Tab</span>}
+      <Plus className="h-4 w-4 shrink-0" strokeWidth={button ? TOOLBAR_STROKE : undefined} />
+      {!compact && !button && <span>New Tab</span>}
     </button>
   )
 }
@@ -401,9 +416,20 @@ interface FolderRowProps {
   live: boolean
   liveError: string | null
   splitGroups: UIState['splitGroups']
+  /** The horizontal strip's trailing slot for each member row (§9.37). */
+  slot?: (tab: Tab, active: boolean) => StripSlot
 }
 
-function FolderRow({
+/**
+ * A group's header and its member rows. In the sidebar the header is a folder row – icon,
+ * colour swatch, name, count, chevron – with the members indented beneath it; on the tablet the
+ * full-width group row (§9.36). In the horizontal strip (§9.37, the list's axis `x`) the header
+ * is the group's chip – 32 tall at radius 8, the 8 colour dot, the name at 13/600 – ahead of its
+ * members, and the group's colour runs as one continuous 2 px line in the band's top inset from
+ * the chip's start to the last member's end, bridging the gaps (`.zen-strip-group-line` on the
+ * shell, never a dash per pill); the fold runs the shell's width on the spring.
+ */
+export function FolderRow({
   folder,
   tabs,
   activeTabId,
@@ -412,8 +438,10 @@ function FolderRow({
   dragging,
   live,
   liveError,
-  splitGroups
+  splitGroups,
+  slot
 }: FolderRowProps): JSX.Element {
+  const horizontal = useStripAxis() === 'x'
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
   // The tablet's row (TABLET-04, v2 §9.36): the group as a full-width 44 row like Zen's folder –
@@ -440,12 +468,20 @@ function FolderRow({
   const tabIndex = useStripTabIndex(key, containsActive && folder.collapsed)
   const shell = useRef<HTMLDivElement>(null)
   const header = useRef<HTMLDivElement>(null)
-  const drawn = useGroupFold(shell, header, folder.collapsed, tabs, tablet)
+  const drawn = useGroupFold(
+    shell,
+    header,
+    folder.collapsed,
+    tabs,
+    tablet || horizontal,
+    horizontal ? 'x' : 'y'
+  )
   const count = saved ? (folder.savedTabs?.length ?? 0) : tabs.length
   const unit = count === 1 ? 'tab' : 'tabs'
-  const description = tablet
-    ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
-    : `${live ? 'Live folder' : 'Folder'}, ${count} ${unit}`
+  const description =
+    tablet || horizontal
+      ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
+      : `${live ? 'Live folder' : 'Folder'}, ${count} ${unit}`
   // The tablet row's hold (the phone's group card's, `useLongPress`: a haptic tick at 380 ms, the
   // menu on the release, the click after it swallowed): the group's menu as a §9.36 popover at
   // the finger.
@@ -454,10 +490,24 @@ function FolderRow({
   )
   const { onContextMenu: holdMenu, ...hold } = press.handlers
   return (
-    <div ref={shell} className="zen-group-fold flex flex-col gap-0.5">
+    <div
+      ref={shell}
+      className={cn(
+        'zen-group-fold',
+        horizontal
+          ? 'zen-strip-group relative flex h-full shrink-0 items-end gap-1'
+          : 'flex flex-col gap-0.5'
+      )}
+      data-strip-group-shell={horizontal ? folder.id : undefined}
+    >
       <div
         ref={header}
-        className={cn('zen-tab', compact && 'justify-center px-0', tablet && 'zen-group-row')}
+        className={cn(
+          'zen-tab',
+          compact && !horizontal && 'justify-center px-0',
+          tablet && 'zen-group-row',
+          horizontal && 'zen-strip-group-chip'
+        )}
         role="button"
         aria-label={folder.name}
         aria-description={description}
@@ -468,6 +518,7 @@ function FolderRow({
         data-editing={editing || undefined}
         data-drop-into={isDropTarget || undefined}
         data-tab-folder={folder.id}
+        data-strip-group={horizontal ? folder.id : undefined}
         data-saved={saved || undefined}
         onFocus={stripFocusIn}
         onBlur={stripFocusOut}
@@ -506,7 +557,37 @@ function FolderRow({
         title={compact ? folder.name : undefined}
       >
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
-        {tablet ? (
+        {horizontal ? (
+          <>
+            {/* The chip's dot: the group's colour with the ink's 20 % hairline (a11y-30). */}
+            <span
+              className="h-2 w-2 shrink-0 rounded-full border border-[rgb(var(--zen-fg-rgb)/0.2)]"
+              style={{ background: groupColorHex(folder.color) }}
+              data-strip-group-dot
+              aria-hidden
+            />
+            {renaming ? (
+              <FolderRename folder={folder} />
+            ) : (
+              <span
+                className="min-w-0 truncate text-[13px] font-semibold"
+                data-strip-group-name
+                data-testid="group-chip-name"
+              >
+                {folder.name}
+              </span>
+            )}
+            {live && (
+              <span
+                className={cn(
+                  'h-1.5 w-1.5 shrink-0 rounded-full',
+                  liveError ? 'bg-[var(--v2-danger)]' : 'zen-live-dot bg-[var(--v2-control-accent)]'
+                )}
+                title={liveError ?? 'Live folder – updates automatically'}
+              />
+            )}
+          </>
+        ) : tablet ? (
           <>
             <GroupRowGlyph folder={folder} saved={saved} />
             {!compact &&
@@ -590,10 +671,19 @@ function FolderRow({
           row={row}
           activeTabId={activeTabId}
           compact={compact}
-          indent
+          indent={!horizontal}
           parent={key}
+          slot={slot}
         />
       ))}
+      {horizontal && (
+        <span
+          className="zen-strip-group-line"
+          data-strip-group-line={folder.id}
+          style={{ background: groupColorHex(folder.color) }}
+          aria-hidden
+        />
+      )}
     </div>
   )
 }

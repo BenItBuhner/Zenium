@@ -383,7 +383,8 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
           options: [
             { value: 'single', label: 'Single toolbar' },
             { value: 'multiple', label: 'Multiple toolbars' },
-            { value: 'collapsed', label: 'Collapsed toolbar' }
+            { value: 'collapsed', label: 'Collapsed toolbar' },
+            { value: 'horizontal', label: 'Horizontal tabs' }
           ],
           onChange: (v) => set({ toolbarLayout: v })
         }),

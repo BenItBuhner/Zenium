@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { FolderInput, VenetianMask } from 'lucide-react'
 import type { UIState } from '@shared/types'
+import { hasTopToolbar } from '@shared/toolbarLayout'
 import { cmd, run } from '@renderer/lib/api'
 import {
   activeSpace,
@@ -38,6 +39,13 @@ interface Props {
    * own and passes false.
    */
   navRow?: boolean
+  /**
+   * The horizontal layout's rail (design language v2 §9.37): the 56 column beside the frame from
+   * the toolbar row down – Essentials as 44 tiles, the spaces' 32 glyphs with the current on
+   * `--v2-window-fill`, + and palette, the compact player – with no navigation row and no tab
+   * rows, which the strip along the caption band carries. It starts level with the frame at 82.
+   */
+  rail?: boolean
 }
 
 export const COLLAPSED_WIDTH = 56
@@ -47,7 +55,8 @@ export function Sidebar({
   isDark,
   floating,
   onPointerLeave,
-  compact = !state.settings.sidebarExpanded,
+  rail = false,
+  compact = rail || !state.settings.sidebarExpanded,
   navRow
 }: Props): JSX.Element {
   const space = activeSpace(state)
@@ -59,10 +68,36 @@ export function Sidebar({
     state.spaces.findIndex((s) => s.id === state.activeSpaceId)
   )
   const essentials = local ? [] : essentialsFor(state, space)
-  const showToolbar = navRow ?? state.settings.toolbarLayout !== 'multiple'
+  const showToolbar = navRow ?? !hasTopToolbar(state.settings.toolbarLayout)
   const side = state.settings.sidebarSide
   // Touch screens have no hover target for the resize handle; the width is a setting there.
   const { coarse } = useViewport()
+
+  if (rail) {
+    return (
+      <aside
+        className={cn(
+          'relative flex h-full shrink-0 flex-col',
+          floating && 'zen-panel zen-animate-in'
+        )}
+        style={{ width: COLLAPSED_WIDTH, marginTop: floating ? 0 : 'var(--zen-padding)' }}
+        onPointerLeave={onPointerLeave}
+        data-side={side}
+        data-surface="window"
+        data-pane="tabs"
+        data-rail
+        aria-label="Sidebar"
+      >
+        {local ? (
+          <LocalWindowHeader state={state} compact />
+        ) : (
+          <Essentials essentials={essentials} activeTabId={space.activeTabId} compact />
+        )}
+        <div className="min-h-0 flex-1" />
+        <SidebarBottom state={state} compact isDark={isDark} />
+      </aside>
+    )
+  }
 
   return (
     // A window surface (design language v2 §9.29): the tab strip's chips draw in the window family.

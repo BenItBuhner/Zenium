@@ -89,6 +89,9 @@ export function stripRows(tabs: readonly Tab[], groups: Record<string, SplitGrou
   return rows
 }
 
+/** A row's React key: the tab's id, or the split row's anchor (the slot it stands in). */
+export const rowKey = (row: StripRow): string => (row.kind === 'tab' ? row.tab.id : row.anchor.id)
+
 /** Ids of the tabs that should be visible in the content area right now. */
 export function visibleTabIds(state: UIState): string[] {
   const tab = activeTab(state)

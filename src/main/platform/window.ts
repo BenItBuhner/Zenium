@@ -13,6 +13,7 @@ import { is } from '@electron-toolkit/utils'
 import { ElectronShortcuts } from './shortcuts'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
+import { hasTopToolbar } from '../../shared/toolbarLayout'
 import type { Browser } from '../../core/browser'
 import type { ZenWindow } from '../../core/window'
 import type {
@@ -520,7 +521,7 @@ export class ElectronWindow implements WindowHost {
     const sidebarHidden =
       fullscreen || (zen.compactEnabled && cm.hideSidebar && !zen.compactSidebarPersistent)
     const toolbarHidden =
-      state.settings.toolbarLayout === 'multiple' &&
+      hasTopToolbar(state.settings.toolbarLayout) &&
       (fullscreen || (zen.compactEnabled && cm.hideToolbar))
     if (zen.htmlFullscreenTabId || (!sidebarHidden && !toolbarHidden)) {
       this.sidebarEdge.reset()
