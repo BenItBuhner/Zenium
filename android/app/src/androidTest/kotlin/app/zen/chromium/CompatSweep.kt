@@ -546,16 +546,38 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         coreCall("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
         // The sheet the click brought up: the popup, or the side panel an action without a popup
         // opens from `onClicked` (Image Downloader's `sidePanel.open`), the extension's answer as
-        // Chrome shows it.
-        val view = poll(POPUP_TIMEOUT_MS, 400) {
+        // Chrome shows it. A tab the click opened is watched for meanwhile, with the URL it was
+        // first seen on (Boomerang's popup.html opens Gmail's compose URL and closes itself; the
+        // tab lands on Google's sign-in or, on 156, on workspace.google.com – the click's answer
+        // is the URL it asked for): once a tab is up and no sheet follows it within
+        // [POPUP_AFTER_TAB_MS], the popup document opened it and closed itself, or the action
+        // fired `onClicked`, and no sheet is coming.
+        var openedFirst: Pair<String, String>? = null
+        var openedAt = 0L
+        var view: ExtensionWebView? = null
+        val sheetDeadline = SystemClock.uptimeMillis() + POPUP_TIMEOUT_MS
+        while (SystemClock.uptimeMillis() < sheetDeadline) {
             val v = popupView()
-            if (v != null && (v.context == "popup" || (runtimePopup == null && v.context == "sidePanel")) && rendered(v)) v else null
+            if (v != null && (v.context == "popup" || (runtimePopup == null && v.context == "sidePanel")) && rendered(v)) {
+                view = v
+                break
+            }
+            if (openedFirst == null) {
+                tabUrls().entries.firstOrNull { it.key !in tabsBefore }?.let {
+                    openedFirst = it.key to it.value
+                    openedAt = SystemClock.uptimeMillis()
+                }
+            } else if (v == null && SystemClock.uptimeMillis() - openedAt > POPUP_AFTER_TAB_MS) {
+                break
+            }
+            SystemClock.sleep(400)
         }
         SystemClock.sleep(1_800)
         snap("$slug-popup")
         val live = popupView()
         val detail = JSONObject().put("declared", declared ?: JSONObject.NULL).put("runtimePopup", runtimePopup ?: JSONObject.NULL)
         view?.let { detail.put("surface", it.context) }
+        openedFirst?.let { detail.put("openedFirstSeen", it.second) }
         if (live != null) {
             detail.put("console", JSONArray(consoleOf(live).takeLast(20)))
             detail.put("dom", json(tabEval(live, DOM_REPORT)))
@@ -626,6 +648,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     val page = answered.first { extensionPage(it, row.id) }
                     entry.put("popupOpened", JSONArray(answered))
                     stage(entry, "popup", "P", "the popup opened ${page.take(160)} in a tab and closed itself (no sheet left within ${POPUP_TIMEOUT_MS / 1000} s)", detail)
+                } else if (opened.isNotEmpty()) {
+                    // The popup opened a page elsewhere in a tab and closed itself (Boomerang's
+                    // popup.html sends the click to Gmail's compose URL): the tab is the popup's
+                    // answer, as Chrome shows it. The URL the tab was first seen on leads (the
+                    // click's own destination, before the site's redirect), for the core stage's
+                    // account gate to read.
+                    val first = openedFirst?.second?.takeIf { it.isNotEmpty() }
+                    val urls = (listOfNotNull(first) + opened).distinct()
+                    entry.put("popupOpened", JSONArray(urls))
+                    if (row.account) openedPage(row, opened[0])?.let { entry.put("popupOpenedPage", it) }
+                    stage(
+                        entry, "popup", "P",
+                        "the popup opened ${(first ?: opened[0]).take(160)} in a tab and closed itself" +
+                            (if (first != null && first != opened[0]) " (the tab then landed on ${opened[0].take(120)})" else "") +
+                            " (no sheet within ${POPUP_AFTER_TAB_MS / 1000} s of the tab)",
+                        detail
+                    )
                 } else {
                     stage(entry, "popup", "F", "no popup sheet within ${POPUP_TIMEOUT_MS / 1000} s (runtime popup=${runtimePopup ?: "null"}, declared=$declared, tabs opened=${opened.size})", detail)
                 }
@@ -6532,6 +6571,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val BACKGROUND_TIMEOUT_MS = 40_000L
         private const val BACKGROUND_SETTLE_MS = 6_000L
         private const val POPUP_TIMEOUT_MS = 30_000L
+        /** After the action click opened a tab: how long a sheet gets to follow it before the tab is read as the click's whole answer. */
+        private const val POPUP_AFTER_TAB_MS = 5_000L
         private const val OPTIONS_TIMEOUT_MS = 30_000L
         /** A userscript manager's install landing: its install tab closing after the Install click. */
         private const val USERSCRIPT_INSTALL_MS = 15_000L
