@@ -83,8 +83,51 @@ describe('engineApiSpec', () => {
   it('has every engine namespace in the permission table', () => {
     for (const name of Object.keys(ENGINE_SPEC)) {
       const mv2Only = name === 'browserAction' || name === 'pageAction'
-      expect(namespaceGranted(name, [name], mv2Only ? 2 : 3)).toBe(true)
+      // The `system` holder has no permission of its own: any `system.*` one makes it.
+      const held = name === 'system' ? ['system.display'] : [name]
+      expect(namespaceGranted(name, held, mv2Only ? 2 : 3)).toBe(true)
     }
+  })
+
+  it('makes chrome.system with any system.* permission only, each member with its own', () => {
+    // Chrome has no `chrome.system` for an extension holding none of them: Coinbase Wallet's
+    // worker feature-detects `chrome.system?.cpu?.getInfo` before it reads the CPU load, and a
+    // holder that was always there passed the test and then rejected.
+    expect(namespaceGranted('system', ['tabs', 'storage'], 3)).toBe(false)
+    expect(namespaceGranted('system', ['system'], 3)).toBe(false)
+    for (const p of ['system.cpu', 'system.memory', 'system.display', 'system.storage']) {
+      expect(namespaceGranted('system', [p], 3)).toBe(true)
+      expect(namespaceGranted(p, [p], 3)).toBe(true)
+      expect(
+        namespaceGranted(
+          p,
+          ['system.cpu', 'system.memory', 'system.display', 'system.storage'].filter(
+            (q) => q !== p
+          ),
+          3
+        )
+      ).toBe(false)
+    }
+    const none = engineApiSpec({
+      permissions: ['tabs', 'storage'],
+      manifestVersion: 3,
+      context: 'page'
+    })
+    expect(none.system).toBeUndefined()
+    expect(none['system.display']).toBeUndefined()
+    const display = engineApiSpec({
+      permissions: ['system.display'],
+      manifestVersion: 3,
+      context: 'page'
+    })
+    expect(display.system?.permissions).toEqual([
+      'system.cpu',
+      'system.memory',
+      'system.display',
+      'system.storage'
+    ])
+    expect(display['system.display']?.permissions).toEqual(['system.display'])
+    expect(display['system.storage']).toBeUndefined()
   })
 
   it('makes every permission-gated namespace of the browser layer exist once declared', () => {

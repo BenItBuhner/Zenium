@@ -30,7 +30,6 @@ import {
   downloadUpdate,
   iconCandidates,
   imageMime,
-  installPromptText,
   packageFromFile,
   packageIcon,
   parseStoreRef,
@@ -69,6 +68,7 @@ import {
   type StoreFetch,
   type StoreId
 } from '@core/extensions/store'
+import { nativePromptPlan } from './extensionPromptPlan'
 import { noRuntimeHooks, type ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { AndroidExtensionStoreIo, PackageHandle } from './extensionStoreIo'
 
@@ -283,11 +283,11 @@ export class AndroidExtensions implements ExtensionHost {
 
   /**
    * Shows the install prompt and resolves with the user's decision: the chrome's sheet when a
-   * live window can show it, else the host's native confirm dialog. Reassignable so a host can
-   * swap the prompt without touching the install flow.
+   * live window can show it, else the same prompt on the native chassis ([nativeConfirm]).
+   * Reassignable so a host can swap the prompt without touching the install flow.
    */
   confirmInstall: ConfirmInstall = (request, win) =>
-    win?.alive ? this.prompts.ask(request, win) : this.nativeConfirm(request, win)
+    win?.alive ? this.prompts.ask(request, win) : this.nativeConfirm(request)
 
   constructor(
     protected readonly browser: Browser,
@@ -1082,7 +1082,7 @@ export class AndroidExtensions implements ExtensionHost {
 
   /**
    * A running extension's `permissions.request` as the chrome's sheet (kind `request`), else the
-   * native confirm. The runtime's own `permissions.request` grants declared optional permissions
+   * native chassis's sheet. The runtime's own `permissions.request` grants declared optional permissions
    * without asking for now; this is the question a host raises when it does ask.
    */
   confirmPermissionRequest(id: string, warnings: string[], win?: ZenWindow): Promise<boolean> {
@@ -1090,23 +1090,14 @@ export class AndroidExtensions implements ExtensionHost {
     const name = record?.name || id
     // A worker has no window; the question goes to the one window the user is in.
     const target = win?.alive ? win : this.browser.allWindows()[0]
-    if (target)
-      return this.prompts.ask(
-        { kind: 'request', name, icon: this.details.get(id)?.icon ?? null, warnings },
-        target
-      )
-    return this.browser.platform.dialogs.confirm(
-      {
-        message: `"${name}" wants additional permissions`,
-        detail:
-          warnings.length > 0
-            ? `It can:\n${warnings.map((w) => `\u2022 ${w}`).join('\n')}`
-            : undefined,
-        okLabel: 'Allow',
-        cancelLabel: 'Cancel'
-      },
-      win
-    )
+    const request = {
+      kind: 'request' as const,
+      name,
+      icon: this.details.get(id)?.icon ?? null,
+      warnings
+    }
+    if (target) return this.prompts.ask(request, target)
+    return this.io.prompt(nativePromptPlan(request))
   }
 
   /**
@@ -1572,12 +1563,13 @@ export class AndroidExtensions implements ExtensionHost {
   // Install prompt
   // ---------------------------------------------------------------------------
 
-  private nativeConfirm(request: InstallConfirmation, win?: ZenWindow): Promise<boolean> {
-    const text = installPromptText(request)
-    return this.browser.platform.dialogs.confirm(
-      { message: text.message, detail: text.detail, okLabel: text.okLabel, cancelLabel: 'Cancel' },
-      win
-    )
+  /**
+   * The prompt with no live window to show the renderer's sheet in (a package handed over before
+   * the chrome booted, a worker's question with no window up): the same composition on the
+   * native chassis – `ext/ExtensionPromptFallback.kt` draws the plan on a `NativePromptSheet`.
+   */
+  private nativeConfirm(request: InstallConfirmation): Promise<boolean> {
+    return this.io.prompt(nativePromptPlan(request))
   }
 
   // ---------------------------------------------------------------------------

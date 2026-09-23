@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lucide "network": the glyph of a permission warning row (warningGlyph.ts) on the native install prompt (tinted at runtime). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M17,16 h4 a1,1 0 0 1 1,1 v4 a1,1 0 0 1 -1,1 h-4 a1,1 0 0 1 -1,-1 v-4 a1,1 0 0 1 1,-1 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M3,16 h4 a1,1 0 0 1 1,1 v4 a1,1 0 0 1 -1,1 h-4 a1,1 0 0 1 -1,-1 v-4 a1,1 0 0 1 1,-1 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M10,2 h4 a1,1 0 0 1 1,1 v4 a1,1 0 0 1 -1,1 h-4 a1,1 0 0 1 -1,-1 v-4 a1,1 0 0 1 1,-1 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12 12V8" />
+</vector>
