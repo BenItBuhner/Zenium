@@ -6031,9 +6031,12 @@
   /*
    * The result card's picture: centred in the card's 16 gutter on an inner box (§2: the inner
    * radius, the hairline, the fill behind a picture that is not the box's shape), sized by
-   * `fitPicture` – the picture at its own CSS size at most, scaled down to the card's column and
-   * half the page's height, never up. The fallback row follows on the row primitive (§9.33's
-   * status anatomy in the warn ink) 8 under it.
+   * `fitPicture` – the picture at its own CSS size at most, scaled down to the card's column
+   * (364: the 400 less the card's hairline, the gutters and this box's own, `PICTURE_COLUMN`)
+   * and half the page's height, never up. The box is content-box at the picture's size, so it
+   * fits the column with its hairline and the picture fills it edge to edge; a box wider than
+   * the column would be shrunk border-box and show a band of the fill inside the hairline. The
+   * fallback row follows on the row primitive (§9.33's status anatomy in the warn ink) 8 under it.
    */
   .zen-capture-picture {
     display: flex;

@@ -37,6 +37,13 @@ const DESCRIPTION_ID = 'zen-capture-description'
 
 /** The toolbar's distance from the page's top edge, and the result card's picture from its frame. */
 const TOOLBAR_INSET = 12
+/**
+ * The result card's picture column: the 400 form width less the card's own hairline, the two
+ * 16 gutters and the picture box's hairline – 364, the most the box's content can be before
+ * the box, a flex item, is shrunk border-box and the picture's `contain` leaves a band of the
+ * fill inside the hairline (§2, §9.20).
+ */
+const PICTURE_COLUMN = POPOVER_WIDTH.form - 2 - 2 * 16 - 2
 const EMPTY: Rect = { x: 0, y: 0, width: 0, height: 0 }
 
 /**
@@ -462,7 +469,7 @@ function ResultCard({
   onSave: () => void
 }): JSX.Element {
   const picture = fitPicture(result, {
-    width: POPOVER_WIDTH.form - 2 * 16 - 2,
+    width: PICTURE_COLUMN,
     height: Math.max(96, Math.round(frame.height * 0.5))
   })
   return (

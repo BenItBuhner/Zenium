@@ -337,9 +337,14 @@ describe('the result card (capture-21)', () => {
     expect(card.querySelector('#zen-capture-description')?.textContent).toBe('400 × 300 pixels')
     const img = card.querySelector<HTMLImageElement>('img')!
     expect(img.getAttribute('src')).toBe(RESULT.dataUrl)
-    // 400 × 300 CSS px, fitted to the card's 366 inside its 16 px padding and hairline.
-    expect(img.getAttribute('width')).toBe('366')
-    expect(img.getAttribute('height')).toBe('275')
+    // 400 × 300 CSS px, fitted to the card's 364 column: the 400 less the card's hairline, the
+    // 16 gutters and the picture box's own hairline, so the box fits the column border-box and
+    // the picture fills it with no band of the fill inside the hairline.
+    expect(img.getAttribute('width')).toBe('364')
+    expect(img.getAttribute('height')).toBe('273')
+    const box = card.querySelector<HTMLElement>('.zen-capture-picture-box')!
+    expect(box.style.width).toBe('364px')
+    expect(box.style.height).toBe('273px')
     const buttons = [...card.querySelectorAll<HTMLButtonElement>('button')].map(
       (b) => b.textContent
     )
@@ -361,8 +366,8 @@ describe('the result card (capture-21)', () => {
     mount?.remove()
     el = await captured({ ...RESULT, width: 1600, height: 600, devicePixelRatio: 2 })
     img = el.querySelector<HTMLImageElement>('[data-capture-result] img')!
-    // 800 × 300 CSS, fitted to the card's 366 inner width: 366 × 137.
-    expect(img.getAttribute('width')).toBe('366')
+    // 800 × 300 CSS, fitted to the card's 364 column: 364 × 137.
+    expect(img.getAttribute('width')).toBe('364')
     expect(img.getAttribute('height')).toBe('137')
     expect(el.querySelector('#zen-capture-description')?.textContent).toBe('1,600 × 600 pixels')
   })

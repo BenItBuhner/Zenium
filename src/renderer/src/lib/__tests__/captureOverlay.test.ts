@@ -357,8 +357,9 @@ describe('the scrim’s cut-out', () => {
 
 describe('the card’s picture', () => {
   it('shows a picture at its CSS size when it fits, never scaled up', () => {
-    expect(fitPicture(RESULT, { width: 366, height: 400 })).toEqual({ width: 366, height: 275 })
-    expect(fitPicture({ ...RESULT, width: 100, height: 60 }, { width: 366, height: 400 })).toEqual({
+    // The card's column is 364 (`PICTURE_COLUMN`): a 400 × 300 picture scales to 364 × 273.
+    expect(fitPicture(RESULT, { width: 364, height: 400 })).toEqual({ width: 364, height: 273 })
+    expect(fitPicture({ ...RESULT, width: 100, height: 60 }, { width: 364, height: 400 })).toEqual({
       width: 100,
       height: 60
     })
@@ -366,19 +367,19 @@ describe('the card’s picture', () => {
 
   it('a DPR 2 picture is shown at half its device pixels, then fitted', () => {
     const result = { width: 800, height: 600, devicePixelRatio: 2 }
-    expect(fitPicture(result, { width: 366, height: 400 })).toEqual({ width: 366, height: 275 })
+    expect(fitPicture(result, { width: 364, height: 400 })).toEqual({ width: 364, height: 273 })
     expect(fitPicture(result, { width: 600, height: 400 })).toEqual({ width: 400, height: 300 })
   })
 
   it('a tall full-page picture is bounded by the height', () => {
     expect(
-      fitPicture({ width: 1200, height: 9000, devicePixelRatio: 1 }, { width: 366, height: 400 })
+      fitPicture({ width: 1200, height: 9000, devicePixelRatio: 1 }, { width: 364, height: 400 })
     ).toEqual({ width: 53, height: 400 })
   })
 
   it('a ratio of 0 or less is taken as 1', () => {
     expect(
-      fitPicture({ width: 100, height: 50, devicePixelRatio: 0 }, { width: 366, height: 400 })
+      fitPicture({ width: 100, height: 50, devicePixelRatio: 0 }, { width: 364, height: 400 })
     ).toEqual({ width: 100, height: 50 })
   })
 })
