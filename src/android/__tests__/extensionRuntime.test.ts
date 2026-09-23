@@ -2476,6 +2476,37 @@ describe('AndroidExtensionRuntime: chrome.action state is last-wins (what the ho
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.browsingData', () => {
+  it("routes to the browsing-data module for an extension with the permission and answers Chrome's error without it", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['browsingData', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    const settings = await call(h, 'bg1', 'browsingData', 'settings', [])
+    expect(settings.ok).toBe(true)
+    expect(settings.result).toMatchObject({
+      options: { since: 0, originTypes: { unprotectedWeb: true } },
+      dataRemovalPermitted: { cache: true, passwords: false }
+    })
+    // An `originTypes` without the open web clears nothing and succeeds (nothing of the
+    // browser's is touched; the harness has no engine clearing to reach).
+    const noop = await call(h, 'bg1', 'browsingData', 'remove', [
+      { originTypes: { unprotectedWeb: false } },
+      { cache: true }
+    ])
+    expect(noop).toMatchObject({ ok: true, result: null })
+    const bad = await call(h, 'bg1', 'browsingData', 'remove', [{}, { cache: 'yes' }])
+    expect(bad.ok).toBe(false)
+    expect(bad.error).toBe('Invalid data type set')
+
+    const without = harness()
+    await without.runtime.attach(record(without, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(without, 'bg1')
+    const refused = await call(without, 'bg1', 'browsingData', 'removeCache', [{}])
+    expect(refused.ok).toBe(false)
+    expect(refused.error).toBe("The extension does not have the 'browsingData' permission.")
+  })
+})
+
 describe('AndroidExtensionRuntime: chrome.system.storage', () => {
   it('answers Chrome\u2019s shape over no devices for an extension declaring the permission', async () => {
     const h = harness()
