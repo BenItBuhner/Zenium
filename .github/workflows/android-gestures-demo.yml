@@ -12,6 +12,8 @@ name: Android gestures demo
 # findings (PASS / FAIL lines) fail the run. Dispatch-only, like the other demos; the build, the
 # emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
+  push:
+    branches: [cursor/android-gestures-7a98]
   workflow_dispatch:
     inputs:
       api-level:
