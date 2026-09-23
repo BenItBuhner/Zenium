@@ -360,6 +360,81 @@ describe('the folder header menu (tabs-13)', () => {
     expect(h.browser.state.model.folders[empty.id]).toBeUndefined()
   })
 
+  it('Close Folder (N Tabs) keeps the folder SAVED with its pages, folded; its menu then leads with Open Folder (N Tabs) and offers nothing to unpack or close', () => {
+    const h = harness()
+    const space = h.win.activeSpaceId
+    const folder = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
+    const a = h.open('https://a.test/', { folderId: folder.id })
+    const b = h.open('https://b.test/', { folderId: folder.id })
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    const close = item(h.shown(), 'Close Folder (2 Tabs)')
+    expect(close.danger).toBeUndefined()
+    close.click!()
+    const saved = h.browser.state.model.folders[folder.id]
+    expect(saved).toBeDefined()
+    expect(saved.collapsed).toBe(true)
+    expect(saved.savedTabs?.map((p) => p.url)).toEqual(['https://a.test/', 'https://b.test/'])
+    expect(h.browser.tabs.tab(a)).toBeUndefined()
+    expect(h.browser.tabs.tab(b)).toBeUndefined()
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    const shown = labels(h.shown())
+    expect(shown[0]).toBe('Open Folder (2 Tabs)')
+    expect(shown).toEqual(
+      expect.arrayContaining(['Edit Folder…', 'Rename Folder…', 'Expand Folder', 'Delete Folder'])
+    )
+    expect(shown).not.toContain('Unpack Folder')
+    expect(shown.some((l) => l.startsWith('Close Folder'))).toBe(false)
+    // Open Folder brings the pages back as the folder's tabs, the folder unfolded and live again.
+    item(h.shown(), 'Open Folder (2 Tabs)').click!()
+    const opened = h.browser.state.model.folders[folder.id]
+    expect(opened.savedTabs ?? null).toBeNull()
+    expect(opened.collapsed).toBe(false)
+    const members = h.win
+      .activeSpace()
+      .tabIds.filter((id) => h.browser.tabs.tab(id)?.folderId === folder.id)
+      .map((id) => h.browser.tabs.tab(id)!.url)
+    expect(members).toEqual(['https://a.test/', 'https://b.test/'])
+  })
+
+  it('Delete Folder asks the chrome first when the folder holds tabs or saved pages, and deletes an empty one outright', () => {
+    const h = harness()
+    const space = h.win.activeSpaceId
+    const docs = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
+    const a = h.open('https://a.test/', { folderId: docs.id })
+    h.browser.menus.showFolderContextMenu(docs.id, h.win)
+    const del = item(h.shown(), 'Delete Folder')
+    expect(del.danger).toBe(true)
+    h.sent.length = 0
+    del.click!()
+    // The prompt is the chrome's (§9.23): nothing deleted yet, the window asked to show it.
+    expect(events(h, 'folder.confirmDelete')).toEqual([{ folderId: docs.id }])
+    expect(h.browser.state.model.folders[docs.id]).toBeDefined()
+    expect(h.browser.tabs.tab(a)).toBeDefined()
+    // The chrome's confirm: the folder and its tabs go.
+    h.browser.handleCommand(h.win, 'folder.delete', { folderId: docs.id, unpack: false })
+    expect(h.browser.state.model.folders[docs.id]).toBeUndefined()
+    expect(h.browser.tabs.tab(a)).toBeUndefined()
+
+    // A saved folder holds its pages: asked too.
+    const trip = h.browser.createFolder(space, 'Trip', '📁', h.win, { rename: false })
+    h.open('https://t.test/', { folderId: trip.id })
+    h.browser.handleCommand(h.win, 'folder.close', { folderId: trip.id })
+    expect(h.browser.state.model.folders[trip.id].savedTabs).toHaveLength(1)
+    h.sent.length = 0
+    h.browser.menus.showFolderContextMenu(trip.id, h.win)
+    item(h.shown(), 'Delete Folder').click!()
+    expect(events(h, 'folder.confirmDelete')).toEqual([{ folderId: trip.id }])
+    expect(h.browser.state.model.folders[trip.id]).toBeDefined()
+
+    // An empty folder: nothing to lose, gone without a prompt.
+    const empty = h.browser.createFolder(space, 'Empty', '📁', h.win, { rename: false })
+    h.sent.length = 0
+    h.browser.menus.showFolderContextMenu(empty.id, h.win)
+    item(h.shown(), 'Delete Folder').click!()
+    expect(events(h, 'folder.confirmDelete')).toEqual([])
+    expect(h.browser.state.model.folders[empty.id]).toBeUndefined()
+  })
+
   it('New Tab in Folder opens the tab through the same path as the bubble', () => {
     const h = harness()
     const folder = h.browser.createFolder(h.win.activeSpaceId, 'Docs', '📁', h.win, {
