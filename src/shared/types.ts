@@ -2050,6 +2050,13 @@ export type PinnedCloseBehavior =
 export type ThirdPartyPinnedBehavior = 'new-tab' | 'glance' | 'same-tab'
 export type ColorScheme = 'system' | 'light' | 'dark'
 export type SidebarSide = 'left' | 'right'
+/**
+ * Where the developer tools stand (design language v2 §9.29; Chrome's and Zen's dock side):
+ * docked in the frame's box under the page (`bottom`) or beside it (`right`, `left`), or in a
+ * window of their own (`undocked`). The menu offers bottom, right and undocked; `left` is the
+ * toolbox's own fourth button, kept when the user picks it there.
+ */
+export type DevtoolsDock = 'bottom' | 'right' | 'left' | 'undocked'
 export type NewTabPosition = 'end' | 'after-current'
 /** Screen edge the phone layout docks its address bar to. */
 export type PhoneBarPosition = 'top' | 'bottom'
@@ -2273,6 +2280,12 @@ export interface Settings {
   appIcon: AppIconId
   toolbarLayout: ToolbarLayout
   sidebarSide: SidebarSide
+  /**
+   * Desktop: where the developer tools open – the last dock chosen, from the app menu's rows or
+   * inside the toolbox itself (its dock buttons, read back). Absent in profiles from before it
+   * existed (read as `bottom`); inert where the host has no developer tools (Android).
+   */
+  devtoolsDock: DevtoolsDock
   sidebarWidth: number
   /** Expanded (titles shown) vs collapsed (favicons only). */
   sidebarExpanded: boolean
