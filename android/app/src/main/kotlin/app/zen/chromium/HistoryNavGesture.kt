@@ -53,6 +53,18 @@ class HistoryNavGesture(
             MotionEvent.ACTION_POINTER_DOWN -> classifier.pointerDown(event.eventTime)
             MotionEvent.ACTION_MOVE -> {
                 remember(event)
+                // A MOVE the input pipeline batched to the frame carries the finger's earlier
+                // positions as history: each is a sample of its own here, so the drag's motion
+                // is the finger's path and not one step per frame. The chrome's machine clamps
+                // every step to a third of the drag distance (Chrome's flick guard, which reads
+                // one step per event), and a long frame would otherwise hold a whole frame's
+                // travel to that one step: the bubble lagging a finger it is meant to ride.
+                // Only the current sample decides the event: a move never activates the drag or
+                // hands the finger back (both come between events), so its disposition is theirs.
+                for (i in 0 until event.historySize) {
+                    classifier.move(event.getHistoricalX(i), event.getHistoricalY(i), event.getHistoricalEventTime(i))
+                        .nav?.let(::send)
+                }
                 classifier.move(event.x, event.y, event.eventTime)
             }
             MotionEvent.ACTION_UP -> classifier.up(event.eventTime)

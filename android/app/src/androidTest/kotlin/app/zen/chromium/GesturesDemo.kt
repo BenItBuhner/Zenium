@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -10,6 +11,8 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -304,11 +307,14 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         val row = awaitTrue(6_000) { clipboardRowText().isNotEmpty() }
         val text = clipboardRowText()
         claim("the clipboard row is up under the field, titled for text ('${text.take(40)}')", row && text.contains("Text you copied"))
-        val pasteBox = domBox("document.querySelector('li.zen-suggestion[data-kind=\"clipboard\"] button[aria-label=\"Paste\"]')")
-        claim("the row carries Paste beside its Paste and search", pasteBox != null)
+        claim("the row carries Paste beside its Paste and search", domBox(PASTE_BUTTON_JS) != null)
+        // The keyboard rises after the open and carries the surface up with it (run 1's tap,
+        // aimed before it rose, landed on the keyboard's p): the button's place is read again
+        // once the keyboard is up and the surface has settled, right before the finger goes in.
+        finding(if (awaitIme(true)) "  (the keyboard is up)" else "  (the keyboard did not rise within 6 s)")
         settle()
         shot("09-pill-hold-clipboard-row")
-        val paste = pasteBox?.let { touchPoint(it) }
+        val paste = domBox(PASTE_BUTTON_JS)?.let { touchPoint(it) }
         if (paste == null) {
             touchFault("the clipboard row's Paste was not touchable")
             leaveOmnibox()
@@ -336,20 +342,36 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
      * Gesture navigation on: the system owns the edges (Chrome's `checkCanInterceptSwipe`), so the
      * same drag never brings the bubble up. The system's own back may take the edge and navigate:
      * noted, not a claim. 3-button mode comes back whatever happened.
+     *
+     * The overlay switch is a configuration change (the assets' paths) an activity cannot take in
+     * place: the system recreates it (run 1's `app.getState` timed out on the destroyed one's
+     * chrome). The resumed MainActivity is taken over as the harness's, its chrome awaited, and
+     * the tab given a back entry again before the drag – without one the drag is the page's from
+     * the down and its absent bubble would say nothing.
      */
     private fun gesturalEdgeUntouched() {
         section("GN-04: the edge under gesture navigation")
         try {
+            val launched = activity
             shellCommand("cmd overlay disable $THREE_BUTTON_OVERLAY")
             shellCommand("cmd overlay enable $GESTURAL_OVERLAY")
             SystemClock.sleep(3_000)
-            ensureForeground()
             val mode = navMode()
             finding("navigation mode switched: $mode")
             if (mode != GESTURAL) {
                 finding("(the emulator did not take gesture navigation; the scene is skipped)")
                 return
             }
+            if (!reacquireActivity(launched)) {
+                finding("(no MainActivity resumed with a chrome within 30 s of the switch; the scene is skipped)")
+                return
+            }
+            ensureForeground()
+            val target = if (activeUrl() == url("third")) url("second") else url("third")
+            coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"$target"}""")
+            awaitLoaded(target)
+            finding("history rebuilt: ${describeHistory()}")
+            claim("the tab has a back entry for the drag to take", activeCoreTab()?.optBoolean("canGoBack") == true)
             val before = activeUrl()
             val y = pageMidY()
             val f = Finger()
@@ -374,6 +396,8 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
             shellCommand("cmd overlay enable-exclusive --category $THREE_BUTTON_OVERLAY")
             SystemClock.sleep(3_000)
             finding("navigation mode restored: ${navMode()}")
+            // The restore recreates the activity once more; the harness's tail wants the live one.
+            if (!reacquireActivity(activity, 20_000)) finding("  (no MainActivity resumed with a chrome after the restore)")
         }
     }
 
@@ -488,6 +512,29 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         }
     }
 
+    /**
+     * Take over the MainActivity the system has resumed – the one it recreated for a configuration
+     * change, or [launched] itself when it kept it – and wait for its chrome to be up (`window.zen`
+     * bound). False when neither came within [timeoutMs].
+     */
+    private fun reacquireActivity(launched: Activity, timeoutMs: Long = 30_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val resumed = onMain {
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()
+            }
+            if (resumed != null) {
+                activity = resumed
+                if (chromeJs("typeof window.zen") == "\"object\"") {
+                    finding("  (the activity was ${if (resumed === launched) "kept" else "recreated"} by the switch; its chrome is up)")
+                    return true
+                }
+            }
+            SystemClock.sleep(250)
+        }
+        return false
+    }
+
     private fun seedClipboard() {
         instrumentation.runOnMainSync {
             val manager = app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -546,5 +593,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         const val GESTURAL = "gestural"
         const val THREE_BUTTON_OVERLAY = "com.android.internal.systemui.navbar.threebutton"
         const val GESTURAL_OVERLAY = "com.android.internal.systemui.navbar.gestural"
+        /** The clipboard row's Paste (the §6 fill control; the row's own tap is Paste and search). */
+        const val PASTE_BUTTON_JS = "document.querySelector('li.zen-suggestion[data-kind=\"clipboard\"] button[aria-label=\"Paste\"]')"
     }
 }
