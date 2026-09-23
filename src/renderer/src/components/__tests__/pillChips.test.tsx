@@ -33,7 +33,7 @@ const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
 const { TOOLBAR_STROKE } = await import('../v2/controls')
 const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
-const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { closeSiteInfo, openSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 const { DEFAULT_PAGE_CONTROLS } = await import('@shared/pageControls')
 
@@ -105,6 +105,8 @@ function state(
     // Tooltips quote the chord from the active key table (the default Chrome set here).
     shortcuts: defaultShortcuts('linux', 'chrome'),
     blockedPopups: {},
+    // No site has a stored permission decision: no blocked-permission icon in the pill.
+    permissionRules: [],
     // The host runs the translation engine (every desktop build); no tab has left idle.
     translate: { available: true, tabs: {} },
     securityPrompts: [],
@@ -191,7 +193,7 @@ function expectChip(el: HTMLElement, label: string): void {
 beforeEach(() => {
   uiStore.set({ siteInfoOpen: false, overlay: 'none', starDialog: null, blockedPopupsPanel: null })
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
-  siteInfoStore.set({ tabId: null, anchor: null })
+  siteInfoStore.set({ tabId: null, anchor: null, level: 'overview', openedBy: null })
   invoke.mockClear()
 })
 
@@ -258,13 +260,14 @@ describe('desktop pill (NavRow)', () => {
     const glyphs = Array.from(el.querySelectorAll<SVGElement>('[data-zen-nav-row] svg')).filter(
       (svg) => svg.classList.contains('h-4') || svg.parentElement?.matches('.zen-v2-blocked-chip')
     )
-    // Back, forward, reload, the shield, the blocked pop-ups chip, the key chip, the star and the
-    // menu (the puzzle piece, the downloads and media buttons wait on an extension, a download, a
-    // player).
+    // Back, forward, reload, the site-information slot's lock (§9.19's 16, as ruled for #406),
+    // the shield, the blocked pop-ups chip, the key chip, the star and the menu (the puzzle
+    // piece, the downloads and media buttons wait on an extension, a download, a player).
     expect(el.querySelector('.zen-v2-blocked-chip')).not.toBeNull()
     expect(el.querySelector('[aria-label="Pop-up blocked"]')).not.toBeNull()
     expect(el.querySelector('[data-af-chip]')).not.toBeNull()
-    expect(glyphs.length).toBe(8)
+    expect(el.querySelector('[data-site-chip] svg.lucide-lock.h-4')).not.toBeNull()
+    expect(glyphs.length).toBe(9)
     for (const svg of glyphs) expect(svg.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
     expect(TOOLBAR_STROKE).toBe(1.5)
   })
@@ -289,11 +292,21 @@ describe('desktop pill (NavRow)', () => {
     expect(chip('Reader View').hasAttribute('aria-haspopup')).toBe(false)
     expect(chip('Reader View').getAttribute('aria-pressed')).toBe('false')
 
-    act(() => uiStore.set({ siteInfoOpen: true }))
+    // The site information reads open on the chip that opened it (§9.20; `openedBy`), not on
+    // every chip that could have.
+    act(() => {
+      uiStore.set({ siteInfoOpen: true })
+      siteInfoStore.set({ tabId: 't1', openedBy: 'site' })
+    })
     expect(chip('Site information').getAttribute('aria-expanded')).toBe('true')
     expect(chip('Boost this site').getAttribute('aria-expanded')).toBe('false')
+    act(() => siteInfoStore.set({ openedBy: null }))
+    expect(chip('Site information').getAttribute('aria-expanded')).toBe('false')
 
-    act(() => uiStore.set({ siteInfoOpen: false, overlay: 'boosts' }))
+    act(() => {
+      uiStore.set({ siteInfoOpen: false, overlay: 'boosts' })
+      siteInfoStore.set({ tabId: null })
+    })
     expect(chip('Site information').getAttribute('aria-expanded')).toBe('false')
     expect(chip('Boost this site').getAttribute('aria-expanded')).toBe('true')
 
@@ -381,6 +394,354 @@ describe('desktop pill (NavRow)', () => {
     expect(one.getAttribute('aria-expanded')).toBe('true')
     act(() => uiStore.set({ blockedPopupsPanel: null }))
     expect(one.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  // omnibox-38 (design language v2 §9.29): the pill's word on the page's live capture and on
+  // the permissions the user blocked on the site is the site-information slot's glyph – one
+  // state at a time, never a second chip – leading to the site information's Permissions level.
+  describe('the site-information slot’s state glyph (omnibox-38)', () => {
+    const using = (capture: Tab['capture']): Tab => tab(page.url, { readerable: true, capture })
+    /** The state with the site's stored decisions. */
+    const withRules = (t: Tab, rules: UIState['permissionRules']): UIState => ({
+      ...state(t),
+      permissionRules: rules
+    })
+    const deny = (
+      permission: string,
+      origin = 'https://example.com'
+    ): UIState['permissionRules'][0] => ({
+      origin,
+      permission,
+      decision: 'deny'
+    })
+    /** The state with the blocking engine on: the shield is in the pill beside the slot. */
+    const withShield = (s: UIState): UIState =>
+      ({
+        ...s,
+        capabilities: { ...s.capabilities, requestBlocking: true },
+        settings: { ...s.settings, blocking: { level: 'standard' } },
+        blocking: { enabled: true, siteExceptions: [] }
+      }) as unknown as UIState
+    const slotOf = (el: HTMLElement): HTMLElement =>
+      el.querySelector<HTMLElement>('[data-site-chip]')!
+    const chipLabels = (el: HTMLElement): (string | null)[] =>
+      labels(Array.from(el.querySelectorAll<HTMLElement>('[data-pill-chip]')))
+    /** The token the slot's ink comes from: the class the chip carries, once, with no opacity over it. */
+    const inkOf = (chip: HTMLElement): string[] =>
+      chip.className.split(/\s+/).filter((c) => /^text-\[var\(--v2-/.test(c))
+    /** A rest opacity on the chip (a `focus-visible:` lift is the chassis's and no rest state). */
+    const restOpacity = (chip: HTMLElement): string[] =>
+      chip.className.split(/\s+/).filter((c) => /^opacity-/.test(c))
+
+    it('swaps the glyph for the camera / microphone / screen the page is using, at full ink, named for what it holds', () => {
+      const call = using({ camera: true, microphone: true, display: false })
+      const el = render(<NavRow state={state(call)} tab={call} compact={false} />)
+      const slot = slotOf(el)
+      expectChip(slot, 'Site information · This page is using your camera and microphone')
+      expect(slot.getAttribute('data-slot-state')).toBe('capture')
+      expect(slot.getAttribute('data-slot-glyph')).toBe('camera')
+      expect(slot.querySelector('svg.lucide-camera')).not.toBeNull()
+      expect(slot.querySelector('svg.lucide-lock')).toBeNull()
+      // The chrome tooltip (a11y-26) carries the state's name; never a native title.
+      expect(slot.getAttribute('data-tooltip')).toBe(
+        'This page is using your camera and microphone'
+      )
+      expect(slot.hasAttribute('title')).toBe(false)
+      expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(slot.getAttribute('aria-expanded')).toBe('false')
+      // §9.19's 16 glyph in the 24 box, at the row's stroke.
+      expect(slot.classList.contains('h-6')).toBe(true)
+      expect(slot.querySelector('svg')?.classList.contains('h-4')).toBe(true)
+      expect(slot.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
+      // A live state is full ink, and no coloured mark (the tab row's dot says recording).
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+      expect(restOpacity(slot)).toEqual([])
+      expect(slot.className).not.toContain('--v2-danger')
+
+      const mic = using({ camera: false, microphone: true, display: false })
+      act(() => root!.render(<NavRow state={state(mic)} tab={mic} compact={false} />))
+      expect(slot.getAttribute('data-slot-glyph')).toBe('microphone')
+      expect(slot.getAttribute('aria-label')).toBe(
+        'Site information · This page is using your microphone'
+      )
+      expect(slot.querySelector('svg.lucide-mic')).not.toBeNull()
+
+      const share = using({ camera: false, microphone: false, display: true })
+      act(() => root!.render(<NavRow state={state(share)} tab={share} compact={false} />))
+      expect(slot.getAttribute('data-slot-glyph')).toBe('display')
+      expect(slot.getAttribute('aria-label')).toBe(
+        'Site information · This page is sharing your screen'
+      )
+      expect(slot.querySelector('svg.lucide-screen-share')).not.toBeNull()
+
+      // Nothing captured: the connection's glyph, the plain name, the tooltip on the connection.
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      expect(slot.hasAttribute('data-slot-glyph')).toBe(false)
+      expect(slot.getAttribute('aria-label')).toBe('Site information')
+      expect(slot.getAttribute('data-tooltip')).toBe('Connection is secure · Site information')
+      expect(slot.querySelector('svg.lucide-lock')).not.toBeNull()
+    })
+
+    it('draws the first blocked permission’s crossed-out glyph at rest, at the slot’s 69 % ink, the name listing every one', () => {
+      const rules = [
+        deny('notifications'),
+        deny('camera'),
+        deny('geolocation', 'https://other.example'),
+        { origin: 'https://example.com', permission: 'microphone', decision: 'allow' as const }
+      ]
+      const el = render(<NavRow state={withRules(page, rules)} tab={page} compact={false} />)
+      const slot = slotOf(el)
+      // The pill's order, whatever the rules': the camera's glyph leads; an allow and another
+      // site's block are no state.
+      expectChip(slot, 'Site information · Camera and notifications blocked')
+      expect(slot.getAttribute('data-slot-state')).toBe('blocked')
+      expect(slot.getAttribute('data-slot-glyph')).toBe('camera-off')
+      expect(slot.querySelector('svg.lucide-camera-off')).not.toBeNull()
+      expect(slot.getAttribute('data-tooltip')).toBe('Camera and notifications blocked')
+      expect(slot.hasAttribute('title')).toBe(false)
+      expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(slot.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
+      // A standing decision rests at the deemphasised ink, the token's own alpha once.
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      expect(restOpacity(slot)).toEqual([])
+      // No second chip for it anywhere in the pill.
+      expect(el.querySelectorAll('[data-blocked-permission], [data-capture-chip]').length).toBe(0)
+      // The block lifted: the glyph and the name follow.
+      act(() =>
+        root!.render(
+          <NavRow state={withRules(page, [deny('notifications')])} tab={page} compact={false} />
+        )
+      )
+      expect(slot.getAttribute('data-slot-glyph')).toBe('notifications-off')
+      expect(slot.getAttribute('aria-label')).toBe('Site information · Notifications blocked')
+      expect(slot.querySelector('svg.lucide-bell-off')).not.toBeNull()
+      act(() => root!.render(<NavRow state={withRules(page, [])} tab={page} compact={false} />))
+      expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      expect(slot.getAttribute('aria-label')).toBe('Site information')
+    })
+
+    it('shows one state at a time: a certificate error over a capture, a capture over a block', () => {
+      const call = using({ camera: true, microphone: false, display: false })
+      const el = render(
+        <NavRow state={withRules(call, [deny('microphone')])} tab={call} compact={false} />
+      )
+      const slot = slotOf(el)
+      // Live beats standing: the camera, not the crossed-out microphone.
+      expect(slot.getAttribute('data-slot-glyph')).toBe('camera')
+      expect(slot.getAttribute('aria-label')).toBe(
+        'Site information · This page is using your camera'
+      )
+      // The identity in question beats both: the danger glyph in the danger ink, the state's
+      // name gone with the state.
+      const broken = tab(page.url, {
+        readerable: true,
+        capture: { camera: true, microphone: false, display: false },
+        certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+      })
+      act(() =>
+        root!.render(
+          <NavRow state={withRules(broken, [deny('microphone')])} tab={broken} compact={false} />
+        )
+      )
+      expect(slot.getAttribute('data-indicator')).toBe('certificate-error')
+      expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      expect(slot.getAttribute('aria-label')).toBe('Site information')
+      expect(slot.querySelector('svg.lucide-triangle-alert')).not.toBeNull()
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+      expect(restOpacity(slot)).toEqual([])
+      // The "Not secure" label is the label's own and stays beside it.
+      expect(el.querySelector('.zen-pill-label')?.textContent).toBe('Not secure')
+    })
+
+    // §9.19 / §9.29 as ruled for #406: the slot has one 16 glyph on the desktop – the lock, the
+    // mask – and a glyph that grew when a state came on would move the address by the difference
+    // at every capture start (the 12 was the shield's one-off). The box is the slot's 24 either
+    // way; the glyph inside it is the same size at rest and in a state.
+    const box = (el: HTMLElement): string[] =>
+      el.className.split(/\s+/).filter((c) => /^(-ml-|h-|w-)/.test(c))
+    const glyphOf = (el: HTMLElement): SVGElement => el.querySelector('svg')!
+    const glyphSize = (svg: SVGElement): string[] =>
+      Array.from(svg.classList).filter((c) => /^(h-|w-)/.test(c))
+    const expectSlotGlyph = (svg: SVGElement): void => {
+      expect(glyphSize(svg).sort()).toEqual(['h-4', 'w-4'])
+      expect(svg.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
+    }
+
+    it('draws the connection’s resting glyph at the slot’s one size – 16 in the 24 box at the row stroke – so nothing moves when a state comes on', () => {
+      const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+      const slot = slotOf(el)
+      // At rest: the lock, 16 at the row's stroke, in the 24 box pulled 4 into the pill's pad.
+      expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      expect(glyphOf(slot).classList.contains('lucide-lock')).toBe(true)
+      expectSlotGlyph(glyphOf(slot))
+      const atRest = box(slot)
+      expect(atRest.sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      // A capture comes on: the camera in the same box, the same size – the address's room is
+      // the box's, and the box did not change.
+      const call = using({ camera: true, microphone: false, display: false })
+      act(() => root!.render(<NavRow state={state(call)} tab={call} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-camera')).toBe(true)
+      expectSlotGlyph(glyphOf(slot))
+      expect(box(slot).sort()).toEqual(atRest)
+      // A block at rest: the same again.
+      act(() =>
+        root!.render(
+          <NavRow state={withRules(page, [deny('camera')])} tab={page} compact={false} />
+        )
+      )
+      expect(glyphOf(slot).classList.contains('lucide-camera-off')).toBe(true)
+      expectSlotGlyph(glyphOf(slot))
+      expect(box(slot).sort()).toEqual(atRest)
+      // The other resting glyphs take the one size too: http's info circle, and the certificate
+      // error's triangle – whose danger ink is the chip's and stays as it was.
+      const http = tab('http://example.com/some/path', { readerable: true })
+      act(() => root!.render(<NavRow state={state(http)} tab={http} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-info')).toBe(true)
+      expectSlotGlyph(glyphOf(slot))
+      expect(box(slot).sort()).toEqual(atRest)
+      const broken = tab(page.url, {
+        readerable: true,
+        certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+      })
+      act(() => root!.render(<NavRow state={state(broken)} tab={broken} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-triangle-alert')).toBe(true)
+      expectSlotGlyph(glyphOf(slot))
+      expect(box(slot).sort()).toEqual(atRest)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+      expect(restOpacity(slot)).toEqual([])
+      // No glyph in the slot is ever the shield's old 12 or a 14.
+      expect(el.querySelector('[data-site-chip] svg.h-3, [data-site-chip] svg.h-3\\.5')).toBeNull()
+    })
+
+    it('draws a private tab’s mask in the slot’s box at the same size and stroke, in the slot’s rest ink, the token once', () => {
+      const secret = tab(page.url, { readerable: true, containerId: PRIVATE_CONTAINER_ID })
+      const el = render(<NavRow state={state(secret)} tab={secret} compact={false} />)
+      // The mask stands where the site chip stands, in its 24 box (§9.19's leading slot); the
+      // desktop draws no button there on a private tab, as before.
+      expect(el.querySelector('[data-site-chip]')).toBeNull()
+      const slot = el.querySelector<HTMLElement>('[data-private-slot]')!
+      expect(slot).not.toBeNull()
+      expect(slot.tagName).toBe('SPAN')
+      expect(slot.getAttribute('aria-hidden')).toBe('true')
+      expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      const mask = glyphOf(slot)
+      expect(mask.classList.contains('lucide-venetian-mask')).toBe(true)
+      expect(mask.hasAttribute('data-private-mark')).toBe(true)
+      expectSlotGlyph(mask)
+      // The window's deemphasised token, once: no opacity stacked on it, on the box or the glyph.
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      expect(restOpacity(slot)).toEqual([])
+      expect(Array.from(mask.classList).filter((c) => /^opacity-/.test(c))).toEqual([])
+      // The regular tab's slot in the same box: a private tab's address has the room any tab's has.
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      expect(box(slotOf(el)).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+    })
+
+    it('adds nothing to the pill: the same chips, in the same order, with a state as at rest', () => {
+      const rest = render(<NavRow state={withShield(state(page))} tab={page} compact={false} />)
+      const atRest = chipLabels(rest)
+      expect(atRest[0]).toBe('Site information')
+      const call = using({ camera: true, microphone: true, display: false })
+      act(() =>
+        root!.render(
+          <NavRow
+            state={withShield(withRules(call, [deny('geolocation')]))}
+            tab={call}
+            compact={false}
+          />
+        )
+      )
+      const withState = chipLabels(rest)
+      expect(withState.length).toBe(atRest.length)
+      expect(withState.slice(1)).toEqual(atRest.slice(1))
+      expect(withState[0]).toBe('Site information · This page is using your camera and microphone')
+      // The slot keeps its 24 box (§9.19): the address's room at the 240 sidebar is what it was.
+      const slot = slotOf(rest)
+      expect(slot.classList.contains('w-6')).toBe(true)
+      expect(slot.classList.contains('-ml-1')).toBe(true)
+      expect(rest.querySelectorAll('.zen-v2-blocked-chip').length).toBe(1)
+    })
+
+    it('opens the site information on its Permissions level from a state, the overview from the connection, and hands the keyboard back', async () => {
+      const call = using({ camera: true, microphone: false, display: false })
+      const el = render(
+        <NavRow state={withRules(call, [deny('microphone')])} tab={call} compact={false} />
+      )
+      const slot = slotOf(el)
+      await openFromChip(slot)
+      expect(siteInfoStore.get().tabId).toBe('t1')
+      expect(siteInfoStore.get().level).toBe('permissions')
+      expect(siteInfoStore.get().openedBy).toBe('site')
+      expect(uiStore.get().urlbar.open).toBe(false)
+      expect(slot.getAttribute('aria-expanded')).toBe('true')
+      await dismiss()
+      expect(document.activeElement).toBe(slot)
+      expect(siteInfoStore.get().level).toBe('overview')
+      expect(siteInfoStore.get().openedBy).toBeNull()
+      expect(slot.getAttribute('aria-expanded')).toBe('false')
+
+      // A block alone leads to Permissions as well.
+      act(() =>
+        root!.render(
+          <NavRow state={withRules(page, [deny('microphone')])} tab={page} compact={false} />
+        )
+      )
+      await openFromChip(slot)
+      expect(siteInfoStore.get().level).toBe('permissions')
+      await dismiss()
+      expect(document.activeElement).toBe(slot)
+
+      // The connection's glyph still opens the overview.
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      expect(slot.getAttribute('aria-label')).toBe('Site information')
+      await openFromChip(slot)
+      expect(siteInfoStore.get().level).toBe('overview')
+      await dismiss()
+    })
+
+    it('has one pressed anchor: the chip that opened the popover, and no other', async () => {
+      const el = render(<NavRow state={withShield(state(page))} tab={page} compact={false} />)
+      const slot = slotOf(el)
+      const shield = el.querySelector<HTMLElement>('.zen-v2-blocked-chip')!
+      expect(shield.getAttribute('aria-expanded')).toBe('false')
+      expect(slot.getAttribute('aria-expanded')).toBe('false')
+      // The pressed fill is the window control's (`--v2-control-fill-hover` at full ink), on
+      // the opener alone – the class itself, not its `hover:` variant, which every chip carries.
+      const hasPressedFill = (chip: HTMLElement): boolean =>
+        chip.className.split(/\s+/).includes('bg-[var(--v2-control-fill-hover)]')
+
+      await openFromChip(slot)
+      expect(siteInfoStore.get().openedBy).toBe('site')
+      expect(slot.getAttribute('aria-expanded')).toBe('true')
+      expect(shield.getAttribute('aria-expanded')).toBe('false')
+      expect(hasPressedFill(slot)).toBe(true)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text)]'])
+      expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(1)
+      await dismiss()
+      expect(hasPressedFill(slot)).toBe(false)
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(0)
+
+      await openFromChip(shield)
+      expect(siteInfoStore.get().openedBy).toBe('shield')
+      expect(shield.getAttribute('aria-expanded')).toBe('true')
+      expect(slot.getAttribute('aria-expanded')).toBe('false')
+      expect(hasPressedFill(slot)).toBe(false)
+      expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(1)
+      await dismiss()
+      expect(document.activeElement).toBe(shield)
+
+      // Opened with no chip (the app menu's Page info): nothing in the pill reads pressed.
+      await act(async () => {
+        await openSiteInfo(page)
+        await vi.waitFor(() => expect(uiStore.get().siteInfoOpen).toBe(true))
+      })
+      expect(siteInfoStore.get().openedBy).toBeNull()
+      expect(el.querySelectorAll('[aria-expanded="true"]').length).toBe(0)
+      await dismiss()
+    })
   })
 
   it('marks Reader View pressed while the tab is in it', () => {
@@ -700,7 +1061,10 @@ describe('desktop pill on a tablet’s private tab', () => {
   it('puts the mask in the leading slot in place of the site icon', () => {
     const el = render(<NavRow state={tablet(privatePage)} tab={privatePage} compact={false} />)
     const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
-    expect(pill.querySelector('svg.lucide-venetian-mask.order-first')).not.toBeNull()
+    // The mask in the slot's 24 box at the pill's start (§9.19), the site icon's place.
+    expect(
+      pill.querySelector('[data-private-slot].order-first > svg.lucide-venetian-mask')
+    ).not.toBeNull()
     expect(pill.querySelector('[aria-label="Site information"]')).toBeNull()
     expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
   })

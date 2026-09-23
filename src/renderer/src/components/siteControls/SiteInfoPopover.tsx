@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ExternalLink } from 'lucide-react'
 import type { DeviceGrant, DeviceKind, Rect, Tab, UIState } from '@shared/types'
 import {
   cookieBytes,
@@ -15,8 +16,10 @@ import { useEscape } from '@renderer/hooks/useEscape'
 import { DEVICE_KIND_WORDS, grantDetail, grantsOf, grantsRowLabel } from '@renderer/lib/devices'
 import { manageExtension } from '@renderer/lib/extensions/manage'
 import { extensionPageChrome, extensionPageLine } from '@renderer/lib/extensions/pages'
+import { openSettings } from '@renderer/lib/pages'
 import { focusableIn } from '@renderer/lib/popover'
 import { POPOVER_WIDTH } from '@renderer/lib/portals'
+import { permissionSiteOf } from '@renderer/lib/siteChips'
 import {
   SITE_DATA_TEXT,
   applySiteDataChoice,
@@ -44,9 +47,10 @@ import {
 } from '@renderer/lib/siteInfoCopy'
 import { siteChip, siteChipRects } from '@renderer/lib/surfaces'
 import { pushToast } from '@renderer/lib/ui'
+import { cn } from '@renderer/lib/utils'
 import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
 import { Favicon } from '../sidebar/Favicon'
-import { V2Button } from '../v2/controls'
+import { V2_GLYPH, V2Button } from '../v2/controls'
 import {
   BarHeader,
   BusyButton,
@@ -65,13 +69,16 @@ import {
 /**
  * Site information on a mouse (design language v1 §9 target, on the v2 chassis): a 400 px popover
  * under the site icon in the address pill (v2 §9.20) opening on a title block (§9.23) – the
- * favicon, the host, one line on the connection – then four rows: Connection, Cookies and site
- * data, Permissions (each a level away, pushing in on the spring), Reset permissions; a Trackers
- * blocked row where the engine counts them; and the panel form of footer (§9.20) – a hairline in
- * the gutter under the rows, then Clear site data and Reload at 12. The
- * detail levels answer the same commands the Android sheet does (`site.*`, `permissions.*`), so
- * the two surfaces show one site the same way. Everything it shows comes from one
- * `siteInfo.snapshot` reading, taken again after every action.
+ * favicon, the host, one line on the connection – then the rows: Connection, Cookies and site
+ * data, Permissions (each a level away, pushing in on the spring), a Trackers blocked row where
+ * the engine counts them, Reset permissions, and Site settings (Chrome's last row of page info,
+ * omnibox-28: Settings › Privacy and security as a tab, on the site's landing); and the panel
+ * form of footer (§9.20) – a hairline in the gutter under the rows, then Clear site data and
+ * Reload at 12. The detail levels answer the same commands the Android sheet does (`site.*`,
+ * `permissions.*`), so the two surfaces show one site the same way. Everything it shows comes
+ * from one `siteInfo.snapshot` reading, taken again after every action. The pill's site-
+ * information slot opens it on the Permissions level while it shows a live capture or a blocked
+ * permission (`level`, omnibox-38).
  */
 export function SiteInfoPopover({
   tab,
@@ -79,6 +86,7 @@ export function SiteInfoPopover({
   anchor,
   bar,
   closing,
+  level: initialLevel = 'overview',
   onDismiss,
   onClosed
 }: {
@@ -88,6 +96,12 @@ export function SiteInfoPopover({
   bar: Rect | null
   /** The store let go of the site (another surface took over, the tab closed): leave now. */
   closing: boolean
+  /**
+   * The level it opens on: the overview, or Permissions from the pill's site-information slot
+   * while it carries a capture or a block (omnibox-38), with the overview a Back away as from
+   * any level.
+   */
+  level?: LevelId
   /** Escape, a press outside, a window resize: the owner starts the exit. */
   onDismiss: () => void
   onClosed: () => void
@@ -98,7 +112,7 @@ export function SiteInfoPopover({
     direction: LevelDirection
     /** What opened the confirm level standing (`ConfirmOpener`); null on every other level. */
     opener: ConfirmOpener | null
-  }>({ level: 'overview', direction: 'none', opener: null })
+  }>({ level: initialLevel, direction: 'none', opener: null })
   const [busy, setBusy] = useState(false)
   const site = describeSite(tab.url)
   const titleId = `site-info-${tab.id}`
@@ -184,6 +198,15 @@ export function SiteInfoPopover({
   const reload = (): void => {
     run('tab.reload', { tabId: tab.id })
     onDismiss()
+  }
+  // Chrome's last row of page info (omnibox-28): Settings › Privacy and security as a tab, on
+  // the `?site=<origin>` landing that opens with the site's own group on screen (#356; the phone
+  // sheet's "Site settings" row and the pill's "Requests blocked" row lead the same way). The
+  // popover leaves as the tab opens: a settings tab under an open popover would say two things.
+  const openSiteSettings = (): void => {
+    const origin = permissionSiteOf(tab.url)
+    onDismiss()
+    openSettings('privacy', origin ? { site: origin } : undefined)
   }
 
   const cookies = info?.cookies.items ?? []
@@ -324,6 +347,21 @@ export function SiteInfoPopover({
                     disabled={busy || (permissions.length === 0 && grants.length === 0)}
                     aria-label="Reset permissions of this site"
                   />
+                  {site.web && (
+                    // The row leaves the popover for a tab, so it trails the open glyph rather
+                    // than a level's chevron (§9.20), in the chevron's ink.
+                    <ListRow
+                      label="Site settings"
+                      trailing={
+                        <ExternalLink
+                          className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
+                          aria-hidden
+                        />
+                      }
+                      onClick={openSiteSettings}
+                      data-site-settings=""
+                    />
+                  )}
                 </Body>
               )}
               <Footer
@@ -1009,16 +1047,21 @@ function formatDate(ms: number): string {
 export function SiteInfoDesktopLayer({ state }: { state: UIState }): JSX.Element | null {
   const tabId = siteInfoStore.use((s) => s.tabId)
   const anchor = siteInfoStore.use((s) => s.anchor)
+  const level = siteInfoStore.use((s) => s.level)
   const tab = tabId ? state.tabs[tabId] : undefined
   // The popover's subject: the store's tab once it names one, followed while it changes, and kept
   // as last seen while the popover leaves – after the user dismissed it, the tab closed or the
-  // store moved on. Settled during render, so the exit never waits on an effect.
-  const [held, setHeld] = useState<{ tab: Tab; anchor: Rect | null; dismissed: boolean } | null>(
-    null
-  )
+  // store moved on. Settled during render, so the exit never waits on an effect. The level it
+  // opened on is held with them: the store's word is for the mount, and it is read there once.
+  const [held, setHeld] = useState<{
+    tab: Tab
+    anchor: Rect | null
+    level: LevelId
+    dismissed: boolean
+  } | null>(null)
   let shown = held
   if (tab && held === null) {
-    shown = { tab, anchor, dismissed: false }
+    shown = { tab, anchor, level, dismissed: false }
     setHeld(shown)
   } else if (tab && held && held.tab.id === tab.id && held.tab !== tab) {
     shown = { ...held, tab }
@@ -1043,6 +1086,7 @@ export function SiteInfoDesktopLayer({ state }: { state: UIState }): JSX.Element
       anchor={shown.anchor}
       bar={bar}
       closing={closing}
+      level={shown.level}
       onDismiss={onDismiss}
       onClosed={onClosed}
     />

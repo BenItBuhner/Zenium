@@ -1,6 +1,13 @@
 import { useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { PhoneBarPosition } from '@shared/types'
-import { beginDock, catchDock, dockAlong, dragDock, releaseDock } from '@renderer/lib/gestures/dock'
+import {
+  beginDock,
+  catchDock,
+  dockAlong,
+  dockStore,
+  dragDock,
+  releaseDock
+} from '@renderer/lib/gestures/dock'
 import { capturePointer } from '@renderer/lib/gestures/pointerCapture'
 import {
   beginOverviewDrag,
@@ -48,7 +55,7 @@ type Mode = 'pending' | 'tabs' | 'overview' | 'dock' | 'none'
  * the page consumes drops every gesture derived from it, fling included, and the moves of a
  * surface we drag ourselves are ours in full. Returns the function that hands them back.
  */
-function claimTouchMoves(target: HTMLElement): () => void {
+export function claimTouchMoves(target: HTMLElement): () => void {
   const consume = (e: TouchEvent): void => {
     if (e.cancelable) e.preventDefault()
   }
@@ -66,6 +73,8 @@ interface Touch {
   mode: Mode
   /** The touch grabbed a transition that was still moving: never a tap. */
   caught: boolean
+  /** This touch's own long-press picked the pill up (not a catch of one already flying). */
+  pickedUp: boolean
   /** Track position the carried pill had when this touch took it over. */
   dockStart: number
   tracker: VelocityTracker
@@ -79,6 +88,13 @@ export interface PillGestureOptions {
   edge: PhoneBarPosition
   /** A plain tap (the click event tells which part of the pill was tapped). */
   onTap: (e: ReactPointerEvent<HTMLElement> | React.MouseEvent<HTMLElement>) => void
+  /**
+   * A hold that lifted in place (GN-10): the finger picked the pill up and let go without
+   * carrying it past the slop, and the pill has landed back on its edge. Chrome's long-press on
+   * the address bar offers the clipboard; here the address surface opens, its clipboard row
+   * carrying Paste and Paste and go (§6 rows). Not called for a hold that carried the bar.
+   */
+  onHold?: () => void
 }
 
 export interface PillGestureHandlers {
@@ -96,15 +112,35 @@ export interface PillGestureHandlers {
  * axis decides: sideways drags the tab track (finger left → next tab), towards the middle of
  * the screen pulls the tab overview in (or, when it is open, away from the middle pushes it
  * out). A touch that holds still for a long-press instead picks the pill up, to carry the bar
- * to the other edge of the screen. A touch that lands while a transition is still settling
+ * to the other edge of the screen; a pick-up let go in place puts the pill back and then opens
+ * the address surface (`onHold`). A touch that lands while a transition is still settling
  * catches it – the motion stops under the finger and continues from there when it lifts, so
  * every animation is interruptible.
  */
-export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestureHandlers {
+export function usePillGestures({ edge, onTap, onHold }: PillGestureOptions): PillGestureHandlers {
   const touch = useRef<Touch | null>(null)
   const swallowClick = useRef(false)
   // Sign of a vertical delta that heads towards the middle of the screen.
   const inward = edge === 'bottom' ? -1 : 1
+
+  /** Once the put-back pill has landed and nothing else has taken it, the hold's result. */
+  const holdAfterLanding = (): void => {
+    if (!onHold) return
+    const unsubscribe = dockStore.subscribe(() => {
+      const { phase } = dockStore.get()
+      // A finger that caught the pill on its way down owns it now, wherever it carries it: the
+      // hold is over, and the pill's landing – at this edge or the one the finger took it to –
+      // opens nothing.
+      if (phase === 'lifted') {
+        unsubscribe()
+        return
+      }
+      if (phase !== 'idle') return
+      unsubscribe()
+      // A finger down on the landing pill that did not catch it still owns the moment.
+      if (!touch.current) onHold()
+    })
+  }
 
   const clearLongPress = (t: Touch): void => {
     if (t.longPress) clearTimeout(t.longPress)
@@ -150,6 +186,7 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
       y: e.clientY,
       mode,
       caught,
+      pickedUp: false,
       dockStart,
       tracker,
       longPress: null,
@@ -169,6 +206,7 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
         if (!current || !beginDock(current, slot, edge)) return
         t.mode = 'dock'
         t.caught = true
+        t.pickedUp = true
         t.x0 = t.x
         t.y0 = t.y
         t.dockStart = 0
@@ -230,7 +268,14 @@ export function usePillGestures({ edge, onTap }: PillGestureOptions): PillGestur
     const { vx, vy } = cancelled ? { vx: 0, vy: 0 } : t.tracker.velocity(e.timeStamp)
     if (t.mode === 'tabs') releaseTabSwitch(-vx)
     else if (t.mode === 'overview') releaseOverview(vy * inward)
-    else if (t.mode === 'dock') releaseDock(vy)
+    else if (t.mode === 'dock') {
+      const from = dockStore.get().from
+      releaseDock(vy)
+      // Picked up and let go where it was, the pill going back to its own edge: a hold.
+      const inPlace = Math.hypot(e.clientX - t.x0, e.clientY - t.y0) < SLOP
+      const putBack = dockStore.get().phase === 'settling' && dockStore.get().target === from
+      if (t.pickedUp && !cancelled && inPlace && putBack) holdAfterLanding()
+    }
   }
 
   return {

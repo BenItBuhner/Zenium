@@ -85,8 +85,10 @@ import { openedWindowKind, planWindowOpen } from './windowOpen'
 import { parseDropKey } from './tabDrag'
 import {
   reportIsLive,
+  sameCapture,
   sanitiseCaptureReport,
   tabAlertFor,
+  tabCaptureFor,
   type CaptureStateReport
 } from '../shared/captureState'
 
@@ -1142,7 +1144,9 @@ export class TabManager {
   /**
    * A frame's `capture-state` report (tabs-43): kept by the frame's id while something is live,
    * dropped when nothing is; the tab's `alert` is folded from all of them with Chrome's priority
-   * (recording > capturing > picture-in-picture) and the row repaints when it changes.
+   * (recording > capturing > picture-in-picture) and the row repaints when it changes. The
+   * kinds behind it (`capture`: camera, microphone, display; omnibox-38) are folded from the same
+   * reports for the URL pill's site-information slot, whose glyph says which.
    */
   onCaptureState(tabId: string, raw: unknown): void {
     const tab = this.tab(tabId)
@@ -1171,9 +1175,12 @@ export class TabManager {
   private refreshAlert(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    const alert = tabAlertFor(this.captureReports.get(tabId)?.values() ?? [])
-    if ((tab.alert ?? null) === alert) return
+    const reports = [...(this.captureReports.get(tabId)?.values() ?? [])]
+    const alert = tabAlertFor(reports)
+    const capture = tabCaptureFor(reports)
+    if ((tab.alert ?? null) === alert && sameCapture(tab.capture, capture)) return
     tab.alert = alert
+    tab.capture = capture
     this.browser.state.commitVolatile()
   }
 
