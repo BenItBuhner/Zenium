@@ -306,6 +306,11 @@ export class Actions {
       case 'downloads.open':
         this.browser.pages.open('downloads', undefined, win)
         return
+      // Chrome's Delete browsing data: the dialog is the chrome's (`ClearBrowsingDataDialog`, the
+      // History page's and Settings › Privacy's entry too); the core only asks for it.
+      case 'privacy.clearBrowsingData':
+        this.browser.emit('clearBrowsingData.open', undefined, win)
+        return
       case 'settings.open':
         this.browser.pages.open('settings', undefined, win)
         return
@@ -351,6 +356,14 @@ export class Actions {
         return
       case 'window.minimize':
         win.host.minimize()
+        return
+      // Chrome's Name window…: the prompt is the chrome's (`windowName/NameWindowDialog`); the
+      // core asks for it and takes the answer as `window.setName`. The desktop's alone: a phone
+      // or tablet window has no title bar and no window switcher to show a name, so a chord
+      // bound to it there (the row is listed on the desktop layout only) does nothing.
+      case 'window.name':
+        if (win.formFactor !== 'desktop') return
+        this.browser.emit('windowName.open', undefined, win)
         return
       case 'menu.app':
         // The renderer opens the menu from its button so Escape leaves the keyboard there.

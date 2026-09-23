@@ -207,6 +207,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'webapp.install',
   'translate.selection',
   'import.open',
+  'clearBrowsingData.open',
+  'windowName.open',
   'capture.start'
 ])
 
@@ -715,7 +717,8 @@ export class Browser {
       localSpace,
       cascadeFrom: opts.bounds ? undefined : from,
       opener: from,
-      app
+      app,
+      name: opts.persisted?.name ?? null
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -1573,6 +1576,18 @@ export class Browser {
    */
   openImportDialog(win: ZenWindow): void {
     this.emit('import.open', undefined, win)
+  }
+
+  /**
+   * The macOS menu bar's "Warn Before Quitting (⌘Q)" (Chrome's checkbox): the one setting behind
+   * Zenium's quit warning – `requestQuit` asks "Quit Zenium?" while it is set, and a window with
+   * several tabs asks before it closes on the same setting. Set with no window needed: the menu
+   * bar stands with every window closed.
+   */
+  setWarnBeforeQuitting(on: boolean): void {
+    if (this.state.settings.warnOnCloseWindow === on) return
+    this.state.settings.warnOnCloseWindow = on
+    this.state.commit()
   }
 
   async importBookmarks(win: ZenWindow): Promise<BookmarkImportResult | null> {
@@ -3142,6 +3157,7 @@ export class Browser {
       'window.minimize': (_a, win) => win.host.minimize(),
       'window.toggleMaximize': (_a, win) =>
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
+      'window.captionDoubleClick': (_a, win) => win.captionDoubleClick(),
       'window.close': (_a, win) => void this.requestWindowClose(win),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
       'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),
@@ -3157,6 +3173,7 @@ export class Browser {
       'window.newPrivate': (_a, win) => void this.openWindow('private', win),
       'window.openUrl': ({ url, kind }, win) => this.openUrlInWindow(url, kind, win),
       'window.moveTabsToSpace': ({ spaceId }, win) => tabs.moveLocalTabsToSpace(win, spaceId),
+      'window.setName': ({ name }, win) => win.setName(name),
 
       'page.screenshot': ({ tabId, fullPage }, win) =>
         this.actions.run(fullPage ? 'page.captureFullPage' : 'page.screenshot', {

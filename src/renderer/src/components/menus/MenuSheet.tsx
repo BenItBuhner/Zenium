@@ -668,7 +668,13 @@ function MenuLevel({
       }}
       role="menu"
       aria-label={label}
-      tabIndex={-1}
+      // The panel is the keyboard's in its own right (§9.22: opened by the pointer it holds the
+      // focus, Tab and the arrows walk its rows from there), and 0 rather than -1 says so where
+      // it counts: past the height cap the level scrolls, and axe's scrollable-region-focusable
+      // (the CI walkthrough's audit) reads a scroller's own tabindex – a -1 fails it while every
+      // row stands at -1 too. Nothing in the order changes: Tab wraps inside an open menu, and a
+      // closed one is unmounted.
+      tabIndex={0}
       className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
       data-context={context || undefined}
       style={{

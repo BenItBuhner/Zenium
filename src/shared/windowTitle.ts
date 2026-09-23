@@ -2,23 +2,45 @@
  * The native window title (Alt+Tab, taskbar, Dock, window switcher). Kept platform neutral and
  * pure so it can be unit tested; hosts apply the result through `WindowHost.setTitle`.
  *
- * Format: `<active tab title> - Zenium`, with ` (Private)` appended for private windows. A window
+ * Format: `<active tab title> — Zenium`, with ` (Private)` appended for private windows. A window
  * with no active tab (or a blank/untitled one) shows the bare product name, still marked private.
- * A web app's standalone window (`appName`) is titled as Chrome titles its app windows: the
- * page's title alone, the app's name while the page has none – the window is the app's, not the
- * browser's.
+ * A window the user named (Chrome's Name window…, `windowName`) reads `<name> — Zenium` whatever
+ * its tabs: the name is the window's, so it stands where the tab's title would. One joiner for
+ * both forms – the design language's spaced em dash, the title–detail dash Firefox's title bar
+ * uses (§9.1; the #396 review's ruling 4), not Chrome's hyphen: two joiners in one title bar
+ * read as two conventions. A web app's standalone window (`appName`) is titled as Chrome titles
+ * its app windows: the page's title alone, the app's name while the page has none – the window
+ * is the app's, not the browser's.
  */
 export const PRODUCT_NAME = 'Zenium'
+
+/** The longest name a window keeps (the prompt's field stops there too). */
+export const WINDOW_NAME_MAX = 120
+
+/** The one joiner between the window's lead – its name or its tab's title – and the product. */
+export const TITLE_JOINER = ' — '
 
 export function formatWindowTitle(
   activeTabTitle: string | null | undefined,
   isPrivate: boolean,
-  appName?: string | null
+  appName?: string | null,
+  windowName?: string | null
 ): string {
   const title = activeTabTitle?.trim()
   if (appName) return title || appName
-  const base = title ? `${title} - ${PRODUCT_NAME}` : PRODUCT_NAME
+  const name = normalizeWindowName(windowName)
+  const lead = name || title
+  const base = lead ? `${lead}${TITLE_JOINER}${PRODUCT_NAME}` : PRODUCT_NAME
   return isPrivate ? `${base} (Private)` : base
+}
+
+/**
+ * A window name as the model keeps it: trimmed, cut at `WINDOW_NAME_MAX`, null when nothing is
+ * left – an emptied field in the prompt clears the name, as Chrome's does.
+ */
+export function normalizeWindowName(input: string | null | undefined): string | null {
+  const name = input?.trim().slice(0, WINDOW_NAME_MAX).trim()
+  return name ? name : null
 }
 
 /** Native title changes per window are capped at ten a second. */
