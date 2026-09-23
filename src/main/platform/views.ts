@@ -1756,6 +1756,13 @@ export function pageViewportFrom(raw: unknown, zoom: number): PageViewport | nul
  * right-to-left document the scrollbar sits on the left and the area is anchored at the right.
  * A horizontal scrollbar takes the bottom rows in either direction. With overlay scrollbars
  * (`clientWidth === width`) this is the whole bitmap.
+ *
+ * Floored, not rounded: `clientWidth` is an integer of CSS pixels, so at a fractional ratio
+ * (150 %: a 15 px scrollbar is 10 CSS px, but 769 content rows are 512.67 CSS px, reported as
+ * 513) the product can overshoot the content by up to half a CSS pixel – rounding would keep a
+ * one-pixel sliver of the scrollbar's track (measured in the proof at 150 %); flooring drops
+ * at most one row or column of page content instead, which nothing can see. At an integer
+ * ratio the cut is exact either way.
  */
 export function visibleAreaClip(
   viewport: Pick<PageViewport, 'clientWidth' | 'clientHeight' | 'rtl' | 'devicePixelRatio'>,
@@ -1765,8 +1772,8 @@ export function visibleAreaClip(
     Number.isFinite(viewport.devicePixelRatio) && viewport.devicePixelRatio > 0
       ? viewport.devicePixelRatio
       : 1
-  const width = Math.max(1, Math.min(bitmap.width, Math.round(viewport.clientWidth * ratio)))
-  const height = Math.max(1, Math.min(bitmap.height, Math.round(viewport.clientHeight * ratio)))
+  const width = Math.max(1, Math.min(bitmap.width, Math.floor(viewport.clientWidth * ratio)))
+  const height = Math.max(1, Math.min(bitmap.height, Math.floor(viewport.clientHeight * ratio)))
   return { x: viewport.rtl ? bitmap.width - width : 0, y: 0, width, height }
 }
 

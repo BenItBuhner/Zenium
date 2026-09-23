@@ -1398,13 +1398,16 @@ describe('visibleAreaClip', () => {
       width: 1265,
       height: 705
     })
+    // A fractional ratio: floored, so a half-pixel overshoot of the integer `clientWidth` never
+    // keeps a sliver of the scrollbar (1265 × 1.5 = 1897.5; the proof at 150 % measured the
+    // rounded cut one row into the horizontal scrollbar's track).
     expect(
       visibleAreaClip({ ...page, devicePixelRatio: 1.5 }, { width: 1920, height: 1080 })
     ).toEqual({
       x: 0,
       y: 0,
-      width: 1898,
-      height: 1058
+      width: 1897,
+      height: 1057
     })
   })
 
