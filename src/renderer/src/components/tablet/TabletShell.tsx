@@ -27,6 +27,7 @@ import {
   setTabletDrawerTravel,
   TABLET_TOOLBAR_HEIGHT,
   tabletDrawerLayout,
+  tabletDrawerShift,
   tabletDrawerStore
 } from './tabletChrome'
 import { TabletToolbar } from './TabletToolbar'
@@ -63,8 +64,11 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   const viewport = useViewport()
   const side = state.settings.sidebarSide
   const drawerLayout = tabletDrawerLayout(viewport.width)
-  const drawer = tabletDrawerStore.use()
-  const drawerUp = drawer.phase !== 'closed'
+  // Whether the drawer is up is all the shell reads of its store: the drawer's progress moves
+  // per frame of the spring or the back gesture, and the drawer writes it to its own elements
+  // (`TabletDrawer`), so a frame renders nothing here – not the toolbar, not the sidebar in the
+  // drawer (PERF-5's `tablet-drawer-open` reading).
+  const drawerUp = tabletDrawerStore.use((s) => s.phase !== 'closed')
   const expanded = state.settings.sidebarExpanded
   // The docked sidebar: the rail in a narrow window, else what the setting says.
   const rail = drawerLayout || !expanded
@@ -200,9 +204,7 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
           anchor={anchor}
         />
       )}
-      {drawerLayout && drawerUp && (
-        <TabletDrawer state={state} isDark={isDark} side={side} progress={drawer.progress} />
-      )}
+      {drawerLayout && drawerUp && <TabletDrawer state={state} isDark={isDark} side={side} />}
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />
       {onboarding && <Onboarding state={state} />}
@@ -248,31 +250,42 @@ function TabletSidebarColumn({
  * the phone's drawer chassis (`zen-drawer-panel`: a translucent panel flush with the window's
  * edge, rounded towards the content) under the toolbar row, at the rail's side, with the scrim
  * over the rest of the page; its position and the scrim's depth follow `tabletDrawerStore`'s
- * progress per frame. A tap on the scrim, a swipe towards the edge, picking a tab or the system
- * back gesture close it (`TabletShell`, `tabletChrome.ts`).
+ * progress per frame – written to the two elements as the store moves, not rendered: a render
+ * per frame would take this drawer and the whole sidebar in it (the tab rows) through React at
+ * every frame of the spring for a `transform` and an `opacity` (v2 §11; the phone pill's label
+ * and the overview's morph write theirs the same way). The commit gives a freshly mounted
+ * drawer its first pose before the paint. A tap on the scrim, a swipe towards the edge, picking
+ * a tab or the system back gesture close it (`TabletShell`, `tabletChrome.ts`).
  */
 function TabletDrawer({
   state,
   isDark,
-  side,
-  progress
+  side
 }: {
   state: UIState
   isDark: boolean
   side: 'left' | 'right'
-  progress: number
 }): JSX.Element {
   const panel = useRef<HTMLDivElement>(null)
+  const scrim = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     if (panel.current) setTabletDrawerTravel(panel.current.getBoundingClientRect().width)
   }, [])
+  useLayoutEffect(() => {
+    const apply = (): void => {
+      const { progress } = tabletDrawerStore.get()
+      if (scrim.current) scrim.current.style.opacity = String(progress)
+      if (panel.current) panel.current.style.transform = tabletDrawerShift(progress, side)
+    }
+    apply()
+    return tabletDrawerStore.subscribe(apply)
+  }, [side])
   const swipe = useSidebarSwipe({
     side,
     collapsed: false,
     onCollapse: () => closeTabletDrawer(),
     onExpand: () => undefined
   })
-  const shift = (1 - progress) * 100 * (side === 'left' ? -1 : 1)
   return (
     <div
       className="zen-tablet-drawer absolute inset-x-0 bottom-0 z-40 flex"
@@ -280,10 +293,7 @@ function TabletDrawer({
       data-side={side}
       style={{ top: `calc(var(--zen-inset-top) + ${TABLET_TOOLBAR_HEIGHT}px)` }}
     >
-      <div
-        className="zen-overview-scrim pointer-events-none absolute inset-0"
-        style={{ opacity: progress }}
-      />
+      <div ref={scrim} className="zen-overview-scrim pointer-events-none absolute inset-0" />
       <div
         className="absolute inset-0"
         aria-label="Close sidebar"
@@ -299,7 +309,6 @@ function TabletDrawer({
         role="dialog"
         aria-label="Sidebar"
         data-side={side}
-        style={{ transform: `translateX(${shift}%)` }}
         onClick={(e) => e.stopPropagation()}
         {...swipe}
       >
