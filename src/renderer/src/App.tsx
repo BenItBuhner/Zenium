@@ -7,17 +7,12 @@ import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
-import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
 import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { openNewTabPage } from '@renderer/lib/newtab'
 import { onboardingCovers } from '@renderer/lib/onboarding'
 import { activeTab } from '@renderer/lib/selectors'
 import {
-  browserStore,
   captureActiveTab,
-  clearTabSelection,
-  closeFindBar,
-  closeOverlay,
   closeUrlbar,
   invalidateSnapshot,
   lastPointer,
@@ -26,6 +21,7 @@ import {
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
+import { useGlobalKeys } from '@renderer/hooks/useGlobalKeys'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useStageContinuity } from '@renderer/hooks/useStageContinuity'
 import { useTheme } from '@renderer/hooks/useTheme'
@@ -481,79 +477,6 @@ function SlideDown({ closing, children }: { closing: boolean; children: ReactNod
 function fullscreenBinding(state: UIState): string {
   const shortcut = state.shortcuts.find((s) => s.action === 'page.fullscreen')
   return formatBinding(shortcut?.binding ?? shortcut?.extraBindings[0] ?? null, state.platform)
-}
-
-/**
- * Keys the renderer handles itself (main handles the shortcut table): the chrome's Escape stack.
- * Exported for its test (`__tests__/escapeStack.test.tsx`).
- */
-export function useGlobalKeys(state: UIState): void {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      // A popover that closed itself on this Escape (a Settings menulist, a Radix layer) has
-      // claimed the key: it returns focus to its anchor and the overlay under it stays open.
-      if (e.defaultPrevented) return
-      const ui = uiStore.get()
-      if (ui.urlbar.open) return // handled by the URL bar input
-      if (ui.menu) return // handled by the menu layer
-      if (ui.extensionPrompts.length) return // the prompt dialog answers Escape itself
-      if (ui.extensionPopup) {
-        e.preventDefault()
-        closeExtensionPopup()
-        return
-      }
-      // Dialogs, choosers and overflow menus take Escape first (capture traps).
-      if (ui.bookmarkEdit || ui.starDialog || ui.bookmarkAllTabs || ui.barMenuOpen) return
-      if (ui.zoomBubble) return
-      if (ui.overlay !== 'none') {
-        e.preventDefault()
-        closeOverlay()
-        return
-      }
-      if (state.glance) {
-        e.preventDefault()
-        run('glance.close', undefined)
-        return
-      }
-      if (ui.selectedTabIds.length) {
-        e.preventDefault()
-        clearTabSelection()
-        return
-      }
-      if (ui.findOpen && ui.findTabId) {
-        closeFindBar('afterKey')
-        return
-      }
-      // Nothing in the chrome claimed the key: Escape is Stop, as it is in Chrome and Firefox
-      // when the focus sits in the toolbar. The page handler (core/keys.ts) stops the load when
-      // the page has the focus; this rung covers the chrome, where the keyboard stays while a
-      // tab's first navigation has no document yet (window.ts focusContent) or after the URL bar
-      // has handed the key back.
-      const live = browserStore.get().state
-      const tab = live ? activeTab(live) : null
-      if (tab?.loading) {
-        e.preventDefault()
-        run('tab.stop', { tabId: tab.id })
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [state.glance])
-
-  // A multi-selection belongs to one space; drop it when the space changes. So does the tab
-  // strip's roving tab stop: the new space's active row is the stop (lib/tabStrip.ts).
-  useEffect(() => {
-    clearTabSelection()
-    if (uiStore.get().stripFocus !== null) uiStore.set({ stripFocus: null })
-  }, [state.activeSpaceId])
-
-  // Sidebar collapse toggle (Zen's "Toggle Sidebar" action).
-  useEffect(() => {
-    const onToggle = (): void => run('sidebar.toggleExpanded', undefined)
-    window.addEventListener('zen-sidebar-toggle', onToggle)
-    return () => window.removeEventListener('zen-sidebar-toggle', onToggle)
-  }, [])
 }
 
 /**

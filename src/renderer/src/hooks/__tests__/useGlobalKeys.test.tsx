@@ -12,10 +12,10 @@ vi.mock('@renderer/lib/api', () => ({
 
 import { run } from '@renderer/lib/api'
 import { browserStore, uiStore } from '@renderer/lib/ui'
-import { useGlobalKeys } from '../App'
+import { useGlobalKeys } from '../useGlobalKeys'
 
 /*
- * The chrome's Escape stack (`App.tsx` useGlobalKeys) ends in Stop: with nothing else claiming
+ * The chrome's Escape stack (`hooks/useGlobalKeys.ts`) ends in Stop: with nothing else claiming
  * the key, Escape stops the active tab's load, as Chrome and Firefox do when the keyboard is in
  * the toolbar (BUG-009, shortcuts-menus-73). The keyboard is in the chrome while a tab's first
  * navigation has no document yet (`window.ts` focusContent keeps it there) and after the URL
