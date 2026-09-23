@@ -233,6 +233,13 @@ describe('Name Window…', () => {
       }
     }
   })
+
+  it('is listed on the desktop layout alone: a phone or tablet window shows no name, so their tables offer no row to bind', () => {
+    for (const preset of ['zen', 'chrome'] as const) {
+      const row = defaultShortcuts('linux', preset).find((s) => s.id === 'key_nameWindow')
+      expect(row?.layouts).toEqual(['desktop'])
+    }
+  })
 })
 
 describe('the Chrome preset', () => {

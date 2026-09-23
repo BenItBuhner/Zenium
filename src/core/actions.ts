@@ -358,8 +358,11 @@ export class Actions {
         win.host.minimize()
         return
       // Chrome's Name window…: the prompt is the chrome's (`windowName/NameWindowDialog`); the
-      // core asks for it and takes the answer as `window.setName`.
+      // core asks for it and takes the answer as `window.setName`. The desktop's alone: a phone
+      // or tablet window has no title bar and no window switcher to show a name, so a chord
+      // bound to it there (the row is listed on the desktop layout only) does nothing.
       case 'window.name':
+        if (win.formFactor !== 'desktop') return
         this.browser.emit('windowName.open', undefined, win)
         return
       case 'menu.app':

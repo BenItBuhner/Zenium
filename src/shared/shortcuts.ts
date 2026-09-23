@@ -609,11 +609,14 @@ const DEFS: Def[] = [
   },
   {
     // Chrome's More tools › Name window… has no chord in either browser: the row is in the
-    // table so Settings can bind one and the palette lists it.
+    // table so Settings can bind one and the palette lists it. The desktop layout's alone, as
+    // the palette's row is: a phone or tablet window shows no name (no title bar, no window
+    // switcher), so their listings leave the row out rather than offer a chord that does nothing.
     id: 'key_nameWindow',
     action: 'window.name',
     group: 'windowAndTabManagement',
     label: 'Name Window…',
+    layouts: ['desktop'],
     ...both(UNBOUND)
   },
   {

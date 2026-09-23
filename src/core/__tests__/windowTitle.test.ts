@@ -43,6 +43,8 @@ interface Fixture {
   views: Recorded[]
   /** Every title each window's host was asked to set, in order. */
   titles: Map<ZenWindow, string[]>
+  /** Every event sent to any window's chrome, in order (`windowName.open` among them). */
+  sent: Array<{ name: string; payload: unknown }>
   /** The profile's files, `state.json` among them, as the store writes them. */
   files: Record<string, string>
 }
@@ -50,6 +52,7 @@ interface Fixture {
 function fixture(files: Record<string, string> = {}): Fixture {
   const views: Recorded[] = []
   const titles = new Map<ZenWindow, string[]>()
+  const sent: Fixture['sent'] = []
   const capabilities = stub<HostCapabilities>({ windows: true, updates: false, agents: false })
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
@@ -69,6 +72,9 @@ function fixture(files: Record<string, string> = {}): Fixture {
           isVisible: () => true,
           setTitle: (title: string) => {
             if (log.at(-1) !== title) log.push(title)
+          },
+          send: (name: string, payload: unknown) => {
+            sent.push({ name, payload })
           }
         })
       }
@@ -105,7 +111,7 @@ function fixture(files: Record<string, string> = {}): Fixture {
   const browser = new Browser(platform)
   browser.state.settings.onboardingDone = true
   browser.start()
-  return { browser, views, titles, files }
+  return { browser, views, titles, sent, files }
 }
 
 /** The windows `state.json` holds, as the store last wrote it. */
@@ -276,6 +282,20 @@ describe('a named window (Name Window…, shortcuts-menus-121)', () => {
     first.setName(null)
     expect(f.browser.menus.windowLabel(first)).toBe('Example Domain')
     await tick()
+  })
+
+  it('asks the desktop chrome for the prompt, and a phone or tablet window – no title bar, no window switcher to show a name – for nothing', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const prompts = (): number => f.sent.filter((s) => s.name === 'windowName.open').length
+    f.browser.actions.run('window.name', { sourceTabId: null, win })
+    expect(prompts()).toBe(1)
+    for (const formFactor of ['phone', 'tablet'] as const) {
+      win.formFactor = formFactor
+      f.browser.actions.run('window.name', { sourceTabId: null, win })
+      expect(prompts()).toBe(1)
+      expect(win.name).toBeNull()
+    }
   })
 
   it('keeps the name with the session and gives it back to the restored window, title and all', async () => {
