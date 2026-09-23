@@ -36,13 +36,6 @@ sealed class PageMessageRoute {
         val videoHeight: Int
     ) : PageMessageRoute()
 
-    /**
-     * Rotate-to-fullscreen's word back from the page (`installRotateToFullscreen`, MED-02): the
-     * page has a playing video for the screen's new orientation and waits for the host's key
-     * (`armed`), or its `requestFullscreen` settled (`result`: `entered`, or `failed`).
-     */
-    data class RotateFullscreen(val armed: Boolean, val result: String?) : PageMessageRoute()
-
     /** Anything else goes to the core as a `pageMessage` view event, without the token. */
     data class Forward(val message: JSONObject) : PageMessageRoute()
 
@@ -72,7 +65,6 @@ fun routePageMessage(data: String?, token: String): PageMessageRoute {
             obj.optInt("videoWidth").coerceAtLeast(0),
             obj.optInt("videoHeight").coerceAtLeast(0)
         )
-        "rotateFullscreen" -> PageMessageRoute.RotateFullscreen(obj.optBoolean("armed"), obj.strOrNull("result"))
         else -> {
             obj.remove("token")
             PageMessageRoute.Forward(obj)

@@ -150,12 +150,6 @@ interface PageHost {
      */
     fun fullscreenVideo(tab: TabWebView, active: Boolean, video: Boolean, rotate: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {}
     /**
-     * Rotate-to-fullscreen's word from the page ([PageMessageRoute.RotateFullscreen], MED-02):
-     * armed for the host's key, or its request settled. A host without a screen to turn has
-     * nothing to do.
-     */
-    fun rotateFullscreen(tab: TabWebView, armed: Boolean, result: String?) {}
-    /**
      * The page view was laid out at a new size (device px). The browser's host tells the chrome
      * once the frame at that size is drawn (`view.sized`), for the chrome's return from a
      * fullscreen to fade in on the page's landing (MED-01); a host without a chrome has no one

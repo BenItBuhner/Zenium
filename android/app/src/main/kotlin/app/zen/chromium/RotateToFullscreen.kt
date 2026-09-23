@@ -4,12 +4,13 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Rotate-to-fullscreen's rules (MED-02), Chrome's for Android to the degree: a `<video>` with
- * the browser's own controls that is playing in view goes fullscreen when the screen turns to
- * the video's orientation, and leaves it when the screen turns away again – the page script
- * judges the video (`shared/rotateToFullscreen.ts`: controls, visibility, playing, size), the
- * host the screen and the device. Pure, so the decisions run under plain JUnit
- * ([RotateToFullscreenTest]); [Host] wires them to the activity's configuration, an
+ * Rotate-to-fullscreen's host side (MED-02). The turn itself is the engine's: Chrome's
+ * `MediaControlsRotateToFullscreenDelegate` runs in WebView as it does in Chrome (content's
+ * web preference for the phone form factor), taking a `<video>` with the browser's controls
+ * that is playing in view fullscreen when the screen turns to the video's orientation and out
+ * again when the screen turns away. What the host adds is the way back under its own lock, and
+ * the exit on the turn for the video it locked for; pure, so the decisions run under plain
+ * JUnit ([RotateToFullscreenTest]); [Host] wires them to the activity's configuration, an
  * `OrientationEventListener` and the system's auto-rotate setting.
  *
  * Chrome's orientation lock holds a fullscreen landscape video in landscape (MED-01,

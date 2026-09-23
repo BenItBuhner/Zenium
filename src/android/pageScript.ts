@@ -118,7 +118,6 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   let onNotification: ((message: NotificationHostMessage) => void) | null = null
   let onReadAloud: ((message: ReadAloudHostMessage) => void) | null = null
   let onHint: ((hint: PageHint | null) => void) | null = null
-  let onRotateFullscreen: ((landscape: boolean) => void) | null = null
   let onShareResult: ((id: string, result: ShareOutcome) => void) | null = null
   let onTextFragment: ((message: TextFragmentHostMessage) => void) | null = null
   const selectionMemory = rememberClearedSelection(document)
@@ -139,14 +138,11 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         id?: string
         hint?: PageHint | null
         result?: string
-        landscape?: boolean
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
       // The browser's fullscreen hint, drawn over the page in its top layer (null takes it down).
       else if (data.type === 'hint') onHint?.(data.hint ?? null)
-      // The screen turned (Host.onScreenOrientationChanged, MED-02): a playing video may follow.
-      else if (data.type === 'rotateFullscreen') onRotateFullscreen?.(data.landscape === true)
       else if (data.type === 'forms' && data.command) onForms?.(data.command)
       else if (data.type === 'webapp' && data.action)
         onWebApp?.({
@@ -255,11 +251,6 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     // is drawn in the page's top layer, as the desktop's fullscreen hints are.
     onHint: (listener) => {
       onHint = listener
-    },
-    // Rotate-to-fullscreen (MED-02): Kotlin's word that the screen turned reaches the main frame
-    // alone (postToPage), so the top document's videos are the ones a turn takes fullscreen.
-    onRotateFullscreen: (listener) => {
-      onRotateFullscreen = listener
     },
     onFlags: (listener) => {
       onFlags = listener

@@ -60,21 +60,6 @@ class PageMessagesTest {
     }
 
     @Test
-    fun rotateToFullscreensWordIsTheHostsOwn() {
-        assertEquals(
-            PageMessageRoute.RotateFullscreen(true, null),
-            routePageMessage(message("type" to "rotateFullscreen", "armed" to true), token)
-        )
-        assertEquals(
-            PageMessageRoute.RotateFullscreen(false, "entered"),
-            routePageMessage(message("type" to "rotateFullscreen", "result" to "entered"), token)
-        )
-        // A frame's video is not one the host turns the screen for on its own.
-        assertFalse(PageMessageRoute.RotateFullscreen(true, null).heardFrom(isMainFrame = false))
-        assertTrue(PageMessageRoute.RotateFullscreen(true, null).heardFrom(isMainFrame = true))
-    }
-
-    @Test
     fun aFrameIsHeardOnItsOwnFullscreenAlone() {
         // An embed's document (a YouTube iframe) is the one that sees its video go fullscreen,
         // and its size; the main document sees the <iframe>, 0 x 0.

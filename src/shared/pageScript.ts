@@ -17,7 +17,7 @@ import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
 import type { CaptureStateReport } from './captureState'
-import { installRotateToFullscreen, rotateManaged } from './rotateToFullscreen'
+import { rotateManaged } from './rotateToFullscreen'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -101,13 +101,6 @@ export interface PageScriptMessage {
   rotate?: boolean
   videoWidth?: number
   videoHeight?: number
-  /**
-   * `rotateFullscreen` (hosts with `onRotateFullscreen`): the page has a playing video for the
-   * screen's new orientation and waits for the host's key (`armed`), or its `requestFullscreen`
-   * settled (`result`).
-   */
-  armed?: boolean
-  result?: 'entered' | 'failed'
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
@@ -166,12 +159,6 @@ export interface PageScriptTransport {
    * (`installFullscreenReporter`).
    */
   reportFullscreen?: boolean
-  /**
-   * Hosts whose screen turns a playing video fullscreen (Android, as Chrome's does, MED-02):
-   * the host says when the screen turned, the script judges the page's videos and takes the
-   * host's key for the video's `requestFullscreen()` (`installRotateToFullscreen`).
-   */
-  onRotateFullscreen?(listener: (landscape: boolean) => void): void
   /**
    * Hosts that offer a page's own search engine (Chrome for Android's "Recently visited" engines):
    * the script posts the address of the first `<link rel="search"
@@ -250,13 +237,6 @@ export function installPageScript(transport: PageScriptTransport): void {
   }
 
   const zap = installZap(transport)
-  // Ahead of the activation reporter: rotate-to-fullscreen's key (the host's, not the user's) is
-  // stopped by its listener before the reporter's sees it, so the pop-up blocker never counts it.
-  if (transport.onRotateFullscreen)
-    installRotateToFullscreen({
-      send: transport.send.bind(transport),
-      onRotateFullscreen: transport.onRotateFullscreen.bind(transport)
-    })
   installActivationReporter(transport)
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
