@@ -568,10 +568,11 @@ class TabWebView(
      * rewriting for zoom, desktop layout and force-zoom happens in the page, from the same rules
      * the core and this host share) and the host's word on rotate-to-fullscreen – a phone's
      * window's alone ([PageHost.rotateToFullscreen], MED-02) – followed by the page script itself.
-     * Re-registered whenever the rules or the view's width change (a window crossing the tablet
-     * line resizes, so the next document hears the new class; the live one keeps the word it was
-     * born with, as Chrome's device-level gate never changes at all); the live page is told the
-     * rules over the message channel too.
+     * Re-registered whenever the rules or the view's width change (a screen crossing the tablet
+     * line – a fold, a floating window; never a split, whose class stays the display's – resizes
+     * the view, so the next document hears the new class; the live one keeps the word it was born
+     * with, as Chrome's gate never changes with the window); the live page is told the rules over
+     * the message channel too.
      */
     private fun startScriptSource(): String =
         "window.__zenPageRules=" + host.pageRulesJson.toString() + ";window.__zenDeviceWidth=" + deviceWidth() +

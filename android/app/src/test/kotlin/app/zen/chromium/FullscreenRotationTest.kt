@@ -134,9 +134,10 @@ class FullscreenRotationTest {
     }
 
     /**
-     * The word is the window's, read live: a phone's window grown past the line mid-hold (a fold
-     * opened, a split ended) drops the hand-over under way; narrowed back under it, the next word
-     * from the device starts it again.
+     * The word is read live: a phone's screen grown past the line mid-hold (a fold opened, a
+     * floating window widened – never a split, which leaves the display's class in place) drops
+     * the hand-over under way; narrowed back under it, the next word from the device starts it
+     * again (the sensor a phone's hold started keeps speaking, so the host's wiring does the same).
      */
     @Test
     fun aWindowGrownPastTheLineDropsAHandOverUnderWay() {

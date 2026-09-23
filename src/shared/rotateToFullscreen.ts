@@ -38,9 +38,10 @@
  * this: the rule is the phone's alone (design language v2 §9.36 – a phone turned on its side with
  * a video playing has one plausible intent, a tablet turned has many; the tablet keeps its layout
  * through the turn and its video goes fullscreen by the player's own control). The host says
- * which the window is at document start (`PageHost.rotateToFullscreen`: under 600 dp on the short
- * side, the same line the tablet layout is picked on – `PHONE_MAX_WIDTH` in `formFactor.ts`) and
- * holds its own half back on a tablet too (`FullscreenRotation`'s hand-over).
+ * which the screen is at document start (`PageHost.rotateToFullscreen`: under 600 dp on the short
+ * side of `smallestScreenWidthDp` – the display's through split screen, as Chrome's own `sw600dp`
+ * gate reads it – the same number the tablet layout is picked on, `PHONE_MAX_WIDTH` in
+ * `formFactor.ts`) and holds its own half back on a tablet too (`FullscreenRotation`'s hand-over).
  */
 
 export type SimpleOrientation = 'portrait' | 'landscape' | 'unknown'

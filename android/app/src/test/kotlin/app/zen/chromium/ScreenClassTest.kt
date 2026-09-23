@@ -7,19 +7,21 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The window's class on the 600 dp line, each side of it (MED-02's form-factor gate; design
- * language v2 §9.36): a window under 600 dp on its short side is a phone's, whose turn takes a
- * playing video fullscreen, and one of 600 or more is a large screen – the tablet layout's class –
- * where rotate-to-fullscreen never runs. The line is the chrome's (`PHONE_MAX_WIDTH` in
+ * The screen's class on the 600 dp line, each side of it (MED-02's form-factor gate; design
+ * language v2 §9.36): a screen under 600 dp on its short side is a phone's, whose turn takes a
+ * playing video fullscreen, and one of 600 or more is large – the tablet line – where
+ * rotate-to-fullscreen never runs. The number is the chrome's (`PHONE_MAX_WIDTH` in
  * `shared/formFactor.ts`, `classifyViewport`'s `side < PHONE_MAX_WIDTH` for a phone), read from
- * the source, so the host and the chrome cannot pick a tablet on two different lines.
+ * the source, so the host and the chrome cannot pick a tablet on two different numbers (the
+ * inputs differ – the host's is the configuration's, the chrome's its window's – the line is one).
  */
 class ScreenClassTest {
     @Test
     fun aWindowUnderTheLineIsAPhonesWhoseTurnTakesItsVideoFullscreen() {
         assertFalse(ScreenClass.large(599))
         assertTrue(ScreenClass.rotateToFullscreen(599))
-        // A phone's window, and a tablet's narrowed in split screen: a phone's while it stays so.
+        // A phone's screen, and a tablet's folded shut or a desktop window narrowed under the line
+        // (a split moves nothing: the class is the display's through it).
         assertFalse(ScreenClass.large(360))
         assertTrue(ScreenClass.rotateToFullscreen(360))
     }

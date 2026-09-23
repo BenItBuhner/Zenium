@@ -151,13 +151,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override var pageRulesJson: JSONObject = JSONObject()
         private set
     /**
-     * Rotate-to-fullscreen is the phone's alone (§9.36, Chrome's `device_is_phone`): the window
-     * under Android's tablet line, the class the chrome lays itself out by too
-     * ([MainActivity.largeScreen], read live). The page script's half hears it at document start
-     * ([TabWebView]'s start script) and the host's half ([rotation]'s hand-over) reads it at each
-     * word from the device.
+     * Rotate-to-fullscreen is the phone's alone (§9.36, Chrome's `device_is_phone`): the screen
+     * under Android's tablet line ([ScreenClass.rotateToFullscreen], read live from the same
+     * configuration [MainActivity.largeScreen] gives the page controls' desktop default – the
+     * display's class through split screen, the window's through a fold or a floating window; the
+     * chrome's own layout classifies its window, `classifyViewport`, on the same number, pinned).
+     * The page script's half hears it at document start ([TabWebView]'s start script) and the
+     * host's half ([rotation]'s hand-over) reads it at each word from the device.
      */
-    override val rotateToFullscreen: Boolean get() = !activity.largeScreen()
+    override val rotateToFullscreen: Boolean
+        get() = ScreenClass.rotateToFullscreen(activity.resources.configuration.smallestScreenWidthDp)
     /**
      * The page fonts the core last pushed (`fonts.apply`, at its start and on every change of
      * `Settings.fonts`), every page WebView's `WebSettings`; from the last run's document until the
@@ -272,7 +275,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * device turns to match it, then the device's again ([FullscreenRotation], MED-02); given back
      * on exit. The sensor speaks through [deviceTurned] while the screen is held in a phone's
      * window ([rotateToFullscreen]: a tablet's hold never follows the device, so its sensor is
-     * never read). The apply lambda runs only from [FullscreenRotation]'s methods, after this
+     * never read). The sensor is switched at the hold, the hand-over and the release alone, so a
+     * hold begun on a tablet's screen never starts it: a screen that narrows under the line
+     * mid-hold (a fold closed on a fullscreen video) hands nothing over and stays held until the
+     * exit – the safe direction, MED-01's – while a phone's hold whose screen widens past the line
+     * keeps its sensor and drops every word ([FullscreenRotation.onDevice]), handing over again if
+     * it narrows back. The apply lambda runs only from [FullscreenRotation]'s methods, after this
      * initializer: its reads of [orientationSensor] (declared above) and of `rotation` itself are
      * deferred, and the type is stated so the self-reference infers.
      */

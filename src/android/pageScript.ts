@@ -98,8 +98,8 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         })
       : null
   // Rotate-to-fullscreen is the phone's alone (MED-02, §9.36: Chrome's `device_is_phone`); the
-  // host's word on this window's class comes with the rules (`PageHost.rotateToFullscreen`, from
-  // the same 600 dp line the tablet layout is picked on), and a host that says nothing turns
+  // host's word on the screen's class comes with the rules (`PageHost.rotateToFullscreen`, from
+  // the same 600 dp number the tablet layout is picked on), and a host that says nothing turns
   // nothing.
   const rotateToFullscreen = w.__zenRotateToFullscreen === true
   // The rules were only ever for this script; pages keep no trace of them.
