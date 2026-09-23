@@ -204,9 +204,10 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         else viewport = installViewportController(config)
       } else if (data.type === 'focus' && topFrame) {
         // A hardware keyboard's Tab entering the page from the chrome (A11Y-09): the host gave
-        // this view the keyboard with its focus unplaced; the landing is the document's first or
-        // last tabbable, read here (`@shared/focusEdge`). The top frame's: a frame element in the
-        // order stands for its document.
+        // this view the keyboard, Blink's initial focus on the first tabbable as a keyboard focus
+        // (the ring's condition; `TabWebView.focusEdge`), and the landing is confirmed on the
+        // document's first tabbable or moved to its last, read here (`@shared/focusEdge`). The top
+        // frame's: a frame element in the order stands for its document.
         focusEdge(data.edge === 'last' ? 'last' : 'first', document)
       }
     } catch {

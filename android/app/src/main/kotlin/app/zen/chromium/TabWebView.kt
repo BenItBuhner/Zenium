@@ -669,15 +669,15 @@ class TabWebView(
 
     /**
      * A hardware keyboard's Tab entering this page from the chrome ([FocusHandoff], A11Y-09): the
-     * view takes the keyboard with its document's focus unplaced – out of touch mode WebView's
-     * own `requestFocus` would focus the document's first node, the wrong end for a Shift+Tab –
-     * and the page script lands it on the first or last tabbable (`focus` in `pageScript.ts`,
-     * `@shared/focusEdge`). `edge` is `first` or `last`.
+     * view takes the keyboard, and out of touch mode WebView's own `requestFocus` has Blink land
+     * the document's initial focus on its first tabbable as a keyboard focus – the landing that
+     * matches `:focus-visible`, which a script's `focus()` after a touch would not (see
+     * [Host.onFocusLanding]) – then the page script confirms the first tabbable or moves to the
+     * last for a Shift+Tab (`focus` in `pageScript.ts`, `@shared/focusEdge`); in touch mode, where
+     * Blink places nothing, the script's landing is the whole of it. `edge` is `first` or `last`.
      */
     fun focusEdge(edge: String) {
-        settings.setNeedInitialFocus(false)
         requestFocus()
-        settings.setNeedInitialFocus(true)
         postToPage(json("type" to "focus", "edge" to edge).toString())
     }
 

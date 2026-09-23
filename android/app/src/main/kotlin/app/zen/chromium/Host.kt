@@ -328,10 +328,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     /**
      * A hardware keyboard's Tab ran off one WebView's document ([FocusHandoff], A11Y-09). Into
-     * the chrome: its WebView takes the keyboard with the document's focus left for the chrome
-     * to place (`setNeedInitialFocus(false)`), on its first or last control per the
-     * `focus.fromPage` event (`lib/panes.ts`). Into the page: the core is asked (`focus.toPage`)
-     * – it knows which tab is the active one – and answers with `view.focusEdge` for it
+     * the chrome: its WebView takes the keyboard the way Chromium's own Tab into a document
+     * does – `needInitialFocus` on for the one `requestFocus()`, so Blink's initial focus lands
+     * on the document's first tabbable *as a keyboard focus* (`FocusThroughTabTraversal`): that
+     * is what makes the landing match `:focus-visible` and draw the ring; a focus placed by
+     * script after a touch would not, since Blink counts a document's last user focus type and
+     * keydowns, never a script's `focus()`. Then the `focus.fromPage` event (`lib/panes.ts`)
+     * confirms the first control forward or moves to the last one backward – WebView has no
+     * reverse traversal to offer, so a backward landing rests on the first control for the one
+     * frame before the chrome moves it. Into the page: the core is asked (`focus.toPage`) – it
+     * knows which tab is the active one – and answers with `view.focusEdge` for it
      * ([TabWebView.focusEdge]).
      */
     private fun onFocusLanding(landing: FocusHandoff.Landing) {
@@ -340,7 +346,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         val toChrome = landing == FocusHandoff.Landing.CHROME_FIRST || landing == FocusHandoff.Landing.CHROME_LAST
         Log.d(TAG, "keyboard Tab $direction off the ${if (toChrome) "page: the chrome takes it" else "chrome: the active page takes it"}")
         if (toChrome) {
+            chrome.settings.setNeedInitialFocus(true)
             chrome.requestFocus()
+            chrome.settings.setNeedInitialFocus(false)
             chrome.hostEvent("focus.fromPage", json("direction" to direction))
         } else {
             chrome.hostEvent("focus.toPage", json("direction" to direction))

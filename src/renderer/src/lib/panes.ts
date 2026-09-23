@@ -147,12 +147,14 @@ export function currentPane(
 
 /**
  * A hardware keyboard's Tab ran past the page's last tabbable (Shift+Tab past its first) and the
- * host handed the chrome the keyboard (A11Y-09's remainder, the phone's `FocusHandoff.kt`): the
- * focus lands on the chrome's first control forward, its last backward – the document's own
- * order, `@shared/focusEdge`, less what is `inert` or hidden from the tree (a bar that is away).
- * The Tab was the keyboard's, so it is the last input (`data-input`): the landing draws the
- * shared ring, as the same Tab pressed inside the chrome would. The control landed on, or null
- * in a chrome with nothing to land on (the keyboard then rests on the document).
+ * host handed the chrome the keyboard (A11Y-09's remainder, the phone's `FocusHandoff.kt`), with
+ * Blink's own initial focus already on the first control as a keyboard focus (the `:focus-visible`
+ * condition; `Host.onFocusLanding`): the focus is confirmed on the chrome's first control
+ * forward, moved to its last backward – the document's own order, `@shared/focusEdge`, less what
+ * is `inert` or hidden from the tree (a bar that is away). The Tab was the keyboard's, so it is
+ * the last input (`data-input`): the landing draws the shared ring, as the same Tab pressed
+ * inside the chrome would. The control landed on, or null in a chrome with nothing to land on
+ * (the keyboard then rests on the document).
  */
 export function pageHandedKeyboard(
   direction: 'forward' | 'backward',
