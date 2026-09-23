@@ -1752,9 +1752,17 @@ class Extensions(private val host: Host) {
     private fun openPopup(id: String, url: String, context: String, title: String) {
         closePopup()
         val ext = served[id] ?: return
-        val sheet = ExtensionPopup(host, this, ext, title, url, context) {
-            popup = null
-            chromeEvent("ext.popupClosed", json("id" to id))
+        lateinit var sheet: ExtensionPopup
+        sheet = ExtensionPopup(host, this, ext, title, url, context) {
+            // A dialog's dismiss listener runs a loop after `dismiss()`, so the sheet this one
+            // replaced reports its close once the new sheet is up: only the sheet still in place
+            // gives up the slot and tells the core (UltraSurf's worker opens its popup at install
+            // with `action.openPopup()`, and the user's tap replaces it; the replaced sheet's late
+            // report left the tap's sheet on screen with nothing tracking it, compat rounds 11-12).
+            if (popup === sheet) {
+                popup = null
+                chromeEvent("ext.popupClosed", json("id" to id))
+            }
         }
         popup = sheet
         sheet.show()
