@@ -26,16 +26,24 @@ import { browserStore, pushToast, type MessageAction } from './ui'
  * tab (`captureClosed`) once the page's `beforeunload` handlers have let it go, which is after
  * the command has returned, so each close is an intent that waits for the
  * `session.recentlyClosedChanged` it causes and takes, oldest first, the tab entries filed since
- * it started that no earlier intent has taken – as many as it closed. Intents settle as soon as
- * their count is in, or after {@link CLOSE_SETTLE_MS} with what has come; a close that makes no
- * entry (a blank tab never visited, a pinned tab that only resets) has nothing to undo and gets
- * no toast, as Firefox's "Recently closed" skips such tabs too.
+ * it started that no earlier intent has taken – as many as it closed. An intent settles as soon
+ * as its count is in, or {@link CLOSE_SETTLE_MS} after the core last had one of its tabs closing
+ * (`closingTabIds`: a close of several goes one page after the other, `tab.closeMany`, and a
+ * page may ask "Leave site?" for as long as the user takes; the toast waits as the card's exit
+ * does), with what has come; a close that makes no entry (a blank tab never visited, a pinned
+ * tab that only resets) has nothing to undo and gets no toast, as Firefox's "Recently closed"
+ * skips such tabs too.
  */
 
 /**
- * How long a close waits for its entries before the toast shows with what has come: a page's
- * `beforeunload` handlers run first, one round trip to the page; a page that asks "Leave site?"
- * holds its close for as long as the user takes, and such a close gets no toast.
+ * How long a close waits for its entries once the core has no tab of it closing any more, before
+ * the toast shows with what has come: the last page's entry is one event away, and a close the
+ * chrome hears nothing of (a host without an unload check) files its entries in the tick it is
+ * asked. While the core lists one of the close's tabs as closing – its `beforeunload` handlers
+ * running, one asking "Leave site?" for as long as the user takes, the next page of a
+ * `tab.closeMany` in its turn – the wait does not run: the toast comes once the close is
+ * through, never before it (a fixed wait settled a seven-tab close with the three entries in by
+ * then and left the other four with no Undo).
  */
 export const CLOSE_SETTLE_MS = 1500
 
@@ -58,6 +66,13 @@ export interface CloseUndoDeps {
   now: () => number
   /** The tab the user is on right now (Undo keeps them there unless it brings back their tab). */
   activeTabId: () => string | null
+  /**
+   * The tabs whose close the core has in flight, as the chrome last heard (`UIState.closingTabIds`:
+   * a `requestClose` from its start to its page's answer, "Leave site?" included).
+   */
+  closingTabIds: () => readonly string[]
+  /** Hear the chrome's state change (`browserStore`); returns the unsubscribe. */
+  onState: (listener: () => void) => () => void
 }
 
 export interface CloseRequest {
@@ -78,12 +93,17 @@ export interface CloseUndo {
 interface Intent {
   /** The clock as the close was issued: only entries filed since can be its. */
   startedAt: number
+  /** The tabs told to close: the intent holds while the core has any of them closing. */
+  tabIds: ReadonlySet<string>
   /** How many entries the close can make at most; the intent settles once they are in. */
   expected: number
   /** The entries taken so far, oldest first. */
   entries: ClosedEntrySummary[]
   /** The closed tab that was active, if any: Undo brings it back as the active tab. */
   focus: string | null
+  /** Whether the core had one of its tabs closing at the chrome's last look. */
+  held: boolean
+  /** The settle wait, running only while the intent is not held. */
   timer: ReturnType<typeof setTimeout> | null
 }
 
@@ -108,11 +128,21 @@ export function closedMessage(entries: readonly ClosedEntrySummary[]): string {
 }
 
 /** An undo over `invoke` and `on`; the app uses {@link closeUndo}, tests build their own. */
-export function createCloseUndo({ invoke, on, toast, now, activeTabId }: CloseUndoDeps): CloseUndo {
+export function createCloseUndo({
+  invoke,
+  on,
+  toast,
+  now,
+  activeTabId,
+  closingTabIds,
+  onState
+}: CloseUndoDeps): CloseUndo {
   const pending: Intent[] = []
   /** Entries an intent has taken, while they are on the list. */
   const claimed = new Set<string>()
   let watching = false
+  /** The state subscription, held only while an intent is pending. */
+  let unwatchState: (() => void) | null = null
   let syncing: Promise<void> | null = null
   let again = false
 
@@ -120,6 +150,48 @@ export function createCloseUndo({ invoke, on, toast, now, activeTabId }: CloseUn
     if (watching) return
     watching = true
     on('session.recentlyClosedChanged', () => void sync())
+  }
+
+  const watchState = (): void => {
+    unwatchState ??= onState(look)
+  }
+
+  const unwatch = (): void => {
+    if (pending.length > 0 || !unwatchState) return
+    unwatchState()
+    unwatchState = null
+  }
+
+  /** Start (or start over) the settle wait: the last entries get {@link CLOSE_SETTLE_MS} to come. */
+  const arm = (intent: Intent): void => {
+    if (intent.timer) clearTimeout(intent.timer)
+    intent.timer = setTimeout(() => {
+      intent.timer = null
+      void sync().then(() => {
+        // Held again while the list was read: the hold's end starts the wait over.
+        if (!intent.held) settle(intent)
+      })
+    }, CLOSE_SETTLE_MS)
+  }
+
+  /**
+   * The core's closing set as the chrome last heard it: an intent one of whose tabs is in it
+   * holds, its wait cleared – the close is still on its way, one page after the other, or a
+   * page is asking "Leave site?" – and one whose tabs have all left it gets a fresh wait for the
+   * entries the last of them made.
+   */
+  const look = (): void => {
+    const closing = closingTabIds()
+    for (const intent of pending) {
+      const held = closing.some((id) => intent.tabIds.has(id))
+      if (held === intent.held) continue
+      intent.held = held
+      if (!held) arm(intent)
+      else if (intent.timer) {
+        clearTimeout(intent.timer)
+        intent.timer = null
+      }
+    }
   }
 
   /** Read the list and hand out what is new; a change during the read reads again. */
@@ -165,6 +237,8 @@ export function createCloseUndo({ invoke, on, toast, now, activeTabId }: CloseUn
     if (i === -1) return
     pending.splice(i, 1)
     if (intent.timer) clearTimeout(intent.timer)
+    intent.timer = null
+    unwatch()
     if (intent.entries.length === 0) return
     toast(closedMessage(intent.entries), { label: 'Undo', onPick: () => void undo(intent) })
   }
@@ -191,18 +265,21 @@ export function createCloseUndo({ invoke, on, toast, now, activeTabId }: CloseUn
       }
       const intent: Intent = {
         startedAt: now(),
+        tabIds: new Set(tabs.map((tab) => tab.id)),
         expected,
         entries: [],
         focus: active && tabs.some((tab) => tab.id === active) ? active : null,
+        held: false,
         timer: null
       }
       pending.push(intent)
       watch()
+      watchState()
       close()
-      intent.timer = setTimeout(() => {
-        intent.timer = null
-        void sync().then(() => settle(intent))
-      }, CLOSE_SETTLE_MS)
+      arm(intent)
+      // A tab of this close the core has closing already (asked by an earlier close, its page
+      // still being asked) holds the intent from the start.
+      look()
     }
   }
 }
@@ -216,7 +293,9 @@ export const closeUndo: CloseUndo = createCloseUndo({
   activeTabId: () => {
     const state = browserStore.get().state
     return state ? (activeTab(state)?.id ?? null) : null
-  }
+  },
+  closingTabIds: () => browserStore.get().state?.closingTabIds ?? [],
+  onState: (listener) => browserStore.subscribe(listener)
 })
 
 /** Close `request.tabs` through `request.close` with Undo on the toast (see the module note). */
