@@ -8,7 +8,9 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -6287,24 +6289,89 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * A finger on a control of `view` at `css` (`x`, `y` in its CSS px) that reads the frame's
-     * answer. A tap under a main-thread stall lands as a long-press: the down's timestamp ages in
-     * the queue and the WebView's long-press timer, started against it, fires before the up is
-     * read, so the control's text is selected instead of clicked (round 11b's 6.2, Clear Cache's
-     * Clear on 156). The finger waits for the main thread first ([tap]) and, when the tap left a
-     * text selection behind, clears it and taps once more. What happened, for the step's record,
-     * or null for a plain tap.
+     * A finger on a control of `view` at `css` (`x`, `y` in its CSS px) that cannot land as a
+     * long-press, and that reads what the tap left. The instrumentation's tap is a down, 60 ms, an
+     * up, each queued for the main thread; under a stall the down's timestamp ages in the queue,
+     * the WebView's long-press timer runs against it and fires before the up is read, and the
+     * control's text is selected with the Copy / Select all menu up instead of clicked (round
+     * 11b's 6.2, Clear Cache's Clear on 156; round 12's retry read the top document's selection,
+     * which a control in the extension's own frame – Clear Cache's confirmation iframe, another
+     * origin – never shows). Here the down and the up go through the WebView's own
+     * `dispatchTouchEvent` in one turn of the main thread ([tapThroughView]), 50 ms apart by their
+     * timestamps and both taken before any timer can run, so the queue's age never separates
+     * them. What the tap left is then read – a selection in the document, or the selection menu
+     * on screen ([selectionMenuUp]) – and either is pressed away (BACK ends the action mode) and
+     * the control tapped once more; the record says so. Null for a plain tap.
      */
     private fun tapSettled(view: WebView, css: JSONObject, factor: Double): String? {
         val point = screenPoint(view, css) ?: return "no screen point for ${css.toString().take(80)}"
-        tap(point.first, point.second)
+        if (!onScreen("tap at ${point.first},${point.second}")) return "the browser was off screen"
+        tapThroughView(view, point)
         SystemClock.sleep(scaled(700, factor))
         val selected = runCatching { tabEval(view, "String(!!window.getSelection && getSelection().toString().trim().length > 0)", 5) }.getOrNull() == "true"
-        if (!selected) return null
-        runCatching { tabEval(view, "(function(){getSelection().removeAllRanges();return 'cleared'})()", 5) }
+        val menu = selectionMenuUp()
+        if (!selected && menu == null) return null
+        snap("tap-long-press")
+        if (selected) runCatching { tabEval(view, "(function(){getSelection().removeAllRanges();return 'cleared'})()", 5) }
+        if (menu != null) {
+            back()
+            SystemClock.sleep(scaled(600, factor))
+        }
         SystemClock.sleep(scaled(500, factor))
-        tap(point.first, point.second)
-        return "the first tap landed as a long-press (text selected); the selection cleared and the control tapped again"
+        tapThroughView(view, point)
+        val left = listOfNotNull(if (selected) "text selected in the document" else null, menu?.let { "the selection menu up ($it)" }).joinToString(", ")
+        return "the first tap landed as a long-press ($left); ${if (menu != null) "BACK pressed the menu away" else "the selection cleared"} and the control tapped again"
+    }
+
+    /**
+     * The down and the up of a tap at a screen point through `view`'s own `dispatchTouchEvent`,
+     * in one turn of the main thread with fresh timestamps 50 ms apart: the WebView reads them
+     * as one tap whatever the queue behind them held.
+     */
+    private fun tapThroughView(view: WebView, screen: Pair<Float, Float>) {
+        instrumentation.runOnMainSync {
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            val x = screen.first - location[0]
+            val y = screen.second - location[1]
+            val downTime = SystemClock.uptimeMillis()
+            val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
+            val up = MotionEvent.obtain(downTime, downTime + 50, MotionEvent.ACTION_UP, x, y, 0)
+            down.source = InputDevice.SOURCE_TOUCHSCREEN
+            up.source = InputDevice.SOURCE_TOUCHSCREEN
+            try {
+                view.dispatchTouchEvent(down)
+                view.dispatchTouchEvent(up)
+            } finally {
+                down.recycle()
+                up.recycle()
+            }
+        }
+    }
+
+    /**
+     * The WebView's text-selection menu on screen (its floating action mode: Copy, Select all,
+     * Share, Web search, Paste – a window of its own in the accessibility tree), as its labels;
+     * null when none is up. Two of its words in one window that is not the activity's make it.
+     */
+    private fun selectionMenuUp(): String? {
+        val screenHeight = app.resources.displayMetrics.heightPixels
+        for (window in ui.windows) {
+            val root = window.root ?: continue
+            val bounds = Rect().also(window::getBoundsInScreen)
+            if (bounds.height() >= screenHeight * 9 / 10) continue
+            val labels = ArrayList<String>()
+            val queue = ArrayDeque(listOf(root))
+            var visited = 0
+            while (queue.isNotEmpty() && visited++ < 500) {
+                val node = queue.removeFirst()
+                val text = (node.text ?: node.contentDescription)?.toString()?.trim().orEmpty()
+                if (SELECTION_MENU_WORDS.matches(text)) labels.add(text)
+                for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+            }
+            if (labels.size >= 2) return labels.joinToString(" / ")
+        }
+        return null
     }
 
     /**
@@ -7143,6 +7210,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Amazon's interstitial for an automated visitor ("Click the button below to continue
         // shopping") is a challenge page too: the product page behind it never reaches Keepa.
         private val CHALLENGE_WORDS = Regex("access denied|captcha|unusual traffic|verify (that )?you are|not a robot|attention required|just a moment|checking your browser|enable javascript|rate limit|error 403|forbidden|service unavailable|temporarily unavailable|something went wrong|blocked|continue shopping", RegexOption.IGNORE_CASE)
+        /** The WebView's selection action mode's labels (Chromium's, in English on the runner's image). */
+        private val SELECTION_MENU_WORDS = Regex("Copy|Select all|Share|Web search|Paste|Cut|Translate", RegexOption.IGNORE_CASE)
         /** A live page's "not found" (Amazon's dog page, a store's 404): the site served no product, so a live row's read is `n/m`, not a grade of the extension. */
         private val NOT_FOUND_WORDS = Regex("couldn.t find that page|page not found|looking for something\\?|this page isn.t available|error 404|404 not found", RegexOption.IGNORE_CASE)
         /** DeepL: the Spanish phrase selected by script with the events a mouse's selection ends in (`mouseup`, `selectionchange`). */
