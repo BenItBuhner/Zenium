@@ -198,11 +198,21 @@ describe('the dimmed page (capture-02)', () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 
-  it('the toolbar sits at the top centre of the page’s frame, 12 px in', () => {
+  it('the toolbar sits at the top centre of the page’s frame, 12 px in, its left a whole pixel (§9.16)', () => {
+    // The toolbar's width is the font's, fractional: 273.7 here. Its left is the centre less
+    // half of that, rounded – not a translate that would rest the box on the fraction.
+    const computed = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((node, pseudo) =>
+      node instanceof HTMLElement && node.hasAttribute('data-capture-toolbar')
+        ? ({ width: '273.7px' } as CSSStyleDeclaration)
+        : computed(node, pseudo)
+    )
     const el = open()
     const toolbar = el.querySelector<HTMLElement>('[data-capture-toolbar]')!
-    expect(toolbar.style.left).toBe(`${AREA.x + AREA.width / 2}px`)
+    expect(toolbar.style.left).toBe(`${Math.round(AREA.x + AREA.width / 2 - 273.7 / 2)}px`)
+    expect(toolbar.style.left).toBe('463px')
     expect(toolbar.style.top).toBe(`${AREA.y + 12}px`)
+    expect(toolbar.style.translate).toBe('')
   })
 
   it('a page whose geometry the host could not give has Free select off and only the visible area and the full page to offer', () => {

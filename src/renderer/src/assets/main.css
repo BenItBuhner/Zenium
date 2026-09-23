@@ -5955,7 +5955,7 @@
    * bottom-right corner, placed by `labelPlacement`. The cursor is a crosshair over the page
    * while a drag would draw. The toolbar is a §9.20 panel at 4 padding holding §9.3 32 px
    * buttons with 16 glyphs (`.zen-capture-mode`, unlayered below), a hairline, and a §9.3 icon
-   * button; it hangs from the page's top edge at its centre (`translateX(-50%)`). A stage is
+   * button; it hangs from the page's top edge at its centre, on whole pixels. A stage is
    * the page's own box laid over the overlay for what centres on the page (the cards) or sits
    * at its bottom edge (the toast): it takes no pointer of its own.
    */
@@ -5993,10 +5993,11 @@
     pointer-events: none;
   }
   /*
-   * Centred on the page's frame from an inline `left` at its middle: on `translate`, not
-   * `transform`, since the pop's keyframes own `transform` and would hold the toolbar off-centre
-   * by half its width for the animation's 180 ms (the harness's first run: 225 px right, then
-   * the jump). The two compose; the pop scales about the centred box.
+   * Placed by the overlay (`left`/`top` inline, §9.16): centred on the page's frame from its
+   * measured width and rounded to a whole window pixel, so the hairline and the separator each
+   * hold one column. Not a `translate: -50%` – from a width the font makes fractional it would
+   * rest the box on a fraction and smear both over two – and not `transform`, which the pop's
+   * keyframes own; the pop scales about the placed box and leaves it where it was.
    */
   .zen-capture-toolbar {
     position: absolute;
@@ -6004,7 +6005,6 @@
     align-items: center;
     gap: 4px;
     padding: 4px;
-    translate: -50% 0;
     cursor: default;
   }
   .zen-capture-toolbar-sep {
@@ -6059,16 +6059,19 @@
   /*
    * The toast (§9.33): the message card 8 px inside the page's bottom edge, centred, at the
    * notice width on a mouse (320: "Copied" across a 1600 px frame would be a bar, not a card),
-   * up from the edge on the toast's own rise (the rise's keyframes own `transform`, so the
-   * centring is on `translate`, as the toolbar's); under reduced motion the 120 ms fade in
-   * place (§11.3), `!important` past the global rule at the foot.
+   * up from the edge on the toast's own rise. Centred by its auto margins between the stage's
+   * edges, not a `translate` (the rise's keyframes own `transform`, and a translated box rests
+   * where a fraction leaves it – an odd frame width would smear the hairline, §9.16 – where a
+   * laid-out box paints on whole pixels); under reduced motion the 120 ms fade in place
+   * (§11.3), `!important` past the global rule at the foot.
    */
   .zen-capture-toast {
     position: absolute;
     bottom: var(--zen-message-inset);
-    left: 50%;
+    left: 0;
+    right: 0;
+    margin: 0 auto;
     width: min(320px, 100% - 16px);
-    translate: -50% 0;
     animation: zen-toast-in 160ms var(--zen-ease);
   }
   @media (prefers-reduced-motion: reduce) {

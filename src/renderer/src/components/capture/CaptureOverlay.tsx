@@ -87,6 +87,7 @@ function CaptureOverlay({
   const { tabId, viewport } = capture
   const ref = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
+  const toolbarRef = useRef<HTMLDivElement>(null)
   const labelRef = useRef<HTMLDivElement>(null)
   const [phase, dispatch] = useReducer(captureReducer, SELECTING)
   const [toast, setToast] = useState<{ id: number; text: string; error: boolean } | null>(null)
@@ -197,6 +198,23 @@ function CaptureOverlay({
     }
   }, [phase.kind])
 
+  const selecting = phase.kind === 'selecting'
+  const canSelect = selecting && viewport !== null
+
+  // The toolbar rests on whole pixels (§9.16): centred on the page's frame from a measured
+  // width – the labels' widths are the font's, fractional – with the left rounded in window
+  // pixels. A `translate: -50%` from that width would leave the box on a fraction, and the
+  // hairline and the separator smeared over two columns; only the pop's own transform plays.
+  useLayoutEffect(() => {
+    const el = toolbarRef.current
+    if (!el) return
+    const width = parseFloat(getComputedStyle(el).width) || el.offsetWidth
+    const left = Math.round(box.x + frame.x + frame.width / 2 - width / 2) - box.x
+    const top = Math.round(box.y + frame.y + TOOLBAR_INSET) - box.y
+    el.style.left = `${left}px`
+    el.style.top = `${top}px`
+  }, [box, frame, selecting])
+
   // The size label sits at the marquee's corner once it has a width to place (`labelPlacement`).
   const marquee =
     phase.kind === 'selecting' && phase.drag
@@ -227,8 +245,6 @@ function CaptureOverlay({
     setToast({ id: ++toastSeq.current, text, error })
   }
 
-  const selecting = phase.kind === 'selecting'
-  const canSelect = selecting && viewport !== null
   const toRoot = (e: ReactPointerEvent): Point => {
     const r = ref.current?.getBoundingClientRect()
     return { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) }
@@ -327,11 +343,11 @@ function CaptureOverlay({
       )}
       {selecting && (
         <div
+          ref={toolbarRef}
           className="zen-capture-toolbar zen-v2-panel zen-animate-pop"
           role="toolbar"
           aria-label="Capture"
           data-capture-toolbar
-          style={{ left: frame.x + frame.width / 2, top: frame.y + TOOLBAR_INSET }}
         >
           <button
             type="button"
