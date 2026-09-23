@@ -23,6 +23,7 @@ import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { KEEPS_KEYBOARD_ATTR } from '@renderer/lib/panes'
 import { ChromePortal } from '@renderer/lib/portals'
 import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
@@ -639,6 +640,21 @@ function AgentBadge({ agent, tabId }: { agent: AgentInfo; tabId: string }): JSX.
 /** The rename field's height: the row's 32 less the fill's 4 px inset each side. */
 const RENAME_FIELD_HEIGHT = 24
 
+/**
+ * How long after the field opens a loss of the document's focus may be the row's own doing. The
+ * first click of the pair that opened it activated the tab, and the core hands the keyboard to
+ * the page for a click (`tab.activate` without `keepFocus`, `win.focusContent()`); when the
+ * main process is slow that landing – the page's view taking the keyboard, `focus.page` – comes
+ * after the second click has opened the field, and would blur it shut before it was seen (the
+ * a11y-2 drive's finding: a double click 1 ms apart lost the field 2 ms after it opened). For
+ * this span the field carries {@link KEEPS_KEYBOARD_ATTR}: `pageTookKeyboard` (lib/panes.ts)
+ * leaves it the document's focused element and asks the chrome's keyboard back, which Chromium
+ * gives the field again with the frame's. A blur without a taker inside the span waits as long
+ * again for the keyboard to return before it commits; focus coming back cancels the commit.
+ * Past the span a blur is the user's, and commits at once.
+ */
+const RENAME_FOCUS_GRACE_MS = 300
+
 type RenameBox = { left: number; top: number; width: number }
 
 /** The field's box: on the title's, the row's height centred; null before the row has a layout. */
@@ -668,7 +684,8 @@ const sameBox = (a: RenameBox | null, b: RenameBox | null): boolean =>
  * (lib/tabStrip.ts) is untouched: focus leaving the row for the field makes the active row the
  * strip's stop, as leaving the strip does, and Enter or Escape hand focus back to the row that
  * was renamed, which takes the stop again; a blur – the user went elsewhere – commits and
- * leaves focus where it went.
+ * leaves focus where it went (a blur to nowhere in the field's first moments, the opening
+ * pair's activation handing the keyboard to the page, excepted: `RENAME_FOCUS_GRACE_MS`).
  */
 function RenameInput({
   tab,
@@ -685,9 +702,29 @@ function RenameInput({
   const ref = useRef<HTMLInputElement>(null)
   const done = useRef(false)
   const took = useRef(false)
+  // The field's first moments (`RENAME_FOCUS_GRACE_MS`): the mark is set on the element itself,
+  // not rendered, so its removal is no render of the field. `pendingCommit` is a blur to
+  // nowhere inside them, waiting for the keyboard to return.
+  const keeps = useRef(true)
+  const pendingCommit = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const el = ref.current
+    el?.setAttribute(KEEPS_KEYBOARD_ATTR, '')
+    const grace = setTimeout(() => {
+      keeps.current = false
+      el?.removeAttribute(KEEPS_KEYBOARD_ATTR)
+    }, RENAME_FOCUS_GRACE_MS)
+    return () => {
+      clearTimeout(grace)
+      if (pendingCommit.current) clearTimeout(pendingCommit.current)
+    }
+  }, [])
   useEffect(() => {
     if (!box || took.current) return
     took.current = true
+    // The field takes the keyboard: the chrome's – the opening pair's first click may have
+    // handed it to the page already – and its own.
+    run('focus.chrome', undefined)
     ref.current?.focus()
     ref.current?.select()
   }, [box])
@@ -715,6 +752,24 @@ function RenameInput({
     const trimmed = value.trim()
     run('tab.rename', { tabId: tab.id, title: trimmed && trimmed !== tab.title ? trimmed : null })
   }
+  const onBlur = (e: React.FocusEvent<HTMLInputElement>): void => {
+    // Focus left the document – no element in it took it – in the field's first moments: the
+    // pair's first click handing the keyboard to the page, which `pageTookKeyboard` asks back.
+    // The commit waits for it; focus returning (`onFocus`) cancels the wait.
+    if (e.relatedTarget === null && keeps.current) {
+      pendingCommit.current ??= setTimeout(() => {
+        pendingCommit.current = null
+        commit(true, false)
+      }, RENAME_FOCUS_GRACE_MS)
+      return
+    }
+    commit(true, false)
+  }
+  const onFocus = (): void => {
+    if (!pendingCommit.current) return
+    clearTimeout(pendingCommit.current)
+    pendingCommit.current = null
+  }
   const stop = (e: { stopPropagation: () => void }): void => e.stopPropagation()
   return (
     <ChromePortal>
@@ -741,7 +796,8 @@ function RenameInput({
           value={value}
           aria-label="Rename tab"
           onChange={(e) => setValue(e.target.value)}
-          onBlur={() => commit(true, false)}
+          onFocus={onFocus}
+          onBlur={onBlur}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commit(true, true)
             if (e.key === 'Escape') commit(false, true)

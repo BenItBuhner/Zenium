@@ -33,6 +33,16 @@ export const URLBAR_LEAVE_EVENT = 'zen-urlbar-leave'
 export const URLBAR_KEYBOARD_EVENT = 'zen-urlbar-keyboard'
 
 /**
+ * The mark of a chrome field a page taking the keyboard does not blur ({@link pageTookKeyboard}):
+ * the chrome's keyboard is asked back (`focus.chrome`) and the field stays the document's focused
+ * element, for Chromium to give it the frame's focus again. The open URL bar's field is that by
+ * the bar's state; a field carries the mark for the moments a page's taking is its own doing –
+ * the tab rename field while the opening pair's first click, the row's activation, hands the
+ * keyboard to the page (sidebar/TabItem.tsx).
+ */
+export const KEEPS_KEYBOARD_ATTR = 'data-keeps-keyboard'
+
+/**
  * The pane the keyboard moves to from `current` – forward (`next`, F6) or back (`prev`,
  * Shift+F6) – among the panes on screen (`shown`). The page is always shown, and is where the
  * keyboard counts as being when it is in no pane (`current` null, or a pane that is not shown):
@@ -192,8 +202,11 @@ export function releaseChromeFocus(doc: Document = document): boolean {
  * beside them is live, a view taking the keyboard there is the user's press, and the blur is
  * what keeps their focus ring honest. The empty split pane's bar (`urlbar.pane`) sits beside
  * live panes the same way: a sibling page taking the keyboard is the user's press and the field
- * is let go as any control; the pane's own blank page taking it is the race. Returns what was
- * done: `kept` (the bar's), `released` (a control was blurred), `none`.
+ * is let go as any control; the pane's own blank page taking it is the race. A field marked
+ * {@link KEEPS_KEYBOARD_ATTR} is the bar's case for as long as it carries the mark – the tab
+ * rename field in its first moments, whose opening pair's first click handed the keyboard to
+ * the page: it is not blurred and the chrome's keyboard is asked back. Returns what was done:
+ * `kept` (the bar's, or a marked field's), `released` (a control was blurred), `none`.
  */
 export function pageTookKeyboard(
   tabId: string,
@@ -202,6 +215,10 @@ export function pageTookKeyboard(
   const { urlbar } = uiStore.get()
   if (urlbar.open && (!urlbar.pane || urlbar.tabId === tabId)) {
     doc.defaultView?.dispatchEvent(new CustomEvent(URLBAR_KEYBOARD_EVENT))
+    return 'kept'
+  }
+  if (doc.activeElement?.closest(`[${KEEPS_KEYBOARD_ATTR}]`)) {
+    run('focus.chrome', undefined)
     return 'kept'
   }
   return releaseChromeFocus(doc) ? 'released' : 'none'

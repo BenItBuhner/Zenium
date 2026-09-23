@@ -10,7 +10,8 @@ import { DEFAULT_CONTAINER_ID } from '@shared/types'
  * playing, sleeping, pinned – as hidden text the row is described by, joined by the hover card
  * when it stands; its place in its list as aria-posinset / aria-setsize, one list per run of
  * rows; and the rename field beside the row in the chrome layer rather than inside the tab
- * (axe nested-interactive), handing focus back to the row on Enter and Escape.
+ * (axe nested-interactive), handing focus back to the row on Enter and Escape, and keeping the
+ * keyboard through its opening pair's activation handing it to the page (`KEEPS_KEYBOARD_ATTR`).
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -24,6 +25,7 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 const { run } = await import('@renderer/lib/api')
+const { KEEPS_KEYBOARD_ATTR } = await import('@renderer/lib/panes')
 const { browserStore, HOVER_CARD_HIDDEN, uiStore } = await import('@renderer/lib/ui')
 const { tabRowDescription, tabRowPosition, tabRowStates } = await import('@renderer/lib/tabRowAria')
 const { defaultShortcuts } = await import('@shared/shortcuts')
@@ -341,6 +343,82 @@ describe('the rename field (a11y-31, axe nested-interactive)', () => {
     expect(vi.mocked(run)).not.toHaveBeenCalledWith('tab.activate', expect.anything())
   })
 
+  const lostToNowhere = (field: HTMLInputElement): void => {
+    act(() => {
+      field.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+    })
+  }
+  const renames = (): unknown[][] => vi.mocked(run).mock.calls.filter(([c]) => c === 'tab.rename')
+
+  it('takes the chrome’s keyboard as it opens and keeps it for its first moments (the opening pair’s activation handing it to the page): the mark pageTookKeyboard honours, and a blur to nowhere that waits for the keyboard to return', () => {
+    vi.useFakeTimers()
+    try {
+      panel([tab('a'), tab('b')])
+      const field = startRename('b')
+      expect(vi.mocked(run)).toHaveBeenCalledWith('focus.chrome', undefined)
+      expect(field.hasAttribute(KEEPS_KEYBOARD_ATTR)).toBe(true)
+      type(field, 'Kept')
+      // Focus leaves the document (no element in it takes it) 20 ms after the field opened…
+      act(() => vi.advanceTimersByTime(20))
+      lostToNowhere(field)
+      expect(renames()).toEqual([])
+      expect(document.querySelector('[data-tab-rename="b"] input')).toBe(field)
+      // …and comes back with the chrome's keyboard: nothing commits, then or later.
+      act(() => field.dispatchEvent(new FocusEvent('focusin', { bubbles: true })))
+      act(() => vi.advanceTimersByTime(2000))
+      expect(renames()).toEqual([])
+      expect(document.querySelector('[data-tab-rename="b"] input')).toBe(field)
+      expect(uiStore.get().renamingTabId).toBe('b')
+      // Past its first moments the mark is gone, and the same loss is the user's: it commits at once.
+      expect(field.hasAttribute(KEEPS_KEYBOARD_ATTR)).toBe(false)
+      lostToNowhere(field)
+      expect(renames()).toEqual([['tab.rename', { tabId: 'b', title: 'Kept' }]])
+      expect(document.querySelector('[data-tab-rename]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('commits after the wait when the keyboard does not come back – a pane chord to the page as the field opened', () => {
+    vi.useFakeTimers()
+    try {
+      panel([tab('a'), tab('b')])
+      const field = startRename('b')
+      type(field, 'Gone')
+      lostToNowhere(field)
+      act(() => vi.advanceTimersByTime(100))
+      // A second loss while one waits is the same loss: it starts no second wait.
+      lostToNowhere(field)
+      act(() => vi.advanceTimersByTime(199))
+      expect(renames()).toEqual([])
+      expect(uiStore.get().renamingTabId).toBe('b')
+      act(() => vi.advanceTimersByTime(1))
+      expect(renames()).toEqual([['tab.rename', { tabId: 'b', title: 'Gone' }]])
+      expect(uiStore.get().renamingTabId).toBeNull()
+      expect(document.querySelector('[data-tab-rename]')).toBeNull()
+      act(() => vi.advanceTimersByTime(1000))
+      expect(renames()).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a wait the field does not live to see commits nothing – the rename was ended another way', () => {
+    vi.useFakeTimers()
+    try {
+      panel([tab('a'), tab('b')])
+      const field = startRename('b')
+      type(field, 'Never')
+      lostToNowhere(field)
+      act(() => uiStore.set({ renamingTabId: null }))
+      expect(document.querySelector('[data-tab-rename]')).toBeNull()
+      act(() => vi.advanceTimersByTime(1000))
+      expect(renames()).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('drops the edit on Escape, focus back to the row, and commits once on a blur without moving focus', () => {
     panel([tab('a'), tab('b')])
     let field = startRename('b')
@@ -355,8 +433,7 @@ describe('the rename field (a11y-31, axe nested-interactive)', () => {
     const elsewhere = document.createElement('button')
     document.body.appendChild(elsewhere)
     act(() => elsewhere.focus())
-    expect(vi.mocked(run)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(run)).toHaveBeenCalledWith('tab.rename', { tabId: 'b', title: 'Later' })
+    expect(renames()).toEqual([['tab.rename', { tabId: 'b', title: 'Later' }]])
     expect(document.activeElement).toBe(elsewhere)
     elsewhere.remove()
   })

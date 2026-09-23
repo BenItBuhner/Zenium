@@ -5,6 +5,7 @@ vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () =
 
 import { run } from '../api'
 import {
+  KEEPS_KEYBOARD_ATTR,
   KEYBOARD_FOCUS_ATTR,
   PANE_ORDER,
   URLBAR_KEYBOARD_EVENT,
@@ -287,6 +288,22 @@ describe('the document side', () => {
       expect(pageTookKeyboard('t2')).toBe('kept')
       expect(document.activeElement?.id).toBe('omnibox')
       expect(keyboardAsked).toEqual(['omnibox', 'omnibox'])
+    })
+
+    it('never blurs a field marked as keeping the keyboard – the tab rename field in its first moments – and asks the chrome’s keyboard back for it', () => {
+      mount(CHROME + `<input id="rename" ${KEEPS_KEYBOARD_ATTR} />`)
+      byId('rename').focus()
+      // The opening pair's first click activated the row: the page's view took the keyboard.
+      expect(pageTookKeyboard('t1')).toBe('kept')
+      expect(document.activeElement?.id).toBe('rename')
+      expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+      expect(keyboardAsked).toEqual([])
+      // The mark gone – the field's first moments over – the same taking lets the field go.
+      vi.mocked(run).mockClear()
+      byId('rename').removeAttribute(KEEPS_KEYBOARD_ATTR)
+      expect(pageTookKeyboard('t1')).toBe('released')
+      expect(document.activeElement).toBe(document.body)
+      expect(run).not.toHaveBeenCalled()
     })
 
     it("the empty split pane's bar keeps its field from its own blank page and lets it go to a sibling pane's", () => {
