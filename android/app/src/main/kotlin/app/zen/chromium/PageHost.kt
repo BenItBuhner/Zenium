@@ -49,6 +49,12 @@ interface PageHost {
      * [ContentCover]) is handed to: the browser window's chrome WebView. A custom tab has none.
      */
     val underlay: View? get() = null
+    /**
+     * Page-to-chrome Tab traversal for a hardware keyboard ([FocusHandoff], A11Y-09): the browser
+     * window wires every page view into it; a custom tab has no chrome to hand the keyboard to,
+     * so its page wraps within itself as WebView does.
+     */
+    val focusHandoff: FocusHandoff? get() = null
     /** The colour scheme and scrim of the surrounding chrome, for what is drawn natively. */
     val themeDark: Boolean
     val themeScrim: Int

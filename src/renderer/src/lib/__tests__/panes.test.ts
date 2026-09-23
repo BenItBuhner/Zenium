@@ -11,6 +11,7 @@ import {
   currentPane,
   focusPane,
   nextPane,
+  pageHandedKeyboard,
   pageTookKeyboard,
   paneFirstControl,
   paneOf,
@@ -328,5 +329,52 @@ describe('the document side', () => {
     mount(CHROME)
     expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
     expect(document.activeElement?.id).toBe('reload')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The phone's page-to-chrome Tab traversal (A11Y-09's remainder)
+
+describe('pageHandedKeyboard: a Tab past the page’s end arrives in the chrome', () => {
+  const PHONE =
+    '<div class="zen-phone-bar-clip"><nav class="zen-phone-bar">' +
+    '<button id="back">Back</button>' +
+    '<div class="zen-phone-pill"><button id="address">Address</button><button id="lock">Site information</button></div>' +
+    '<button id="tabs">Tabs</button><button id="menu">Menu</button>' +
+    '</nav></div>'
+
+  afterEach(() => {
+    delete document.documentElement.dataset.input
+  })
+
+  it('lands a Tab on the chrome’s first control and a Shift+Tab on its last, the keyboard the last input', () => {
+    mount(PHONE)
+    document.documentElement.dataset.input = 'touch'
+    expect(pageHandedKeyboard('forward')?.id).toBe('back')
+    expect(document.activeElement?.id).toBe('back')
+    expect(document.documentElement.dataset.input).toBe('keyboard')
+    expect(pageHandedKeyboard('backward')?.id).toBe('menu')
+    expect(document.activeElement?.id).toBe('menu')
+  })
+
+  it('passes a bar that is away (aria-hidden, inert) and what is hidden by, and lands in an open sheet’s controls', () => {
+    mount(
+      PHONE.replace(
+        '<nav class="zen-phone-bar">',
+        '<nav class="zen-phone-bar" aria-hidden="true">'
+      ) +
+        '<div role="dialog" class="zen-sheet"><button id="row">First row</button><button id="cancel">Cancel</button></div>'
+    )
+    expect(pageHandedKeyboard('forward')?.id).toBe('row')
+    expect(pageHandedKeyboard('backward')?.id).toBe('cancel')
+  })
+
+  it('leaves the keyboard on the document, and says so, in a chrome with nothing to land on', () => {
+    mount(
+      '<div class="zen-phone-bar-clip"><nav class="zen-phone-bar" inert><button id="back">Back</button></nav></div>'
+    )
+    expect(pageHandedKeyboard('forward')).toBeNull()
+    expect(document.activeElement).toBe(document.body)
+    expect(document.documentElement.dataset.input).toBe('keyboard')
   })
 })

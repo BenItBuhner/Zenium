@@ -577,12 +577,16 @@ export function isPrivateFolder(model: Model, folder: Folder): boolean {
 
 /**
  * A tab joined the group (made in it, moved into it, restored to it): the group is open, so
- * whatever it kept as a saved group is stale and goes; the group counts as used now.
+ * whatever it kept as a saved group is stale and goes, and it is unfolded – closing a group folds
+ * it shut with its pages (`closeFolderTabs`, `saveFolderOnLastClose`), and the tab that brings
+ * it back to life must not find it folded around itself, whichever way it came (a reopened
+ * closed tab, a move, a new tab, as much as Open Folder); the group counts as used now.
  */
 export function folderOpened(model: Model, folderId: string | null, now: number): void {
   const folder = folderId ? model.folders[folderId] : undefined
   if (!folder) return
   if (folder.savedTabs) folder.savedTabs = null
+  folder.collapsed = false
   folder.lastUsedAt = now
 }
 

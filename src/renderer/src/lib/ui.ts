@@ -353,6 +353,12 @@ export interface UiState {
    * dialog over the page in `tabId`, opened from the popover, which closes when it does (§9.20).
    */
   siteDataConfirm: { tabId: string; kind: 'cookies' | 'data'; site: string; count: number } | null
+  /**
+   * "Delete <folder>?" (the desktop sidebar's folder menu and editor bubble; TAB-16's desktop
+   * half): a §9.23 frame dialog over the page, asked before a folder that holds tabs or saved
+   * pages goes. `keyboard`: the folder's header had the keyboard, so Cancel hands it back there.
+   */
+  folderDeleteConfirm: { folderId: string; keyboard: boolean } | null
   /** A folder panel of the bookmarks bar hangs over the page. */
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
@@ -572,6 +578,7 @@ export const uiStore = createStore<UiState>(
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
     siteDataConfirm: null,
+    folderDeleteConfirm: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
@@ -1122,6 +1129,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.siteDataConfirm &&
+    !ui.folderDeleteConfirm &&
     !bookmarkChromeOpen(ui)
   )
 }
@@ -1184,6 +1192,7 @@ export function invalidateSnapshot(): void {
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.siteDataConfirm &&
+    !ui.folderDeleteConfirm &&
     !bookmarkChromeOpen(ui) &&
     ui.frameDialogCover === 0
   ) {
@@ -1886,6 +1895,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
     ui.siteDataConfirm !== null ||
+    ui.folderDeleteConfirm !== null ||
     // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
   )
@@ -1974,6 +1984,35 @@ export function closeSiteDataConfirm(): void {
   uiStore.set({ siteDataConfirm: null })
   invalidateSnapshot()
   returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// The folder delete confirmation over the page (desktop)
+// ---------------------------------------------------------------------------
+
+/**
+ * "Delete <folder>?" from the sidebar's folder menu or the group editor bubble (TAB-16's desktop
+ * half): a frame dialog (design language v2 §9.23, §9.5) over the active page's picture; the
+ * bubble it may have come from closes as it opens (§9.20). `keyboard` records that a chrome
+ * control had the keyboard, so a Cancel hands it back to the folder's header rather than the
+ * page (§9.22).
+ */
+export async function openFolderDeleteConfirm(
+  folderId: string,
+  activeTabId: string | null,
+  keyboard: boolean
+): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ folderDeleteConfirm: { folderId, keyboard }, groupEditor: null })
+}
+
+/** Put the prompt away; `toChrome` keeps the keyboard in the chrome (Cancel from the keyboard). */
+export function closeFolderDeleteConfirm(toChrome = false): void {
+  if (!uiStore.get().folderDeleteConfirm) return
+  uiStore.set({ folderDeleteConfirm: null })
+  invalidateSnapshot()
+  if (!toChrome) returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------

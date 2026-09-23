@@ -152,7 +152,7 @@ function MenulistSheet<T extends string>({
         (§9.2) – and the radio itself, carrying `aria-checked`, which draws the glyph inside it;
         an option's second line is a §9.2 description under its label.
       */}
-      <div className="zen-v2 flex flex-col pb-1" role="radiogroup" aria-label={label}>
+      <div className="zen-v2 flex flex-col pb-2" role="radiogroup" aria-label={label}>
         {options.map((option) => (
           <button
             key={option.value}

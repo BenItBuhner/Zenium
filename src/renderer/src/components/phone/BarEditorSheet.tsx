@@ -487,7 +487,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
     >
       <div
         ref={body}
-        className="relative flex flex-col pb-1 pt-1"
+        className="relative flex flex-col pb-2 pt-1"
         onClickCapture={(e) => {
           if (!swallowClick.current) return
           swallowClick.current = false
