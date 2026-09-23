@@ -23,7 +23,7 @@ import { NavRow } from '../SidebarTop'
  * leaves the pill, the media hub's button folds as the width tier folds it (the ⋯ dot and the
  * menu's "Now Playing…" row stand in) – and the pins speak for the desktop layout alone. The
  * row publishes what the width tier hid of the pinned controls (`toolbarTiering`) for the
- * dialog's "Hidden at this width".
+ * dialog's "Hidden at this width."
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -79,6 +79,8 @@ function state(t: Tab, settings: Partial<Settings> = {}, entries: MediaState[] =
     translate: { available: true, tabs: {} },
     securityPrompts: [],
     autofill: { prompts: [], picker: null },
+    // The site-information slot (#406) reads the site's blocked permissions from the engine's rules.
+    permissionRules: [],
     media: entries
   } as unknown as UIState
 }
