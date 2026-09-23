@@ -5,7 +5,7 @@
  * feed their raw readings through.
  */
 import type { SiteDataSiteState } from './siteData'
-import type { CertificateError } from './types'
+import type { CertificateDetails, CertificateError } from './types'
 import { FILE_SITE } from './contentSettings'
 import {
   BLANK_URL,
@@ -293,6 +293,35 @@ export function certificateErrorDetail(error: CertificateError): string {
   return error.bypassed
     ? 'You chose to proceed past a certificate warning. What you send to this site could be read or changed on the way.'
     : 'The certificate this site sent could not be verified, so Zenium did not load the page.'
+}
+
+/**
+ * What is wrong with a certificate that failed verification, in a word or two for the line under
+ * the host in site information's title block – the fault, never the issuer: an invalid
+ * certificate's issuer is no credential, and the Connection level's certificate detail lists it.
+ * Named per Chromium `net::ERR_CERT_*` code as the interstitial names them; the rest of the
+ * family reads as not valid. `now` tells a certificate that has expired from one not yet valid
+ * when the host gave its dates.
+ */
+export function certificateFault(
+  code: number | null,
+  certificate: CertificateDetails | null = null,
+  now: number = Date.now()
+): string {
+  switch (code) {
+    case -200: // ERR_CERT_COMMON_NAME_INVALID
+      return 'Certificate not valid for this site'
+    case -201: // ERR_CERT_DATE_INVALID
+      return (certificate?.validStart ?? 0) > now
+        ? 'Certificate not yet valid'
+        : 'Certificate expired'
+    case -202: // ERR_CERT_AUTHORITY_INVALID
+      return 'Certificate not trusted'
+    case -206: // ERR_CERT_REVOKED
+      return 'Certificate revoked'
+    default:
+      return 'Certificate not valid'
+  }
 }
 
 /** The refused certificate as the site-information card lists certificates. */

@@ -94,6 +94,7 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { BookmarkManager } = await import('../BookmarkManager')
+const { HOLD_TO_OPEN_MS } = await import('../useBookmarkDrag')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { uiStore } = await import('@renderer/lib/ui')
 
@@ -568,5 +569,179 @@ describe('the bookmarks manager page tab (§10.1, §10.5)', () => {
       replace: false,
       query: { folder: BOOKMARKS_BAR_ID }
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Drag and drop: a drag held over a closed tree folder opens it (bookmarks-26)
+// ---------------------------------------------------------------------------
+
+function treeRow(el: HTMLElement, title: string): HTMLElement {
+  return [...el.querySelectorAll<HTMLElement>('[role="treeitem"]')].find((r) => text(r) === title)!
+}
+
+/** A mouse pointer event at `(x, y)`; the drag's events go to the window as the hook listens there. */
+function pointer(target: EventTarget, type: string, x: number, y: number): void {
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+      button: 0,
+      clientX: x,
+      clientY: y
+    })
+  )
+}
+
+/** Fold a tree folder's branch through its twisty (the tree opens every branch by default). */
+async function collapse(el: HTMLElement, title: string): Promise<HTMLElement> {
+  const item = treeRow(el, title)
+  await act(async () => click(item.querySelector('.zen-bm-tree-twisty')!))
+  expect(item.getAttribute('aria-expanded')).toBe('false')
+  return item
+}
+
+async function hold(ms: number): Promise<void> {
+  await act(async () => {
+    vi.advanceTimersByTime(ms)
+  })
+}
+
+describe('a drag held over a closed tree folder opens it (bookmarks-26, Chrome’s manager)', () => {
+  /** What the pointer is over: the hook asks the document, and the tests answer for it. */
+  let under: Element | null = null
+  beforeEach(() => {
+    under = null
+    vi.spyOn(document, 'elementFromPoint').mockImplementation(() => under)
+  })
+  // A drag a failing test left in the hand would answer the next test's pointer: let it go.
+  afterEach(() => {
+    act(() => pointer(window, 'pointercancel', 0, 0))
+  })
+
+  /** Pick up a list row with the mouse and carry it over `over`. */
+  async function dragOver(el: HTMLElement, id: string, over: Element): Promise<void> {
+    await act(async () => pointer(row(el, id), 'pointerdown', 400, 300))
+    under = over
+    await act(async () => pointer(window, 'pointermove', 400, 320))
+  }
+
+  // The fake clock also runs with the wall clock (`shouldAdvanceTime`), so "before the hold is
+  // up" is checked well short of it, never a millisecond short.
+  const SHORT = HOLD_TO_OPEN_MS / 2
+
+  it('opens the branch after the bar’s hold – one constant for both surfaces – with the drop-into mark on the row, and the ghost in the hand', async () => {
+    const el = await mountPage()
+    const docs = await collapse(el, 'Docs')
+    // While it folds the row says so; the API folder is out of the tree.
+    expect(docs.hasAttribute('data-bm-hold')).toBe(true)
+    expect(treeRow(el, 'API')).toBeUndefined()
+    await dragOver(el, 'zen', docs)
+    expect(document.querySelector('.zen-bm-drag-ghost')).not.toBeNull()
+    expect(docs.hasAttribute('data-target')).toBe(true)
+    // Not before the hold is up.
+    await hold(SHORT)
+    expect(docs.getAttribute('aria-expanded')).toBe('false')
+    await hold(HOLD_TO_OPEN_MS - SHORT)
+    expect(docs.getAttribute('aria-expanded')).toBe('true')
+    expect(docs.hasAttribute('data-bm-hold')).toBe(false)
+    expect(treeRow(el, 'API')).toBeDefined()
+    // The drop mark stayed the row's own (§9.4); nothing moved yet.
+    expect(docs.hasAttribute('data-target')).toBe(true)
+    expect(calls('bookmark.move')).toEqual([])
+    expect(HOLD_TO_OPEN_MS).toBe(500)
+    await act(async () => pointer(window, 'pointerup', 400, 320))
+  })
+
+  it('the hold is the row’s: the pointer’s jitter within it does not restart the timer, leaving it does', async () => {
+    // Shown: Other bookmarks, so the bar's branch (Docs inside it) may fold.
+    const el = await mountPage(tab(`zen://bookmarks?folder=${OTHER_BOOKMARKS_ID}`))
+    const bar = await collapse(el, 'Bookmarks bar')
+    expect(treeRow(el, 'Docs')).toBeUndefined()
+    await dragOver(el, 'other', bar)
+    await hold(SHORT)
+    // Still over the row, a few pixels on: the same target, the same timer – it is up at the
+    // hold from the arrival, not from the last move.
+    await act(async () => pointer(window, 'pointermove', 404, 324))
+    await hold(HOLD_TO_OPEN_MS - SHORT)
+    expect(bar.getAttribute('aria-expanded')).toBe('true')
+    // Docs, closed: the drag leaves it before the hold is up, and it stays closed.
+    const docs = await collapse(el, 'Docs')
+    under = docs
+    await act(async () => pointer(window, 'pointermove', 400, 140))
+    await hold(SHORT)
+    under = el.querySelector('.zen-bm-list')!
+    await act(async () => pointer(window, 'pointermove', 400, 500))
+    await hold(HOLD_TO_OPEN_MS * 2)
+    expect(docs.getAttribute('aria-expanded')).toBe('false')
+    // Back on it, the hold starts over.
+    under = docs
+    await act(async () => pointer(window, 'pointermove', 400, 140))
+    await hold(SHORT)
+    expect(docs.getAttribute('aria-expanded')).toBe('false')
+    await hold(HOLD_TO_OPEN_MS - SHORT)
+    expect(docs.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => pointer(window, 'pointerup', 400, 140))
+  })
+
+  it('a folder opened by the hold stays open after the drop and after a let-go (Chrome leaves them open)', async () => {
+    const el = await mountPage()
+    const docs = await collapse(el, 'Docs')
+    await dragOver(el, 'zen', docs)
+    await hold(HOLD_TO_OPEN_MS)
+    expect(docs.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => pointer(window, 'pointerup', 400, 320))
+    expect(calls('bookmark.move').at(-1)).toEqual({
+      ids: ['zen'],
+      parentId: 'docs',
+      index: undefined
+    })
+    await hold(1000)
+    expect(docs.getAttribute('aria-expanded')).toBe('true')
+    expect(treeRow(el, 'API')).toBeDefined()
+    // Escape half-way through a second drag: the branch opened by the hold stays open too.
+    await rerender(tab(`zen://bookmarks?folder=${OTHER_BOOKMARKS_ID}`))
+    const bar = await collapse(el, 'Bookmarks bar')
+    await dragOver(el, 'other', bar)
+    await hold(HOLD_TO_OPEN_MS)
+    expect(bar.getAttribute('aria-expanded')).toBe('true')
+    await act(async () =>
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    )
+    await hold(1000)
+    expect(bar.getAttribute('aria-expanded')).toBe('true')
+    expect(calls('bookmark.move')).toHaveLength(1)
+  })
+
+  it('an open branch, the list’s empty space and a list folder row’s middle band ask nothing of the tree', async () => {
+    const el = await mountPage()
+    const docs = await collapse(el, 'Docs')
+    // The list's folder row drops into Docs (its middle band) but the list does not nest: the
+    // tree's branch is not the hold's to open from here.
+    const docsRow = row(el, 'docs')
+    vi.spyOn(docsRow, 'getBoundingClientRect').mockReturnValue({
+      top: 300,
+      bottom: 340,
+      height: 40,
+      left: 0,
+      right: 600,
+      width: 600,
+      x: 0,
+      y: 300,
+      toJSON: () => ({})
+    } as DOMRect)
+    await dragOver(el, 'zen', docsRow)
+    await hold(HOLD_TO_OPEN_MS * 2)
+    expect(docs.getAttribute('aria-expanded')).toBe('false')
+    // The list's empty space: nothing to open.
+    under = el.querySelector('.zen-bm-list')!
+    await act(async () => pointer(window, 'pointermove', 400, 600))
+    await hold(HOLD_TO_OPEN_MS * 2)
+    expect(docs.getAttribute('aria-expanded')).toBe('false')
+    // An open branch carries no hold mark.
+    expect(treeRow(el, 'Other bookmarks').hasAttribute('data-bm-hold')).toBe(false)
+    await act(async () => pointer(window, 'pointerup', 400, 600))
   })
 })

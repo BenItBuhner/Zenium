@@ -607,3 +607,93 @@ describe('PermissionService content settings', () => {
     expect(permissions.get('camera', 'https://meet.example')).toBe('allow')
   })
 })
+
+/*
+ * Chrome's Incognito rule for prompts answered in a private window or tab (`privateContainerId`
+ * on the request): the regular profile's stored decisions and defaults are read as they are – a
+ * stored block stands in private – but nothing answered in private reaches the store. An Allow
+ * or a Block lasts the private session (`forgetContainer` ends it), a prompt dismissed three
+ * times in private earns the site no stored block, no activity is counted, and "Always allow"
+ * given in private is private too.
+ */
+describe('PermissionService: private windows leave no trace', () => {
+  const PRIVATE: PermissionRequestDetails = { tabId: 'tab_p', privateContainerId: 'private' }
+
+  it('an Allow in private is not written, holds for the private session, and is gone with it', async () => {
+    const io = fakeIo()
+    const d = prompts(true)
+    const p = new PermissionService(io, d)
+    expect(await p.decide('geolocation', PAGE, PRIVATE)).toBe(true)
+    expect(d.asked).toHaveLength(1)
+    expect(io.writes).toEqual([])
+    // Asked again in the same private session: the answer holds, no second prompt.
+    expect(await p.decide('geolocation', PAGE, { ...PRIVATE, tabId: 'tab_q' })).toBe(true)
+    expect(d.asked).toHaveLength(1)
+    // A regular window is none the wiser: it is asked afresh.
+    expect(p.resolve('geolocation', PAGE, { tabId: 'tab_r' })).toBe('ask')
+    expect(p.get('geolocation', PAGE)).toBeUndefined()
+    // The private session ends: the answer goes, and the next private request asks again.
+    p.forgetContainer('private')
+    expect(p.resolve('geolocation', PAGE, PRIVATE)).toBe('ask')
+  })
+
+  it('a stored block is inherited in private; a Block given in private is not stored', async () => {
+    const io = fakeIo()
+    const d = prompts(false)
+    const p = new PermissionService(io, d)
+    p.set('camera', PAGE, 'deny')
+    const writes = io.writes.length
+    // The regular profile's block stands in private, without a prompt.
+    expect(await p.decide('camera', PAGE, PRIVATE)).toBe(false)
+    expect(d.asked).toHaveLength(0)
+    // A Block answered in private is remembered for the session only.
+    expect(await p.decide('notifications', PAGE, PRIVATE)).toBe(false)
+    expect(d.asked).toHaveLength(1)
+    expect(p.resolve('notifications', PAGE, PRIVATE)).toBe('deny')
+    expect(p.get('notifications', PAGE)).toBeUndefined()
+    expect(io.writes).toHaveLength(writes)
+  })
+
+  it('three dismissals in private earn the site no stored block', async () => {
+    const io = fakeIo()
+    const d = prompts('dismiss')
+    const p = new PermissionService(io, d)
+    for (let i = 0; i < 3; i++) expect(await p.decide('geolocation', PAGE, PRIVATE)).toBe(false)
+    expect(d.asked).toHaveLength(3)
+    expect(io.writes).toEqual([])
+    expect(p.get('geolocation', PAGE)).toBeUndefined()
+    // In private the block holds for the session, as Chrome's Incognito does.
+    expect(p.resolve('geolocation', PAGE, PRIVATE)).toBe('deny')
+    // The regular profile still asks.
+    expect(p.resolve('geolocation', PAGE, { tabId: 'tab_r' })).toBe('ask')
+  })
+
+  it('a stored allow used in private counts no activity, and "Always allow" in private stays private', async () => {
+    const io = fakeIo()
+    const p = new PermissionService(io, prompts(true))
+    p.set('notifications', PAGE, 'allow')
+    const writes = io.writes.length
+    expect(await p.decide('notifications', PAGE, PRIVATE)).toBe(true)
+    expect(p.activity('notifications')).toEqual([])
+    // The same request from a regular tab is the profile's own use.
+    expect(await p.decide('notifications', PAGE, { tabId: 'tab_r' })).toBe(true)
+    expect(p.activity('notifications')).toEqual([{ origin: permissionSite(PAGE), count: 1 }])
+    // "Always allow pop-ups on this site" from a private tab: the session's, not the store's.
+    p.remember('popups', PAGE, 'allow', PRIVATE)
+    expect(p.resolve('popups', PAGE, PRIVATE)).toBe('allow')
+    expect(p.get('popups', PAGE)).toBeUndefined()
+    expect(io.writes).toHaveLength(writes)
+  })
+
+  it('the site-information sheet hears of private answers and of the session ending', async () => {
+    const p = new PermissionService(fakeIo(), prompts(true))
+    const changes: PermissionChange[] = []
+    p.subscribe((change) => changes.push(change))
+    await p.decide('geolocation', PAGE, PRIVATE)
+    expect(changes).toEqual([{ permission: 'geolocation', origin: permissionSite(PAGE) }])
+    p.forgetContainer('private')
+    expect(changes).toHaveLength(2)
+    p.forgetContainer('private')
+    expect(changes).toHaveLength(2)
+  })
+})
