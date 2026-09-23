@@ -85,10 +85,11 @@ export interface PageScriptMessage {
   readAloud?: ReadAloudExtraction
   /**
    * `fullscreen` (hosts with `reportFullscreen`): the document has a fullscreen element
-   * (`active`), and when it is a `<video>` or holds one, the video's natural size – 0 × 0 while
-   * the size is not known (no video, or its metadata still to come).
+   * (`active`), whether it is a `<video>` or holds one (`video`), and then the video's natural
+   * size – 0 × 0 while the size is not known (no video, or its metadata still to come).
    */
   active?: boolean
+  video?: boolean
   videoWidth?: number
   videoHeight?: number
 }
@@ -354,12 +355,14 @@ export function fullscreenVideoOf(element: Element): HTMLVideoElement | null {
 }
 
 /**
- * Tells the host, at every `fullscreenchange`, whether the document has a fullscreen element
- * and the natural size of the video it shows (0 × 0 for none, or none known yet). The host
- * turns the screen by it: a landscape video takes Android to landscape as Chrome's does
- * (MED-01). A video in fullscreen before its metadata arrived reports again at
- * `loadedmetadata`, as Chrome's orientation lock waits for the size before it locks. The
- * engine's own `onShowCustomView` comes before the page's event, so the host pairs the two.
+ * Tells the host, at every `fullscreenchange`, whether the document has a fullscreen element,
+ * whether that element shows a video at all (`video`; a canvas's or a slide deck's fullscreen
+ * does not, and the phone tells the way out of it every time, MED-03) and the natural size of
+ * the video it shows (0 × 0 for none, or none known yet). The host turns the screen by it: a
+ * landscape video takes Android to landscape as Chrome's does (MED-01). A video in fullscreen
+ * before its metadata arrived reports again at `loadedmetadata`, as Chrome's orientation lock
+ * waits for the size before it locks. The engine's own `onShowCustomView` comes before the
+ * page's event, so the host pairs the two.
  */
 export function installFullscreenReporter(transport: Pick<PageScriptTransport, 'send'>): void {
   let awaitingMetadata: HTMLVideoElement | null = null
@@ -367,6 +370,7 @@ export function installFullscreenReporter(transport: Pick<PageScriptTransport, '
     transport.send({
       type: 'fullscreen',
       active,
+      video: video !== null,
       videoWidth: video?.videoWidth ?? 0,
       videoHeight: video?.videoHeight ?? 0
     })

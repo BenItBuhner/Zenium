@@ -633,10 +633,12 @@ export interface HostEventPayloads {
   'private.closeAll': Record<string, never>
   /**
    * A page's element went fullscreen: the engine's view is up in the fullscreen layer
-   * (`Host.enterFullscreen`), a video's, a canvas's or an embed's alike. The first-time exit
-   * hint's cue (GN-20); the video's size, which turns the screen, stays the host's own.
+   * (`Host.enterFullscreen`), a video's, a canvas's or an embed's alike, with the page's word
+   * on whether the element shows a video (`video`; null when the page said nothing in time). The
+   * exit hint's cue – the first time for a video (GN-20), every time for an element without one
+   * (MED-03); the video's size, which turns the screen, stays the host's own.
    */
-  'fullscreen.entered': { tabId: string }
+  'fullscreen.entered': { tabId: string; video?: boolean | null }
   /**
    * A toast the host raises itself on the chrome's message cards (v2 §9.33), where it cannot
    * go through the core's own (`Browser.toast` has no action): the file chooser's camera
@@ -1904,13 +1906,16 @@ export class AndroidPlatform implements Platform {
         const tabId = p.tabId
         // The chrome is under the fullscreen layer: the hint is drawn in the page's top layer
         // (`shared/pageHint.ts`), as the desktop's fullscreen hints are.
-        onFullscreenEntered({
-          settings: () => browser.state.settings,
-          dark: () => browser.darkScheme(),
-          markShown: () => browser.updateSettings({ fullscreenHintDone: true }, this.window),
-          post: (hint) =>
-            this.bridge.send('view.postMessage', { tabId, message: { type: 'hint', hint } })
-        })
+        onFullscreenEntered(
+          {
+            settings: () => browser.state.settings,
+            dark: () => browser.darkScheme(),
+            markShown: () => browser.updateSettings({ fullscreenHintDone: true }, this.window),
+            post: (hint) =>
+              this.bridge.send('view.postMessage', { tabId, message: { type: 'hint', hint } })
+          },
+          typeof p.video === 'boolean' ? p.video : null
+        )
         return
       }
       case 'view.adopt': {

@@ -610,7 +610,7 @@ class TabWebView(
             is PageMessageRoute.EvalResult -> pendingEvals.remove(route.id)?.invoke(route.value)
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
             is PageMessageRoute.Fullscreen ->
-                host.fullscreenVideo(this, route.active, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
+                host.fullscreenVideo(this, route.active, route.video, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
             is PageMessageRoute.Forward ->
                 if (route.message.optString("type") == "share") host.preparePageMessage(route.message) { host.viewEvent(tabId, "pageMessage", it) }
                 else host.viewEvent(tabId, "pageMessage", route.message)

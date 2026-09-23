@@ -3,9 +3,9 @@ import { FULLSCREEN_EXIT_HINT, TOAST_SHOW_MS, type PageHint } from '@shared/full
 import { fullscreenHintDue, onFullscreenEntered, type FullscreenHintIo } from '../fullscreenHint'
 
 /*
- * GN-20: the first time a page goes fullscreen (a video's, a canvas's or an embed's alike – every
- * fullscreen is left the same way) the phone shows how to leave, once ever, keyed
- * in settings as the gesture hint (FRE-07) is.
+ * GN-20: the first time a video goes fullscreen the phone shows how to leave, once ever, keyed
+ * in settings as the gesture hint (FRE-07) is. MED-03: an element without a video (a canvas, a
+ * slide deck) has no controls with a way out of their own, so the hint stands every time.
  */
 
 function io(
@@ -52,8 +52,37 @@ describe('the first-time fullscreen exit hint (GN-20)', () => {
   it('shows nothing once the record says it was shown', () => {
     const rec = io(true)
     expect(onFullscreenEntered(rec)).toBe(false)
+    expect(onFullscreenEntered(rec, true)).toBe(false)
     expect(rec.posted).toEqual([])
     expect(rec.marked).toBe(0)
+  })
+
+  it('stands every time for an element without a video, in the same words (MED-03)', () => {
+    expect(fullscreenHintDue({ fullscreenHintDone: true }, false)).toBe(true)
+    expect(fullscreenHintDue({ fullscreenHintDone: true }, true)).toBe(false)
+    expect(fullscreenHintDue({ fullscreenHintDone: true }, null)).toBe(false)
+    const rec = io(true, true)
+    expect(onFullscreenEntered(rec, false)).toBe(true)
+    expect(onFullscreenEntered(rec, false)).toBe(true)
+    expect(rec.posted).toHaveLength(2)
+    expect(rec.posted[0]).toEqual({
+      text: FULLSCREEN_EXIT_HINT,
+      exit: null,
+      duration: TOAST_SHOW_MS,
+      dark: true,
+      kind: 'toast'
+    })
+    // The record already stood: nothing written again.
+    expect(rec.marked).toBe(0)
+  })
+
+  it("an element without a video counts as the hint's showing: the first video after it says nothing more", () => {
+    const rec = io(false)
+    expect(onFullscreenEntered(rec, false)).toBe(true)
+    expect(rec.marked).toBe(1)
+    expect(onFullscreenEntered(rec, true)).toBe(false)
+    expect(onFullscreenEntered(rec)).toBe(false)
+    expect(rec.posted).toHaveLength(1)
   })
 
   it('records the showing before posting, so a second report inside the round trip cannot show it twice', () => {

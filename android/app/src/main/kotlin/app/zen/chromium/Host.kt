@@ -158,6 +158,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
 
+    /** Run `block` on the main thread after `delayMs`; what comes back cancels it ([FullscreenRotation], [FullscreenHintCue]). */
+    private fun postDelayed(delayMs: Long, block: () -> Unit): () -> Unit {
+        val run = Runnable { block() }
+        main.postDelayed(run, delayMs)
+        return { main.removeCallbacks(run) }
+    }
+
     init {
         // Spilled bodies the last chrome document never released (it, or the process, went away).
         io.execute(handoff::sweep)
@@ -243,18 +250,22 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * on exit. The sensor speaks through [deviceTurned] while the screen is held.
      */
     private val rotation = FullscreenRotation(
-        schedule = { delayMs, block ->
-            val run = Runnable { block() }
-            main.postDelayed(run, delayMs)
-            val cancel: () -> Unit = { main.removeCallbacks(run) }
-            cancel
-        },
+        schedule = ::postDelayed,
         apply = { orientation ->
             activity.requestedOrientation = orientation
             orientationSensor.follow(rotation.phase == FullscreenRotation.Phase.HELD)
         }
     )
     private val orientationSensor = DeviceOrientationSensor(activity) { angle -> deviceTurned(angle) }
+    /**
+     * The exit hint's cue to the chrome (`fullscreen.entered`): after the view's reveal, with the
+     * page's word on whether the fullscreen element shows a video – the first time for a video
+     * (GN-20), every time for an element without one (MED-03; [FullscreenHintCue]).
+     */
+    private val hintCue = FullscreenHintCue(
+        schedule = ::postDelayed,
+        cue = { tabId, video -> chrome.hostEvent("fullscreen.entered", json("tabId" to tabId, "video" to video)) }
+    )
     /**
      * The bars' way back after a fullscreen: the chrome holds its return fade while they settle
      * (MED-01, v2 §11.5). [MainActivity] carries its word on every `insets`.
@@ -1001,9 +1012,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (tabs.filling == tab.tabId) tabs.fillWindow(null)
         // The page's size report came ahead of the engine's view: the screen turns now.
         if (fullscreenVideoTab === tab) fullscreenVideoSize?.let { (width, height) -> turnForVideo(width, height) }
-        // The first-time exit hint's cue (GN-20): every fullscreen is left the same way, a
-        // canvas's or an embed's as much as a video's, so the cue is the layer's, not the size's.
-        chrome.hostEvent("fullscreen.entered", json("tabId" to tab.tabId))
+        // The exit hint's cue (GN-20, MED-03): the layer's, after its reveal, with the page's word
+        // on whether a video is what went fullscreen ([fullscreenVideo]).
+        hintCue.entered(tab.tabId)
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
         back.refresh()
         media.onFullscreenChanged()
@@ -1026,10 +1037,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // without the page's `active: false`; a size kept past that would turn the tab's next
         // fullscreen before its own report and hold a destroyed view.
         if (fullscreenVideoTab === tab) clearFullscreenVideo()
+        hintCue.exited(tab.tabId)
         if (!immersive) setSystemBarsHidden(false)
         // Out of fullscreen while the window is the small one: the tab's own view takes it over.
         if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
-        // A hint standing over the page (the first-time exit hint, GN-20) leaves with the fullscreen.
+        // A hint standing over the page (the exit hint, GN-20 / MED-03) leaves with the fullscreen.
         tab.postToPage(json("type" to "hint", "hint" to null).toString())
         // The bars are on their way back: said before the exit itself, so the chrome's return
         // fade waits for the page's landing rather than starting over its first inline layout.
@@ -1053,8 +1065,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * video of its own: a frame that lies about a video can at most turn a screen that is
      * already fullscreen on an element without one. Its `active: false` says nothing the main
      * document's `fullscreenchange` does not say too.
+     *
+     * Whether the element shows a video at all (`video`) is the exit hint's word ([hintCue]):
+     * told every time for an element without one (MED-03), once for a video (GN-20).
      */
-    override fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {
+    override fun fullscreenVideo(tab: TabWebView, active: Boolean, video: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {
+        hintCue.reported(tab.tabId, active, video, mainFrame)
         if (!active) {
             if (mainFrame && fullscreenVideoTab === tab) clearFullscreenVideo()
             return

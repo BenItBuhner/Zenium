@@ -29,7 +29,9 @@ import { REDUCED_FADE_MS, TOAST_CARD } from './toastCard'
  * along the bottom edge, moving as the chrome's toasts move (`useMessageMotion`): in across the
  * edge on `SPRING_GENTLE`, out on `SPRING_SNAPPY` thinning with its travel, a 120 ms fade in
  * place under reduced motion (§11.3). The springs are the shared ones, stepped per frame here,
- * since the page's CSS transitions could not carry them.
+ * since the page's CSS transitions could not carry them. The toast stands its time, or until the
+ * first touch on the page (MED-03, as Chrome's toast goes): a finger on the page has found it and
+ * needs no more telling; the way out it names is the same either way.
  */
 
 const HOST_TAG = 'zenium-fullscreen-hint'
@@ -211,12 +213,15 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
   let stand: ReturnType<typeof setTimeout> | null = null
   let gone: ReturnType<typeof setTimeout> | null = null
   let motion: Cancel | null = null
+  /** The standing toast's early leave, for the first touch; null while none stands or one is already leaving. */
+  let leaveNow: (() => void) | null = null
 
   const clearTimers = (): void => {
     if (stand !== null) clearTimeout(stand)
     if (gone !== null) clearTimeout(gone)
     stand = null
     gone = null
+    leaveNow = null
     motion?.()
     motion = null
   }
@@ -248,20 +253,25 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
   }
 
   /**
-   * The toast: in from below its edge on the gentle spring, its stand, out on the snappy one
-   * thinning with its travel; a fade in place either way under reduced motion. `will-change`
-   * only while it moves (§9.33).
+   * The toast: in from below its edge on the gentle spring, its stand – its time, or the first
+   * touch on the page, whichever comes first – then out on the snappy one thinning with its
+   * travel, from wherever it stands; a fade in place either way under reduced motion.
+   * `will-change` only while it moves (§9.33).
    */
   const showToast = (el: HTMLElement, hint: PageHint): void => {
     const leaveWith = (leave: (done: () => void) => Cancel): void => {
-      stand = setTimeout(() => {
+      const go = (): void => {
+        if (stand !== null) clearTimeout(stand)
         stand = null
+        leaveNow = null
         motion?.()
         motion = leave(() => {
           motion = null
           if (current === el) remove()
         })
-      }, hint.duration)
+      }
+      stand = setTimeout(go, hint.duration)
+      leaveNow = go
     }
     if (reducedMotion()) {
       motion = fadeTo(el, 0, 1, TOAST_REDUCED_FADE_MS, () => (motion = null))
@@ -338,6 +348,10 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
   }
   document.addEventListener('fullscreenchange', raise, true)
   document.addEventListener('webkitfullscreenchange', raise, true)
+  // The first touch on the page takes the standing toast away (the touch that brought the
+  // fullscreen came before the toast did). Heard at the document in the capture phase, so a
+  // page that stops its pointer events still counts; passive, in no one's way.
+  document.addEventListener('pointerdown', () => leaveNow?.(), { capture: true, passive: true })
 
   onHint((hint) => (hint ? show(hint) : remove()))
 }
