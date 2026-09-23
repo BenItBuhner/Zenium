@@ -503,10 +503,15 @@ describe('keyword mode and search mode (omnibox-08, -26)', () => {
   it('an engine\u2019s keyword then Tab: the chip, the engine\u2019s glyph, the field emptied; Backspace brings the keyword back', async () => {
     const el = await render(desktop())
     expect(glyph(el)).toBe('G')
+    // The letter is an image named for the engine (a11y-02), not a word a screen reader spells.
+    const mark = el.querySelector('.zen-omnibox-engine')!
+    expect(mark.getAttribute('role')).toBe('img')
+    expect(mark.getAttribute('aria-label')).toBe('Search engine: Google')
     await type(input(el), '@ddg')
     await key(input(el), 'Tab')
     expect(chip(el)?.textContent).toBe('Search DuckDuckGo')
     expect(glyph(el)).toBe('D')
+    expect(mark.getAttribute('aria-label')).toBe('Search engine: DuckDuckGo')
     expect(input(el).value).toBe('')
     expect(callsTo<{ engineId?: string }>('urlbar.suggest').at(-1)?.engineId).toBe('duckduckgo')
 
