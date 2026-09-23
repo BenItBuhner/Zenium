@@ -335,6 +335,8 @@ export class Browser {
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
+  /** Set by `onHostTeardown()`: the host is gone under the running browser; the profile is frozen. */
+  hostGone = false
   private readonly handlers: CommandHandlers
   /** Close checks in flight per window, so a second request joins the first instead of asking twice. */
   private readonly closeChecks = new Map<string, Promise<boolean>>()
@@ -804,6 +806,23 @@ export class Browser {
   onWindowClosing(win: ZenWindow): void {
     this.windowPrompts.cancelForWindow(win)
     this.tabs.releaseWindow(win, this.quitting)
+  }
+
+  /**
+   * The host is going away under the running browser – Android's Activity destroyed for a
+   * relaunch or a configuration change – while the process, and this core with it, live on for
+   * a moment. Not a quit: nothing is asked, nothing is stopped, and above all nothing is written
+   * from here on. The host flushed the profile at `pause`; the core booting in the host that
+   * follows reads it, and a write that this core still had in it would land over that read with
+   * a state the teardown itself made (a tab closed because its view went with the host). So the
+   * tabs learn that their views die with the host, not with their pages, and the state freezes.
+   * Idempotent.
+   */
+  onHostTeardown(): void {
+    if (this.hostGone) return
+    this.hostGone = true
+    this.tabs.onHostTeardown()
+    this.state.freeze()
   }
 
   // ---------------------------------------------------------------------------
