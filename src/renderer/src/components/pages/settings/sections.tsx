@@ -39,7 +39,8 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
-import { resolveDownloadSettings } from '@shared/downloads'
+import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '@shared/downloads'
+import { TOOLBAR_CONTROLS, toolbarPinned, withToolbarPin } from '@shared/toolbarPins'
 import {
   MAX_NEW_TAB_SHORTCUTS,
   newTabPresetChoices,
@@ -160,6 +161,7 @@ import {
   ZoomBlock
 } from './blocks'
 import { importGroups } from '../../import/importRows'
+import { CustomizeToolbarForm } from './CustomizeToolbarForm'
 import { extensionsGroups } from './extensions'
 import { LayoutCards } from './LayoutCards'
 import {
@@ -407,6 +409,12 @@ function lookSection({
   // tabs (§9.37): there the expanded width is the layout's, not the setting's. The phone and
   // the tablet have shells of their own, which the layout never reaches (nor does its row).
   const railSet = (formFactor ?? 'desktop') === 'desktop' && forcesRail(s.toolbarLayout)
+  // What the Reset to default row has to undo: the folded pins and the downloads button's key.
+  const toolbarChanges =
+    TOOLBAR_CONTROLS.filter((control) => !toolbarPinned(s.toolbarPins, control)).length +
+    (resolveDownloadSettings(s).alwaysShowButton !== DEFAULT_DOWNLOAD_SETTINGS.alwaysShowButton
+      ? 1
+      : 0)
   const groups: RowGroup[] = [
     {
       id: 'appearance',
@@ -443,6 +451,65 @@ function lookSection({
           render: () => (
             <LayoutCards value={s.toolbarLayout} onChange={(v) => set({ toolbarLayout: v })} />
           )
+        },
+        // The desktop bar's optional controls (settings-36; Chrome's toolbar customisation).
+        // "Show forward button" is the Customize toolbar dialog's Forward row by another name –
+        // one setting, `toolbarPins.forward` (`shared/toolbarPins.ts`) – and the dialog holds
+        // every control the bar can fold into the app menu; Reset puts the default bar back,
+        // the downloads button's own key (`downloads.alwaysShowButton`) included, since the
+        // dialog binds it as its Downloads row. The phone and the tablet keep their own bars.
+        {
+          kind: 'switch',
+          id: 'show-forward-button',
+          label: 'Show forward button',
+          keywords: ['toolbar', 'forward', 'navigation', 'customise toolbar'],
+          layouts: ['desktop'],
+          checked: toolbarPinned(s.toolbarPins, 'forward'),
+          onChange: (v) => set({ toolbarPins: withToolbarPin(s.toolbarPins, 'forward', v) })
+        },
+        {
+          kind: 'action',
+          id: 'customize-toolbar',
+          label: 'Customize toolbar',
+          description: 'Choose which controls show beside the address bar.',
+          keywords: [
+            'toolbar',
+            'customise toolbar',
+            'pin',
+            'unpin',
+            'buttons',
+            'reader view',
+            'translate',
+            'bookmark',
+            'media',
+            'downloads'
+          ],
+          layouts: ['desktop'],
+          button: 'Customize…',
+          form: {
+            title: 'Customize toolbar',
+            description: 'Choose the controls beside the address bar and how they show.',
+            body: 'list',
+            render: (close) => <CustomizeToolbarForm state={state} set={set} close={close} />
+          }
+        },
+        {
+          kind: 'action',
+          id: 'toolbar-reset',
+          label: 'Your toolbar',
+          description:
+            toolbarChanges === 0
+              ? 'Every control is where the default bar has it.'
+              : `${toolbarChanges} ${toolbarChanges === 1 ? 'control differs' : 'controls differ'} from the default bar.`,
+          keywords: ['reset', 'defaults', 'toolbar'],
+          layouts: ['desktop'],
+          button: 'Reset to default',
+          disabled: toolbarChanges === 0,
+          onPress: () =>
+            set({
+              toolbarPins: {},
+              downloads: { alwaysShowButton: DEFAULT_DOWNLOAD_SETTINGS.alwaysShowButton }
+            })
         },
         {
           kind: 'switch',

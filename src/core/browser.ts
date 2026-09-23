@@ -160,6 +160,7 @@ import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeFontSettings } from '../shared/fonts'
 import { sanitizeLanguages } from '../shared/languages'
+import { sanitizeToolbarPins } from '../shared/toolbarPins'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -3574,6 +3575,9 @@ export class Browser {
         const { askWhereToSave, ...rest } = incoming
         s.downloads = { ...s.downloads, ...rest }
         if (typeof askWhereToSave === 'boolean') s.askWhereToSave = askWhereToSave
+      } else if (key === 'toolbarPins') {
+        // The Customize toolbar dialog writes the whole record; only known controls' folds stay.
+        s.toolbarPins = sanitizeToolbarPins(value)
       } else {
         ;(s as unknown as Record<string, unknown>)[key] = value
       }

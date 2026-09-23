@@ -2266,7 +2266,10 @@ describe('the section model', () => {
     expect(findRow(search.groups, 'full-urls')).not.toBeNull()
     // "Find in Settings" reads the same filtered rows: "phones" finds no phone-bar row here…
     expect(searchRows(desktop, 'phones').map((h) => h.row.id)).toEqual([])
-    expect(searchRows(desktop, 'address bar').map((h) => h.row.id)).toEqual(['full-urls'])
+    expect(searchRows(desktop, 'address bar').map((h) => h.row.id)).toEqual([
+      'customize-toolbar',
+      'full-urls'
+    ])
 
     // …the tablet shell is the desktop's (no phone bar, a bookmarks bar)…
     const tablet = on('tablet')

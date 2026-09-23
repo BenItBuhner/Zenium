@@ -77,6 +77,7 @@ import {
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeHomepage } from '../shared/homepage'
 import { sanitizeToolbarLayout } from '../shared/toolbarLayout'
+import { sanitizeToolbarPins } from '../shared/toolbarPins'
 import {
   allSearchEngines,
   defaultSearchEngineOf,
@@ -606,6 +607,7 @@ export class BrowserState {
       data.settings?.toolbarLayout,
       DEFAULT_SETTINGS.toolbarLayout
     )
+    this.settings.toolbarPins = sanitizeToolbarPins(data.settings?.toolbarPins)
     this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
       ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
       : []

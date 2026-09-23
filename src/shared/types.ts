@@ -12,6 +12,7 @@ import type {
 } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type {
   PrivacySettings,
@@ -2272,6 +2273,14 @@ export interface Settings {
   /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
   appIcon: AppIconId
   toolbarLayout: ToolbarLayout
+  /**
+   * The desktop toolbar's optional controls that are folded into the app menu (Look and Feel ›
+   * Customize toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
+   * key absent reading pinned. Read by the desktop chrome's toolbar row and the desktop app
+   * menu; inert on the phone and the tablet, which keep their own bars. Absent in profiles from
+   * before it existed.
+   */
+  toolbarPins?: ToolbarPins
   sidebarSide: SidebarSide
   sidebarWidth: number
   /** Expanded (titles shown) vs collapsed (favicons only). */

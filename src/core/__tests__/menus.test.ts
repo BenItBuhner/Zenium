@@ -904,6 +904,68 @@ describe('the app menu', () => {
     })
   })
 
+  describe('the folded Forward row (Look and Feel › Customize toolbar, settings-36: the button off the desktop bar)', () => {
+    it('heads the desktop menu while Forward is unpinned and is gone while the bar has the button', () => {
+      const h = pageHarness(DESKTOP)
+      const without = appMenu(h)
+      expect(without[0]).toBe('New Tab')
+      expect(without).not.toContain('Forward')
+      h.browser.state.settings.toolbarPins = { forward: false }
+      const menu = appMenu(h)
+      // The row and its separator at the top; nothing else moves.
+      expect(menu.slice(0, 3)).toEqual(['Forward', '-', 'New Tab'])
+      expect(menu.slice(2)).toEqual(without)
+      // No glyph column: the desktop menu's rows carry none (§9.29's all-or-nothing).
+      expect('glyph' in h.items()[0]).toBe(false)
+      // Re-pinned (the key removed, as the dialog writes it), the row leaves.
+      h.browser.state.settings.toolbarPins = {}
+      expect(appMenu(h)).toEqual(without)
+    })
+
+    it('is disabled, not dropped, on the last history entry and steps forward with one (§9.30)', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.state.settings.toolbarPins = { forward: false }
+      appMenu(h)
+      expect(h.items()[0]).toMatchObject({
+        label: 'Forward',
+        action: 'nav.forward',
+        enabled: false
+      })
+      h.browser.tabs.tab(h.tabId)!.canGoForward = true
+      appMenu(h)
+      expect(h.items()[0]).toMatchObject({ label: 'Forward', enabled: true })
+      const go = vi.spyOn(h.browser.tabs, 'goForward').mockImplementation(() => undefined)
+      h.click('Forward')
+      expect(go).toHaveBeenCalledWith(h.tabId)
+    })
+
+    it('stands under the Now Playing… row when both have folded: the hub first, then Forward, then the tabs', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.state.settings.toolbarPins = { forward: false }
+      h.browser.state.media = [
+        {
+          tabId: h.tabId,
+          playing: true,
+          title: 'Nocturne',
+          artist: 'The Band',
+          artwork: null,
+          session: true
+        }
+      ]
+      expect(appMenuFolded(h).slice(0, 5)).toEqual(['Now Playing…', '-', 'Forward', '-', 'New Tab'])
+    })
+
+    it('is the desktop’s alone: the tablet and the phone keep their bars whatever the field says', () => {
+      const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+      tablet.browser.state.settings.toolbarPins = { forward: false }
+      expect(appMenu(tablet)[0]).toBe('New Tab')
+      const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+      phone.browser.state.settings.toolbarPins = { forward: false }
+      // The phone's icon row has its own Forward (TB-08), one and only one.
+      expect(appMenu(phone).filter((l) => l === 'Forward')).toHaveLength(1)
+    })
+  })
+
   it('keeps the desktop menu until the chrome reports a phone layout', () => {
     const h = harness(ANDROID)
     expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')

@@ -203,6 +203,7 @@ export const DEFAULT_SETTINGS: Settings = {
   colorScheme: 'system',
   appIcon: APP_ICON_DEFAULT,
   toolbarLayout: 'single',
+  toolbarPins: {},
   sidebarSide: 'left',
   sidebarWidth: 240,
   sidebarExpanded: true,
