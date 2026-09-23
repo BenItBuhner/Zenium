@@ -10,7 +10,7 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
-import { groupColorChannels, groupColorHex, groupsOf } from '@renderer/lib/groups'
+import { groupColorVars, groupsOf } from '@renderer/lib/groups'
 import { groupRowOf, isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
@@ -453,8 +453,10 @@ interface FolderRowProps {
  * the 10 colour dot, the 2 px ring of a saved group, or the folder's own icon), the name at
  * 13/600 – ahead of its members, and the group's colour runs as one continuous 2 px line in the
  * band's top inset from the chip's start to the last member's end, bridging the gaps
- * (`.zen-strip-group-line` on the shell, never a dash per pill); the fold runs the shell's width
- * on the spring. A SAVED group (TAB-16: its tabs closed, its pages kept) is its chip alone along
+ * (`.zen-strip-group-line` on the shell, never a dash per pill), wearing the colour as the §9.14
+ * pair (`groupColorVars`, `data-group-rgb`) so the theme's pick recolours it with the glyph's
+ * dot; the fold runs the shell's width on the spring. A SAVED group (TAB-16: its tabs closed,
+ * its pages kept) is its chip alone along
  * the band – the ring, the name, the count of its pages as the aside – and a press on it opens
  * the folder (`folder.open`), as the tablet's saved row does; its menu is the folder's.
  */
@@ -776,7 +778,8 @@ export function FolderRow({
         <span
           className="zen-strip-group-line"
           data-strip-group-line={folder.id}
-          style={{ background: groupColorHex(folder.color) }}
+          data-group-rgb=""
+          style={groupColorVars(folder.color) as CSSProperties}
           aria-hidden
         />
       )}
@@ -869,7 +872,8 @@ function GroupRowGlyph({ folder, saved }: { folder: Folder; saved: boolean }): J
       className="zen-group-row-glyph"
       data-saved={saved || undefined}
       data-testid="group-row-glyph"
-      style={{ '--zen-group-rgb': groupColorChannels(folder.color) } as CSSProperties}
+      data-group-rgb=""
+      style={groupColorVars(folder.color) as CSSProperties}
       aria-hidden
     >
       {own ? (

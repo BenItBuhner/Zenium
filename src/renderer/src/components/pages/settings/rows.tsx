@@ -558,7 +558,7 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
           row.secret && 'zen-settings-field-secret'
         )}
         type={row.input === 'number' ? 'number' : 'text'}
-        inputMode={row.input === 'number' ? 'numeric' : 'text'}
+        inputMode={row.input === 'number' ? 'numeric' : row.input === 'url' ? 'url' : 'text'}
         min={row.min}
         max={row.max}
         placeholder={row.placeholder}

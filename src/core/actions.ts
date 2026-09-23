@@ -246,7 +246,7 @@ export class Actions {
         if (target) void this.browser.translate.open(target.id, win)
         return
       case 'page.pip':
-        if (target) void this.togglePictureInPicture(target.id, win)
+        if (target) void this.browser.mediaSession.togglePictureInPicture(target.id, win)
         return
       case 'page.screenshot':
         if (target) void this.screenshot(target.id, win)
@@ -477,41 +477,6 @@ export class Actions {
       this.browser.toast('Screenshot saved to Downloads', 'info', win)
     } else {
       this.browser.toast('Could not capture the page', 'error', win)
-    }
-  }
-
-  private async togglePictureInPicture(tabId: string, win: ZenWindow): Promise<void> {
-    const view = this.browser.tabs.view(tabId)
-    if (!view) return
-    const tab = this.browser.tabs.tab(tabId)
-    if (tab && this.browser.tabs.isPrivate(tab)) {
-      // Withheld from private tabs, as Chrome withholds it from Incognito (ruled 2026-09-21).
-      this.browser.toast("Picture-in-Picture isn't available in private tabs.", 'info', win)
-      return
-    }
-    if (!this.browser.state.capabilities.pictureInPicture) {
-      this.browser.toast('Picture-in-Picture is not available on this device.', 'info', win)
-      return
-    }
-    // A host whose window itself goes into PiP (Android): the OS shows the page's video.
-    if (this.browser.platform.mediaSession?.enterPictureInPicture) {
-      if (!(await this.browser.mediaSession.enterPictureInPicture(tabId)))
-        this.browser.toast('No video available for Picture-in-Picture', 'info', win)
-      return
-    }
-    try {
-      await view.executeJavaScript(
-        `(async () => {
-          if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return true }
-          const videos = [...document.querySelectorAll('video')].filter(v => v.readyState > 0 && !v.disablePictureInPicture)
-          const video = videos.sort((a, b) => (b.clientWidth * b.clientHeight) - (a.clientWidth * a.clientHeight))[0]
-          if (!video) return false
-          await video.requestPictureInPicture()
-          return true
-        })()`
-      )
-    } catch {
-      this.browser.toast('No video available for Picture-in-Picture', 'info', win)
     }
   }
 }

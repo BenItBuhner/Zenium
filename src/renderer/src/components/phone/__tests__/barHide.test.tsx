@@ -246,11 +246,13 @@ describe('the published hide progress', () => {
     expect(css).toContain(
       ":root[data-form-factor='phone'] .zen-phone-bar { pointer-events: auto; will-change: transform; }"
     )
+    // The bar's way off around a page's fullscreen (MOT-32, lib/fullscreenMotion.ts) is summed
+    // into the same transform: `--zen-fullscreen-away`, the bar's own property like the hide's.
     expect(css).toContain(
-      ".zen-phone-bar[data-edge='bottom'] { transform: translate3d(0, calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0); }"
+      ".zen-phone-bar[data-edge='bottom'] { transform: translate3d( 0, calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel) + var(--zen-fullscreen-away) * 100%), 0 ); }"
     )
     expect(css).toContain(
-      ".zen-phone-bar[data-edge='top'] { transform: translate3d(0, calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0); }"
+      ".zen-phone-bar[data-edge='top'] { transform: translate3d( 0, calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel) - var(--zen-fullscreen-away) * 100%), 0 ); }"
     )
     expect(css).not.toMatch(/\.zen-phone-bar\[data-edge='(bottom|top)'\] \{[^}]*clip-path/)
     // The clip is the parent box's: from the inset line to the window's far edge, static.

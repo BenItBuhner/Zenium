@@ -16,6 +16,7 @@ import { INSTALL_PROMPT_EVENTS, type InstallPromptShimEvents } from './installPr
 import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
+import { fullscreenElementOf, installRotateToFullscreen } from './rotateToFullscreen'
 import type { CaptureStateReport } from './captureState'
 
 /**
@@ -89,10 +90,11 @@ export interface PageScriptMessage {
   readAloud?: ReadAloudExtraction
   /**
    * `fullscreen` (hosts with `reportFullscreen`): the document has a fullscreen element
-   * (`active`), and when it is a `<video>` or holds one, the video's natural size – 0 × 0 while
-   * the size is not known (no video, or its metadata still to come).
+   * (`active`), whether it is a `<video>` or holds one (`video`), and then the video's natural
+   * size – 0 × 0 while the size is not known (no video, or its metadata still to come).
    */
   active?: boolean
+  video?: boolean
   videoWidth?: number
   videoHeight?: number
 }
@@ -153,6 +155,13 @@ export interface PageScriptTransport {
    * (`installFullscreenReporter`).
    */
   reportFullscreen?: boolean
+  /**
+   * Hosts whose device turns (Android): a video playing inline goes fullscreen as the screen turns
+   * to its orientation and leaves as it turns away, Chrome's rule, asked for inside the turn's
+   * own event – the one place Blink lets a page ask without a touch (`rotateToFullscreen.ts`).
+   * The phone's alone, as Chrome gates it (§9.36): the host sets it by the window's class.
+   */
+  rotateToFullscreen?: boolean
   /**
    * Hosts that offer a page's own search engine (Chrome for Android's "Recently visited" engines):
    * the script posts the address of the first `<link rel="search"
@@ -244,6 +253,7 @@ export function installPageScript(transport: PageScriptTransport): void {
       onReadAloud: transport.onReadAloud.bind(transport)
     })
   if (transport.reportFullscreen) installFullscreenReporter(transport)
+  if (transport.rotateToFullscreen) installRotateToFullscreen()
   // The reader document's extras (EDGE-13: line focus, syllables) – a `zen://reader` document
   // only; `installReaderExtras` finds no article anywhere else.
   if (location.protocol === 'zen:') installReaderExtrasWhenReady(document)
@@ -336,15 +346,6 @@ export function installActivationReporter(transport: Pick<PageScriptTransport, '
 // Fullscreen video: the size the host turns the screen by
 // ---------------------------------------------------------------------------
 
-/** The document's fullscreen element, under either name the engines have given it. */
-function fullscreenElementOf(doc: Document): Element | null {
-  return (
-    doc.fullscreenElement ??
-    (doc as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ??
-    null
-  )
-}
-
 /**
  * The video a fullscreen element shows: the element itself, or – a player's wrapper in
  * fullscreen, YouTube's way – the first video inside it with a size, else the first at all.
@@ -360,12 +361,14 @@ export function fullscreenVideoOf(element: Element): HTMLVideoElement | null {
 }
 
 /**
- * Tells the host, at every `fullscreenchange`, whether the document has a fullscreen element
- * and the natural size of the video it shows (0 × 0 for none, or none known yet). The host
- * turns the screen by it: a landscape video takes Android to landscape as Chrome's does
- * (MED-01). A video in fullscreen before its metadata arrived reports again at
- * `loadedmetadata`, as Chrome's orientation lock waits for the size before it locks. The
- * engine's own `onShowCustomView` comes before the page's event, so the host pairs the two.
+ * Tells the host, at every `fullscreenchange`, whether the document has a fullscreen element,
+ * whether that element shows a video at all (`video`; a canvas's or a slide deck's fullscreen
+ * does not, and the phone tells the way out of it every time, MED-03) and the natural size of
+ * the video it shows (0 × 0 for none, or none known yet). The host turns the screen by it: a
+ * landscape video takes Android to landscape as Chrome's does (MED-01). A video in fullscreen
+ * before its metadata arrived reports again at `loadedmetadata`, as Chrome's orientation lock
+ * waits for the size before it locks. The engine's own `onShowCustomView` comes before the
+ * page's event, so the host pairs the two.
  */
 export function installFullscreenReporter(transport: Pick<PageScriptTransport, 'send'>): void {
   let awaitingMetadata: HTMLVideoElement | null = null
@@ -373,6 +376,7 @@ export function installFullscreenReporter(transport: Pick<PageScriptTransport, '
     transport.send({
       type: 'fullscreen',
       active,
+      video: video !== null,
       videoWidth: video?.videoWidth ?? 0,
       videoHeight: video?.videoHeight ?? 0
     })

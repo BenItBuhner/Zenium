@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Folder, Tab } from '@shared/types'
-import { FOLDER_COLORS } from '@shared/defaults'
+import { FOLDER_COLORS_DARK, FOLDER_COLORS_LIGHT } from '@shared/defaults'
+import { hexToRgb } from '@shared/theme'
 
 vi.mock('@renderer/lib/api', () => ({
   cmd: vi.fn(async () => null),
@@ -304,16 +305,30 @@ describe('the Groups pane (TAB-16)', () => {
     )
     const dot = rowNamed('Work').querySelector<HTMLElement>('.zen-overview-group-glyph')!
     const ring = rowNamed('Trip').querySelector<HTMLElement>('.zen-overview-group-glyph')!
-    expect(dot.style.getPropertyValue('--zen-group-color')).toBe(FOLDER_COLORS.blue)
+    // §9.14's pair on the glyph – both schemes' channels – with the marker main.css derives the
+    // theme's `--zen-group-rgb` from; no hex, no single-scheme value on the element.
+    expect(dot.hasAttribute('data-group-rgb')).toBe(true)
+    expect(dot.style.getPropertyValue('--zen-group-rgb-light')).toBe(
+      hexToRgb(FOLDER_COLORS_LIGHT.blue)!.join(' ')
+    )
+    expect(dot.style.getPropertyValue('--zen-group-rgb-dark')).toBe(
+      hexToRgb(FOLDER_COLORS_DARK.blue)!.join(' ')
+    )
+    expect(dot.style.getPropertyValue('--zen-group-color')).toBe('')
     expect(dot.hasAttribute('data-saved')).toBe(false)
-    expect(ring.style.getPropertyValue('--zen-group-color')).toBe(FOLDER_COLORS.green)
+    expect(ring.style.getPropertyValue('--zen-group-rgb-light')).toBe(
+      hexToRgb(FOLDER_COLORS_LIGHT.green)!.join(' ')
+    )
+    expect(ring.style.getPropertyValue('--zen-group-rgb-dark')).toBe(
+      hexToRgb(FOLDER_COLORS_DARK.green)!.join(' ')
+    )
     expect(ring.hasAttribute('data-saved')).toBe(true)
     const glyph = rule('.zen-overview-group-glyph')
     expect(glyph).toContain('width: 12px')
     expect(glyph).toContain('height: 12px')
-    expect(glyph).toContain('background: var(--zen-group-color)')
+    expect(glyph).toContain('background: rgb(var(--zen-group-rgb))')
     const saved = rule('.zen-overview-group-glyph[data-saved]')
-    expect(saved).toContain('border: 2px solid var(--zen-group-color)')
+    expect(saved).toContain('border: 2px solid rgb(var(--zen-group-rgb))')
     expect(saved).toContain('background: transparent')
     // The pane speaks the window family (§9.29): the theme's ink and fills, no rule of its own for the rows.
     const pane_ = rule('.zen-overview-groups')
@@ -497,7 +512,24 @@ describe('the row’s sheet (TAB-16, §9.1, §6)', () => {
     expect(
       swatches.find((s) => s.getAttribute('aria-checked') === 'true')?.getAttribute('aria-label')
     ).toBe('Blue')
-    act(() => swatches.find((s) => s.getAttribute('aria-label') === 'Green')!.click())
+    // Each swatch carries §9.14's pair and shows the theme's pick: its disc reads
+    // `--zen-group-rgb`, the picked one's ring the same; no hex on either.
+    const green = swatches.find((s) => s.getAttribute('aria-label') === 'Green')!
+    expect(green.hasAttribute('data-group-rgb')).toBe(true)
+    expect(green.style.getPropertyValue('--zen-group-rgb-light')).toBe(
+      hexToRgb(FOLDER_COLORS_LIGHT.green)!.join(' ')
+    )
+    expect(green.style.getPropertyValue('--zen-group-rgb-dark')).toBe(
+      hexToRgb(FOLDER_COLORS_DARK.green)!.join(' ')
+    )
+    expect(green.style.getPropertyValue('--zen-swatch')).toBe('')
+    const disc = green.firstElementChild as HTMLElement
+    expect(disc.className).toContain('bg-[rgb(var(--zen-group-rgb))]')
+    expect(disc.style.background).toBe('')
+    expect(rule('.zen-group-swatch-selected')).toContain(
+      'box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb))'
+    )
+    act(() => green.click())
     expect(run).toHaveBeenCalledWith('folder.update', {
       folderId: 'work',
       patch: { color: 'green' }

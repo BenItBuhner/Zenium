@@ -3,11 +3,13 @@ import type {
   FormFactor,
   HostCapabilities,
   MediaState,
+  MenuGlyph,
   Platform as PlatformOs,
   Settings,
   SharePayload,
   SyncDeviceTabs,
-  SyncRemoteTab
+  SyncRemoteTab,
+  Tab
 } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
@@ -902,6 +904,7 @@ describe('the app menu', () => {
     // the row's Download Page is the phone's one save entry, so no 'Save Page As…' row (TB-08).
     expect(appMenu(harness(ANDROID, 'phone'))).toEqual([
       'Forward',
+      'Home',
       'Bookmark',
       'Download Page',
       'Page Info',
@@ -938,6 +941,35 @@ describe('the app menu', () => {
       '-',
       'About Zenium 1.2.3'
     ])
+  })
+
+  it('on a phone Home is the icon row’s glyph after Forward (SET-36, v2 §9.13), never a text row: gone while Off, and it opens the homepage on the active tab', () => {
+    const h = harness(ANDROID, 'phone')
+    const active = (): Tab => h.browser.tabs.activeTabFor(h.win)!
+    h.browser.handleCommand(h.win, 'urlbar.submit', {
+      input: 'https://example.com/a',
+      newTab: true,
+      background: false
+    })
+    expect(active().url).toBe('https://example.com/a')
+    h.browser.handleCommand(h.win, 'settings.update', {
+      homepage: { mode: 'url', url: 'https://news.example/' }
+    })
+    const items = appMenu(h)
+    // In the row's group, second after Forward, before its separator – a button with the bar's
+    // own House glyph, not a row among New Tab and New Private Tab.
+    expect(items.indexOf('Home')).toBe(items.indexOf('Forward') + 1)
+    expect(items.indexOf('Home')).toBeLessThan(items.indexOf('-'))
+    const home = item(h.shown(), 'Home')
+    expect(home.glyph).toBe('home')
+    expect(h.shown().filter((i) => i.label === 'Home')).toHaveLength(1)
+    expect(home.enabled).not.toBe(false)
+    home.click?.()
+    expect(h.viewCalls.at(-1)).toBe('loadURL("https://news.example/")')
+    // Off: no glyph, and the desktop's menu never had one.
+    h.browser.handleCommand(h.win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    expect(appMenu(h)).not.toContain('Home')
+    expect(appMenu(harness(DESKTOP))).not.toContain('Home')
   })
 
   it('offers private tabs where the host keeps the private session in tabs', () => {
@@ -1148,32 +1180,56 @@ function allItems(items: MenuItemTemplate[]): MenuItemTemplate[] {
 }
 
 describe("the phone menu's icon row", () => {
-  /** A phone with one loaded web page, its menu open; `row` is the menu's first group. */
-  function phone(url = PAGE_URL): PageHarness & { row: () => MenuItemTemplate[] } {
+  /**
+   * A phone with one loaded web page, its menu open; `row` is the menu's first group and
+   * `glyph(name)` the row's button carrying that glyph (the row's order is fixed, but Home
+   * comes and goes with the homepage setting, so the tests below name their glyph).
+   */
+  function phone(
+    url = PAGE_URL
+  ): PageHarness & { row: () => MenuItemTemplate[]; glyph: (name: MenuGlyph) => MenuItemTemplate } {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     if (url !== PAGE_URL) h.browser.tabs.tab(h.tabId)!.url = url
+    const row = (): MenuItemTemplate[] => {
+      appMenu(h)
+      const items = h.shown()
+      return items.slice(
+        0,
+        items.findIndex((item) => item.type === 'separator')
+      )
+    }
     return {
       ...h,
-      row: () => {
-        appMenu(h)
-        const items = h.shown()
-        return items.slice(
-          0,
-          items.findIndex((item) => item.type === 'separator')
-        )
+      row,
+      glyph: (name) => {
+        const found = row().find((item) => item.glyph === name)
+        if (!found) throw new Error(`no ${name} glyph in the row`)
+        return found
       }
     }
   }
 
-  it("is Chrome's five, in Chrome's order, each naming its glyph, and heads the phone menu alone", () => {
+  it("is Chrome's five plus Home while a homepage is set, in Chrome's order, each naming its glyph, and heads the phone menu alone", () => {
     const h = phone()
+    // The default homepage is the new tab page, so Home rides second (SET-36, §9.13).
     expect(h.row().map((item) => [item.label, item.glyph])).toEqual([
       ['Forward', 'forward'],
+      ['Home', 'home'],
       ['Bookmark', 'star'],
       ['Download Page', 'download'],
       ['Page Info', 'info'],
       ['Reload', 'reload']
     ])
+    // Homepage Off: Chrome's five, Home gone from the row and from the menu.
+    h.browser.handleCommand(h.win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    expect(h.row().map((item) => item.label)).toEqual([
+      'Forward',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload'
+    ])
+    expect(appMenu(h)).not.toContain('Home')
     // The row is the phone layout's: the desktop's native menu and the tablet's carry no glyph
     // anywhere, and their templates are what they were.
     for (const layout of [
@@ -1186,7 +1242,9 @@ describe("the phone menu's icon row", () => {
     }
     // Rows of text below the row carry none either.
     appMenu(h)
-    expect(allItems(h.shown().slice(6)).every((item) => item.glyph === undefined)).toBe(true)
+    const shown = h.shown()
+    const below = shown.slice(shown.findIndex((item) => item.type === 'separator'))
+    expect(allItems(below).every((item) => item.glyph === undefined)).toBe(true)
   })
 
   it('serialises the glyph for the chrome and leaves every other descriptor as it was', () => {
@@ -1216,7 +1274,12 @@ describe("the phone menu's icon row", () => {
 
   it("the star is the page's bookmark: unfilled and saving on a new page, filled and editing on a bookmarked one, off a page that takes no bookmark", () => {
     const h = phone()
-    const star = (): MenuItemTemplate => h.row()[1]
+    const star = (): MenuItemTemplate => h.glyph('star')
+    const serialisedStar = (): unknown => {
+      appMenu(h)
+      const items = h.shown()
+      return serialiseMenu(items, 'm').items[items.findIndex((item) => item.glyph === 'star')]
+    }
     expect(star()).toMatchObject({
       label: 'Bookmark',
       checked: false,
@@ -1225,16 +1288,14 @@ describe("the phone menu's icon row", () => {
     // A stateful glyph, not a toggle (§9.13): a plain item whose `checked` is the fill – never a
     // checkbox, which the mouse popover would tick. The chrome gets `checked` either way.
     expect(star().type).toBeUndefined()
-    appMenu(h)
-    expect(serialiseMenu(h.shown(), 'm').items[1]).toMatchObject({ type: 'normal', checked: false })
+    expect(serialisedStar()).toMatchObject({ type: 'normal', checked: false })
     const flow = vi.spyOn(h.browser, 'starTab')
     star().click?.()
     expect(flow).toHaveBeenCalledWith(h.tabId, h.win)
     // The star flow saved the page: the row's star is filled now and a press edits.
     expect(h.browser.tabs.tab(h.tabId)!.bookmarked).toBe(true)
     expect(star()).toMatchObject({ label: 'Edit Bookmark', checked: true, enabled: true })
-    appMenu(h)
-    expect(serialiseMenu(h.shown(), 'm').items[1]).toMatchObject({ type: 'normal', checked: true })
+    expect(serialisedStar()).toMatchObject({ type: 'normal', checked: true })
     // The bookmarks submenu has no second entry for it on the phone.
     appMenu(h)
     const bookmarks = h.shown().find((item) => item.label === 'Bookmarks')
@@ -1248,17 +1309,17 @@ describe("the phone menu's icon row", () => {
     ])
     // A blank tab has nothing to bookmark.
     const blank = phone('zen://blank')
-    expect(blank.row()[1]).toMatchObject({ label: 'Bookmark', enabled: false })
+    expect(blank.glyph('star')).toMatchObject({ label: 'Bookmark', enabled: false })
   })
 
   it('Download Page saves a web page through page.savePage and is off elsewhere; it is the phone menu’s one save entry', () => {
     const h = phone()
-    expect(h.row()[2]).toMatchObject({ label: 'Download Page', glyph: 'download', enabled: true })
+    expect(h.glyph('download')).toMatchObject({ label: 'Download Page', enabled: true })
     const run = vi.spyOn(h.browser.actions, 'run').mockImplementation(() => undefined)
-    h.row()[2].click?.()
+    h.glyph('download').click?.()
     expect(run).toHaveBeenCalledWith('page.savePage', { sourceTabId: h.tabId, win: h.win })
-    expect(phone('zen://settings').row()[2]).toMatchObject({ enabled: false })
-    expect(phone('zen://blank').row()[2]).toMatchObject({ enabled: false })
+    expect(phone('zen://settings').glyph('download')).toMatchObject({ enabled: false })
+    expect(phone('zen://blank').glyph('download')).toMatchObject({ enabled: false })
     // Chrome's phone menu saves through the icon alone: the text row is the desktop's, so the
     // same command is not offered twice (once gated to the web, once not).
     appMenu(h)
@@ -1270,14 +1331,14 @@ describe("the phone menu's icon row", () => {
 
   it('Page Info asks the chrome for the site information sheet, and is off where there is no site', () => {
     const h = phone()
-    expect(h.row()[3]).toMatchObject({ label: 'Page Info', glyph: 'info', enabled: true })
+    expect(h.glyph('info')).toMatchObject({ label: 'Page Info', enabled: true })
     h.sent.length = 0
-    h.row()[3].click?.()
+    h.glyph('info').click?.()
     expect(h.sent).toEqual(['siteInfo.open'])
     // No site: a blank or new tab, a registered internal page; a site's error page keeps it.
-    expect(phone('zen://blank').row()[3]).toMatchObject({ enabled: false })
-    expect(phone('zen://newtab').row()[3]).toMatchObject({ enabled: false })
-    expect(phone('zen://settings/privacy').row()[3]).toMatchObject({ enabled: false })
+    expect(phone('zen://blank').glyph('info')).toMatchObject({ enabled: false })
+    expect(phone('zen://newtab').glyph('info')).toMatchObject({ enabled: false })
+    expect(phone('zen://settings/privacy').glyph('info')).toMatchObject({ enabled: false })
     expect(hasSiteInfo({ url: 'zen://error?url=https%3A%2F%2Fexample.com' })).toBe(true)
     expect(hasSiteInfo({ url: 'file:///sdcard/page.html' })).toBe(true)
     expect(hasSiteInfo({ url: 'zen://settings' })).toBe(false)
@@ -1285,7 +1346,7 @@ describe("the phone menu's icon row", () => {
 
   it('Reload is Stop while the page loads, each running its own command', () => {
     const h = phone()
-    const last = (): MenuItemTemplate => h.row()[4]
+    const last = (): MenuItemTemplate => h.row().at(-1)!
     expect(last()).toMatchObject({ label: 'Reload', glyph: 'reload', enabled: true })
     const reload = vi.spyOn(h.browser.tabs, 'reload').mockImplementation(() => undefined)
     last().click?.()
@@ -2333,6 +2394,78 @@ function chromeParams(overrides: Partial<ChromeContextParams> = {}): ChromeConte
     ...overrides
   }
 }
+
+describe("the phone's new tab tile menu (NTP-06)", () => {
+  const tileMenu = (h: PageHarness, url: string, title: string): string[] => {
+    h.browser.handleCommand(h.win, 'newtab.tileContextMenu', { url, title, tabId: h.tabId })
+    return topLabels(h.shown())
+  }
+
+  it('a pinned tile: Open in New Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    const id = h.browser.newTab.addShortcut('Docs', 'https://docs.example/')!
+    expect(tileMenu(h, 'https://docs.example/', 'Docs')).toEqual([
+      'Open in New Tab',
+      'Copy Link',
+      '-',
+      'Edit Shortcut…',
+      'Move Left',
+      'Move Right',
+      'Unpin Shortcut',
+      'Remove'
+    ])
+    // Edit opens the shortcut's form sheet over the page the tile was held on.
+    h.sent.length = 0
+    h.click('Edit Shortcut…')
+    expect(h.sent).toContain('newtab.shortcutDialog')
+    // Unpin takes the tile off the pinned list; Remove hides its host from the page as well.
+    h.click('Unpin Shortcut')
+    expect(h.browser.state.newTabDevice.shortcuts.find((s) => s.id === id)).toBeUndefined()
+  })
+
+  it('Move Left / Move Right step a pinned tile one slot along the grid – the drag’s accessible path – and are greyed at the ends (§9.17)', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    const a = h.browser.newTab.addShortcut('A', 'https://a.example/')!
+    const b = h.browser.newTab.addShortcut('B', 'https://b.example/')!
+    const c = h.browser.newTab.addShortcut('C', 'https://c.example/')!
+    const order = (): string[] => h.browser.state.newTabDevice.shortcuts.map((s) => s.id)
+    const move = (url: string, label: string): MenuItemTemplate => {
+      tileMenu(h, url, '')
+      return item(h.shown(), label)
+    }
+    // At the start Move Left is off, Move Right steps the tile past its neighbour.
+    expect(move('https://a.example/', 'Move Left').enabled).toBe(false)
+    expect(move('https://a.example/', 'Move Right').enabled).toBe(true)
+    move('https://a.example/', 'Move Right').click?.()
+    expect(order()).toEqual([b, a, c])
+    // In the middle both are on; at the end Move Right is off.
+    expect(move('https://a.example/', 'Move Left').enabled).toBe(true)
+    move('https://a.example/', 'Move Right').click?.()
+    expect(order()).toEqual([b, c, a])
+    expect(move('https://a.example/', 'Move Right').enabled).toBe(false)
+    move('https://a.example/', 'Move Left').click?.()
+    expect(order()).toEqual([b, a, c])
+    // A most visited tile is not a slot: no Move rows for it.
+    expect(tileMenu(h, 'https://often.example/', 'Often')).not.toContain('Move Left')
+  })
+
+  it('a most visited tile has no edit – it is the history’s – and offers Pin instead', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    expect(tileMenu(h, 'https://often.example/', 'Often')).toEqual([
+      'Open in New Tab',
+      'Copy Link',
+      '-',
+      'Pin Shortcut',
+      'Remove'
+    ])
+    h.click('Pin Shortcut')
+    expect(h.browser.state.newTabDevice.shortcuts.map((s) => s.url)).toEqual([
+      'https://often.example/'
+    ])
+    h.click('Remove')
+    expect(h.browser.state.newTabDevice.hiddenHosts).toContain('often.example')
+  })
+})
 
 describe('the chrome context menus', () => {
   const show = async (h: PageHarness, params: ChromeContextParams): Promise<string[]> => {

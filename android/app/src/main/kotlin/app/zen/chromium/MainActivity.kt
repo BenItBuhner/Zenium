@@ -173,13 +173,25 @@ class MainActivity : BrowserActivity() {
             device != null && !device.isVirtual && device.supportsSource(InputDevice.SOURCE_MOUSE)
         }
         return json(
-            "largeScreen" to (c.smallestScreenWidthDp >= 600),
+            "largeScreen" to largeScreen(),
             "pointerAndKeyboard" to (keyboard && mouse),
             "fontScale" to c.fontScale.toDouble(),
             "textZoom" to ChromeTextScale.zoomFactor(ChromeTextScale.textZoomPercent(resources)),
             "fontWeightAdjustment" to ChromeTextScale.fontWeightAdjustment(c)
         )
     }
+
+    /**
+     * Whether the screen is large ([ScreenClass]: 600 dp or more on its short side, the tablet
+     * line): the page controls' desktop default reads it ([environment]), and rotate-to-fullscreen's
+     * gate reads the same configuration's other face ([Host.rotateToFullscreen],
+     * [ScreenClass.rotateToFullscreen]). Read live from the activity's configuration, which is the
+     * display's through split screen (from Android 11 a split task inherits the display's
+     * `smallestScreenWidthDp`) and the window's through a fold or a floating window: a fold opened or
+     * a desktop window widened moves the class, a split does not – Chrome's own `sw600dp` gate reads
+     * the same way.
+     */
+    fun largeScreen(): Boolean = ScreenClass.large(resources.configuration.smallestScreenWidthDp)
 
     /**
      * Tell the chrome how far the status bar, cutout, gesture bar and keyboard reach in CSS px,
@@ -202,7 +214,11 @@ class MainActivity : BrowserActivity() {
     /** The insets as last measured, with the landing's word as it stands now; judged again when the landing asks. */
     private fun sendInsets() {
         val now = SystemClock.uptimeMillis()
+        val wasSettling = host.landing.settling
         val settling = host.landing.settle(landingWindow(), now)
+        // The bars settled: the frames the tab host held back for the landing – the chrome's
+        // layouts for the screen the exit turned away from (BH-32) – are applied or dropped.
+        if (wasSettling && !settling) host.tabs.landed()
         val payload = JSONObject(insets.toString()).put("settling", settling)
         host.chrome.hostEvent("insets", payload)
         root.removeCallbacks(landingCheck)

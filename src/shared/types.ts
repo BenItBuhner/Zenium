@@ -493,6 +493,12 @@ export interface Tab {
 export type FolderColor =
   'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange'
 
+/**
+ * The scheme a group colour is drawn for (design language v2 §9.14: one set a scheme): the
+ * chrome's resolved theme – the root's `data-theme` – never the setting's 'system'.
+ */
+export type FolderColorScheme = Exclude<ColorScheme, 'system'>
+
 /** A page of a saved (closed) group: what "Open" brings back (Chrome's saved tab groups). */
 export interface SavedGroupTab {
   url: string
@@ -2025,6 +2031,21 @@ export type NewTabPosition = 'end' | 'after-current'
 /** Screen edge the phone layout docks its address bar to. */
 export type PhoneBarPosition = 'top' | 'bottom'
 /**
+ * Where a Home action goes (Settings › Homepage, SET-36 / NTP-30; Chrome's and Edge's homepage):
+ * nowhere – the Home controls hide (`off`) –, the new tab page (`newtab`), or a page of the
+ * user's (`url`).
+ */
+export type HomepageMode = 'off' | 'newtab' | 'url'
+export interface HomepageSettings {
+  mode: HomepageMode
+  /**
+   * The page a `url` homepage opens: an absolute web address (`shared/homepage.ts` normalises
+   * what was typed), or empty while none has been entered – a `url` homepage without one opens
+   * the new tab page. Kept across mode changes, so a way back to "Specific page" finds it.
+   */
+  url: string
+}
+/**
  * A control the phone's bar can host (see `shared/phoneBar.ts` for the catalogue). The address
  * pill is not one of them: it is always there, in the flexible slot between the two sides.
  */
@@ -2243,6 +2264,14 @@ export interface Settings {
   phoneBarPosition: PhoneBarPosition
   /** Phone layout: the controls either side of the address pill (Settings › Navigation bar). */
   phoneBar: PhoneBarLayout
+  /**
+   * The homepage (SET-36 / NTP-30): what the phone's Home button – the bar's optional item, the
+   * app menu's icon-row glyph otherwise – opens, or that there is none. Absent in profiles from
+   * before it existed (`sanitizeHomepage` reads the new tab page, Chrome's default). Synced
+   * with the settings; the desktop shells have no row for it yet and their Home (`nav.home`)
+   * keeps its own destination.
+   */
+  homepage: HomepageSettings
   /** Touch hosts: drag down from the top of a page to reload it. */
   pullToRefresh: boolean
   /**
@@ -3479,11 +3508,11 @@ export interface CommandDescriptor {
 
 /**
  * The glyph an icon-row item draws. The phone app menu's first group is Chrome's row of icon
- * buttons (Forward, the bookmark star, Download page, Page info, Reload / Stop): the core names
- * the glyph, the chrome draws it, and the item's label is the button's accessible name. A menu
- * whose items carry no glyph is rows of text, as before.
+ * buttons (Forward, Home while a homepage is set, the bookmark star, Download page, Page info,
+ * Reload / Stop): the core names the glyph, the chrome draws it, and the item's label is the
+ * button's accessible name. A menu whose items carry no glyph is rows of text, as before.
  */
-export type MenuGlyph = 'forward' | 'star' | 'download' | 'info' | 'reload' | 'stop'
+export type MenuGlyph = 'forward' | 'home' | 'star' | 'download' | 'info' | 'reload' | 'stop'
 
 export interface MenuItemDescriptor {
   id: string
@@ -3693,6 +3722,11 @@ export interface Commands {
   'tab.closeBelow': { args: { tabId: string }; result: void }
   'tab.closeAbove': { args: { tabId: string }; result: void }
   'tab.navigate': { args: { tabId: string; input: string }; result: void }
+  /**
+   * A Home control (TB-15): `tabId` goes to the homepage (Settings › Homepage) – the user's
+   * page, or the new tab page at rest. Nothing with the homepage off.
+   */
+  'tab.home': { args: { tabId: string }; result: void }
   'tab.back': { args: { tabId: string }; result: void }
   'tab.forward': { args: { tabId: string }; result: void }
   'tab.reload': { args: { tabId: string; skipCache?: boolean }; result: void }
@@ -3859,8 +3893,11 @@ export interface Commands {
    */
   'folder.newTab': { args: { folderId: string }; result: string }
   'newtab.contextMenu': { args: MenuAnchor | void; result: void }
-  /** Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab. */
-  'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
+  /**
+   * Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab and, for a
+   * shortcut, Edit Shortcut… – its edit sheet over the page in `tabId` (the active tab without).
+   */
+  'newtab.tileContextMenu': { args: { url: string; title: string; tabId?: string }; result: void }
   /**
    * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu

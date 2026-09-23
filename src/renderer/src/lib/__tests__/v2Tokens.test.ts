@@ -1669,6 +1669,14 @@ describe('the fullscreen hint palette', () => {
     )
     const insetBlock = css.lastIndexOf(':root {', css.indexOf('--zen-message-inset:'))
     expect(`${TOAST_CARD.insetPx}px`).toBe(value(':root', insetBlock, '--zen-message-inset'))
+    // The cap where the frame is wider (§9.33): the toasts' cell and the banners' stack span
+    // the frame up to it and centre – the twin caps its own host element by the same number.
+    expect(`${TOAST_CARD.maxWidthPx}px`).toBe(value(':root', insetBlock, '--zen-message-max-width'))
+    for (const selector of ['.zen-message-toasts', '.zen-message-stack']) {
+      const cell = block(selector)
+      expect(cell).toMatch(/^ {2}max-width: var\(--zen-message-max-width\);$/m)
+      expect(cell).toMatch(/^ {2}margin: 0 auto;$/m)
+    }
     // The card reads those tokens – so the twin's copies are the card's – and states the rest
     // of its geometry once, where the twin's numbers come from.
     const card = block('.zen-message')

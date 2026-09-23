@@ -24,6 +24,9 @@
   #embed { display: block; width: 60%; height: 112px; border: 0; border-radius: 8px; background: #000; }
   #stage { display: block; width: 34%; height: 112px; border-radius: 8px; background: #3a0ca3; }
   input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  /* The inline row (MED-02): the clips played where they are, with the native controls, for the turn to take. */
+  .row { display: flex; gap: 12px; padding: 0 20px; margin: 8px 0; }
+  .row .big { width: 50%; margin: 0; font-size: 17px; background: #6d597a; }
   pre#state { margin: 0; padding: 12px 20px; font-size: 13px; line-height: 1.5; color: #333; white-space: pre-wrap; word-break: break-all; }
 </style>
 </head>
@@ -44,6 +47,10 @@
 <input id="cap" type="file" accept="image/*" capture>
 <label id="pick-label" class="big file" for="pick">Choose an image</label>
 <input id="pick" type="file" accept="image/*">
+<div class="row">
+  <button id="play-land" class="big">Play landscape inline</button>
+  <button id="play-port" class="big">Play portrait inline</button>
+</div>
 <pre id="state"></pre>
 <script>
 (function () {
@@ -86,6 +93,28 @@
   };
   $('fs-land').addEventListener('click', function () { goFullscreen($('land')); });
   $('fs-port').addEventListener('click', function () { goFullscreen($('port')); });
+  // Inline, with the native controls (MED-02 takes a playing video that shows them): the turn of
+  // the screen, not this tap, is what takes it fullscreen.
+  var playInline = function (video) {
+    video.setAttribute('controls', '');
+    var played = video.play();
+    if (played && played.catch) played.catch(function (e) { state.err = String(e && e.name || e); render(); });
+  };
+  $('play-land').addEventListener('click', function () { playInline($('land')); });
+  $('play-port').addEventListener('click', function () { playInline($('port')); });
+  // Every turn of the screen the page hears (`screen.orientation`'s change, the event the page
+  // script asks for fullscreen inside) since the driver's last mark: when, the new type, what
+  // was fullscreen as it fired.
+  var turns = [];
+  var turnsMark = performance.now();
+  window.__turnsMark = function () { turns = []; turnsMark = performance.now(); };
+  window.__turns = function () { return JSON.stringify(turns); };
+  var orientation = window.screen && window.screen.orientation;
+  if (orientation && orientation.addEventListener) {
+    orientation.addEventListener('change', function () {
+      turns.push({ at: Math.round(performance.now() - turnsMark), type: orientation.type, fs: state.fs, el: state.el });
+    });
+  }
   // The canvas: a fullscreen element with no video in it (a game's, a slide deck's), under a
   // finger on the canvas itself. Something drawn, so the fullscreen shows more than black.
   var stage = $('stage');
@@ -110,15 +139,17 @@
   };
   document.addEventListener('fullscreenchange', onFullscreenChange);
   document.addEventListener('webkitfullscreenchange', onFullscreenChange);
-  // Every resize on record (when, the viewport, whether fullscreen) since the driver's last mark,
-  // so the exit's relayouts can be told apart: the layer's hand-back, the bars, the turn.
+  // Every resize on record (when, the viewport, whether fullscreen, the screen's size as it stood)
+  // since the driver's last mark, so the exit's relayouts can be told apart: the layer's
+  // hand-back, the bars, the turn – and a frame wider than the screen it came on is a stale one.
   var resizeLog = [];
   var resizeMark = performance.now();
   window.__resizeMark = function () { resizeLog = []; resizeMark = performance.now(); };
   window.__resizeLog = function () { return JSON.stringify(resizeLog); };
   window.addEventListener('resize', function () {
     state.resizes++;
-    resizeLog.push({ at: Math.round(performance.now() - resizeMark), w: window.innerWidth, h: window.innerHeight, fs: state.fs });
+    resizeLog.push({ at: Math.round(performance.now() - resizeMark), w: window.innerWidth, h: window.innerHeight, fs: state.fs,
+      sw: window.screen.width, sh: window.screen.height });
     render();
   });
   var onFile = function (input) {

@@ -278,3 +278,97 @@ describe('the field’s engine mark (NTP-09)', () => {
     expect(slot().querySelector('img')).toBeNull()
   })
 })
+
+const { setFakeboxPainter, fakeboxMorphStore } = await import('@renderer/lib/fakeboxMorph')
+
+describe('the page for the bar’s edge (NTP-29)', () => {
+  const PINNED = [
+    { id: 's1', title: 'Docs', url: 'https://docs.example/' },
+    { id: 's2', title: 'News', url: 'https://news.example/' }
+  ]
+  const withDock = (dock: 'top' | 'bottom'): UIState =>
+    ({
+      ...state,
+      settings: { ...state.settings, phoneBarPosition: dock },
+      newTabShortcuts: PINNED
+    }) as UIState
+
+  /** Render and let the history's answer (no most visited) land, so the grid draws the pins. */
+  async function renderAt(dock: 'top' | 'bottom'): Promise<HTMLElement> {
+    render(tab('r', 'default'), withDock(dock))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    return host!.querySelector<HTMLElement>('.zen-ntp')!
+  }
+  const before = (a: Element, b: Element): boolean =>
+    Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  /** The column's spacers – its first and last children – by their `flex` share. */
+  const spacers = (column: HTMLElement): string[] =>
+    [column.firstElementChild, column.lastElementChild].map((el) =>
+      el instanceof HTMLElement ? el.style.flexGrow || el.style.flex : ''
+    )
+
+  afterEach(() => {
+    setFakeboxPainter(null)
+    vi.restoreAllMocks()
+  })
+
+  it('with the bar at the bottom the shortcuts stand above the field and the gear moves to the top corner', async () => {
+    const page = await renderAt('bottom')
+    expect(page.dataset.dock).toBe('bottom')
+    const field = page.querySelector<HTMLElement>('.zen-ntp-field')!
+    const grid = page.querySelector<HTMLElement>('[aria-label="Most visited"]')!
+    expect(grid.textContent).toContain('Docs')
+    expect(before(grid, field)).toBe(true)
+    // Both in the one scrolling column, whose scroll carries the field toward the pill (#243).
+    const column = field.closest<HTMLElement>('.zen-ntp-scroll')!
+    expect(grid.closest('.zen-ntp-scroll')).toBe(column)
+    // One geometry measured from the bar's edge (§9.29): the free height 3 : 5 with the block on
+    // the bar's side – here 5 parts above the tiles, 3 under the field – and the 24 between the
+    // tiles and the field on the tiles' side.
+    expect(spacers(column)).toEqual(['5', '3'])
+    expect(grid.classList.contains('mb-6')).toBe(true)
+    const gear = page.querySelector<HTMLElement>('[aria-label="Customise the new tab page"]')!
+    expect(gear.style.top).toBe('12px')
+    expect(gear.style.bottom).toBe('')
+  })
+
+  it('with the bar at the top the layout is the one it was: the field first, the tiles under it, the gear low', async () => {
+    const page = await renderAt('top')
+    expect(page.dataset.dock).toBe('top')
+    const field = page.querySelector<HTMLElement>('.zen-ntp-field')!
+    const grid = page.querySelector<HTMLElement>('[aria-label="Most visited"]')!
+    expect(before(field, grid)).toBe(true)
+    // The same 3 : 5 the other way up: 3 parts over the field, 5 under the tiles, the 24 above them.
+    expect(spacers(field.closest<HTMLElement>('.zen-ntp-scroll')!)).toEqual(['3', '5'])
+    expect(grid.classList.contains('mt-6')).toBe(true)
+    const gear = page.querySelector<HTMLElement>('[aria-label="Customise the new tab page"]')!
+    expect(gear.style.bottom).toBe('12px')
+    expect(gear.style.top).toBe('')
+  })
+
+  it('the field is the morph’s origin wherever it rests: the dock changing measures it there anew', async () => {
+    // The field's rectangle as the layout would give it: high on the page at a top dock, low at
+    // a bottom one; everything else has no size (the bar is not in this document).
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      if (!this.classList.contains('zen-ntp-field')) return new DOMRect(0, 0, 0, 0)
+      const dock = this.closest<HTMLElement>('.zen-ntp')?.dataset.dock
+      return new DOMRect(16, dock === 'bottom' ? 760 : 200, 380, 52)
+    })
+    const rests: number[] = []
+    setFakeboxPainter((frame) => void rests.push(frame.geometry.rest.y))
+    await renderAt('top')
+    expect(fakeboxMorphStore.get().tabId).toBe('r')
+    expect(rests.at(-1)).toBe(200)
+    await renderAt('bottom')
+    // Registered again for the same tab, and the origin is the field's new place.
+    expect(fakeboxMorphStore.get().tabId).toBe('r')
+    expect(rests.at(-1)).toBe(760)
+    await renderAt('top')
+    expect(rests.at(-1)).toBe(200)
+  })
+})

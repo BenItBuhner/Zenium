@@ -394,11 +394,20 @@ describe('the group’s colour (M2) and the count aside (M3)', () => {
     const block = shell()
     expect(block.className).toContain('zen-group-fold')
     const glyph = header().querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toMatch(/^\d+ \d+ \d+$/)
+    // The colour as §9.14's pair – both schemes' channels on the glyph, the marker the
+    // stylesheet picks `--zen-group-rgb` from by the root's theme, no pick written inline.
+    expect(glyph.hasAttribute('data-group-rgb')).toBe(true)
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-light')).toMatch(/^\d+ \d+ \d+$/)
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-dark')).toMatch(/^\d+ \d+ \d+$/)
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-light')).not.toBe(
+      glyph.style.getPropertyValue('--zen-group-rgb-dark')
+    )
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('')
     expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
     // The block carries no colour and no bar (§9.36: the rows' indent is the bracket); the
     // header's own background is the row's: no colour of the group on it.
     expect(block.hasAttribute('data-group-bar')).toBe(false)
+    expect(block.hasAttribute('data-group-rgb')).toBe(false)
     expect(block.style.getPropertyValue('--zen-group-rgb')).toBe('')
     expect(block.getAttribute('style')).toBeNull()
     expect(header().style.background).toBe('')
@@ -408,13 +417,11 @@ describe('the group’s colour (M2) and the count aside (M3)', () => {
     expect(css).not.toContain('data-group-bar')
     expect(css).not.toMatch(/\.zen-group-fold[^{]*::before/)
     expect(css).not.toMatch(/\.zen-group-fold[^{]*:focus-visible/)
-    // A colourless folder's dot is the grey default, never none.
+    // A colourless folder's dot is the grey default, never none – in both schemes.
     panel([tab('home'), tab('a', { folderId: 'g' })], [folder({ color: undefined })])
-    expect(
-      header()
-        .querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-        .style.getPropertyValue('--zen-group-rgb')
-    ).toMatch(/^\d+ \d+ \d+$/)
+    const bare = header().querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
+    expect(bare.style.getPropertyValue('--zen-group-rgb-light')).toMatch(/^\d+ \d+ \d+$/)
+    expect(bare.style.getPropertyValue('--zen-group-rgb-dark')).toMatch(/^\d+ \d+ \d+$/)
   })
 
   it('shows the count as the 13 tabular aside at 69 %, folded and open alike – never a badge', () => {

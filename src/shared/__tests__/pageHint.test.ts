@@ -12,6 +12,7 @@ import {
   renderHint,
   springTo,
   TOAST_INSET_PX,
+  TOAST_MAX_WIDTH_PX,
   TOAST_REDUCED_FADE_MS,
   toastPresence
 } from '../pageHint'
@@ -98,6 +99,11 @@ describe('the phone toast as a page hint', () => {
     expect(el.style.bottom).toContain('safe-area-inset-bottom')
     expect(el.style.left).toBe(`${TOAST_INSET_PX}px`)
     expect(el.style.right).toBe(`${TOAST_INSET_PX}px`)
+    // Where the frame is wider than the card's cap (a phone in landscape) the card caps and
+    // centres between its insets (§9.33): the same number as the chrome's cards.
+    expect(el.style.maxWidth).toBe(`${TOAST_MAX_WIDTH_PX}px`)
+    expect(TOAST_MAX_WIDTH_PX).toBe(560)
+    expect(el.style.margin).toBe('0px auto')
     expect(el.style.pointerEvents).toBe('none')
     expect(el.style.opacity).toBe('0')
     // The bubble keeps its place at the top and its fade.
@@ -191,6 +197,57 @@ describe('the phone toast as a page hint', () => {
     expect(el!.isConnected).toBe(false)
   })
 
+  it('takes its leave at the first touch on the page, from where it stands (MED-03)', () => {
+    reduceMotion(false)
+    let listener: ((hint: PageHint | null) => void) | null = null
+    installHint((l) => {
+      listener = l
+    })
+    const touch = (): void => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    }
+    // A touch before any toast stands is nobody's.
+    touch()
+    listener!(fullscreenExitHint(false))
+    const el = document.documentElement.querySelector<HTMLElement>('zenium-fullscreen-hint')!
+    for (let i = 0; i < 200 && frames.pending > 0; i++) frames.tick()
+    expect(el.style.transform).toBe('translateY(0.00px)')
+    // Well inside its stand, the first touch starts the way out: the stand's timer is dropped.
+    vi.advanceTimersByTime(TOAST_SHOW_MS / 2)
+    touch()
+    expect(vi.getTimerCount()).toBe(0)
+    frames.tick()
+    expect(Number.parseFloat(el.style.opacity)).toBeLessThan(1)
+    expect(el.style.willChange).toContain('transform')
+    // A second touch on the way out changes nothing.
+    touch()
+    for (let i = 0; i < 200 && frames.pending > 0; i++) frames.tick()
+    expect(el.isConnected).toBe(false)
+  })
+
+  it('a touch on the way in turns it round where it is', () => {
+    reduceMotion(false)
+    let listener: ((hint: PageHint | null) => void) | null = null
+    installHint((l) => {
+      listener = l
+    })
+    listener!(fullscreenExitHint(false))
+    const el = document.documentElement.querySelector<HTMLElement>('zenium-fullscreen-hint')!
+    frames.tick()
+    frames.tick()
+    const partWay = Number.parseFloat(el.style.transform.slice('translateY('.length))
+    expect(partWay).toBeGreaterThan(0)
+    expect(partWay).toBeLessThan(TOAST_INSET_PX)
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    frames.tick()
+    // Out again from part way, not from its rest: never past its landing first.
+    const turned = Number.parseFloat(el.style.transform.slice('translateY('.length))
+    expect(turned).toBeGreaterThan(partWay)
+    expect(turned).toBeLessThan(TOAST_INSET_PX)
+    for (let i = 0; i < 200 && frames.pending > 0; i++) frames.tick()
+    expect(el.isConnected).toBe(false)
+  })
+
   it('fades in place under reduced motion', () => {
     reduceMotion(true)
     let listener: ((hint: PageHint | null) => void) | null = null
@@ -206,6 +263,23 @@ describe('the phone toast as a page hint', () => {
     vi.advanceTimersByTime(TOAST_SHOW_MS)
     frames.tick(TOAST_REDUCED_FADE_MS / 2)
     expect(Number.parseFloat(el.style.opacity)).toBeCloseTo(0.5, 1)
+    frames.tick(TOAST_REDUCED_FADE_MS / 2)
+    expect(el.isConnected).toBe(false)
+  })
+
+  it('a touch under reduced motion fades it out from where its fade in stands', () => {
+    reduceMotion(true)
+    let listener: ((hint: PageHint | null) => void) | null = null
+    installHint((l) => {
+      listener = l
+    })
+    listener!(fullscreenExitHint(true))
+    const el = document.documentElement.querySelector<HTMLElement>('zenium-fullscreen-hint')!
+    frames.tick(TOAST_REDUCED_FADE_MS / 2)
+    expect(Number.parseFloat(el.style.opacity)).toBeCloseTo(0.5, 1)
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    frames.tick(TOAST_REDUCED_FADE_MS / 2)
+    expect(Number.parseFloat(el.style.opacity)).toBeCloseTo(0.25, 1)
     frames.tick(TOAST_REDUCED_FADE_MS / 2)
     expect(el.isConnected).toBe(false)
   })

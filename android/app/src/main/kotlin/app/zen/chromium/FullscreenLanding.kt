@@ -40,6 +40,14 @@ class FullscreenLanding {
     val settling: Boolean get() = exitAt >= 0
 
     /**
+     * Whether the window the exit comes back to is portrait (taller than wide), while one is
+     * kept – from the fullscreen's entry until its exit has settled; null when none is. The
+     * frames the chrome lays out for the other orientation meanwhile are held to it
+     * ([TabHost.landingOn]).
+     */
+    fun landsOnPortrait(): Boolean? = before?.let { it.screenHeightDp > it.screenWidthDp }
+
+    /**
      * The host is going fullscreen from `window` (its bars still where they were): the state the
      * exit comes back to. A fullscreen entered again while the last one's exit is still settling
      * (the tab's second video, a switch of tabs) keeps the window from before the first; the

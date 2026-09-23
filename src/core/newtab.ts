@@ -26,7 +26,7 @@ import type {
 } from '../shared/types'
 import { privateThirdPartyCookieStatus, type SafeBrowsingHit } from '../shared/privacy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
-import { NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
+import { BLANK_URL, NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
 import { resolveTheme, themeCssVariables } from '../shared/theme'
 import { newId } from '../shared/ids'
 import {
@@ -314,6 +314,19 @@ export class NewTabService {
   /** Where `nav.home` and fresh blank / private windows go with the page on. */
   homeUrl(): string | null {
     return this.enabled ? NEW_TAB_URL : null
+  }
+
+  /**
+   * Where a Home control goes (Settings › Homepage, SET-36 / NTP-30): the user's page, or the
+   * new tab page – the served page where it is on, the blank tab the phone's chrome draws its
+   * page over elsewhere; a "Specific page" homepage with no address yet opens that too. Null
+   * with the homepage off: the Home controls hide and nothing runs.
+   */
+  homepageUrl(): string | null {
+    const { homepage } = this.browser.state.settings
+    if (homepage.mode === 'off') return null
+    if (homepage.mode === 'url' && homepage.url) return homepage.url
+    return this.homeUrl() ?? BLANK_URL
   }
 
   /** The new tab pages a window shows: the tab records are theirs, so are the state pushes. */

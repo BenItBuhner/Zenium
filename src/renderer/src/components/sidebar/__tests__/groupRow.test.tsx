@@ -290,7 +290,11 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(row.hasAttribute('data-saved')).toBe(false)
     const glyph = row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
     expect(glyph.hasAttribute('data-saved')).toBe(false)
-    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('76 141 255')
+    // §9.14's pair on the glyph; main.css picks `--zen-group-rgb` from it by the root's theme.
+    expect(glyph.hasAttribute('data-group-rgb')).toBe(true)
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-light')).toBe('22 108 221')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-dark')).toBe('138 180 248')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('')
     expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
     expect(glyph.querySelector('.zen-group-row-icon')).toBeNull()
     expect(row.querySelector('[data-testid="group-row-name"]')?.textContent).toBe('Research')
@@ -345,11 +349,29 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(chip.className).toContain('zen-strip-group-chip')
     let glyph = chip.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
     expect(glyph).not.toBeNull()
-    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('76 141 255')
+    // §9.14's pair on the glyph; main.css picks `--zen-group-rgb` from it by the root's theme.
+    expect(glyph.hasAttribute('data-group-rgb')).toBe(true)
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-light')).toBe('22 108 221')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-dark')).toBe('138 180 248')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('')
     expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
     expect(glyph.querySelector('.zen-group-row-icon')).toBeNull()
     expect(glyph.nextElementSibling?.getAttribute('data-testid')).toBe('group-chip-name')
     expect(chip.querySelector('[data-testid="group-chip-name"]')?.textContent).toBe('Research')
+    // The group's 2 px line along the band wears the same pair on itself and reads
+    // `rgb(var(--zen-group-rgb))` from the stylesheet: no colour of its own inline.
+    const line = shell().querySelector<HTMLElement>('[data-strip-group-line="g"]')!
+    expect(line).not.toBeNull()
+    expect(line.hasAttribute('data-group-rgb')).toBe(true)
+    expect(line.style.getPropertyValue('--zen-group-rgb-light')).toBe('22 108 221')
+    expect(line.style.getPropertyValue('--zen-group-rgb-dark')).toBe('138 180 248')
+    expect(line.style.getPropertyValue('--zen-group-rgb')).toBe('')
+    expect(line.style.background).toBe('')
+    expect(line.style.backgroundColor).toBe('')
+    const lineRule = rule('.zen-strip-group-line')
+    expect(lineRule).toContain('height: 2px')
+    expect(lineRule).toContain('top: 2px')
+    expect(lineRule).toContain('background: rgb(var(--zen-group-rgb))')
     // …and the folder's own icon where it has one, as on every other host.
     panel(grouped(), [folder({ icon: '🔬' })], 'desktop', 'synced', 'x')
     chip = header()

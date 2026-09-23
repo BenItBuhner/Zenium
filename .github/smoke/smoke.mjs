@@ -2860,6 +2860,154 @@ async function scenarioWalkthrough() {
       return { z0, z1, z2, z3, z4, bubbleGone: true }
     })
 
+    // A page that never answers (BUG-009): the fixture takes the request and writes nothing, so
+    // the navigation hangs before its document commits and the row spins until the user stops
+    // it. Both shapes of the hang, each stopped its own way: a new tab's first navigation
+    // stopped with Escape at the chrome – `press` goes through the window's chrome page, the
+    // path a user's Escape takes while the keyboard is in the chrome (a tab whose view has no
+    // document yet, the URL bar just closed), which the page handler in core/keys.ts never sees –
+    // then that tab, on a committed page, leaving for the same address, stopped with the
+    // toolbar's Stop button. What the fixture holds and what the app's own state says of the tab
+    // are read, never a clock: the load hangs until it is stopped.
+    await s.step('stop-hanging-load', async () => {
+      await s.reset()
+      const hang = bootSite.hanging
+      const rowsBefore = await s.sidebarTabCount()
+      /** The tab's record in the app state (the row's spinner is `loading`). */
+      const record = (id) =>
+        s.chrome
+          .evaluate(async (tabId) => {
+            const t = (await window.zen.invoke('app.getState')).tabs?.[tabId]
+            return t ? { url: t.url, loading: t.loading, errorCode: t.errorCode ?? null } : null
+          }, id)
+          .catch(() => null)
+      /** The fixture is sitting on `n` more requests for the hanging address than before. */
+      const heldMore = (before) =>
+        waitFor(
+          () => (bootSite.held() > before ? bootSite.held() : null),
+          15000,
+          `the fixture holding the request for ${hang.url}`
+        )
+      const spinning = (id, what) =>
+        waitFor(
+          async () => ((await record(id))?.loading === true ? true : null),
+          8000,
+          `${what}: tab ${id} loading in the app state`
+        )
+      const stopped = (id, what) =>
+        waitFor(
+          async () => {
+            const t = await record(id)
+            return t && t.loading === false ? t : null
+          },
+          8000,
+          `${what}: tab ${id} stopped`
+        )
+
+      // Shape 1: a new tab, its first navigation hanging. The bar's Enter closes it; the chrome's
+      // Escape stack ends in Stop (hooks/useGlobalKeys.ts). The keyboard's owner at the press is
+      // recorded: the new tab's own view, when it had a document to give the keyboard to.
+      await s.press(`${ACCEL}+t`)
+      await s.urlbarInput().waitFor({ state: 'visible', timeout: 8000 })
+      let held = bootSite.held()
+      await s.submitUrl(hang.url)
+      await heldMore(held)
+      const tabId = await waitFor(
+        async () => {
+          const id = await s.activeTabId()
+          return id && (await record(id))?.url === hang.url ? id : null
+        },
+        8000,
+        `the active tab at ${hang.url}`
+      )
+      await spinning(tabId, 'Escape')
+      // The bar has gone: the chrome's document-level Escape stands back while it is up.
+      await waitFor(
+        async () => (!(await s.urlbarState()).barVisible ? true : null),
+        8000,
+        'the URL bar down after Enter'
+      )
+      const owner = await s.keyboardOwner()
+      await s.shot('03b-hanging-load')
+      await s.press('Escape')
+      const afterEscape = await stopped(tabId, 'Escape')
+      if (afterEscape.errorCode !== null) {
+        throw new Error(`Escape left the tab on error ${afterEscape.errorCode}, not at rest`)
+      }
+      // At rest the request is gone from the server too: the socket went with the navigation.
+      await waitFor(
+        () => (bootSite.held() === held ? true : null),
+        8000,
+        'the fixture let go of the stopped request'
+      )
+
+      // Shape 2: the same tab on a committed page leaves for the hanging address; the reload
+      // button, Stop while the tab loads, ends it.
+      await s.press(`${ACCEL}+l`)
+      await s.submitUrl(bootSite.second.url)
+      await waitFor(
+        async () => {
+          const t = await record(tabId)
+          return t && t.url === bootSite.second.url && t.loading === false ? t : null
+        },
+        15000,
+        `tab ${tabId} on ${bootSite.second.url}`
+      )
+      held = bootSite.held()
+      await s.press(`${ACCEL}+l`)
+      await s.submitUrl(hang.url)
+      await heldMore(held)
+      await spinning(tabId, 'the Stop button')
+      const button = s.chrome.locator(`[data-zen-menu="reload"][data-zen-menu-tab="${tabId}"]`)
+      await button.first().waitFor({ state: 'visible', timeout: 8000 })
+      const titleWhileLoading = await waitFor(
+        async () => {
+          const title = await button.first().getAttribute('title')
+          return title && title.startsWith('Stop') ? title : null
+        },
+        8000,
+        'the reload button turned into Stop'
+      )
+      await button.first().click()
+      const afterButton = await stopped(tabId, 'the Stop button')
+      if (afterButton.errorCode !== null) {
+        throw new Error(`Stop left the tab on error ${afterButton.errorCode}, not at rest`)
+      }
+      const titleAtRest = await waitFor(
+        async () => {
+          const title = await button.first().getAttribute('title')
+          return title && title.startsWith('Reload') ? title : null
+        },
+        8000,
+        'the Stop button turned back into Reload'
+      )
+      // The committed page stayed where it was: only the navigation went.
+      const live = (await s.tabs()).find((t) => t.url === bootSite.second.url)
+      if (!live) throw new Error(`the stopped tab's page is no longer ${bootSite.second.url}`)
+
+      // Back to the walkthrough's two tabs, the fixture's first page active.
+      await s.press(`${ACCEL}+w`)
+      await waitFor(
+        async () => ((await s.sidebarTabCount()) === rowsBefore ? true : null),
+        8000,
+        `${rowsBefore} sidebar rows again after Ctrl+W`
+      )
+      await s.sidebarTab(page.title).first().click()
+      await waitFor(
+        async () => {
+          const id = await s.activeTabId()
+          return id && (await record(id))?.url === page.url ? id : null
+        },
+        8000,
+        `the fixture's first page active again`
+      )
+      return {
+        url: hang.url,
+        escape: { keyboardOwner: owner, ...afterEscape },
+        button: { titleWhileLoading, titleAtRest, ...afterButton }
+      }
+    })
+
     await s.step('fullscreen', async () => {
       await s.reset()
       const combo = FULLSCREEN_COMBO

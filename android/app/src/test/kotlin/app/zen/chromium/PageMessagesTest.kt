@@ -37,15 +37,28 @@ class PageMessagesTest {
     @Test
     fun aFullscreenReportIsTheHostsOwnWithItsVideoSize() {
         assertEquals(
-            PageMessageRoute.Fullscreen(true, 1920, 1080),
-            routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to 1920, "videoHeight" to 1080), token)
+            PageMessageRoute.Fullscreen(true, 1920, 1080, video = true),
+            routePageMessage(message("type" to "fullscreen", "active" to true, "video" to true, "videoWidth" to 1920, "videoHeight" to 1080), token)
         )
-        // Fullscreen ended, or an element without a video: no size.
-        assertEquals(PageMessageRoute.Fullscreen(false, 0, 0), routePageMessage(message("type" to "fullscreen", "active" to false), token))
-        // A size that makes no sense is read as none known.
+        // Fullscreen ended, or an element without a video: no size, no video.
+        assertEquals(PageMessageRoute.Fullscreen(false, 0, 0, video = false), routePageMessage(message("type" to "fullscreen", "active" to false, "video" to false), token))
         assertEquals(
-            PageMessageRoute.Fullscreen(true, 0, 0),
+            PageMessageRoute.Fullscreen(true, 0, 0, video = false),
+            routePageMessage(message("type" to "fullscreen", "active" to true, "video" to false, "videoWidth" to 0, "videoHeight" to 0), token)
+        )
+        // A video whose size is not known yet (MED-03 reads the word, MED-01 waits for the size).
+        assertEquals(
+            PageMessageRoute.Fullscreen(true, 0, 0, video = true),
+            routePageMessage(message("type" to "fullscreen", "active" to true, "video" to true, "videoWidth" to 0, "videoHeight" to 0), token)
+        )
+        // A size that makes no sense is read as none known; a report without the word has a video where it has a size.
+        assertEquals(
+            PageMessageRoute.Fullscreen(true, 0, 0, video = false),
             routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to -4, "videoHeight" to "wide"), token)
+        )
+        assertEquals(
+            PageMessageRoute.Fullscreen(true, 1280, 720, video = true),
+            routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to 1280, "videoHeight" to 720), token)
         )
     }
 

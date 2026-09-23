@@ -233,6 +233,28 @@ describe('the icon row', () => {
     for (const b of buttons()) expect(b.textContent).toBe('')
   })
 
+  it('Home, while a homepage is set, is the row’s second button after Forward (SET-36, §9.13) – the bar’s House, no text row', async () => {
+    const menu = appMenu()
+    menu.items.splice(1, 0, item('menu_1_home', 'Home', { glyph: 'home' }))
+    await show(menu)
+    expect(buttons().map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Forward',
+      'Home',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload'
+    ])
+    const home = button('Home')
+    expect(home.dataset.glyph).toBe('home')
+    expect(home.querySelector('svg')).not.toBeNull()
+    expect(home.textContent).toBe('')
+    expect(textRows()).toEqual(['New Tab', 'New Private Tab'])
+    click(home)
+    runAll()
+    expect(picks()).toEqual([['menu.click', { menuId: 'menu_1', itemId: 'menu_1_home' }]])
+  })
+
   it('Forward comes alive with a forward entry; the last slot is Stop while the page loads, with the bar’s own Reload / Stop glyph', async () => {
     await show(appMenu({ forward: true, loading: true }))
     expect(button('Forward').disabled).toBe(false)

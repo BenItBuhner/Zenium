@@ -228,10 +228,16 @@ describe('page script: the fullscreen video report (MED-01)', () => {
     document.body.appendChild(v)
     fullscreen(v)
     expect(sent).toEqual([
-      { type: 'fullscreen', active: true, videoWidth: 1920, videoHeight: 1080 }
+      { type: 'fullscreen', active: true, video: true, videoWidth: 1920, videoHeight: 1080 }
     ])
     fullscreen(null)
-    expect(sent[1]).toEqual({ type: 'fullscreen', active: false, videoWidth: 0, videoHeight: 0 })
+    expect(sent[1]).toEqual({
+      type: 'fullscreen',
+      active: false,
+      video: false,
+      videoWidth: 0,
+      videoHeight: 0
+    })
   })
 
   it("finds the video inside a player's wrapper, preferring one with a size", () => {
@@ -246,16 +252,18 @@ describe('page script: the fullscreen video report (MED-01)', () => {
     const sent = install()
     fullscreen(wrapper)
     expect(sent).toEqual([
-      { type: 'fullscreen', active: true, videoWidth: 1080, videoHeight: 1920 }
+      { type: 'fullscreen', active: true, video: true, videoWidth: 1080, videoHeight: 1920 }
     ])
   })
 
-  it('reports an element without a video as 0 × 0, so the screen is left alone', () => {
+  it('reports an element without a video as none, 0 × 0, so the screen is left alone and the way out is told (MED-03)', () => {
     const sent = install()
     const canvas = document.createElement('canvas')
     document.body.appendChild(canvas)
     fullscreen(canvas)
-    expect(sent).toEqual([{ type: 'fullscreen', active: true, videoWidth: 0, videoHeight: 0 }])
+    expect(sent).toEqual([
+      { type: 'fullscreen', active: true, video: false, videoWidth: 0, videoHeight: 0 }
+    ])
   })
 
   it('reports again when a video fullscreen before its metadata learns its size', () => {
@@ -263,13 +271,17 @@ describe('page script: the fullscreen video report (MED-01)', () => {
     const v = video(0, 0)
     document.body.appendChild(v)
     fullscreen(v)
-    expect(sent).toEqual([{ type: 'fullscreen', active: true, videoWidth: 0, videoHeight: 0 }])
+    // A video all the same, its size not known yet: no way-out toast for it, no turn of the screen.
+    expect(sent).toEqual([
+      { type: 'fullscreen', active: true, video: true, videoWidth: 0, videoHeight: 0 }
+    ])
     Object.defineProperty(v, 'videoWidth', { value: 1280, configurable: true })
     Object.defineProperty(v, 'videoHeight', { value: 720, configurable: true })
     v.dispatchEvent(new Event('loadedmetadata'))
     expect(sent[1]).toEqual({
       type: 'fullscreen',
       active: true,
+      video: true,
       videoWidth: 1280,
       videoHeight: 720
     })

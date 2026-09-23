@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type { Rect, Space, Tab, UIState } from '@shared/types'
+import { run } from '@renderer/lib/api'
+import { landingStore } from '@renderer/lib/fullscreenLanding'
 import { registerRecedeLayer, recedeScale, type RecedeHandle } from '@renderer/lib/motion/recede'
 import { contentAreaStore, uiStore } from '@renderer/lib/ui'
 import { useLayoutReporter } from '../useLayoutReporter'
@@ -268,5 +270,42 @@ describe('useLayoutReporter under the recede', () => {
       h.progress(0)
     })
     expect(area()).toBeNull()
+  })
+
+  /*
+   * A page's element in fullscreen (MOT-32): the chrome stays mounted under the host's
+   * fullscreen layer, so the reporter is mounted too – and reports nothing meanwhile: the core
+   * lays the fullscreen view over the window itself and keeps the layout from before the
+   * fullscreen to put the page back by. The first layout after the exit is reported whatever
+   * the last one said: the return fade waits on that report's placement (lib/fullscreenLanding.ts).
+   */
+  const fullscreen = (s: UIState, tabId: string | null): UIState =>
+    ({ ...s, window: { ...s.window, htmlFullscreenTabId: tabId } }) as UIState
+  const reports = (): number =>
+    vi.mocked(run).mock.calls.filter(([c]) => c === 'layout.report').length
+
+  it('reports no layout while a page is fullscreen, and the first one after it even when nothing changed', () => {
+    vi.mocked(run).mockClear()
+    landingStore.set({ settling: undefined, placed: new Map(), sized: new Map(), reports: 0 })
+    const { rerender } = render(<Probe state={state('bottom')} />)
+    expect(reports()).toBe(1)
+    const noted = landingStore.get().reports
+    expect(noted).toBeGreaterThan(0)
+    // The fullscreen: whatever the chrome lays out under the layer is no placement.
+    rerender(<Probe state={fullscreen(state('bottom'), 't1')} />)
+    act(() => frames.splice(0).forEach((f) => f()))
+    expect(reports()).toBe(1)
+    expect(landingStore.get().reports).toBe(noted)
+    // The exit: the layout is the one from before, and it is reported – and noted for the
+    // landing – all the same.
+    rerender(<Probe state={fullscreen(state('bottom'), null)} />)
+    expect(reports()).toBe(2)
+    expect(landingStore.get().reports).toBe(noted + 1)
+    const [, first] = vi.mocked(run).mock.calls.filter(([c]) => c === 'layout.report')[0]!
+    const [, after] = vi.mocked(run).mock.calls.filter(([c]) => c === 'layout.report')[1]!
+    expect(after).toEqual(first)
+    // Out of fullscreen an unchanged layout is not reported twice.
+    rerender(<Probe state={fullscreen(state('bottom'), null)} />)
+    expect(reports()).toBe(2)
   })
 })
