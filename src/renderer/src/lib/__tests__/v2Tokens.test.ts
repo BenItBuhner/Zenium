@@ -416,8 +416,7 @@ describe('design language v2 tokens', () => {
     expect(block(":root[data-theme='dark']", lightStart)).not.toMatch(/--v2-danger:/)
     // Measured, not asserted: the ink over the fill it is drawn on – `--v2-fill`'s alpha at the
     // 8 bits Skia paints it, over `--v2-panel` – and over the panel itself, both at least 4.5:1.
-    const hex = (v: string): number[] =>
-      [0, 2, 4].map((i) => parseInt(v.slice(1 + i, 3 + i), 16))
+    const hex = (v: string): number[] => [0, 2, 4].map((i) => parseInt(v.slice(1 + i, 3 + i), 16))
     const alpha = (v: string): { rgb: number[]; a: number } => {
       const m = /^rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)$/.exec(v)
       expect(m, v).not.toBeNull()
