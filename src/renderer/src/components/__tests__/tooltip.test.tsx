@@ -7,9 +7,9 @@ import { createRoot, type Root } from 'react-dom/client'
  * The chrome tooltip's host (components/Tooltip.tsx; v2 draft §9.31, a11y-26), driven from
  * the document: any control carrying `data-tooltip` gets the one `role=tooltip` in the chrome
  * layer after the pointer's dwell or at once on keyboard focus, is `aria-describedby` it while
- * it shows, and loses it on the pointer leaving, focus leaving, a press, Escape – consumed only
- * then – the text going, or the control leaving the DOM. The text follows the control's
- * attribute while it is up (Reload becoming Stop).
+ * it shows, and loses it on the pointer leaving, focus leaving, a press, Escape – which travels
+ * on to the control's own meaning, never consumed – the text going, or the control leaving the
+ * DOM. The text follows the control's attribute while it is up (Reload becoming Stop).
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -184,7 +184,10 @@ describe('Tooltip host', () => {
     expect(shown()!.getAttribute('data-by')).toBe('focus')
   })
 
-  it('Escape takes it down and is consumed only then', () => {
+  it('Escape takes it down and travels on untouched: the control’s own Escape (Stop, Close) is one press', () => {
+    // The design review of #400 (A1): a swallowed Escape cost a keyboard user two presses on
+    // Stop, and on the find bar's Next and Close – `useGlobalKeys`' "Escape is Stop" never ran
+    // under a tooltip. The key must reach the listeners below as if no tooltip had been up.
     const seen: string[] = []
     const onKey = (e: KeyboardEvent): void => {
       seen.push(e.defaultPrevented ? 'prevented' : 'free')
@@ -197,13 +200,43 @@ describe('Tooltip host', () => {
         back.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       })
       expect(shown()).toBeNull()
-      // Consumed: nothing under it saw the key. The control keeps the keyboard.
-      expect(seen).toEqual([])
+      // Not consumed: the listener below saw the key, free of `preventDefault`, in the one
+      // press. The control keeps the keyboard.
+      expect(seen).toEqual(['free'])
       expect(document.activeElement).toBe(back)
+      // With nothing up the key is as free – the tooltip has no say either way.
       act(() => {
         back.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       })
+      expect(seen).toEqual(['free', 'free'])
+    } finally {
+      window.removeEventListener('keydown', onKey)
+    }
+  })
+
+  it('Escape on a pointer’s tooltip takes it down, free, and the control stays silent until the pointer leaves', () => {
+    const seen: string[] = []
+    const onKey = (e: KeyboardEvent): void => {
+      seen.push(e.defaultPrevented ? 'prevented' : 'free')
+    }
+    window.addEventListener('keydown', onKey)
+    try {
+      pointer('pointerover', back, aside)
+      tick(TOOLTIP_DELAY)
+      expect(shown()).not.toBeNull()
+      act(() => {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      expect(shown()).toBeNull()
       expect(seen).toEqual(['free'])
+      // The pointer's dwell is silenced for the still pointer (a press's rule), not the key.
+      pointer('pointerover', back, back.querySelector('svg'))
+      tick(TOOLTIP_DELAY * 2)
+      expect(shown()).toBeNull()
+      pointer('pointerout', back, aside)
+      pointer('pointerover', back, aside)
+      tick(TOOLTIP_DELAY)
+      expect(shown()).not.toBeNull()
     } finally {
       window.removeEventListener('keydown', onKey)
     }

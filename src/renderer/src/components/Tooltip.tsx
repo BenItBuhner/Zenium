@@ -32,8 +32,9 @@ import {
  * the chrome layer – 13/400 on `--v2-panel` with the hairline, radius 6, no arrow, 8 px from
  * the control and never over it, slid and flipped to stay inside the control's pane and the
  * window (`placeTooltip`) – marks the control `aria-describedby` it while it is up, and takes
- * it down on the pointer leaving, focus leaving, a press, Escape, the window losing focus, a
- * scroll or resize, the control leaving the DOM or losing its text, and other chrome opening.
+ * it down on the pointer leaving, focus leaving, a press, Escape (let through to whatever it
+ * is for the control: one press), the window losing focus, a scroll or resize, the control
+ * leaving the DOM or losing its text, and other chrome opening.
  *
  * The tab views draw above the chrome's DOM: a tooltip that has to lie over the page (a toolbar
  * band with the page right under it; §9.29's layouts) waits for the page to go under its
@@ -86,15 +87,14 @@ export function Tooltip(): JSX.Element | null {
     const onDown = (): void => {
       tooltip.dismiss()
     }
-    // Escape is the tooltip's only while one is showing: consumed then (the control keeps the
-    // keyboard, nothing under it hears the key), let by otherwise – the popups' stack and the
-    // chrome's own Escape (Stop) are never touched for a key that was not the tooltip's.
+    // Escape takes the tooltip down and goes on its way, never consumed: the key is whatever
+    // it is for the control under it – Stop on a loading tab's Stop button, Close on the find
+    // bar's – in the one press (the popups' stack, `useEscape`, and the chrome's own Escape in
+    // `useGlobalKeys` hear it as if no tooltip had been up). Only a pointer's tooltip is
+    // silenced by it (`dismiss`), as by a press.
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape' || !tooltip.showing()) return
-      if (tooltip.dismiss()) {
-        e.preventDefault()
-        e.stopPropagation()
-      }
+      if (e.key !== 'Escape') return
+      tooltip.dismiss()
     }
     const hide = (): void => tooltip.hide()
     document.addEventListener('pointerover', onOver)

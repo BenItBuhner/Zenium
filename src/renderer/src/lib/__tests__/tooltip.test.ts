@@ -288,7 +288,7 @@ describe('TooltipController', () => {
     expect(state.target).toBeNull()
   })
 
-  it('dismiss with nothing showing says so – Escape is not the tooltip’s then', () => {
+  it('dismiss with nothing showing says so, and drops what was on its way', () => {
     expect(controller.dismiss()).toBe(false)
     controller.pointerEnter(a)
     expect(controller.dismiss()).toBe(false)

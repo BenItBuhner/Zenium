@@ -9,10 +9,11 @@ import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from './ui'
  * shortcut – "Back (Alt+←)" – on a plain panel 8 px from the control, shown once the pointer
  * has rested on the control for `TOOLTIP_DELAY`, or at once when keyboard focus lands on it
  * (`:focus-visible`), and gone when the pointer leaves, focus leaves, a press lands, or Escape
- * is pressed – which the tooltip consumes only while it is showing, so the popups' Escape stack
- * (`useEscape`) never sees a key that was the tooltip's and is never asked for one that was not.
- * One at a time, and never beside other chrome: no tooltip shows while a popover, menu or dialog
- * has the window (§9.31's rule for the hover card, kept for the tooltip).
+ * is pressed – a key the tooltip never consumes: it goes on to whatever it is for the control
+ * (Stop, the find bar's Close, the popups' Escape stack `useEscape`, the chrome's Escape in
+ * `useGlobalKeys`) in the one press, the tooltip having gone with it. One at a time, and never
+ * beside other chrome: no tooltip shows while a popover, menu or dialog has the window (§9.31's
+ * rule for the hover card, kept for the tooltip).
  *
  * A control takes the tooltip by carrying its text in `data-tooltip` (`TOOLTIP_ATTR`) in place
  * of a native `title`; its accessible name stays its own (`aria-label`, or its content). The
@@ -149,8 +150,8 @@ export class TooltipController {
    * control it was on stays silent until the pointer leaves it (Chrome's: a clicked button's
    * tooltip does not come back under the still pointer). One the keyboard put up silences
    * nothing: the pointer is not on the control, and its first visit should show the tooltip
-   * after the dwell as on any other. Returns whether there was one to take down – Escape is
-   * consumed only then.
+   * after the dwell as on any other. Returns whether there was one to take down (the key itself
+   * is never consumed on its account: Escape goes on to the control's own meaning).
    */
   dismiss(): boolean {
     const { target: shown, by } = this.store.get()
