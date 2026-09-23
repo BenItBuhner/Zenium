@@ -1,14 +1,19 @@
 import type { CSSProperties, JSX, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
+  BluetoothConnected,
   Bot,
+  Cable,
+  Gamepad2,
   MonitorSmartphone,
   Moon,
   PictureInPicture2,
+  RectangleGoggles,
   RotateCcw,
   ScreenShare,
   Snowflake,
   Turtle,
+  Usb,
   VenetianMask,
   Volume2,
   VolumeX,
@@ -592,12 +597,17 @@ function AudioButton({ tab }: { tab: Tab }): JSX.Element {
   )
 }
 
+/** The alert kinds Chrome draws in red: a capture of the user, or of the screen. */
+const ALERT_IN_RED: ReadonlySet<TabAlert> = new Set<TabAlert>(['recording', 'capturing'])
+
 /**
  * The tab's alert indicator (tabs-43), in the slot the audio indicator takes otherwise: Chrome's
  * red dot for a camera or microphone in use, the sharing glyph for a screen, window or tab being
- * shared (Chrome draws its desktop capture in the same red), the picture-in-picture glyph in the
- * row's ink. Not a control – the tooltip says what it is – so it sits in the 24 px slot without
- * the button's hover fill; the context menu keeps Mute Site.
+ * shared (Chrome draws its desktop capture in the same red), and in the row's deemphasised ink
+ * the device sessions the page holds – a connected Bluetooth device, a USB device, a HID device
+ * (Chrome's gamepad glyph), a serial port (its cable) – picture-in-picture, and a VR headset
+ * presented to. Not a control – the tooltip says what it is – so it sits in the 24 px slot
+ * without the button's hover fill; the context menu keeps Mute Site.
  */
 function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
   const label = tabAlertTooltip(alert)
@@ -605,7 +615,9 @@ function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
     <span
       className={cn(
         'zen-tab-alert flex h-6 w-6 shrink-0 items-center justify-center',
-        alert === 'pip' ? 'text-[var(--v2-control-text-deemphasized)]' : 'text-[var(--v2-danger)]'
+        ALERT_IN_RED.has(alert)
+          ? 'text-[var(--v2-danger)]'
+          : 'text-[var(--v2-control-text-deemphasized)]'
       )}
       data-alert={alert}
       role="img"
@@ -618,7 +630,12 @@ function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
         </svg>
       )}
       {alert === 'capturing' && <ScreenShare className={V2_TRAILING_GLYPH} aria-hidden />}
+      {alert === 'bluetooth' && <BluetoothConnected className={V2_TRAILING_GLYPH} aria-hidden />}
+      {alert === 'usb' && <Usb className={V2_TRAILING_GLYPH} aria-hidden />}
+      {alert === 'hid' && <Gamepad2 className={V2_TRAILING_GLYPH} aria-hidden />}
+      {alert === 'serial' && <Cable className={V2_TRAILING_GLYPH} aria-hidden />}
       {alert === 'pip' && <PictureInPicture2 className={V2_TRAILING_GLYPH} aria-hidden />}
+      {alert === 'vr' && <RectangleGoggles className={V2_TRAILING_GLYPH} aria-hidden />}
     </span>
   )
 }

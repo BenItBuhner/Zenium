@@ -1594,12 +1594,18 @@
     box-shadow: inset 0 0 0 1.5px var(--v2-control-text-deemphasized);
   }
   /* The alert states on a compact row (tabs-43): Chrome's red for a camera / microphone in use
-   * and for sharing, the row's deemphasised ink for picture-in-picture. */
+   * and for sharing, the row's deemphasised ink for a device session (Bluetooth, USB, HID, a
+   * serial port), picture-in-picture and a VR headset. */
   .zen-tab-alert-dot[data-alert='recording'],
   .zen-tab-alert-dot[data-alert='capturing'] {
     background: var(--v2-danger);
   }
-  .zen-tab-alert-dot[data-alert='pip'] {
+  .zen-tab-alert-dot[data-alert='bluetooth'],
+  .zen-tab-alert-dot[data-alert='usb'],
+  .zen-tab-alert-dot[data-alert='hid'],
+  .zen-tab-alert-dot[data-alert='serial'],
+  .zen-tab-alert-dot[data-alert='pip'],
+  .zen-tab-alert-dot[data-alert='vr'] {
     background: var(--v2-control-text-deemphasized);
   }
   /*

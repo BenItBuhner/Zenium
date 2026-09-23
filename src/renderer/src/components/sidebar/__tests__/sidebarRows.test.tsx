@@ -340,6 +340,49 @@ describe('the rows’ trailing glyphs (§9.3)', () => {
     }
   })
 
+  it('the device alerts (tabs-43): one glyph per kind in the deemphasised ink, the captures in Chrome’s red, each named by its tooltip', () => {
+    panel([
+      tab('a', { alert: 'bluetooth' }),
+      tab('b', { alert: 'usb', audible: true }),
+      tab('c', { alert: 'hid' }),
+      tab('d', { alert: 'serial' }),
+      tab('e', { alert: 'vr' }),
+      tab('f', { alert: 'recording' }),
+      tab('g', { alert: 'capturing' }),
+      tab('h', { alert: 'pip' })
+    ])
+    const glyphs: Record<string, string> = {
+      a: 'lucide-bluetooth-connected',
+      b: 'lucide-usb',
+      c: 'lucide-gamepad-2',
+      d: 'lucide-cable',
+      e: 'lucide-rectangle-goggles',
+      g: 'lucide-screen-share',
+      h: 'lucide-picture-in-picture-2'
+    }
+    for (const [id, glyph] of Object.entries(glyphs)) {
+      trailing(document.querySelector(`[data-tab-id="${id}"] .zen-tab-alert svg.${glyph}`))
+    }
+    trailing(document.querySelector('[data-tab-id="f"] .zen-tab-alert svg'))
+    const indicator = (id: string): HTMLElement =>
+      document.querySelector<HTMLElement>(`[data-tab-id="${id}"] .zen-tab-alert`)!
+    for (const id of ['a', 'b', 'c', 'd', 'e', 'h']) {
+      expect(indicator(id).className).toContain('text-[var(--v2-control-text-deemphasized)]')
+      expect(indicator(id).className).not.toContain('--v2-danger')
+    }
+    for (const id of ['f', 'g'])
+      expect(indicator(id).className).toContain('text-[var(--v2-danger)]')
+    expect(indicator('a').getAttribute('title')).toBe('This tab is connected to a Bluetooth device')
+    expect(indicator('b').getAttribute('title')).toBe('This tab is connected to a USB device')
+    expect(indicator('c').getAttribute('title')).toBe('This tab is connected to a HID device')
+    expect(indicator('d').getAttribute('title')).toBe('This tab is connected to a serial port')
+    expect(indicator('e').getAttribute('title')).toBe(
+      'This tab is presenting VR content to a headset'
+    )
+    // The alert takes the audio's slot: a page that plays and holds a device shows the device.
+    expect(document.querySelectorAll('[data-tab-id="b"] .zen-tab-audio')).toHaveLength(0)
+  })
+
   it('the stylesheet sets no tablet size of its own on the close glyph: 16 is every platform’s', () => {
     expect(css).not.toMatch(/\.zen-tab-close > svg/)
   })
