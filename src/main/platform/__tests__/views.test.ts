@@ -13,7 +13,12 @@ import {
   removeForeignDebuggerOwner,
   setDebuggerRecycler
 } from '../pageDebugger'
-import { ElectronTabViewHost, fullPagePaint, pageViewportFrom, type ElectronTabView } from '../views'
+import {
+  ElectronTabViewHost,
+  fullPagePaint,
+  pageViewportFrom,
+  type ElectronTabView
+} from '../views'
 
 /** The options every `WebContentsView` in the test was constructed with, in order. */
 const constructed: Array<Record<string, unknown>> = []
@@ -1023,7 +1028,10 @@ describe('ElectronTabView.capture', () => {
   const bitmap = (
     width: number,
     height: number
-  ): { image: Electron.NativeImage; crops: Array<{ x: number; y: number; width: number; height: number }> } => {
+  ): {
+    image: Electron.NativeImage
+    crops: Array<{ x: number; y: number; width: number; height: number }>
+  } => {
     const crops: Array<{ x: number; y: number; width: number; height: number }> = []
     const make = (w: number, h: number): Electron.NativeImage =>
       ({
@@ -1042,7 +1050,16 @@ describe('ElectronTabView.capture', () => {
   const tabView = (
     geometry: Record<string, unknown> | null = GEOMETRY,
     paint = bitmap(1280, 720)
-  ): { view: ElectronTabView; wc: Electron.WebContents; dbg: { log: string[]; commands: Array<{ method: string; params: Record<string, unknown> | undefined }>; taken: boolean }; paint: typeof paint } => {
+  ): {
+    view: ElectronTabView
+    wc: Electron.WebContents
+    dbg: {
+      log: string[]
+      commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
+      taken: boolean
+    }
+    paint: typeof paint
+  } => {
     const host = new ElectronTabViewHost(sessions)
     const view = host.createView(
       { id: 'tab_1', containerId: 'default' } as Tab,
@@ -1053,20 +1070,27 @@ describe('ElectronTabView.capture', () => {
     Object.assign(wc, {
       capturePage: () => Promise.resolve(paint.image),
       executeJavaScriptInIsolatedWorld: () =>
-        geometry === null ? Promise.reject(new Error('Script failed to execute')) : Promise.resolve(geometry)
+        geometry === null
+          ? Promise.reject(new Error('Script failed to execute'))
+          : Promise.resolve(geometry)
     })
     const dbg = wc.debugger as unknown as {
       log: string[]
       commands: Array<{ method: string; params: Record<string, unknown> | undefined }>
       taken: boolean
-      sendCommand: (method: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
+      sendCommand: (
+        method: string,
+        params?: Record<string, unknown>
+      ) => Promise<Record<string, unknown>>
     }
     // The protocol paints what it is asked for.
     const send = dbg.sendCommand.bind(dbg)
     dbg.sendCommand = async (method, params) => {
       const result = await send(method, params)
-      if (method === 'Page.getLayoutMetrics') return { cssContentSize: { width: 1280, height: 4000 } }
-      if (method === 'Page.captureScreenshot') return { data: Buffer.from('devtools-png').toString('base64') }
+      if (method === 'Page.getLayoutMetrics')
+        return { cssContentSize: { width: 1280, height: 4000 } }
+      if (method === 'Page.captureScreenshot')
+        return { data: Buffer.from('devtools-png').toString('base64') }
       return result
     }
     return { view, wc, dbg, paint }
@@ -1105,7 +1129,7 @@ describe('ElectronTabView.capture', () => {
 
   it('leaves a page an extension’s chrome.debugger holds alone: the viewport paint cropped to the region, marked as the stand-in', async () => {
     const { view, wc, dbg, paint } = tabView()
-    addForeignDebuggerOwner(wc.id, 'ext_1')
+    addForeignDebuggerOwner(wc.id)
     const result = await view.capture({
       mode: 'region',
       region: { x: 100, y: 700, width: 300, height: 200 },
@@ -1141,7 +1165,7 @@ describe('ElectronTabView.capture', () => {
   it('crops the fallback at the page’s device pixel ratio on a scaled display, and cuts the region at the bitmap’s edge', async () => {
     // A 2x display: `capturePage` hands over 2560 × 1440 device pixels as a 1x bitmap.
     const { view, wc, paint } = tabView({ ...GEOMETRY, dpr: 2 }, bitmap(2560, 1440))
-    addForeignDebuggerOwner(wc.id, 'ext_1')
+    addForeignDebuggerOwner(wc.id)
     const result = await view.capture({
       mode: 'region',
       region: { x: 100, y: 700, width: 300, height: 200 },
@@ -1150,10 +1174,18 @@ describe('ElectronTabView.capture', () => {
     expect(paint.crops).toEqual([{ x: 200, y: 200, width: 600, height: 400 }])
     expect(result).toMatchObject({ width: 600, height: 400, fallback: 'viewport' })
     // A region reaching past the visible area is cut at it; one wholly outside is nothing.
-    await view.capture({ mode: 'region', region: { x: 1200, y: 1200, width: 300, height: 300 }, format: 'png' })
+    await view.capture({
+      mode: 'region',
+      region: { x: 1200, y: 1200, width: 300, height: 300 },
+      format: 'png'
+    })
     expect(paint.crops[1]).toEqual({ x: 2400, y: 1200, width: 160, height: 240 })
     await expect(
-      view.capture({ mode: 'region', region: { x: 0, y: 3000, width: 10, height: 10 }, format: 'png' })
+      view.capture({
+        mode: 'region',
+        region: { x: 0, y: 3000, width: 10, height: 10 },
+        format: 'png'
+      })
     ).resolves.toBeNull()
   })
 
@@ -1185,7 +1217,10 @@ describe('ElectronTabView.viewport', () => {
   }
 
   it('maps the script’s answer, the zoom from the engine', async () => {
-    const view = tabView(() => Promise.resolve({ sx: 0, sy: 600, vw: 1280, vh: 720, dpr: 2.5, dw: 1280, dh: 4000 }), 1.25)
+    const view = tabView(
+      () => Promise.resolve({ sx: 0, sy: 600, vw: 1280, vh: 720, dpr: 2.5, dw: 1280, dh: 4000 }),
+      1.25
+    )
     await expect(view.viewport()).resolves.toEqual({
       scrollX: 0,
       scrollY: 600,
@@ -1199,7 +1234,9 @@ describe('ElectronTabView.viewport', () => {
   })
 
   it('is null for a page that throws or does not answer in time', async () => {
-    await expect(tabView(() => Promise.reject(new Error('Script failed'))).viewport()).resolves.toBeNull()
+    await expect(
+      tabView(() => Promise.reject(new Error('Script failed'))).viewport()
+    ).resolves.toBeNull()
     vi.useFakeTimers()
     try {
       const pending = tabView(() => new Promise(() => undefined)).viewport()
@@ -1232,7 +1269,10 @@ describe('pageViewportFrom', () => {
       documentHeight: 600
     })
     // No `devicePixelRatio` from the page: the zoom stands in; no usable zoom: 1.
-    expect(pageViewportFrom({ ...raw, dpr: 0 }, 1.5)).toMatchObject({ zoom: 1.5, devicePixelRatio: 1.5 })
+    expect(pageViewportFrom({ ...raw, dpr: 0 }, 1.5)).toMatchObject({
+      zoom: 1.5,
+      devicePixelRatio: 1.5
+    })
     expect(pageViewportFrom(raw, Number.NaN)).toMatchObject({ zoom: 1 })
   })
 

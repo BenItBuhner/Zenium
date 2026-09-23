@@ -105,7 +105,8 @@ export class CaptureService {
     const host = this.browser.platform.downloads.saveFile
     if (!image || !host) return null
     const extension = captureExtension(image.mimeType)
-    const name = fileNameFor(options.fileName, extension) ?? screenshotFileName(this.now(), extension)
+    const name =
+      fileNameFor(options.fileName, extension) ?? screenshotFileName(this.now(), extension)
     let path: string | null
     try {
       path = await host.call(this.browser.platform.downloads, {
@@ -183,8 +184,6 @@ function fileNameFor(name: string | undefined, extension: 'png' | 'jpg'): string
   if (leaf === '') return null
   const lower = leaf.toLowerCase()
   const has =
-    extension === 'jpg'
-      ? lower.endsWith('.jpg') || lower.endsWith('.jpeg')
-      : lower.endsWith('.png')
+    extension === 'jpg' ? lower.endsWith('.jpg') || lower.endsWith('.jpeg') : lower.endsWith('.png')
   return has ? leaf : `${leaf.replace(/\.(png|jpe?g)$/i, '')}.${extension}`
 }

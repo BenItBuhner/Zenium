@@ -58,25 +58,35 @@ describe('captureArea', () => {
   })
 
   it('clamps a region to the document and refuses one outside it', () => {
-    expect(captureArea({ mode: 'region', region: { x: 100, y: 700, width: 300, height: 200 } }, plain)).toEqual({
+    expect(
+      captureArea({ mode: 'region', region: { x: 100, y: 700, width: 300, height: 200 } }, plain)
+    ).toEqual({
       x: 100,
       y: 700,
       width: 300,
       height: 200
     })
-    expect(captureArea({ mode: 'region', region: { x: 1200, y: 3900, width: 300, height: 300 } }, plain)).toEqual({
+    expect(
+      captureArea({ mode: 'region', region: { x: 1200, y: 3900, width: 300, height: 300 } }, plain)
+    ).toEqual({
       x: 1200,
       y: 3900,
       width: 80,
       height: 100
     })
-    expect(captureArea({ mode: 'region', region: { x: 2000, y: 0, width: 10, height: 10 } }, plain)).toBeNull()
-    expect(captureArea({ mode: 'region', region: { x: 0, y: 0, width: 0, height: 10 } }, plain)).toBeNull()
+    expect(
+      captureArea({ mode: 'region', region: { x: 2000, y: 0, width: 10, height: 10 } }, plain)
+    ).toBeNull()
+    expect(
+      captureArea({ mode: 'region', region: { x: 0, y: 0, width: 0, height: 10 } }, plain)
+    ).toBeNull()
     expect(captureArea({ mode: 'region' }, plain)).toBeNull()
   })
 
   it('without the geometry takes a region as given and leaves the rest to the host', () => {
-    expect(captureArea({ mode: 'region', region: { x: 5, y: 5, width: 10, height: 10 } }, null)).toEqual({
+    expect(
+      captureArea({ mode: 'region', region: { x: 5, y: 5, width: 10, height: 10 } }, null)
+    ).toEqual({
       x: 5,
       y: 5,
       width: 10,
@@ -105,7 +115,9 @@ describe('captureBudget', () => {
 
   it('refuses past the budget – a full page at the height cut on a wide display at 150 percent', () => {
     // 2560 CSS px wide at the cut on a plain display fits: 30.7 Mpx.
-    expect(captureBudget({ x: 0, y: 0, width: 2560, height: CAPTURE_MAX_HEIGHT }, 1).withinBudget).toBe(true)
+    expect(
+      captureBudget({ x: 0, y: 0, width: 2560, height: CAPTURE_MAX_HEIGHT }, 1).withinBudget
+    ).toBe(true)
     // At 1.5 it is 69 Mpx: refused.
     const over = captureBudget({ x: 0, y: 0, width: 2560, height: CAPTURE_MAX_HEIGHT }, 1.5)
     expect(over.withinBudget).toBe(false)
@@ -116,8 +128,14 @@ describe('captureBudget', () => {
   })
 
   it('takes a ratio the host could not say as 1', () => {
-    expect(captureBudget({ x: 0, y: 0, width: 10, height: 10 }, 0)).toMatchObject({ width: 10, height: 10 })
-    expect(captureBudget({ x: 0, y: 0, width: 10, height: 10 }, Number.NaN)).toMatchObject({ width: 10, height: 10 })
+    expect(captureBudget({ x: 0, y: 0, width: 10, height: 10 }, 0)).toMatchObject({
+      width: 10,
+      height: 10
+    })
+    expect(captureBudget({ x: 0, y: 0, width: 10, height: 10 }, Number.NaN)).toMatchObject({
+      width: 10,
+      height: 10
+    })
   })
 })
 
@@ -140,7 +158,11 @@ describe('CaptureTooLargeError', () => {
 
   it('reads as one sentence for the UI, the prefix and the name gone', () => {
     const error = new CaptureTooLargeError(1, { width: 7000, height: 7000 })
-    expect(captureErrorMessage(new Error(`Error invoking remote method 'zen:cmd': Error: ${error.message}`))).toBe(
+    expect(
+      captureErrorMessage(
+        new Error(`Error invoking remote method 'zen:cmd': Error: ${error.message}`)
+      )
+    ).toBe(
       'The capture would be 7,000 × 7,000 pixels, more than the 36 megapixels a capture can hold. Zoom out or select a smaller area.'
     )
     expect(captureErrorMessage(new Error('Tab not found'))).toBe('Tab not found')
@@ -189,7 +211,9 @@ describe('regionFromChrome', () => {
   })
 
   it('rounds to whole page pixels', () => {
-    expect(regionFromChrome({ x: 240.4, y: 80.4, width: 10.3, height: 10.3 }, frame, plain)).toEqual({
+    expect(
+      regionFromChrome({ x: 240.4, y: 80.4, width: 10.3, height: 10.3 }, frame, plain)
+    ).toEqual({
       x: 0,
       y: 600,
       width: 11,
@@ -200,8 +224,12 @@ describe('regionFromChrome', () => {
 
 describe('screenshotFileName', () => {
   it('is Chrome’s: the date and the local time with dots', () => {
-    expect(screenshotFileName(new Date(2026, 8, 23, 14, 5, 9))).toBe('Screenshot 2026-09-23 at 14.05.09.png')
-    expect(screenshotFileName(new Date(2026, 0, 1, 0, 0, 0), 'jpg')).toBe('Screenshot 2026-01-01 at 00.00.00.jpg')
+    expect(screenshotFileName(new Date(2026, 8, 23, 14, 5, 9))).toBe(
+      'Screenshot 2026-09-23 at 14.05.09.png'
+    )
+    expect(screenshotFileName(new Date(2026, 0, 1, 0, 0, 0), 'jpg')).toBe(
+      'Screenshot 2026-01-01 at 00.00.00.jpg'
+    )
     expect(screenshotFileName(new Date(2026, 0, 1), '.png')).toMatch(/\.png$/)
   })
 })
@@ -241,7 +269,18 @@ describe('imageDimensions', () => {
   const jpegHeader = (width: number, height: number): Uint8Array => {
     // SOI, an APP0 segment of 16 bytes, then SOF0 with the frame's size.
     const app0 = [0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]
-    const sof0 = [0xff, 0xc0, 0x00, 0x11, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff, 3]
+    const sof0 = [
+      0xff,
+      0xc0,
+      0x00,
+      0x11,
+      0x08,
+      height >> 8,
+      height & 0xff,
+      width >> 8,
+      width & 0xff,
+      3
+    ]
     return new Uint8Array([0xff, 0xd8, ...app0, ...sof0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
   }
 
@@ -259,7 +298,9 @@ describe('imageDimensions', () => {
   })
 
   it('knows neither anything else nor nothing', () => {
-    expect(imageDimensions(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0]))).toBeNull()
+    expect(
+      imageDimensions(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0]))
+    ).toBeNull()
     expect(imageDimensions(new Uint8Array(0))).toBeNull()
   })
 })

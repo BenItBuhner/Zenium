@@ -1286,7 +1286,11 @@ describe('ElectronDownloads saveFile', () => {
 
   it('writes the bytes under the name into the downloads folder and numbers a taken name', async () => {
     const h = harness()
-    const file = { name: 'Screenshot 2026-09-23 at 14.05.09.png', mimeType: 'image/png', data: png.toString('base64') }
+    const file = {
+      name: 'Screenshot 2026-09-23 at 14.05.09.png',
+      mimeType: 'image/png',
+      data: png.toString('base64')
+    }
     const first = await h.host.saveFile(file)
     expect(first).toBe(join(h.dir, 'Screenshot 2026-09-23 at 14.05.09.png'))
     expect(readFileSync(first!)).toEqual(png)
@@ -1308,7 +1312,11 @@ describe('ElectronDownloads saveFile', () => {
   it('keeps the name a leaf name of the folder and refuses one that is nothing', async () => {
     const h = harness()
     const data = png.toString('base64')
-    const escaped = await h.host.saveFile({ name: '../../escaped.png', mimeType: 'image/png', data })
+    const escaped = await h.host.saveFile({
+      name: '../../escaped.png',
+      mimeType: 'image/png',
+      data
+    })
     expect(escaped).toBe(join(h.dir, 'escaped.png'))
     const odd = await h.host.saveFile({ name: 'shot:2026?.png', mimeType: 'image/png', data })
     expect(odd).toBe(join(h.dir, 'shot_2026_.png'))

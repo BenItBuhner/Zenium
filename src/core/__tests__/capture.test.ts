@@ -5,6 +5,8 @@ import type { ZenWindow } from '../window'
 import type {
   AgentCapture,
   AgentCaptureOptions,
+  ClipboardHost,
+  DownloadHost,
   Platform,
   StoreIO,
   TabView,
@@ -107,7 +109,12 @@ function fixture(
     })
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '0.0.0' },
-    capabilities: stub<HostCapabilities>({ windows: true, updates: false, agents: false, pageTabs: false }),
+    capabilities: stub<HostCapabilities>({
+      windows: true,
+      updates: false,
+      agents: false,
+      pageTabs: false
+    }),
     io: memoryIo(),
     windows: {
       create: () =>
@@ -155,7 +162,7 @@ function fixture(
     }),
     menus: stub(),
     dialogs: stub(),
-    clipboard: stub({
+    clipboard: stub<ClipboardHost>({
       writeImageFromUrl: async (dataUrl: string) => {
         copied.push(dataUrl)
         return opts.clipboard ?? true
@@ -163,7 +170,7 @@ function fixture(
     }),
     shell: stub(),
     net: stub(),
-    downloads: stub({
+    downloads: stub<DownloadHost>({
       currentDirectory: () => '/home/u/Downloads',
       ...(opts.noSaveFile
         ? {}
@@ -252,7 +259,11 @@ describe('page.capture', () => {
     })
     expect(f.captures[0]).toMatchObject({ region: { x: 1200, y: 3900, width: 80, height: 100 } })
     await expect(
-      command(f, 'page.capture', { tabId: tab.id, mode: 'region', region: { x: 5000, y: 0, width: 10, height: 10 } })
+      command(f, 'page.capture', {
+        tabId: tab.id,
+        mode: 'region',
+        region: { x: 5000, y: 0, width: 10, height: 10 }
+      })
     ).resolves.toBeNull()
     expect(f.captures).toHaveLength(1)
   })
@@ -260,7 +271,10 @@ describe('page.capture', () => {
   it('paints the viewport and the full page as asked, PNG unless JPEG is wanted', async () => {
     const f = fixture()
     const tab = openSite(f)
-    const viewport = await command<CaptureResult>(f, 'page.capture', { tabId: tab.id, mode: 'viewport' })
+    const viewport = await command<CaptureResult>(f, 'page.capture', {
+      tabId: tab.id,
+      mode: 'viewport'
+    })
     expect(viewport).toMatchObject({ width: 1280, height: 720, devicePixelRatio: 1 })
     const full = await command<CaptureResult>(f, 'page.capture', {
       tabId: tab.id,
@@ -277,7 +291,13 @@ describe('page.capture', () => {
   it('refuses a request past the pixel budget with the named error before the host paints anything', async () => {
     // 2560 CSS px wide at the height cut on a display at 150 %: 69 Mpx.
     const f = fixture({
-      viewport: { ...PLAIN, width: 2560, documentWidth: 2560, documentHeight: 30_000, devicePixelRatio: 1.5 }
+      viewport: {
+        ...PLAIN,
+        width: 2560,
+        documentWidth: 2560,
+        documentHeight: 30_000,
+        devicePixelRatio: 1.5
+      }
     })
     const tab = openSite(f)
     const attempt = command(f, 'page.capture', { tabId: tab.id, mode: 'fullPage' })
@@ -288,7 +308,11 @@ describe('page.capture', () => {
     expect(f.captures).toEqual([])
     // A region of the same page within the budget goes through.
     await expect(
-      command(f, 'page.capture', { tabId: tab.id, mode: 'region', region: { x: 0, y: 0, width: 2560, height: 2000 } })
+      command(f, 'page.capture', {
+        tabId: tab.id,
+        mode: 'region',
+        region: { x: 0, y: 0, width: 2560, height: 2000 }
+      })
     ).resolves.not.toBeNull()
     expect(f.captures).toHaveLength(1)
   })
@@ -322,24 +346,35 @@ describe('page.capture', () => {
   it('answers null for a host without the agent capture, a tab that is not there, or a paint that failed', async () => {
     const none = fixture({ noCapture: true })
     const tab = openSite(none)
-    await expect(command(none, 'page.capture', { tabId: tab.id, mode: 'viewport' })).resolves.toBeNull()
-    await expect(command(none, 'page.capture', { tabId: 'tab_missing', mode: 'viewport' })).resolves.toBeNull()
+    await expect(
+      command(none, 'page.capture', { tabId: tab.id, mode: 'viewport' })
+    ).resolves.toBeNull()
+    await expect(
+      command(none, 'page.capture', { tabId: 'tab_missing', mode: 'viewport' })
+    ).resolves.toBeNull()
     const failing = fixture({
       capture: () => {
         throw new Error('Debugger is already attached')
       }
     })
     const other = openSite(failing)
-    await expect(command(failing, 'page.capture', { tabId: other.id, mode: 'viewport' })).resolves.toBeNull()
+    await expect(
+      command(failing, 'page.capture', { tabId: other.id, mode: 'viewport' })
+    ).resolves.toBeNull()
     const empty = fixture({ capture: () => null })
     const third = openSite(empty)
-    await expect(command(empty, 'page.capture', { tabId: third.id, mode: 'viewport' })).resolves.toBeNull()
+    await expect(
+      command(empty, 'page.capture', { tabId: third.id, mode: 'viewport' })
+    ).resolves.toBeNull()
   })
 
   it('without the page’s geometry leaves the viewport and full page to the host and measures nothing', async () => {
     const f = fixture({ viewport: null })
     const tab = openSite(f)
-    const result = await command<CaptureResult>(f, 'page.capture', { tabId: tab.id, mode: 'fullPage' })
+    const result = await command<CaptureResult>(f, 'page.capture', {
+      tabId: tab.id,
+      mode: 'fullPage'
+    })
     expect(f.captures).toEqual([{ mode: 'fullPage', format: 'png' }])
     expect(result).toMatchObject({ width: 1280, height: 4000, devicePixelRatio: 1 })
   })
@@ -363,8 +398,12 @@ describe('capture.copy', () => {
     const url = `data:image/png;base64,${pngHeader(4, 4)}`
     await expect(command(f, 'capture.copy', { dataUrl: url })).resolves.toBe(true)
     expect(f.copied).toEqual([url])
-    await expect(command(f, 'capture.copy', { dataUrl: 'https://example.test/a.png' })).resolves.toBe(false)
-    await expect(command(f, 'capture.copy', { dataUrl: 'data:text/html;base64,PGh0bWw+' })).resolves.toBe(false)
+    await expect(
+      command(f, 'capture.copy', { dataUrl: 'https://example.test/a.png' })
+    ).resolves.toBe(false)
+    await expect(
+      command(f, 'capture.copy', { dataUrl: 'data:text/html;base64,PGh0bWw+' })
+    ).resolves.toBe(false)
     expect(f.copied).toEqual([url])
     const refusing = fixture({ clipboard: false })
     await expect(command(refusing, 'capture.copy', { dataUrl: url })).resolves.toBe(false)
@@ -376,9 +415,16 @@ describe('capture.save', () => {
     const f = fixture()
     const tab = openSite(f)
     const url = `data:image/png;base64,${pngHeader(4, 4)}`
-    const result = await command<{ path: string } | null>(f, 'capture.save', { dataUrl: url, tabId: tab.id })
+    const result = await command<{ path: string } | null>(f, 'capture.save', {
+      dataUrl: url,
+      tabId: tab.id
+    })
     expect(f.saved).toEqual([
-      { name: 'Screenshot 2026-09-23 at 14.05.09.png', mimeType: 'image/png', data: pngHeader(4, 4) }
+      {
+        name: 'Screenshot 2026-09-23 at 14.05.09.png',
+        mimeType: 'image/png',
+        data: pngHeader(4, 4)
+      }
     ])
     expect(result).toEqual({ path: '/home/u/Downloads/Screenshot 2026-09-23 at 14.05.09.png' })
     const listed = f.browser.downloads.items.find((i) => i.savePath === result?.path)
@@ -397,7 +443,10 @@ describe('capture.save', () => {
     await command(f, 'capture.save', { dataUrl: png, fileName: '../../etc/passwd' })
     await command(f, 'capture.save', { dataUrl: png, fileName: 'Invoice (page 2)' })
     await command(f, 'capture.save', { dataUrl: png, fileName: 'photo.JPG' })
-    await command(f, 'capture.save', { dataUrl: 'data:image/jpeg;base64,/9j/4AAQ', fileName: 'photo' })
+    await command(f, 'capture.save', {
+      dataUrl: 'data:image/jpeg;base64,/9j/4AAQ',
+      fileName: 'photo'
+    })
     expect(f.saved.map((s) => s.name)).toEqual([
       'passwd.png',
       'Invoice (page 2).png',
@@ -409,7 +458,9 @@ describe('capture.save', () => {
   it('answers null for anything but an image, a host without the write, or a write that failed – and lists nothing', async () => {
     const f = fixture()
     const png = `data:image/png;base64,${pngHeader(4, 4)}`
-    await expect(command(f, 'capture.save', { dataUrl: 'https://example.test/a.png' })).resolves.toBeNull()
+    await expect(
+      command(f, 'capture.save', { dataUrl: 'https://example.test/a.png' })
+    ).resolves.toBeNull()
     const noHost = fixture({ noSaveFile: true })
     await expect(command(noHost, 'capture.save', { dataUrl: png })).resolves.toBeNull()
     const failing = fixture({ savePath: null })

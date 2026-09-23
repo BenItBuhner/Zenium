@@ -187,7 +187,12 @@ export function captureArea(
   }
   if (!viewport) return null
   if (request.mode === 'viewport')
-    return { x: viewport.scrollX, y: viewport.scrollY, width: viewport.width, height: viewport.height }
+    return {
+      x: viewport.scrollX,
+      y: viewport.scrollY,
+      width: viewport.width,
+      height: viewport.height
+    }
   return {
     x: 0,
     y: 0,

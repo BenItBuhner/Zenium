@@ -40,10 +40,16 @@ function fakeBridge(reply: (method: string) => unknown): {
 describe('the Android capture host', () => {
   it('saves a capture through the downloads bridge and hands the path back', async () => {
     const { bridge, calls } = fakeBridge((method) =>
-      method === 'download.saveFile' ? '/storage/emulated/0/Download/Screenshot 2026-09-23 at 14.05.09.png' : null
+      method === 'download.saveFile'
+        ? '/storage/emulated/0/Download/Screenshot 2026-09-23 at 14.05.09.png'
+        : null
     )
     const platform = new AndroidPlatform(bridge, BOOT)
-    const file = { name: 'Screenshot 2026-09-23 at 14.05.09.png', mimeType: 'image/png', data: 'iVBORw0KGgo=' }
+    const file = {
+      name: 'Screenshot 2026-09-23 at 14.05.09.png',
+      mimeType: 'image/png',
+      data: 'iVBORw0KGgo='
+    }
     await expect(platform.downloads.saveFile?.(file)).resolves.toBe(
       '/storage/emulated/0/Download/Screenshot 2026-09-23 at 14.05.09.png'
     )
@@ -54,7 +60,11 @@ describe('the Android capture host', () => {
     const { bridge } = fakeBridge(() => null)
     const platform = new AndroidPlatform(bridge, BOOT)
     await expect(
-      platform.downloads.saveFile?.({ name: 'shot.png', mimeType: 'image/png', data: 'iVBORw0KGgo=' })
+      platform.downloads.saveFile?.({
+        name: 'shot.png',
+        mimeType: 'image/png',
+        data: 'iVBORw0KGgo='
+      })
     ).resolves.toBeNull()
   })
 
