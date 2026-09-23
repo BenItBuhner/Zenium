@@ -315,11 +315,13 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         // sight of the layer gone (leftSeenOnSampler), the lenient way for the cap.
         val landingBeganAt = listOfNotNull(story.firstOrNull()?.optInt("at"), leftSeenOnSampler.toInt()).minOrNull()
         val capAt = landingBeganAt?.let { it + LANDING_TIMEOUT_MS - CLOCK_TOLERANCE_MS }
-        val onTheCap = fadeAt != null && capAt != null && landedAt != null && fadeAt < landedAt && fadeAt >= capAt
+        // The fade and the store's entry for the landing come of the one change, in an order the
+        // subscribers' is: a tolerance's worth either way is the same moment.
+        val onTheCap = fadeAt != null && capAt != null && landedAt != null && fadeAt + CLOCK_TOLERANCE_MS < landedAt && fadeAt >= capAt
         note("  L2: the bars at rest at $settledAt ms; the host's last size drawn at $sizedAt ms; the placement settled at the drawn size (hasLanded) at $landedAt ms; the landing begun at $landingBeganAt ms; the fade at $fadeAt ms (one clock)${if (onTheCap) " – on the landing's $LANDING_TIMEOUT_MS ms cap, the host's frame ${landedAt!! - fadeAt!!} ms behind it" else ""}")
         check("the chrome's fade starts on the landing – the bars at rest, the placement settled at the host's drawn size – or on the landing's $LANDING_TIMEOUT_MS ms cap – never over the shrink (L2, the chrome's clock)",
-            fadeAt != null && landedAt != null && (fadeAt >= landedAt || (capAt != null && fadeAt >= capAt)))
-        note("  ${if (fadeAt != null && landedAt != null && fadeAt >= landedAt) "PASS " else "SOFT MISS"}  the landing came inside its cap (a software renderer's bound: noted, not enforced)")
+            fadeAt != null && landedAt != null && (fadeAt + CLOCK_TOLERANCE_MS >= landedAt || (capAt != null && fadeAt >= capAt)))
+        note("  ${if (fadeAt != null && landedAt != null && fadeAt + CLOCK_TOLERANCE_MS >= landedAt) "PASS " else "SOFT MISS"}  the landing came inside its cap (a software renderer's bound: noted, not enforced)")
     }
 
     /** The tab's entry in a landing-store list (`tab:WxH`, a placement laid out on settling bars ending in `~`): width, height, settled. */
@@ -786,7 +788,8 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
             "el=${field("el")} state=${field("state")} rotation ${rotation()} requested ${requested()}")
         check("the screen turned to landscape", turned)
         check("the playing clip went fullscreen on the turn to landscape (rotate-to-fullscreen)", entered)
-        check("the fullscreen element is the clip itself, the kind the host's lock gives way for (rotate)", field("el") == "land" && host.fullscreenElementRotate)
+        // The page's report (`rotate`) rides the bridge a moment behind the page's own state.
+        check("the fullscreen element is the clip itself, the kind the host's lock gives way for (rotate)", field("el") == "land" && poll(3_000) { host.fullscreenElementRotate })
         check("the clip keeps playing", field("state") == "playing")
         check("the fullscreen holds the screen in landscape (MED-01's lock, SENSOR_LANDSCAPE)", requested() == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE && host.fullscreenLandscape)
         check("no hint for a video with its once-key set", awaitHint(2_500, present = true) == null)
