@@ -568,6 +568,9 @@ describe('the touch host’s group menu (TABLET-04; v2 §9.1, §6)', () => {
     h.browser.menus.showFolderContextMenu(folder, h.win)
     expect(labels(h.shown())).toContain('Edit Folder…')
     expect(labels(h.shown())).not.toContain('Rename Group…')
+    // The desktop's has no Rename or Collapse / Expand at all (each a control the row has); the
+    // touch host's group menu above keeps them.
+    expect(labels(h.shown()).some((l) => /^(Rename|Collapse|Expand) /.test(l))).toBe(false)
   })
 })
 

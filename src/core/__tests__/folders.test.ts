@@ -318,35 +318,75 @@ describe('the tab menu’s group items (context-menus-91)', () => {
 })
 
 describe('the folder header menu (tabs-13)', () => {
-  it('has Chrome’s group items around Zenium’s live folder ones', () => {
+  it('runs act / change / destroy: New Tab in Folder – Edit Folder… with Zenium’s live folder item – Unpack and Close – Delete Folder', () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const folder = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
     h.open('https://a.test/', { folderId: folder.id })
     h.open('https://b.test/', { folderId: folder.id })
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
-    expect(labels(h.shown())).toEqual([
-      'Edit Folder…',
-      'Rename Folder…',
+    const shown = labels(h.shown())
+    expect(shown).toEqual([
       'New Tab in Folder',
-      'Collapse Folder',
       '-',
+      'Edit Folder…',
       'Make Live Folder…',
       '-',
       'Unpack Folder',
       'Close Folder (2 Tabs)',
+      '-',
       'Delete Folder'
     ])
+    // No Rename Folder… and no Collapse or Expand Folder: each duplicates a control the row
+    // already has (the editor's Name field, the header's own click).
+    expect(shown.some((l) => l.startsWith('Rename'))).toBe(false)
+    expect(shown.some((l) => /^(Collapse|Expand) Folder$/.test(l))).toBe(false)
     h.sent.length = 0
     item(h.shown(), 'Edit Folder…').click!()
     expect(events(h, 'folder.edit')).toEqual([{ folderId: folder.id }])
-    item(h.shown(), 'Collapse Folder').click!()
-    expect(h.browser.state.model.folders[folder.id].collapsed).toBe(true)
+    // The same shape on a folded folder: the menu does not fold or unfold.
+    h.browser.updateFolder(folder.id, { collapsed: true })
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
-    expect(labels(h.shown())).toContain('Expand Folder')
+    expect(labels(h.shown())).toEqual(shown)
   })
 
-  it('reads Close Folder (1 Tab) for one member and Delete Folder for none', () => {
+  it('keeps the live folder’s items in the change group, after Edit Folder…', async () => {
+    const h = harness()
+    const space = h.win.activeSpaceId
+    const folder = h.browser.createFolder(space, 'Feed', '📁', h.win, { rename: false })
+    h.open('https://a.test/', { folderId: folder.id })
+    h.browser.liveFolders.save(folder.id, {
+      provider: 'rss',
+      source: 'https://feed.test/rss',
+      includeDrafts: false,
+      token: '',
+      mapping: null,
+      intervalMinutes: 60,
+      maxItems: 10
+    })
+    // The fetch it starts fails against the stub host and settles before the menu is read.
+    await tick()
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    const top = h.shown().map((i) => (i.type === 'separator' ? '-' : (i.label ?? '')))
+    expect(top).toEqual([
+      'New Tab in Folder',
+      '-',
+      'Edit Folder…',
+      'Refresh Live Folder',
+      'Refresh Every',
+      'Live Folder Settings…',
+      'Stop Updating (make static)',
+      '-',
+      'Unpack Folder',
+      'Close Folder (1 Tab)',
+      '-',
+      'Delete Folder'
+    ])
+    expect(labels(h.shown())).toContain('Refresh Every > 1 hour')
+    expect(item(h.shown(), 'Refresh Every').submenu?.find((i) => i.checked)?.label).toBe('1 hour')
+  })
+
+  it('reads Close Folder (1 Tab) for one member and, for none, no Unpack or Close and Delete Folder alone at the end', () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const one = h.browser.createFolder(space, 'One', '📁', h.win, { rename: false })
@@ -355,7 +395,15 @@ describe('the folder header menu (tabs-13)', () => {
     expect(labels(h.shown())).toContain('Close Folder (1 Tab)')
     const empty = h.browser.createFolder(space, 'Empty', '📁', h.win, { rename: false })
     h.browser.menus.showFolderContextMenu(empty.id, h.win)
-    expect(labels(h.shown())).toContain('Delete Folder')
+    // An empty group leaves no double rule: the three groups that remain, one separator each.
+    expect(labels(h.shown())).toEqual([
+      'New Tab in Folder',
+      '-',
+      'Edit Folder…',
+      'Make Live Folder…',
+      '-',
+      'Delete Folder'
+    ])
     item(h.shown(), 'Delete Folder').click!()
     expect(h.browser.state.model.folders[empty.id]).toBeUndefined()
   })
@@ -379,15 +427,13 @@ describe('the folder header menu (tabs-13)', () => {
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
     const shown = labels(h.shown())
     expect(shown[0]).toBe('Open Folder (2 Tabs)')
-    // The whole menu of a saved folder: New Tab in Folder is left out – on a saved folder the
-    // tab it made would forget the kept pages (the model's `folderOpened` rule) under a
-    // plain-ink label – as are Unpack and Close, which have no tabs to act on.
+    // The whole menu of a saved folder, act / change / destroy: New Tab in Folder is left out –
+    // on a saved folder the tab it made would forget the kept pages (the model's `folderOpened`
+    // rule) under a plain-ink label – as are Unpack and Close, which have no tabs to act on.
     expect(shown).toEqual([
       'Open Folder (2 Tabs)',
-      'Edit Folder…',
-      'Rename Folder…',
-      'Expand Folder',
       '-',
+      'Edit Folder…',
       'Make Live Folder…',
       '-',
       'Delete Folder'

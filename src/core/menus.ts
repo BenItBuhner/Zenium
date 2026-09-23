@@ -1986,107 +1986,79 @@ export class Menus {
     }
     const live = this.browser.liveFolders.get(folderId)
     // The desktop's folder is the sidebar's tab group, saved when its tabs close (TAB-16, the
-    // desktop half of the shared groups): its menu leads with Open Folder while it is saved,
-    // Close Folder keeps it saved with its pages, and Delete Folder – which forgets them, or
-    // closes its tabs with it – asks first through the chrome's prompt when there is anything
-    // to lose (`folder.confirmDelete`). New Tab in Folder is an open folder's alone: on a saved
-    // one the first tab it holds again forgets the pages it kept (the model's `folderOpened`
-    // rule), a loss no plain-ink verb may carry (§5, §9.1); Open Folder brings them back first.
-    // Zen's word is Folder; the touch hosts say Group.
+    // desktop half of the shared groups). Its menu runs act / change / destroy in four groups:
+    // what the folder does (Open Folder while it is saved, New Tab in Folder while it is open),
+    // what changes it (Edit Folder… – Chrome's group editor bubble, tabs-13: name, colour and
+    // the group's actions in one surface beside the header – and the live folder's items or
+    // Make Live Folder…), what ends one half of an open folder and can be undone (Unpack Folder
+    // leaves the tabs loose to regroup, Close Folder closes them and the folder stays SAVED with
+    // their pages, Open Folder brings them back), then Delete Folder alone – Chrome's for a saved
+    // group – which forgets what the folder holds, or closes its tabs with it, and so asks first
+    // through the chrome's prompt when there is anything to lose (`folder.confirmDelete`). New
+    // Tab in Folder is an open folder's alone: on a saved one the first tab it holds again
+    // forgets the pages it kept (the model's `folderOpened` rule), a loss no plain-ink verb may
+    // carry (§5, §9.1); Open Folder brings them back first. No Rename Folder… and no Expand or
+    // Collapse Folder: each duplicates a control the row already has (the editor's Name field,
+    // the header's own click). Zen's word is Folder; the touch hosts say Group.
     const saved = isSavedFolder(state.model, folder)
     const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
     const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
-    this.popup(
-      [
-        ...((saved
-          ? [
-              {
-                label: `Open Folder (${tabs})`,
-                click: () => this.browser.openFolder(folderId, win)
-              }
-            ]
-          : []) as Template),
-        // Chrome's group editor bubble (tabs-13): name, colour and the group's actions in one
-        // surface beside the header; the desktop chrome draws it, the phone its group sheet.
-        {
-          label: 'Edit Folder…',
-          click: () => this.browser.emit('folder.edit', { folderId }, win)
-        },
-        {
-          label: 'Rename Folder…',
-          click: () => this.browser.emit('folder.startRename', { folderId }, win)
-        },
-        ...((saved
-          ? []
-          : [
-              {
-                label: 'New Tab in Folder',
-                click: () => this.browser.newTabInFolder(folderId, win)
-              }
-            ]) as Template),
-        {
-          label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
-          click: () => this.browser.updateFolder(folderId, { collapsed: !folder.collapsed })
-        },
-        { type: 'separator' },
-        ...((live
-          ? [
-              {
-                label: 'Refresh Live Folder',
-                click: () => void this.browser.liveFolders.refresh(folderId, true)
-              },
-              {
-                label: 'Refresh Every',
-                submenu: [15, 30, 60, 120, 240, 480].map((minutes) => ({
-                  label:
-                    minutes < 60
-                      ? `${minutes} minutes`
-                      : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`,
-                  type: 'radio' as const,
-                  checked: live.intervalMinutes === minutes,
-                  click: () => this.browser.liveFolders.setInterval(folderId, minutes)
-                }))
-              },
-              {
-                label: 'Live Folder Settings…',
-                click: () =>
-                  this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
-              },
-              {
-                label: 'Stop Updating (make static)',
-                click: () => this.browser.liveFolders.remove(folderId)
-              }
-            ]
-          : [
-              {
-                label: 'Make Live Folder…',
-                click: () =>
-                  this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
-              }
-            ]) as Template),
-        { type: 'separator' },
-        // Chrome's Ungroup and Close group on an open folder: the tabs stay, loose, or close
-        // (each to the recently closed list) and the folder stays SAVED with their pages; then
-        // Delete Folder, Chrome's for a saved group, which forgets what the folder holds.
-        ...((count && !saved
-          ? [
-              { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
-              {
-                label: `Close Folder (${tabs})`,
-                click: () => this.browser.closeFolder(folderId, win)
-              }
-            ]
-          : []) as Template),
-        {
-          label: 'Delete Folder',
-          danger: true,
-          click: () => this.deleteFolderAsking(folderId, win)
-        }
-      ],
-      win,
-      'folder',
-      anchor
-    )
+    const act: Template = saved
+      ? [{ label: `Open Folder (${tabs})`, click: () => this.browser.openFolder(folderId, win) }]
+      : [{ label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }]
+    const change: Template = [
+      {
+        label: 'Edit Folder…',
+        click: () => this.browser.emit('folder.edit', { folderId }, win)
+      },
+      ...((live
+        ? [
+            {
+              label: 'Refresh Live Folder',
+              click: () => void this.browser.liveFolders.refresh(folderId, true)
+            },
+            {
+              label: 'Refresh Every',
+              submenu: [15, 30, 60, 120, 240, 480].map((minutes) => ({
+                label:
+                  minutes < 60
+                    ? `${minutes} minutes`
+                    : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`,
+                type: 'radio' as const,
+                checked: live.intervalMinutes === minutes,
+                click: () => this.browser.liveFolders.setInterval(folderId, minutes)
+              }))
+            },
+            {
+              label: 'Live Folder Settings…',
+              click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
+            },
+            {
+              label: 'Stop Updating (make static)',
+              click: () => this.browser.liveFolders.remove(folderId)
+            }
+          ]
+        : [
+            {
+              label: 'Make Live Folder…',
+              click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
+            }
+          ]) as Template)
+    ]
+    const end: Template =
+      count && !saved
+        ? [
+            { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
+            {
+              label: `Close Folder (${tabs})`,
+              click: () => this.browser.closeFolder(folderId, win)
+            }
+          ]
+        : []
+    const destroy: Template = [
+      { label: 'Delete Folder', danger: true, click: () => this.deleteFolderAsking(folderId, win) }
+    ]
+    this.popup(joinGroups([act, change, end, destroy]), win, 'folder', anchor)
   }
 
   /**
