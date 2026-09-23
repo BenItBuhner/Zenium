@@ -6020,9 +6020,13 @@
     justify-content: center;
     pointer-events: none;
   }
+  /*
+   * The cards take the pointer the stage does not. Their container is a `role="dialog"` at
+   * tabindex −1, so the chassis's dialog exemption (unlayered, by the `zen-v2-*` ring) paints no
+   * whole-card ring while it holds the keyboard; a layered `outline: none` here would not win.
+   */
   .zen-capture-card {
     pointer-events: auto;
-    outline: none;
   }
   /*
    * The result card's picture: centred in the card's 16 gutter on an inner box (§2: the inner

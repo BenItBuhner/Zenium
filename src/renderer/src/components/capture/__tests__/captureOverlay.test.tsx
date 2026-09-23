@@ -318,7 +318,11 @@ describe('the result card (capture-21)', () => {
     const card = el.querySelector<HTMLElement>('[data-capture-result]')!
     expect(card.dataset.captureResult).toBe('ok')
     expect(card.style.width).toBe('400px')
-    expect(card.getAttribute('role')).toBe('group')
+    // §9.22's container that holds the keyboard: a dialog at tabindex −1 (the chassis paints no
+    // ring around one), not a group (which it would ring whole).
+    expect(card.getAttribute('role')).toBe('dialog')
+    expect(card.getAttribute('aria-modal')).toBe('true')
+    expect(card.tabIndex).toBe(-1)
     expect(card.querySelector('#zen-capture-title')?.textContent).toBe('Web capture')
     expect(card.querySelector('#zen-capture-description')?.textContent).toBe('400 × 300 pixels')
     const img = card.querySelector<HTMLImageElement>('img')!
@@ -450,6 +454,9 @@ describe('the failed card', () => {
     await settle()
     const card = el.querySelector<HTMLElement>('[data-capture-failed]')!
     expect(card.style.width).toBe('320px')
+    expect(card.getAttribute('role')).toBe('dialog')
+    expect(card.getAttribute('aria-modal')).toBe('true')
+    expect(card.tabIndex).toBe(-1)
     expect(card.querySelector('#zen-capture-title')?.textContent).toBe(TOO_LARGE_TITLE)
     expect(card.querySelector('#zen-capture-description')?.textContent).toBe(refusal.message)
     expect(document.activeElement).toBe(card)

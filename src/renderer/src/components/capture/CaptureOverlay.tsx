@@ -423,7 +423,10 @@ function CaptureOverlay({
  * got), then the §9.11 footer: Close, Copy, and Save as the primary. Copy and Save keep the
  * card up and say what they did on a §9.33 toast 8 px inside the page's bottom edge ("Copied";
  * "Saved" with the file's name); the host's downloads bubble shows the file as it would any
- * finished download. Focus lands on the card's container; Tab reaches Close, Copy, Save.
+ * finished download. Focus lands on the card's container – a `role="dialog"` at `tabIndex`
+ * −1, §9.22's form for a container that holds the keyboard, which the chassis paints no ring
+ * around (the whole-card ring the `zen-v2-*` rule would give a group) – and Tab reaches Close,
+ * Copy, Save.
  */
 function ResultCard({
   ref,
@@ -449,7 +452,8 @@ function ResultCard({
   return (
     <div
       ref={ref}
-      role="group"
+      role="dialog"
+      aria-modal="true"
       aria-labelledby={TITLE_ID}
       aria-describedby={DESCRIPTION_ID}
       tabIndex={-1}
@@ -503,7 +507,8 @@ function ResultCard({
  * The engine refused or failed: a §9.20 notice at 320 – the title names the case (the budget
  * refusal, a page that gave no picture, anything else), the description is the engine's own
  * sentence (`captureErrorMessage`: complete, with what to do), and the footer offers Close and
- * a way back to the dimmed page for another go.
+ * a way back to the dimmed page for another go. The same `role="dialog"` container as the
+ * result's holds the keyboard, ringless.
  */
 function FailedCard({
   ref,
@@ -523,7 +528,8 @@ function FailedCard({
   return (
     <div
       ref={ref}
-      role="group"
+      role="dialog"
+      aria-modal="true"
       aria-labelledby={TITLE_ID}
       aria-describedby={DESCRIPTION_ID}
       tabIndex={-1}
