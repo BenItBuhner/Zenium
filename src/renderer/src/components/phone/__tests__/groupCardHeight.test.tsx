@@ -94,6 +94,7 @@ interface Inputs {
   columns: number
   forming?: boolean
   dissolving?: boolean
+  onDissolved?: (folder: Folder) => void
 }
 
 /**
@@ -101,7 +102,7 @@ interface Inputs {
  * list, the card renderer and the menu callback all new on every render – what a render of the
  * grid for its own reasons (a phase change, a lift, a selection) hands the card.
  */
-function Grid({ collapsed, tabs, columns, forming, dissolving }: Inputs): JSX.Element {
+function Grid({ collapsed, tabs, columns, forming, dissolving, onDissolved }: Inputs): JSX.Element {
   return createElement(GroupCard, {
     folder: folderOf(collapsed),
     tabs: [...tabs],
@@ -111,7 +112,7 @@ function Grid({ collapsed, tabs, columns, forming, dissolving }: Inputs): JSX.El
     forming,
     dissolving,
     held: dissolving ? 1 : undefined,
-    onDissolved: () => undefined
+    onDissolved: onDissolved ?? (() => undefined)
   })
 }
 
@@ -342,6 +343,32 @@ describe("the group card's height effect", () => {
     expect(unfold.frames).toBe(springFrames(GROUP_HEADER, open))
     expect(layoutAnimations.end).toHaveBeenCalledTimes(2)
     expect(shell().style.height).toBe('')
+  })
+
+  it('under reduced motion a fold and a dissolve rest once each: the jump to the floor is the rest, and the owner hears of it once (v2 §11.3)', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (q: string) => ({ matches: q === '(prefers-reduced-motion: reduce)' }) as MediaQueryList
+    )
+    bodyHeight = bodyOf(2)
+    render({ collapsed: false, tabs: three, columns: 2 })
+    vi.spyOn(layoutAnimations, 'end')
+
+    // The fold: the height jumps to the header in the commit, and the card is at rest there –
+    // the settle at the floor is no second rest on top of the jump's own.
+    render({ collapsed: true, tabs: three, columns: 2 })
+    expect(layoutAnimations.has(KEY)).toBe(false)
+    expect(layoutAnimations.end).toHaveBeenCalledTimes(1)
+    expect(shell().style.height).toBe('')
+    expect(shell().dataset.clip).toBeUndefined()
+
+    // The dissolve: gone in the commit, and the owner told once.
+    const onDissolved = vi.fn()
+    render({ collapsed: true, tabs: [], columns: 2, dissolving: true, onDissolved })
+    expect(layoutAnimations.end).toHaveBeenCalledTimes(2)
+    expect(onDissolved).toHaveBeenCalledTimes(1)
+    const gone = host!.querySelector<HTMLElement>('.zen-group')!
+    expect(gone.style.display).toBe('none')
+    expect(gone.hasAttribute('data-cell')).toBe(false)
   })
 
   it('a change mid-flight retargets the spring in the one commit that carries it, and renders after it leave it be', () => {

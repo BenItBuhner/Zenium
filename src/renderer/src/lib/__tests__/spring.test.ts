@@ -257,6 +257,86 @@ describe('SpringAnimation', () => {
     expect(toThresholds - written.length).toBeGreaterThanOrEqual(5)
   })
 
+  it('under reduced motion a settle() from inside onFrame rests once – start()’s own jump is the rest – and on a spring not running it does nothing', () => {
+    const { queue } = frames()
+    vi.stubGlobal('window', {
+      matchMedia: (q: string) => ({ matches: q === '(prefers-reduced-motion: reduce)' })
+    })
+    const FLOOR = 44
+    const onRest = vi.fn()
+    const spring: SpringAnimation = new SpringAnimation(
+      SPRING_GENTLE,
+      (x) => {
+        if (x <= FLOOR) spring.settle()
+      },
+      onRest
+    )
+    // The fold under reduced motion: `start()` jumps to the header and calls `onFrame` there,
+    // whose settle() must not be a second rest before `start()`'s own.
+    spring.start(293, 0, FLOOR)
+    expect(onRest).toHaveBeenCalledTimes(1)
+    expect(onRest).toHaveBeenCalledWith(FLOOR)
+    expect(spring.running).toBe(false)
+    expect(spring.current).toEqual({ x: FLOOR, v: 0 })
+    expect(queue).toHaveLength(0)
+    // Idle: nothing to end, nothing reported.
+    spring.settle()
+    expect(onRest).toHaveBeenCalledTimes(1)
+  })
+
+  it('a throwing onFrame leaves the spring at rest and restartable: the frame is off the books, and start() asks for one again', () => {
+    const { pending, tick } = clockedFrames()
+    let broken = true
+    const onRest = vi.fn()
+    const spring = new SpringAnimation(
+      SPRING_SNAPPY,
+      () => {
+        if (broken) throw new Error('a consumer’s bug')
+      },
+      onRest
+    )
+    spring.start(0, 0, 300)
+    expect(() => tick()).toThrow('a consumer’s bug')
+    expect(spring.running).toBe(false)
+    expect(pending()).toBe(0)
+    expect(onRest).not.toHaveBeenCalled()
+    broken = false
+    spring.start(0, 0, 300)
+    expect(spring.running).toBe(true)
+    expect(pending()).toBe(1)
+    let guard = 0
+    while (spring.running && guard++ < 300) tick()
+    expect(onRest).toHaveBeenCalledTimes(1)
+    expect(onRest).toHaveBeenCalledWith(spring.current.x)
+  })
+
+  it('a stop() and a start() from inside onFrame run one loop: the frame in flight leaves the new one to its own', () => {
+    const { pending, tick } = clockedFrames()
+    const onRest = vi.fn()
+    let restarted = false
+    const spring: SpringAnimation = new SpringAnimation(
+      SPRING_SNAPPY,
+      (x) => {
+        if (x > 100 && !restarted) {
+          restarted = true
+          spring.stop()
+          spring.start(0, 0, 50)
+        }
+      },
+      onRest
+    )
+    spring.start(0, 0, 300)
+    let guard = 0
+    while (spring.running && guard++ < 300) {
+      expect(pending()).toBe(1)
+      tick()
+    }
+    expect(restarted).toBe(true)
+    expect(onRest).toHaveBeenCalledTimes(1)
+    expect(spring.destination).toBe(50)
+    expect(Math.abs(spring.current.x - 50)).toBeLessThan(1)
+  })
+
   it('a stop() from inside onFrame holds: the frame in flight asks for no next one and nothing rests', () => {
     const { pending, tick } = clockedFrames()
     const onRest = vi.fn()

@@ -78,9 +78,14 @@ export class SpringAnimation {
    * it would at the rest thresholds. For a caller that knows nothing more of the spring's way to
    * rest can show – a height clamped at a floor once the spring has passed it runs on beneath
    * the floor, the §7 hair of overshoot and back, drawing nothing (the fold's tail: PERF-5,
-   * #349). Fine to call from `onFrame`: the frame in flight then asks for no next one.
+   * #349). Fine to call from `onFrame`: the frame in flight then asks for no next one. A spring
+   * not running has nothing to end and the call does nothing – so a `settle()` from `onFrame`
+   * under reduced motion, where `start()` jumps to the destination and rests on its own, rests
+   * once. `x` stays where the motion was ended, a hair short of the destination, and the
+   * destination stands: a `retarget()` later sets off from there.
    */
   settle(): void {
+    if (this.frame === null) return
     this.cancelFrame()
     this.state = { x: this.state.x, v: 0 }
     this.onRest(this.state.x)
@@ -97,11 +102,20 @@ export class SpringAnimation {
     this.last = now
     this.state = stepSpring(this.state, this.target, dt, this.config)
     // The frame stays on the books through `onFrame`, so a `stop` or a `settle` made there ends
-    // the motion: the frame in flight then asks for no next one.
-    this.onFrame(this.state.x, this.state.v)
-    if (this.frame === null) return
+    // the motion: the frame in flight then asks for no next one. Off the books after it whatever
+    // `onFrame` did – a throw must not leave a stale frame that reads as motion (`running`) and
+    // keeps `start` from asking for one.
+    const frame = this.frame
+    let after = frame
+    try {
+      this.onFrame(this.state.x, this.state.v)
+      after = this.frame
+    } finally {
+      if (this.frame === frame) this.frame = null
+    }
+    // Stopped or settled there, or started again on a frame of its own: this one is done.
+    if (after !== frame) return
     if (isAtRest(this.state, this.target)) {
-      this.frame = null
       this.onRest(this.state.x)
       return
     }
