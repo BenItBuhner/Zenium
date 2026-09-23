@@ -4864,7 +4864,8 @@ const WORKER_PROBE_PREFIX = 'ZENIUM_SMOKE_WORKER_PROBE '
 // What the fixture's worker finds under the sandbox – the preload's namespaces: `permissions`
 // and `windows` for every extension, `contextMenus` for the permission the manifest holds – and
 // must not find without it: Electron's engine defines none of the three in a worker (its own
-// set there is alarms, dom, extension, i18n, management, runtime, storage, tabs).
+// set there, for this manifest, is dom, extension, i18n, management, runtime, storage, tabs –
+// Electron 44.4.5 under --no-sandbox; `alarms` and the rest of the sandboxed set are the layer's).
 const WORKER_LAYER_NAMESPACES = ['permissions', 'windows', 'contextMenus']
 
 /** The fixture's probe, once its worker has logged it: the parsed line and the event it came in. */
