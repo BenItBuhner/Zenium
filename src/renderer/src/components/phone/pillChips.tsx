@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- the pill's chip kit: the run that draws the chips ships with the chip models it draws and the rows the site-information sheet lists */
 import type { JSX, ReactNode } from 'react'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { AudioLines, Languages, Shield, ShieldOff } from 'lucide-react'
+import { AudioLines, BellOff, Languages, Shield, ShieldOff } from 'lucide-react'
 import { siteOriginOf } from '@shared/blocking'
 import { internalPageOf } from '@shared/internalPages'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
@@ -21,6 +21,7 @@ import {
   type PillChipFold,
   type PillFold
 } from '@renderer/lib/pillChips'
+import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
 import { securityToneClass, securityVerdict } from '@renderer/lib/securityVerdict'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
 import { barStateOf, isTranslating, pairLabel, translateStateOf } from '@renderer/lib/translate'
@@ -57,6 +58,10 @@ export type PillChipId =
   | 'translate'
   | 'media'
   | 'save-prompt'
+  | 'notifications-blocked'
+
+/** The quiet notification ask's name, on the bell and its sheet row (Chrome's words; a harness contract). */
+export const NOTIFICATIONS_BLOCKED_LABEL = 'Notifications blocked'
 
 /** The glyph slot's chip id for a connection state that has a verdict to draw. */
 const VERDICT_CHIP_IDS = {
@@ -93,6 +98,8 @@ export interface PillChipModel {
 export interface PillChipContext {
   siteInfoOpen: boolean
   mediaSheetOpen: boolean
+  /** The quiet notification prompt's sheet is up, opened from the bell (NOT-03). */
+  quietPromptOpen?: boolean
   /** The tab on screen, for a row that opens something over its picture. */
   activeTabId: string | null
   /**
@@ -198,6 +205,46 @@ export function phonePillChips(
           className={cn(CHIP_CLASS, securityToneClass(verdict.tone) || 'zen-pill-quiet')}
         >
           <Glyph className="h-3.5 w-3.5" />
+        </PillChip>
+      )
+    })
+  }
+
+  // The quiet notification ask (NOT-03; Chrome's quiet permission UI): a site the user dismissed
+  // before, or a request made without a gesture, does not get a sheet over the page – the
+  // bell-off glyph takes the slot while the page's question waits (a §9.29 state, in the full
+  // ink: a pending question is to be seen, where a stored block rests at 69%), named as Chrome
+  // names it, "Notifications blocked"; its tap opens the quiet sheet (Allow / Keep blocking).
+  // Under the danger glyph – a certificate that failed, a Safe Browsing verdict – the identity
+  // in question keeps the slot (§9.29's first rule) and the bell is the sheet's row; behind a
+  // newer state it is the sheet's row too, as every state is (Bennett's one-glyph rule).
+  const quiet = identity && !page && !extension ? quietPermissionPrompt(state, tab.id) : null
+  if (quiet) {
+    const open = (): void => {
+      dismissSiteInfo()
+      openQuietPrompt(quiet.id)
+    }
+    chips.push({
+      id: 'notifications-blocked',
+      fold: verdict?.tone === 'danger' ? 'sheet' : pillChipFold('notifications-blocked'),
+      spoken: NOTIFICATIONS_BLOCKED_LABEL,
+      row: {
+        glyph: <BellOff />,
+        label: NOTIFICATIONS_BLOCKED_LABEL,
+        value: 'Tap to review',
+        activate: open
+      },
+      render: (interactive) => (
+        <PillChip
+          inert={!interactive}
+          label={NOTIFICATIONS_BLOCKED_LABEL}
+          popup="dialog"
+          expanded={ctx.quietPromptOpen === true}
+          data-quiet-bell
+          data-testid="quiet-bell"
+          className={CHIP_CLASS}
+        >
+          <BellOff className="h-3.5 w-3.5" />
         </PillChip>
       )
     })

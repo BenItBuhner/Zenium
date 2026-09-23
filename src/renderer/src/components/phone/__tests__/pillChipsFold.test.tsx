@@ -394,6 +394,120 @@ describe('phonePillChips: the chips as data', () => {
   })
 })
 
+describe('the quiet notification ask in the pill (NOT-03)', () => {
+  /** The page's quiet notification prompt in the core's queue (`webNotifications.ts`). */
+  function quiet(s: UIState, tabId = 't1'): UIState {
+    return {
+      ...s,
+      permissionPrompts: [
+        {
+          id: 'perm-q1',
+          tabId,
+          origin: 'https://github.com',
+          permission: 'notifications',
+          message: 'Notifications blocked',
+          detail: 'You usually block notifications. To let github.com notify you, tap Allow.',
+          allowLabel: 'Allow',
+          blockLabel: 'Keep blocking',
+          allowOnce: false,
+          requestedAt: 0,
+          quiet: true
+        }
+      ]
+    }
+  }
+
+  it('is a live state chip named as Chrome names it, in the glyph’s slot: the lock gives way', () => {
+    const chips = phonePillChips(quiet(offered(state(counted))), counted, ctx)
+    expect(chips.map((c) => [c.id, c.fold])).toEqual([
+      ['lock', 'glyph'],
+      ['notifications-blocked', 'live'],
+      ['blocked', 'sheet'],
+      ['translate', 'sheet']
+    ])
+    const fold = foldPhonePillChips(chips)
+    expect(fold.shown.map((c) => c.id)).toEqual(['notifications-blocked'])
+    expect(fold.yielded.map((c) => c.id)).toEqual(['lock'])
+    const bell = chips.find((c) => c.id === 'notifications-blocked')!
+    expect(bell.spoken).toBe('Notifications blocked')
+    expect(bell.row?.label).toBe('Notifications blocked')
+    // Answered or withdrawn, the bell is gone and the lock is back.
+    const after = foldPhonePillChips(phonePillChips(offered(state(counted)), counted, ctx))
+    expect(after.shown.map((c) => c.id)).toEqual(['lock'])
+  })
+
+  it('a tap on the bell opens the quiet prompt’s sheet, from the pill and from its sheet row', () => {
+    const chips = phonePillChips(quiet(state(page)), page, ctx)
+    const bell = chips.find((c) => c.id === 'notifications-blocked')!
+    uiStore.set({ siteInfoOpen: true, quietPromptId: null })
+    siteInfoStore.set({ tabId: 't1', anchor: null })
+    bell.row!.activate()
+    expect(uiStore.get().quietPromptId).toBe('perm-q1')
+    expect(uiStore.get().siteInfoOpen).toBe(false)
+    uiStore.set({ quietPromptId: null })
+    const el = render(<>{bell.render!(true)}</>)
+    const button = el.querySelector<HTMLButtonElement>('[data-testid="quiet-bell"]')!
+    expect(button.getAttribute('aria-label')).toBe('Notifications blocked')
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    const open = phonePillChips(quiet(state(page)), page, { ...ctx, quietPromptOpen: true }).find(
+      (c) => c.id === 'notifications-blocked'
+    )!.render!(true)
+    act(() => root!.render(<>{open}</>))
+    expect(el.querySelector('[data-testid="quiet-bell"]')?.getAttribute('aria-expanded')).toBe(
+      'true'
+    )
+  })
+
+  it('under the danger glyph the bell is the sheet’s row (§9.29: the identity in question keeps the slot)', () => {
+    const failed = tab('https://expired.badssl.com/', {
+      certificateError: {
+        code: -201,
+        url: 'https://expired.badssl.com/',
+        certificate: null,
+        bypassed: true
+      }
+    })
+    const chips = phonePillChips(quiet(state(failed)), failed, ctx)
+    expect(chips.map((c) => [c.id, c.fold])).toEqual([
+      ['certificate-error', 'glyph'],
+      ['notifications-blocked', 'sheet'],
+      ['blocked', 'sheet']
+    ])
+    const fold = foldPhonePillChips(chips)
+    expect(fold.shown.map((c) => c.id)).toEqual(['certificate-error'])
+    expect(fold.folded.map((c) => c.id)).toEqual(['notifications-blocked', 'blocked'])
+  })
+
+  it('behind a newer state the bell waits in the sheet as a row; another tab’s ask is not this pill’s', () => {
+    // The bell first, then the media session: the newer state has the slot, the bell its row.
+    foldPhonePillChips(phonePillChips(quiet(state(page)), page, ctx))
+    const fold = foldPhonePillChips(phonePillChips(playing(quiet(state(page))), page, ctx))
+    expect(fold.shown.map((c) => c.id)).toEqual(['media'])
+    expect(fold.folded.map((c) => c.id)).toEqual(['notifications-blocked', 'blocked'])
+    expect(
+      pillChipsSpoken(phonePillChips(playing(quiet(state(page))), page, ctx)).filter(Boolean)
+    ).toEqual(['Notifications blocked'])
+    expect(
+      phonePillChips(quiet(state(page), 't2'), page, ctx).some(
+        (c) => c.id === 'notifications-blocked'
+      )
+    ).toBe(false)
+  })
+
+  it('PillContent draws the bell in the lock’s room, its own stop; the address label speaks nothing of it', () => {
+    const s = quiet(state(page))
+    const el = render(<PillContent state={s} tab={page} space={space} interactive />)
+    expect(shown(el)).toEqual(['notifications-blocked'])
+    expect(labels(el)).toEqual([
+      'Address, github.com, Connection is secure',
+      'Site information',
+      'Notifications blocked'
+    ])
+    expect(addressLabel(el)).not.toContain('Notifications blocked')
+  })
+})
+
 describe('pillChipRows: what the sheet lists', () => {
   it('is the shield and the translate offer of this tab, in the pill’s order, whatever else is up', () => {
     const rows = pillChipRows(playing(offered(state(counted))), counted, ctx)

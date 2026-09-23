@@ -58,6 +58,19 @@ export function installNotificationPolyfill(transport: NotificationTransport): v
     target.dispatchEvent(new Event(type))
   }
 
+  // Whether the page is inside a user activation right now (a tap, a key): Chrome asks quietly
+  // for a request made without one (NOT-03). An engine without `userActivation` cannot say, and
+  // the request is taken as a gestured one rather than quieted on a guess.
+  const gestured = (): boolean => {
+    try {
+      const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
+        .userActivation
+      return activation ? activation.isActive === true : true
+    } catch {
+      return true
+    }
+  }
+
   class NotificationImpl extends EventTarget {
     readonly title: string
     readonly body: string
@@ -182,7 +195,7 @@ export function installNotificationPolyfill(transport: NotificationTransport): v
           }
           resolve(result)
         })
-        post({ notification: 'request', id })
+        post({ notification: 'request', id, gesture: gestured() })
       })
     }
   }

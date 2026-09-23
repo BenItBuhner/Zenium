@@ -6,6 +6,12 @@ interface Pending {
   resolve: (answer: PermissionPromptAnswer | null) => void
 }
 
+/** A prompt settled: the answer, or null for one withdrawn (the page navigated, the tab closed). */
+export type PromptAnsweredListener = (
+  prompt: PermissionPrompt,
+  answer: PermissionPromptAnswer | null
+) => void
+
 /**
  * The permission prompts the chrome shows: non-modal, one at a time per tab, oldest first. The
  * queue rides in the state snapshot (`permissionPrompts`); the renderer shows its active tab's
@@ -16,8 +22,19 @@ interface Pending {
  */
 export class PermissionPromptService implements PermissionPromptHost {
   private readonly pending: Pending[] = []
+  private readonly answered = new Set<PromptAnsweredListener>()
 
   constructor(private readonly changed: () => void) {}
+
+  /**
+   * Hear every prompt's answer as it settles – the user's word, or null for one withdrawn – for
+   * a service that keeps its own memory of them (the quiet notification rule remembers a site
+   * whose prompt was dismissed, `webNotifications.ts`). Fired after the prompt has left the list.
+   */
+  onAnswered(listener: PromptAnsweredListener): () => void {
+    this.answered.add(listener)
+    return () => this.answered.delete(listener)
+  }
 
   list(): PermissionPrompt[] {
     return this.pending.map((p) => p.prompt)
@@ -42,6 +59,7 @@ export class PermissionPromptService implements PermissionPromptHost {
     const [entry] = this.pending.splice(i, 1)
     this.changed()
     entry.resolve(answer)
+    for (const listener of this.answered) listener(entry.prompt, answer)
   }
 
   cancel(id: string): void {

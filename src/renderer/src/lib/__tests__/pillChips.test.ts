@@ -46,10 +46,28 @@ describe('pillChipFold: what each chip is to the pill at rest', () => {
         'lock',
         'media',
         'not-secure',
+        'notifications-blocked',
         'save-prompt',
         'translate'
       ].sort()
     )
+  })
+
+  it('the quiet notification ask is a state (NOT-03): live, in the glyph’s slot while the page waits', () => {
+    expect(pillChipFold('notifications-blocked')).toBe('live')
+    const fold = foldPillChips([
+      { id: 'lock', fold: 'glyph' },
+      { id: 'notifications-blocked', fold: 'live' }
+    ])
+    expect(fold.shown.map((c) => c.id)).toEqual(['notifications-blocked'])
+    expect(fold.yielded.map((c) => c.id)).toEqual(['lock'])
+    // Under a danger glyph the pill gives it the sheet's fold instead: the glyph stays.
+    const danger = foldPillChips([
+      { id: 'certificate-error', fold: 'glyph' },
+      { id: 'notifications-blocked', fold: 'sheet' }
+    ])
+    expect(danger.shown.map((c) => c.id)).toEqual(['certificate-error'])
+    expect(danger.folded.map((c) => c.id)).toEqual(['notifications-blocked'])
   })
 })
 

@@ -370,6 +370,11 @@ export interface UiState {
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
   permissionPromptOpen: boolean
+  /**
+   * Phone layout: the quiet notification prompt (NOT-03) the pill's bell was tapped for, by
+   * prompt id – its sheet is up while this names it; the bell alone stands for it otherwise.
+   */
+  quietPromptId: string | null
   /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
   clearBrowsingDataOpen: boolean
   /** Chrome's Name window prompt (`windowName/NameWindowDialog`) is up over the page. */
@@ -597,6 +602,7 @@ export const uiStore = createStore<UiState>(
     folderDeleteConfirm: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
+    quietPromptId: null,
     clearBrowsingDataOpen: false,
     nameWindowOpen: false,
     importDialog: null,

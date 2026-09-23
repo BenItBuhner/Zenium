@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { MAX_LIVE_PER_ORIGIN, WebNotificationService } from '../webNotifications'
+import {
+  MAX_LIVE_PER_ORIGIN,
+  WebNotificationService,
+  asksQuietly,
+  quietNotificationPrompt
+} from '../webNotifications'
 import type { Browser } from '../browser'
 import type { PageHostMessage, WebNotificationRequest } from '../platform'
 import type { NotificationPageRequest } from '../../shared/notifications'
+import type { PermissionPrompt, PermissionPromptAnswer } from '../../shared/types'
 
 type Decision = 'allow' | 'deny' | 'ask'
 
@@ -31,6 +37,12 @@ interface Harness {
   addTab(tabId: string, url: string): FakeView
   closeTab(tabId: string): void
   decideCalls: Array<{ permission: string; url: string }>
+  /** The chrome's prompt queue: the quiet prompts `show` put there, answered by `answer`. */
+  prompts: PermissionPrompt[]
+  answer(id: string, answer: PermissionPromptAnswer | null): void
+  /** What the harness's `decide` answers a loud prompt with (Allow by default). */
+  loudAnswer: PermissionPromptAnswer | null
+  remembered: Array<{ permission: string; url: string; decision: string }>
 }
 
 function harness(options: { host?: boolean } = {}): Harness {
@@ -38,6 +50,9 @@ function harness(options: { host?: boolean } = {}): Harness {
   const decisions = new Map<string, Decision>()
   const listeners: Harness['listeners'] = []
   const privateTabs = new Set<string>()
+  const answered: Array<(prompt: PermissionPrompt, answer: PermissionPromptAnswer | null) => void> =
+    []
+  const pending = new Map<string, (answer: PermissionPromptAnswer | null) => void>()
   const h = {
     views,
     decisions,
@@ -50,7 +65,18 @@ function harness(options: { host?: boolean } = {}): Harness {
     hostShows: true,
     listeners,
     privateTabs,
-    decideCalls: [] as Array<{ permission: string; url: string }>
+    decideCalls: [] as Array<{ permission: string; url: string }>,
+    prompts: [] as PermissionPrompt[],
+    loudAnswer: 'allow' as PermissionPromptAnswer | null,
+    remembered: [] as Array<{ permission: string; url: string; decision: string }>,
+    answer: (id: string, answer: PermissionPromptAnswer | null): void => {
+      const i = h.prompts.findIndex((p) => p.id === id)
+      if (i < 0) return
+      const [prompt] = h.prompts.splice(i, 1)
+      pending.get(id)?.(answer)
+      pending.delete(id)
+      for (const listener of answered) listener(prompt!, answer)
+    }
   }
   const originOf = (url: string): string => new URL(url).origin
   const host =
@@ -81,15 +107,48 @@ function harness(options: { host?: boolean } = {}): Harness {
       },
       resolve: (permission: string, url: string) =>
         decisions.get(`${permission}|${originOf(url)}`) ?? 'ask',
-      decide: async (permission: string, url: string) => {
+      decide: async (permission: string, url: string, details?: { tabId?: string }) => {
         h.decideCalls.push({ permission, url })
         const decision = decisions.get(`${permission}|${originOf(url)}`) ?? 'ask'
         if (decision === 'ask') {
-          // The prompt: this harness answers allow and remembers it, like the user tapping Allow.
-          decisions.set(`${permission}|${originOf(url)}`, 'allow')
-          return true
+          // The prompt: this harness answers as `loudAnswer` says (Allow by default, remembered,
+          // like the user tapping Allow) and tells the prompts' listeners, as the core does.
+          const prompt: PermissionPrompt = {
+            id: `loud-${h.decideCalls.length}`,
+            tabId: details?.tabId ?? null,
+            origin: originOf(url),
+            permission,
+            message: '',
+            detail: '',
+            allowLabel: 'Allow',
+            blockLabel: 'Block',
+            allowOnce: false,
+            requestedAt: 0
+          }
+          const answer = h.loudAnswer
+          if (answer === 'allow') decisions.set(`${permission}|${originOf(url)}`, 'allow')
+          if (answer === 'block') decisions.set(`${permission}|${originOf(url)}`, 'deny')
+          for (const listener of answered) listener(prompt, answer)
+          return answer === 'allow'
         }
         return decision === 'allow'
+      },
+      remember: (permission: string, url: string, decision: 'allow' | 'deny') => {
+        h.remembered.push({ permission, url, decision })
+        decisions.set(`${permission}|${originOf(url)}`, decision)
+      }
+    },
+    permissionPrompts: {
+      show: (prompt: PermissionPrompt) =>
+        new Promise<PermissionPromptAnswer | null>((resolve) => {
+          h.prompts.push(prompt)
+          pending.set(prompt.id, resolve)
+        }),
+      onAnswered: (
+        listener: (prompt: PermissionPrompt, answer: PermissionPromptAnswer | null) => void
+      ) => {
+        answered.push(listener)
+        return () => undefined
       }
     },
     tabs: {
@@ -195,6 +254,145 @@ describe('WebNotificationService', () => {
       action: 'result',
       status: 'denied',
       id: 'r'
+    })
+  })
+
+  describe('the quiet ask (NOT-03)', () => {
+    const lastPosted = (tabId: string): PageHostMessage | undefined =>
+      h.views.get(tabId)!.posted.at(-1)
+
+    it('asks quietly for a request without a gesture: a quiet prompt in the queue, no sheet through decide', async () => {
+      h.service.handle('t1', { notification: 'request', id: 'q1', gesture: false })
+      await flush()
+      expect(h.decideCalls).toEqual([])
+      expect(h.prompts).toHaveLength(1)
+      const prompt = h.prompts[0]!
+      expect(prompt).toMatchObject({
+        tabId: 't1',
+        origin: 'https://site.example',
+        permission: 'notifications',
+        quiet: true,
+        allowOnce: false,
+        message: 'Notifications blocked',
+        detail: 'You usually block notifications. To let site.example notify you, tap Allow.',
+        allowLabel: 'Allow',
+        blockLabel: 'Keep blocking'
+      })
+      // The page waits: its promise settles with the answer.
+      expect(h.views.get('t1')!.posted.filter((m) => m.type === 'notification')).toEqual([])
+
+      h.answer(prompt.id, 'allow')
+      await flush()
+      expect(h.remembered).toEqual([
+        { permission: 'notifications', url: 'https://site.example/page', decision: 'allow' }
+      ])
+      expect(h.ensured).toBe(1)
+      expect(lastPosted('t1')).toEqual({
+        type: 'notification',
+        action: 'result',
+        status: 'granted',
+        id: 'q1'
+      })
+    })
+
+    it('Keep blocking remembers a block; a withdrawn quiet prompt remembers nothing and reads default', async () => {
+      h.service.handle('t1', { notification: 'request', id: 'q1', gesture: false })
+      await flush()
+      h.answer(h.prompts[0]!.id, 'block')
+      await flush()
+      expect(h.remembered).toEqual([
+        { permission: 'notifications', url: 'https://site.example/page', decision: 'deny' }
+      ])
+      expect(h.ensured).toBe(0)
+      expect(lastPosted('t1')).toMatchObject({ action: 'result', status: 'denied', id: 'q1' })
+
+      h.service.handle('t2', { notification: 'request', id: 'q2', gesture: false })
+      await flush()
+      h.answer(h.prompts[0]!.id, null)
+      await flush()
+      expect(h.remembered).toHaveLength(1)
+      expect(lastPosted('t2')).toMatchObject({ action: 'result', status: 'default', id: 'q2' })
+    })
+
+    it('a gestured request asks loudly the first time and quietly once its prompt was dismissed', async () => {
+      h.loudAnswer = 'dismiss'
+      h.service.handle('t1', { notification: 'request', id: 'r1', gesture: true })
+      await flush()
+      expect(h.decideCalls).toHaveLength(1)
+      expect(h.prompts).toEqual([])
+      expect(lastPosted('t1')).toMatchObject({ action: 'result', status: 'default', id: 'r1' })
+      expect(h.service.dismissedBefore('https://site.example/other')).toBe(true)
+      expect(h.service.dismissedBefore('https://other.example/')).toBe(false)
+
+      // The same site, asked again with a gesture: the bell, not the sheet.
+      h.service.handle('t1', { notification: 'request', id: 'r2', gesture: true })
+      await flush()
+      expect(h.decideCalls).toHaveLength(1)
+      expect(h.prompts).toHaveLength(1)
+      expect(h.prompts[0]!.quiet).toBe(true)
+      // Another site is not marked by it.
+      h.service.handle('t2', { notification: 'request', id: 'r3', gesture: true })
+      await flush()
+      expect(h.decideCalls).toHaveLength(2)
+    })
+
+    it('a loud prompt answered Allow or Block closes the site’s question: no quiet mark', async () => {
+      h.loudAnswer = 'dismiss'
+      h.service.handle('t1', { notification: 'request', id: 'r1', gesture: true })
+      await flush()
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(true)
+      h.loudAnswer = 'block'
+      // The answer arrives through the prompts' listener, as the core's does.
+      h.decisions.delete('notifications|https://site.example')
+      h.service.handle('t1', { notification: 'request', id: 'r2', gesture: true })
+      await flush()
+      // Dismissed before: this one went quietly; answering the loud path is simulated directly.
+      expect(h.prompts).toHaveLength(1)
+      h.answer(h.prompts[0]!.id, 'block')
+      await flush()
+      expect(h.service.dismissedBefore('https://site.example/')).toBe(false)
+    })
+
+    it('a request without the gesture word (an older page script) asks loudly', async () => {
+      h.service.handle('t1', { notification: 'request', id: 'r1' })
+      await flush()
+      expect(h.decideCalls).toHaveLength(1)
+      expect(h.prompts).toEqual([])
+    })
+
+    it('a site with an answer never asks quietly: allowed reads granted, blocked reads denied', async () => {
+      h.decisions.set('notifications|https://site.example', 'deny')
+      h.service.handle('t1', { notification: 'request', id: 'r1', gesture: false })
+      await flush()
+      expect(h.prompts).toEqual([])
+      expect(h.decideCalls).toHaveLength(1)
+      expect(lastPosted('t1')).toMatchObject({ action: 'result', status: 'denied' })
+    })
+
+    it('two quiet requests from one tab share one bell and its answer', async () => {
+      h.service.handle('t1', { notification: 'request', id: 'a', gesture: false })
+      h.service.handle('t1', { notification: 'request', id: 'b', gesture: false })
+      await flush()
+      expect(h.prompts).toHaveLength(1)
+      h.answer(h.prompts[0]!.id, 'allow')
+      await flush()
+      const results = h.views
+        .get('t1')!
+        .posted.filter((m) => m.type === 'notification' && m.action === 'result')
+      expect(results.map((m) => (m as { id?: string }).id).sort()).toEqual(['a', 'b'])
+      expect(h.remembered).toHaveLength(1)
+    })
+
+    it('the quiet rule and the quiet prompt are pure', () => {
+      expect(asksQuietly(false, false)).toBe(true)
+      expect(asksQuietly(true, true)).toBe(true)
+      expect(asksQuietly(undefined, false)).toBe(false)
+      expect(asksQuietly(true, false)).toBe(false)
+      const prompt = quietNotificationPrompt('t9', 'https://news.example:8443', 42)
+      expect(prompt.quiet).toBe(true)
+      expect(prompt.requestedAt).toBe(42)
+      expect(prompt.detail).toContain('news.example:8443')
+      expect(prompt.id).not.toBe(quietNotificationPrompt('t9', 'https://news.example', 42).id)
     })
   })
 

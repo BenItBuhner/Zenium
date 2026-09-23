@@ -3107,6 +3107,13 @@ export interface PermissionPrompt {
   /** Whether "Allow once" (until the tab leaves the site) is offered. */
   allowOnce: boolean
   requestedAt: number
+  /**
+   * A quiet request (Chrome's quiet notification permission UI, NOT-03): a site the user
+   * dismissed before, or a request made without a gesture, asks through the bell-off glyph in
+   * the pill's slot instead of a sheet; the sheet opens from the bell. Not counted as a
+   * dismissal when it goes unanswered.
+   */
+  quiet?: boolean
 }
 
 // ---------------------------------------------------------------------------

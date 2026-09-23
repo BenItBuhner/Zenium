@@ -1,9 +1,7 @@
 package app.zen.chromium.ext
 
-import android.Manifest
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -221,8 +219,6 @@ class Extensions(private val host: Host) {
      * chrome is still booting): delivered when `ext.configure` brings the extension back.
      */
     private val pendingNotificationEvents = HashMap<String, ArrayDeque<JSONObject>>()
-    /** The notification permission is asked for once per process, on the first card (Android 13+). */
-    private var askedNotifications = false
     /**
      * Whether the WebView stores the cookies of an intercepted response handed over through
      * `WebResourceResponseCompat.setCookies` (`COOKIE_INTERCEPT`, Chromium 137+); read once, and
@@ -581,19 +577,13 @@ class Extensions(private val host: Host) {
     // --- notifications ---------------------------------------------------------------------------
 
     /**
-     * `ext.notifications.show`: the card, once the app may post (Android 13+ asks the first time,
-     * as the downloader does; a refusal leaves the card unposted, `getPermissionLevel` says so).
+     * `ext.notifications.show`: the card, once the app may post (Android 13's one ask for the whole
+     * app, shared with web notifications and the downloader: `Permissions.ensureNotificationsAllowed`;
+     * a refusal leaves the card unposted, `getPermissionLevel` says so).
      */
     private fun showNotification(id: String, notification: JSONObject) {
         val dir = served[id]?.dir
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !askedNotifications && !notifications.allowed()) {
-            askedNotifications = true
-            host.activity.requestRuntimePermissions(listOf(Manifest.permission.POST_NOTIFICATIONS)) {
-                notifications.show(id, dir, notification)
-            }
-            return
-        }
-        notifications.show(id, dir, notification)
+        host.permissions.ensureNotificationsAllowed { notifications.show(id, dir, notification) }
     }
 
     /** A tap or a button on a card: the activity intent [MainActivity] received. */

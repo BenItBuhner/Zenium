@@ -61,7 +61,12 @@ export const PILL_CHIP_FOLDS: Readonly<Record<string, PillChipFold>> = {
   blocked: 'sheet',
   translate: 'sheet',
   'save-prompt': 'live',
-  media: 'live'
+  media: 'live',
+  // The quiet notification ask (NOT-03): a pending question is a state, live while the page
+  // waits on it; the bell-off glyph takes the slot and the sheet opens from it. Under a danger
+  // glyph the pill folds it to the sheet instead (§9.29: the identity in question beats every
+  // other state) – `phonePillChips` gives the chip that fold.
+  'notifications-blocked': 'live'
 }
 
 /** The fold of a chip by id, for a chip built without one. */

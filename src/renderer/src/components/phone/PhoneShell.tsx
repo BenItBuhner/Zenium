@@ -43,6 +43,7 @@ import { privateLockStore, privateTabLocked, unlockPrivateTabs } from '@renderer
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
+import { openQuietPrompt, quietPermissionPrompt } from '@renderer/lib/security'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
   closeBarEditor,
@@ -205,12 +206,17 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     onTap: (e) => {
       const icon = (e.target as HTMLElement).closest('[data-site-info]')
       const media = (e.target as HTMLElement).closest('[data-media]')
+      const bell = (e.target as HTMLElement).closest('[data-quiet-bell]')
       const session = media ? mediaSession(state) : null
+      const quiet = bell && tab ? quietPermissionPrompt(state, tab.id) : null
       if (overviewIsOpen() || (tab && privateTabLocked(state)) || fakeboxAway()) openAddress()
       else if (session) {
         // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16),
         // over a picture of the tab on screen.
         void openMediaSheet(session.tabId, activeTabId)
+      } else if (quiet) {
+        // The bell-off glyph of a quiet notification ask (NOT-03) opens its sheet.
+        openQuietPrompt(quiet.id)
       } else if (tab && icon) {
         // The site icon at the start of the pill and the lock after the host open the site
         // information instead – where the translate offer and the blocking shield are (OMN-02).
@@ -674,6 +680,7 @@ export function PillContent({
   // none, at the phone's 20 (v2 §9.19; Chrome's incognito toolbar glyph).
   const privateMark = shown ? isPrivateTab(shown) : false
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
+  const quietPromptOpen = uiStore.use((s) => s.quietPromptId !== null)
   // The chips after the address as data (`phonePillChips`): the lock, the blocking shield with
   // its count, a translate offer, the Now playing chip (MW-16). At rest the pill draws the
   // favicon, the host and the lock alone – v2 §9.29 as amended on Bennett's ruling (OMN-02):
@@ -684,6 +691,7 @@ export function PillContent({
   const chips = phonePillChips(state, shown, {
     siteInfoOpen,
     mediaSheetOpen,
+    quietPromptOpen,
     activeTabId: tab?.id ?? null,
     locked
   })

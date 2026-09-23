@@ -1,10 +1,14 @@
 package app.zen.chromium
 
 import android.Manifest
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.os.Build
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
 /**
@@ -62,6 +66,32 @@ class Permissions(private val host: PageHost) {
             val granted = results[permission] == true
             val canAskAgain = results.isEmpty() || ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)
             then(RuntimeGrant.of(granted, canAskAgain))
+        }
+    }
+
+    private fun prefs(): SharedPreferences = host.activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private val notificationAsk = NotificationAsk(
+        askedBefore = { prefs().getBoolean(KEY_NOTIFICATIONS_ASKED, false) },
+        markAsked = { prefs().edit().putBoolean(KEY_NOTIFICATIONS_ASKED, true).apply() }
+    )
+
+    /**
+     * Android 13's `POST_NOTIFICATIONS`, the app's own right to post: ONE ask for the whole app, the
+     * first time anything wants a card up – a site's first notification grant (`WebNotifications`),
+     * the first download (`Downloads`), an extension's first card (`Extensions`) – as Chrome asks it
+     * when a site is first allowed; and never a second one, whoever asks ([NotificationAsk]): a
+     * refusal leaves Zenium's cards down until the system settings turn notifications on. Answers
+     * whether the app may post right now; below Android 13 there is no prompt and the system's
+     * switch is the answer. `then` runs on the main thread.
+     */
+    fun ensureNotificationsAllowed(then: (Boolean) -> Unit) {
+        val activity = host.activity
+        val needsPrompt = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        val allowed = NotificationManagerCompat.from(activity).areNotificationsEnabled()
+        if (notificationAsk.arrive(needsPrompt, allowed, then)) {
+            requestForApp(Manifest.permission.POST_NOTIFICATIONS) { grant -> notificationAsk.settle(grant == RuntimeGrant.GRANTED) }
         }
     }
 
@@ -154,5 +184,12 @@ class Permissions(private val host: PageHost) {
             // Location: coarse alone is still a grant.
             then(results.values.any { it } && (permissions.size > 1 || results.values.all { it }))
         }
+    }
+
+    companion object {
+        /** The install's memory of the permissions the app asked for in its own name. */
+        const val PREFS = "zenium.permissions"
+        /** Whether Android 13's notification permission was asked (once is all it gets). */
+        const val KEY_NOTIFICATIONS_ASKED = "notificationsAsked"
     }
 }

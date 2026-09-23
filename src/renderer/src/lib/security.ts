@@ -181,10 +181,47 @@ export function httpAuthSpace(prompt: HttpAuthPrompt): string {
  * the host could not tie to a tab). Prompts of other tabs wait until their tab is active, and
  * a security prompt on the same tab goes first: its request is what the page is stuck on.
  */
-export function currentPermissionPrompt(state: UIState): PermissionPrompt | null {
+export function currentPermissionPrompt(
+  state: UIState,
+  options: {
+    /**
+     * The phone's rule for a quiet prompt (NOT-03): it waits in the pill's bell and shows as a
+     * sheet only once the bell was tapped for it (`quietPromptId`); a loud prompt behind it in
+     * the queue is not held up. Left out (the desktop), every prompt shows in turn.
+     */
+    quietOpenId?: string | null
+  } = {}
+): PermissionPrompt | null {
   if (currentSecurityPrompt(state)) return null
   const tabId = activeTab(state)?.id ?? null
-  return state.permissionPrompts.find((p) => p.tabId === null || p.tabId === tabId) ?? null
+  const quietOpenId = options.quietOpenId
+  return (
+    state.permissionPrompts.find(
+      (p) =>
+        (p.tabId === null || p.tabId === tabId) &&
+        (quietOpenId === undefined || p.quiet !== true || p.id === quietOpenId)
+    ) ?? null
+  )
+}
+
+/** The quiet notification prompt pending for `tabId` (NOT-03): what the pill's bell stands for. */
+export function quietPermissionPrompt(state: UIState, tabId: string): PermissionPrompt | null {
+  // Every host sends the list; states built by hand in tests may leave it out (as `mediaSession`).
+  return (state.permissionPrompts ?? []).find((p) => p.tabId === tabId && p.quiet === true) ?? null
+}
+
+/** The pill's bell was tapped: the quiet prompt's sheet comes up. */
+export function openQuietPrompt(id: string): void {
+  uiStore.set({ quietPromptId: id })
+}
+
+/**
+ * The quiet prompt's sheet closed without a word (pulled down, the scrim, the system back): the
+ * bell stays up for it, and the core hears nothing – a quiet prompt is never dismissed, only
+ * answered or withdrawn by the page leaving.
+ */
+export function closeQuietPrompt(): void {
+  if (uiStore.get().quietPromptId !== null) uiStore.set({ quietPromptId: null })
 }
 
 /** A permission prompt is about to show over `tabId`: same page-snapshot dance as the security ones. */
