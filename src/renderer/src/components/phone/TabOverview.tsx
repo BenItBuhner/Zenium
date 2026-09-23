@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Archive,
@@ -15,7 +15,6 @@ import {
 import type {
   ArchivedTabSummary,
   Folder,
-  FolderColor,
   PhoneBarPosition,
   Rect,
   Space,
@@ -40,7 +39,7 @@ import {
   type OverviewState
 } from '@renderer/lib/gestures/stage'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
-import { groupColorVars, groupsOf, nextGroupColor } from '@renderer/lib/groups'
+import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
 import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
 import { overviewColumns } from '@renderer/lib/layout'
@@ -99,6 +98,7 @@ import {
 } from '@renderer/lib/selectors'
 import { browserStore, openOverlay, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { CloseAllSheet } from './CloseAllSheet'
@@ -113,7 +113,7 @@ import {
   type Departure,
   type GroupDeparture
 } from './departureStore'
-import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
+import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
 import { InactiveTabsSheet } from './InactiveTabsSheet'
 import { CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
@@ -2091,7 +2091,7 @@ function GroupPickerSheet({
     ...groups.map(({ folder, count: held }): SheetAction => ({
       id: `group-${folder.id}`,
       label: `Add to ${folder.name} (${held})`,
-      icon: <GroupDot color={folder.color} />,
+      icon: <GroupGlyph folder={folder} />,
       onPick: () => onPick(folder.id)
     }))
   ]
@@ -2174,7 +2174,7 @@ function TabSheet({
       actions.push({
         id: `group-${g.id}`,
         label: current ? `Move to ${g.name}` : `Add to ${g.name}`,
-        icon: <GroupDot color={g.color} />,
+        icon: <GroupGlyph folder={g} />,
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: g.id })
       })
     }
@@ -2258,17 +2258,6 @@ function GroupSheet({
       header={<GroupColorPalette folder={folder} />}
       actions={actions}
       onClose={onClose}
-    />
-  )
-}
-
-/** A sheet row's leading dot in the group's colour – the scheme's set (§9.14's pair), following a theme flip live. */
-function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Element {
-  return (
-    <span
-      className="h-2.5 w-2.5 rounded-full bg-[rgb(var(--zen-group-rgb))]"
-      data-group-rgb=""
-      style={groupColorVars(color) as CSSProperties}
     />
   )
 }
