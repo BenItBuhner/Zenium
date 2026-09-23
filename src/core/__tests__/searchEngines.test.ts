@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { DEFAULT_SETTINGS } from '../../shared/defaults'
-import { DEFAULT_SEARCH_ENGINES, MAX_OPENSEARCH_BYTES } from '../../shared/search'
+import {
+  DEFAULT_SEARCH_ENGINES,
+  MAX_OPENSEARCH_BYTES,
+  isActiveSearchEngine,
+  matchEngineKeyword,
+  matchEngineWord,
+  sanitizeSearchEngines
+} from '../../shared/search'
 import { Browser } from '../browser'
 import type {
   AppHost,
@@ -385,6 +392,159 @@ describe('Settings > Search engines', () => {
     expect(state.settings.searchEngineId).toBe('custom:mine')
     // A shipped id in the stored list never shadows the shipped engine.
     expect(state.searchEngines.find((e) => e.id === 'google')!.name).toBe('Google')
+  })
+
+  it('edits an engine – name, template and shortcut – deriving the shortcut when left empty (omnibox-09)', () => {
+    const { browser, win } = setup()
+    const id = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Marginalia',
+      url: 'https://search.marginalia.nu/search?query=%s'
+    })
+    expect(browser.state.searchEngines.find((e) => e.id === id)!.keyword).toBe('@marginalia')
+
+    browser.handleCommand(win, 'search.updateEngine', {
+      id,
+      name: 'Marginalia Search',
+      searchUrl: 'https://search.marginalia.nu/search?query=%s&profile=modern',
+      keyword: 'MS'
+    })
+    const edited = browser.state.searchEngines.find((e) => e.id === id)!
+    // The shortcut takes its `@` and lower case; the glyph follows the name.
+    expect(edited).toMatchObject({
+      name: 'Marginalia Search',
+      searchUrl: 'https://search.marginalia.nu/search?query=%s&profile=modern',
+      keyword: '@ms',
+      glyph: 'M',
+      source: 'custom'
+    })
+    // The omnibox reads the persisted shortcut.
+    expect(matchEngineKeyword('@ms rust', browser.state.searchEngines)?.engine.id).toBe(id)
+    expect(matchEngineKeyword('@marginalia rust', browser.state.searchEngines)?.engine.id).toBe(
+      undefined
+    )
+
+    // An empty shortcut derives one from the new name, unique among the others (`@google` is
+    // the shipped engine's).
+    browser.handleCommand(win, 'search.updateEngine', {
+      id,
+      name: 'Google',
+      searchUrl: 'https://mirror.example/?q=%s',
+      keyword: ''
+    })
+    expect(browser.state.searchEngines.find((e) => e.id === id)!.keyword).toBe('@google2')
+  })
+
+  it('refuses an edit with the reason the form shows, and the shipped engines are not edited', () => {
+    const { browser, win } = setup()
+    const id = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Mine',
+      url: 'https://mine.example/?q=%s'
+    })
+    const edit = (patch: Partial<{ name: string; searchUrl: string; keyword: string }>): unknown =>
+      browser.handleCommand(win, 'search.updateEngine', {
+        id,
+        name: 'Mine',
+        searchUrl: 'https://mine.example/?q=%s',
+        keyword: '@mine',
+        ...patch
+      })
+    expect(() => edit({ name: ' ' })).toThrow('Enter a name')
+    expect(() => edit({ searchUrl: 'https://mine.example/' })).toThrow(
+      'Put %s where the search terms go'
+    )
+    expect(() => edit({ keyword: 'my engine' })).toThrow('A shortcut is one word, with no spaces')
+    expect(() => edit({ keyword: '@ddg' })).toThrow('DuckDuckGo already answers to @ddg')
+    expect(() => edit({ keyword: 'tabs' })).toThrow('@tabs is one of Zenium’s own shortcuts')
+    expect(() =>
+      browser.handleCommand(win, 'search.updateEngine', {
+        id: 'google',
+        name: 'Evil',
+        searchUrl: 'https://evil.example/?q=%s',
+        keyword: '@google'
+      })
+    ).toThrow('The engine is not one of yours to edit')
+    expect(browser.state.searchEngines.find((e) => e.id === 'google')!.name).toBe('Google')
+  })
+
+  it('deactivates an engine out of the omnibox and activates it again; the default stays active (settings-43)', () => {
+    const { browser, win } = setup()
+    const id = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Mine',
+      url: 'https://mine.example/?q=%s'
+    })
+    const engines = (): ReturnType<typeof browser.state.searchEngines.filter> =>
+      browser.state.searchEngines
+    expect(matchEngineKeyword('@mine x', engines())?.engine.id).toBe(id)
+    expect(matchEngineWord('mine.example', engines())?.id).toBe(id)
+
+    browser.handleCommand(win, 'search.setEngineActive', { id, active: false })
+    const off = engines().find((e) => e.id === id)!
+    expect(off.active).toBe(false)
+    expect(isActiveSearchEngine(off)).toBe(false)
+    // Kept, with its shortcut, but answering to nothing: not by keyword, not by host.
+    expect(off.keyword).toBe('@mine')
+    expect(matchEngineKeyword('@mine x', engines())).toBeNull()
+    expect(matchEngineWord('mine.example', engines())).toBeNull()
+
+    browser.handleCommand(win, 'search.setEngineActive', { id, active: true })
+    const on = engines().find((e) => e.id === id)!
+    expect(on.active).toBeUndefined()
+    expect(matchEngineKeyword('@mine x', engines())?.engine.id).toBe(id)
+
+    // The default engine stays active.
+    browser.handleCommand(win, 'settings.update', { searchEngineId: id })
+    expect(() =>
+      browser.handleCommand(win, 'search.setEngineActive', { id, active: false })
+    ).toThrow('The default search engine stays active')
+    expect(engines().find((e) => e.id === id)!.active).toBeUndefined()
+    // A shipped engine is not the user's to deactivate: nothing happens.
+    browser.handleCommand(win, 'search.setEngineActive', { id: 'google', active: false })
+    expect(engines().find((e) => e.id === 'google')!.active).toBeUndefined()
+  })
+
+  it('keeps a deactivated flag and an edited engine through the sanitiser and a site’s later visit', () => {
+    const { browser, win } = setup()
+    browser.searchEngines.remember({
+      name: 'Wiki',
+      searchUrl: 'https://wiki.example/w/index.php?search=%s',
+      suggestUrl: null,
+      favicon: null
+    })
+    const id = 'discovered:wiki.example'
+    browser.handleCommand(win, 'search.setEngineActive', { id, active: false })
+    // The site offers its description again: the engine stays deactivated.
+    browser.searchEngines.remember({
+      name: 'Wiki renamed',
+      searchUrl: 'https://wiki.example/w/index.php?search=%s',
+      suggestUrl: null,
+      favicon: null
+    })
+    expect(browser.state.searchEngines.find((e) => e.id === id)).toMatchObject({
+      name: 'Wiki renamed',
+      source: 'discovered',
+      active: false
+    })
+    // Edited, the engine is the user's own: the site's later description leaves it alone.
+    browser.handleCommand(win, 'search.updateEngine', {
+      id,
+      name: 'My wiki',
+      searchUrl: 'https://wiki.example/w/index.php?search=%s',
+      keyword: '@w'
+    })
+    browser.searchEngines.remember({
+      name: 'Wiki again',
+      searchUrl: 'https://wiki.example/w/index.php?search=%s',
+      suggestUrl: null,
+      favicon: null
+    })
+    const mine = browser.state.searchEngines.find((e) => e.id === id)!
+    expect(mine).toMatchObject({ name: 'My wiki', keyword: '@w', source: 'custom', active: false })
+    expect(mine.visitedAt).toBeUndefined()
+
+    const persisted = sanitizeSearchEngines(
+      JSON.parse(JSON.stringify(browser.state.settings.searchEngines))
+    )
+    expect(persisted).toEqual(browser.state.settings.searchEngines)
   })
 })
 

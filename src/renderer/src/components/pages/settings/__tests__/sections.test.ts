@@ -9,6 +9,7 @@ import type {
   HostCapabilities,
   ImportSource,
   SafetyCheckResult,
+  SearchEngine,
   Settings,
   SyncStatus,
   Tab,
@@ -3029,6 +3030,187 @@ describe('what a row does', () => {
     expect(added.rows).toEqual([])
     expect(groupShows(added)).toBe(true)
     expect(added.empty).toBe('No search engines added yet')
+  })
+
+  describe('Search › site search management on the desktop (omnibox-09, settings-43)', () => {
+    const mine = {
+      id: 'custom:mine',
+      name: 'Mine',
+      searchUrl: 'https://mine.example/?q=%s',
+      suggestUrl: null,
+      keyword: '@mine',
+      glyph: 'M',
+      source: 'custom' as const,
+      favicon: null
+    }
+    const wiki = {
+      id: 'custom:wiki',
+      name: 'Wiki',
+      searchUrl: 'https://wiki.example/w?search=%s',
+      suggestUrl: null,
+      keyword: '@wiki',
+      glyph: 'W',
+      source: 'custom' as const,
+      favicon: null
+    }
+    const forum = {
+      id: 'discovered:forum.example',
+      name: 'Forum',
+      searchUrl: 'https://forum.example/search?q=%s',
+      suggestUrl: null,
+      keyword: '@forum',
+      glyph: 'F',
+      source: 'discovered' as const,
+      favicon: 'https://forum.example/favicon.ico',
+      visitedAt: 5,
+      active: false
+    }
+    const def = PAGE.sections.find((x) => x.id === 'search')!
+    const searchOn = (
+      layout: FormFactor | undefined
+    ): { model: Model; ctx: ReturnType<typeof context> } => {
+      const s = state(
+        { searchEngines: [...DEFAULT_SEARCH_ENGINES, mine, wiki, forum] } as Partial<UIState>,
+        { searchEngines: [mine, wiki, forum], searchEngineId: 'custom:mine' }
+      )
+      const c = context(s)
+      return { model: buildSection(def, { ...c.ctx, formFactor: layout }), ctx: c }
+    }
+    const ids = (model: Model, group: string): string[] =>
+      model.groups.find((g) => g.id === group)?.rows.map((r) => r.id) ?? []
+    /** The ids of the rows an engine's sheet offers, in order. */
+    const sheetIds = (model: Model, id: string): string[] => {
+      const found = row(model, id)
+      if (found.kind !== 'item') throw new Error('not an item')
+      return found.sheet.groups.flatMap((g) => g.rows.map((r) => r.id))
+    }
+
+    it('lists the active engines under Added and the deactivated ones under Inactive, offered by neither the picker nor the keywords row', () => {
+      const { model } = searchOn('desktop')
+      expect(ids(model, 'search-engines')).toEqual([
+        'search-engine:custom:mine',
+        'search-engine:custom:wiki'
+      ])
+      expect(ids(model, 'inactive-search-engines')).toEqual([
+        'search-engine:discovered:forum.example'
+      ])
+      const inactive = model.groups.find((g) => g.id === 'inactive-search-engines')!
+      expect(inactive.heading).toBe('Inactive')
+      expect(inactive.empty).toBeUndefined()
+      // The inactive engine reads so on its row, its shortcut and host kept.
+      expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
+        kind: 'item',
+        description: 'Inactive · @forum · forum.example'
+      })
+      // Not the default's candidate: the picker lists the active engines alone …
+      const picker = row(model, 'search-engine')
+      if (picker.kind !== 'value') throw new Error('not a value row')
+      expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
+      expect(picker.options.map((o) => o.value)).toContain(wiki.id)
+      // … and so does the keywords row.
+      const keywords = row(model, 'search-keywords')
+      if (keywords.kind !== 'info') throw new Error('not an info row')
+      expect(keywords.description).toContain('@wiki')
+      expect(keywords.description).not.toContain('@forum')
+    })
+
+    it('the Inactive heading is not drawn while no engine is deactivated', () => {
+      const s = state({ searchEngines: [...DEFAULT_SEARCH_ENGINES, mine] } as Partial<UIState>, {
+        searchEngines: [mine],
+        searchEngineId: 'custom:mine'
+      })
+      const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
+      const inactive = model.groups.find((g) => g.id === 'inactive-search-engines')!
+      expect(inactive.rows).toEqual([])
+      expect(groupShows(inactive)).toBe(false)
+    })
+
+    it('Edit is a form row over the Add form pre-filled – name, shortcut, URL – saving through search.updateEngine', () => {
+      const { model } = searchOn('desktop')
+      const edit = row(model, 'search-engine:custom:wiki:edit')
+      if (edit.kind !== 'action') throw new Error('not an action')
+      expect(edit).toMatchObject({ label: 'Edit', button: 'Edit…' })
+      expect(edit.form).toMatchObject({
+        title: 'Edit search engine',
+        description: 'Put %s in the URL where the search terms go.'
+      })
+      const form = edit.form!.render(() => {})
+      if (!isValidElement<{ engine: SearchEngine; onSave: (edits: object) => void }>(form))
+        throw new Error('not an element')
+      expect(form.props.engine).toBe(wiki)
+      form.props.onSave({ name: 'Wiki 2', searchUrl: wiki.searchUrl, keyword: '@w' })
+      expect(invoke).toHaveBeenCalledWith('search.updateEngine', {
+        id: wiki.id,
+        name: 'Wiki 2',
+        searchUrl: wiki.searchUrl,
+        keyword: '@w'
+      })
+    })
+
+    it('Deactivate takes an added engine out of the URL bar, is held on the default, and Activate brings an inactive one back', () => {
+      const { model } = searchOn('desktop')
+      const deactivate = row(model, 'search-engine:custom:wiki:deactivate')
+      if (deactivate.kind !== 'action') throw new Error('not an action')
+      expect(deactivate.disabled).toBeFalsy()
+      expect(deactivate.description).toBe(
+        'Keeps Wiki in the list but out of the URL bar until you activate it.'
+      )
+      deactivate.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
+        id: wiki.id,
+        active: false
+      })
+      // The default engine stays active: its row says so and takes no press.
+      const held = row(model, 'search-engine:custom:mine:deactivate')
+      if (held.kind !== 'action') throw new Error('not an action')
+      expect(held.disabled).toBe(true)
+      expect(held.description).toBe('The default search engine stays active.')
+      // An inactive engine offers Activate in the place of Deactivate, and no Make default.
+      expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+        'search-engine:discovered:forum.example:edit',
+        'search-engine:discovered:forum.example:activate',
+        'search-engine:discovered:forum.example:remove'
+      ])
+      const activate = row(model, 'search-engine:discovered:forum.example:activate')
+      if (activate.kind !== 'action') throw new Error('not an action')
+      expect(activate.description).toBe('@forum works in the URL bar again.')
+      activate.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
+        id: forum.id,
+        active: true
+      })
+      // Make default and Remove stay on an active engine.
+      expect(sheetIds(model, 'search-engine:custom:wiki')).toEqual([
+        'search-engine:custom:wiki:default',
+        'search-engine:custom:wiki:edit',
+        'search-engine:custom:wiki:deactivate',
+        'search-engine:custom:wiki:remove'
+      ])
+    })
+
+    it('the phone and tablet shells keep every engine under Added with Make default and Remove alone, the Inactive heading and the desktop rows gone', () => {
+      for (const layout of ['phone', 'tablet'] as const) {
+        const { model } = searchOn(layout)
+        expect(ids(model, 'search-engines')).toEqual([
+          'search-engine:custom:mine',
+          'search-engine:custom:wiki',
+          'search-engine:discovered:forum.example'
+        ])
+        expect(model.groups.some((g) => g.id === 'inactive-search-engines')).toBe(false)
+        expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+          'search-engine:discovered:forum.example:remove'
+        ])
+        expect(sheetIds(model, 'search-engine:custom:wiki')).toEqual([
+          'search-engine:custom:wiki:default',
+          'search-engine:custom:wiki:remove'
+        ])
+        // The picker still leaves the deactivated engine out: the flag is the model's, not the
+        // layout's.
+        const picker = row(model, 'search-engine')
+        if (picker.kind !== 'value') throw new Error('not a value row')
+        expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
+      }
+    })
   })
 
   it('a per-site zoom is one item with a Remove zoom action that forgets the site', () => {

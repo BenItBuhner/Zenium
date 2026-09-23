@@ -69,7 +69,7 @@ import {
   type ReadAloudVoice,
   type ReadAloudVoicesResult
 } from '@shared/readAloud'
-import { engineHost } from '@shared/search'
+import { engineHost, isActiveSearchEngine } from '@shared/search'
 import {
   SHORTCUT_GROUP_LABELS,
   SHORTCUT_PRESETS,
@@ -175,6 +175,7 @@ import { AboutVersionBlock } from './AboutVersionBlock'
 import { CustomizeToolbarForm } from './CustomizeToolbarForm'
 import { extensionsGroups } from './extensions'
 import { LayoutCards } from './LayoutCards'
+import { SearchEngineEditForm } from './SearchEngineEditForm'
 import {
   choice,
   onLayout,
@@ -2620,12 +2621,20 @@ function privateLockGroups({ state, screenLock }: SectionContext): RowGroup[] {
  * host it searches; the user's engines are listed under the picker with Make default and
  * Remove, and a form adds one by name and `%s` template.
  */
-function searchSection({ state, set }: SectionContext): RowGroup[] {
+function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
   const s = state.settings
   // An extension's engine (`chrome_settings_overrides`) is not the user's to pick or remove; it
   // is the default only through the extension, which the URL bar follows (`defaultSearchEngineOf`).
   const engines = state.searchEngines.filter((e) => e.source !== 'extension')
   const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
+  // A deactivated engine (settings-43) is offered nowhere – not as the default, not by shortcut
+  // – and the desktop lists it under Inactive; the default engine reads active whatever a peer's
+  // list says. The other layouts keep every engine under Added (the rows that deactivate are
+  // the desktop's).
+  const isActive = (e: SearchEngine): boolean =>
+    isActiveSearchEngine(e) || e.id === s.searchEngineId
+  const active = engines.filter(isActive)
+  const splitInactive = formFactor === 'desktop'
   const glyph = (e: SearchEngine): ReactNode => <EngineGlyph engine={e} />
   /**
    * The picker's heading for the user's engines; the shipped ones (no `source`) sit above any
@@ -2642,7 +2651,7 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           id: 'search-engine',
           label: 'Default search engine',
           value: s.searchEngineId,
-          options: engines.map((e) => ({
+          options: active.map((e) => ({
             value: e.id,
             label: e.name,
             description: pickerGroup(e) ? (engineHost(e) ?? undefined) : undefined,
@@ -2693,7 +2702,7 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'info',
           id: 'search-keywords',
           label: 'Engine keywords',
-          description: `Type a keyword, then a space: ${engines.map((e) => e.keyword).join(' · ')}`
+          description: `Type a keyword, then a space: ${active.map((e) => e.keyword).join(' · ')}`
         }
       ]
     },
@@ -2702,56 +2711,22 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
       heading: 'Added search engines',
       description:
         'Engines you added, and engines from sites you visited that offer one. Sites in private tabs are never listed.',
-      // The row's second line carries the engine's shortcut (Chrome's Shortcut column) beside
-      // its standing – the default, or a visited site's – and the host it searches.
-      rows: own.map((e) =>
-        item(
-          `search-engine:${e.id}`,
-          e.name,
-          [
-            e.id === s.searchEngineId
-              ? 'Default search engine'
-              : e.source === 'discovered'
-                ? 'Recently visited'
-                : null,
-            e.keyword,
-            e.id === s.searchEngineId ? null : (engineHost(e) ?? e.searchUrl)
-          ]
-            .filter((part): part is string => Boolean(part))
-            .join(' · '),
-          [
-            {
-              kind: 'action',
-              id: `search-engine:${e.id}:default`,
-              label: 'Make default',
-              description: `Searches from the URL bar use ${e.name}.`,
-              disabled: e.id === s.searchEngineId,
-              onPress: () => set({ searchEngineId: e.id })
-            },
-            {
-              kind: 'action',
-              id: `search-engine:${e.id}:remove`,
-              label: 'Remove',
-              description:
-                e.source === 'discovered'
-                  ? 'The site offers it again on your next visit.'
-                  : undefined,
-              destructive: true,
-              confirm: {
-                title: `Remove ${e.name}?`,
-                description:
-                  e.id === s.searchEngineId
-                    ? 'The URL bar goes back to the default engine.'
-                    : undefined,
-                action: 'Remove'
-              },
-              onPress: () => run('search.removeEngine', { id: e.id })
-            }
-          ],
-          { leading: glyph(e), keywords: [e.keyword, engineHost(e) ?? ''] }
-        )
+      rows: (splitInactive ? own.filter(isActive) : own).map((e) =>
+        searchEngineItem(e, state, set, glyph(e))
       ),
       empty: 'No search engines added yet'
+    },
+    // The engines taken out of the omnibox (settings-43; Chrome's Inactive shortcuts): kept
+    // with their shortcut, answering to nothing until activated. No empty state: the heading
+    // appears with the first engine deactivated and goes with the last activated.
+    {
+      id: 'inactive-search-engines',
+      heading: 'Inactive',
+      description: 'Engines kept but not offered in the address bar until you activate them.',
+      layouts: ['desktop'],
+      rows: (splitInactive ? own.filter((e) => !isActive(e)) : []).map((e) =>
+        searchEngineItem(e, state, set, glyph(e))
+      )
     },
     {
       id: 'add-search-engine',
@@ -2777,6 +2752,107 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
       ]
     }
   ]
+}
+
+/**
+ * One of the user's engines under Added or Inactive (omnibox-09, settings-43; Chrome's Site
+ * search rows): the row's second line carries the engine's standing – the default, a visited
+ * site's, inactive – its shortcut (Chrome's Shortcut column) and the host it searches; its
+ * sheet offers Make default (an active engine; the default's is held), Edit – the Add form
+ * pre-filled with a Shortcut field, the desktop's – Deactivate or Activate (the desktop's; the
+ * default engine stays active), and Remove.
+ */
+function searchEngineItem(
+  e: SearchEngine,
+  state: UIState,
+  set: SectionContext['set'],
+  leading: ReactNode
+): SettingsRow {
+  const s = state.settings
+  const isDefault = e.id === s.searchEngineId
+  const inactive = !isDefault && !isActiveSearchEngine(e)
+  const standing = isDefault
+    ? 'Default search engine'
+    : inactive
+      ? 'Inactive'
+      : e.source === 'discovered'
+        ? 'Recently visited'
+        : null
+  const rows: SettingsRow[] = []
+  if (!inactive)
+    rows.push({
+      kind: 'action',
+      id: `search-engine:${e.id}:default`,
+      label: 'Make default',
+      description: `Searches from the URL bar use ${e.name}.`,
+      disabled: isDefault,
+      onPress: () => set({ searchEngineId: e.id })
+    })
+  rows.push(
+    {
+      kind: 'action',
+      id: `search-engine:${e.id}:edit`,
+      label: 'Edit',
+      description: 'The name, the shortcut and the URL the terms go into.',
+      layouts: ['desktop'],
+      button: 'Edit…',
+      form: {
+        title: 'Edit search engine',
+        description: 'Put %s in the URL where the search terms go.',
+        render: (close) => (
+          <SearchEngineEditForm
+            engine={e}
+            engines={state.searchEngines}
+            onSave={(edits) => cmd('search.updateEngine', { id: e.id, ...edits })}
+            close={close}
+          />
+        )
+      }
+    },
+    inactive
+      ? {
+          kind: 'action',
+          id: `search-engine:${e.id}:activate`,
+          label: 'Activate',
+          description: `${e.keyword} works in the URL bar again.`,
+          layouts: ['desktop'],
+          onPress: () => run('search.setEngineActive', { id: e.id, active: true })
+        }
+      : {
+          kind: 'action',
+          id: `search-engine:${e.id}:deactivate`,
+          label: 'Deactivate',
+          description: isDefault
+            ? 'The default search engine stays active.'
+            : `Keeps ${e.name} in the list but out of the URL bar until you activate it.`,
+          layouts: ['desktop'],
+          disabled: isDefault,
+          onPress: () => run('search.setEngineActive', { id: e.id, active: false })
+        },
+    {
+      kind: 'action',
+      id: `search-engine:${e.id}:remove`,
+      label: 'Remove',
+      description:
+        e.source === 'discovered' ? 'The site offers it again on your next visit.' : undefined,
+      destructive: true,
+      confirm: {
+        title: `Remove ${e.name}?`,
+        description: isDefault ? 'The URL bar goes back to the default engine.' : undefined,
+        action: 'Remove'
+      },
+      onPress: () => run('search.removeEngine', { id: e.id })
+    }
+  )
+  return item(
+    `search-engine:${e.id}`,
+    e.name,
+    [standing, e.keyword, isDefault ? null : (engineHost(e) ?? e.searchUrl)]
+      .filter((part): part is string => Boolean(part))
+      .join(' · '),
+    rows,
+    { leading, keywords: [e.keyword, engineHost(e) ?? '', inactive ? 'inactive' : ''] }
+  )
 }
 
 // ---------------------------------------------------------------------------

@@ -221,6 +221,102 @@ export function customSearchEngine(
   }
 }
 
+/**
+ * Whether the omnibox offers the engine's shortcut and tab-to-search (settings-43): a
+ * deactivated engine (`active: false`) stays in the list and is offered nowhere until activated.
+ */
+export function isActiveSearchEngine(engine: Pick<SearchEngine, 'active'>): boolean {
+  return engine.active !== false
+}
+
+/**
+ * A shortcut as the model keeps it (`@wiki`): `@` – added when the user left it off – and one
+ * word of at most 64 characters, lower case. Null for text that cannot be one: empty, spaces
+ * inside, too long.
+ */
+export function normalizeEngineKeyword(input: string): string | null {
+  const word = input.trim().toLowerCase()
+  if (!word) return null
+  const keyword = word.startsWith('@') ? word : `@${word}`
+  return /^@\S{1,64}$/.test(keyword) ? keyword : null
+}
+
+/**
+ * Why `input` cannot be the shortcut of the engine `engineId`, or null when it can – or when it
+ * is empty, and the shortcut derived from the name stands in (`editedSearchEngine`): spaces or
+ * length, one of Zenium's own scopes (`@tabs`), or a word another engine already answers to.
+ */
+export function engineKeywordProblem(
+  input: string,
+  engineId: string,
+  engines: readonly SearchEngine[]
+): string | null {
+  const word = input.trim()
+  if (!word) return null
+  const keyword = normalizeEngineKeyword(word)
+  if (!keyword)
+    return /\s/.test(word) ? 'A shortcut is one word, with no spaces' : 'The shortcut is too long'
+  if (SEARCH_SCOPES.some((s) => s.keyword === keyword))
+    return `${keyword} is one of Zenium’s own shortcuts`
+  const other = engines.find((e) => e.id !== engineId && engineKeywords(e).includes(keyword))
+  if (other) return `${other.name} already answers to ${keyword}`
+  return null
+}
+
+/** What Settings › Search › Edit changes on one of the user's engines (omnibox-09). */
+export interface SearchEngineEdits {
+  name: string
+  /** The template, `%s` where the terms go (`searchTemplateProblem` has passed it). */
+  searchUrl: string
+  /** The shortcut as typed, `@` or not; empty for one derived from the name. */
+  keyword: string
+}
+
+/**
+ * `engine` as edited: the name and template trimmed and capped, the shortcut normalised or –
+ * left empty – derived from the new name as an added engine's is, unique among the other
+ * engines, and the glyph re-read from the name. An engine a page offered (`discovered`) becomes
+ * the user's own once edited: a later visit's description no longer rewrites what the user set
+ * (`rememberDiscoveredEngine` leaves a site with an added engine alone).
+ */
+export function editedSearchEngine(
+  engine: SearchEngine,
+  edits: SearchEngineEdits,
+  existing: readonly SearchEngine[]
+): SearchEngine {
+  const others = existing.filter((e) => e.id !== engine.id)
+  const name = edits.name.trim().slice(0, MAX_ENGINE_NAME)
+  const keyword = normalizeEngineKeyword(edits.keyword) ?? uniqueEngineKeyword(name, others)
+  const next: SearchEngine = {
+    ...engine,
+    name,
+    searchUrl: edits.searchUrl.trim(),
+    keyword,
+    glyph: engineGlyph(name),
+    source: 'custom'
+  }
+  delete next.visitedAt
+  return next
+}
+
+/**
+ * The user's list with the engine `id` activated or deactivated for the omnibox (settings-43):
+ * an active engine carries no flag, a deactivated one `active: false`.
+ */
+export function withSearchEngineActive(
+  user: readonly SearchEngine[],
+  id: string,
+  active: boolean
+): SearchEngine[] {
+  return user.map((e) => {
+    if (e.id !== id) return e
+    if (!active) return { ...e, active: false }
+    const next = { ...e }
+    delete next.active
+    return next
+  })
+}
+
 /** Stands in for `%s` while a template is read as a URL; nothing a user types looks like it. */
 const TERMS_MARKER = 'zen-search-terms-marker'
 
@@ -335,6 +431,7 @@ function sanitizeSearchEngine(raw: unknown): SearchEngine | null {
     engine.visitedAt =
       typeof r.visitedAt === 'number' && Number.isFinite(r.visitedAt) ? r.visitedAt : 0
   }
+  if (r.active === false) engine.active = false
   return engine
 }
 
@@ -425,7 +522,7 @@ export function discoveredSearchEngine(
   if (!host) return null
   const id = `discovered:${host}`
   const previous = existing.find((e) => e.id === id)
-  return {
+  const engine: SearchEngine = {
     id,
     name: description.name,
     searchUrl: description.searchUrl,
@@ -441,6 +538,9 @@ export function discoveredSearchEngine(
     favicon: description.favicon,
     visitedAt: now
   }
+  // A deactivated engine stays deactivated through the site's later visits.
+  if (previous?.active === false) engine.active = false
+  return engine
 }
 
 /**
@@ -682,7 +782,8 @@ export function engineKeywords(engine: SearchEngine): string[] {
 
 /**
  * A keyword alone (`@ddg`, `@bookmarks`), as typed before the Space or Tab that enters keyword
- * mode: the match it would select, or null. Case-insensitive.
+ * mode: the match it would select, or null. Case-insensitive. A deactivated engine
+ * (`active: false`) answers to nothing until activated.
  */
 export function matchKeywordWord(word: string, engines: SearchEngine[]): KeywordMatch | null {
   const w = word.trim().toLowerCase()
@@ -691,6 +792,7 @@ export function matchKeywordWord(word: string, engines: SearchEngine[]): Keyword
     if (s.keyword === w) return { kind: 'scope', scope: s.scope, keyword: s.keyword, query: '' }
   }
   for (const engine of engines) {
+    if (!isActiveSearchEngine(engine)) continue
     if (engineKeywords(engine).includes(w)) return { kind: 'engine', engine, keyword: w, query: '' }
   }
   return null
@@ -701,8 +803,8 @@ export function matchKeywordWord(word: string, engines: SearchEngine[]): Keyword
  * (tab-to-search, omnibox-08): its `@keyword` (and `@id`, `@name`) or the host it searches at
  * (`duckduckgo.com`, Chrome's own keywords), and with `byName` its name too (`duckduckgo`,
  * case and inner spaces aside) – Chrome offers the name as a Tab hint but takes only the exact
- * keyword on Space, so "google maps" stays a query. Null for anything else, and for a word with
- * spaces.
+ * keyword on Space, so "google maps" stays a query. Null for anything else, for a word with
+ * spaces, and for a deactivated engine's words.
  */
 export function matchEngineWord(
   word: string,
@@ -712,6 +814,7 @@ export function matchEngineWord(
   const w = word.trim().toLowerCase()
   if (!w || /\s/.test(w)) return null
   for (const engine of engines) {
+    if (!isActiveSearchEngine(engine)) continue
     if (engineKeywords(engine).includes(w)) return engine
     const host = engineHost(engine)?.toLowerCase()
     if (host && (host === w || `www.${host}` === w)) return engine

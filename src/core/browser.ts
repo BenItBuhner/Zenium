@@ -3043,6 +3043,10 @@ export class Browser {
       'clipboard.read': () => this.searchEngines.readClipboard(),
       'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
       'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
+      'search.updateEngine': ({ id, name, searchUrl, keyword }, win) =>
+        this.searchEngines.update(id, { name, searchUrl, keyword }, win),
+      'search.setEngineActive': ({ id, active }, win) =>
+        this.searchEngines.setActive(id, active, win),
       'search.removeEngine': ({ id }, win) => this.searchEngines.remove(id, win),
 
       'newtab.open': (_a, win) => this.openNewTab(win),
