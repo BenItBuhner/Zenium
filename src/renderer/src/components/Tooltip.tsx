@@ -29,12 +29,12 @@ import {
  * The chrome tooltip's host (lib/tooltip.ts; design-language-v2-draft §9.31, a11y-26): one
  * for the window, mounted by the desktop shell, listening on the document for the pointer and
  * the keyboard reaching any control that carries `data-tooltip`. It draws the one tooltip in
- * the chrome layer – 13/400 on `--v2-panel` with the hairline, radius 6, no arrow, 8 px from
- * the control and never over it, slid and flipped to stay inside the control's pane and the
- * window (`placeTooltip`) – marks the control `aria-describedby` it while it is up, and takes
- * it down on the pointer leaving, focus leaving, a press, Escape (let through to whatever it
- * is for the control: one press), the window losing focus, a scroll or resize, the control
- * leaving the DOM or losing its text, and other chrome opening.
+ * the chrome layer – 13/400 on `--v2-panel` with the hairline, the control radius (4), no
+ * arrow, 8 px from the control and never over it, slid and flipped to stay inside the control's
+ * pane and the window (`placeTooltip`) – marks the control `aria-describedby` it while it is
+ * up, and takes it down on the pointer leaving, focus leaving, a press, Escape (let through to
+ * whatever it is for the control: one press), the window losing focus, a scroll or resize, the
+ * control leaving the DOM or losing its text, and other chrome opening.
  *
  * The tab views draw above the chrome's DOM: a tooltip that has to lie over the page (a toolbar
  * band with the page right under it; §9.29's layouts) waits for the page to go under its
