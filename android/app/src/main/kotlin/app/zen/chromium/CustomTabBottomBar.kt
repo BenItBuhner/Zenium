@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -10,7 +11,9 @@ import android.graphics.Paint
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.util.Log
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
@@ -122,17 +125,20 @@ class CustomTabBottomBar(
 
     /**
      * The caller's `RemoteViews`, applied fresh (an update replaces the previous views), each
-     * clickable id wired to [Listener.onRemoteViewClick]. Null clears the slot. Views that fail
-     * to inflate (a layout from a package the system will not load) leave the slot empty. With
-     * views in the slot the caller's buttons stand down, as in Chrome (the views are the bar);
-     * cleared, the buttons come back.
+     * clickable id wired to [Listener.onRemoteViewClick]. Null clears the slot. The views are
+     * inflated through [PlainInflaterContext], the framework's widgets under the caller's own
+     * theme; views that still fail to inflate (a layout from a package the system will not load,
+     * a view RemoteViews forbid) are logged and leave the slot empty. With views in the slot the
+     * caller's buttons stand down, as in Chrome (the views are the bar); cleared, the buttons
+     * come back.
      */
     fun setRemoteViews(remote: CustomTabConfig.RemoteViews?) {
         remoteSlot.removeAllViews()
         val view = remote?.let {
             try {
-                it.views.apply(context, remoteSlot)
+                it.views.apply(PlainInflaterContext(context), remoteSlot)
             } catch (e: RuntimeException) {
+                Log.w(TAG, "the caller's RemoteViews did not inflate; the bottom toolbar's slot stays empty", e)
                 null
             }
         }
@@ -358,5 +364,22 @@ class CustomTabBottomBar(
         /** §11 SPRING_SNAPPY. */
         private const val SPRING_STIFFNESS = 420f
         private const val SPRING_DAMPING = 40f
+        private const val TAG = "ZenCustomTabs"
     }
+}
+
+/**
+ * The context the caller's `RemoteViews` inflate through. `RemoteViews.apply` takes its
+ * inflater from the context it is handed; the activity's carries AppCompat's view factory, which
+ * turns the caller's `Button` into a `MaterialButton` that refuses the caller's (non-AppCompat)
+ * theme and throws — the slot would stay empty for any caller whose bar has a button. This
+ * context hands out a factory-free inflater instead (the application's, cloned here), so the
+ * caller's layout inflates to the framework widgets it names under its own theme, as a launcher
+ * inflates a widget.
+ */
+private class PlainInflaterContext(base: Context) : ContextWrapper(base) {
+    private val inflater: LayoutInflater by lazy { LayoutInflater.from(baseContext.applicationContext).cloneInContext(this) }
+
+    override fun getSystemService(name: String): Any? =
+        if (name == Context.LAYOUT_INFLATER_SERVICE) inflater else super.getSystemService(name)
 }
