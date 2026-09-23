@@ -2681,15 +2681,6 @@ export class Menus {
       action: 'tab.new',
       click: () => this.browser.openNewTab(win)
     }
-    // The phone's Home (TB-15 / NTP-30): Chrome's is a toolbar button, and the phone bar's is
-    // an optional control, so the menu is where a homepage is always reachable from – this tab
-    // goes to it. With the homepage off there is no Home anywhere, as Chrome's button leaves
-    // the toolbar; a page that is not a tab (nothing active) has nowhere to go.
-    const home = when(phone && this.browser.newTab.homepageUrl() !== null, {
-      label: 'Home',
-      enabled: Boolean(active),
-      click: () => active && this.browser.goHome(active.id, win)
-    })
     // Chrome's tab search (tabs-17): a popover of the sidebar layouts, and the desktop's one
     // pointer way into it (the chord and the macOS menu bar are the others), so it keeps a row
     // in the tabs group; the phone's tab switcher searches on its own.
@@ -2965,12 +2956,11 @@ export class Menus {
     if (phone) {
       this.popup(
         [
-          // Chrome's icon row heads the phone's menu: Forward, the star, Download page, Page
-          // info and Reload / Stop, which the chrome draws as a row of icon buttons from each
-          // item's glyph.
+          // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set,
+          // the star, Download page, Page info and Reload / Stop, which the chrome draws as a
+          // row of icon buttons from each item's glyph.
           ...this.phoneIconRow(active, win),
           separator,
-          ...home,
           newTab,
           ...privateTabs,
           ...newSpace,
@@ -3182,6 +3172,22 @@ export class Menus {
         enabled: Boolean(active?.canGoForward),
         click: () => active && tabs.goForward(active.id)
       },
+      // Home (TB-15 / NTP-30, v2 §9.13): a button wherever it lives – the bar's item when the
+      // user adds it, this glyph otherwise, never a text row among New Tab and New Private Tab
+      // (a row reads as a destination). The tab goes to the homepage; with the homepage off
+      // there is no Home anywhere, as Chrome's button leaves the toolbar. Not repeating it here
+      // while the bar carries it is §9.13's rule for the whole row, a follow-up once the menu
+      // model can see the bar as the chrome draws it.
+      ...(this.browser.newTab.homepageUrl() !== null
+        ? [
+            {
+              label: 'Home',
+              glyph: 'home',
+              enabled: Boolean(active),
+              click: () => active && this.browser.goHome(active.id, win)
+            } satisfies MenuItemTemplate
+          ]
+        : []),
       // The star (TB-16), with Chrome's flow as the phone's Bookmarks submenu ran it before: a
       // page that is not bookmarked is saved and toasted with Edit, a bookmarked one opens its
       // editor. `checked` is the fill; the label says which of the two a press does (§9.13's

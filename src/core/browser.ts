@@ -1131,11 +1131,11 @@ export class Browser {
   }
 
   /**
-   * A Home control (TB-15: the phone bar's Home button, the app menu's Home row): the tab goes
-   * to the homepage (`NewTabService.homepageUrl`) – the user's page, or the new tab page at
-   * rest, Chrome's Home showing it without the keyboard (the page's own field is the way in).
-   * Nothing runs with the homepage off, where no Home control is drawn. The desktop's Alt+Home
-   * (`nav.home`) keeps its own destination: the setting has no desktop row yet.
+   * The Home button (TB-15: the phone bar's optional item, the app menu's icon-row glyph): the
+   * tab goes to the homepage (`NewTabService.homepageUrl`) – the user's page, or the new tab
+   * page at rest, Chrome's Home showing it without the keyboard (the page's own field is the
+   * way in). Nothing runs with the homepage off, where no Home button is drawn. The desktop's
+   * Alt+Home (`nav.home`) keeps its own destination: the setting has no desktop row yet.
    */
   goHome(tabId: string, win: ZenWindow): void {
     const url = this.newTab.homepageUrl()

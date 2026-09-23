@@ -304,6 +304,11 @@ describe('the page for the bar’s edge (NTP-29)', () => {
   }
   const before = (a: Element, b: Element): boolean =>
     Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+  /** The column's spacers – its first and last children – by their `flex` share. */
+  const spacers = (column: HTMLElement): string[] =>
+    [column.firstElementChild, column.lastElementChild].map((el) =>
+      el instanceof HTMLElement ? el.style.flexGrow || el.style.flex : ''
+    )
 
   afterEach(() => {
     setFakeboxPainter(null)
@@ -318,7 +323,13 @@ describe('the page for the bar’s edge (NTP-29)', () => {
     expect(grid.textContent).toContain('Docs')
     expect(before(grid, field)).toBe(true)
     // Both in the one scrolling column, whose scroll carries the field toward the pill (#243).
-    expect(field.closest('.zen-ntp-scroll')).toBe(grid.closest('.zen-ntp-scroll'))
+    const column = field.closest<HTMLElement>('.zen-ntp-scroll')!
+    expect(grid.closest('.zen-ntp-scroll')).toBe(column)
+    // One geometry measured from the bar's edge (§9.29): the free height 3 : 5 with the block on
+    // the bar's side – here 5 parts above the tiles, 3 under the field – and the 24 between the
+    // tiles and the field on the tiles' side.
+    expect(spacers(column)).toEqual(['5', '3'])
+    expect(grid.classList.contains('mb-6')).toBe(true)
     const gear = page.querySelector<HTMLElement>('[aria-label="Customise the new tab page"]')!
     expect(gear.style.top).toBe('12px')
     expect(gear.style.bottom).toBe('')
@@ -330,6 +341,9 @@ describe('the page for the bar’s edge (NTP-29)', () => {
     const field = page.querySelector<HTMLElement>('.zen-ntp-field')!
     const grid = page.querySelector<HTMLElement>('[aria-label="Most visited"]')!
     expect(before(field, grid)).toBe(true)
+    // The same 3 : 5 the other way up: 3 parts over the field, 5 under the tiles, the 24 above them.
+    expect(spacers(field.closest<HTMLElement>('.zen-ntp-scroll')!)).toEqual(['3', '5'])
+    expect(grid.classList.contains('mt-6')).toBe(true)
     const gear = page.querySelector<HTMLElement>('[aria-label="Customise the new tab page"]')!
     expect(gear.style.bottom).toBe('12px')
     expect(gear.style.top).toBe('')

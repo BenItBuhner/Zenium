@@ -88,14 +88,17 @@ function useWindowBackdrop(): CSSProperties | undefined {
  * and the wallpaper presets put the space's colours – or a picked image under a legibility scrim
  * – behind it all.
  *
- * The page lays out for the bar's edge (NTP-29, `phoneBarPosition`). With the bar at the top the
- * field sits in the upper part of the page and the tiles under it, as Chrome's page has them.
- * With the bar at the bottom everything is within the thumb's reach, as Chrome's bottom-omnibox
- * page puts its box low: the field 24 above the frame's bottom edge – the bar's band right under
- * it – and the tiles above the field, the rest of the page clear; the customise gear, which
- * would sit on the field's end, moves to the top corner. The field is the morph's origin
- * wherever it rests (#243: `registerFakebox` measures it there), so a tap at a bottom dock is a
- * short hop into the omnibox's field in the band below.
+ * The page has one geometry, measured from the bar's edge (NTP-29, v2 §9.29, keyed on
+ * `phoneBarPosition`): the column's free height splits 3 : 5 with the block – the field, 24, the
+ * tiles – on the bar's side, so the field's centre sits on the frame's third nearest the bar
+ * (224 from the bar at 920 tall) and the tiles stand 24 beyond it on the side away from the
+ * bar; the customise gear is 12 into the corner opposite the bar. With the bar at the top that
+ * is the field high and the tiles under it, as Chrome's page has them; with the bar at the
+ * bottom the same picture upside down – the tiles above, the field's centre on the two-thirds
+ * line, inside the thumb's reach – never the block huddled against the bar, where the field and
+ * the bar's empty well read as two boxes for the one control (§11.8). The field is the morph's
+ * origin wherever it rests (#243: `registerFakebox` measures it there), so a tap at either dock
+ * is the same travel into the bar's slot.
  */
 function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
   const settings = state.settings.newTab
@@ -144,11 +147,12 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
         onScroll={onNewTabScroll}
       >
         {dock === 'bottom' ? (
+          // The top layout's spacers the other way round: 5 parts above the block, 3 below it.
           <>
-            <div className="min-h-6" style={{ flex: 1 }} />
+            <div className="min-h-6" style={{ flex: 5 }} />
             {sections.shortcuts && <TopSites state={state} tab={tab} dock={dock} />}
             {sections.searchBox && <SearchField state={state} tab={tab} dock={dock} />}
-            <div className="min-h-6 shrink-0" />
+            <div className="min-h-6" style={{ flex: 3 }} />
           </>
         ) : (
           <>

@@ -2251,8 +2251,8 @@ export interface Settings {
   /** Phone layout: the controls either side of the address pill (Settings › Navigation bar). */
   phoneBar: PhoneBarLayout
   /**
-   * The homepage (SET-36 / NTP-30): what the phone's Home controls – the bar's optional Home
-   * button, the app menu's Home row – open, or that there are none. Absent in profiles from
+   * The homepage (SET-36 / NTP-30): what the phone's Home button – the bar's optional item, the
+   * app menu's icon-row glyph otherwise – opens, or that there is none. Absent in profiles from
    * before it existed (`sanitizeHomepage` reads the new tab page, Chrome's default). Synced
    * with the settings; the desktop shells have no row for it yet and their Home (`nav.home`)
    * keeps its own destination.
@@ -3471,11 +3471,11 @@ export interface CommandDescriptor {
 
 /**
  * The glyph an icon-row item draws. The phone app menu's first group is Chrome's row of icon
- * buttons (Forward, the bookmark star, Download page, Page info, Reload / Stop): the core names
- * the glyph, the chrome draws it, and the item's label is the button's accessible name. A menu
- * whose items carry no glyph is rows of text, as before.
+ * buttons (Forward, Home while a homepage is set, the bookmark star, Download page, Page info,
+ * Reload / Stop): the core names the glyph, the chrome draws it, and the item's label is the
+ * button's accessible name. A menu whose items carry no glyph is rows of text, as before.
  */
-export type MenuGlyph = 'forward' | 'star' | 'download' | 'info' | 'reload' | 'stop'
+export type MenuGlyph = 'forward' | 'home' | 'star' | 'download' | 'info' | 'reload' | 'stop'
 
 export interface MenuItemDescriptor {
   id: string

@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, Info } from 'lucide-react'
+import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, House, Info } from 'lucide-react'
 import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
 import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useBackSurface } from '@renderer/lib/back'
@@ -264,6 +264,8 @@ function MenuGlyphView({ glyph }: { glyph: Exclude<MenuGlyph, 'star'> }): JSX.El
   switch (glyph) {
     case 'forward':
       return <ArrowRight aria-hidden />
+    case 'home':
+      return <House aria-hidden />
     case 'download':
       return <Download aria-hidden />
     case 'info':

@@ -716,12 +716,13 @@ function lookSection({ state, set, pointer, openBarEditor, tab }: SectionContext
 
 /**
  * Settings › Look and Feel › Home (SET-36 / NTP-30; Chrome's and Edge's Homepage): what the
- * phone's Home controls open – the navigation bar's optional Home button (TB-15) and the app
- * menu's Home row – or that there are none. The value row's §9.13 picker sets the mode; a
- * "Specific page" shows its address as a §9.12 field row (the one-field sheet, a web address
- * required) and Use current page, which takes the address of the page Settings was opened from
- * (the tab's opener). The rows are the phone shell's: the desktop shells have no Home control
- * that reads the setting yet (their Alt+Home keeps its own destination).
+ * phone's Home button opens – the navigation bar's optional item (TB-15) when the user adds it,
+ * the app menu's icon-row glyph otherwise (v2 §9.13: a button wherever it lives) – or that
+ * there is none. The value row's §9.13 picker sets the mode; a "Specific page" shows its
+ * address as a §9.12 field row (the one-field sheet, a web address required) and Use current
+ * page, which takes the address of the page Settings was opened from (the tab's opener). The
+ * rows are the phone shell's: the desktop shells have no Home control that reads the setting
+ * yet (their Alt+Home keeps its own destination).
  */
 function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): RowGroup {
   const homepage = state.settings.homepage
@@ -736,9 +737,9 @@ function homepageGroup(state: UIState, tab: Tab, set: SectionContext['set']): Ro
       keywords: ['home', 'home button', 'start page', 'new tab page'],
       layouts: ['phone'],
       value: homepage.mode,
-      sheetDescription: 'Where the Home button and the menu’s Home go.',
+      sheetDescription: 'Where the Home button goes.',
       options: [
-        { value: 'off', label: 'Off', description: 'No Home button or menu row.' },
+        { value: 'off', label: 'Off', description: 'No Home button.' },
         { value: 'newtab', label: 'New tab page' },
         {
           value: 'url',

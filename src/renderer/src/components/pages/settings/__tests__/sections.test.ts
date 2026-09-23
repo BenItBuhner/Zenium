@@ -4703,9 +4703,10 @@ describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
     if (homepage.kind !== 'value') throw new Error('not a value row')
     expect(homepage.label).toBe('Homepage')
     expect(currentOptionLabel(homepage)).toBe('New tab page')
-    expect(homepage.sheetDescription).toBe('Where the Home button and the menu’s Home go.')
+    // Home is a button wherever it lives (§9.13): the copy names one thing.
+    expect(homepage.sheetDescription).toBe('Where the Home button goes.')
     expect(homepage.options.map((o) => [o.label, o.description ?? ''])).toEqual([
-      ['Off', 'No Home button or menu row.'],
+      ['Off', 'No Home button.'],
       ['New tab page', ''],
       ['Specific page', 'Enter an address below, or use the current page.']
     ])
