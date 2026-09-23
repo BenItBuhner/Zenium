@@ -49,8 +49,12 @@ function WindowPromptView({
 }): JSX.Element {
   const answered = useRef(false)
   const [keepWarning, setKeepWarning] = useState(true)
-  // Read as the view first renders, before the prompt's container takes the focus itself.
-  const [fromChrome] = useState(openedFromKeyboard)
+  // Read as the view first renders, before the prompt's container takes the focus itself: a
+  // control with the ring showing, never `body` (which is what the chrome's document holds
+  // while the page has the keyboard).
+  const [fromChrome] = useState(
+    () => document.activeElement !== document.body && openedFromKeyboard()
+  )
 
   useEffect(() => {
     let gone = false

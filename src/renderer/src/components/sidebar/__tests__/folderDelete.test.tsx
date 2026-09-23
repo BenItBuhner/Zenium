@@ -301,6 +301,27 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(uiStore.get().folderDeleteConfirm).toEqual({ folderId: 'g', keyboard: true })
   })
 
+  it('Enter from the container answers with Delete – the primitive’s default button, in the destructive form too (the named question) – and the page takes the keyboard back', async () => {
+    browserStore.set({ state: state([tab('home', null), tab('a', 'g')], [folder()]) })
+    render(<Dialogs />)
+    requestFolderDelete('g', true)
+    await settle()
+    const d = dialog()!
+    expect(document.activeElement).toBe(d)
+    run.mockClear()
+    act(() => {
+      d.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(run).toHaveBeenCalledWith('folder.delete', { folderId: 'g', unpack: false })
+    expect(uiStore.get().folderDeleteConfirm).toBeNull()
+    // The header went with the folder: not the keyboard's way back, even from the keyboard.
+    expect(run).toHaveBeenCalledWith('focus.content', undefined)
+    await settle()
+    expect(document.activeElement).not.toBe(document.querySelector('[data-tab-folder="g"]'))
+  })
+
   it('says of a saved folder that its pages are forgotten', async () => {
     const saved = folder({
       savedTabs: [
