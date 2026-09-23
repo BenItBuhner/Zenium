@@ -47,6 +47,9 @@ import {
   chromiumFontPreferences,
   DEFAULT_FONT_SETTINGS,
   electronFontDefaults,
+  FONT_RESTYLE_SCRIPT,
+  fontSizesMove,
+  sanitizeFontSettings,
   type ChromiumFontPreferences,
   type FontFamilySlot,
   type PageFontSettings
@@ -209,6 +212,11 @@ const FONT_DEFAULTS = electronFontDefaults(process.platform)
 /** One string per font setting, so a page knows whether it has the one that stands. */
 function fontsKey(fonts: PageFontSettings): string {
   return JSON.stringify(fonts)
+}
+
+/** The setting behind a page's `fontsKey` (what it has), for the restyle decision in `sendFonts`. */
+function fontsOf(key: string): PageFontSettings {
+  return sanitizeFontSettings(JSON.parse(key))
 }
 
 /** What every tab page runs with; `session` picks the container (omitted for pages that exist). */
@@ -1218,6 +1226,13 @@ export class ElectronTabView implements TabView {
    * session is attached for the commands and detached after); on a long-lived session a second
    * family change recycles the session (`recycleDebugger`: the governor puts its overrides back
    * on the new one) and the fonts and the dark theme hold are re-sent on it.
+   *
+   * A size change restyles the open document by itself; a family change alone does not (Blink
+   * recomputes only the elements whose style depends on font metrics, `FONT_RESTYLE_SCRIPT`
+   * says why), so the top document is asked to, from the preload's isolated world, once the
+   * commands are in. A same-process sub-frame's document follows at its next restyle (the
+   * recorded limit; a frame in another process keeps the fonts it was made with until its next
+   * load, as before).
    */
   refreshFonts(): void {
     if (this.wc.isDestroyed()) return
@@ -1276,6 +1291,8 @@ export class ElectronTabView implements TabView {
     // Only the slots that move are named: a family the user never chose keeps the engine's face.
     const changes = cdpFontFamilyChanges(this.familiesApplied, families)
     const sizes = chromiumFontPreferences(fonts)
+    // What the page shows follows a size on its own; a family alone must be asked for.
+    const restyle = changes !== null && !fontSizesMove(fontsOf(this.fontsApplied), fonts)
     try {
       await this.withDebugger(async (session) => {
         if (changes) {
@@ -1295,6 +1312,10 @@ export class ElectronTabView implements TabView {
         })
       })
       this.fontsApplied = key
+      if (restyle && !this.wc.isDestroyed())
+        await this.wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [
+          { code: FONT_RESTYLE_SCRIPT }
+        ])
     } catch {
       /* the page went away, or the engine refused: the next load or change tries again */
     }

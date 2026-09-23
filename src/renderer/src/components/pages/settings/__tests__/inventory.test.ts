@@ -151,6 +151,10 @@ function desktopState(): UIState {
     },
     agents: { ...DEFAULT_SETTINGS.agents, enabled: true },
     downloads: { ...DEFAULT_SETTINGS.downloads, autoOpenTypes: ['pdf'] },
+    // CT-41: the preferred languages the pane's "Languages you read" rows became (translate's
+    // `preferred` is derived from this list); CT-25: a size off the default, so Reset builds.
+    languages: ['en', 'de'],
+    fonts: { ...DEFAULT_SETTINGS.fonts, size: 18 },
     blocking: {
       ...DEFAULT_BLOCKING_SETTINGS,
       customLists: [
@@ -458,10 +462,13 @@ const INVENTORY: Record<string, readonly string[]> = {
   ],
   languages: [
     'Offer to translate pages in other languages',
+    // The pane's "Languages you read" rows are the Preferred languages rows (CT-41, driven by
+    // `Settings.languages`); the pane's "Translate pages into this language" (Make first) and
+    // Remove actions are the rows' ⋯ menu – Move Up / Move Down / Remove – not rows of their
+    // own, and "Add a language you read" is Add language, Chrome's wording.
     'English',
     'German',
-    'Translate pages into this language',
-    'Add a language',
+    'Add language',
     'French',
     'Spanish',
     'example.org',
@@ -631,8 +638,10 @@ const HEADINGS: Record<string, readonly string[]> = {
   ],
   tabs: ['Tabs', 'Window sync', 'Pinned tabs and Essentials', 'Tab unloading'],
   languages: [
+    // CT-41: the pane's "Languages you read" became Preferred languages, the category's first
+    // group (Chrome's order on chrome://settings/languages).
+    'Preferred languages',
     'Translation',
-    'Languages you read',
     'Always translate',
     'Never translate',
     'Sites never translated',

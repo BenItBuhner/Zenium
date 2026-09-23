@@ -336,12 +336,17 @@ class TabWebView(
     // --- page fonts (the document the core pushes; see PageFonts.kt) -------------------------------
 
     /**
-     * Bring this page's `WebSettings` in line with the host's page fonts: at creation and on
-     * every `fonts.apply` (the core's start, a Settings row, a sync merge). WebView restyles the
-     * open document as the settings change, so nothing reloads.
+     * Bring this page's `WebSettings` in line with the host's page fonts: at creation, on every
+     * `fonts.apply` (the core's start, a Settings row, a sync merge), and when a page made
+     * elsewhere is adopted (`TabHost.adopt`). Nothing reloads: WebView restyles the open
+     * document as a size changes, and a family changing alone – which Blink's own invalidation
+     * does not carry to the text – has the document asked to (`PageFonts.RESTYLE_SCRIPT`): one
+     * line of script after the settings, reaching the renderer in that order (both travel the
+     * frame's channel). A page with no document yet has nothing to restyle.
      */
     fun applyFonts() {
-        host.pageFonts.applyTo(settings)
+        val restyle = host.pageFonts.applyTo(settings)
+        if (restyle && currentDocument != null) evaluateJavascript(PageFonts.RESTYLE_SCRIPT, null)
     }
 
     // --- privacy (the policy the core pushes; see privacy/Privacy.kt) -----------------------------

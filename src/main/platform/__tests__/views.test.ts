@@ -5,6 +5,7 @@ import type { TabViewEvents, WindowHost, WindowOpenTicket } from '../../../core/
 import {
   DEFAULT_FONT_SETTINGS,
   electronFontDefaults,
+  FONT_RESTYLE_SCRIPT,
   type PageFontSettings
 } from '../../../shared/fonts'
 import type { SessionManager } from '../sessions'
@@ -104,6 +105,16 @@ vi.mock('electron', async () => {
     }
     sendInputEvent(event: Record<string, unknown>): void {
       this.widgetEvents.push(event)
+    }
+    /** Scripts run in the preload's isolated world, and when: a `restyle` entry in the session's log. */
+    readonly isolatedScripts: Array<{ worldId: number; code: string }> = []
+    executeJavaScriptInIsolatedWorld(
+      worldId: number,
+      scripts: Array<{ code: string }>
+    ): Promise<unknown> {
+      for (const script of scripts) this.isolatedScripts.push({ worldId, code: script.code })
+      this.debugger.log.push('restyle')
+      return Promise.resolve(undefined)
     }
     setWindowOpenHandler(): undefined {
       return undefined
@@ -652,11 +663,13 @@ describe('page fonts (CT-25)', () => {
     expect(sent(dbg, 'Page.setFontSizes')).toEqual([{ fontSizes: { standard: 24, fixed: 20 } }])
     host.applyFonts({ ...DEFAULT_FONT_SETTINGS, size: 24, fixed: 'Fira Code' })
     await settle()
+    // A family with the sizes as they were: the document is asked to restyle once the commands are in.
     expect(dbg.log.slice(3)).toEqual([
       'attach',
       'Page.setFontFamilies',
       'Page.setFontSizes',
-      'detach'
+      'detach',
+      'restyle'
     ])
     expect(sent(dbg, 'Page.setFontFamilies').at(-1)).toEqual({
       fontFamilies: { fixed: 'Fira Code' }
@@ -668,7 +681,45 @@ describe('page fonts (CT-25)', () => {
     expect(sent(dbg, 'Page.setFontFamilies').at(-1)).toEqual({
       fontFamilies: { fixed: electronFontDefaults(process.platform).fixed }
     })
+    expect(dbg.log.slice(8)).toEqual([
+      'attach',
+      'Page.setFontFamilies',
+      'Page.setFontSizes',
+      'detach',
+      'restyle'
+    ])
     expect(dbg.attached).toBe(false)
+  })
+
+  it('asks the open document to restyle after a family change alone, in the preload’s world, never for a size', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, dbg } = page(host, 'tab_fonts_restyle')
+    const wc = view.webContents as unknown as {
+      isolatedScripts: Array<{ worldId: number; code: string }>
+    }
+    // Sizes moved (with a family): Blink restyles on its own, nothing is asked.
+    host.applyFonts(FONTS)
+    await settle()
+    expect(dbg.log).toEqual(['attach', 'Page.setFontFamilies', 'Page.setFontSizes', 'detach'])
+    expect(wc.isolatedScripts).toEqual([])
+    // A family alone: the registration of an unused custom property, in the isolated world.
+    host.applyFonts({ ...FONTS, standard: 'Palatino' })
+    await settle()
+    expect(dbg.log.slice(4)).toEqual([
+      'attach',
+      'Page.setFontFamilies',
+      'Page.setFontSizes',
+      'detach',
+      'restyle'
+    ])
+    expect(wc.isolatedScripts).toEqual([{ worldId: 999, code: FONT_RESTYLE_SCRIPT }])
+    expect(FONT_RESTYLE_SCRIPT).toContain('CSS.registerProperty')
+    expect(FONT_RESTYLE_SCRIPT).toContain("'--zenium-fonts-'")
+    // No family moved: the sizes go out as ever and nothing is asked.
+    host.applyFonts({ ...FONTS, standard: 'Palatino', minimumSize: 0 })
+    await settle()
+    expect(dbg.log.slice(9)).toEqual(['attach', 'Page.setFontSizes', 'detach'])
+    expect(wc.isolatedScripts).toHaveLength(1)
   })
 
   it('leaves a page an extension’s chrome.debugger holds alone, and tries again on its next load', async () => {
@@ -747,7 +798,8 @@ describe('page fonts (CT-25)', () => {
         'attach',
         'Emulation.setHardwareConcurrencyOverride',
         'Page.setFontFamilies',
-        'Page.setFontSizes'
+        'Page.setFontSizes',
+        'restyle'
       ])
       expect(recycled).toHaveLength(1)
       // The slot that moved, on the new agent (the other choice already stands in the settings).
@@ -783,7 +835,8 @@ describe('page fonts (CT-25)', () => {
         'attach',
         'Emulation.setAutoDarkModeOverride',
         'Page.setFontFamilies',
-        'Page.setFontSizes'
+        'Page.setFontSizes',
+        'restyle'
       ])
       // The hold keeps the (new) session; it goes when the hold ends.
       expect(dbg.attached).toBe(true)
