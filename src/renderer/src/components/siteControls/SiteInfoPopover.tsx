@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Rect, Tab, UIState } from '@shared/types'
 import {
   cookieBytes,
@@ -12,6 +12,7 @@ import {
   type SiteSecurity
 } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { manageExtension } from '@renderer/lib/extensions/manage'
 import { extensionPageChrome, extensionPageLine } from '@renderer/lib/extensions/pages'
 import { POPOVER_WIDTH } from '@renderer/lib/portals'
@@ -38,6 +39,7 @@ import {
 } from '@renderer/lib/siteInfoCopy'
 import { siteChip, siteChipRects } from '@renderer/lib/surfaces'
 import { pushToast } from '@renderer/lib/ui'
+import { useConfirmKeyboard } from '../dialogs/ConfirmDialog'
 import { Favicon } from '../sidebar/Favicon'
 import { V2Button } from '../v2/controls'
 import {
@@ -352,6 +354,7 @@ export function SiteInfoPopover({
           {level === 'clear-data' && (
             <ConfirmLevel
               id={titleId}
+              name="clear-data"
               title="Clear site data?"
               description={`Removes cookies, stored data and permissions of ${site.site || 'this site'}, then reloads the page.`}
               action="Clear site data"
@@ -364,6 +367,7 @@ export function SiteInfoPopover({
           {level === 'clear-cookies' && (
             <ConfirmLevel
               id={titleId}
+              name="clear-cookies"
               title="Clear cookies?"
               description={`Removes ${cookies.length} cookie${cookies.length === 1 ? '' : 's'} and signs you out of ${site.site || 'this site'}.`}
               action="Clear cookies"
@@ -682,9 +686,28 @@ function PermissionsLevel({
   )
 }
 
-/** A destructive action asks once, one level in: the question, one sentence, Cancel and the deed. */
+/**
+ * A destructive action asks once, one level in: the question, one sentence, Cancel and the deed
+ * – the deed in the danger ink beside Cancel, no primary (§6; `V2Button`'s `data-danger`, the
+ * `--v2-danger` ink of §1). The level wears the confirmation primitive's keyboard (§9.22 as
+ * amended on #392; `useConfirmKeyboard`, W4-14): it HOLDS ITS CONTAINER as it comes – no verb
+ * preselected. `Level` arms a level's first control as the push begins, a list's rule, which for
+ * a prompt is Cancel (§9.22's failure case): the container takes the focus back in the same
+ * effect flush, before the paint – a parent's effect runs after its child's, so the level's own
+ * focusing is queued as a microtask behind it (`Level` itself is W4-7's this round; a
+ * `focus: 'container'` on it is the follow-up). Tab enters at Cancel then the verb, wrapping at
+ * the ends (the popover's own wrap); Enter from the held container is inert – a destructive
+ * prompt has no default – and a focused button answers its own Enter and Space; Escape is one hop
+ * back, the level's Escape standing above the popover's on the stack (the popover stays up and
+ * takes the next press), and – as Cancel's button does – it hands the focus to the control the
+ * level opened from: the footer's one danger verb of the level under it ("Clear site data",
+ * "Clear cookies"), found as this level leaves and focused behind the arriving level's own first
+ * focus. While the deed is at work (§9.30) Cancel is disabled and Escape is inert with it. The
+ * container carries `data-confirm="<name>"`, the primitive's handle.
+ */
 function ConfirmLevel({
   id,
+  name,
   title,
   description,
   action,
@@ -693,6 +716,8 @@ function ConfirmLevel({
   onConfirm
 }: {
   id: string
+  /** The level's name on its container, `data-confirm="<name>"`: a test's and a drive's handle. */
+  name: string
   title: string
   description: string
   action: string
@@ -700,23 +725,80 @@ function ConfirmLevel({
   onCancel: () => void
   onConfirm: () => void
 }): JSX.Element {
+  const container = useRef<HTMLDivElement>(null)
+  const latest = useRef({ busy, onCancel })
+  useLayoutEffect(() => {
+    latest.current = { busy, onCancel }
+  })
+  /** How the level was left, for the return: only a Cancel goes back to the verb it came from. */
+  const answer = useRef<'cancel' | 'confirm' | null>(null)
+  useEffect(() => {
+    const el = container.current
+    if (!el) return
+    let left = false
+    queueMicrotask(() => {
+      if (!left) el.focus({ preventScroll: true })
+    })
+    return () => {
+      left = true
+      if (answer.current !== 'cancel') return
+      // The level under this one has mounted by now (this cleanup runs in the same flush as its
+      // mount); its footer's danger verb is what opened this level. Focused behind `Level`'s own
+      // first-control focus, before the paint.
+      const back = openerOfConfirmLevel()
+      if (!back) return
+      queueMicrotask(() => {
+        if (back.isConnected) back.focus({ preventScroll: true })
+      })
+    }
+  }, [])
+  useConfirmKeyboard(container, { destructive: true, confirm: onConfirm, tab: false })
+  const cancel = (): void => {
+    answer.current = 'cancel'
+    latest.current.onCancel()
+  }
+  useEscape(() => {
+    if (latest.current.busy) return
+    cancel()
+  })
   return (
-    <>
+    <div
+      ref={container}
+      tabIndex={-1}
+      data-confirm={name}
+      data-destructive="true"
+      className="flex min-h-0 flex-col outline-none"
+    >
       <TitleBlock id={id} title={title} description={description} />
       <Footer count={2} hairline={false} className="pt-0 pb-4">
-        <V2Button disabled={busy} onClick={onCancel}>
+        <V2Button disabled={busy} onClick={cancel}>
           Cancel
         </V2Button>
         <BusyButton
           variant="danger"
           busy={busy}
-          onClick={onConfirm}
+          onClick={() => {
+            answer.current = 'confirm'
+            onConfirm()
+          }}
           aria-label={`Confirm ${action.toLowerCase()}`}
         >
           {action}
         </BusyButton>
       </Footer>
-    </>
+    </div>
+  )
+}
+
+/**
+ * The control a confirm level opened from, read as the level leaves: the one danger verb in the
+ * footer of the level standing in the popover then – the overview's "Clear site data", the
+ * cookies level's "Clear cookies" (the confirm level's own verb is out of the document by the
+ * time its cleanup runs). Null when that level draws no such footer (the cookies went).
+ */
+function openerOfConfirmLevel(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    '[data-testid="site-info"] [data-footer] .zen-v2-button[data-danger]'
   )
 }
 
