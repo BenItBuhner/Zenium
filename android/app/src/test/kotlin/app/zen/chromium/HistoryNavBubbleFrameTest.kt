@@ -76,4 +76,39 @@ class HistoryNavBubbleFrameTest {
         assertNull(frame("""{"edge":"left","left":-44,"top":378,"size":44}""")!!.clip)
         assertNull(frame("""{"edge":"left","left":-44,"top":378,"size":44,"clip":{"left":6,"top":100,"right":6,"bottom":700}}""")!!.clip)
     }
+
+    // The disc's opacity per frame (`HistoryNavBubbleView.setShown` through `bubbleAlphaStep`).
+
+    @Test
+    fun withMotionOnEveryFrameSetsTheAlphaOutright() {
+        // The chrome's spring is the animation: the leave's frames arrive already faded.
+        assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = false, target = 0.5f, alpha = 0f, fading = false))
+        assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = false, target = 0f, alpha = 1f, fading = false))
+        assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = false, target = 0f, alpha = 0.3f, fading = true))
+    }
+
+    @Test
+    fun underReducedMotionTheDragsFramesSetTheAlphaOutright() {
+        // The fade-in over the first 16 px, and the disc held at 1 while the finger moves: no
+        // animator per touch sample.
+        assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = true, target = 0f, alpha = 0f, fading = false))
+        assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = true, target = 0.5f, alpha = 0f, fading = false))
+        assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = true, target = 1f, alpha = 0.5f, fading = false))
+        assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = true, target = 1f, alpha = 1f, fading = false))
+    }
+
+    @Test
+    fun underReducedMotionTheLeaveIsTheOneFade() {
+        // The release: the machine's hide arrives whole, a showing disc taken to nothing.
+        assertEquals(BubbleAlphaStep.FADE, bubbleAlphaStep(reduced = true, target = 0f, alpha = 1f, fading = false))
+        assertEquals(BubbleAlphaStep.FADE, bubbleAlphaStep(reduced = true, target = 0f, alpha = 0.4f, fading = false))
+        // The machine's rest frame 120 ms on, still at nothing: the fade that runs is left to finish.
+        assertEquals(BubbleAlphaStep.KEEP, bubbleAlphaStep(reduced = true, target = 0f, alpha = 0.2f, fading = true))
+        assertEquals(BubbleAlphaStep.KEEP, bubbleAlphaStep(reduced = true, target = 0f, alpha = 0f, fading = true))
+    }
+
+    @Test
+    fun aFrameThatShowsTheDiscAgainCutsARunningFade() {
+        assertEquals(BubbleAlphaStep.SET, bubbleAlphaStep(reduced = true, target = 1f, alpha = 0.2f, fading = true))
+    }
 }

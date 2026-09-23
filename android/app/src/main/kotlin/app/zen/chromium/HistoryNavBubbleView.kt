@@ -35,7 +35,7 @@ class HistoryNavBubbleFrame(
      * of its own for it (v2 §11.9: the threshold shows as the full disc and the haptic).
      */
     val armed: Boolean,
-    /** Motion is reduced: an opacity change fades over 120 ms; the box still follows the finger (v2 §11.3). */
+    /** Motion is reduced: the leave fades over 120 ms and nothing else animates; the box still follows the finger (v2 §11.3, §11.9). */
     val reduced: Boolean,
     /**
      * The page frame's box: the disc is drawn only inside it, as the DOM disc under the frame's
@@ -213,18 +213,22 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         visibility = GONE
     }
 
-    /** The frame's opacity: set outright, or under reduced motion faded to over 120 ms as the DOM disc's transition. */
+    /** The frame's opacity: set outright, save reduced motion's leave, the one 120 ms fade ([bubbleAlphaStep]). */
     private fun setShown(target: Float, reduced: Boolean) {
-        if (reduced) {
-            fading = true
-            animate().alpha(target).setDuration(REDUCED_FADE_MS).setInterpolator(EASE).start()
-            return
+        when (bubbleAlphaStep(reduced, target, alpha, fading)) {
+            BubbleAlphaStep.KEEP -> Unit
+            BubbleAlphaStep.FADE -> {
+                fading = true
+                animate().alpha(0f).setDuration(REDUCED_FADE_MS).setInterpolator(EASE).start()
+            }
+            BubbleAlphaStep.SET -> {
+                if (fading) {
+                    animate().cancel()
+                    fading = false
+                }
+                alpha = target
+            }
         }
-        if (fading) {
-            animate().cancel()
-            fading = false
-        }
-        alpha = target
     }
 
     /** Lucide's arrow in the glyph box centred on the disc: two strokes, the shaft and the head, in the icon's 24-unit grid. */
@@ -279,4 +283,32 @@ class HistoryNavBubbleView(context: Context) : View(context) {
         /** `--zen-ease`: `cubic-bezier(0.2, 0.8, 0.2, 1)`. */
         private val EASE = PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
     }
+}
+
+/** What a frame's opacity does to the disc ([bubbleAlphaStep]). */
+enum class BubbleAlphaStep {
+    /** Set outright, a fade that runs cancelled first. */
+    SET,
+    /** Start the one 120 ms fade to nothing: reduced motion's leave. */
+    FADE,
+    /** The fade to nothing already runs; a further frame at nothing restarts nothing. */
+    KEEP
+}
+
+/**
+ * The disc's opacity per frame. With motion on every frame is set outright – the chrome's
+ * spring is the animation. Under reduced motion the box still follows the finger and the
+ * opacity is set outright too, the fade-in over the first 16 px of the drag included; the one
+ * thing animated is the LEAVE – the frame that takes a showing disc to nothing, which the
+ * chrome's machine sends whole in a single frame – as the 120 ms fade v2 §11.9 gives reduced
+ * motion for its leave (the DOM disc's `transition: opacity 120ms`). One fade per leave: a
+ * frame at nothing while it runs is kept, a frame that shows the disc again cuts it and sets.
+ * A top-level function, so the JVM can hold it without the view (its interpolator is a stub).
+ */
+fun bubbleAlphaStep(reduced: Boolean, target: Float, alpha: Float, fading: Boolean): BubbleAlphaStep = when {
+    !reduced -> BubbleAlphaStep.SET
+    target > 0f -> BubbleAlphaStep.SET
+    fading -> BubbleAlphaStep.KEEP
+    alpha > 0f -> BubbleAlphaStep.FADE
+    else -> BubbleAlphaStep.SET
 }
