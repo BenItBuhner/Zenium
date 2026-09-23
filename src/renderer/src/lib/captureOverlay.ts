@@ -115,6 +115,41 @@ export function pageFrame(state: UIState, tabId: string, area: Rect, gap: number
   return area
 }
 
+/**
+ * When the overlay first nudges the engine's paint, and how often after until it answers.
+ *
+ * A region is painted through the debugger (`Page.captureScreenshot` with a clip, the engine's
+ * `captureWithDevtools`), which waits for a compositor frame – and the live view is hidden
+ * behind its stand-in while the overlay is up, as under every chrome surface over the page, so
+ * the renderer paints none (Chromium 152: the request stays pending until the widget is shown
+ * or a capturer wakes it; the visible area, Electron's `capturePage`, holds such a capturer
+ * itself and is painted hidden in 23 ms). Asking for the page's stand-in afresh
+ * (`overlay.snapshot { fresh }`, that same `capturePage`) has the hidden renderer paint one
+ * frame, which the pending request takes: measured at 1600×1000 (probe 5), the region paint
+ * that never returned on its own returned 20 ms after a nudge, 12 of 12 – but asked in the same
+ * tick as the paint, the frame can come before the engine's request is out (2 of 4 stalled),
+ * hence the wait, and the repeat for a slower attach. An engine that paints hidden views on its
+ * own makes this a no-op: the answer is in before the first nudge is due.
+ */
+export const NUDGE_AFTER_MS = 60
+export const NUDGE_EVERY_MS = 150
+
+/** How long the overlay waits for the engine's paint in all before the failed card says so. */
+export const PAINT_TIMEOUT_MS = 15_000
+
+/**
+ * The paint is out for `tabId`: from `NUDGE_AFTER_MS` on, and every `NUDGE_EVERY_MS` after, the
+ * page's stand-in is asked afresh and its picture dropped – the ask is the point. Returns the
+ * stop, for the answer (or the overlay's close) to call.
+ */
+export function nudgePaint(tabId: string): () => void {
+  let timer = setTimeout(function tick() {
+    void window.zen.invoke('overlay.snapshot', { tabId, fresh: true }).catch(() => null)
+    timer = setTimeout(tick, NUDGE_EVERY_MS)
+  }, NUDGE_AFTER_MS)
+  return () => clearTimeout(timer)
+}
+
 /** A saved file's name out of the path the host answered with, whichever separator it uses. */
 export function fileNameOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -156,6 +191,8 @@ export type CaptureEvent =
   | { type: 'captured'; result: PageCaptureResult | null }
   /** The engine refused or failed. */
   | { type: 'failed'; error: unknown }
+  /** The engine has not answered in `PAINT_TIMEOUT_MS`: the overlay does not wait longer. */
+  | { type: 'timeout' }
   /** A card's "Select again": back to the dimmed page. */
   | { type: 'again' }
   /** Escape, from anywhere: the overlay goes. */
@@ -175,6 +212,11 @@ export const NOTHING_TO_CAPTURE = {
 export const TOO_LARGE_TITLE = 'Capture is too large'
 /** The failed card's title for any other failure. */
 export const FAILED_TITLE = 'Couldn’t capture the page'
+/** The words the failed card shows when the engine has not answered in `PAINT_TIMEOUT_MS`. */
+export const PAINT_TIMED_OUT = {
+  title: FAILED_TITLE,
+  message: 'The page gave no picture in time. Try again, or capture the visible area.'
+}
 
 /** One step of the overlay: a pure function of the phase and the event, for `useReducer`. */
 export function captureReducer(phase: CapturePhase, event: CaptureEvent): CapturePhase {
@@ -220,6 +262,10 @@ export function captureReducer(phase: CapturePhase, event: CaptureEvent): Captur
         message: captureErrorMessage(event.error)
       }
     }
+    case 'timeout':
+      return phase.kind === 'capturing'
+        ? { kind: 'failed', mode: phase.mode, ...PAINT_TIMED_OUT }
+        : phase
   }
 }
 

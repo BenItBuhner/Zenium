@@ -16,7 +16,9 @@ import {
   labelPlacement,
   marqueeOf,
   marqueeSize,
+  nudgePaint,
   pageFrame,
+  PAINT_TIMEOUT_MS,
   scrimClipPath,
   SELECTING,
   sizeText,
@@ -64,7 +66,10 @@ export function CaptureLayer(): JSX.Element | null {
  * chrome box to the page's document (`regionFromChrome`, §3 of the engine's contract) and asks
  * `page.capture`; the answer is the result card (`ResultCard`), a refusal the failed card
  * (`FailedCard`): the engine's budget refusal in its own sentence, "Nothing to capture" for a
- * page that gave no picture.
+ * page that gave no picture, and the overlay's own words for a paint that never came
+ * (`PAINT_TIMEOUT_MS`). While the paint is out the hidden view is nudged into a frame for it
+ * (`nudgePaint`) – the page is behind its stand-in, as under every chrome surface, and the
+ * engine's debugger paint waits for a frame a hidden view does not give of itself.
  *
  * Keyboard (§9.22): focus lands on the overlay's container; Tab reaches the toolbar's buttons,
  * then the card's, wrapping; Escape closes from any phase at once – the picture is let go, the
@@ -162,6 +167,10 @@ function CaptureOverlay({
       request.mode === 'region' && request.region
         ? { tabId, mode: request.mode, region: request.region, format: 'png' as const }
         : { tabId, mode: request.mode, format: 'png' as const }
+    // The paint is nudged while it is out (`nudgePaint`: the hidden view paints a frame for the
+    // engine's request), and given up on after `PAINT_TIMEOUT_MS` – the failed card, not a wait.
+    const stopNudging = nudgePaint(tabId)
+    const timeout = setTimeout(() => dispatch({ type: 'timeout' }), PAINT_TIMEOUT_MS)
     capturePage(args).then(
       (result) => {
         if (!stale) dispatch({ type: 'captured', result })
@@ -172,6 +181,8 @@ function CaptureOverlay({
     )
     return () => {
       stale = true
+      stopNudging()
+      clearTimeout(timeout)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one paint per capturing phase
   }, [phase])
@@ -288,6 +299,7 @@ function CaptureOverlay({
       data-sheet-layer="true"
       data-capture={phase.kind}
       data-selecting={canSelect || undefined}
+      aria-busy={phase.kind === 'capturing' || undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
