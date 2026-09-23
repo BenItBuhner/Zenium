@@ -4036,15 +4036,6 @@
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
-  .zen-siteinfo-footer {
-    display: flex;
-    flex-shrink: 0;
-    justify-content: flex-end;
-    gap: 8px;
-    margin: 0 16px;
-    padding: 12px 0;
-    border-top: 1px solid var(--v2-border);
-  }
   /* The root level sits under the title block, whose own 16 below is the gap to the rows (§9.23). */
   .zen-siteinfo-under-title {
     padding-top: 0;
@@ -10162,9 +10153,9 @@
 /*
  * §9.20's second footer form, for a dialog whose body is a row list and ends in buttons (the
  * site-data viewer's Clear all under its list): a hairline in the gutter with the list's 4
- * inset above it (§6's separator margin) and the buttons at 12 above and below, 16 at the sides
- * – the site-information popover's form (`.zen-siteinfo-footer`). The list's own end inset is
- * the 4 above the line, so the body's 16 goes; the prompt form's 16 stays for a form's footer.
+ * inset above it (§6's separator margin) and the buttons at 12 above and below, 16 at the sides.
+ * The list's own end inset is the 4 above the line, so the body's 16 goes; the prompt form's 16
+ * stays for a form's footer.
  */
 .zen-settings-dialog[data-body='list']
   > .zen-settings-dialog-body:has(+ .zen-settings-dialog-footer) {
