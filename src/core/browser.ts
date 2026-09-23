@@ -353,6 +353,8 @@ export class Browser {
    * (`start({ windows: false })`), and they come up the first time a browser window is needed.
    */
   private startupWindowsPending = false
+  /** `start({ restoreLastSession: true })`: the last session comes back over the setting. */
+  private restoreLastSessionForced = false
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -1075,9 +1077,12 @@ export class Browser {
   /**
    * Bring the browser up. `windows: false` leaves the session's browser windows unopened – a run
    * that begins with `--app=<url>` shows the app's window alone, as Chrome does, and opens the
-   * browser proper the first time something asks for a browser window.
+   * browser proper the first time something asks for a browser window. `restoreLastSession`
+   * (the desktop's `--restore-last-session`) brings the last session back on this launch
+   * whatever "Restore previous session" says, as the switch overrides Chrome's startup setting.
    */
-  start(options: { windows?: boolean } = {}): void {
+  start(options: { windows?: boolean; restoreLastSession?: boolean } = {}): void {
+    this.restoreLastSessionForced = options.restoreLastSession === true
     if (this.state.settings.pinnedResetOnStartup) {
       for (const tab of Object.values(this.state.model.tabs)) {
         if ((tab.pinned || tab.essential) && tab.pinnedUrl) tab.url = tab.pinnedUrl
@@ -1112,7 +1117,7 @@ export class Browser {
     this.pageFonts.start()
     // With "restore previous session" off, the last session's tabs are forgotten at once, whether
     // or not a window opens now.
-    if (!this.state.settings.restoreSession) this.state.forgetSession()
+    if (!this.restoreSessionAtStartup()) this.state.forgetSession()
     if (options.windows === false) this.startupWindowsPending = true
     else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
@@ -1141,7 +1146,7 @@ export class Browser {
    */
   private openStartupWindows(): ZenWindow[] {
     this.startupWindowsPending = false
-    const { restoreSession } = this.state.settings
+    const restoreSession = this.restoreSessionAtStartup()
     const restore =
       restoreSession && this.state.capabilities.windows
         ? this.state.restoredWindows
@@ -1157,6 +1162,11 @@ export class Browser {
       this.session.onUncleanStart()
     }
     return opened
+  }
+
+  /** "Restore previous session", or the launch's `--restore-last-session` over it. */
+  private restoreSessionAtStartup(): boolean {
+    return this.restoreLastSessionForced || this.state.settings.restoreSession
   }
 
   // ---------------------------------------------------------------------------

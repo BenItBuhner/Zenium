@@ -924,6 +924,12 @@ export interface WindowHost {
   contentSize(): { width: number; height: number }
   isFullScreen(): boolean
   setFullScreen(fullscreen: boolean): void
+  /**
+   * The window is a kiosk (the desktop's `--kiosk`): fullscreen for its life, without the
+   * chrome, the fullscreen hint or a way out by keyboard – the host refuses `setFullScreen(false)`.
+   * Hosts without the mode leave it out.
+   */
+  readonly kiosk?: boolean
   isMaximized(): boolean
   isFocused(): boolean
   isVisible(): boolean

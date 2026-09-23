@@ -232,7 +232,14 @@ npm run build:linux  # packaged app via electron-builder (also build:win / build
 ```
 
 On a headless Linux box run with a display, e.g. `xvfb-run -a npm run dev`. Command-line flags:
-`zenium https://example.com`, `zenium --blank-window`, `zenium --private-window`.
+`zenium https://example.com`, `zenium --blank-window`, `zenium --private-window`. Chrome's launch
+switches: `--kiosk` (browser windows fullscreen without the chrome; F11 and Esc leave nothing),
+`--user-data-dir=<path>` (the profile directory; one instance per directory, so two profiles run
+side by side), `--restore-last-session` (the last session comes back whatever "Restore previous
+session" says), `--start-maximized`; `--profile-directory=<name>` is accepted and ignored, Zenium
+keeping one profile per user data directory. A second `zenium` on the same profile hands its URLs
+and window flags to the running one; its `--kiosk`, `--start-maximized` and
+`--restore-last-session` change nothing there, as in Chrome.
 
 ## Setting up sync
 

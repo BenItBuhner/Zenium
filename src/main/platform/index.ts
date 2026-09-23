@@ -48,6 +48,7 @@ import type {
   ThemeHost
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
+import type { WindowSwitches } from '../cli'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import {
@@ -233,7 +234,11 @@ export class ElectronPlatform implements Platform {
 
   constructor(
     private readonly userDataDir: string,
-    options: { holdBackgroundWork?: boolean } = {}
+    options: {
+      holdBackgroundWork?: boolean
+      /** The launch's `--kiosk` / `--start-maximized` (`cli.ts`), for every browser window. */
+      windowSwitches?: WindowSwitches
+    } = {}
   ) {
     this.info = {
       os: process.platform as PlatformOs,
@@ -253,7 +258,7 @@ export class ElectronPlatform implements Platform {
     this.shortcuts = new ElectronShortcuts(join(this.profileDir, 'webapps'), (id, details) =>
       this.browser.webApps.onPinned(id, details)
     )
-    this.windows = new ElectronWindowFactory()
+    this.windows = new ElectronWindowFactory(options.windowSwitches)
     this.translate = new ElectronTranslateHost(userDataDir, () =>
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
     )
@@ -500,9 +505,10 @@ export class ElectronPlatform implements Platform {
 
   /**
    * Build the browser, wire IPC and sessions, and restore the windows (`windows: false` holds
-   * the browser windows back for a run that begins on an app window alone, `Browser.start`).
+   * the browser windows back for a run that begins on an app window alone,
+   * `restoreLastSession` is the `--restore-last-session` switch; both `Browser.start`'s).
    */
-  start(options: { windows?: boolean } = {}): Browser {
+  start(options: { windows?: boolean; restoreLastSession?: boolean } = {}): Browser {
     const browser = new Browser(this)
     this.browser = browser
     this.windows.bind(browser)
