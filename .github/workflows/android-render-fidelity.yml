@@ -23,7 +23,7 @@ env:
 jobs:
   compare:
     name: Compare with Chrome on an API 34 emulator
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
