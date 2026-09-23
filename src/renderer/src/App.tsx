@@ -197,7 +197,9 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       <ModStyles mods={state.mods} />
       <div className="zen-texture" />
       {!sidebarHidden && <Sidebar state={state} isDark={theme.isDark} />}
-      <main
+      {/* The column beside the sidebar: the toolbar (a banner in the multiple-toolbar layout),
+          the bookmarks bar and the page box, which is the window's `main` landmark (a11y-02). */}
+      <div
         className="relative flex min-w-0 flex-1 flex-col"
         style={{
           // Longhands only: mixing the `padding` shorthand with `paddingLeft` breaks React's
@@ -247,7 +249,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
           )
         )}
         {showBar && <BookmarksBar state={state} tab={tab} />}
-        <div className="relative min-h-0 flex-1">
+        <main className="relative min-h-0 flex-1">
           <ContentArea state={state} ui={ui} />
           {/*
            * Modal dialogs render in the content frame through FrameDialogHost (its scrim dims
@@ -255,8 +257,8 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
            * the window (lib/portals.tsx).
            */}
           <TabDialogs state={state} />
-        </div>
-      </main>
+        </main>
+      </div>
 
       {sidebarHidden && !popupChrome && (
         <>

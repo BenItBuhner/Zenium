@@ -26,6 +26,9 @@
     <!-- Hairline: rgb(0 0 0 / .15) and rgb(255 255 255 / .12). -->
     <color name="v2_border_light">#26000000</color>
     <color name="v2_border_dark">#1FFFFFFF</color>
+    <!-- The opaque hairline between a list's rows and round a card (the install prompt's warning rows). -->
+    <color name="v2_card_border_light">#E7E7E8</color>
+    <color name="v2_card_border_dark">#302F38</color>
     <!-- Text; deemphasised text is this at 69%. -->
     <color name="v2_text_light">#15141A</color>
     <color name="v2_text_dark">#FBFBFE</color>
@@ -42,6 +45,6 @@
     <color name="v2_on_accent_light">#FFFFFF</color>
     <color name="v2_on_accent_dark">#15141A</color>
     <!-- The danger ink (the zen-danger status ink): a destructive peer's label (Exit page, Remove). -->
-    <color name="v2_danger_light">#C43434</color>
+    <color name="v2_danger_light">#B02A2A</color>
     <color name="v2_danger_dark">#FF8080</color>
 </resources>

@@ -44,14 +44,19 @@ class PageCapture(
 ) {
     private val main = Handler(Looper.getMainLooper())
 
-    /** The capture's pixels (the caller's to recycle) and the viewport's height in them. */
-    class Capture(val bitmap: Bitmap, val viewportHeightPx: Int)
+    /**
+     * The capture's pixels (the caller's to recycle) and the viewport's height in them.
+     * `fallback` says the picture is the visible area although a full page or region was asked
+     * for (the page's geometry could not be read): the core passes it on (`fallback: "viewport"`)
+     * so the chrome does not pass the viewport off as the whole.
+     */
+    class Capture(val bitmap: Bitmap, val viewportHeightPx: Int, val fallback: Boolean = false)
 
     /** `quality`: the JPEG quality 0..100; anything outside is the agent's default ([JPEG_QUALITY]). */
     fun run(mode: String, region: Box?, format: String, quality: Int = -1, callback: (JSONObject?) -> Unit) {
         val jpegQuality = if (quality in 0..100) quality else JPEG_QUALITY
         runBitmap(mode, region) { capture ->
-            if (capture == null) callback(null) else encode(capture.bitmap, format, jpegQuality, callback)
+            if (capture == null) callback(null) else encode(capture.bitmap, format, jpegQuality, capture.fallback, callback)
         }
     }
 
@@ -73,17 +78,17 @@ class PageCapture(
             squareCorners(false)
             callback(result)
         }
-        val viewportOnly = { copyView { bitmap -> finish(bitmap?.let { Capture(it, it.height) }) } }
+        val viewportOnly = { fallback: Boolean -> copyView { bitmap -> finish(bitmap?.let { Capture(it, it.height, fallback) }) } }
         settle {
             if (mode == CapturePlan.MODE_VIEWPORT) {
-                viewportOnly()
+                viewportOnly(false)
                 return@settle
             }
             readMetrics { metrics ->
                 if (metrics == null) {
                     // No page script access (about:blank before anything ran, a crashed renderer):
-                    // the viewport is still worth returning.
-                    viewportOnly()
+                    // the viewport is still worth returning, marked as the stand-in it is.
+                    viewportOnly(true)
                     return@readMetrics
                 }
                 Stitch(mode, region, metrics, finish).start()
@@ -294,7 +299,7 @@ class PageCapture(
         }
     }
 
-    private fun encode(bitmap: Bitmap, format: String, jpegQuality: Int, callback: (JSONObject?) -> Unit) {
+    private fun encode(bitmap: Bitmap, format: String, jpegQuality: Int, fallback: Boolean, callback: (JSONObject?) -> Unit) {
         encoder.execute {
             val png = format == "png"
             val out = ByteArrayOutputStream()
@@ -307,7 +312,7 @@ class PageCapture(
                 "mimeType" to if (png) "image/png" else "image/jpeg",
                 "width" to bitmap.width,
                 "height" to bitmap.height
-            ) else null
+            ).also { if (fallback) it.put("fallback", FALLBACK_VIEWPORT) } else null
             bitmap.recycle()
             main.post { callback(result) }
         }
@@ -326,7 +331,11 @@ class PageCapture(
 requestAnimationFrame(function(){requestAnimationFrame(f)});setTimeout(f,400)})"""
         private const val WATCHDOG_MS = 20_000L
 
-        private const val METRICS_SCRIPT = """(function(){var v=window.visualViewport,d=document.documentElement,b=document.body;
+        /** The answer's `fallback` when the visible area stood in for a full page or region. */
+        const val FALLBACK_VIEWPORT = "viewport"
+
+        /** The page's geometry as the stitcher plans with it; `TabWebView.viewport` reads it for the chrome too. */
+        const val METRICS_SCRIPT = """(function(){var v=window.visualViewport,d=document.documentElement,b=document.body;
 return {sx:window.scrollX,sy:window.scrollY,px:v?v.pageLeft:window.scrollX,py:v?v.pageTop:window.scrollY,
 vw:v?v.width:window.innerWidth,vh:v?v.height:window.innerHeight,
 dw:Math.max(d?d.scrollWidth:0,b?b.scrollWidth:0,window.innerWidth),dh:Math.max(d?d.scrollHeight:0,b?b.scrollHeight:0,window.innerHeight)}})()"""

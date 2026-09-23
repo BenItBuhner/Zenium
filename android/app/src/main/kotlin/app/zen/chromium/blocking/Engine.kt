@@ -10,13 +10,16 @@ package app.zen.chromium.blocking
  * matched by a request's document allows the request, a set scoped to partitions takes part
  * only in requests of one of them, and filter-list matches take part at the filter-list
  * priority with uBlock Origin's `@@` / `$important` semantics resolved inside the text engine.
- * Header edits are not applied on Android.
+ * `modifyHeaders` rules never decide: when the request is neither blocked nor redirected, the
+ * edits of those above the allow that stands ride on the decision, highest effective priority
+ * first ([Decision.requestHeaderEdits], [Decision.responseHeaderEdits]); on Android only a
+ * document's are applied, by the header stage's relay ([HeaderStage]).
  *
  * Rules with response header conditions (`responseHeaders` / `excludedResponseHeaders`) are
  * decided in two stages as on the desktop: [decide] without headers is the request stage and
  * marks an allow one of them could still overturn ([Decision.needsHeaders]); [decide] with the
  * response's headers is the headers-received stage ([HeaderStage] relays the document request to
- * reach it).
+ * reach it), where the `modifyHeaders` rules of both stages apply together.
  *
  * Structured rules are looked up through each set's [RuleIndex] (a request visits the rules
  * under its host's suffixes and its URL's tokens, plus the few with nothing to index them by),
@@ -39,6 +42,9 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
     /** Structured rules with response header conditions across the enabled sets. */
     val headerRuleCount: Int = ordered.sumOf { set -> set.rules.count { it.needsHeaders } }
 
+    /** `modifyHeaders` rules across the enabled sets. */
+    val modifyHeadersRuleCount: Int = ordered.sumOf { set -> set.rules.count { it.editsHeaders } }
+
     /** The enabled sets with structured rules, highest priority first (diagnostics). */
     val ruleSets: List<RuleSetInfo> get() = ordered
 
@@ -50,7 +56,9 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
      * headers-received stage: those rules are evaluated too and the two stages merge as Chrome's
      * `RulesetManager` merges them – a request-stage block or redirect stands, a request-stage
      * allow caps the header stage (a header rule of equal or lower effective priority yields), a
-     * header-stage block or redirect wins over the allow.
+     * header-stage allow caps the request stage's header edits, a header-stage block or redirect
+     * wins over the allow and over the header edits of either stage, and the `modifyHeaders`
+     * rules of both stages apply together, highest priority first.
      */
     fun decide(req: Request, responseHeaders: Map<String, List<String>>? = null): Decision {
         val resolution = Resolution(responseHeaders)
@@ -82,20 +90,33 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
         return conclude(resolution, req)
     }
 
-    /** Merge the stages of `resolution` with the filter lists' word (the desktop engine's `conclude`, header edits aside). */
+    /**
+     * Merge the stages of `resolution` with the filter lists' word and stack the header edits
+     * (the desktop engine's `conclude`). The caps are Chromium's, with their `<` / `<=`
+     * asymmetry: a header-stage rule needs strictly more than the request stage's allow; a
+     * request-stage `modifyHeaders` rule survives a header-stage allow of equal priority, a
+     * header-stage one needs strictly more than either allow.
+     */
     private fun conclude(resolution: Resolution, req: Request): Decision {
         val best = resolveText(resolution.best, req)
         if (best != null && best.decision.action != Decision.Action.ALLOW) return best.decision
         // The request stage's allow caps everything the header stage finds.
         val allowEffective = best?.effective ?: -1L
-        val decision = best?.decision ?: Decision.ALLOW
-        if (resolution.headers == null) {
-            // A second round is only worth it when a header rule could beat the request stage's allow.
-            return if (resolution.lateEffective > allowEffective) decision.awaitingHeaders() else decision
+        val allow = best?.decision ?: Decision.ALLOW
+        if (resolution.received == null) {
+            val applicable = resolution.headers.filter { it.rule.effective > allowEffective }
+            val decision = composeHeaderEdits(applicable, allow)
+            // A second round is only worth it when a header rule could change the outcome.
+            return if (resolution.relayWorthIt(allowEffective, applicable)) decision.awaitingHeaders() else decision
         }
         val late = resolution.bestLate?.takeIf { it.effective > allowEffective }
         if (late != null && late.decision.action != Decision.Action.ALLOW) return late.decision
-        return decision
+        // A header-stage allow caps the request stage's header edits (Chrome keeps the ones of
+        // equal or higher priority) and its own stage's (strictly higher).
+        val lateAllowEffective = late?.effective ?: -1L
+        val applicable = resolution.headers.filter { it.rule.effective > allowEffective && it.rule.effective >= lateAllowEffective } +
+            resolution.lateHeaders.filter { it.rule.effective > maxOf(allowEffective, lateAllowEffective) }
+        return composeHeaderEdits(applicable, late?.decision ?: allow)
     }
 
     /** The filter lists' word, against the structured rules' best candidate so far. */
@@ -173,38 +194,92 @@ class EngineSnapshot(sets: Collection<RuleSetInfo>, private val text: TextEngine
  */
 private class Candidate(val effective: Long, val rank: Int, val order: Long, val decision: Decision)
 
+/** A `modifyHeaders` rule that matched, with its set and where the scan meets it (`HeaderCandidate` in `engine.ts`). */
+private class HeaderCandidate(val setId: String, val rule: DnrRule, val order: Long)
+
 /**
- * The claims of one evaluation: the request stage's best candidate, and – for rules with
- * response header conditions – either the strongest such rule the request's other conditions
- * selected (`lateEffective`, without the headers) or the best one whose header conditions the
- * response met (`bestLate`, with them). The desktop engine's `Resolution`, header edits aside.
+ * The claims of one evaluation (the desktop engine's `Resolution`): the request stage's best
+ * candidate and its `modifyHeaders` rules ([headers]), and – for rules with response header
+ * conditions – either the strongest such rule the request's other conditions selected
+ * ([lateEffective] / [lateAllowEffective], without the received headers) or, with them, the
+ * best one whose header conditions the response met ([bestLate]) and the `modifyHeaders` rules
+ * among them ([lateHeaders]).
  */
-private class Resolution(val headers: Map<String, List<String>>?) {
+private class Resolution(val received: Map<String, List<String>>?) {
     var best: Candidate? = null
+    val headers = ArrayList<HeaderCandidate>()
     var bestLate: Candidate? = null
+    val lateHeaders = ArrayList<HeaderCandidate>()
+    /** Request stage: the strongest header-conditioned block / redirect / upgrade / `modifyHeaders` whose other conditions passed. */
     var lateEffective: Long = -1L
+    /** Request stage: the strongest header-conditioned allow / `allowAllRequests` whose other conditions passed. */
+    var lateAllowEffective: Long = -1L
 
     fun claim(setId: String, setIndex: Int, rule: DnrRule, req: Request) {
         if (rule.needsHeaders) {
-            if (headers == null) {
-                // Only a rule that could overturn the allow makes the relay worth it: a
-                // header-conditioned allow yields at the header stage in any case (it could
-                // only cap header edits, which this engine has none of), so it does not raise
-                // the bar. Recorded deviation from the desktop engine; the outcomes are the same.
-                if (rule.action != RuleAction.ALLOW && rule.action != RuleAction.ALLOW_ALL_REQUESTS && rule.effective > lateEffective) {
+            if (received == null) {
+                // The request stage only notes a header-conditioned rule; `relayWorthIt` weighs
+                // what it could change. The two kinds are told apart because a header-conditioned
+                // allow yields to the request stage's decision and can only cap header edits.
+                if (rule.action == RuleAction.ALLOW || rule.action == RuleAction.ALLOW_ALL_REQUESTS) {
+                    if (rule.effective > lateAllowEffective) lateAllowEffective = rule.effective
+                } else if (rule.effective > lateEffective) {
                     lateEffective = rule.effective
                 }
                 return
             }
-            if (!rule.matchesHeaders(headers)) return
+            if (!rule.matchesHeaders(received)) return
+        }
+        if (rule.editsHeaders) {
+            (if (rule.needsHeaders) lateHeaders else headers).add(HeaderCandidate(setId, rule, orderOf(setIndex, rule)))
+            return
         }
         val decision = decisionFor(setId, rule, req) ?: return
         val candidate = Candidate(rule.effective, rule.action.rank, orderOf(setIndex, rule), decision)
         if (rule.needsHeaders) bestLate = better(bestLate, candidate) else best = better(best, candidate)
     }
 
+    /**
+     * Request stage: whether the header stage could change the outcome, given the allow that
+     * stands (`allowEffective`, -1 for the default) and the request-stage header edits above it
+     * (`applicable`). A header-conditioned block / redirect / upgrade / `modifyHeaders` above the
+     * allow could; a header-conditioned allow above it only by capping an edit weaker than
+     * itself. The desktop engine asks for the second round for any header-conditioned rule above
+     * the allow (there it costs microseconds; here it is a network fetch of the document) –
+     * recorded deviation, the outcomes are the same.
+     */
+    fun relayWorthIt(allowEffective: Long, applicable: List<HeaderCandidate>): Boolean {
+        if (lateEffective > allowEffective) return true
+        return lateAllowEffective > allowEffective && applicable.any { it.rule.effective < lateAllowEffective }
+    }
+
     /** The band the request stage's winner sits in; -1 without one. */
     fun band(): Long = best?.let { it.effective / (DnrRule.RULE_PRIORITY_MAX + 1) } ?: -1L
+}
+
+/**
+ * The `modifyHeaders` decision of `applicable` (already capped), highest effective priority
+ * first and, within one, in the order the scan meets them; `otherwise` when none is left
+ * (`composeHeaderEdits` in `engine.ts`). The first rule is the decision's match.
+ */
+private fun composeHeaderEdits(applicable: List<HeaderCandidate>, otherwise: Decision): Decision {
+    if (applicable.isEmpty()) return otherwise
+    val sorted = applicable.sortedWith(compareByDescending<HeaderCandidate> { it.rule.effective }.thenBy { it.order })
+    val request = ArrayList<HeaderOp>()
+    val response = ArrayList<HeaderOp>()
+    for (candidate in sorted) {
+        val rule = candidate.rule
+        // A header-conditioned rule decides once the request is out, so it can only edit the
+        // response (Chrome refuses its `requestHeaders` at parse); a set written by hand gets
+        // the same treatment here.
+        if (!rule.needsHeaders) rule.requestHeaderEdits?.let(request::addAll)
+        rule.responseHeaderEdits?.let(response::addAll)
+    }
+    val first = sorted[0]
+    return Decision(
+        Decision.Action.MODIFY_HEADERS, matchedSet = first.setId, matchedRule = first.rule.id,
+        requestHeaderEdits = request, responseHeaderEdits = response
+    )
 }
 
 private fun orderOf(setIndex: Int, rule: DnrRule): Long = (setIndex.toLong() shl 32) or rule.position.toLong()
@@ -220,6 +295,8 @@ private fun decisionFor(setId: String, rule: DnrRule, req: Request): Decision? =
     RuleAction.BLOCK -> Decision(Decision.Action.BLOCK, matchedSet = setId, matchedRule = rule.id)
     RuleAction.UPGRADE_SCHEME -> rule.target(req.url)?.let { Decision(Decision.Action.UPGRADE, it, setId, rule.id) }
     RuleAction.REDIRECT -> rule.target(req.url)?.let { Decision(Decision.Action.REDIRECT, it, setId, rule.id) }
+    // Never a decision of its own: `Resolution.claim` stacks it (`composeHeaderEdits`).
+    RuleAction.MODIFY_HEADERS -> null
 }
 
 /**

@@ -1,0 +1,5 @@
+- 'img "Search engine: Google"': G
+- combobox "Search or enter address" [expanded]: http://fixture/first.html
+- listbox:
+  - option "http://fixture/first.html fixture/first.html"
+- text: ↵ Open Alt ↵ New tab Ctrl ↵ www.com Tab Complete @ Engines, bookmarks, history, tabs Type a command like “compact mode”

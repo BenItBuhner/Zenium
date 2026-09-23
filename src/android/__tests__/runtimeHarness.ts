@@ -3,9 +3,12 @@ import type {
   ExtensionInfo,
   SearchEngine,
   SearchEngineControl,
-  Tab
+  Space,
+  Tab,
+  TabSection
 } from '@shared/types'
 import { RuleEngine } from '@core/blocking/engine'
+import { moveTab as moveTabInModel, type Model } from '@core/model'
 import type { Browser } from '@core/browser'
 import type { SpeechHost, SpeechHostEvent, SpeechUtteranceOptions, StoreIO } from '@core/platform'
 import type { ReadAloudVoice } from '@shared/readAloud'
@@ -41,6 +44,8 @@ export class FakeKotlin implements RuntimeBridge {
   /** The fake WebView has the navigation listener (`navigation` view events carry webNavigation). */
   navigationListener = false
   readonly calls: Array<{ method: string; args: Record<string, unknown> }> = []
+  /** The methods that came one way (`post`), in order; `calls` has them too. */
+  readonly posted: string[] = []
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
   readonly manifests = new Map<string, Record<string, unknown>>()
@@ -57,6 +62,19 @@ export class FakeKotlin implements RuntimeBridge {
   execAnswer: ((args: Record<string, unknown>) => unknown) | null = null
   /** What the fake platform's classifier answers `ext.i18n.detectLanguage` (Kotlin's shape). */
   languageAnswer: (text: string) => unknown = () => ({ isReliable: false, languages: [] })
+  /** What the fake phone answers `ext.system.cpu` (Kotlin's reading: `Runtime`, `/proc` where readable). */
+  cpuAnswer: () => unknown = () => ({
+    numOfProcessors: 4,
+    archName: 'aarch64',
+    modelName: 'Qualcomm Technologies, Inc SM8550',
+    features: [],
+    usage: null
+  })
+  /** What the fake phone answers `ext.system.memory` (`ActivityManager.MemoryInfo`, bytes). */
+  memoryAnswer: () => unknown = () => ({
+    capacity: 8 * 1024 ** 3,
+    availableCapacity: 3 * 1024 ** 3
+  })
   /** The offscreen documents Kotlin holds right now (`ext.offscreen.*`): extension id → page URL. */
   readonly offscreens = new Map<string, string>()
   /** The cookie jars (`ext.cookies.*`), one per container, see `FakeJar`. */
@@ -102,6 +120,12 @@ export class FakeKotlin implements RuntimeBridge {
   }
 
   send(method: string, args?: unknown): void {
+    this.dispatch(method, (args ?? {}) as Record<string, unknown>)
+  }
+
+  /** One way, as the real bridge's: dispatched, nothing answered. */
+  post(method: string, args?: unknown): void {
+    this.posted.push(method)
     this.dispatch(method, (args ?? {}) as Record<string, unknown>)
   }
 
@@ -163,6 +187,10 @@ export class FakeKotlin implements RuntimeBridge {
         return this.files.get(`${args.id}/${args.path}`) ?? null
       case 'ext.i18n.detectLanguage':
         return this.languageAnswer(String(args.text))
+      case 'ext.system.cpu':
+        return this.cpuAnswer()
+      case 'ext.system.memory':
+        return this.memoryAnswer()
       case 'ext.observeRequests':
       case 'ext.popup.open':
       case 'ext.popup.close':
@@ -414,6 +442,8 @@ export interface Harness {
   readAloud: { status: 'idle' | 'playing' | 'paused'; pauses: number }
   files: Map<string, string>
   tabs: Record<string, Tab>
+  /** The model's spaces (`tabs.move` orders a space's `tabIds`); none until a test adds one. */
+  spaces: Space[]
   active: { id: string | null }
   /** The core's request-blocking engine the declarativeNetRequest sink feeds (`browser.blocking.engine`). */
   engine: RuleEngine
@@ -485,6 +515,10 @@ export function harness(
     }
   }
   const tabs: Record<string, Tab> = { t1: makeTab('t1', 'https://example.com/') }
+  // The model's ordered lists, for `tabs.move`: a test that orders tabs puts a space here and
+  // names it in its tabs' `spaceId`; the real model's move runs over it.
+  const spaces: Space[] = []
+  const model = { tabs, spaces, essentialTabIds: [] as string[], localSpaces: {} }
   const active = { id: 't1' as string | null }
   const created: Harness['created'] = []
   const listeners: Array<() => void> = []
@@ -532,8 +566,13 @@ export function harness(
     tabs: {
       tab: (id: string) => tabs[id],
       activeTabFor: () => (active.id ? tabs[active.id] : undefined),
-      model: { tabs, spaces: [] },
+      model,
       isPrivate: (tab: Tab) => tab.containerId === 'private',
+      moveTab: (tabId: string, target: { section: TabSection; index: number }) => {
+        const tab = tabs[tabId]
+        if (tab) moveTabInModel(model as unknown as Model, tab, target, 12)
+        notifyState()
+      },
       createTab: (opts: { url: string; active?: boolean }) => {
         const id = `t${created.length + 2}`
         tabs[id] = makeTab(id, opts.url)
@@ -603,6 +642,7 @@ export function harness(
     readAloud,
     files,
     tabs,
+    spaces,
     active,
     engine,
     containers,

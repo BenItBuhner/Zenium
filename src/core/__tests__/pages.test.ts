@@ -1496,3 +1496,46 @@ describe('the History page’s folded device groups (ID-28)', () => {
     )
   })
 })
+
+describe('the History page’s hidden devices (history-21, the heading menu’s Hide Device)', () => {
+  it('holds the hidden set for the session, tells every window, and Show hidden devices empties it', () => {
+    const f = fixture({ pageTabs: true, windows: true })
+    const other = f.browser.createWindow({ kind: 'synced', from: f.win })
+    expect(f.browser.handleCommand(f.win, 'history.hiddenDevices', undefined)).toEqual([])
+
+    f.browser.handleCommand(f.win, 'history.hideDevice', { deviceId: 'phone', hidden: true })
+    f.browser.handleCommand(other, 'history.hideDevice', { deviceId: 'work', hidden: true })
+    // Hiding what is hidden already is no change: nothing is sent.
+    f.browser.handleCommand(f.win, 'history.hideDevice', { deviceId: 'phone', hidden: true })
+    expect(f.browser.handleCommand(other, 'history.hiddenDevices', undefined)).toEqual([
+      'phone',
+      'work'
+    ])
+    const changed = (): Array<[string, unknown]> =>
+      f.sent
+        .filter((s) => s.name === 'history.hiddenDevicesChanged')
+        .map((s) => [s.winId, s.payload])
+    expect(changed()).toEqual([
+      [f.win.id, ['phone']],
+      [other.id, ['phone']],
+      [f.win.id, ['phone', 'work']],
+      [other.id, ['phone', 'work']]
+    ])
+    // The folds are another set: hiding folded nothing.
+    expect(f.browser.handleCommand(f.win, 'history.foldedDevices', undefined)).toEqual([])
+
+    // One device shown again by id; then the row: every hidden device back, one word to each window.
+    f.browser.handleCommand(other, 'history.hideDevice', { deviceId: 'phone', hidden: false })
+    expect(f.browser.handleCommand(f.win, 'history.hiddenDevices', undefined)).toEqual(['work'])
+    f.browser.handleCommand(f.win, 'history.showHiddenDevices', undefined)
+    expect(f.browser.handleCommand(other, 'history.hiddenDevices', undefined)).toEqual([])
+    expect(changed().slice(-2)).toEqual([
+      [f.win.id, []],
+      [other.id, []]
+    ])
+    // With nothing hidden the row has nothing to do: no word goes out.
+    const before = changed().length
+    f.browser.handleCommand(f.win, 'history.showHiddenDevices', undefined)
+    expect(changed().length).toBe(before)
+  })
+})

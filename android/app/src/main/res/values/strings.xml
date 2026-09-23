@@ -54,4 +54,23 @@
     <string name="unresponsive_exit">Exit page</string>
     <!-- The native prompt sheet's grabber (NativePromptSheet, v2 §9.9): a tap on it is the dismissal. -->
     <string name="prompt_sheet_dismiss">Dismiss</string>
+
+    <!-- A page's own dialogs (PUI-27, PUI-28) on the native prompt sheet (PageDialogSheet.kt, the words read
+         through PageDialogWords; PageDialogsTest pins them to Chrome's). Chrome's lines: the title names the
+         frame's site (IDS_JAVASCRIPT_MESSAGEBOX_TITLE, …_IFRAME for a frame of another origin), or none for a
+         file, data: or about: document (…_NONSTANDARD_URL, …_NONSTANDARD_URL_IFRAME for a frame of an opaque
+         origin); the checkbox from the page's second dialog of a visit (…_SUPPRESS_OPTION); the beforeunload
+         question (IDS_BEFOREUNLOAD_MESSAGEBOX_*, IDS_BEFORERELOAD_MESSAGEBOX_* for a reload). -->
+    <string name="page_dialog_title_site">%1$s says</string>
+    <string name="page_dialog_title_embedded">An embedded page at %1$s says</string>
+    <string name="page_dialog_title_embedded_no_site">An embedded page on this page says</string>
+    <string name="page_dialog_title_no_site">This page says</string>
+    <string name="page_dialog_leave_title">Leave site?</string>
+    <string name="page_dialog_reload_title">Reload site?</string>
+    <string name="page_dialog_leave_message">Changes you made may not be saved.</string>
+    <string name="page_dialog_suppress">Don\'t let this page create more dialogs</string>
+    <string name="page_dialog_cancel">Cancel</string>
+    <string name="page_dialog_ok">OK</string>
+    <string name="page_dialog_leave">Leave</string>
+    <string name="page_dialog_reload">Reload</string>
 </resources>

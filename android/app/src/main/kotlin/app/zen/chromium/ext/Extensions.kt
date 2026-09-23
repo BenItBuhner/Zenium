@@ -40,6 +40,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.InputStream
 import java.security.SecureRandom
 import java.util.Locale
 import java.util.WeakHashMap
@@ -133,7 +134,14 @@ class Extensions(private val host: Host) {
         /** Page-mode boot config (JSON) without `context`; set per WebView kind. */
         val pageConfig: String,
         /** Content-mode boot config (JSON) of a late boot: no groups, `with` isolation. */
-        val lateConfig: String
+        val lateConfig: String,
+        /**
+         * The substitution map of the extension's stylesheets (`cssSubstitutionMap` in the core):
+         * every `text/css` file served on the extension's origin has its `__MSG_name__`
+         * placeholders replaced from it, as Chrome's renderer does for a `chrome-extension://`
+         * stylesheet response (`ExtensionFiles.localizeCss`).
+         */
+        val cssMessages: Map<String, String> = emptyMap()
     )
 
     /**
@@ -386,6 +394,14 @@ class Extensions(private val host: Host) {
                     main.post { reply(detected) }
                 }
             }
+            "ext.system.cpu" -> {
+                // `/proc` reads are file IO (and refused by the sandbox as often as not): off the main thread.
+                io.execute {
+                    val reading = SystemInfo.cpu()
+                    main.post { reply(reading) }
+                }
+            }
+            "ext.system.memory" -> reply(SystemInfo.memory(host.activity))
             else -> throw IllegalArgumentException("Unknown method: $method")
         }
     }
@@ -454,7 +470,8 @@ class Extensions(private val host: Host) {
                 backgroundHtml = s.strOrNull("backgroundHtml"),
                 backgroundUrl = s.strOrNull("backgroundUrl"),
                 pageConfig = s.str("page", "{}"),
-                lateConfig = s.str("late", "{}")
+                lateConfig = s.str("late", "{}"),
+                cssMessages = s.obj("cssMessages").let { m -> m.keys().asSequence().associateWith { k -> m.optString(k, "") } }
             )
             val compiled = compiler.compile(id, servedNow.version, args.arr("units"), debug) { path ->
                 fileIn(dir, path)?.takeIf { it.isFile }?.readText()
@@ -588,9 +605,9 @@ class Extensions(private val host: Host) {
         }
     }
 
-    private fun recordCall(ep: String, message: JSONObject) {
+    private fun recordCall(ep: String, message: JSONObject, chars: Int) {
         val ext = endpoints[ep]?.extensionId ?: message.str("ext")
-        trace(">", ep, ext, message)
+        trace(">", ep, ext, message, chars)
         val key = when (message.str("t")) {
             "call" -> "$ext ${message.str("ns")}.${message.str("method")}"
             "msg" -> "$ext runtime.sendMessage"
@@ -606,8 +623,8 @@ class Extensions(private val host: Host) {
     }
 
     private fun recordReply(ep: String, message: String) {
-        val reply = runCatching { JSONObject(message) }.getOrNull() ?: return
-        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply)
+        val reply = BridgeEnvelope.read(message) ?: return
+        trace("<", ep, endpoints[ep]?.extensionId ?: "", reply, message.length)
         if (reply.optString("t") != "reply") return
         synchronized(callStats) {
             val key = pendingCalls.remove("$ep:${reply.opt("id")}") ?: return
@@ -626,9 +643,11 @@ class Extensions(private val host: Host) {
      * type and the little that tells messages apart (a call's method, a message's `type` field,
      * a reply's outcome). Instrumentation reads it to see where a handshake stopped.
      */
-    private fun trace(direction: String, ep: String, ext: String, message: JSONObject) {
+    private fun trace(direction: String, ep: String, ext: String, message: JSONObject, chars: Int = 0) {
         val context = endpoints[ep]?.context ?: message.str("ctx", "?")
         val t = message.str("t")
+        // A big message is an envelope here (its nested values unread): its size stands in for them.
+        val size = if (chars >= BridgeEnvelope.BIG_MESSAGE) " chars=$chars" else ""
         val detail = when (t) {
             "call" -> "${message.str("ns")}.${message.str("method")}"
             "msg", "deliver" -> {
@@ -655,7 +674,7 @@ class Extensions(private val host: Host) {
         }
         synchronized(bridgeTrace) {
             if (bridgeTrace.size >= TRACE_LINES) bridgeTrace.removeFirst()
-            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail".trimEnd())
+            bridgeTrace.addLast("${SystemClock.uptimeMillis()} $direction ${ext.take(8)}/$context $t $detail$size".trimEnd())
         }
     }
 
@@ -697,6 +716,39 @@ class Extensions(private val host: Host) {
             })
         }.isSuccess
         if (!delivered) callback(null)
+    }
+
+    /**
+     * Instrumentation only: `code` run in `extensionId`'s content scope on `view`'s main frame
+     * the way `scripting.executeScript({ code })` runs it ([exec]'s main-frame path) – the
+     * isolated world where the frame has one, else the main world's `with` scope through the
+     * bootstrap (a late boot when the document has no scope for the extension yet) – with the
+     * guarded JSON handed back as the WebView gave it (`{"v": …}` or `{"e": …}`), null when
+     * nothing answered. The driver reads what a content script's own `window.postMessage`
+     * does in that scope. Main thread.
+     */
+    fun evalInScope(view: WebView, extensionId: String, code: String, callback: (String?) -> Unit) {
+        val ext = served[extensionId]
+        if (ext == null) {
+            callback(null)
+            return
+        }
+        val mine = endpoints.values.filter { it.view === view && it.extensionId == extensionId && it.context == "content" && it.isMainFrame }
+        val world = if (isolatedWorlds) mine.firstOrNull { it.world } else null
+        if (world != null) {
+            val call = ExtensionScripts.execScript(token, extensionId, "js", JSONObject(), code, emptyList(), null, null, null, false, false)
+            val delivered = runCatching {
+                world.proxy.executeJavaScript(call, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
+                    override fun onResult(result: String?) { callback(result) }
+                    override fun onError(error: androidx.webkit.JavaScriptExecutionException) { callback(null) }
+                })
+            }.isSuccess
+            if (!delivered) callback(null)
+            return
+        }
+        val prefix = if (mine.none { !it.world }) ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug) else null
+        val script = ExtensionScripts.execScript(token, extensionId, "js", JSONObject(), code, emptyList(), null, null, prefix, true, true)
+        view.evaluateJavascript(script) { result -> callback(result) }
     }
 
     /**
@@ -946,9 +998,10 @@ class Extensions(private val host: Host) {
      */
     private fun onBridgeMessage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy, kind: String, slot: Int?) {
         val text = data ?: return
-        val message = runCatching { JSONObject(text) }.getOrNull() ?: return
+        // The host reads the envelope (top-level scalars) and hands the text on as it came; a big
+        // message is never built whole on this thread (`BridgeEnvelope`).
+        val message = BridgeEnvelope.read(text) ?: return
         if (message.str("token") != token) return
-        message.remove("token")
         val ep = message.str("ep")
         if (ep.isEmpty()) return
         bridgeCounters[0]++
@@ -960,7 +1013,7 @@ class Extensions(private val host: Host) {
         // A private tab's document still running the script of an extension no longer allowed
         // there (the toggle flipped after the document started) has no bridge.
         if (view.isPrivateTab && served[endpoints[ep]?.extensionId ?: message.str("ext")]?.allowPrivate != true) return
-        if (debug) recordCall(ep, message)
+        if (debug) recordCall(ep, message, text.length)
         when (message.str("t")) {
             "hello" -> {
                 val context = message.str("ctx", kind)
@@ -992,10 +1045,16 @@ class Extensions(private val host: Host) {
             }
         }
         val tabId = (view as? TabWebView)?.tabId
-        chromeEvent(
-            "ext.message",
-            json("ep" to ep, "tabId" to tabId, "top" to isMainFrame, "origin" to origin.toString(), "message" to message)
-        )
+        // The message goes to the core as the frame wrote it (one copy, no rebuild); the core
+        // drops the token it carries (`extensionRuntime.onMessage`).
+        val event = StringBuilder(text.length + 128)
+            .append("{\"ep\":").append(JSONObject.quote(ep))
+            .append(",\"tabId\":").append(if (tabId == null) "null" else JSONObject.quote(tabId))
+            .append(",\"top\":").append(isMainFrame)
+            .append(",\"origin\":").append(JSONObject.quote(origin.toString()))
+            .append(",\"message\":").append(text)
+            .append('}')
+        chromeEvent("ext.message", Host.RawJson(event.toString()))
     }
 
     /**
@@ -1092,10 +1151,14 @@ class Extensions(private val host: Host) {
             !ext.webAccessible.any { it.matches(path) } -> reply(null, null, "$path is not a web-accessible resource")
             else -> io.execute {
                 val bytes = fileIn(ext.dir, path)?.takeIf { it.isFile }?.let { f -> runCatching { f.readBytes() }.getOrNull() }
+                val mime = ExtensionScripts.mimeType(path)
                 when {
                     bytes == null -> reply(null, null, "$path was not found")
                     bytes.size > MAX_RELAYED_FILE_BYTES -> reply(null, null, "$path is ${bytes.size} bytes, more than the bridge carries ($MAX_RELAYED_FILE_BYTES)")
-                    else -> reply(bytes, ExtensionScripts.mimeType(path), null)
+                    // A stylesheet relayed over the bridge is the one the origin would have served: localized.
+                    mime == "text/css" && ext.cssMessages.isNotEmpty() ->
+                        reply(ExtensionFiles.localizeCss(String(bytes, Charsets.UTF_8), ext.cssMessages).toByteArray(), mime, null)
+                    else -> reply(bytes, mime, null)
                 }
             }
         }
@@ -1211,6 +1274,7 @@ class Extensions(private val host: Host) {
             Decision.Action.BLOCK -> "block"
             Decision.Action.REDIRECT -> "redirect"
             Decision.Action.UPGRADE -> "upgrade"
+            Decision.Action.MODIFY_HEADERS -> "modifyHeaders"
         }
         val type = request.type.dnrName
         if (debug) synchronized(decisions) {
@@ -1306,17 +1370,32 @@ class Extensions(private val host: Host) {
         }
         val file = fileIn(ext.dir, path) ?: return notFound()
         if (!file.isFile) return notFound()
-        var bytes = runCatching { file.readBytes() }.getOrNull() ?: return notFound()
-        if (moduleChromeFor != null) bytes = ExtensionScripts.moduleChromeWrap(String(bytes, Charsets.UTF_8), moduleChromeFor).toByteArray()
-        return response(ExtensionScripts.mimeType(path), 200, "OK", bytes)
+        val mime = ExtensionScripts.mimeType(path)
+        // A stylesheet is localized as Chrome's renderer localizes a `chrome-extension://` one
+        // (`ExtensionLocalizationThrottle`): read whole, its placeholders substituted, whatever
+        // linked it. Anything else streams from disk.
+        if (mime == "text/css" && ext.cssMessages.isNotEmpty() && file.length() <= ExtensionFiles.LOCALIZED_CSS_LIMIT) {
+            val text = runCatching { file.readText() }.getOrNull() ?: return notFound()
+            return response(mime, 200, "OK", ExtensionFiles.localizeCss(text, ext.cssMessages).toByteArray())
+        }
+        // Streamed from disk, the module bracket on either side (ExtensionFiles.servedBody).
+        val body = ExtensionFiles.servedBody(
+            file,
+            moduleChromeFor?.let(ExtensionScripts::moduleChromeOpen),
+            moduleChromeFor?.let(ExtensionScripts::moduleChromeClose)
+        ) ?: return notFound()
+        return response(mime, 200, "OK", body.stream, body.length)
     }
 
-    private fun response(mime: String, status: Int, reason: String, body: ByteArray, extra: Map<String, String> = emptyMap()): WebResourceResponse {
+    private fun response(mime: String, status: Int, reason: String, body: ByteArray, extra: Map<String, String> = emptyMap()): WebResourceResponse =
+        response(mime, status, reason, ByteArrayInputStream(body), body.size.toLong(), extra)
+
+    private fun response(mime: String, status: Int, reason: String, body: InputStream, length: Long, extra: Map<String, String> = emptyMap()): WebResourceResponse {
         val headers = HashMap<String, String>(extra)
         headers["Access-Control-Allow-Origin"] = "*"
         headers["Cache-Control"] = "no-cache"
-        headers["Content-Length"] = body.size.toString()
-        return WebResourceResponse(mime, if (mime.startsWith("text/") || mime.contains("javascript") || mime.contains("json")) "utf-8" else null, status, reason, headers, ByteArrayInputStream(body))
+        headers["Content-Length"] = length.toString()
+        return WebResourceResponse(mime, if (mime.startsWith("text/") || mime.contains("javascript") || mime.contains("json")) "utf-8" else null, status, reason, headers, body)
     }
 
     private fun notFound() = response("text/plain", 404, "Not Found", ByteArray(0))

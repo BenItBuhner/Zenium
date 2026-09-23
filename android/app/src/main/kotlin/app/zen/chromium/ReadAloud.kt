@@ -98,7 +98,7 @@ class ReadAloud(private val host: Host) {
     private var engineNumber = 0
     /** Work asked for while the engine binds; run on `onInit`, in order. */
     private val pending = ArrayList<(ready: Boolean) -> Unit>()
-    /** The engine's voices by `Voice.getName()`, read on init and again when its data changes. */
+    /** The engine's voices by `Voice.getName()`, read on init, again when its data changes, and again while none is installed ([recheckVoices]). */
     private var voicesByName: Map<String, Voice> = emptyMap()
     private var defaultVoiceName: String? = null
     /** The utterance the engine speaks or is about to (the last flushed in, or the queued one it moved on to). */
@@ -165,13 +165,26 @@ class ReadAloud(private val host: Host) {
 
     // --- the core's SpeechHost ---------------------------------------------------------------------
 
-    /** `speech.voices`: the engine's voices as `ReadAloudVoice[]`; an empty list without an engine or when it fails to bind. */
+    /**
+     * `speech.voices`: the engine's voices as `ReadAloudVoice[]`; an empty list without an engine
+     * or when it fails to bind. A snapshot with no installed voice is read from the engine again
+     * first: a fresh device's engine lists its voices before their data is on it (Google's starts
+     * the locale's voice-pack download on its first bind, a few seconds) and says nothing when
+     * the pack lands (no `ACTION_TTS_DATA_INSTALLED` for it), so the ask reaches the engine rather
+     * than the list read at init (the nightly sweep's `reader-ui`, #332: `no-voice` on a tap that
+     * bound the engine, and again minutes later off the stale list).
+     */
     fun voices(reply: (Any?) -> Unit) {
         if (!available) {
             reply(JSONArray())
             return
         }
-        whenReady { ready -> reply(if (ready) voiceList() else JSONArray()) }
+        // An ask that waits on the bind gets the list `onInit` reads; one that finds the engine bound re-reads a stale empty snapshot.
+        val bound = state == EngineState.READY
+        whenReady { ready ->
+            if (ready && bound && installedCount() == 0) refreshVoices()
+            reply(if (ready) voiceList() else JSONArray())
+        }
     }
 
     /**
@@ -287,11 +300,42 @@ class ReadAloud(private val host: Host) {
         runCatching { engine.setAudioAttributes(attributes) }
         readVoices()
         state = EngineState.READY
-        Log.d(TAG, "speech engine ready: ${runCatching { engine.defaultEngine }.getOrNull()}, ${voicesByName.size} voices, default ${defaultVoiceName ?: "none"}")
+        Log.d(TAG, "speech engine ready: ${runCatching { engine.defaultEngine }.getOrNull()}, ${voicesByName.size} voices (${installedCount()} installed), default ${defaultVoiceName ?: "none"}")
         drainPending(ready = true)
         // The list went from unknown to known: a picker open on the wait re-asks.
         host.hostEvent("speech.voicesChanged", null)
+        // Nothing installed: the engine may be fetching its data; the list is read again for a while.
+        if (installedCount() == 0) recheckVoices(number, ReadAloudLogic.VOICE_DATA_RECHECKS)
     }
+
+    /**
+     * No installed voice yet after the bind: Google's engine downloads the device locale's voice
+     * pack on its first bind and broadcasts no `ACTION_TTS_DATA_INSTALLED` when it lands, so the
+     * list is read again every [ReadAloudLogic.VOICE_DATA_RECHECK_MS] up to [left] times and the
+     * chrome told the moment voices appear (a session waiting on them starts, a picker fills).
+     */
+    private fun recheckVoices(number: Int, left: Int) {
+        if (left <= 0) return
+        main.postDelayed({
+            if (number != engineNumber || destroyed || state != EngineState.READY) return@postDelayed
+            if (installedCount() > 0) return@postDelayed
+            if (!refreshVoices()) recheckVoices(number, left - 1)
+        }, ReadAloudLogic.VOICE_DATA_RECHECK_MS)
+    }
+
+    /** Read the engine's list again; true – and the chrome told – when installed voices appeared. */
+    private fun refreshVoices(): Boolean {
+        readVoices()
+        val installed = installedCount()
+        if (installed == 0) return false
+        Log.d(TAG, "speech engine's voice data arrived: $installed installed of ${voicesByName.size} voices, default ${defaultVoiceName ?: "none"}")
+        host.hostEvent("speech.voicesChanged", null)
+        return true
+    }
+
+    /** How many of the engine's voices have their data on the device (the ones `speech.voices` lists). */
+    private fun installedCount(): Int =
+        voicesByName.values.count { ReadAloudLogic.FEATURE_NOT_INSTALLED !in (it.features ?: emptySet()) }
 
     private fun drainPending(ready: Boolean) {
         val work = ArrayList(pending)

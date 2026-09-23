@@ -9,6 +9,7 @@ import type {
 import type { SafeBrowsingHit } from '@shared/privacy'
 import type { FormsCommand } from '@shared/forms'
 import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
+import { parsePageViewport, type PageViewport } from '@shared/capture'
 import { certificateDetailsFrom } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
@@ -272,6 +273,26 @@ export class AndroidTabView implements TabView {
     }
   }
 
+  /**
+   * Whether the page may be unloaded (`TabView.confirmUnload`): Kotlin runs its `beforeunload`
+   * handlers through a navigation the page may object to (`TabWebView.confirmUnload`) – an
+   * objection asks "Leave site?" as Zenium's native sheet there (PUI-28; the page's `alert` /
+   * `confirm` / `prompt` are that sheet too, PUI-27: the WebView's one renderer waits in the
+   * page's call for the chrome as well, so nothing the core draws could answer it), and the
+   * answer settles the check – and destroys a view whose page did not object (the core hears
+   * `destroyed`). Only an explicit false keeps the page: a host without the method (an older
+   * APK, the preview host) does not object.
+   */
+  async confirmUnload(): Promise<boolean> {
+    if (this.destroyed) return true
+    try {
+      const leave = await this.bridge.call<unknown>('view.confirmUnload', { tabId: this.tabId })
+      return leave !== false
+    } catch {
+      return true
+    }
+  }
+
   /** Key events Kotlin pre-filtered against the shortcut table. */
   key(input: KeyEventInput): boolean {
     return this.events.onKey(input)
@@ -530,6 +551,11 @@ export class AndroidTabView implements TabView {
   }
 
   // --- placement ---------------------------------------------------------------
+  //
+  // The core places every view of a layout report in one go (`window.ts` `applyLayout`: the
+  // bounds, the radius, the cover, a flip of visibility, the glance to the front), and nothing
+  // reads the answers: these go `batched`, one hop for the report instead of one per op, the
+  // host applying them in order in one main-thread task (#312's H3b; `bridge.ts` has the why).
 
   attachTo(): void {
     // One window on Android: every view already lives in it.
@@ -540,16 +566,16 @@ export class AndroidTabView implements TabView {
   }
 
   setBounds(rect: Rect): void {
-    this.bridge.send('view.setBounds', { tabId: this.tabId, rect })
+    this.bridge.batched('view.setBounds', { tabId: this.tabId, rect })
   }
 
   setBorderRadius(radius: number): void {
-    this.bridge.send('view.setRadius', { tabId: this.tabId, radius })
+    this.bridge.batched('view.setRadius', { tabId: this.tabId, radius })
   }
 
   setVisible(visible: boolean): void {
     this.visible = visible
-    this.bridge.send('view.setVisible', { tabId: this.tabId, visible })
+    this.bridge.batched('view.setVisible', { tabId: this.tabId, visible })
   }
 
   isVisible(): boolean {
@@ -557,14 +583,14 @@ export class AndroidTabView implements TabView {
   }
 
   bringToFront(): void {
-    this.bridge.send('view.bringToFront', { tabId: this.tabId })
+    this.bridge.batched('view.bringToFront', { tabId: this.tabId })
   }
 
   setCover(cover: ContentCover): void {
     // Every layout report carries the cover; only a change is worth a spring on the host.
     if (this.cover.top === cover.top && this.cover.bottom === cover.bottom) return
     this.cover = cover
-    this.bridge.send('view.setCover', { tabId: this.tabId, cover })
+    this.bridge.batched('view.setCover', { tabId: this.tabId, cover })
   }
 
   // --- page operations -----------------------------------------------------------
@@ -616,6 +642,17 @@ export class AndroidTabView implements TabView {
       region: options.mode === 'region' ? (options.region ?? null) : null,
       format: options.format
     })
+  }
+
+  /**
+   * The page's geometry for the chrome's capture overlay (`shared/capture.ts`): Kotlin reads
+   * the same metrics the stitcher plans with (`PageCapture.METRICS_SCRIPT`) and puts the visual
+   * viewport's offset, size and scale in the chrome's terms (`TabWebView.viewport`).
+   */
+  async viewport(): Promise<PageViewport | null> {
+    return parsePageViewport(
+      await this.bridge.call<unknown>('view.viewport', { tabId: this.tabId })
+    )
   }
 
   async copyImageAt(): Promise<boolean> {

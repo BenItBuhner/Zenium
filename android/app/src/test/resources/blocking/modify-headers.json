@@ -1,0 +1,1089 @@
+{
+  "description": "The modifyHeaders golden fixture, read by both differential harnesses (src/core/blocking/__tests__/indexDifferential.test.ts and android/.../IndexDifferentialTest.kt): the same rule sets and probes, the same expected decisions – action, matched rule, request and response header edits in order, needsHeaders – so the two engines produce the same edits for the same rules. Requests are decided at the request stage; a probe with responseHeaders is decided again at the headers-received stage with them, as the desktop's onHeadersReceived and the Android relay decide. The first ext: set is User-Agent Switcher for Chrome's session rule as its background registers it (every resource type, no URL condition); ext:bbbb… is a newer extension (the higher slot of the band, contract 1.3), ext:aaaa… an older one.",
+  "sets": [
+    {
+      "id": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+      "source": "dnr",
+      "priority": 2999,
+      "enabled": true,
+      "rules": [
+        {
+          "id": 1,
+          "priority": 1,
+          "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+              {
+                "header": "user-agent",
+                "operation": "set",
+                "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+              }
+            ]
+          },
+          "condition": {}
+        }
+      ]
+    },
+    {
+      "id": "ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:_dynamic",
+      "source": "dnr",
+      "priority": 2998,
+      "enabled": true,
+      "rules": [
+        {
+          "id": 1,
+          "priority": 2,
+          "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+              {
+                "header": "X-A",
+                "operation": "set",
+                "value": "a1"
+              }
+            ],
+            "responseHeaders": [
+              {
+                "header": "X-R",
+                "operation": "append",
+                "value": "a1"
+              }
+            ]
+          },
+          "condition": {
+            "urlFilter": "||hdr.example^"
+          }
+        },
+        {
+          "id": 2,
+          "priority": 3,
+          "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+              {
+                "header": "X-B",
+                "operation": "set",
+                "value": "a2"
+              }
+            ]
+          },
+          "condition": {
+            "requestDomains": [
+              "hdr.example"
+            ],
+            "resourceTypes": [
+              "main_frame",
+              "sub_frame",
+              "script"
+            ]
+          }
+        },
+        {
+          "id": 3,
+          "priority": 1,
+          "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+              {
+                "header": "Accept-Language",
+                "operation": "append",
+                "value": "fr"
+              }
+            ]
+          },
+          "condition": {
+            "regexFilter": "\\.(png|gif)$"
+          }
+        },
+        {
+          "id": 4,
+          "priority": 2,
+          "action": {
+            "type": "allow"
+          },
+          "condition": {
+            "urlFilter": "||hdr.example/assets/quiet^"
+          }
+        },
+        {
+          "id": 5,
+          "priority": 1,
+          "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+              {
+                "header": "X-Dropped",
+                "operation": "set",
+                "value": "1"
+              }
+            ],
+            "responseHeaders": [
+              {
+                "header": "X-Frame-Options",
+                "operation": "remove"
+              }
+            ]
+          },
+          "condition": {
+            "urlFilter": "||hdr.example^",
+            "responseHeaders": [
+              {
+                "header": "x-frame-options"
+              }
+            ]
+          }
+        },
+        {
+          "id": 6,
+          "priority": 3,
+          "action": {
+            "type": "allow"
+          },
+          "condition": {
+            "urlFilter": "||hdr2.example^",
+            "excludedResponseHeaders": [
+              {
+                "header": "content-type",
+                "values": [
+                  "text/html*"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 7,
+          "priority": 4,
+          "action": {
+            "type": "block"
+          },
+          "condition": {
+            "requestDomains": [
+              "hdr.example",
+              "hdr2.example"
+            ],
+            "responseHeaders": [
+              {
+                "header": "x-ads"
+              }
+            ]
+          }
+        },
+        {
+          "id": 8,
+          "priority": 2,
+          "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+              {
+                "header": "X-B",
+                "operation": "set",
+                "value": "two"
+              }
+            ],
+            "responseHeaders": [
+              {
+                "header": "X-Edited",
+                "operation": "set",
+                "value": "yes"
+              }
+            ]
+          },
+          "condition": {
+            "urlFilter": "||hdr2.example^"
+          }
+        },
+        {
+          "id": 9,
+          "priority": 3,
+          "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+              {
+                "header": "X-Requested-With",
+                "operation": "remove"
+              }
+            ]
+          },
+          "condition": {
+            "urlFilter": "||hdr2.example^"
+          }
+        },
+        {
+          "id": 10,
+          "priority": 1,
+          "action": {
+            "type": "block"
+          },
+          "condition": {
+            "urlFilter": "||blocked.hdr.example^"
+          }
+        },
+        {
+          "id": 11,
+          "priority": 1,
+          "action": {
+            "type": "redirect",
+            "redirect": {
+              "url": "https://safe.example/"
+            }
+          },
+          "condition": {
+            "urlFilter": "||moved.hdr.example^"
+          }
+        },
+        {
+          "id": 12,
+          "priority": 5,
+          "action": {
+            "type": "modifyHeaders",
+            "responseHeaders": [
+              {
+                "header": "Set-Cookie",
+                "operation": "append",
+                "value": "added=1; Path=/"
+              },
+              {
+                "header": "Content-Security-Policy",
+                "operation": "set",
+                "value": "default-src 'self'"
+              }
+            ]
+          },
+          "condition": {
+            "regexFilter": "^https://cookie\\.hdr\\.example/",
+            "resourceTypes": [
+              "main_frame"
+            ]
+          }
+        },
+        {
+          "id": 13,
+          "priority": 4,
+          "action": {
+            "type": "modifyHeaders",
+            "responseHeaders": [
+              {
+                "header": "X-Late-Above",
+                "operation": "set",
+                "value": "1"
+              }
+            ]
+          },
+          "condition": {
+            "urlFilter": "||hdr2.example^",
+            "responseHeaders": [
+              {
+                "header": "x-mark"
+              }
+            ]
+          }
+        },
+        {
+          "id": 14,
+          "priority": 3,
+          "action": {
+            "type": "modifyHeaders",
+            "responseHeaders": [
+              {
+                "header": "X-Late-Equal",
+                "operation": "set",
+                "value": "1"
+              }
+            ]
+          },
+          "condition": {
+            "urlFilter": "||hdr2.example^",
+            "responseHeaders": [
+              {
+                "header": "x-mark"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ext:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:_dynamic",
+      "source": "dnr",
+      "priority": 2999,
+      "enabled": true,
+      "rules": [
+        {
+          "id": 1,
+          "priority": 3,
+          "action": {
+            "type": "modifyHeaders",
+            "requestHeaders": [
+              {
+                "header": "X-A",
+                "operation": "set",
+                "value": "b1"
+              }
+            ]
+          },
+          "condition": {
+            "regexFilter": "^https://hdr\\.example/"
+          }
+        },
+        {
+          "id": 2,
+          "priority": 1,
+          "action": {
+            "type": "modifyHeaders",
+            "responseHeaders": [
+              {
+                "header": "X-R",
+                "operation": "append",
+                "value": "b2"
+              }
+            ]
+          },
+          "condition": {
+            "urlFilter": "/index"
+          }
+        },
+        {
+          "id": 3,
+          "priority": 1,
+          "action": {
+            "type": "allow"
+          },
+          "condition": {
+            "urlFilter": "||allowed.example^"
+          }
+        }
+      ]
+    },
+    {
+      "id": "user",
+      "source": "user",
+      "priority": 10,
+      "enabled": true,
+      "rules": [
+        {
+          "id": 1,
+          "priority": 9,
+          "action": {
+            "type": "allow"
+          },
+          "condition": {
+            "urlFilter": "||hdr.example^"
+          }
+        },
+        {
+          "id": 2,
+          "priority": 1,
+          "action": {
+            "type": "block"
+          },
+          "condition": {
+            "urlFilter": "||userblocked.example^"
+          }
+        }
+      ]
+    },
+    {
+      "id": "builtin:site-exceptions",
+      "source": "builtin",
+      "priority": 900,
+      "enabled": true,
+      "rules": [
+        {
+          "id": 1,
+          "action": {
+            "type": "allowAllRequests"
+          },
+          "condition": {
+            "urlFilter": "|https://excepted.example/",
+            "resourceTypes": [
+              "main_frame",
+              "sub_frame"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "name": "User-Agent Switcher: a navigation anywhere gets the rule's UA",
+      "request": {
+        "url": "https://whatsmyua.example/",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          }
+        ],
+        "responseHeaders": []
+      }
+    },
+    {
+      "name": "User-Agent Switcher: a subresource too (the engine edits it; only the Android relay cannot carry it)",
+      "request": {
+        "url": "https://cdn.whatsmyua.example/app.js",
+        "type": "script",
+        "documentUrl": "https://whatsmyua.example/",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          }
+        ],
+        "responseHeaders": []
+      }
+    },
+    {
+      "name": "the site exception and the user's allow sit below the dnr band: the edits stand",
+      "request": {
+        "url": "https://excepted.example/",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          }
+        ],
+        "responseHeaders": []
+      }
+    },
+    {
+      "name": "the user's block stands: nothing to edit",
+      "request": {
+        "url": "https://userblocked.example/",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "block",
+        "matched": {
+          "setId": "user",
+          "ruleId": 2
+        }
+      }
+    },
+    {
+      "name": "an allow of a newer extension (the higher slot of the band) at equal priority caps the older extension's edits",
+      "request": {
+        "url": "https://allowed.example/",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "allow",
+        "matched": {
+          "setId": "ext:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:_dynamic",
+          "ruleId": 3
+        }
+      }
+    },
+    {
+      "name": "edits stack highest effective priority first, then in scan order across sets; a header-conditioned edit asks for the relay",
+      "request": {
+        "url": "https://hdr.example/index.html",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:_dynamic",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "b1"
+          },
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "X-B",
+            "operation": "set",
+            "value": "a2"
+          },
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "a1"
+          }
+        ],
+        "responseHeaders": [
+          {
+            "header": "X-R",
+            "operation": "append",
+            "value": "b2"
+          },
+          {
+            "header": "X-R",
+            "operation": "append",
+            "value": "a1"
+          }
+        ],
+        "needsHeaders": true
+      },
+      "responseHeaders": {
+        "Content-Type": [
+          "text/html"
+        ],
+        "X-Frame-Options": [
+          "DENY"
+        ]
+      },
+      "expectedWithHeaders": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:_dynamic",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "b1"
+          },
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "X-B",
+            "operation": "set",
+            "value": "a2"
+          },
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "a1"
+          }
+        ],
+        "responseHeaders": [
+          {
+            "header": "X-R",
+            "operation": "append",
+            "value": "b2"
+          },
+          {
+            "header": "X-R",
+            "operation": "append",
+            "value": "a1"
+          },
+          {
+            "header": "X-Frame-Options",
+            "operation": "remove"
+          }
+        ]
+      }
+    },
+    {
+      "name": "the same document without the marker: the request stage's edits alone, its request edit dropped",
+      "request": {
+        "url": "https://hdr.example/index.html",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "responseHeaders": {
+        "Content-Type": [
+          "text/html"
+        ]
+      },
+      "expectedWithHeaders": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:_dynamic",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "b1"
+          },
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "X-B",
+            "operation": "set",
+            "value": "a2"
+          },
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "a1"
+          }
+        ],
+        "responseHeaders": [
+          {
+            "header": "X-R",
+            "operation": "append",
+            "value": "b2"
+          },
+          {
+            "header": "X-R",
+            "operation": "append",
+            "value": "a1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a header-conditioned block above the edits wins over both stages' edits",
+      "request": {
+        "url": "https://hdr.example/index.html",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "responseHeaders": {
+        "Content-Type": [
+          "text/html"
+        ],
+        "X-Ads": [
+          "1"
+        ],
+        "X-Frame-Options": [
+          "DENY"
+        ]
+      },
+      "expectedWithHeaders": {
+        "action": "block",
+        "matched": {
+          "setId": "ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:_dynamic",
+          "ruleId": 7
+        }
+      }
+    },
+    {
+      "name": "an allow of equal priority caps its own set's edit (a `^` matches the `/`); the newer extension's edits above it stand; the header-conditioned block above it still asks for the headers",
+      "request": {
+        "url": "https://hdr.example/assets/quiet/style.css",
+        "type": "stylesheet",
+        "documentUrl": "https://hdr.example/",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:_dynamic",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "b1"
+          },
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          }
+        ],
+        "responseHeaders": [],
+        "needsHeaders": true
+      }
+    },
+    {
+      "name": "a cross-site frame of the hdr host: the same edits (the relay sends them without the jar)",
+      "request": {
+        "url": "https://hdr.example/frame.html",
+        "type": "sub_frame",
+        "documentUrl": "https://news.example/story",
+        "method": "GET",
+        "thirdParty": true,
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:_dynamic",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "b1"
+          },
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "X-B",
+            "operation": "set",
+            "value": "a2"
+          },
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "a1"
+          }
+        ],
+        "responseHeaders": [
+          {
+            "header": "X-R",
+            "operation": "append",
+            "value": "a1"
+          }
+        ],
+        "needsHeaders": true
+      }
+    },
+    {
+      "name": "a request-stage block stands: nothing to edit, no relay",
+      "request": {
+        "url": "https://blocked.hdr.example/index.html",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "block",
+        "matched": {
+          "setId": "ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:_dynamic",
+          "ruleId": 10
+        }
+      }
+    },
+    {
+      "name": "a request-stage redirect stands: nothing to edit, no relay",
+      "request": {
+        "url": "https://moved.hdr.example/index.html",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "redirect",
+        "redirectUrl": "https://safe.example/",
+        "matched": {
+          "setId": "ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:_dynamic",
+          "ruleId": 11
+        }
+      }
+    },
+    {
+      "name": "a header-conditioned allow caps request-stage edits below it (equal survives) and header-stage edits at or below it, once its condition holds",
+      "request": {
+        "url": "https://hdr2.example/",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "X-Requested-With",
+            "operation": "remove"
+          },
+          {
+            "header": "X-B",
+            "operation": "set",
+            "value": "two"
+          }
+        ],
+        "responseHeaders": [
+          {
+            "header": "X-Edited",
+            "operation": "set",
+            "value": "yes"
+          }
+        ],
+        "needsHeaders": true
+      },
+      "responseHeaders": {
+        "Content-Type": [
+          "text/css"
+        ],
+        "X-Mark": [
+          "1"
+        ]
+      },
+      "expectedWithHeaders": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "X-Requested-With",
+            "operation": "remove"
+          }
+        ],
+        "responseHeaders": [
+          {
+            "header": "X-Late-Above",
+            "operation": "set",
+            "value": "1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "the same document as HTML: the allow's condition fails, every edit of both stages applies",
+      "request": {
+        "url": "https://hdr2.example/",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "responseHeaders": {
+        "Content-Type": [
+          "text/html; charset=utf-8"
+        ],
+        "X-Mark": [
+          "1"
+        ]
+      },
+      "expectedWithHeaders": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "X-Requested-With",
+            "operation": "remove"
+          },
+          {
+            "header": "X-B",
+            "operation": "set",
+            "value": "two"
+          }
+        ],
+        "responseHeaders": [
+          {
+            "header": "X-Late-Above",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "header": "X-Late-Equal",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "header": "X-Edited",
+            "operation": "set",
+            "value": "yes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "the header-conditioned block outranks the header-conditioned allow and the edits",
+      "request": {
+        "url": "https://hdr2.example/",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "default"
+      },
+      "responseHeaders": {
+        "Content-Type": [
+          "text/css"
+        ],
+        "X-Ads": [
+          "banner"
+        ]
+      },
+      "expectedWithHeaders": {
+        "action": "block",
+        "matched": {
+          "setId": "ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:_dynamic",
+          "ruleId": 7
+        }
+      }
+    },
+    {
+      "name": "a rule appending to the image's Accept-Language rides with the UA rule",
+      "request": {
+        "url": "https://img.example/pixel.gif",
+        "type": "image",
+        "documentUrl": "https://news.example/",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "Accept-Language",
+            "operation": "append",
+            "value": "fr"
+          }
+        ],
+        "responseHeaders": []
+      }
+    },
+    {
+      "name": "response-only edits ride with the UA rule, highest effective priority first; the user's allow below the band caps nothing",
+      "request": {
+        "url": "https://cookie.hdr.example/login",
+        "type": "main_frame",
+        "method": "GET",
+        "partition": "work"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          },
+          {
+            "header": "X-B",
+            "operation": "set",
+            "value": "a2"
+          },
+          {
+            "header": "X-A",
+            "operation": "set",
+            "value": "a1"
+          }
+        ],
+        "responseHeaders": [
+          {
+            "header": "Set-Cookie",
+            "operation": "append",
+            "value": "added=1; Path=/"
+          },
+          {
+            "header": "Content-Security-Policy",
+            "operation": "set",
+            "value": "default-src 'self'"
+          },
+          {
+            "header": "X-R",
+            "operation": "append",
+            "value": "a1"
+          }
+        ],
+        "needsHeaders": true
+      }
+    },
+    {
+      "name": "a POSTed document is decided like any other (the Android relay declines it afterwards; the edits are the engine's word)",
+      "request": {
+        "url": "https://whatsmyua.example/form",
+        "type": "main_frame",
+        "method": "POST",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "modifyHeaders",
+        "matched": {
+          "setId": "ext:djflhoibgkdhkhhcedjiklpkjnoahfmg:_session",
+          "ruleId": 1
+        },
+        "requestHeaders": [
+          {
+            "header": "user-agent",
+            "operation": "set",
+            "value": "Mozilla/5.0 (Windows NT 10.0; Trident/7.0; rv:11.0) like Gecko"
+          }
+        ],
+        "responseHeaders": []
+      }
+    },
+    {
+      "name": "the rules leave a request alone: the plain allow (User-Agent Switcher's rule excepted here by a newer extension's allow)",
+      "request": {
+        "url": "https://allowed.example/img/logo.png",
+        "type": "image",
+        "documentUrl": "https://allowed.example/",
+        "method": "GET",
+        "partition": "default"
+      },
+      "expected": {
+        "action": "allow",
+        "matched": {
+          "setId": "ext:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:_dynamic",
+          "ruleId": 3
+        }
+      }
+    }
+  ]
+}

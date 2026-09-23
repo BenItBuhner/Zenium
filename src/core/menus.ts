@@ -34,6 +34,7 @@ import {
   type Settings,
   type Shortcut,
   type ShortcutAction,
+  type SyncRemoteTab,
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
@@ -2259,7 +2260,7 @@ export class Menus {
         {
           label: nodes.length > 1 ? `Delete ${nodes.length} Items` : 'Delete',
           enabled: editable,
-          click: () => void bookmarks.removeMany(ids)
+          click: () => this.browser.deleteBookmarks(ids, win)
         }
       )
     }
@@ -2347,7 +2348,7 @@ export class Menus {
         .getChildren(folderId)
         .filter((n) => n.type === 'folder' && !excluded.has(n.id))
       return [
-        { label: 'Move Here', click: () => void bookmarks.move(ids, folderId) },
+        { label: 'Move Here', click: () => void this.browser.bookmarkUndo.move(ids, folderId) },
         ...(subfolders.length ? [{ type: 'separator' as const }] : []),
         ...subfolders.map((f) => ({ label: f.title, submenu: build(f.id) }))
       ]
@@ -2601,6 +2602,67 @@ export class Menus {
       win,
       'history'
     )
+  }
+
+  /**
+   * The menu of a device's heading in the History page's "Tabs from other devices" (ID-28; the
+   * lead's #326 ruling: a device's actions are its heading's context menu on desktop – a
+   * right-click or the menu key on the line, as Firefox's Synced Tabs keep theirs – and the
+   * phone's sheet). Two items, Chrome's synced-device card's pair under §10.1's names: Open All
+   * in Tabs (Firefox's word for the action) opens every tab the device lists here, and Hide
+   * Device takes the group off the page for the session (the core
+   * holds the set, `PageService.hideDevice`; the page's "Show hidden devices" row brings them
+   * back). A device the engine no longer lists – its list moved since the page drew it – has no
+   * tabs to open; its Hide Device still stands, since its heading does.
+   */
+  showHistoryDeviceMenu(deviceId: string, win: ZenWindow, anchor?: MenuAnchor): void {
+    const device = this.browser.sync.tabsFromDevices().find((d) => d.deviceId === deviceId)
+    const tabs = device?.tabs ?? []
+    this.popup(
+      [
+        {
+          label: 'Open All in Tabs',
+          enabled: tabs.length > 0,
+          click: () => this.openRemoteTabs(tabs, win)
+        },
+        { label: 'Hide Device', click: () => this.browser.pages.hideDevice(deviceId, true) }
+      ],
+      win,
+      'history',
+      anchor
+    )
+  }
+
+  /**
+   * Open All in Tabs: each tab the device lists opens in this window as a new tab, the first in
+   * front and the rest behind it in the group's order (newest activity first). A tab the browser
+   * already holds under the tab's own id – in this window or another; the Open tabs scope
+   * carries the records too (ID-10), and held anywhere is held, the rule the page's row follows
+   * (#314) – is not opened a second time. The first held tab comes to the front in the window
+   * that shows it, and that window comes forward when it is another (the shape of a reopened
+   * tab's return to its own window, `Session.showRestored`); the other held tabs stay where they
+   * are, and the tabs that do open all open behind – the first of them takes the front only when
+   * no held tab did. A held tab no window can show now (a space of a window that is gone) is
+   * left as it is too: the user has it.
+   */
+  private openRemoteTabs(remote: readonly SyncRemoteTab[], win: ZenWindow): void {
+    const { tabs } = this.browser
+    let front = true
+    for (const tab of remote) {
+      const held = tabs.tab(tab.tabId)
+      if (!held) continue
+      const home = tabs.windowShowing(held, win)
+      if (!home) continue
+      tabs.activateTab(held.id, home, { userSwitch: true })
+      if (home !== win) home.host.focus()
+      front = false
+      break
+    }
+    for (const tab of remote) {
+      if (tabs.tab(tab.tabId)) continue
+      tabs.createTab({ url: tab.url, active: front }, win)
+      front = false
+    }
   }
 
   /** Menu of a day heading on the history page. */

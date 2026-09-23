@@ -39,9 +39,29 @@ export const EXTRACT_TIMEOUT_MS = 8000
 /**
  * How long a start waits for a host that has listed no voices yet before failing `no-voice`: an
  * engine lists its voices a moment after it comes up (Chromium over speech-dispatcher lists
- * thousands), and the first start of a session is often that moment.
+ * thousands), and the first start of a session is often that moment. The wait holds through a
+ * `voicesChanged` whose list is still empty: Android's engine lists its voices before their data
+ * is on a fresh device (its first bind downloads the locale's voice pack, seconds), and the host
+ * says `voicesChanged` again once they are installed.
+ *
+ * Eight seconds, to cover a cold bind on a slow phone: Android's `TextToSpeech` binds its engine
+ * on the first use, so the first Listen of a boot starts the engine's process and waits for it to
+ * list – 4.1 s after the ask on the nightly's emulator (`speech engine ready … 421 voices`), past
+ * the 4 s this was, and the session failed `no-voice` with 421 voices a tenth of a second away.
+ * The player shows its busy state for the wait, as for any start; a bind later still restarts
+ * the session on its own (`LATE_VOICES_RETRY_MS`).
  */
-export const VOICES_GRACE_MS = 4000
+export const VOICES_GRACE_MS = 8000
+
+/**
+ * After a `no-voice`, how long a `voicesChanged` – the engine binding after the grace ran out –
+ * restarts the failed session on its own, from where it stood, while it is still the current one
+ * (not stopped, not replaced by another start, its tab not gone). The same path Play takes after
+ * `no-voice` (`retryVoice`): the player's error line gives way to busy, then playing. Once per
+ * failure the user saw: a `no-voice` at the end of the automatic retry stays until Play, so an
+ * engine that keeps announcing itself with nothing installed never keeps the player cycling.
+ */
+export const LATE_VOICES_RETRY_MS = 30_000
 
 /** How long a `readAloud.voices` query that found no voices waits for the engine's list before re-asking. */
 export const VOICES_QUERY_GRACE_MS = 1500
@@ -81,6 +101,8 @@ interface Session {
   cssKey: Promise<string | null> | null
   /** The player in the media session, from the first sentence spoken until `stop` or the tab goes. */
   source: MediaSessionSourceHandle | null
+  /** Armed by a `no-voice`: while it runs, a `voicesChanged` restarts the session on its own (`LATE_VOICES_RETRY_MS`). */
+  lateVoicesRetry: ReturnType<typeof setTimeout> | null
 }
 
 interface PendingExtraction {
@@ -118,9 +140,8 @@ export class ReadAloudService {
     this.host?.onEvent((utteranceId, event) => this.onHostEvent(utteranceId, event))
     this.host?.onVoicesChanged(() => {
       this.voiceList = null
-      const waiting = this.voicesWaiters
-      this.voicesWaiters = []
-      for (const wake of waiting) wake()
+      this.wakeVoicesWaiters()
+      this.retryOnLateVoices()
     })
   }
 
@@ -205,18 +226,23 @@ export class ReadAloudService {
     session.state.lang = text.lang
     session.state.sentenceCount = text.sentences.length
 
-    let voices = await this.voices()
-    if (this.session !== session) return
-    if (voices.length === 0) {
-      // The host may still be listing: give it a moment, then ask it to list again.
-      await this.voicesChangedWithin(VOICES_GRACE_MS)
-      if (this.session !== session) return
-      voices = await this.voices(true)
-      if (this.session !== session) return
-    }
+    if (!(await this.chooseVoice(session))) return
+    this.speak(session, this.startIndex(text, from))
+  }
+
+  /**
+   * The voice the session's text speaks with: the host's voices, waited for while it lists none
+   * (`VOICES_GRACE_MS`), resolved for the text's language. False when the session is over by
+   * then (another start, a stop) or no voice came: the session has failed `no-voice`, and – when
+   * the user asked (a start, Play), not the automatic retry itself – a `voicesChanged` inside
+   * `LATE_VOICES_RETRY_MS` will try once more on its own.
+   */
+  private async chooseVoice(session: Session, armLateRetry = true): Promise<boolean> {
+    const voices = await this.voicesWithin(VOICES_GRACE_MS)
+    if (this.session !== session) return false
     const resolved = resolveReadAloudVoice(
       voices,
-      text.lang,
+      session.text.lang,
       this.settings().voiceByLanguage,
       this.uiLanguage()
     )
@@ -224,9 +250,10 @@ export class ReadAloudService {
     session.state.voiceId = resolved.voiceId
     if (resolved.voiceId === null) {
       this.fail(session, 'no-voice')
-      return
+      if (armLateRetry) this.armLateVoicesRetry(session)
+      return false
     }
-    this.speak(session, this.startIndex(text, from))
+    return true
   }
 
   /** Pause a playing session, resume a paused one, restart an ended (or failed) one. */
@@ -272,12 +299,54 @@ export class ReadAloudService {
         this.speak(session, 0)
         return
       case 'error':
-        if (session.text.sentences.length > 0 && session.voiceId !== null)
-          this.speak(session, Math.max(0, session.state.sentenceIndex))
+        if (session.text.sentences.length === 0) return
+        if (session.voiceId === null) void this.retryVoice(session)
+        else this.speak(session, Math.max(0, session.state.sentenceIndex))
         return
       default:
         return
     }
+  }
+
+  /**
+   * Play after `no-voice`: the engine may have its voices by now (a fresh device's voice pack
+   * landed, a voice was installed), so the session chooses again – loading meanwhile, as a start
+   * is – and speaks from where it stood; still none, and the state says `no-voice` again. The
+   * same path runs on its own for a `voicesChanged` inside the failure's window (`auto`), once.
+   */
+  private async retryVoice(session: Session, auto = false): Promise<void> {
+    this.disarmLateVoicesRetry(session)
+    session.state.status = 'loading'
+    delete session.state.error
+    this.changed()
+    if (await this.chooseVoice(session, !auto))
+      this.speak(session, Math.max(0, session.state.sentenceIndex))
+  }
+
+  /**
+   * The engine listed its voices after a start (or Play) gave up on them: a cold bind on a slow
+   * phone lands past the grace. The session that failed `no-voice`, still the current one and
+   * inside its window, chooses again and speaks from where it stood, so the user need not press
+   * Play for a voice that is there now.
+   */
+  private retryOnLateVoices(): void {
+    const session = this.session
+    if (!session || session.lateVoicesRetry === null) return
+    if (session.state.status !== 'error' || session.state.error !== 'no-voice') return
+    void this.retryVoice(session, true)
+  }
+
+  private armLateVoicesRetry(session: Session): void {
+    this.disarmLateVoicesRetry(session)
+    session.lateVoicesRetry = setTimeout(() => {
+      session.lateVoicesRetry = null
+    }, LATE_VOICES_RETRY_MS)
+  }
+
+  private disarmLateVoicesRetry(session: Session): void {
+    if (session.lateVoicesRetry === null) return
+    clearTimeout(session.lateVoicesRetry)
+    session.lateVoicesRetry = null
   }
 
   /** End the session: speech stops, the highlight clears, the OS controls let go, the state is idle. */
@@ -287,6 +356,7 @@ export class ReadAloudService {
     this.session = null
     session.utteranceId = null
     session.prepared = null
+    this.disarmLateVoicesRetry(session)
     this.host?.stop()
     this.clearHighlight(session)
     this.releaseSource(session)
@@ -379,11 +449,7 @@ export class ReadAloudService {
    * and a host that can list again (`refreshVoices`) is asked to.
    */
   async voicesResult(): Promise<ReadAloudVoicesResult> {
-    let voices = await this.voices()
-    if (voices.length === 0 && this.host) {
-      await this.voicesChangedWithin(VOICES_QUERY_GRACE_MS)
-      voices = await this.voices(true)
-    }
+    const voices = await this.voicesWithin(VOICES_QUERY_GRACE_MS)
     const extra = [this.uiLanguage(), this.session?.text.lang ?? '']
     return {
       voices,
@@ -457,6 +523,7 @@ export class ReadAloudService {
       const session = this.session
       this.session = null
       session.utteranceId = null
+      this.disarmLateVoicesRetry(session)
       this.host?.stop()
       this.releaseSource(session)
       this.changed()
@@ -477,6 +544,7 @@ export class ReadAloudService {
     state.status = 'playing'
     delete state.error
     session.resumeFromStart = false
+    this.disarmLateVoicesRetry(session)
     const utteranceId =
       session.prepared?.index === index ? session.prepared.utteranceId : this.nextUtteranceId()
     session.prepared = null
@@ -761,19 +829,40 @@ export class ReadAloudService {
     return voices
   }
 
-  /** Resolves when the host says its voices changed, or after `ms`, whichever comes first. */
-  private voicesChangedWithin(ms: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-      let done = false
-      const finish = (): void => {
-        if (done) return
-        done = true
-        clearTimeout(timer)
-        resolve()
-      }
-      const timer = setTimeout(finish, ms)
-      this.voicesWaiters.push(finish)
-    })
+  /**
+   * The host's voices, waited for up to `ms` while it lists none: every `voicesChanged` inside
+   * the window re-asks (`voices(true)`), an answer that is still empty waits on – an engine says
+   * its voices changed when it has bound, before their data is on the device – and the window's
+   * end asks one last time. The answer is empty only when nothing came by then.
+   */
+  private async voicesWithin(ms: number): Promise<ReadAloudVoice[]> {
+    let voices = await this.voices()
+    if (voices.length > 0 || !this.host) return voices
+    let expired = false
+    const deadline = setTimeout(() => {
+      expired = true
+      this.wakeVoicesWaiters()
+    }, ms)
+    try {
+      do {
+        await this.voicesChanged()
+        voices = await this.voices(true)
+      } while (voices.length === 0 && !expired)
+    } finally {
+      clearTimeout(deadline)
+    }
+    return voices
+  }
+
+  /** Resolves when the host says its voices changed (or a `voicesWithin` window ends). */
+  private voicesChanged(): Promise<void> {
+    return new Promise<void>((resolve) => this.voicesWaiters.push(resolve))
+  }
+
+  private wakeVoicesWaiters(): void {
+    const waiting = this.voicesWaiters
+    this.voicesWaiters = []
+    for (const wake of waiting) wake()
   }
 
   /** The page's language as the translate engine detected it ('' when it has not). */
@@ -969,7 +1058,8 @@ export class ReadAloudService {
       prepared: null,
       resumeFromStart: false,
       cssKey: null,
-      source: null
+      source: null,
+      lateVoicesRetry: null
     }
   }
 

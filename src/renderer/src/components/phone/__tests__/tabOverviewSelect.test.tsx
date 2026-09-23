@@ -138,7 +138,10 @@ function stateOf(
     boosts: [],
     extensions: [],
     bookmarks: [],
-    recentlyClosed: []
+    recentlyClosed: [],
+    closingTabIds: [],
+    // Sync off: the tab search's reach has no other devices to look through (TAB-21).
+    sync: { enabled: false, scope: { openTabs: false } }
   } as unknown as UIState
 }
 
@@ -456,7 +459,7 @@ describe('entering the mode', () => {
   it("from the header menu's first row: the cards become checkboxes, none checked; the header row is replaced by ×, 'Select tabs' and Select all; the strip is up with every action off (§9.6, §9.30)", async () => {
     show(five())
     // Before: the overview's own header row, cards as buttons, no strip.
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
     expect(checkboxes()).toEqual([])
     expect(byTestId('overview-actions')).toBeNull()
     await enter()
@@ -550,7 +553,7 @@ describe('entering the mode', () => {
     expect(
       [...document.querySelectorAll('[data-cell]')].map((c) => c.getAttribute('data-cell'))
     ).toEqual(['p', 'a', 'b', 'c', 'blank', 'new-tab'])
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
     expect(byTestId('overview-count')?.textContent).toBe('5 tabs')
     expect(commands()).toEqual([])
   })
@@ -588,7 +591,7 @@ describe('entering the mode', () => {
       dispatchBackEvent('commit')
     })
     expect(checkboxes()).toEqual([])
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
     expect(stageStore.get().overview.phase).toBe('open')
     expect(topBackSurface()?.name).not.toBe('overview-selection')
   })
@@ -637,19 +640,18 @@ describe('the action strip', () => {
     ])
   })
 
-  it('Close departs every picked card at once, closes them one by one, ends the mode, and one toast undoes the lot', async () => {
+  it('Close departs every picked card at once, closes them in turn, ends the mode, and one toast undoes the lot', async () => {
     show(five())
     await enter()
     tapCard('a')
     tapCard('c')
     act(() => action('close').click())
-    // Immediate: the mode is off, the two cards are on their way, the closes are out.
+    // Immediate: the mode is off, the two cards are on their way, the close is out – one ask
+    // for the two, the core closing them one after the other so a page that objects asks
+    // "Leave site?" on its own tab (`tab.closeMany`, PUI-28).
     expect(checkboxes()).toEqual([])
     expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'c'])
-    expect(commands()).toEqual([
-      ['tab.close', { tabId: 'a' }],
-      ['tab.close', { tabId: 'c' }]
-    ])
+    expect(commands()).toEqual([['tab.closeMany', { tabIds: ['a', 'c'] }]])
     expect(toasts()).toEqual([])
     // The core files them; ONE toast counts them and Undo restores newest first.
     const state = five()
@@ -818,6 +820,6 @@ describe('the grid under the mode', () => {
     act(() => byTestId('overview-pane-private')!.click())
     await land()
     expect(countTitle()).toBeNull()
-    expect(headerButtons()).toEqual(['Spaces', 'More'])
+    expect(headerButtons()).toEqual(['Search tabs', 'Spaces', 'More'])
   })
 })

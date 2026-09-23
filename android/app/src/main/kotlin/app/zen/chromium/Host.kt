@@ -30,6 +30,7 @@ import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -40,6 +41,7 @@ import androidx.webkit.WebViewRenderProcess
 import androidx.webkit.WebViewRenderProcessClient
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.ext.ExtensionPromptFallback
 import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.privacy.Privacy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -208,8 +210,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * nothing was held. An instrumentation driver calls it once its measured scenes are over.
      */
     fun releaseBackgroundWork() = chrome.hostEvent(BackgroundWorkHold.RELEASE_EVENT, null)
+    /**
+     * Test hook, debug builds only: the document tree behind a sync folder string, in place of
+     * the granted SAF tree ([syncOp]). A driver cannot be granted a document tree without a
+     * finger in the system picker (the shell may not issue the grant, and neither may root), so
+     * the tab-search / Recent demo hands the engine a plain directory under the app's files and
+     * seeds another device's documents into it. Null in every normal run; a release build never
+     * reads it. An instrumentation driver sets it on the activity's host.
+     */
+    @Volatile var syncTreeOverride: ((String) -> SyncTree)? = null
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
+    /** The store's install and permission prompt when no live window can show the chrome's sheet (the native chassis). */
+    val extPrompt = ExtensionPromptFallback(this)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
     val shortcuts = Shortcuts(activity, io)
     /** Voice search: the device's speech recogniser behind the chrome's mic buttons (OMN-19). */
@@ -264,6 +277,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     /** Settings → Passwords → autofill provider, applied to every page WebView (`autofill.setProvider`). */
     override var autofillProvider = SystemAutofill.PROVIDER_SYSTEM
+        private set
+    /** The pages' dialogs and their "Leave site?" are Zenium's own sheet (PUI-27, PUI-28); a custom tab keeps the WebView's. */
+    override val pageDialogs: Boolean get() = true
+    /** The chrome's `--v2-accent` / `--v2-on-accent` (ARGB) for a native primary control, once it has sent them. */
+    override var themeAccent = ContextCompat.getColor(activity, R.color.v2_accent_light)
+        private set
+    override var themeOnAccent = ContextCompat.getColor(activity, R.color.v2_on_accent_light)
         private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
@@ -634,6 +654,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.stop" -> { tab?.stopLoading(); reply(null) }
+            // --- the page's beforeunload (PUI-28; `TabWebView.confirmUnload`) ---
+            // Whether the page may be unloaded (the core's `TabView.confirmUnload`, before a tab
+            // close or the app's exit): true once its `beforeunload` handlers let it go or the user
+            // chose to leave, false when they chose to stay. A view already gone may go.
+            "view.confirmUnload" -> if (tab == null) reply(true) else tab.confirmUnload { leave -> reply(leave) }
             "view.setMuted" -> { tab?.setMuted(args.bool("muted")); reply(null) }
             "view.setZoom" -> { tab?.setZoom(args.num("factor", 1.0)); reply(null) }
             "view.setDesktopMode" -> { tab?.setDesktopMode(args.bool("on")); reply(null) }
@@ -682,6 +707,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot(args.bool("fullPage")) { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
             "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), args.optInt("quality", -1), reply)
+            // The chrome's capture overlay maps its drag rectangle with this (`shared/capture.ts`).
+            "view.viewport" -> if (tab == null) reply(null) else tab.viewport(reply)
             "view.certificate" -> reply(tab?.certificateInfo())
 
             // --- site information (cookies and storage of a site, per container) -------------------
@@ -707,7 +734,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "chrome.haptic" -> { haptic(args.str("kind")); reply(null) }
-            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim")); reply(null) }
+            "chrome.setTheme" -> { applyTheme(args.bool("dark"), args.str("scheme", "system"), args.str("background"), args.str("scrim"), args.str("accent"), args.str("onAccent")); reply(null) }
             "chrome.setPullToRefresh" -> {
                 pullToRefresh = args.bool("enabled", true)
                 for (view in tabs.all()) view.applyPullToRefreshMode()
@@ -786,6 +813,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.exists" -> downloads.exists(args.str("savePath"), reply)
             "download.deleteFile" -> downloads.deleteFile(args.str("savePath"), reply)
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
+            // A web capture the core saves (`capture.save`): the bytes into the public Downloads
+            // collection, the path back for the downloads list – Take Screenshot's path.
+            "download.saveFile" -> saveToDownloads(args.str("name"), args.str("mimeType", "image/png"), runCatching { android.util.Base64.decode(args.str("data"), android.util.Base64.DEFAULT) }.getOrNull(), reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.openWith" -> { downloads.openWith(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.share" -> { downloads.share(args.str("savePath"), args.str("mimeType"), args.str("name")); reply(null) }
@@ -899,7 +929,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "extStore.prune" -> extStore.prune(args.str("id"), args.str("keep"), reply)
             "extStore.sweep" -> extStore.sweep(reply)
             "extStore.pick" -> extStore.pick(reply)
-            "extStore.takeSideloads" -> reply(extStore.takeSideloads())
+            "extStore.takeSideloads" -> extStore.takeSideloads(reply)
+            "extStore.prompt" -> extPrompt.show(args, reply)
             // --- end of the extension store block -------------------------------------------------------
 
             // --- page translation models ----------------------------------------------------------
@@ -922,9 +953,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     private fun syncOp(args: JSONObject, reply: (Any?) -> Unit, op: (SyncFolder) -> Any?) {
         val folder = args.str("folder")
+        val override = if (BuildConfig.DEBUG) syncTreeOverride else null
         io.execute {
             val result = try {
-                op(SyncFolder(SafTree(activity, Uri.parse(folder))))
+                op(SyncFolder(override?.invoke(folder) ?: SafTree(activity, Uri.parse(folder))))
             } catch (e: SyncFolder.FolderLostException) {
                 Rejection("${SyncFolder.LOST_PREFIX} ${e.message}")
             } catch (e: Exception) {
@@ -1292,9 +1324,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         refreshGuard()
     }
 
-    private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String) {
+    private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String, accent: String, onAccent: String) {
         themeDark = dark
         if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
+        // The primary control's colours for what is drawn natively (the page dialog sheet's OK):
+        // the chrome's own, or the draft's defaults for the scheme when it sent none.
+        themeAccent = if (accent.isNotEmpty()) parseColor(accent) else ContextCompat.getColor(activity, if (dark) R.color.v2_accent_dark else R.color.v2_accent_light)
+        themeOnAccent = if (onAccent.isNotEmpty()) parseColor(onAccent) else ContextCompat.getColor(activity, if (dark) R.color.v2_on_accent_dark else R.color.v2_on_accent_light)
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
         root.setBackgroundColor(color)
         activity.window.decorView.setBackgroundColor(color)

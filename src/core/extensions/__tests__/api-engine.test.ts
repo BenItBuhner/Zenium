@@ -126,6 +126,13 @@ describe('createEmulatedEngine', () => {
     expect((h.chrome.extension.getURL as Fn)('a.png')).toBe(`${ORIGIN}/a.png`)
     expect((h.chrome.i18n.getMessage as Fn)('hello', 'Ada')).toBe('Hallo Ada')
     expect((h.chrome.i18n.getUILanguage as Fn)()).toBe('de')
+    // Chrome's predefined messages: the id, the locale as a `_locales` directory spells it, the
+    // UI language's direction.
+    expect((h.chrome.i18n.getMessage as Fn)('@@extension_id')).toBe(EXT)
+    expect((h.chrome.i18n.getMessage as Fn)('@@ui_locale')).toBe('de')
+    expect((h.chrome.i18n.getMessage as Fn)('@@bidi_dir')).toBe('ltr')
+    expect((h.chrome.i18n.getMessage as Fn)('@@bidi_start_edge')).toBe('left')
+    expect((h.chrome.i18n.getMessage as Fn)('@@no_such')).toBe('')
     expect(h.engine.diagnostics).toMatchObject({ installed: true, browserAliased: true })
   })
 
@@ -150,6 +157,37 @@ describe('createEmulatedEngine', () => {
     expect(Object.keys(mv2.chrome)).toContain('browserAction')
     expect(Object.keys(mv2.chrome)).toContain('pageAction')
     expect(Object.keys(mv2.chrome)).not.toContain('action')
+  })
+
+  it('defines chrome.system with a system.* permission only, cpu and memory each with its own', async () => {
+    // Coinbase Wallet's worker: `"function" == typeof chrome.system?.cpu?.getInfo` before it
+    // reads the CPU load; Chrome has no `chrome.system` for its permissions (none of system.*),
+    // and a `cpu` that was always there passed the test and rejected on every start.
+    expect(
+      harness({ permissions: ['storage', 'alarms', 'scripting'] }).chrome.system
+    ).toBeUndefined()
+    const display = harness({ permissions: ['system.display'] })
+    expect(display.chrome.system).toBeTypeOf('object')
+    expect(display.chrome.system.cpu).toBeUndefined()
+    expect(display.chrome.system.memory).toBeUndefined()
+    const cpu = harness({ permissions: ['system.cpu'] })
+    expect(typeof (cpu.chrome.system.cpu as Ns).getInfo).toBe('function')
+    expect(cpu.chrome.system.memory).toBeUndefined()
+    // The host answers `getInfo` (the phone's processors); the engine routes the call.
+    const promise = ((cpu.chrome.system.cpu as Ns).getInfo as Fn)() as Promise<unknown>
+    const routed = cpu.last()
+    expect(routed).toMatchObject({ t: 'call', ns: 'system.cpu', method: 'getInfo' })
+    cpu.reply(routed.id, {
+      numOfProcessors: 8,
+      archName: 'arm64',
+      modelName: '',
+      features: [],
+      processors: []
+    })
+    await expect(promise).resolves.toMatchObject({ numOfProcessors: 8 })
+    const memory = harness({ permissions: ['system.memory'] })
+    expect(memory.chrome.system.cpu).toBeUndefined()
+    expect(typeof (memory.chrome.system.memory as Ns).getInfo).toBe('function')
   })
 
   it('supports promises and callbacks with runtime.lastError on routed methods', async () => {

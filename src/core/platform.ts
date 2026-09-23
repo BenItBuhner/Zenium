@@ -51,6 +51,7 @@ import type {
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { PageViewport } from '../shared/capture'
 import type { DisplayMode } from '../shared/displayMode'
 import type { PageFontSettings } from '../shared/fonts'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
@@ -245,8 +246,12 @@ export interface PageMessage {
   reader?: unknown
   /** `pdf`: the viewer's state (page count and page, zoom, find results, the outline). */
   pdf?: PdfViewerReport
-  /** `pdf`: the document's token, as the core wrote it into the viewer's shell (`PdfDocumentInfo.token`). */
-  token?: string
+  /**
+   * `pdf`: the document's token, as the core wrote it into the viewer's shell
+   * (`PdfDocumentInfo.token`). Not `token`: on Android that field is the page bridge's session
+   * token, which Kotlin checks and strips before the message reaches the core.
+   */
+  pdfToken?: string
   /** `share`: what the page asked to share (validated by the core). */
   share?: unknown
   /** `geolocation`: the shim's request (validated by the core). */
@@ -520,8 +525,16 @@ export interface AgentCapture {
   /** Base64 image data (no `data:` prefix). */
   data: string
   mimeType: string
+  /** The picture's pixels (device pixels; the core reads the bytes' own header where it can). */
   width: number
   height: number
+  /**
+   * A full page or region the host could not paint as asked, answered with the visible area
+   * (cropped to the region where one was given): the debugger is another's (DevTools open, an
+   * extension's `chrome.debugger` session, `pageDebugger.ts`), the paint failed, or the page's
+   * geometry could not be read. Absent when the picture is what was asked for.
+   */
+  fallback?: 'viewport'
 }
 
 /** Callbacks a host fires for one tab view. */
@@ -806,6 +819,13 @@ export interface TabView {
    * to `snapshot()` (viewport only).
    */
   capture?(options: AgentCaptureOptions): Promise<AgentCapture | null>
+  /**
+   * The page's geometry for the chrome's capture overlay (`shared/capture.ts`, `page.viewport`):
+   * the scroll offset, the viewport and document sizes in the page's CSS pixels, the page zoom
+   * and the device pixels per CSS pixel. Null when the page cannot be read (nothing loaded, a
+   * renderer gone). Hosts without it leave the chrome to `Tab.zoom` and no scroll offset.
+   */
+  viewport?(): Promise<PageViewport | null>
 
   // Site information (optional).
   /** Certificate of the main frame's connection; null on http pages or when unavailable. */
@@ -1411,6 +1431,14 @@ export interface DownloadHost {
    * one leave it out.
    */
   currentDirectory?(): string
+  /**
+   * Write a file the browser made itself – the capture UI's Save, holding the picture as bytes
+   * – into the folder new downloads go to (the setting, else the platform's), under `name` or
+   * the first free variant of it, never over a file there; resolves with where it landed (a
+   * path, or Android's `content:` address), null when it could not be written. The core lists
+   * the file as a completed download. Hosts without it have no capture save.
+   */
+  saveFile?(file: { name: string; mimeType: string; data: string }): Promise<string | null>
   /**
    * The app is quitting and the host's engine is about to tear the in-flight transfer down
    * (Chromium cancels it and deletes its file): keep the partial file and return where it now

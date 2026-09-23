@@ -35,12 +35,25 @@ import {
   SYSTEM_STORAGE_NO_PERMISSION_ERROR,
   SYSTEM_STORAGE_PERMISSION
 } from '@core/extensions/api/systemStorage'
+import {
+  cpuInfo,
+  memoryInfo,
+  SYSTEM_CPU_NO_PERMISSION_ERROR,
+  SYSTEM_CPU_PERMISSION,
+  SYSTEM_MEMORY_NO_PERMISSION_ERROR,
+  SYSTEM_MEMORY_PERMISSION,
+  type RawCpuReading,
+  type RawMemoryReading
+} from '@core/extensions/api/systemInfo'
+import { TAB_CAPTURE_PERMISSION, type CaptureInfo } from '@core/extensions/api/tabCapture'
 import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '@core/extensions/api/tabs'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import {
   chromeExtensionOrigin,
   presentExtensionUrl,
+  sameExtensionOrigin,
+  sameExtensionUrl,
   toServedUrl
 } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
@@ -143,6 +156,10 @@ export interface ApiHost {
   detectTextLanguage(text: string): Promise<DetectedLanguage>
   /** `system.display.getInfo`: the phone's screen as the chrome page sees it (`extensionSystemDisplay.ts`). */
   screen(): PhoneScreen
+  /** `system.cpu.getInfo`: the phone's processors as Kotlin reads them (`Runtime`, `/proc` where readable). */
+  cpu(): Promise<RawCpuReading>
+  /** `system.memory.getInfo`: the phone's memory as `ActivityManager` reports it, in bytes. */
+  memory(): Promise<RawMemoryReading>
   /** Hear of the screen turning (its orientation changing); `system.display.onDisplayChanged` follows. */
   onScreenChange(listener: () => void): void
   exec(request: ExecRequest): Promise<unknown>
@@ -425,6 +442,42 @@ export class TabIds {
       alwaysOnTop: false,
       tabs: this.visibleTabs(ext).map((t) => this.chromeTab(t))
     }
+  }
+
+  /**
+   * `tabs.move`: `tab` to Chrome's `index` in its window (`-1`: the end), in one step – the tab
+   * leaves its slot and takes `index` in the shorter list, as Chrome's tab strip moves. Chrome
+   * constrains the position to the tab's block: a pinned tab stays among the pinned ones at the
+   * front, a regular one behind them. The window's order is the tab's space's here (what
+   * `chromeTab` reports as `index`); an Essential (no space, `index` 0 to extensions) is
+   * reordered among the Essentials. Answers the positions `tabs.onMoved` reports.
+   */
+  move(tab: Tab, index: number): { fromIndex: number; toIndex: number } {
+    const tabs = this.browser.tabs
+    const win = this.windowOf()
+    if (tab.essential) {
+      const list = tabs.model.essentialTabIds
+      const fromIndex = Math.max(0, list.indexOf(tab.id))
+      tabs.moveTab(tab.id, { section: 'essential', index: index < 0 ? list.length : index }, win)
+      return { fromIndex, toIndex: Math.max(0, tabs.model.essentialTabIds.indexOf(tab.id)) }
+    }
+    const space = tabs.model.spaces.find((s) => s.id === tab.spaceId)
+    if (!space) return { fromIndex: 0, toIndex: 0 }
+    const fromIndex = Math.max(0, space.tabIds.indexOf(tab.id))
+    // The model takes a pinned tab's index as its place in the list and a regular one's as its
+    // place behind the pinned block, each clamped to the block (Chrome's constraint).
+    const firstRegular = space.tabIds.findIndex((id) => !tabs.model.tabs[id]?.pinned)
+    const boundary = firstRegular === -1 ? space.tabIds.length : firstRegular
+    const wanted = index < 0 ? space.tabIds.length : index
+    tabs.moveTab(
+      tab.id,
+      {
+        section: tab.pinned ? 'pinned' : 'regular',
+        index: tab.pinned ? wanted : Math.max(0, wanted - boundary)
+      },
+      win
+    )
+    return { fromIndex, toIndex: Math.max(0, space.tabIds.indexOf(tab.id)) }
   }
 }
 
@@ -796,6 +849,18 @@ export class ExtensionApi {
         if (!this.holdsPermission(ext, SYSTEM_DISPLAY_PERMISSION))
           throw new Error(SYSTEM_DISPLAY_NO_PERMISSION_ERROR)
         return answerSystemDisplay(method, this.host.screen())
+      case 'system.cpu':
+        // The phone's processors in Chrome's shape (`systemInfo.ts`) over what Kotlin reads,
+        // for an extension that declared the permission (Speechify's background at start).
+        if (!this.holdsPermission(ext, SYSTEM_CPU_PERMISSION))
+          throw new Error(SYSTEM_CPU_NO_PERMISSION_ERROR)
+        if (method === 'getInfo') return cpuInfo(await this.host.cpu())
+        break
+      case 'system.memory':
+        if (!this.holdsPermission(ext, SYSTEM_MEMORY_PERMISSION))
+          throw new Error(SYSTEM_MEMORY_NO_PERMISSION_ERROR)
+        if (method === 'getInfo') return memoryInfo(await this.host.memory())
+        break
       case 'proxy':
         // `proxy.settings`, a ChromeSetting over the WebView's proxy override (`extensionProxy.ts`).
         return this.proxy.call(ext, method, args)
@@ -819,6 +884,17 @@ export class ExtensionApi {
           this.host.browser.tabs.createTab({ url, active: false }, this.host.window())
           return this.tabs.peekNext()
         }
+        break
+      case 'tabCapture':
+        // The WebView has no tab capture to source a stream from (no `getDisplayMedia`, no tab
+        // media source for `getUserMedia`: compat round 9's AHA Music), so `capture` and
+        // `getMediaStreamId` stay unimplemented below; `getCapturedTabs` answers as Chrome does
+        // when nothing is being captured, the empty list, for an extension that declared the
+        // permission. Mobile simulator asks it on every action click and reads `.some` off the
+        // answer before it opens its simulator page (round 9, row 8); the rejection left it
+        // with `undefined` and a TypeError in its worker instead of the page.
+        if (method === 'getCapturedTabs' && this.holdsPermission(ext, TAB_CAPTURE_PERMISSION))
+          return [] satisfies CaptureInfo[]
         break
     }
     throw new Error(`chrome.${ns}.${method} ${NOT_IMPLEMENTED}`)
@@ -945,6 +1021,33 @@ export class ExtensionApi {
         tabs.activateTab(first.id, win)
         return ids.chromeWindow(ext)
       }
+      case 'move': {
+        // `tabs.move(tabIds, { index, windowId? })`: the phone's one window is the only one a tab
+        // can move within (Dualless moves the other tabs into the window it just "created", the
+        // same one); each tab of a list takes the next position, as Chrome hands them out.
+        const [first, second] = args
+        const props = asRecord(second)
+        if (props.windowId !== undefined && props.windowId !== null)
+          this.requireWindow(props.windowId)
+        const index = asNumber(props.index)
+        if (index === null)
+          throw new Error("Error at parameter 'moveProperties': Missing required property 'index'.")
+        if (!Number.isInteger(index) || index < -1)
+          throw new Error(
+            "Error at parameter 'moveProperties': Error at property 'index': Value must be at least -1."
+          )
+        const list = Array.isArray(first) ? first : [first]
+        const targets = list.map((value) => ids.tabFor(ext, value))
+        const moved: Array<Record<string, unknown>> = []
+        let at = index
+        for (const target of targets) {
+          const { fromIndex, toIndex } = ids.move(target, at)
+          if (fromIndex !== toIndex) this.tabMoved(target, fromIndex, toIndex)
+          moved.push(ids.chromeTab(tabs.tab(target.id) ?? target))
+          if (at !== -1) at++
+        }
+        return Array.isArray(first) ? moved : moved[0]
+      }
       case 'reload': {
         const target = targetOrActive(args[0])
         if (target) tabs.reload(target.id, Boolean(asRecord(args[1]).bypassCache))
@@ -996,6 +1099,33 @@ export class ExtensionApi {
       }
     }
     throw new Error(`chrome.tabs.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * A window id an extension passed: the phone's one window is `1`, and `WINDOW_ID_CURRENT`
+   * (`-2`) names it too; any other number is a window that does not exist (Chrome's wording),
+   * anything else no id at all.
+   */
+  private requireWindow(windowId: unknown): void {
+    if (windowId === -2 || windowId === 1) return
+    if (asNumber(windowId) === null || !Number.isInteger(windowId))
+      throw new Error('Invalid window id')
+    throw new Error(`No window with id: ${windowId}.`)
+  }
+
+  /**
+   * `tabs.onMoved` to every extension that may see the tab: Chrome raises it once per moved tab,
+   * for the window the tab moved within, and only when the position changed.
+   */
+  private tabMoved(tab: Tab, fromIndex: number, toIndex: number): void {
+    const tabId = this.tabs.chromeIdFor(tab.id)
+    for (const other of this.host.allAttached()) {
+      if (!this.tabs.visibleTo(other, tab)) continue
+      this.host.emit(other.record.id, 'tabs', 'onMoved', [
+        tabId,
+        { windowId: 1, fromIndex, toIndex }
+      ])
+    }
   }
 
   /**
@@ -1078,11 +1208,7 @@ export class ExtensionApi {
     const o = normalizeCaptureOptions(options)
     if (!this.captureQuota.take(ext.record.id, this.host.now()))
       throw new Error(CAPTURE_QUOTA_ERROR)
-    if (windowId !== undefined && windowId !== null && windowId !== -2 && windowId !== 1) {
-      if (asNumber(windowId) === null || !Number.isInteger(windowId))
-        throw new Error('Invalid window id')
-      throw new Error(`No window with id: ${windowId}.`)
-    }
+    if (windowId !== undefined && windowId !== null) this.requireWindow(windowId)
     const tab = this.tabs.activeTabFor(ext)
     if (!tab || tab.discarded) throw new Error('Failed to capture tab: view is invisible')
     const tabUrl = this.tabs.urlOf(tab)
@@ -1183,6 +1309,7 @@ export class ExtensionApi {
       typeof details.code === 'string'
         ? details.code
         : await this.host.readFile(id, String(details.file ?? ''))
+    const fromFile = typeof details.file === 'string'
     const cssId = typeof details.file === 'string' ? details.file : (code ?? '')
     await this.injectFrames(frames, (frameId) =>
       this.host.exec({
@@ -1190,7 +1317,7 @@ export class ExtensionApi {
         tabId: target.id,
         frameId,
         kind: 'css',
-        payload: { id: cssId, code: code ?? '' },
+        payload: { id: cssId, code: code ?? '', file: fromFile },
         code: null,
         files: null,
         funcSource: null,
@@ -1369,14 +1496,16 @@ export class ExtensionApi {
         const tab = resolveTab()
         const frames = this.targetFrames(ext, tab, target)
         const remove = method === 'removeCSS'
-        const sheets: Array<{ id: string; code: string }> = []
+        // A file's text is localized by the frame (`__MSG_@@extension_id__`, the extension's
+        // messages) as Chrome localizes it; an inline `css` string is injected as written.
+        const sheets: Array<{ id: string; code: string; file: boolean }> = []
         if (typeof injection.css === 'string') {
-          sheets.push({ id: injection.css, code: injection.css })
+          sheets.push({ id: injection.css, code: injection.css, file: false })
         } else {
           for (const file of asStringArray(injection.files)) {
             const text = remove ? '' : await this.host.readFile(id, file)
             if (!remove && text === null) throw new Error(`Could not load file: '${file}'.`)
-            sheets.push({ id: file, code: text ?? '' })
+            sheets.push({ id: file, code: text ?? '', file: true })
           }
         }
         await this.injectFrames(frames, async (frameId) => {
@@ -1386,7 +1515,7 @@ export class ExtensionApi {
               tabId: tab.id,
               frameId,
               kind: 'css',
-              payload: { id: sheet.id, code: sheet.code, remove },
+              payload: { id: sheet.id, code: sheet.code, remove, file: sheet.file },
               code: null,
               files: null,
               funcSource: null,
@@ -1477,6 +1606,14 @@ export class ExtensionApi {
         return undefined
       case 'execute':
         return this.executeUserScript(ext, normalizeInjection(args[0]))
+      case 'sendMessage':
+        // The shared shim's `tabs.sendMessage` asks the host to deliver to the tab's user-script
+        // worlds besides the engine's content scripts (`wrapTabsSendMessage`). Here the router
+        // already addresses `tabs.sendMessage` to every document of the extension in the tab,
+        // the user-script worlds among them, so there is nothing more to deliver: nobody
+        // else listened, nobody else answered (OrangeMonkey's worker and popup logged the
+        // refusal on every message to a tab, run 35787391495).
+        return { handled: false, responded: false }
     }
     throw new Error(`chrome.userScripts.${method} ${NOT_IMPLEMENTED}`)
   }
@@ -2046,23 +2183,35 @@ export interface ExtensionContext {
  * only the contexts whose value is among the listed ones (`incognito` a single boolean); an
  * empty filter keeps them all. Tampermonkey asks for `OFFSCREEN_DOCUMENT` contexts to know
  * whether to create its offscreen document: with the filter ignored it never did.
+ *
+ * `documentUrls` and `documentOrigins` match in either spelling of an extension's own URL
+ * (`extensionUrls.ts`): the context carries Chrome's, the filter an extension builds carries
+ * what `runtime.getURL` or `location` gave it, the served one. OneNote Web Clipper asks
+ * `getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [runtime.getURL('offscreen.html')] })`
+ * for its offscreen document; told none while it was up, it created a second and was refused.
  */
 export function filterContexts(
   contexts: ExtensionContext[],
   filter: Record<string, unknown>
 ): ExtensionContext[] {
-  const listed = (name: string, value: unknown): boolean => {
+  const listed = (
+    name: string,
+    value: unknown,
+    same: (wanted: string, value: string) => boolean = (a, b) => a === b
+  ): boolean => {
     const wanted = filter[name]
     if (!Array.isArray(wanted)) return true
-    return wanted.some((entry) => entry === value)
+    return wanted.some((entry) =>
+      typeof entry === 'string' && typeof value === 'string' ? same(entry, value) : entry === value
+    )
   }
   return contexts.filter(
     (context) =>
       listed('contextIds', context.contextId) &&
       listed('contextTypes', context.contextType) &&
       listed('documentIds', context.documentId) &&
-      listed('documentOrigins', context.documentOrigin) &&
-      listed('documentUrls', context.documentUrl) &&
+      listed('documentOrigins', context.documentOrigin, sameExtensionOrigin) &&
+      listed('documentUrls', context.documentUrl, sameExtensionUrl) &&
       listed('frameIds', context.frameId) &&
       listed('tabIds', context.tabId) &&
       listed('windowIds', context.windowId) &&

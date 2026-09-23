@@ -142,6 +142,29 @@ class ExtensionFilesTest {
         }
     }
 
+    // --- serving ---------------------------------------------------------------------------------
+
+    @Test
+    fun servedBodyStreamsTheFileWithTheLengthItIsToldAndNoCopyOfItInTheHeap() {
+        val dir = File(base, "served").apply { mkdirs() }
+        val text = "export const s = \"héllo \uD83D\uDE00\";\n" + "// pad\n".repeat(20_000)
+        val file = File(dir, "chunk.js").apply { writeBytes(text.toByteArray(Charsets.UTF_8)) }
+
+        val plain = ExtensionFiles.servedBody(file)!!
+        assertTrue(plain.stream is java.io.FileInputStream)
+        assertEquals(file.length(), plain.length)
+        assertArrayEquals(text.toByteArray(Charsets.UTF_8), plain.stream.use { it.readBytes() })
+
+        val id = "egjidjbpglichdcondbcbdnbeeppgdph"
+        val wrapped = ExtensionFiles.servedBody(file, ExtensionScripts.moduleChromeOpen(id), ExtensionScripts.moduleChromeClose(id))!!
+        val bytes = wrapped.stream.use { it.readBytes() }
+        assertEquals(bytes.size.toLong(), wrapped.length)
+        assertArrayEquals(ExtensionScripts.moduleChromeWrap(text, id).toByteArray(Charsets.UTF_8), bytes)
+
+        val missing = File(dir, "gone.js")
+        assertEquals(null, ExtensionFiles.servedBody(missing))
+    }
+
     // --- unpacking -------------------------------------------------------------------------------
 
     private fun request(
@@ -297,6 +320,28 @@ class ExtensionFilesTest {
         }
         assertTrue(large.length() >= ExtensionFiles.BRIDGE_TEXT_LIMIT)
         assertEquals("a file at the limit is not quoted into a bridge answer", null, ExtensionFiles.bridgeText(large))
+    }
+
+    // --- served stylesheets ----------------------------------------------------------------------
+
+    @Test
+    fun localizeCssSubstitutesTheMapsNamesCaseInsensitivelyAndLeavesTheRest() {
+        val map = mapOf(
+            "@@extension_id" to ID,
+            "@@bidi_start_edge" to "left",
+            "accentcolor" to "#1b2838"
+        )
+        // Steam Inventory Helper's `<link>`-loaded sheets name their images by the extension's id.
+        val css = ".flag{background:url(chrome-extension://__MSG_@@extension_id__/img/flags/de.svg)}" +
+            ".panel{float:__MSG_@@bidi_start_edge__;color:__MSG_AccentColor__;--x:__MSG_missing__}"
+        assertEquals(
+            ".flag{background:url(chrome-extension://$ID/img/flags/de.svg)}" +
+                ".panel{float:left;color:#1b2838;--x:__MSG_missing__}",
+            ExtensionFiles.localizeCss(css, map)
+        )
+        val plain = "body{color:red}"
+        assertTrue("a sheet without placeholders is the same object", plain === ExtensionFiles.localizeCss(plain, map))
+        assertTrue("no map, no substitution", css === ExtensionFiles.localizeCss(css, emptyMap()))
     }
 
     companion object {

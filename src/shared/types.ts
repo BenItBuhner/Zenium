@@ -46,6 +46,7 @@ import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSetting
 import type { TabAlert } from './captureState'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 import type { ShareFile, ShareFileInfo } from './share'
+import type { PageCaptureRequest, PageCaptureResult, PageViewport } from './capture'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -3210,8 +3211,24 @@ export interface PageDialogResponse {
 export interface WindowPrompt {
   id: string
   kind: 'close-tabs' | 'quit'
-  /** How many tabs close. */
+  /**
+   * How many tabs close, for the warning about them ("You are about to quit with N tabs open");
+   * 0 when that warning is not part of the question – a single tab, or the setting off – and the
+   * downloads alone are asked about.
+   */
   count: number
+  /**
+   * The downloads in progress the answer ends (downloads-35): every one when Zenium quits – the
+   * quit itself, or the last window closing where that quits – the private ones when the last
+   * private window closes. Null when none is running. One prompt carries both questions.
+   */
+  downloads: WindowPromptDownloads | null
+}
+
+/** The downloads a window prompt asks about, and what ends them. */
+export interface WindowPromptDownloads {
+  count: number
+  end: 'quit' | 'private-window'
 }
 
 /** The last run ended without a clean shutdown; the chrome offers to bring its pages back. */
@@ -3339,6 +3356,13 @@ export interface UIState {
   securityPrompts: SecurityPrompt[]
   /** Pending `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, oldest first. */
   pageDialogs: PageDialog[]
+  /**
+   * Tabs the user has told to close whose close is still in flight (`tab.close`,
+   * `tab.closeMany`): their pages' `beforeunload` handlers are being run, one that objects
+   * asking "Leave site?" – on a host that draws that question itself (Android) the chrome hears
+   * of it only here. The phone overview holds a card's exit while its tab is listed.
+   */
+  closingTabIds: string[]
   /** Pages waiting on the screen-capture picker, oldest first (one per tab). */
   screenCaptureRequests: ScreenCaptureRequest[]
   /** Shares waiting on this window's share sheet, oldest first. */
@@ -3659,6 +3683,14 @@ export interface Commands {
    */
   'tab.activate': { args: { tabId: string; keepFocus?: boolean }; result: void }
   'tab.close': { args: { tabId: string; force?: boolean; keepFocus?: boolean }; result: void }
+  /**
+   * Close several tabs the way the user asks for them, one after the other: a page whose
+   * `beforeunload` handler objects asks "Leave site?" in its turn, and a "Cancel" keeps that tab
+   * alone, the run going on (the desktop's Close N Tabs loop; the phone overview's Close, Close
+   * other tabs and Close all). `activate` names the tab to end on once the closes are through,
+   * if it is still open.
+   */
+  'tab.closeMany': { args: { tabIds: string[]; activate?: string }; result: void }
   /**
    * A private tab in this window (`capabilities.privateTabs`): the in-memory private container,
    * no history, no persisted downloads; its session is wiped when the last private tab closes.
@@ -4160,6 +4192,22 @@ export interface Commands {
   'history.foldedDevices': { args: void; result: string[] }
   /** Fold or unfold one device's group; every window hears `history.foldedDevicesChanged`. */
   'history.foldDevice': { args: { deviceId: string; folded: boolean }; result: void }
+  /**
+   * The other devices the History page hides for the session (Hide Device in a device
+   * heading's menu; Chrome's "Hide for now"), by device id – held as the folds are, so every
+   * window's page agrees, and gone at quit. A hidden device's tabs are listed nowhere until the
+   * device is shown again (the "Show hidden devices" row, `history.showHiddenDevices`).
+   */
+  'history.hiddenDevices': { args: void; result: string[] }
+  /** Hide or show one device's group; every window hears `history.hiddenDevicesChanged`. */
+  'history.hideDevice': { args: { deviceId: string; hidden: boolean }; result: void }
+  /** The "Show hidden devices" row: every hidden device is listed again. */
+  'history.showHiddenDevices': { args: void; result: void }
+  /**
+   * The menu of a device's heading on the History page (a right-click or the menu key on its
+   * line; the lead's #326 ruling): Open All in Tabs and Hide Device.
+   */
+  'history.deviceMenu': { args: { deviceId: string } & MenuAnchor; result: void }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
   /**
@@ -4244,8 +4292,28 @@ export interface Commands {
   }
   /** Move nodes (in the given order) so that the first lands at `index` of `parentId`. */
   'bookmark.move': { args: { ids: string[]; parentId: string; index?: number }; result: void }
-  /** Remove bookmarks and folders (folders with all their contents). */
-  'bookmark.remove': { args: { ids: string[] }; result: void }
+  /**
+   * Remove bookmarks and folders (folders with all their contents). Undoable: the window hears
+   * `bookmark.deleted` with the edit's token for its toast (bookmarks-31) – unless `quiet`, for
+   * a caller whose own undo already spoke (the phone panels' deferred deletes: `removeWithUndo`
+   * waits out its toast before the command runs, so the core's word would be a second one).
+   * The delete stays undoable (the manager's Ctrl+Z) either way.
+   */
+  'bookmark.remove': { args: { ids: string[]; quiet?: boolean }; result: void }
+  /**
+   * Take back the newest delete, move or rename (the manager's Ctrl+Z), or the one edit `token`
+   * names (a delete's toast). What came back or moved, under its current ids, with the token of
+   * the edit taken back; null for nothing. Every window hears `bookmark.undone`.
+   */
+  'bookmark.undo': {
+    args: { token?: number }
+    result: {
+      kind: 'remove' | 'move' | 'update'
+      token: number
+      ids: string[]
+      parentId: string | null
+    } | null
+  }
   /**
    * Open a bookmark (records `dateLastUsed`); `background` with `newTab` is a tab behind the
    * current one (a middle or Ctrl click on a manager row, §10.1), as `urlbar.submit` has it.
@@ -4447,6 +4515,40 @@ export interface Commands {
    * page beyond the viewport (Edge's "Capture full page"; the visible area when the host cannot).
    */
   'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
+  // ---- Web capture (`core/capture.ts`, `shared/capture.ts`) ------------------------------------
+  /**
+   * The page's picture for the chrome's capture UI (Edge's Web capture): the visible area, the
+   * whole page or a region in CSS pixels relative to the document, as a data URL with its pixel
+   * size – PNG unless `format` says JPEG. Goes through the host's agent capture; a full page or
+   * region the host could not paint as asked comes back as the visible area with
+   * `fallback: 'viewport'`. Refuses a picture past `CAPTURE_MAX_PIXELS` with
+   * `CaptureTooLargeError` (a named error the UI shows), never with a silent null; null only
+   * for a page that cannot be captured at all (not painted yet, gone) or a region outside the
+   * document.
+   */
+  'page.capture': {
+    args: { tabId: string } & PageCaptureRequest
+    result: PageCaptureResult | null
+  }
+  /**
+   * The page's geometry for the overlay's drag rectangle (`regionFromChrome` in
+   * `shared/capture.ts`): scroll offset, viewport and document sizes, zoom and device pixel
+   * ratio; null when the host cannot read the page.
+   */
+  'page.viewport': { args: { tabId: string }; result: PageViewport | null }
+  /** Put a captured picture (an image data URL) on the clipboard as a PNG; false when the host could not. */
+  'capture.copy': { args: { dataUrl: string }; result: boolean }
+  /**
+   * Save a captured picture to the downloads location (Settings › Downloads, else the platform's
+   * folder) under `fileName` or the screenshot name rule, and list it as a completed download
+   * so the bubble and the Downloads page show it; `tabId` puts it in the tab's container (a
+   * private window's capture stays in the private list). Resolves with where it landed, null
+   * when the host could not write it.
+   */
+  'capture.save': {
+    args: { dataUrl: string; fileName?: string; tabId?: string }
+    result: { path: string } | null
+  }
   /** Print through the system dialog (Ctrl+Shift+P; Ctrl+P too on a host without the preview). */
   'page.print': { args: { tabId: string }; result: void }
   /**
@@ -5162,6 +5264,16 @@ export interface Events {
   'bookmark.star': { tabId: string; nodeId: string; created: boolean }
   /** The bookmark manager should edit a node, or create one (`id: null`) inside `parentId`. */
   'bookmark.edit': { id: string | null; parentId: string; type: BookmarkNodeType }
+  /**
+   * The user deleted bookmarks or folders in this window (bookmarks-31): `count` top-level
+   * nodes of `kind`; `bookmark.undo` with the `token` brings them back (the toast's Undo).
+   */
+  'bookmark.deleted': { token: number; count: number; kind: 'bookmark' | 'folder' | 'mixed' }
+  /**
+   * An edit was taken back (`bookmark.undo`, from any window): the token of the edit and its
+   * kind. A delete's toast still offering that token goes down – its delete is undone already.
+   */
+  'bookmark.undone': { token: number; kind: 'remove' | 'move' | 'update' }
   /** Open the "Bookmark all tabs" dialog for these tabs. */
   'bookmark.allTabs': { tabIds: string[]; defaultTitle: string }
   'space.edit': { spaceId: string }
@@ -5182,6 +5294,8 @@ export interface Events {
   'history.select': { visitId: string }
   /** The History page's folded device groups changed (`history.foldDevice`): the ids now folded. */
   'history.foldedDevicesChanged': string[]
+  /** The History page's hidden devices changed (`history.hideDevice`, `history.showHiddenDevices`): the ids now hidden. */
+  'history.hiddenDevicesChanged': string[]
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –

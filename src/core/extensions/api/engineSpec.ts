@@ -658,6 +658,8 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   omnibox: null,
   tabCapture: 'tabCapture',
   desktopCapture: 'desktopCapture',
+  // The holder: with any one of `SYSTEM_PERMISSIONS` (`namespaceGranted` and `namespaceGate`
+  // read that list, not this entry).
   system: null,
   devtools: null,
   readingList: 'readingList',
@@ -677,12 +679,24 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   tts: 'tts',
   contentSettings: 'contentSettings',
   printerProvider: 'printerProvider',
-  // Under `chrome.system` (the engine makes the holder with `cpu` and `memory` rejecting): the
-  // phone's one screen and its no storage devices, for extensions declaring the permission (LINE
-  // sizes its sign-in window from `system.display.getInfo` before it opens it).
+  // Under `chrome.system` (the shim makes the holder, once one of them is held: `SYSTEM_PERMISSIONS`,
+  // as Chrome defines it): the phone's one screen and its no storage devices, its processors and
+  // its memory, for extensions declaring the permission (LINE sizes its sign-in window from
+  // `system.display.getInfo` before it opens it; Speechify's background reads `system.cpu.getInfo`
+  // at start; Coinbase Wallet's feature-detects `chrome.system?.cpu?.getInfo` and must find none).
   'system.display': 'system.display',
-  'system.storage': 'system.storage'
+  'system.storage': 'system.storage',
+  'system.cpu': 'system.cpu',
+  'system.memory': 'system.memory'
 }
+
+/** The permissions under `chrome.system`; Chrome defines the holder once one of them is held. */
+const SYSTEM_PERMISSIONS: readonly string[] = [
+  'system.cpu',
+  'system.memory',
+  'system.display',
+  'system.storage'
+]
 
 /** Permissions that grant a namespace registered under another name. */
 const PERMISSION_ALIASES: Record<string, string> = {
@@ -750,6 +764,7 @@ export function namespaceGranted(
 ): boolean {
   if (namespace === 'action') return manifestVersion === 3
   if (namespace === 'browserAction' || namespace === 'pageAction') return manifestVersion === 2
+  if (namespace === 'system') return SYSTEM_PERMISSIONS.some((p) => permissions.includes(p))
   const needed = NAMESPACE_PERMISSIONS[namespace]
   if (needed === undefined) return false
   if (needed === null) return true
@@ -819,6 +834,7 @@ export function engineApiSpec(options: EngineSpecOptions): ApiSpec {
 
 /** The permissions any one of which makes the namespace exist (`NAMESPACE_PERMISSIONS` and its aliases); null for one that always does. */
 export function namespaceGate(namespace: string): string[] | null {
+  if (namespace === 'system') return [...SYSTEM_PERMISSIONS]
   const needed = NAMESPACE_PERMISSIONS[namespace]
   if (!needed) return null
   return [

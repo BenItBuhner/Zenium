@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Space } from '@shared/types'
 import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
 import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
@@ -43,6 +44,10 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const late = JSON.parse(String(served.late)) as Record<string, unknown>
     expect(late.late).toBe(true)
     expect((late.extension as Record<string, unknown>).groups).toEqual([])
+    // The stylesheet substitution map Kotlin localizes every served `text/css` file from, as
+    // Chrome's renderer does for a `chrome-extension://` stylesheet: the predefined names with
+    // the extension's id, the locale spelled as a `_locales` directory is.
+    expect(served.cssMessages).toMatchObject({ '@@extension_id': ID, '@@ui_locale': 'en_US' })
     expect(h.kt.calledWith('ext.background.start')).toEqual([{ id: ID }])
     expect(h.runtime.configureStats(ID)?.units[0].key).toBe('isolated:https://example.com')
   })
@@ -1321,6 +1326,15 @@ describe('AndroidExtensionRuntime: chrome.userScripts', () => {
     expect(h.runtime.userScriptMessaging(ID)).toBe(false)
     const off = JSON.parse(String(userUnit().config)) as Record<string, unknown>
     expect(off.userScriptMessaging).toBe(false)
+    // The shim's second delivery of `tabs.sendMessage` (to the user-script worlds) has nothing
+    // left to do here – the router addresses them with the content scripts – and is no refusal.
+    const hosted = await call(h, 'bg1', 'userScripts', 'sendMessage', [
+      h.runtime.api.tabs.chromeIdFor('t1'),
+      { hello: 1 },
+      null
+    ])
+    expect(hosted.ok).toBe(true)
+    expect(hosted.result).toEqual({ handled: false, responded: false })
   })
 
   it('execute runs the sources in order in the user-script world of the target frames and answers per frame', async () => {
@@ -1411,7 +1425,16 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
       documentOrigin: `https://${ID}.ext.zenium.invalid`,
       tabId: -1
     })
-    hello(h, 'off1', 'offscreen', { url: `https://${ID}.ext.zenium.invalid/offscreen.html` })
+    // The filter OneNote Web Clipper builds, `documentUrls: [runtime.getURL('offscreen.html')]`
+    // (the served spelling, what getURL answers), finds the loading document too.
+    const servedUrl = `https://${ID}.ext.zenium.invalid/offscreen.html`
+    const loadingByServed = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [
+        { contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [servedUrl] }
+      ])
+    ).result as Array<Record<string, unknown>>
+    expect(loadingByServed.map((c) => c.contextType)).toEqual(['OFFSCREEN_DOCUMENT'])
+    hello(h, 'off1', 'offscreen', { url: servedUrl })
     await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
     expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
@@ -1421,6 +1444,31 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     ).result as Array<Record<string, unknown>>
     expect(up).toHaveLength(1)
     expect(up[0].contextId).toBe('off1')
+    // And found by its URL in either spelling, and by its origin in either spelling (the page's
+    // `location.origin` is the served one; `chrome-extension://<id>` is what Chrome would give):
+    // with the served filter answered empty, OneNote called createDocument again on every clip
+    // and got "Only a single offscreen document may be created."
+    const found = async (filter: Record<string, unknown>): Promise<string[]> =>
+      (
+        (await call(h, 'bg1', 'runtime', 'getContexts', [filter])).result as Array<
+          Record<string, unknown>
+        >
+      ).map((c) => String(c.contextId))
+    expect(
+      await found({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [servedUrl] })
+    ).toEqual(['off1'])
+    expect(await found({ documentUrls: [`chrome-extension://${ID}/offscreen.html`] })).toEqual([
+      'off1'
+    ])
+    expect(await found({ documentUrls: [`chrome-extension://${ID}/other.html`] })).toEqual([])
+    expect((await found({ documentOrigins: [`https://${ID}.ext.zenium.invalid`] })).sort()).toEqual(
+      ['bg1', 'off1']
+    )
+    expect((await found({ documentOrigins: [`chrome-extension://${ID}`] })).sort()).toEqual([
+      'bg1',
+      'off1'
+    ])
+    expect(await found({ documentOrigins: ['https://example.com'] })).toEqual([])
     // The page has the extension's chrome: its runtime.sendMessage reaches the background as a
     // popup's does, with no tab on the sender.
     message(h, 'off1', { t: 'msg', id: 3, target: {}, data: { blob: 'made' } })
@@ -1614,6 +1662,89 @@ describe('AndroidExtensionRuntime: tabs.highlight', () => {
     expect(String((await call(h, 'bg1', 'tabs', 'highlight', [{ tabs: 7 }])).error)).toContain(
       'No tab at index: 7.'
     )
+  })
+})
+
+describe('AndroidExtensionRuntime: tabs.move', () => {
+  const order = (h: Harness): string[] => h.spaces[0].tabIds
+
+  function orderedTabs(h: Harness): void {
+    for (const [id, url] of [
+      ['p1', 'https://pinned.example/'],
+      ['t2', 'https://two.example/'],
+      ['t3', 'https://three.example/']
+    ])
+      h.tabs[id] = makeTab(id, url)
+    h.tabs.p1.pinned = true
+    h.spaces.push({ id: 's1', tabIds: ['p1', 't1', 't2', 't3'] } as unknown as Space)
+    for (const id of ['p1', 't1', 't2', 't3']) h.tabs[id].spaceId = 's1'
+    h.notifyState()
+  }
+
+  it('moves a tab to the index in the one window, -1 being the end, and raises onMoved once for it', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1', ['tabs.onMoved'])
+    orderedTabs(h)
+    const ids = h.runtime.api.tabs
+    const moved = await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t1'), { index: 3 }])
+    expect(order(h)).toEqual(['p1', 't2', 't3', 't1'])
+    expect(moved.result).toMatchObject({ id: ids.chromeIdFor('t1'), index: 3, windowId: 1 })
+    const raised = events(h, 'bg1', 'tabs.onMoved')
+    expect(raised).toHaveLength(1)
+    expect(raised[0].args).toEqual([
+      ids.chromeIdFor('t1'),
+      { windowId: 1, fromIndex: 1, toIndex: 3 }
+    ])
+    await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t3'), { index: -1, windowId: 1 }])
+    expect(order(h)).toEqual(['p1', 't2', 't1', 't3'])
+    // The same slot again: nothing moved, nothing raised.
+    await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t3'), { index: -1 }])
+    expect(events(h, 'bg1', 'tabs.onMoved')).toHaveLength(2)
+  })
+
+  it('keeps a pinned tab among the pinned and a regular one behind them, as Chrome constrains the index', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    orderedTabs(h)
+    const ids = h.runtime.api.tabs
+    await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t2'), { index: 0 }])
+    expect(order(h)).toEqual(['p1', 't2', 't1', 't3'])
+    const pinned = await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('p1'), { index: 3 }])
+    expect(order(h)).toEqual(['p1', 't2', 't1', 't3'])
+    expect((pinned.result as { index: number }).index).toBe(0)
+  })
+
+  it('hands a list of tabs consecutive positions from the index, and refuses a window or an index Chrome would', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    orderedTabs(h)
+    const ids = h.runtime.api.tabs
+    // Dualless: the other tabs into the window it just created – this one – from index 1.
+    const moved = await call(h, 'bg1', 'tabs', 'move', [
+      [ids.chromeIdFor('t3'), ids.chromeIdFor('t2')],
+      { windowId: 1, index: 1 }
+    ])
+    expect(order(h)).toEqual(['p1', 't3', 't2', 't1'])
+    expect((moved.result as Array<{ index: number }>).map((t) => t.index)).toEqual([1, 2])
+    expect(
+      String(
+        (await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t1'), { windowId: 4, index: 0 }]))
+          .error
+      )
+    ).toContain('No window with id: 4.')
+    expect(
+      String((await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t1'), { index: -3 }])).error)
+    ).toContain('Value must be at least -1.')
+    expect(
+      String((await call(h, 'bg1', 'tabs', 'move', [ids.chromeIdFor('t1'), {}])).error)
+    ).toContain("Missing required property 'index'.")
+    expect(String((await call(h, 'bg1', 'tabs', 'move', [99, { index: 0 }])).error)).toContain(
+      'No tab with id: 99.'
+    )
+    expect(order(h)).toEqual(['p1', 't3', 't2', 't1'])
   })
 })
 
@@ -2135,6 +2266,144 @@ describe('AndroidExtensionRuntime: chrome.system.display', () => {
       ok: false,
       error: "The extension does not have the 'system.display' permission."
     })
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.system.cpu and chrome.system.memory', () => {
+  it("answers the phone's processors and memory in Chrome's shape for an extension declaring the permissions", async () => {
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['system.cpu', 'system.memory', 'storage'] }))
+    )
+    backgroundUp(h, 'bg1')
+    // Kotlin's reading: `Runtime.availableProcessors()`, Java's `os.arch`, the `Hardware` line of
+    // /proc/cpuinfo; the per-processor times unreadable in the app's sandbox (`usage: null`).
+    const cpu = (await call(h, 'bg1', 'system.cpu', 'getInfo', [])).result as Record<
+      string,
+      unknown
+    >
+    expect(cpu).toEqual({
+      numOfProcessors: 4,
+      archName: 'aarch64',
+      modelName: 'Qualcomm Technologies, Inc SM8550',
+      features: [],
+      processors: Array.from({ length: 4 }, () => ({
+        usage: { user: 0, kernel: 0, idle: 0, total: 0 }
+      })),
+      temperatures: []
+    })
+    // Where /proc/stat is readable the times come through, `nice` folded into `user`.
+    h.kt.cpuAnswer = () => ({
+      numOfProcessors: 2,
+      archName: 'x86_64',
+      modelName: 'Intel(R) Core(TM) i7',
+      features: ['sse4_2', 'avx', 'sse', 'mmx', 'sse4_1'],
+      usage: [
+        [120, 30, 900],
+        [80, 20, 950]
+      ]
+    })
+    const x86 = (await call(h, 'bg1', 'system.cpu', 'getInfo', [])).result as Record<
+      string,
+      unknown
+    >
+    expect(x86).toMatchObject({
+      numOfProcessors: 2,
+      archName: 'x86_64',
+      features: ['mmx', 'sse', 'sse4_1', 'sse4_2', 'avx'],
+      processors: [
+        { usage: { user: 120, kernel: 30, idle: 900, total: 1050 } },
+        { usage: { user: 80, kernel: 20, idle: 950, total: 1050 } }
+      ]
+    })
+    // `ActivityManager.MemoryInfo`: totalMem and availMem, in bytes.
+    expect((await call(h, 'bg1', 'system.memory', 'getInfo', [])).result).toEqual({
+      capacity: 8 * 1024 ** 3,
+      availableCapacity: 3 * 1024 ** 3
+    })
+  })
+
+  it('refuses an extension that did not declare them with Chrome\u2019s no-permission errors', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['system.cpu', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect((await call(h, 'bg1', 'system.cpu', 'getInfo', [])).ok).toBe(true)
+    expect(await call(h, 'bg1', 'system.memory', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.memory' permission."
+    })
+    const other = harness()
+    await other.runtime.attach(record(other, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(other, 'bg1')
+    expect(await call(other, 'bg1', 'system.cpu', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.cpu' permission."
+    })
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.tabCapture on a WebView that captures nothing', () => {
+  it("answers getCapturedTabs with Chrome's empty list for an extension holding the permission", async () => {
+    // Mobile simulator's action click: `getCapturedTabs(tabs => tabs.some(...))` before it opens
+    // its simulator page; a rejection hands the callback `undefined` and its `.some` throws.
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['tabCapture', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'tabCapture', 'getCapturedTabs', [])).toMatchObject({
+      ok: true,
+      result: []
+    })
+    // The capture itself has no source on the WebView: still the runtime's own refusal.
+    expect(await call(h, 'bg1', 'tabCapture', 'getMediaStreamId', [{}])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('chrome.tabCapture.getMediaStreamId is not implemented')
+    })
+  })
+
+  it('keeps refusing an extension without the permission', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'tabCapture', 'getCapturedTabs', [])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('chrome.tabCapture.getCapturedTabs is not implemented')
+    })
+  })
+})
+
+describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
+  it('drops the bridge token Kotlin left in the frame text, and sends to endpoints one way', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    // Kotlin forwards the frame's text as written: the token rides along on every message.
+    const event = {
+      ep: 'bg1',
+      tabId: null,
+      top: true,
+      origin: `https://${ID}.ext.zenium.invalid`,
+      message: {
+        t: 'hello',
+        ext: ID,
+        ctx: 'background',
+        url: `https://${ID}.ext.zenium.invalid/bg.html`,
+        token: 'tok'
+      } as Record<string, unknown>
+    }
+    h.runtime.onMessage(event)
+    expect(event.message.token).toBeUndefined()
+
+    // A reply to a call reaches the endpoint through `post` (no `resolve` back to the chrome per
+    // message), not through a `call`; the endpoint the hello registered gets it.
+    const id = nextCallId()
+    h.runtime.onMessage({
+      ...event,
+      message: { t: 'call', id, ns: 'runtime', method: 'getPlatformInfo', args: [], token: 'tok' }
+    })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.posted).toContain('ext.send')
+    expect(h.kt.posted.filter((m) => m === 'ext.send')).toHaveLength(
+      h.kt.calledWith('ext.send').length
+    )
   })
 })
 

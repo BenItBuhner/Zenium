@@ -1502,15 +1502,42 @@ export class TabManager {
     opts: TabFocusOptions = {}
   ): Promise<boolean> {
     // The unload check closes a page that does not object: the tab then goes through
-    // `onViewGone`, which reads the options here.
+    // `onViewGone`, which reads the options here. The chrome sees the intent as
+    // `closingTabIds` for as long as it stands (the overview holds the card's exit on it).
     this.closeIntents.set(tabId, opts)
+    this.browser.state.commitVolatile()
     try {
       if (!(await this.confirmUnload(tabId))) return false
       this.closeTab(tabId, force, win, opts)
       return true
     } finally {
       this.closeIntents.delete(tabId)
+      this.browser.state.commitVolatile()
     }
+  }
+
+  /**
+   * The tabs a `requestClose` is in flight for: told to close by the user, their pages' unload
+   * checks not yet through – one asking "Leave site?" holds its close for as long as the user
+   * takes. Gone from the list as the tab closes, or as its page keeps it.
+   */
+  closingTabIds(): string[] {
+    return [...this.closeIntents.keys()]
+  }
+
+  /**
+   * Close several tabs as the user asks for them, one at a time in the order given (the loop
+   * of the desktop's "Close N Tabs"): a page that objects asks "Leave site?" in its turn – the
+   * dialog is tab-modal, so two asked at once would leave one waiting unseen in a background
+   * tab – and a "Cancel" keeps that tab alone, the run going on to the next (Chrome keeps only
+   * the tab whose question was cancelled). `activate` is the tab to end on, if it is still
+   * open by then.
+   */
+  async closeMany(tabIds: string[], win?: ZenWindow, activate?: string): Promise<void> {
+    for (const tabId of tabIds) {
+      if (this.tab(tabId)) await this.requestClose(tabId, false, win)
+    }
+    if (activate && this.tab(activate)) this.activateTab(activate, win)
   }
 
   /**
