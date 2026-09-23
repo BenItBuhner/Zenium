@@ -343,10 +343,12 @@ function GroupEditorBubble({
 }
 
 /**
- * The nine colours as a radio group of round swatches (§9.14's swatch form): 28 px targets in a
- * row at an 8 px gap, the colour a 20 px disc inside, the picked one with the 2 px accent
- * outline 2 px outside its edge. One swatch is in the tab order (the picked one); Left, Right,
- * Up and Down move and pick, Home and End jump, as native radios do.
+ * The nine colours as a radio group of round swatches (§9.14's swatch form): 28 px targets
+ * touching in a row – the 20 px discs 8 apart on a 28 pitch, the nine discs 244 wide from the
+ * first's left edge to the ninth's right (the targets 252) – the colour the disc inside, the
+ * picked one with the 2 px accent outline 2 px outside its edge. One swatch is
+ * in the tab order (the picked one); Left, Right, Up and Down move and pick, Home and End jump,
+ * as native radios do.
  */
 function ColorSwatches({
   labelledBy,

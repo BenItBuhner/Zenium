@@ -4329,8 +4329,10 @@
    * (§9.12) over the shared `.zen-v2-field`, the shared `.zen-v2-row` for the actions with a
    * leading 16 px glyph (§9.34). Only what those do not say lives here: the form's 12 to the
    * hairline under it (the swatches are a row of controls, not text), the hairline in the gutter
-   * with 4 below (§6, §9.20's list panel), the swatch row's geometry (nine 28 px targets at an
-   * 8 px gap; the swatch itself is the card radio's swatch form, unlayered further down), the
+   * with 4 below (§6, §9.20's list panel), the swatch row's geometry (§9.14 to the letter: nine
+   * 28 px targets touching, so the 20 px discs sit 8 apart on a 28 pitch and the nine discs run
+   * 244 wide, the first's left edge to the ninth's right, the targets 252; the swatch itself is
+   * the card radio's swatch form, unlayered further down), the
    * actions' 4 px inset below, and the tab count trailing the close row. The header row the
    * bubble hangs from keeps its hover fill while the bubble is up, as an anchor does (§9.20).
    */
@@ -4339,7 +4341,7 @@
   }
   .zen-group-editor-swatches {
     display: flex;
-    gap: 8px;
+    gap: 0;
   }
   .zen-group-editor-actions {
     display: flex;

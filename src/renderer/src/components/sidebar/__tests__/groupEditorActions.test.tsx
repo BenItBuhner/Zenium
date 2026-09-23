@@ -16,8 +16,8 @@ import { FOLDER_COLOR_ORDER } from '@shared/defaults'
  * tab in folder would forget the pages it kept (the model's `folderOpened` rule), so the row
  * waits for Open; Delete goes through the "Delete <folder>?" prompt when the folder holds anything
  * and deletes an empty folder outright. The colour row is §9.14's swatch form: the nine colours
- * in Chrome's order as a radio group of 28 px round targets with 20 px discs at an 8 px gap,
- * the picked one ringed.
+ * in Chrome's order as a radio group of 28 px round targets touching (the 20 px discs 8 apart
+ * on a 28 pitch, the nine discs 244 wide), the picked one ringed.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -231,7 +231,7 @@ describe('the colour row (§9.14’s swatch form)', () => {
     }
     click(swatches.find((s) => s.dataset.color === 'green')!)
     expect(run).toHaveBeenCalledWith('folder.update', { folderId: 'g', patch: { color: 'green' } })
-    // A saved folder's row is the same: its colour is its bar's and its ring's.
+    // A saved folder's row is the same: its colour is its header's ring's.
     const savedEl = await bubble([tab('home', null)], folder({ savedTabs: PAGES, color: 'pink' }))
     expect(
       [...savedEl.querySelectorAll<HTMLButtonElement>('[role="radio"][aria-checked="true"]')].map(
@@ -240,12 +240,19 @@ describe('the colour row (§9.14’s swatch form)', () => {
     ).toEqual(['pink'])
   })
 
-  it('draws 28 px round targets with 20 px discs at an 8 px gap, the picked disc ringed 2 px outside', () => {
-    expect(rule('.zen-group-editor-swatches')).toContain('gap: 8px')
+  it('draws 28 px round targets touching – the 20 px discs 8 apart on a 28 pitch, the nine discs 244 wide – the picked disc ringed 2 px outside', () => {
+    // §9.14 to the letter: no gap between the targets, so the pitch is the target's own 28 and
+    // the discs (20 inside 28: 4 each side) stand 8 apart; the nine discs run 8 × 28 + 20 = 244
+    // from the first's left edge to the ninth's right (the targets themselves 9 × 28 = 252).
+    const row = rule('.zen-group-editor-swatches')
+    expect(row).toContain('display: flex')
+    expect(row).toContain('gap: 0')
+    expect(row).not.toContain('gap: 8px')
     const target = rule('.zen-v2-card-radio.zen-group-editor-swatch')
     expect(target).toContain('width: 28px')
     expect(target).toContain('height: 28px')
     expect(target).toContain('border-radius: 50%')
+    expect(target).not.toContain('margin')
     const disc = rule('.zen-group-editor-swatch-disc')
     expect(disc).toContain('width: 20px')
     expect(disc).toContain('height: 20px')
