@@ -11,13 +11,7 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
-import {
-  BAR_BUTTON,
-  BAR_GAP,
-  BAR_PADDING,
-  phoneBarForHost,
-  phoneBarOffered
-} from '@shared/phoneBar'
+import { BAR_BUTTON, BAR_GAP, BAR_PADDING } from '@shared/phoneBar'
 import {
   SEARCH_SCOPES,
   buildSearchUrl,
@@ -49,6 +43,7 @@ import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
+import { barLayout } from '../phone/barItems'
 import { useLongPress } from '../phone/useLongPress'
 import { V2_GLYPH } from '../v2/controls'
 import { Highlighted } from '../v2/Highlighted'
@@ -1271,9 +1266,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
               // The trailing slot's control is a §9.3 icon button, 44 × 44 with the 20 glyph: as
               // tall as the pill, round, flush with its end, so it is the pill's end cap.
               className="zen-omnibox-field flex h-11 min-w-0 flex-1 items-center gap-2.5 rounded-full pl-2"
-              style={fieldGrowFrom(
-                phoneBarForHost(state.settings.phoneBar, phoneBarOffered(state.capabilities))
-              )}
+              style={fieldGrowFrom(barLayout(state))}
             >
               {/* The engine's mark (NTP-09): its favicon when it is not the vendor's default, the
                 letter tile otherwise; the morph's double draws the same (FakeboxMorphLayer). */}
