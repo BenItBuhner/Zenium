@@ -50,13 +50,16 @@ import org.junit.runner.RunWith
  * `requestAnimationFrame` probe, never off the recording's clock): (a) across the pose switch –
  * §11.4's 120 ms cross-fade under §11.6's 240 ms theme blend, scenes 2 and 9 – no frame draws
  * the pose that leaves in the ink of the one arriving nor the one arriving in an ink the window
- * is not in: the still of the leaving pose keeps its rows to its last frame, fades out under
- * the polarity it left in and is gone before the blend flips the ink, and both layers read the
- * one ink the window paints that frame ([readPoseSwitch]); (b) across the lock – Home, the
- * return, Unlock, the lift, scenes 7 and 8 – the rows stay masked until the lock cover LANDS:
- * the first frame back has every row "Private tab", no frame between the lock's arming and the
- * veil's landing shows a private title, and the titles come back only as the veil and the
- * frame's cover rest at 0 ([readLockSpan]).
+ * is not in: the still of the leaving pose keeps its rows to its last frame, is drawn only under
+ * the polarity it left in (main.css hides a still the window's flip has passed, its fade still
+ * running) and both layers read the one ink the window paints that frame ([readPoseSwitch]);
+ * (b) across the lock – Home, the return, Unlock, the lift, scenes 7 and 8 – the rows stay
+ * masked until the lock cover LANDS: the first frame back has every row "Private tab", no frame
+ * between the lock's arming and the veil's landing shows a private title, and the titles come
+ * back only in a frame with the veil and the frame's cover at rest or gone – the spring's rest,
+ * or the cut that takes both when the wait ends first ([readLockSpan]). The frame tables carry
+ * the device's rate: the snapshot WebView under swiftshader draws a chrome frame every 130-400
+ * ms through a switch, so each fade is a frame or two.
  *
  * The credential prompt is answered as the passwords and private lock demos answer it
  * (`PrivateLockDemo.answerPin`: the emulator has no biometric, `BiometricPrompt` falls back to
@@ -380,9 +383,14 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         return answer
     }
 
-    /** One layer of the switch as a frame saw it: the wrapper's opacity, its tab rows, their titles, the first row's ink. */
-    private class Layer(val opacity: Double, val rows: Int, val titles: List<String>, val ink: String) {
-        override fun toString() = "%.2f/%d%s %s".format(opacity, rows, if (titles.isEmpty()) "" else " '${titles.first()}'", ink.ifEmpty { "-" })
+    /**
+     * One layer of the switch as a frame saw it: the wrapper's computed opacity and visibility
+     * (a still past the window's flip is `hidden` by main.css, its fade still running), its tab
+     * rows, their titles, the first row's ink. [drawn]: the layer put ink on the frame.
+     */
+    private class Layer(val opacity: Double, val hidden: Boolean, val rows: Int, val titles: List<String>, val ink: String) {
+        val drawn get() = !hidden && opacity > 0.02
+        override fun toString() = "%.2f%s/%d%s %s".format(opacity, if (hidden) " hidden" else "", rows, if (titles.isEmpty()) "" else " '${titles.first()}'", ink.ifEmpty { "-" })
     }
 
     private class PoseFrame(val t: Int, val pose: String, val theme: String, val privateOn: Boolean, val fg: String, val bg: String, val switching: Boolean, val still: Layer?, val live: Layer)
@@ -390,7 +398,7 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
     private fun layerOf(o: JSONObject?): Layer? {
         if (o == null) return null
         val titles = o.optJSONArray("t")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
-        return Layer(o.optDouble("o", Double.NaN), o.optInt("n"), titles, o.optString("c"))
+        return Layer(o.optDouble("o", Double.NaN), o.optString("v") == "hidden", o.optInt("n"), titles, o.optString("c"))
     }
 
     /** `#rrggbb` as Chromium's computed `rgb(r, g, b)`, so a painted token compares with a row's colour. */
@@ -417,7 +425,7 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
             val f = array.getJSONObject(i)
             PoseFrame(
                 f.optInt("t"), f.optString("pose"), f.optString("theme"), f.optBoolean("priv"), f.optString("fg"), f.optString("bg"), f.optBoolean("sw"),
-                layerOf(f.optJSONObject("still")), layerOf(f.optJSONObject("live")) ?: Layer(Double.NaN, 0, emptyList(), "")
+                layerOf(f.optJSONObject("still")), layerOf(f.optJSONObject("live")) ?: Layer(Double.NaN, false, 0, emptyList(), "")
             )
         }
         // The switch's first frame: the pose changed or the still came (both in one commit: the still
@@ -432,7 +440,7 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         val arrivingPolarity = if (leavingPolarity == "dark") "light" else "dark"
         val leavingInk = base.live.ink
         val stillFrames = frames.mapNotNull { f -> f.still?.let { f to it } }
-        val lastVisibleStill = frames.indexOfLast { (it.still?.opacity ?: 0.0) > 0.02 }
+        val lastDrawnStill = frames.indexOfLast { it.still?.drawn == true }
         val flip = frames.indexOfFirst { it.theme != leavingPolarity }
         val settled = frames.last().theme == arrivingPolarity && frames.last().pose == to && frames.last().still == null
         // The blend at rest: the painted background stops moving.
@@ -443,28 +451,28 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
             check("(a) $label: the probe caught the still of the pose that left", false, "switch at frame $start of ${frames.size}, no still in any frame")
             return
         }
-        val visibleStills = stillFrames.filter { (_, s) -> s.opacity > 0.02 }
-        val lastStill = stillFrames.last().first
+        val drawnStills = stillFrames.filter { (_, s) -> s.drawn }
         check("(a) $label: the switch was recorded frame by frame – the still came with the arriving pose in one frame, and the blend settled", frames[start].pose == to && frames[start].still != null && settled,
             "frames ${frames.size}, switch at frame $start (+${frames[start].t} ms), stills ${stillFrames.size} frames, flip at ${if (flip < 0) "never" else "frame $flip (+${frames[flip].t} ms)"}, at rest by +${frames[rest].t} ms")
         check("(a) $label: the still is a still – the leaving pose's rows, unchanged, to its last frame", stillFrames.all { (_, s) -> s.titles == base.live.titles && s.rows == base.live.rows },
             "leaving rows ${base.live.titles}; the still's ${stillFrames.map { (_, s) -> s.titles }.distinct()}")
-        check("(a) $label: no frame draws the leaving pose's rows in the arriving pose's ink – the still fades out under the polarity it left in, in the ink it left in, and is gone before the flip",
-            visibleStills.all { (f, s) -> f.theme == leavingPolarity && s.ink == leavingInk } && (flip < 0 || flip > lastVisibleStill),
-            "still visible through frame $lastVisibleStill (+${if (lastVisibleStill >= 0) frames[lastVisibleStill].t else 0} ms), flip at frame $flip; inks under the still ${stillFrames.map { (_, s) -> s.ink }.distinct()} vs left in $leavingInk")
+        // Drawn: opacity over .02 and not `hidden` – main.css hides a still whose polarity the window
+        // has left (the flip is a cut at the blend's midpoint), whatever its fade still reads.
+        check("(a) $label: no frame draws the leaving pose's rows in the arriving pose's ink – every frame the still is drawn is under the polarity it left in, in the ink it left in, and none is at or past the flip",
+            drawnStills.all { (f, s) -> f.theme == leavingPolarity && s.ink == leavingInk } && (flip < 0 || flip > lastDrawnStill),
+            "still drawn through frame $lastDrawnStill (+${if (lastDrawnStill >= 0) frames[lastDrawnStill].t else 0} ms), flip at frame $flip; inks under the still while drawn ${drawnStills.map { (_, s) -> s.ink }.distinct()} vs left in $leavingInk; stills ${stillFrames.map { (_, s) -> s.toString() }}")
         val pairs = stillFrames.filter { (f, _) -> f.live.rows > 0 }
         check("(a) $label: one ink per frame – the still, the arriving rows and the window's painted token agree in every frame both layers are up",
             pairs.all { (f, s) -> s.ink == f.live.ink } && frames.filter { it.live.rows > 0 && it.live.ink.isNotEmpty() }.all { it.live.ink == rgbOf(it.fg) },
             "pairs ${pairs.map { (f, s) -> "${s.ink}|${f.live.ink}|${rgbOf(f.fg)}" }.distinct()}")
         val stillOpacities = stillFrames.map { (_, s) -> s.opacity }
         val liveWhileStill = stillFrames.map { (f, _) -> f.live.opacity }.filter { !it.isNaN() }
-        check("(a) $label: one cross-fade – the still's opacity only falls, the arriving pose's only rises meanwhile, and the still is gone within its 120 ms and a few frames",
-            stillOpacities.zipWithNext().all { (a, b) -> b <= a + 0.05 } && liveWhileStill.zipWithNext().all { (a, b) -> b >= a - 0.05 } &&
-                (lastStill.t - frames[start].t) <= 400,
-            "still ${stillOpacities.map { "%.2f".format(it) }}, arriving ${liveWhileStill.map { "%.2f".format(it) }}, still gone by +${lastStill.t} ms")
+        check("(a) $label: one cross-fade – the still's opacity only falls and the arriving pose's only rises while both are up, and the still is gone by the blend's rest",
+            stillOpacities.zipWithNext().all { (a, b) -> b <= a + 0.05 } && liveWhileStill.zipWithNext().all { (a, b) -> b >= a - 0.05 } && frames[rest].still == null,
+            "still ${stillOpacities.map { "%.2f".format(it) }}, arriving ${liveWhileStill.map { "%.2f".format(it) }}, still gone by +${stillFrames.last().first.t} ms, rest at +${frames[rest].t} ms")
         if (from == "private") {
-            check("(a) $label: no frame draws a private title anywhere but in the private still under the private ink – the arriving regular rows never carry one, and the still is gone before the scheme's ink returns",
-                frames.drop(start).all { f -> f.live.titles.none { it in privateTitles } } && visibleStills.all { (f, s) -> f.theme == "dark" && s.ink == leavingInk },
+            check("(a) $label: no frame draws a private title anywhere but in the private still under the private ink – the arriving regular rows never carry one, and no frame at or past the scheme's return draws the still",
+                frames.drop(start).all { f -> f.live.titles.none { it in privateTitles } } && drawnStills.all { (f, s) -> f.theme == "dark" && s.ink == leavingInk },
                 "arriving rows ${frames.drop(start).map { it.live.titles }.distinct().take(3)}")
         } else {
             check("(a) $label: the regular pose's rows never carry a private title – the still lists the space's tabs alone to its last frame", stillFrames.all { (_, s) -> s.titles.none { it in privateTitles } && s.titles == base.live.titles }, "")
@@ -472,9 +480,9 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         // The fact for the lead's reading, not a claim: the arriving rows come up in the ink the window
         // paints that frame, which §11.6 keeps the leaving polarity's until the blend's midpoint – the
         // cross-fade's last frame – where the whole window flips.
-        val arrivingUnderLeaving = frames.drop(start).count { it.live.opacity > 0.02 && it.theme == leavingPolarity && it.live.rows > 0 }
-        finding("  (a) $label: arriving rows visible under the leaving polarity's ink for $arrivingUnderLeaving frame(s) before the flip (§11.6: the ink flips at the blend's midpoint, the cross-fade's end); the still visible for ${stillOpacities.count { it > 0.02 }} frame(s), all under the leaving polarity")
-        finding("  (a) $label: frame table (t from the probe's start; still = opacity/rows 'first title' ink; live = the arriving pose the same; bg = the painted --zen-bg-solid)")
+        val arrivingUnderLeaving = frames.drop(start).count { it.live.drawn && it.theme == leavingPolarity && it.live.rows > 0 }
+        finding("  (a) $label: arriving rows drawn under the leaving polarity's ink for $arrivingUnderLeaving frame(s) before the flip (§11.6: the ink flips at the blend's midpoint, the cross-fade's end); the still drawn for ${drawnStills.size} frame(s), all under the leaving polarity; still frames at or past the flip ${if (flip < 0) 0 else frames.withIndex().count { (i, f) -> i >= flip && f.still != null }} (hidden by main.css)")
+        finding("  (a) $label: frame table (t from the probe's start; still = opacity[ hidden]/rows 'first title' ink; live = the arriving pose the same; bg = the painted --zen-bg-solid)")
         val first = maxOf(0, start - 1)
         for (i in first..minOf(rest, first + 40)) {
             val f = frames[i]
@@ -516,26 +524,37 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         val back = if (away < 0) -1 else (away + 1..entries.lastIndex).firstOrNull { entries[it].event == "visible" } ?: -1
         // The first frame drawn back: the one after the document's `visible` event – or, should the
         // WebView not fire the events, the first frame after the gap the departure leaves (no frame
-        // runs while the window is away).
-        val gapAt = (1..entries.lastIndex).firstOrNull { entries[it].event.isEmpty() && entries[it].t0 - entries[it - 1].t1 > 1_500 } ?: -1
+        // runs while the window is away; a slow device's gaps inside the span are not read once
+        // the events fired).
+        val gapAt = if (back >= 0) -1 else (1..entries.lastIndex).firstOrNull { entries[it].event.isEmpty() && entries[it].t0 - entries[it - 1].t1 > 1_500 } ?: -1
         val firstBack = if (back >= 0) (back + 1..entries.lastIndex).firstOrNull { entries[it].event.isEmpty() } ?: -1 else gapAt
         val firstLocked = frames.indexOfFirst { it.locked }
+        // The veil's landing: the last frame it is drawn (up, or lifting above .02) – the spring's
+        // rest, or the cut that takes it when the wait ends first (`LIFT_MAX_MS`, `PrivateLockCover`).
         val landing = frames.indexOfLast { it.veilP > 0.02 }
         val titlesBack = if (firstLocked < 0) -1 else (firstLocked + 1..frames.lastIndex).firstOrNull { frames[it].leak.isNotEmpty() } ?: -1
-        check("(b) the span was recorded: the departure, the return, the lock, the lift", (back > away || gapAt > 0) && firstBack > 0 && firstLocked >= 0 && landing >= 0 && titlesBack > landing,
-            "entries ${entries.size}, frames ${frames.sumOf { it.n }}, hidden event at entry $away, visible at $back, gap at $gapAt, first locked frame $firstLocked, veil's last visible frame $landing, titles back at frame $titlesBack")
+        val lift = frames.filter { it.veil.startsWith("p=") }
+        check("(b) the span was recorded: the departure, the return, the lock, the lift, the titles back", (back > away || gapAt > 0) && firstBack > 0 && firstLocked >= 0 && landing >= 0 && lift.isNotEmpty() && titlesBack >= 0,
+            "entries ${entries.size}, frames ${frames.sumOf { it.n }}, hidden event at entry $away, visible at $back, gap at $gapAt, first locked frame $firstLocked, veil's last drawn frame $landing, lift ${lift.sumOf { it.n }} frames, titles back at frame $titlesBack")
         if (firstBack > 0) {
             val f = entries[firstBack]
             check("(b) the first frame back has every row masked – Private tab behind the mask, the lock in the store – before anything else is drawn", f.locked && f.rows > 0 && f.masked == f.rows && f.leak.isEmpty(), "first frame back: $f")
         }
         val span = if (firstLocked >= 0 && landing >= firstLocked) frames.subList(firstLocked, landing + 1) else emptyList()
-        check("(b) no frame between the lock's arming and the veil's landing shows a private title – every row Private tab through the lift", span.isNotEmpty() && span.all { it.leak.isEmpty() && it.masked == it.rows }, "span ${span.size} entries, ${span.sumOf { it.n }} frames; titles seen ${span.flatMap { it.leak }.distinct()}")
-        check("(b) the veil's lift is one spring – its value only falls, from 1 to rest at 0, no step over 0.2",
-            frames.filter { it.veil.startsWith("p=") }.map { it.veilP }.let { ps -> ps.isNotEmpty() && ps.zipWithNext().all { (a, b) -> b <= a + 0.001 && a - b <= 0.2 } && ps.last() <= 0.02 },
-            "values ${frames.filter { it.veil.startsWith("p=") }.map { "%.3f".format(it.veilP) }.take(40)}")
+        check("(b) no frame between the lock's arming and the veil's landing shows a private title – every row Private tab through the lift", span.isNotEmpty() && span.all { it.leak.isEmpty() && it.masked == it.rows } && titlesBack > landing,
+            "span ${span.size} entries, ${span.sumOf { it.n }} frames, the veil last drawn at frame $landing, the titles back at frame $titlesBack; titles seen under the veil ${span.flatMap { it.leak }.distinct()}")
+        check("(b) the veil's lift is one spring – its value only falls from 1, frame to frame", lift.isNotEmpty() && lift.map { it.veilP }.zipWithNext().all { (a, b) -> b <= a + 0.001 },
+            "values ${lift.map { "%.3f".format(it.veilP) }.take(40)}")
         if (titlesBack >= 0) {
             val f = frames[titlesBack]
             check("(b) the titles come back only as the covers land – the veil and the frame's cover at rest (≤ 0.02) or gone, the lift over, in the frame the first title returns", f.veilP <= 0.02 && f.coverP <= 0.02 && !f.lifting && !f.locked, "titles back at: $f")
+        }
+        // How the lift ended, for the reading: the spring at rest (its last value at or under .02),
+        // or the cut – the wait ran out first (`LIFT_MAX_MS`: on frames 100 ms or more apart the
+        // spring, stepping at most 64 ms a frame, lands after it) and the covers went with it.
+        val lastLift = lift.lastOrNull()
+        if (lastLift != null) {
+            finding("  (b) the lift: ${lift.sumOf { it.n }} frame(s) over ${lastLift.t1 - lift.first().t0} ms, ${if (lastLift.veilP <= 0.02) "the spring at rest (last value %.3f)".format(lastLift.veilP) else "cut at %.2f as the wait ended (LIFT_MAX_MS), the covers gone with it".format(lastLift.veilP)}")
         }
         finding("  (b) state table (t from the probe's start, run-length coded by state; the window draws no frame while away):")
         for ((i, e) in entries.withIndex()) {
@@ -848,11 +867,12 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
               var qa=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
               var r2=function(x){return Math.round(x*100)/100};
               var op=function(e){return e?r2(parseFloat(getComputedStyle(e).opacity)):null};
+              var vis=function(e){return e?getComputedStyle(e).visibility:''};
               var layer=function(wrap,root){
                 if(!root)return null;
                 var rows=qa('.zen-tab[role="tab"]',root);
                 var titles=rows.map(function(r){var t=q('.zen-tab-title',r);return t?t.textContent.trim():''});
-                return {o:op(wrap),n:rows.length,t:titles.slice(0,8),c:rows.length?getComputedStyle(rows[0]).color:''};
+                return {o:op(wrap),v:vis(wrap),n:rows.length,t:titles.slice(0,8),c:rows.length?getComputedStyle(rows[0]).color:''};
               };
               var store=function(){var s=(window.__zenStores||{})['private-lock'];return s?s.get():{}};
               var pf=[],pr=0,pt=0;
