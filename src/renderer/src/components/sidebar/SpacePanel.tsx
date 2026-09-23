@@ -449,11 +449,11 @@ function FolderRow({
   // The desktop's row (TAB-16's desktop half, tabs-15): Zen's folder header on §5's 32 row, the
   // group's colour in the glyph slot alone – the same dot, saved ring or own icon as the tablet's
   // (`GroupRowGlyph`) – and the rows' 20 px indent as the bracket that says which rows are the
-  // folder's (§9.36: no group line down the block, no fill across the row); the count as the 13
-  // aside while open, and as §9.19's badge – the pill in the window family – while folded, where
-  // it is what the header says of its rows; a SAVED folder stays in the strip as a saved group,
-  // a disclosure like any folder whose rows, while it is unfolded, are the pages it kept
-  // (`SavedPageRow`), and whose menu and editor open it.
+  // folder's (§9.36: no group line down the block, no fill across the row); the count as the
+  // tablet row's 13 tabular aside at 69%, folded and open alike – the tabs it holds, or the
+  // pages a saved one keeps; a SAVED folder stays in the strip as a saved group, a disclosure
+  // like any folder whose rows, while it is unfolded, are the pages it kept (`SavedPageRow`),
+  // and whose menu and editor open it.
   const tablet = viewportStore.use((v) => v.formFactor === 'tablet')
   const row = groupRowOf(folder, tabs)
   const saved = row.kind === 'saved'
@@ -595,24 +595,14 @@ function FolderRow({
                       title={liveError ?? 'Live folder – updates automatically'}
                     />
                   )}
-                  {/* Folded, the header stands for its rows: the count as §9.19's badge, the
-                      pill in the window family (§9.29) and never dimmed with the row. Open, the
-                      count is supplementary to the rows below: the deemphasised 13 aside. */}
-                  {folder.collapsed ? (
-                    <span
-                      className="zen-v2-badge zen-group-count-badge"
-                      data-testid="group-count-badge"
-                    >
-                      {count}
-                    </span>
-                  ) : (
-                    <span
-                      className="text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]"
-                      data-testid="group-count"
-                    >
-                      {count}
-                    </span>
-                  )}
+                  {/* The count as the tablet row's 13 tabular aside at 69% (§9.36), folded and
+                      open alike: the tabs the folder holds, or the pages a saved one keeps. */}
+                  <span
+                    className="text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]"
+                    data-testid="group-count"
+                  >
+                    {count}
+                  </span>
                   {folder.collapsed ? (
                     <ChevronRight
                       className={cn(

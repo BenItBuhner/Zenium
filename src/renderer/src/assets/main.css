@@ -7510,18 +7510,12 @@
  * are the folder's (§9.36): no group line down the block's edge, and never a fill across the row
  * (§9.29 – the row's fills are the window's hover and active). Nothing stands in the header's
  * first pixels, so its §1 ring – 2 px, 2 inside its edge – paints whole on its own (§9.20). The
- * header's count while folded is §9.19's pill in the window family (`.zen-v2-badge` under the
- * sidebar's `data-surface="window"`: `--v2-window-fill` on the ink at 69%, 20 tall, 13/600, 0 8)
- * with tabular figures; a badge is full ink – never dimmed with its row (§9.29) – so it takes no
- * opacity of its own and stands outside the fades below. A saved folder's page rows
- * (`SavedPageRow`) wear the sleeping row's 69% on glyph and title: a page, not a live tab; they
- * keep the live row's trailing 24 px slot, empty, so a title's edge holds as the folder closes
- * and opens.
+ * count, folded and open alike, is the tablet row's 13 tabular aside at 69% – the tabs the
+ * folder holds, or the pages a saved one keeps – never a badge (§9.36). A saved folder's page
+ * rows (`SavedPageRow`) wear the sleeping row's 69% on glyph and title: a page, not a live tab;
+ * they keep the live row's trailing 24 px slot, empty, so a title's edge holds as the folder
+ * closes and opens.
  */
-.zen-group-count-badge {
-  font-variant-numeric: tabular-nums;
-  opacity: 1;
-}
 .zen-saved-page .zen-tab-favicon,
 .zen-saved-page .zen-tab-title {
   opacity: 0.69;

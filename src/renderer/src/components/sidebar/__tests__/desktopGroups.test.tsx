@@ -25,9 +25,9 @@ import { SpacePanel } from '../SpacePanel'
  * saved ring in the glyph slot and the saved count, folded by default, its pages as rows under
  * it while it is unfolded (deemphasised: a page, not a live tab) whose press opens the folder;
  * the group's colour in the header's glyph alone, the rows' indent the bracket that says which
- * rows are the group's (§9.36: no bar down the block, no fill across the row);
- * the count as §9.19's badge in the window family while the header is folded (full ink, never
- * dimmed with the row – #287's rule) and as the 13 aside while open; the header a disclosure
+ * rows are the group's (§9.36: no bar down the block, no fill across the row); the count as
+ * the tablet row's 13 tabular aside at 69%, folded and open alike – never a badge (§9.36) – the
+ * tabs the folder holds or the pages a saved one keeps; the header a disclosure
  * for the keyboard (aria-expanded; Enter, Space fold it through the strip), the page rows in
  * the roving tab order, Shift+F10 and the Menu key opening the folder's menu in keyboard mode.
  */
@@ -173,7 +173,7 @@ const key = (el: HTMLElement, k: string): void => {
 }
 
 describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () => {
-  it('stays in the strip as a folded disclosure header with the saved ring, the saved count as the badge and no page rows', () => {
+  it('stays in the strip as a folded disclosure header with the saved ring, the saved count as the aside and no page rows', () => {
     // As the core leaves it: folded shut when it saved the group.
     panel([tab('home')], [folder({ savedTabs: PAGES, collapsed: true })])
     const row = header()
@@ -190,11 +190,12 @@ describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () 
     expect(glyph.hasAttribute('data-saved')).toBe(true)
     expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
     expect(row.textContent).not.toContain('📁')
-    const badge = row.querySelector<HTMLElement>('[data-testid="group-count-badge"]')!
-    expect(badge.textContent).toBe('3')
-    expect(badge.className).toContain('zen-v2-badge')
-    expect(badge.className).toContain('zen-group-count-badge')
-    expect(row.querySelector('[data-testid="group-count"]')).toBeNull()
+    const aside = row.querySelector<HTMLElement>('[data-testid="group-count"]')!
+    expect(aside.textContent).toBe('3')
+    expect(aside.className).toContain('text-[13px]')
+    expect(aside.className).toContain('tabular-nums')
+    expect(aside.className).toContain('text-[var(--v2-control-text-deemphasized)]')
+    expect(row.querySelector('.zen-v2-badge')).toBeNull()
     expect(row.querySelector('svg.lucide-chevron-right')).not.toBeNull()
     expect(pageRows()).toEqual([])
     expect(shell().querySelectorAll('[data-tab-id]')).toHaveLength(0)
@@ -206,7 +207,7 @@ describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () 
     panel([tab('home')], [folder({ savedTabs: PAGES })])
     expect(header().getAttribute('aria-expanded')).toBe('true')
     expect(header().querySelector('[data-testid="group-count"]')?.textContent).toBe('3')
-    expect(header().querySelector('[data-testid="group-count-badge"]')).toBeNull()
+    expect(header().querySelector('.zen-v2-badge')).toBeNull()
     const rows = pageRows()
     expect(rows).toHaveLength(3)
     expect(rows.map((r) => r.dataset.savedPage)).toEqual(['0', '1', '2'])
@@ -383,11 +384,11 @@ describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () 
     expect(header().getAttribute('aria-description')).toBe('Folder, 0 tabs')
     expect(header().hasAttribute('data-saved')).toBe(false)
     expect(shell().dataset.groupKind).toBe('empty')
-    expect(header().querySelector('[data-testid="group-count-badge"]')?.textContent).toBe('0')
+    expect(header().querySelector('[data-testid="group-count"]')?.textContent).toBe('0')
   })
 })
 
-describe('the group’s colour (M2) and the folded count badge (M3)', () => {
+describe('the group’s colour (M2) and the count aside (M3)', () => {
   it('draws the folder’s colour in the glyph alone – no bar down the fold block, never a fill across the row', () => {
     panel([tab('home'), tab('a', { folderId: 'g' })], [folder({ color: 'green' })])
     const block = shell()
@@ -416,50 +417,46 @@ describe('the group’s colour (M2) and the folded count badge (M3)', () => {
     ).toMatch(/^\d+ \d+ \d+$/)
   })
 
-  it('shows the folded header’s count as §9.19’s badge in the window family – full ink, tabular – and the open header’s as the 13 aside', () => {
+  it('shows the count as the 13 tabular aside at 69 %, folded and open alike – never a badge', () => {
+    const asideOf = (): { aside: HTMLElement; before: number; last: string } => {
+      const aside = header().querySelector<HTMLElement>('[data-testid="group-count"]')!
+      expect(aside).not.toBeNull()
+      // The aside before the chevron, at the row's trailing end.
+      const children = [...header().children]
+      return {
+        aside,
+        before: children.length - 1 - children.indexOf(aside),
+        last: children[children.length - 1]!.tagName.toLowerCase()
+      }
+    }
     panel(
       [tab('home'), tab('a', { folderId: 'g' }), tab('b', { folderId: 'g' })],
       [folder({ collapsed: true })]
     )
-    const badge = header().querySelector<HTMLElement>('[data-testid="group-count-badge"]')!
-    expect(badge.textContent).toBe('2')
-    expect(badge.className).toContain('zen-v2-badge')
-    expect(badge.className).not.toContain('opacity-')
-    expect(badge.className).not.toContain('text-[var(--v2-control-text-deemphasized)]')
-    // The badge before the chevron, at the row's trailing end.
-    const children = [...header().children]
-    expect(children.indexOf(badge)).toBe(children.length - 2)
-    expect(children[children.length - 1]!.tagName.toLowerCase()).toBe('svg')
-    // The shared pill: the small line box (20), 13/600, 0 8, the control fill and ink – which the
-    // sidebar's window surface maps to the window family (§9.29).
-    const pill = rule('.zen-v2-badge')
-    expect(pill).toContain('height: var(--v2-line-small-box)')
-    expect(pill).toContain('padding: 0 8px')
-    expect(pill).toContain('border-radius: 999px')
-    expect(pill).toContain('background: var(--v2-control-fill, var(--v2-fill))')
-    expect(pill).toContain('font-size: var(--v2-font-small)')
-    expect(pill).toContain('font-weight: var(--v2-weight-heading)')
-    expect(css).toMatch(/--v2-line-small: 20px/)
-    expect(css).toMatch(
-      /--v2-line-small-box: calc\(var\(--v2-line-small\) \* var\(--zen-text-zoom\)\)/
-    )
-    expect(css).toMatch(/--v2-font-small: 13px/)
-    expect(css).toMatch(
-      /--v2-weight-heading: min\(900, calc\(600 \+ var\(--zen-font-weight-adjustment\)\)\)/
-    )
-    expect(rule("[data-surface='window']")).toContain('--v2-control-fill: var(--v2-window-fill)')
-    // Never dimmed with the row: the badge's own opacity is 1 and its figures tabular.
-    const own = rule('.zen-group-count-badge')
-    expect(own).toContain('opacity: 1')
-    expect(own).toContain('font-variant-numeric: tabular-nums')
-    // Open, the count is the 13 deemphasised aside and there is no badge.
-    panel([tab('home'), tab('a', { folderId: 'g' }), tab('b', { folderId: 'g' })], [folder()])
+    const folded = asideOf()
+    expect(folded.aside.textContent).toBe('2')
+    expect(folded.aside.className).toContain('text-[13px]')
+    expect(folded.aside.className).toContain('tabular-nums')
+    expect(folded.aside.className).toContain('text-[var(--v2-control-text-deemphasized)]')
+    expect(folded.before).toBe(1)
+    expect(folded.last).toBe('svg')
+    // No pill anywhere in the header, folded: the badge is not the count's form (§9.36).
+    expect(header().querySelector('.zen-v2-badge')).toBeNull()
     expect(header().querySelector('[data-testid="group-count-badge"]')).toBeNull()
-    const aside = header().querySelector<HTMLElement>('[data-testid="group-count"]')!
-    expect(aside.textContent).toBe('2')
-    expect(aside.className).toContain('text-[13px]')
-    expect(aside.className).toContain('tabular-nums')
-    expect(aside.className).toContain('text-[var(--v2-control-text-deemphasized)]')
+    expect(css).not.toContain('.zen-group-count-badge')
+    // Open, the very same aside – one element, one class list, the same place before the chevron.
+    panel([tab('home'), tab('a', { folderId: 'g' }), tab('b', { folderId: 'g' })], [folder()])
+    const open = asideOf()
+    expect(open.aside.textContent).toBe('2')
+    expect(open.aside.className).toBe(folded.aside.className)
+    expect(open.before).toBe(1)
+    expect(open.last).toBe('svg')
+    expect(header().querySelector('.zen-v2-badge')).toBeNull()
+    // The tablet row's aside is the same 13 tabular figure in the deemphasised ink (§9.36).
+    const tabletAside = rule('.zen-group-row-count')
+    expect(tabletAside).toContain('font-size: 13px')
+    expect(tabletAside).toContain('font-variant-numeric: tabular-nums')
+    expect(tabletAside).toContain('color: var(--v2-control-text-deemphasized')
   })
 
   it('keeps the folder’s own icon in the glyph slot, in place of the dot', () => {
