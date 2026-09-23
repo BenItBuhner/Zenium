@@ -11,12 +11,7 @@ import {
   type SiteSecurity
 } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
-import {
-  DEVICE_KIND_WORDS,
-  grantDetail,
-  grantsOf,
-  grantsRowLabel
-} from '@renderer/lib/devices'
+import { DEVICE_KIND_WORDS, grantDetail, grantsOf, grantsRowLabel } from '@renderer/lib/devices'
 import { manageExtension } from '@renderer/lib/extensions/manage'
 import { extensionPageChrome, extensionPageLine } from '@renderer/lib/extensions/pages'
 import { POPOVER_WIDTH } from '@renderer/lib/portals'
@@ -767,7 +762,12 @@ function DevicesLevel({
   const [scrolled, setScrolled] = useState(false)
   return (
     <>
-      <BarHeader id={id} title={DEVICE_KIND_WORDS[kind].label} onBack={onBack} scrolled={scrolled} />
+      <BarHeader
+        id={id}
+        title={DEVICE_KIND_WORDS[kind].label}
+        onBack={onBack}
+        scrolled={scrolled}
+      />
       <Body onScrolled={setScrolled}>
         {grants.length === 0 && <EmptyLine>No devices connected</EmptyLine>}
         {grants.map((grant) => (

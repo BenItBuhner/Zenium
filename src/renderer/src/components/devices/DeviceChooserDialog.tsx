@@ -37,7 +37,7 @@ import { V2Field, V2FormField } from '../extensions/v2'
 const SNAPSHOT_WAIT_MS = 250
 
 /** The chooser is about to show over `tabId`: the page gives way to its picture, the chrome takes the keyboard. */
-export async function openDeviceChooser(tabId: string | null): Promise<void> {
+async function openDeviceChooser(tabId: string | null): Promise<void> {
   if (tabId) {
     await Promise.race([
       captureActiveTab(tabId),
@@ -48,7 +48,7 @@ export async function openDeviceChooser(tabId: string | null): Promise<void> {
   uiStore.set({ deviceChooserOpen: true })
 }
 
-export function closeDeviceChooser(): void {
+function closeDeviceChooser(): void {
   if (uiStore.get().deviceChooserOpen) uiStore.set({ deviceChooserOpen: false })
   invalidateSnapshot()
   returnFocusToPage()
