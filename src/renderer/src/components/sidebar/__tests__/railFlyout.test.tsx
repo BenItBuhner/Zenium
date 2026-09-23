@@ -143,6 +143,8 @@ interface Scene {
   side?: 'left' | 'right'
   folders?: Folder[]
   splitGroups?: SplitGroup[]
+  /** The pinned / regular separator line on. */
+  separator?: boolean
 }
 
 /** The desktop's sidebar under the Collapsed layout with Expand on hover on, by default. */
@@ -155,7 +157,8 @@ function sidebar({
   coarse = false,
   side = 'left',
   folders = [],
-  splitGroups = []
+  splitGroups = [],
+  separator = false
 }: Scene = {}): UIState {
   const space = {
     id: 'work',
@@ -186,7 +189,7 @@ function sidebar({
     media: [],
     mods: [],
     settings: {
-      showTabSeparator: false,
+      showTabSeparator: separator,
       sidebarExpanded: true,
       sidebarSide: side,
       sidebarWidth: width,
@@ -607,6 +610,31 @@ describe('the collapsed rail’s flyout (tabs-03): the pointer', () => {
     wait(RAIL_FLYOUT_GRACE_MS)
     settle()
     expect(split.className).toContain('zen-split-row-column')
+  })
+
+  it('keeps the separator in the rail’s form while out: the line alone, no brush row, so no row moves under the pointer that opened it', async () => {
+    const tabs = [tab('pin', { pinned: true }), tab('home'), tab('docs')]
+    const brush = (): HTMLElement | null => q<HTMLElement>('.group\\/sep button')
+    const line = (): HTMLElement | null => q<HTMLElement>('.group\\/sep')
+    // The expanded sidebar's separator carries the Clear unpinned tabs brush (its 20 row).
+    sidebar({ tabs, layout: 'single', separator: true })
+    expect(line()).not.toBeNull()
+    expect(brush()?.title).toContain('Clear unpinned tabs')
+    // The rail's: the line, no brush – and the flyout keeps it so, the rows in their expanded
+    // form around it; the brush's 20 would push every row below the line down by 19.
+    sidebar({ tabs, separator: true })
+    expect(line()).not.toBeNull()
+    expect(brush()).toBeNull()
+    await open()
+    settle()
+    expect(flyout().dataset.flyout).toBe('out')
+    expect(titles()).toEqual(['PIN PAGE', 'HOME PAGE', 'DOCS PAGE'])
+    expect(line()).not.toBeNull()
+    expect(brush()).toBeNull()
+    pointer('pointerleave')
+    wait(RAIL_FLYOUT_GRACE_MS)
+    settle()
+    expect(brush()).toBeNull()
   })
 
   it('mirrors for a rail on the right: the box at the right edge, the head and the foot boxed against it', async () => {

@@ -40,6 +40,7 @@ import { TabItem } from './TabItem'
 import { TabSet } from './TabSet'
 import { useActiveRowInView } from './useActiveRowInView'
 import { useGroupFold } from './useGroupFold'
+import { useRailFlyoutOut } from './useRailFlyout'
 
 interface Props {
   state: UIState
@@ -83,6 +84,11 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   const loose = regular.filter((t) => !t.folderId || !listed.has(t.folderId))
   const activeTabId = space.activeTabId
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
+  // The collapsed rail's flyout (tabs-03, §9.20's cascade) lays the rail's own rows out in their
+  // expanded form; the separator keeps the rail's form there – the line alone, no brush row –
+  // so no row moves under the pointer that opened it (the brush's 20 would push every row
+  // below the line down by 19). The flyout's Close Unpinned Tabs is the space menu's.
+  const railOut = useRailFlyoutOut()
   // The list's edge fades are the strip's (§9.37: 24): one depth for the tab list on both axes.
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y', size: STRIP_FADE })
 
@@ -198,7 +204,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
             {showSeparator && (
               <div className="group/sep relative my-1.5 flex items-center gap-2 px-1">
                 <div className="h-px flex-1 bg-[var(--zen-border)]" />
-                {regular.length > 0 && !compact && (
+                {regular.length > 0 && !compact && !railOut && (
                   // Pointer-only (it shows on hover); the keyboard has the space menu's
                   // "Close Unpinned Tabs" and the action's shortcut.
                   <button
