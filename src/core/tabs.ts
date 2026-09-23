@@ -22,6 +22,7 @@ import {
   folderOpened,
   getSpace,
   insertTabIntoSpace,
+  isSavedFolder,
   loadProgressAfter,
   MAX_SPLIT_TABS,
   moveTab,
@@ -1334,7 +1335,10 @@ export class TabManager {
       }
       insertTabIntoSpace(m, space, tab, index)
     }
-    // Made in a group: the group is open (a saved one no longer), and used now (TAB-16). A
+    // Made in a group: the group is open, and used now (TAB-16). The user's joins into a SAVED
+    // group bring its pages back first (`restoreSavedFolder`: New Tab in Folder, a move or a
+    // drop into it) and reach here with the group open; a tab made in one by any other path – a
+    // live folder's refresh repopulating it – takes it as open, the pages it kept let go. A
     // private tab is no member of it for the regular profile: it leaves the group as it was.
     if (!this.isPrivate(tab)) folderOpened(m, tab.folderId, tab.createdAt)
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
@@ -2342,18 +2346,81 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /**
+   * A tab joins a folder – a drop on its header, the tab menu's Move to Folder, an extension's
+   * `tabs.group` – or leaves one (`null`). A regular tab joining a SAVED group opens it first:
+   * the pages it kept come back as its tabs, as Open Folder brings them, and the tab takes its
+   * place behind them (open-then-add: the join loses nothing the group kept); joining an open
+   * group it keeps its slot. Either way the group is unfolded and used now. A private tab is no
+   * member of the group for the regular profile and leaves it as it was.
+   */
   moveToFolder(tabId: string, folderId: string | null): void {
     const tab = this.tab(tabId)
     if (!tab || tab.essential || tab.pinned) return
     if (folderId && !this.model.folders[folderId]) return
     const previous = tab.folderId
+    const joining = folderId !== null && folderId !== previous && !this.isPrivate(tab)
+    const restored = joining ? this.restoreSavedFolder(folderId, this.windowFor(tabId)) : []
     tab.folderId = folderId
     if (previous && previous !== folderId) this.browser.liveFolders.onTabLeftFolder(tabId, previous)
-    // A regular tab joining opens the group (a saved one's pages go, stale) and marks it used; a
-    // private tab is no member of it for the regular profile and leaves it as it was.
-    if (folderId && folderId !== previous && !this.isPrivate(tab))
+    if (joining) {
+      const last = restored[restored.length - 1]
+      const space = last ? getSpace(this.model, tab.spaceId) : undefined
+      if (last && space && space.id === last.spaceId) {
+        // Behind the pages that came back: the slot after the last of them, in the space's
+        // regular run without the joiner (the move lifts it out before it lands).
+        const others = regularTabs(this.model, space).filter((t) => t.id !== tabId)
+        moveTab(
+          this.model,
+          tab,
+          { spaceId: space.id, section: 'regular', index: others.indexOf(last) + 1 },
+          this.settings.essentialsMax
+        )
+      }
       folderOpened(this.model, folderId, Date.now())
+    }
     this.browser.state.commit()
+  }
+
+  /**
+   * A SAVED group's pages back as its tabs (TAB-16): in the order they were kept, at the end of
+   * the space's regular tabs – the first there, each next behind the one before – unloaded, none
+   * made active (Open Folder activates the first; a join adds its tab behind them), the group
+   * unfolded and used now. The pages are let go before the first is made, so its own join finds
+   * nothing left to bring back. Returns the tabs in order: none for a group that is not saved
+   * (open, empty, gone) or whose space is.
+   */
+  restoreSavedFolder(folderId: string, win: ZenWindow = this.browser.focusedWindow()): Tab[] {
+    const m = this.model
+    const folder = m.folders[folderId]
+    if (!folder || !isSavedFolder(m, folder)) return []
+    const space = getSpace(m, folder.spaceId)
+    if (!space) return []
+    const pages = folder.savedTabs ?? []
+    folder.savedTabs = null
+    const restored: Tab[] = []
+    for (const page of pages) {
+      const last = restored[restored.length - 1]
+      const tab = this.createTab(
+        {
+          url: page.url,
+          spaceId: space.id,
+          active: false,
+          load: false,
+          index: last ? undefined : Number.MAX_SAFE_INTEGER,
+          afterTabId: last?.id,
+          containerId: space.containerId,
+          folderId
+        },
+        win
+      )
+      // The row and the card read as the page did until it loads again.
+      tab.title = page.title || tab.title
+      tab.favicon = page.favicon ?? null
+      restored.push(tab)
+    }
+    folderOpened(m, folderId, Date.now())
+    return restored
   }
 
   // ---------------------------------------------------------------------------

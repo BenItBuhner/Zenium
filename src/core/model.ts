@@ -577,10 +577,15 @@ export function isPrivateFolder(model: Model, folder: Folder): boolean {
 
 /**
  * A tab joined the group (made in it, moved into it, restored to it): the group is open, so
- * whatever it kept as a saved group is stale and goes, and it is unfolded – closing a group folds
- * it shut with its pages (`closeFolderTabs`, `saveFolderOnLastClose`), and the tab that brings
- * it back to life must not find it folded around itself, whichever way it came (a reopened
- * closed tab, a move, a new tab, as much as Open Folder); the group counts as used now.
+ * whatever it still kept as a saved group is stale and goes, and it is unfolded – closing a group
+ * folds it shut with its pages (`closeFolderTabs`, `saveFolderOnLastClose`), and the tab that
+ * brings it back to life must not find it folded around itself, whichever way it came (a
+ * reopened closed tab, a move, a new tab, as much as Open Folder); the group counts as used now.
+ * The user's joins into a SAVED group bring its pages back as its tabs before the tab joins
+ * (`TabManager.restoreSavedFolder`: New Tab in Folder, a move or a drop into it, Open Folder
+ * itself), so they reach here with nothing left to let go; a tab restored into it from the
+ * recently closed list is one of those pages come back on its own, and a live folder's refresh
+ * repopulates it – those take the group as open and its kept pages go here.
  */
 export function folderOpened(model: Model, folderId: string | null, now: number): void {
   const folder = folderId ? model.folders[folderId] : undefined

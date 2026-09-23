@@ -1640,13 +1640,17 @@ export class Browser {
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder – after its last
    * member, in that member's container – active, with the new tab page (or the URL bar) as any
-   * new tab. Resolves with the tab's id.
+   * new tab. On a SAVED folder the folder opens first – its pages back as its tabs, as Open
+   * Folder brings them – and the new tab joins behind them (open-then-add): the row takes a
+   * tab without losing what the folder kept. Resolves with the tab's id.
    */
   newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
     const folder = this.state.model.folders[folderId]
     if (!folder) throw new Error('Folder not found')
-    // The group's members are its regular ones: a private tab in it lends neither its place
-    // nor its container to a tab the group's menu makes.
+    this.tabs.restoreSavedFolder(folderId, win)
+    // The group's members are its regular ones – the pages just brought back among them: a
+    // private tab in it lends neither its place nor its container to a tab the group's menu
+    // makes.
     const members = regularFolderTabs(this.state.model, folderId)
     const last = members[members.length - 1]
     const created = this.tabs.createTab(
@@ -1711,47 +1715,20 @@ export class Browser {
     const m = this.state.model
     const folder = m.folders[folderId]
     if (!folder) return null
-    const now = Date.now()
     // The group's live members are its regular ones: a private tab in it is not what a regular
     // surface's row opens (`regularFolderTabs`).
     const live = regularFolderTabs(m, folderId)
     if (live.length > 0) {
       folder.collapsed = false
-      folder.lastUsedAt = now
+      folder.lastUsedAt = Date.now()
       this.tabs.activateTab(live[0].id, win)
       this.state.commit()
       return live[0].id
     }
-    const saved = folder.savedTabs ?? []
-    if (saved.length === 0) return null
-    const space = getSpace(m, folder.spaceId)
-    if (!space) return null
-    const restored: Tab[] = []
-    for (const page of saved) {
-      const last = restored[restored.length - 1]
-      const tab = this.tabs.createTab(
-        {
-          url: page.url,
-          spaceId: space.id,
-          active: false,
-          load: false,
-          // The first at the end of the space's tabs, as Chrome reopens a saved group; each
-          // next one behind the one before, so the group keeps its order.
-          index: last ? undefined : Number.MAX_SAFE_INTEGER,
-          afterTabId: last?.id,
-          containerId: space.containerId,
-          folderId
-        },
-        win
-      )
-      // The row and the card read as the page did until it loads again.
-      tab.title = page.title || tab.title
-      tab.favicon = page.favicon ?? null
-      restored.push(tab)
-    }
-    folder.savedTabs = null
-    folder.collapsed = false
-    folder.lastUsedAt = now
+    // The pages back as the group's tabs, at the end of the space's tabs as Chrome reopens a
+    // saved group, in their order; the group unfolded and used now (`restoreSavedFolder`).
+    const restored = this.tabs.restoreSavedFolder(folderId, win)
+    if (restored.length === 0) return null
     this.tabs.activateTab(restored[0].id, win)
     this.state.commit()
     return restored[0].id
@@ -2356,6 +2333,9 @@ export class Browser {
       case 'folder': {
         const folder = m.folders[drop.folderId]
         if (!folder) return
+        // A SAVED folder opens first, as it does for a tab dropped on it (`moveToFolder`): its
+        // pages back as its tabs, the dropped addresses behind them.
+        tabs.restoreSavedFolder(folder.id, win)
         placement = {
           spaceId: folder.spaceId,
           section: 'regular',

@@ -164,17 +164,29 @@ describe('the bubble’s actions', () => {
     expect(uiStore.get().groupEditor).toBeNull()
   })
 
-  it('for a saved folder: Open folder with its page count and Delete alone – no New tab (it would forget the pages), no Unpack or Close; Open brings the pages back', async () => {
-    const el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }))
-    const rows = actions(el)
-    expect(rows.map((r) => r.dataset.action)).toEqual(['open', 'delete'])
-    expect(el.textContent).not.toContain('New tab in folder')
+  it('for a saved folder: Open folder with its page count, New tab in folder (the core opens the folder first, then adds) and Delete – no Unpack or Close; Open brings the pages back', async () => {
+    let el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }))
+    let rows = actions(el)
+    expect(rows.map((r) => r.dataset.action)).toEqual(['open', 'new-tab', 'delete'])
     const open = rows[0]!
     expect(open.querySelector('.zen-v2-label')!.textContent).toBe('Open folder')
     expect(open.querySelector('.zen-group-editor-count')!.textContent).toBe('3 pages')
     expect(open.hasAttribute('data-danger')).toBe(false)
     expect(open.querySelector('svg.lucide-folder-open')).not.toBeNull()
-    click(open)
+    // New tab in folder in the plain ink, with no count of its own: the core's `folder.newTab`
+    // brings the pages back before it adds the tab, so the row loses nothing.
+    const newTab = rows[1]!
+    expect(newTab.querySelector('.zen-v2-label')!.textContent).toBe('New tab in folder')
+    expect(newTab.querySelector('.zen-group-editor-count')).toBeNull()
+    expect(newTab.hasAttribute('data-danger')).toBe(false)
+    click(newTab)
+    expect(run).toHaveBeenCalledWith('folder.newTab', { folderId: 'g' })
+    expect(run).not.toHaveBeenCalledWith('folder.open', expect.anything())
+    expect(uiStore.get().groupEditor).toBeNull()
+    run.mockClear()
+    el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }))
+    rows = actions(el)
+    click(rows[0]!)
     expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
     expect(uiStore.get().groupEditor).toBeNull()
   })

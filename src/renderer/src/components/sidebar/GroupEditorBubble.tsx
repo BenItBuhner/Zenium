@@ -203,11 +203,11 @@ function GroupEditorBubble({
 
   if (!ready) return null
   // A SAVED folder (TAB-16's desktop half): its tabs closed, its pages kept. Its actions are
-  // Open folder – the pages come back as its tabs – and Delete folder; an open folder's are
-  // New tab, Unpack, Close (the tabs close, the folder stays saved with their pages) and
-  // Delete. New tab in folder is the open folder's alone: on a saved one the first tab it
-  // holds again forgets its pages (the model's `folderOpened` rule), a loss no plain-ink row
-  // may carry (§5, §9.1) – Open folder brings them back first.
+  // Open folder – the pages come back as its tabs – New tab in folder and Delete folder; an
+  // open folder's are New tab, Unpack, Close (the tabs close, the folder stays saved with their
+  // pages) and Delete. New tab in a saved folder opens it first – its pages back as its tabs –
+  // and adds the tab behind them (the model's open-then-add, `newTabInFolder`), so the
+  // plain-ink row loses nothing (§5, §9.1).
   const saved = count === 0 && Boolean(folder.savedTabs?.length)
   const pages = folder.savedTabs?.length ?? 0
   const tabsLabel = `${count} ${count === 1 ? 'tab' : 'tabs'}`
@@ -285,17 +285,15 @@ function GroupEditorBubble({
                 <span className="zen-v2-description zen-group-editor-count">{pagesLabel}</span>
               </button>
             )}
-            {!saved && (
-              <button
-                type="button"
-                className="zen-v2-row zen-group-editor-action"
-                data-action="new-tab"
-                onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
-              >
-                <Plus className={V2_GLYPH} aria-hidden />
-                <span className="zen-v2-label truncate">New tab in folder</span>
-              </button>
-            )}
+            <button
+              type="button"
+              className="zen-v2-row zen-group-editor-action"
+              data-action="new-tab"
+              onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
+            >
+              <Plus className={V2_GLYPH} aria-hidden />
+              <span className="zen-v2-label truncate">New tab in folder</span>
+            </button>
             {count > 0 && (
               <>
                 <button

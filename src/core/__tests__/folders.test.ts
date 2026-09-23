@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
 import { FOLDER_COLOR_ORDER } from '../../shared/defaults'
+import { isEmptyTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
 import type {
   MenuHost,
@@ -408,7 +409,7 @@ describe('the folder header menu (tabs-13)', () => {
     expect(h.browser.state.model.folders[empty.id]).toBeUndefined()
   })
 
-  it('Close Folder (N Tabs) keeps the folder SAVED with its pages, folded; its menu then leads with Open Folder (N Tabs) and offers nothing to unpack, close or add to', () => {
+  it('Close Folder (N Tabs) keeps the folder SAVED with its pages, folded; its menu then leads with Open Folder (N Tabs) · New Tab in Folder and offers nothing to unpack or close', () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const folder = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
@@ -427,18 +428,19 @@ describe('the folder header menu (tabs-13)', () => {
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
     const shown = labels(h.shown())
     expect(shown[0]).toBe('Open Folder (2 Tabs)')
-    // The whole menu of a saved folder, act / change / destroy: New Tab in Folder is left out –
-    // on a saved folder the tab it made would forget the kept pages (the model's `folderOpened`
-    // rule) under a plain-ink label – as are Unpack and Close, which have no tabs to act on.
+    // The whole menu of a saved folder, act / change / destroy: Open Folder (N Tabs) then New
+    // Tab in Folder – which opens the folder first and adds the tab behind its pages (the
+    // model's open-then-add), so the plain-ink label loses nothing – and no Unpack or Close,
+    // which have no tabs to act on.
     expect(shown).toEqual([
       'Open Folder (2 Tabs)',
+      'New Tab in Folder',
       '-',
       'Edit Folder…',
       'Make Live Folder…',
       '-',
       'Delete Folder'
     ])
-    expect(shown).not.toContain('New Tab in Folder')
     expect(shown).not.toContain('Unpack Folder')
     expect(shown.some((l) => l.startsWith('Close Folder'))).toBe(false)
     // Open Folder brings the pages back as the folder's tabs, the folder unfolded and live again.
@@ -446,11 +448,29 @@ describe('the folder header menu (tabs-13)', () => {
     const opened = h.browser.state.model.folders[folder.id]
     expect(opened.savedTabs ?? null).toBeNull()
     expect(opened.collapsed).toBe(false)
-    const members = h.win
-      .activeSpace()
-      .tabIds.filter((id) => h.browser.tabs.tab(id)?.folderId === folder.id)
-      .map((id) => h.browser.tabs.tab(id)!.url)
-    expect(members).toEqual(['https://a.test/', 'https://b.test/'])
+    const members = (): string[] =>
+      h.win
+        .activeSpace()
+        .tabIds.filter((id) => h.browser.tabs.tab(id)?.folderId === folder.id)
+        .map((id) => h.browser.tabs.tab(id)!.url)
+    expect(members()).toEqual(['https://a.test/', 'https://b.test/'])
+    // New Tab in Folder on the saved folder: the pages back as its tabs, the new tab behind
+    // them and active, the folder open and unfolded – nothing it kept lost.
+    h.browser.closeFolder(folder.id, h.win)
+    expect(h.browser.state.model.folders[folder.id].savedTabs).toHaveLength(2)
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    item(h.shown(), 'New Tab in Folder').click!()
+    const reopened = h.browser.state.model.folders[folder.id]
+    expect(reopened.savedTabs ?? null).toBeNull()
+    expect(reopened.collapsed).toBe(false)
+    const active = h.browser.tabs.tab(h.win.selectedTabIn(h.win.activeSpace())!)!
+    expect(isEmptyTabUrl(active.url)).toBe(true)
+    expect(active.folderId).toBe(folder.id)
+    expect(members()).toEqual(['https://a.test/', 'https://b.test/', active.url])
+    // Open again: its menu is an open folder's, New Tab in Folder leading.
+    h.browser.menus.showFolderContextMenu(folder.id, h.win)
+    expect(labels(h.shown())[0]).toBe('New Tab in Folder')
+    expect(labels(h.shown())).toContain('Close Folder (3 Tabs)')
   })
 
   it('Delete Folder asks the chrome first when the folder holds tabs or saved pages, and deletes an empty one outright', () => {
