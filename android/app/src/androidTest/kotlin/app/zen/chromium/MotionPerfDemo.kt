@@ -82,9 +82,29 @@ import kotlin.math.roundToInt
  *  spring's own time (the spring's 64 ms step clamp stretches it by the frame rate's shortfall),
  *  the release's lag after the settle, and the glide – see [foldNumbers].
  *
+ * THE GROUP LEAVE (v2 §11.4 as the lead's ruling 3 amended it: a group whose every card has left
+ * – filtered out by a search, closed – is a container with nothing to hold, and its frame departs
+ * as a card does, the ghost fading in place while the cells glide up, never a cut), the
+ * `overview-group-leave` group, on the six tabs with a group made for it off the record, the
+ * frame's behaviour AS IT STANDS measured against its cards' exits, see [groupLeaveScenes]:
+ *
+ *  - `overview-group-leave-search`: the search open from the header (off the record, the keyboard
+ *    up), one key typed – a query every seeded tab's address holds and the made group's do not –
+ *    so the query drops that group's two cards and nothing else (the New Tab card departs with any
+ *    query, §9.34).
+ *  - `overview-group-leave-close`: the query cleared and the search closed off the record, one of
+ *    the group's cards closed off the record (a group of one); then its last card's close X.
+ *
+ *  The probe's timeline says, frame by frame, what the frame did while its cards' exits faded –
+ *  its height written down to nothing (#147's dissolve: the shell shrinking on the gentle spring,
+ *  the cells below holding for it, then gliding), or hidden or removed in the commit with no
+ *  height frame (a cut) – and when the cells below set off: the hold from the key or the tap to
+ *  the glide's first frame, the glide, and whether the frame outlived the exits or left under
+ *  them – see [leaveNumbers].
+ *
  * The groups are picked by the `scenes` argument (`DEMO_SCENES`: `all`, or a comma list of
- * `tab-swipe`, `overview`, `overview-group`), so a branch profiling one motion pays for its
- * scenes alone.
+ * `tab-swipe`, `overview`, `overview-group`, `overview-group-leave`), so a branch profiling one
+ * motion pays for its scenes alone.
  *
  * The scenes are measured BEFORE the recorder rolls (screenrecord composes a second copy of
  * every frame on the emulator's software GPU); the recorded part is the media: the slow swipe,
@@ -110,7 +130,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private val theme = InstrumentationRegistry.getArguments().getString("theme").let {
         if (it == "dark") "dark" else "light"
     }
-    /** The scene groups this run measures (`scenes`: `all` or a comma list of `tab-swipe`, `overview`, `overview-group`). */
+    /** The scene groups this run measures (`scenes`: `all` or a comma list of `tab-swipe`, `overview`, `overview-group`, `overview-group-leave`). */
     private val groups: Set<String> = InstrumentationRegistry.getArguments().getString("scenes").let { arg ->
         if (arg.isNullOrBlank() || arg == "all") GROUPS else arg.split(',').map { it.trim() }.filter { it in GROUPS }.toSet()
     }
@@ -226,7 +246,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         }
         finding("active tab before the scenes: ${activeTabId()}; groups: ${groups.joinToString(", ")}")
         if ("tab-swipe" in groups) measureTabSwipe()
-        if ("overview" in groups || "overview-group" in groups) measureOverview()
+        if (OVERVIEW_GROUPS.any { it in groups }) measureOverview()
     }
 
     /**
@@ -299,7 +319,9 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     /**
      * The overview's scenes on the seeded six tabs, then on thirty: the pull in its pieces, the
      * pick that closes it, a fling open, and (under gesture navigation) the system's back gesture
-     * over it (`overview`); the group folded and unfolded in the open overview (`overview-group`).
+     * over it (`overview`); the group folded and unfolded in the open overview (`overview-group`);
+     * a group's leave when a search drops its every card and when its last card is closed
+     * (`overview-group-leave`, on the six alone: its group is made and gone within its scenes).
      * The thirty are the six plus [EXTRA_TABS] created unloaded (`load: false`: a card each in the
      * grid, no page behind it, no picture in it), so the second set is the grid's size and nothing
      * else; the back scenes run on the six alone.
@@ -307,11 +329,13 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private fun measureOverview() {
         val pull = "overview" in groups
         val fold = "overview-group" in groups
+        val leave = "overview-group-leave" in groups
         if (pull) finding("overview: navigation ${if (gestural) "gestural (the back scenes run)" else "three-button (the back scenes are skipped)"}")
         activate(START_TAB)
         settle()
         if (pull) overviewScenes("", back = gestural)
         if (fold) groupScenes("")
+        if (leave) groupLeaveScenes()
         var made = 0
         for (i in 1..EXTRA_TABS) {
             val id = coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/article?extra=$i")},\"active\":false,\"load\":false}")
@@ -443,7 +467,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * The fold's numbers out of the probe's timeline (`tl`, see [installProbe]: one entry per
      * frame that wrote a cell, `[t, h, n, y]` – the group shell's inline height that frame in px
      * (-1 when it was not written; -2 when it was cleared, the spring at rest), the cells' style
-     * writes and the first one's translateY – and `[t, "down" | "click"]` for the tap's events).
+     * writes and the farthest one's translateY – and `[t, "down" | "click"]` for the tap's events).
      * Times in ms from the tap's `pointerdown` (from the first height write without one). Null when
      * no height was written: the tap folded nothing.
      *
@@ -542,6 +566,441 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     }
 
     private fun r1(v: Double): Double = Math.round(v * 10) / 10.0
+
+    // --- the group leave ---------------------------------------------------------------------------
+
+    /**
+     * A group's leave, as it stands (v2 §11.4, ruling 3: the frame of a group whose every card
+     * has left departs as a card does, never a cut – these scenes measure what the frame does
+     * today, the fix's before). The group is made off the record with the overview closed – the
+     * [LEAVE_GROUP_NAME] group, [LEAVE_URLS]: two tabs created unloaded at addresses with no digit
+     * in them – and stands second in the grid (`tabOrderOf`: the groups first, in their order,
+     * Docs before it), every loose card and the New Tab card below it. Then, in the open overview:
+     *
+     *  - `overview-group-leave-search`: the search opened from the header off the record (the
+     *    magnifier, the field, the keyboard up, a rest for the window's insets), then ONE key,
+     *    [LEAVE_QUERY] – a digit every seeded tab's address holds (`127.0.0.1:18170`) and the made
+     *    group's do not – so the query drops that group's two cards and no other (the New Tab
+     *    card departs with any query); the scene is the key and [LEAVE_SETTLE_MS] after it, with
+     *    one look at the boxes [LEAVE_PEEK_MS] in ([leaveBox]).
+     *  - off the record: the X twice (the query cleared – the group and the New Tab card come
+     *    back – then the field closed, the keyboard down); one of the group's cards closed by its
+     *    X – a group of one, in a single column.
+     *  - `overview-group-leave-close`: the last card's close X; the scene is the tap and
+     *    [LEAVE_SETTLE_MS] after it, with the same look [LEAVE_PEEK_MS] in.
+     *
+     * What stands, at 60 Hz on the preview host (the driver PR's local runs, on main's product
+     * code): no cut, and not the cards' leave either. The frame shrinks on the gentle spring
+     * (293 -> 0 px over ~430 ms in the search scene, 285 -> 0 in the close's; its rest and unmount
+     * ~490 ms after the key, ~575 after the tap) with its cards' exits fading over it (~365 ms
+     * after the key, ~350 after the tap) – but its shell, put out of the flow as `position:
+     * absolute` at its `offsetTop`, is placed against the pane outside the scroller, so the box
+     * lands a `scrollTop` lower than the card stood (121 px there) and the tracker glides it down
+     * as it shrinks; and the tracker holds only the cells drawn under that lower box, so the row
+     * just below the group glides at once, under the shrinking frame, and the rows after it wait
+     * for the rest and glide then – two waves, the second starting ~445 ms after the first in the
+     * search scene and ~460 in the close's, everything still ~900 ms after the key, ~1 s after
+     * the tap. [leaveBox] reads the mechanism on the device: the grid's `scrollTop` against the
+     * shell's top before the input and one frame into the shrink.
+     *
+     * Each scene's line reads the frame against its cards' exits off the probe's timeline
+     * ([leaveNumbers]). Afterwards the group's tabs are closed if any remain and the folder is
+     * deleted, off the record, so the thirty-tab set after these is the same six plus twenty-four.
+     */
+    private fun groupLeaveScenes() {
+        val folderId = coreInvoke(
+            "folder.create",
+            "{\"spaceId\":\"space_main\",\"name\":${JSONObject.quote(LEAVE_GROUP_NAME)},\"icon\":\"\uD83D\uDCE6\",\"color\":\"green\",\"rename\":false}"
+        ).trim('"')
+        if (folderId.isEmpty()) {
+            finding("overview-group-leave: folder.create made no group; the leave scenes are skipped")
+            return
+        }
+        val tabIds = LEAVE_URLS.map { url ->
+            coreInvoke("tab.create", "{\"url\":${JSONObject.quote(url)},\"active\":false,\"load\":false,\"folderId\":${JSONObject.quote(folderId)}}").trim('"')
+        }.filter { it.isNotEmpty() }
+        finding("overview-group-leave: the $LEAVE_GROUP_NAME group $folderId made off the record with ${tabIds.size} tabs (${tabIds.joinToString()}); ${coreState().getJSONObject("tabs").length()} tabs in the core")
+        SystemClock.sleep(OPEN_REST_MS)
+        try {
+            if (tabIds.size != LEAVE_URLS.size) {
+                finding("overview-group-leave: not every tab was made; the leave scenes are skipped")
+                return
+            }
+            if (!openOverview()) {
+                finding("overview-group-leave: the overview did not open; the leave scenes are skipped")
+                return
+            }
+            val header = findByLabel(groupCard(LEAVE_GROUP_NAME)) ?: domRect("${leaveShell(folderId)} > .zen-group-header")
+            finding("overview-group-leave: ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; header at $header; the $GROUP_NAME group ${groupState()}")
+            if (header == null) {
+                finding("overview-group-leave: no $LEAVE_GROUP_NAME group card in the grid; the leave scenes are skipped")
+                closeOverview()
+                return
+            }
+            // The search, off the record: the magnifier, the field with the focus, the keyboard up,
+            // and a rest for the window's insets to land (the grid re-lays out under the keyboard).
+            val toggle = domRect(SEARCH_TOGGLE)
+            if (toggle == null) {
+                finding("overview-group-leave-search: no search magnifier in the header; the leave scenes are skipped")
+                closeOverview()
+                return
+            }
+            Finger().tap(toggle.exactCenterX(), toggle.exactCenterY())
+            val fieldUp = awaitDom(SEARCH_INPUT, 4_000)
+            val imeUp = awaitIme(true, 8_000)
+            SystemClock.sleep(SEARCH_REST_MS)
+            finding("overview-group-leave-search: the field ${if (fieldUp) "is up" else "did NOT come up"}, focus on ${activeElement()}, the keyboard ${if (imeUp) "up" else "NOT up"}; ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; ${leaveBox(folderId)}")
+            var peek = ""
+            scene("overview-group-leave-search", JankBudget.Kind.SPRING, profile = true) {
+                keys(LEAVE_QUERY)
+                SystemClock.sleep(LEAVE_PEEK_MS)
+                peek = leaveBox(folderId)
+                SystemClock.sleep(LEAVE_SETTLE_MS - LEAVE_PEEK_MS)
+            }
+            finding("overview-group-leave-search: query '${searchValue()}'; ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; $LEAVE_PEEK_MS ms after the key: $peek; ${leaveLine()}")
+            SystemClock.sleep(FOLD_REST_MS)
+            // The X twice, off the record: the query goes (the cards and the New Tab card come
+            // back, the group with them), then the empty field closes and the keyboard goes down.
+            tapSearchClear("clear")
+            SystemClock.sleep(LEAVE_REST_MS)
+            tapSearchClear("close")
+            awaitIme(false, 6_000)
+            SystemClock.sleep(LEAVE_REST_MS)
+            finding("overview-group-leave: the search ${if (domRect(SEARCH_INPUT) == null) "closed" else "STILL UP"}, the keyboard ${if (imeShown()) "STILL UP" else "down"}; ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}")
+            // One card closed off the record: a group of one, in a single column.
+            closeCard(tabIds[0], "overview-group-leave (before the close scene)")
+            SystemClock.sleep(LEAVE_REST_MS)
+            finding("overview-group-leave: ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; ${leaveBox(folderId)}")
+            val closeX = domRect(cardClose(tabIds[1]))
+            if (closeX == null) {
+                finding("overview-group-leave-close: no close X on the last card (${tabIds[1]}); the close scene is skipped")
+                closeOverview()
+                return
+            }
+            scene("overview-group-leave-close", JankBudget.Kind.SPRING, profile = true) {
+                Finger().tap(closeX.exactCenterX(), closeX.exactCenterY())
+                SystemClock.sleep(LEAVE_PEEK_MS)
+                peek = leaveBox(folderId)
+                SystemClock.sleep(LEAVE_SETTLE_MS - LEAVE_PEEK_MS)
+            }
+            finding("overview-group-leave-close: ${cardsInGrid()} cards in the grid; the $LEAVE_GROUP_NAME group ${leaveGroupState(folderId)}; $LEAVE_PEEK_MS ms after the tap: $peek; ${leaveLine()}")
+            SystemClock.sleep(FOLD_REST_MS)
+            closeOverview()
+        } finally {
+            dismissLeaveGroup(folderId, tabIds)
+        }
+    }
+
+    /**
+     * The made group gone, off the record, with the overview closed: whatever of its tabs is still
+     * open closed (a tap the system dropped would leave a loose card in the thirty-tab set) and
+     * the folder deleted (the Groups pane would otherwise show it as a saved group).
+     */
+    private fun dismissLeaveGroup(folderId: String, tabIds: List<String>) {
+        if (overviewState() != "closed") closeOverview()
+        val open = coreState().getJSONObject("tabs")
+        var closed = 0
+        for (id in tabIds) if (open.has(id)) {
+            runCatching { coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(id)},\"force\":true}") }
+            closed++
+        }
+        val deleted = runCatching { coreInvoke("folder.delete", "{\"folderId\":${JSONObject.quote(folderId)},\"unpack\":true}") }.isSuccess
+        SystemClock.sleep(LEAVE_REST_MS)
+        finding("overview-group-leave: $closed of the group's tabs were still open and are closed; the folder ${if (deleted) "deleted" else "NOT deleted"}; ${coreState().getJSONObject("tabs").length()} tabs in the core")
+    }
+
+    /** The made group's shell in the grid, by its cell key. */
+    private fun leaveShell(folderId: String): String = ".zen-overview .zen-group[data-cell=${JSONObject.quote("group:$folderId")}]"
+
+    /** `open, 2 cards, 293 px tall`, `dissolving, clipped, 120 px tall (inline 120px)`, `hidden`, or `gone from the grid`. */
+    private fun leaveGroupState(folderId: String): String = jsString(
+        "(function(){var e=document.querySelector(${JSONObject.quote(leaveShell(folderId))});if(!e)return 'gone from the grid';" +
+            "if(e.style.display==='none')return 'hidden';" +
+            "return (e.hasAttribute('data-dissolving')?'dissolving':e.hasAttribute('data-collapsed')?'collapsed':'open')+', '+e.querySelectorAll('[data-tab-id]').length+' cards'+" +
+            "(e.hasAttribute('data-clip')?', clipped':'')+', '+Math.round(e.getBoundingClientRect().height)+' px tall'+(e.style.height?' (inline '+e.style.height+')':'')})()"
+    )
+
+    /**
+     * Where the group's box stands against the grid's scroll – the leave's mechanism read
+     * directly: `GroupCard`'s dissolving shell is `position: absolute` at its `offsetTop`, placed
+     * against the pane outside the scroller, so it lands `scrollTop` lower than the card stood and
+     * the tracker glides it down as it shrinks. The grid's `scrollTop`; the shell (the cell, or
+     * the dissolved shell after its cell attribute went): its top as drawn and, under a transform,
+     * untransformed (less the tracker's translateY), its height, its inline position; a group's
+     * exit where one stands (a group leaving as a card does: the ghost fading where the card stood),
+     * its top and opacity.
+     */
+    private fun leaveBox(folderId: String): String = jsString(
+        "(function(){var g=document.querySelector('.zen-overview-grid[data-pane=\"regular\"]')||document.querySelector('.zen-overview-grid'),s='scrollTop '+(g?Math.round(g.scrollTop*10)/10:'(no grid)');" +
+            "var e=document.querySelector(${JSONObject.quote(leaveShell(folderId))})||document.querySelector('.zen-overview .zen-group[data-dissolving]');" +
+            "if(e){var r=e.getBoundingClientRect(),tf=e.style.transform,k=tf.indexOf(','),ty=k<0?0:parseFloat(tf.slice(k+1));" +
+            "s+='; shell top '+Math.round(r.top*10)/10+(ty?' ('+Math.round((r.top-ty)*10)/10+' untransformed)':'')+', '+Math.round(r.height*10)/10+' px tall'+(e.style.position?', '+e.style.position:'')+(e.style.display==='none'?', hidden':'')}" +
+            "else s+='; no shell';" +
+            "var x=document.querySelector('.zen-group:not([data-cell]):not([data-dissolving])');" +
+            "if(x){var xr=x.getBoundingClientRect();s+='; a group exit at top '+Math.round(xr.top*10)/10+', opacity '+(x.style.opacity===''?'1':x.style.opacity)}" +
+            "return s})()"
+    )
+
+    private fun cardClose(tabId: String): String = ".zen-overview [data-tab-id=${JSONObject.quote(tabId)}] .zen-overview-card-close"
+
+    /** A tap on a card's close X, off the record; the finding says when there was none. */
+    private fun closeCard(tabId: String, name: String) {
+        val x = domRect(cardClose(tabId))
+        if (x == null) {
+            finding("$name: no close X on $tabId's card; not closed")
+            return
+        }
+        Finger().tap(x.exactCenterX(), x.exactCenterY())
+    }
+
+    /** A tap on the search field's X (`Clear search` with a query, `Close search` without), off the record. */
+    private fun tapSearchClear(what: String) {
+        val x = domRect(SEARCH_CLEAR)
+        if (x == null) {
+            finding("overview-group-leave: no X on the search field to $what it")
+            return
+        }
+        Finger().tap(x.exactCenterX(), x.exactCenterY())
+    }
+
+    private fun searchValue(): String = jsString("(function(){var e=document.querySelector(${JSONObject.quote(SEARCH_INPUT)});return e?e.value:''})()")
+
+    private fun activeElement(): String = jsString("(function(){var e=document.activeElement;return e?e.tagName+(e.id?'#'+e.id:''):'nothing'})()")
+
+    /** Poll the chrome until `selector` is in the DOM; false when it is not in time. */
+    private fun awaitDom(selector: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (domRect(selector) != null) return true
+            SystemClock.sleep(150)
+        }
+        return domRect(selector) != null
+    }
+
+    /**
+     * Type into the focused field, one character's events at a time so each carries the time it
+     * is injected (TabSearchRecentDemo's `keys`: the events of one `getEvents` call all carry the
+     * time it was made; on the software-rendered emulator the tail of a string can land past the
+     * dispatcher's window). The probe logs each `keydown` into the timeline (`key`).
+     */
+    private fun keys(text: String) {
+        val map = android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD)
+        for (char in text) {
+            val events = map.getEvents(charArrayOf(char)) ?: error("no key events for '$char'")
+            for (event in events) {
+                ui.injectInputEvent(event, true)
+                SystemClock.sleep(25)
+            }
+            SystemClock.sleep(80)
+        }
+    }
+
+    /** The last scene's leave numbers ([leaveNumbers]) written into its record and described for the findings. */
+    private fun leaveLine(): String {
+        val json = lastScene ?: return "no scene"
+        val leave = leaveNumbers(json.optJSONObject("probe") ?: JSONObject())
+        if (leave != null) json.put("leave", leave)
+        return describeLeave(leave)
+    }
+
+    /**
+     * A departing group's frame against its cards' exits, out of the probe's timeline (`tl`, see
+     * [installProbe]: `[t, h, n, y, g]` per callback that wrote a cell or an exit – the group
+     * shell's inline height (-1 not written, -2 cleared, -3 hidden), the cells' writes and the
+     * farthest one's translateY, the exits' lowest opacity (-1 none) – and `[t, "key" | "down" |
+     * "click" | "gone"]` for the key's and the tap's events and a group shell's removal from the
+     * grid). Entries under [FRAME_MERGE_MS] apart are one frame (the shell's spring and the
+     * tracker's glide each write in their own callback: a frame of the dissolve is two entries,
+     * the height's and the transforms'). Times in ms from the key (the search scene) or the tap's
+     * `pointerdown` (the close scene); from the first frame without either. Null when nothing was
+     * written: the key or the tap did nothing.
+     *
+     *  - the exits (the ghosts): their first and last frame, their frames, the opacity they ran
+     *    from (the highest written) and to (the last);
+     *  - the frame: its height frames (the dissolve's shrink, when there are any: from and to,
+     *    the wall time and the spring's own at the 64 ms clamp; a height written again unchanged
+     *    – a commit's or the tracker's write on the shell – is no frame), when it was hidden (`display:
+     *    none`, the dissolve's end) or removed (`gone`); its END is the first of those, else its
+     *    last height write; `frame` names what it did: `shrink` (height frames, then the end),
+     *    `cut` (the end with no height frame before it), `stayed` (neither in the window);
+     *  - the frame against the exits: `frameAfterGhostsMs`, the frame's end less the exits' last
+     *    frame – positive, the frame outlived the exits (the ghosts finished under it); negative,
+     *    it left under them (the ruling's "a frame that vanishes while its last card is still
+     *    fading");
+     *  - the cells below, in two waves: WITH the frame – the frames between the first height
+     *    write and the end that moved a cell (its translateY changed by half a px or more from
+     *    the last frame's that did; a re-write of the held cells' full offset, a commit's, is not
+     *    motion: the cells the tracker did not hold, gliding while the frame shrinks), their
+     *    count, the travel and the last one's time; and AFTER it – the hold, from the key or the tap to the
+     *    glide's first frame (a frame writing cells after the frame's end – or, with no frame
+     *    motion at all, the first cell frame), the release's lag after the frame's end, the
+     *    glide's frames, length and travel (the cells the tracker held for the frame's rest);
+     *  - `settleMs`: the last frame that wrote a cell or an exit – when everything stood still.
+     */
+    private fun leaveNumbers(probe: JSONObject): JSONObject? {
+        val tl = probe.optJSONArray("tl") ?: return null
+        var down = Double.NaN
+        var key = Double.NaN
+        var gone = Double.NaN
+        val frames = ArrayList<DoubleArray>()
+        for (i in 0 until tl.length()) {
+            val e = tl.getJSONArray(i)
+            if (e.length() == 2) {
+                when (e.getString(1)) {
+                    "down" -> if (down.isNaN()) down = e.getDouble(0)
+                    "key" -> if (key.isNaN()) key = e.getDouble(0)
+                    "gone" -> if (gone.isNaN()) gone = e.getDouble(0)
+                }
+                continue
+            }
+            val f = doubleArrayOf(e.getDouble(0), e.getDouble(1), e.getDouble(2), e.getDouble(3), if (e.length() > 4) e.getDouble(4) else -1.0)
+            val last = frames.lastOrNull()
+            if (last != null && f[0] - last[0] < FRAME_MERGE_MS) {
+                if (f[1] != -1.0) last[1] = f[1]
+                last[2] += f[2]
+                if (Math.abs(f[3]) > Math.abs(last[3])) last[3] = f[3]
+                if (f[4] >= 0 && (last[4] < 0 || f[4] < last[4])) last[4] = f[4]
+            } else frames += f
+        }
+        if (frames.isEmpty() && gone.isNaN()) return null
+        val t0 = when {
+            !key.isNaN() -> key
+            !down.isNaN() -> down
+            frames.isNotEmpty() -> frames.first()[0]
+            else -> gone
+        }
+        // The shell is a tracked cell too: a commit's transform reset or the tracker's draw on it
+        // makes a `group` entry carrying the height as it stands, which is no frame of the
+        // spring – a height equal to the last kept one is dropped.
+        val heights = ArrayList<DoubleArray>()
+        for (f in frames) if (f[1] >= 0 && (heights.isEmpty() || Math.abs(f[1] - heights.last()[1]) > HEIGHT_REPEAT_PX)) heights += f
+        val hidden = frames.firstOrNull { it[1] == -3.0 }?.get(0) ?: Double.NaN
+        val ghosts = frames.filter { it[4] >= 0 }
+        var wall = 0.0
+        var spring = 0.0
+        for (i in 1 until heights.size) {
+            val d = heights[i][0] - heights[i - 1][0]
+            wall += d
+            spring += Math.min(d, SPRING_STEP_CLAMP_MS)
+        }
+        val end = listOf(hidden, gone).filter { !it.isNaN() }.minOrNull() ?: heights.lastOrNull()?.get(0) ?: Double.NaN
+        val frame = when {
+            heights.isNotEmpty() -> "shrink"
+            !end.isNaN() -> "cut"
+            else -> "stayed"
+        }
+        val from = if (end.isNaN()) t0 else end
+        // The glide: the cell-writing frames from the frame's end on that wrote no height and were
+        // not the hidden frame itself (a cut's first glide frame shares its callback with `gone`).
+        val glide = frames.filter { it[0] >= from && it[2] > 0 && it[1] == -1.0 }
+        val travel = frames.filter { it[0] >= from }.maxOfOrNull { Math.abs(it[3]) } ?: 0.0
+        // With the frame: the cell frames between the first height write and the end whose
+        // farthest translateY moved from the last one's that did. A commit's re-write of the held
+        // cells' full offset (the window's first frame is one; a re-render's later) is not
+        // motion, and the frame after it is read against the last moving one, not against it.
+        val window = if (heights.isNotEmpty() && !end.isNaN()) frames.filter { it[0] >= heights.first()[0] && it[0] < end && it[2] > 0 } else emptyList()
+        val fullOffset = window.firstOrNull()?.let { Math.abs(it[3]) } ?: 0.0
+        val withFrame = ArrayList<DoubleArray>()
+        var lastY = fullOffset
+        for ((i, f) in window.withIndex()) {
+            if (i == 0) continue
+            val y = Math.abs(f[3])
+            if (fullOffset > 0.5 && y >= fullOffset - 0.5) continue
+            if (Math.abs(y - lastY) >= 0.5) withFrame += f
+            lastY = y
+        }
+        val settle = frames.lastOrNull { it[2] > 0 || it[4] >= 0 }?.get(0) ?: Double.NaN
+        val o = JSONObject()
+            .put("startedBy", if (!key.isNaN()) "key" else if (!down.isNaN()) "tap" else "none")
+            .put("frame", frame)
+            .put("ghostFrames", ghosts.size)
+        if (!settle.isNaN()) o.put("settleMs", r1(settle - t0))
+        if (withFrame.isNotEmpty()) {
+            o.put("withFrameFrames", withFrame.size)
+                .put("withFrameFirstMs", r1(withFrame.first()[0] - t0))
+                .put("withFrameLastMs", r1(withFrame.last()[0] - t0))
+                .put("withFramePx", r1(window.maxOf { Math.abs(it[3]) }))
+        }
+        if (ghosts.isNotEmpty()) {
+            o.put("ghostFirstMs", r1(ghosts.first()[0] - t0))
+                .put("ghostLastMs", r1(ghosts.last()[0] - t0))
+                .put("ghostFrom", ghosts.maxOf { it[4] })
+                .put("ghostTo", ghosts.last()[4])
+        }
+        if (heights.isNotEmpty()) {
+            o.put("heightFirstMs", r1(heights.first()[0] - t0))
+                .put("heightLastMs", r1(heights.last()[0] - t0))
+                .put("heightFrames", heights.size)
+                .put("heightFrom", r1(heights.first()[1]))
+                .put("heightTo", r1(heights.last()[1]))
+                .put("heightWallMs", r1(wall))
+                .put("heightSpringMs", r1(spring))
+                .put("stretch", if (spring > 0) r1(wall / spring) else 1.0)
+                .put("cellWritesPerHeightFrame", r1(heights.sumOf { it[2] } / heights.size))
+        }
+        if (!hidden.isNaN()) o.put("hiddenMs", r1(hidden - t0))
+        if (!gone.isNaN()) o.put("goneMs", r1(gone - t0))
+        if (!end.isNaN()) {
+            o.put("frameEndMs", r1(end - t0))
+            if (ghosts.isNotEmpty()) o.put("frameAfterGhostsMs", r1(end - ghosts.last()[0]))
+        }
+        if (glide.isNotEmpty()) {
+            o.put("holdMs", r1(glide.first()[0] - t0))
+                .put("releaseLagMs", r1(glide.first()[0] - from))
+                .put("glideFrames", glide.size)
+                .put("glideMs", r1(glide.last()[0] - glide.first()[0]))
+                .put("glidePx", r1(travel))
+        }
+        return o
+    }
+
+    /** [leaveNumbers] as a line of the findings. */
+    private fun describeLeave(o: JSONObject?): String {
+        if (o == null) return "nothing was written: the key or the tap did nothing"
+        val by = o.optString("startedBy")
+        val line = StringBuilder()
+        when (o.optString("frame")) {
+            "shrink" -> line.append(
+                "the frame SHRANK ${o.optDouble("heightFrom")} -> ${o.optDouble("heightTo")} px over ${o.optInt("heightFrames")} frames / ${o.optDouble("heightWallMs")} ms " +
+                    "(${o.optDouble("heightSpringMs")} ms of spring time at the ${SPRING_STEP_CLAMP_MS.toInt()} ms clamp: ${o.optDouble("stretch")}x stretched), " +
+                    "first written ${o.optDouble("heightFirstMs")} ms after the $by, ${o.optDouble("cellWritesPerHeightFrame")} cell writes per height frame; " +
+                    "its end ${describeEnd(o)}"
+            )
+            "cut" -> line.append("the frame was CUT: ${describeEnd(o)}, no height frame before it")
+            else -> line.append("the frame STAYED: neither shrunk, hidden nor removed in the scene's window")
+        }
+        line.append("; ")
+        if (o.optInt("ghostFrames") > 0) {
+            line.append("the exits ran ${o.optInt("ghostFrames")} frames, opacity ${o.opt("ghostFrom")} -> ${o.opt("ghostTo")}, from ${o.optDouble("ghostFirstMs")} to ${o.optDouble("ghostLastMs")} ms after the $by")
+            if (o.has("frameAfterGhostsMs")) {
+                val d = o.optDouble("frameAfterGhostsMs")
+                line.append(
+                    if (d >= 0) "; the frame ended ${r1(d)} ms AFTER the exits' last frame (the ghosts faded under a standing frame)"
+                    else "; the frame ended ${r1(-d)} ms BEFORE the exits' last frame (the frame left while the ghosts were still fading)"
+                )
+            }
+        } else line.append("NO exit was written (no ghost)")
+        line.append("; the cells below: ")
+        if (o.has("withFrameFrames")) {
+            line.append(
+                "${o.optInt("withFrameFrames")} frames MOVED WITH the frame's shrink, ${o.optDouble("withFramePx")} px from ${o.optDouble("withFrameFirstMs")} to ${o.optDouble("withFrameLastMs")} ms after the $by " +
+                    "(cells the tracker did not hold, gliding under the shrinking frame)"
+            )
+        } else line.append("none moved with the frame")
+        line.append("; ")
+        if (o.has("holdMs")) {
+            line.append("HELD ${o.optDouble("holdMs")} ms from the $by to the glide's first frame (${o.optDouble("releaseLagMs")} ms after the frame's end), ")
+            line.append("then a glide of ${o.optInt("glideFrames")} frames over ${o.optDouble("glideMs")} ms, ${o.optDouble("glidePx")} px")
+        } else line.append("no glide after the frame's end")
+        if (o.has("settleMs")) line.append("; all still ${o.optDouble("settleMs")} ms after the $by")
+        return line.toString()
+    }
+
+    private fun describeEnd(o: JSONObject): String = when {
+        o.has("hiddenMs") -> "hidden (display: none) ${o.optDouble("hiddenMs")} ms after the ${o.optString("startedBy")}" + (if (o.has("goneMs")) ", removed from the grid at ${o.optDouble("goneMs")}" else "")
+        o.has("goneMs") -> "removed from the grid ${o.optDouble("goneMs")} ms after the ${o.optString("startedBy")}"
+        else -> "at its last height write, ${o.optDouble("heightLastMs")} ms after the ${o.optString("startedBy")}"
+    }
 
     /**
      * One set of the overview's scenes, named with `suffix`:
@@ -836,40 +1295,64 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * counted apart – the group card's shell (`group`: its height, one write per frame of its
      * spring) and the cards (`cell`: the tracker's transforms, one per card per frame held or
      * gliding) – and kept as a TIMELINE (`tl`, up to [TIMELINE_MAX] entries a scene): one entry per
-     * observer callback that wrote a cell, `[t, h, n, y]` – the time, the shell's inline height in
-     * px as the frame left it (-1: not written this frame; -2: cleared, the spring at rest), the
-     * cards' writes and the first written card's translateY – and `[t, "down"]` / `[t, "click"]`
-     * for the tap's events. The observer runs once per task, after the frame's script (a
-     * microtask), so an entry is a frame of the animation: [foldNumbers] reads the hold and the
-     * glide off it.
+     * observer callback that wrote a cell or an exit, `[t, h, n, y, g]` – the time, the shell's
+     * inline height in px as the frame left it (-1: not written this frame; -2: cleared, the
+     * spring at rest; -3: the shell hidden, `display: none`, a dissolved group's end), the cards'
+     * writes and the farthest written card's translateY, and the exits' opacity as the frame left
+     * it (the lowest, when more than one was written; -1: none) – and `[t, "down"]` /
+     * `[t, "click"]` / `[t, "key"]` for the tap's and the key's events, `[t, "gone"]` for a group
+     * shell taken off the grid (a dissolved group's unmount after its rest; a cut when no height
+     * frame came before it). An EXIT is a card's ghost
+     * drawn over the grid where the card was as it leaves (`Departures`: a tab's, counted with
+     * the overview cards, `ovCard`; a group's or the New Tab card's, `ghost`), fading and
+     * shrinking on the exit spring, so its opacity is the leave's progress. The observer runs
+     * once per task, after the frame's script (a microtask), so an entry is a frame of the
+     * animation: [foldNumbers] reads the hold and the glide off it, [leaveNumbers] a departing
+     * group's frame against its cards' exits.
      */
     private fun installProbe(): String = chromeJs(
         "(function(){if(window.__motion)return 'kept';" +
             "var p=window.__motion={};" + RESET_JS +
             "var inPill=function(n){return !!(n&&n.closest&&n.closest('.zen-phone-pill'))};" +
             "var isStage=function(n){return n.nodeType===1&&(n.classList.contains('zen-stage-card')||(n.querySelector&&!!n.querySelector('.zen-stage-card')))};" +
-            "new MutationObserver(function(rs){var fh,fn=0,fy;for(var i=0;i<rs.length;i++){var r=rs[i],t=r.target;" +
+            "var isCell=function(n){return !!(n.hasAttribute&&n.hasAttribute('data-cell'))};" +
+            // A group card's shell: a cell, or a dissolved one after its rest – the rest's record
+            // (`display: none`) is delivered after the same task took its cell attribute off, so
+            // the shell is known by `data-dissolving` then (a group's ghost carries neither).
+            "var isShell=function(n){return !!(n.classList&&n.classList.contains('zen-group')&&(isCell(n)||n.hasAttribute('data-dissolving')))};" +
+            "var ghostOpacity=function(n,g){var o=n.style.opacity;if(o==='')return g;o=parseFloat(o);return g===undefined||o<g?o:g};" +
+            "new MutationObserver(function(rs){var fh,fn=0,fy,fg,now=Math.round(performance.now()*10)/10;for(var i=0;i<rs.length;i++){var r=rs[i],t=r.target;" +
             "if(r.type==='attributes'){var c=t.classList;" +
             // The hero wears `zen-stage-card` too: it is read first. Inside it, the title row's
             // height and opacity and the picture's scale are the hero's inner writes.
             "if(c&&c.contains('zen-overview-hero'))p.hero++;else if(c&&c.contains('zen-stage-card'))p.card++;else if(c&&c.contains('zen-stage-dim'))p.dim++;" +
-            "else if(c&&c.contains('zen-group-ribbon'))p.ribbon++;else if(c&&c.contains('zen-overview'))p.overview++;else if(c&&c.contains('zen-overview-card'))p.ovCard++;" +
+            "else if(c&&c.contains('zen-group-ribbon'))p.ribbon++;else if(c&&c.contains('zen-overview'))p.overview++;" +
+            // A card's exit (a `.zen-overview-card` off the grid: the grid's own cards carry the
+            // class on a child of their cell – written once, to hide the card behind its exit,
+            // which is no exit frame), a group's or the New Tab card's exit (their class off the
+            // grid): the opacity is the leave's progress.
+            "else if(c&&c.contains('zen-overview-card')){p.ovCard++;if(!(t.closest&&t.closest('[data-cell]')))fg=ghostOpacity(t,fg)}" +
+            "else if(c&&(c.contains('zen-group')||c.contains('zen-overview-new'))&&!isCell(t)&&!isShell(t)){p.ghost++;fg=ghostOpacity(t,fg)}" +
             "else if(t===document.documentElement)p.root++;else if(inPill(t))p.pill++;" +
-            // A cell of the grid: the group card's shell (its height) or a card (its transform).
-            "else if(t.hasAttribute&&t.hasAttribute('data-cell')){if(c.contains('zen-group')){p.group++;var hs=t.style.height;fh=hs===''?-2:parseFloat(hs)}" +
-            "else{p.cell++;fn++;if(fy===undefined){var tf=t.style.transform,k=tf.indexOf(',');fy=k<0?0:parseFloat(tf.slice(k+1))}}}" +
+            // A cell of the grid: the group card's shell (its height; hidden once dissolved) or a card (its transform).
+            "else if(isShell(t)){p.group++;var hs=t.style.height;fh=t.style.display==='none'?-3:hs===''?-2:parseFloat(hs)}" +
+            "else if(isCell(t)){p.cell++;fn++;var tf=t.style.transform,k=tf.indexOf(','),v=k<0?0:parseFloat(tf.slice(k+1));if(fy===undefined||Math.abs(v)>Math.abs(fy))fy=v}" +
             "else if(t.closest&&t.closest('.zen-overview-hero'))p.heroInner++;else if(t.closest&&t.closest('.zen-overview'))p.ovInner++;else p.other++}" +
             "else{p.added+=r.addedNodes.length;p.removed+=r.removedNodes.length;" +
             "for(var j=0;j<r.addedNodes.length;j++){if(isStage(r.addedNodes[j]))p.stageMounts++}" +
+            // A group shell taken off the grid itself (not the grid or the overview going with
+            // everything in it; not a group's ghost, which is no cell): a dissolved group's
+            // unmount (its cell attribute went at its rest, `data-dissolving` stays), or a cut.
+            "for(var k=0;k<r.removedNodes.length;k++){var rn=r.removedNodes[k];if(rn.nodeType===1&&isShell(rn)&&p.tl.length<$TIMELINE_MAX)p.tl.push([now,'gone'])}" +
             "if(inPill(t)&&r.addedNodes.length)p.pillRemounts++}}" +
-            "if((fh!==undefined||fn>0)&&p.tl.length<$TIMELINE_MAX)p.tl.push([Math.round(performance.now()*10)/10,fh===undefined?-1:Math.round(fh*10)/10,fn,fy===undefined?0:Math.round(fy*10)/10])})" +
+            "if((fh!==undefined||fn>0||fg!==undefined)&&p.tl.length<$TIMELINE_MAX)p.tl.push([now,fh===undefined?-1:Math.round(fh*10)/10,fn,fy===undefined?0:Math.round(fy*10)/10,fg===undefined?-1:Math.round(fg*1000)/1000])})" +
             ".observe(document.documentElement,{attributes:true,attributeFilter:['style'],childList:true,subtree:true});" +
             "var at={},root=document.getElementById('root'),inner=root&&root.firstElementChild;" +
             "var seg=function(r,k,d){if(d>(r[k]||0))r[k]=d};" +
-            "['pointerover','pointerenter','pointerdown','touchstart','pointermove','touchmove','pointerup','touchend','pointercancel','gotpointercapture','lostpointercapture','click']" +
+            "['pointerover','pointerenter','pointerdown','touchstart','pointermove','touchmove','pointerup','touchend','pointercancel','gotpointercapture','lostpointercapture','click','keydown']" +
             ".forEach(function(ty){var t={};" +
             "window.addEventListener(ty,function(){at[ty]=t.w0=performance.now();performance.mark('probe:'+ty+':w0');var r=p.ev[ty]||(p.ev[ty]={n:0,ms:0,max:0});r.n++;" +
-            "if((ty==='pointerdown'||ty==='click')&&p.tl.length<$TIMELINE_MAX)p.tl.push([Math.round(t.w0*10)/10,ty==='click'?'click':'down'])},true);" +
+            "if((ty==='pointerdown'||ty==='click'||ty==='keydown')&&p.tl.length<$TIMELINE_MAX)p.tl.push([Math.round(t.w0*10)/10,ty==='click'?'click':ty==='keydown'?'key':'down'])},true);" +
             // React's listeners sit on #root, capture and bubble, registered before these: a
             // capture listener on #root runs after React's capture one, a bubble listener on
             // #root's first child before React's bubble one. So the cuts are React's capture
@@ -1048,9 +1531,38 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         private const val PROFILE_WAIT_MS = 4_000L
 
         /** The scene groups a run can measure (`scenes`). */
-        private val GROUPS = setOf("tab-swipe", "overview", "overview-group")
+        private val GROUPS = setOf("tab-swipe", "overview", "overview-group", "overview-group-leave")
+        /** The groups measured in the open overview ([measureOverview]). */
+        private val OVERVIEW_GROUPS = setOf("overview", "overview-group", "overview-group-leave")
         /** The seeded group the fold scenes fold and unfold (`folder_docs`: the two Docs tabs, at the head of the grid). */
         private const val GROUP_NAME = "Docs"
+        /** The group the leave scenes make off the record and see out; second in the grid, after Docs. */
+        private const val LEAVE_GROUP_NAME = "Leaving"
+        /**
+         * Its two tabs' addresses, created unloaded: no digit in them, so [LEAVE_QUERY] – a digit
+         * every seeded tab's address holds (`127.0.0.1:18170`) – drops these two cards and no other.
+         */
+        private val LEAVE_URLS = listOf("http://leaving.example/one", "http://leaving.example/two")
+        private const val LEAVE_QUERY = "1"
+        /** The leave scene's window after the key or the tap: the exits, the frame's way out, the glide (generous, as the fold's). */
+        private const val LEAVE_SETTLE_MS = 4_000L
+        /**
+         * A look at the boxes this long after the scene's input ([leaveBox]: the grid's scroll, the
+         * shell's top as drawn and untransformed, a group exit's) – on the emulator about one frame
+         * into the frame's way out. One `evaluateJavascript` inside the window, a layout the next
+         * frame would have forced anyway.
+         */
+        private const val LEAVE_PEEK_MS = 250L
+        /** A shell height written again within this of the last kept one is the same height, not a frame of the spring. */
+        private const val HEIGHT_REPEAT_PX = 0.05
+        /** A rest after an off-record step of the leave scenes (an exit and a glide to land). */
+        private const val LEAVE_REST_MS = 2_500L
+        /** After the search opens off the record: the keyboard's own animation and the window's insets, the grid re-laid under them. */
+        private const val SEARCH_REST_MS = 1_500L
+        /** The tab search (TAB-21): the header's magnifier, the field's input, and its X (`Clear search` with a query, `Close search` without). */
+        private const val SEARCH_TOGGLE = "[data-testid=\"overview-search-toggle\"]"
+        private const val SEARCH_INPUT = "#overview-search"
+        private const val SEARCH_CLEAR = "[data-testid=\"overview-search-clear\"]"
         /**
          * The fold scene's window after the tap: the height spring, the hold and the glide (about a
          * second at 60 Hz; the emulator's frame rate stretches both springs by its shortfall under
@@ -1064,6 +1576,11 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
          * the source; `spring.test.ts` pins the two equal, so a change there fails here by name.
          */
         private const val SPRING_STEP_CLAMP_MS = 64.0
+        /**
+         * Timeline entries this close are one frame ([leaveNumbers]): two callbacks of one frame
+         * are tenths of a millisecond apart, two frames sixteen or more (eight at 120 Hz).
+         */
+        private const val FRAME_MERGE_MS = 2.0
         /** The probe's timeline cap per scene (a frame's entry each; the thirty-tab glide is under a hundred). */
         private const val TIMELINE_MAX = 800
         /** Tabs created unloaded for the overview's second set: the six seeded plus these make thirty. */
@@ -1104,6 +1621,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             Triple("heroInner", "hero inner", true),
             Triple("overview", "overview root", true),
             Triple("ovCard", "overview cards", true),
+            Triple("ghost", "group / New Tab exits", true),
             Triple("group", "group height", true),
             Triple("cell", "cells", true),
             Triple("ovInner", "overview inner", true),
@@ -1116,7 +1634,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
 
         /** The probe's counters at zero (runs where `p` is the probe's object). */
         private const val RESET_JS =
-            "p.card=0;p.hero=0;p.heroInner=0;p.overview=0;p.ovCard=0;p.group=0;p.cell=0;p.ovInner=0;p.dim=0;p.ribbon=0;p.pill=0;p.root=0;p.other=0;" +
+            "p.card=0;p.hero=0;p.heroInner=0;p.overview=0;p.ovCard=0;p.ghost=0;p.group=0;p.cell=0;p.ovInner=0;p.dim=0;p.ribbon=0;p.pill=0;p.root=0;p.other=0;" +
                 "p.added=0;p.removed=0;p.stageMounts=0;p.pillRemounts=0;p.ev={};p.cmd={};p.tl=[];"
 
         /**
