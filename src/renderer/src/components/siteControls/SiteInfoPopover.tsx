@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { ExternalLink } from 'lucide-react'
 import type { Rect, Tab, UIState } from '@shared/types'
 import {
   cookieBytes,
@@ -14,7 +15,9 @@ import {
 import { cmd, run } from '@renderer/lib/api'
 import { manageExtension } from '@renderer/lib/extensions/manage'
 import { extensionPageChrome, extensionPageLine } from '@renderer/lib/extensions/pages'
+import { openSettings } from '@renderer/lib/pages'
 import { POPOVER_WIDTH } from '@renderer/lib/portals'
+import { permissionSiteOf } from '@renderer/lib/siteChips'
 import {
   SITE_DATA_TEXT,
   applySiteDataChoice,
@@ -38,8 +41,9 @@ import {
 } from '@renderer/lib/siteInfoCopy'
 import { siteChip, siteChipRects } from '@renderer/lib/surfaces'
 import { pushToast } from '@renderer/lib/ui'
+import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
-import { V2Button } from '../v2/controls'
+import { V2_GLYPH, V2Button } from '../v2/controls'
 import {
   BarHeader,
   BusyButton,
@@ -58,13 +62,15 @@ import {
 /**
  * Site information on a mouse (design language v1 §9 target, on the v2 chassis): a 400 px popover
  * under the site icon in the address pill (v2 §9.20) opening on a title block (§9.23) – the
- * favicon, the host, one line on the connection – then four rows: Connection, Cookies and site
- * data, Permissions (each a level away, pushing in on the spring), Reset permissions; a Trackers
- * blocked row where the engine counts them; and the panel form of footer (§9.20) – a hairline in
- * the gutter under the rows, then Clear site data and Reload at 12. The
- * detail levels answer the same commands the Android sheet does (`site.*`, `permissions.*`), so
- * the two surfaces show one site the same way. Everything it shows comes from one
- * `siteInfo.snapshot` reading, taken again after every action.
+ * favicon, the host, one line on the connection – then the rows: Connection, Cookies and site
+ * data, Permissions (each a level away, pushing in on the spring), a Trackers blocked row where
+ * the engine counts them, Reset permissions, and Site settings (Chrome's last row of page info,
+ * omnibox-28: Settings › Privacy and security as a tab, on the site's landing); and the panel
+ * form of footer (§9.20) – a hairline in the gutter under the rows, then Clear site data and
+ * Reload at 12. The detail levels answer the same commands the Android sheet does (`site.*`,
+ * `permissions.*`), so the two surfaces show one site the same way. Everything it shows comes
+ * from one `siteInfo.snapshot` reading, taken again after every action. The pill's in-use chip
+ * and blocked-permission icons open it on the Permissions level (`level`, omnibox-38).
  */
 export function SiteInfoPopover({
   tab,
@@ -165,6 +171,15 @@ export function SiteInfoPopover({
   const reload = (): void => {
     run('tab.reload', { tabId: tab.id })
     onDismiss()
+  }
+  // Chrome's last row of page info (omnibox-28): Settings › Privacy and security as a tab, on
+  // the `?site=<origin>` landing that opens with the site's own group on screen (#356; the phone
+  // sheet's "Site settings" row and the pill's "Requests blocked" row lead the same way). The
+  // popover leaves as the tab opens: a settings tab under an open popover would say two things.
+  const openSiteSettings = (): void => {
+    const origin = permissionSiteOf(tab.url)
+    onDismiss()
+    openSettings('privacy', origin ? { site: origin } : undefined)
   }
 
   const cookies = info?.cookies.items ?? []
@@ -303,6 +318,21 @@ export function SiteInfoPopover({
                     disabled={busy || permissions.length === 0}
                     aria-label="Reset permissions of this site"
                   />
+                  {site.web && (
+                    // The row leaves the popover for a tab, so it trails the open glyph rather
+                    // than a level's chevron (§9.20), in the chevron's ink.
+                    <ListRow
+                      label="Site settings"
+                      trailing={
+                        <ExternalLink
+                          className={cn(V2_GLYPH, 'text-[var(--v2-text-deemphasized)]')}
+                          aria-hidden
+                        />
+                      }
+                      onClick={openSiteSettings}
+                      data-site-settings=""
+                    />
+                  )}
                 </Body>
               )}
               <Footer
