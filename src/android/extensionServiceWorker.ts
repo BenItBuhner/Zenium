@@ -689,6 +689,16 @@ export function platformOperations(global: object): ReadonlySet<PropertyKey> {
  *   native, then calls `GLOBAL_OBJ.addEventListener(…)`; the wrapper has a `prototype` as any
  *   plain function does, and unbound it would hand the native this proxy, an Illegal invocation
  *   that took MetaMask's and Malwarebytes' workers down.
+ * - `constructor` and the tag `Object.prototype.toString` reads are the interface a worker's
+ *   global is an instance of, `ServiceWorkerGlobalScope`, once `installWorkerScopeInterfaces`
+ *   has defined it on the global (it runs after this proxy is made, so the read is at call
+ *   time); the global's own `Window` until then. uVPN's store-sync library
+ *   (vuex-extension-sync) gives the background the master role on
+ *   `globalThis.constructor.name === 'ServiceWorkerGlobalScope'` and every other context a
+ *   client's: through a Window's `constructor` the worker joined its own popup as a client, no
+ *   `onConnect` answered the popup's connect, and the popup waited for a state it was never
+ *   sent, on both WebViews. The prototype stays the global's (`instanceof` is answered by the
+ *   interfaces' `Symbol.hasInstance`).
  *
  * The proxy's target is an empty object, not the global: a proxy over the global itself would
  * be held to the global's own invariants, and refusing a write to a getter-only `window` is
@@ -725,11 +735,20 @@ export function workerSelf(global: object): object {
     }
     return false
   }
+  /** The worker's interface, once defined on the global; the read is at call time. */
+  const scopeInterface = (): (new () => never) | undefined => {
+    const scope: unknown = Reflect.get(global, 'ServiceWorkerGlobalScope', global)
+    return typeof scope === 'function' ? (scope as new () => never) : undefined
+  }
   const proxy: object = new Proxy(held, {
     get(target, key) {
       if (key === 'self' || key === 'globalThis') return proxy
       if (holds(key)) return Reflect.get(target, key, proxy)
       if (WINDOW_ONLY_MEMBERS.has(key)) return undefined
+      if (key === 'constructor' || key === Symbol.toStringTag) {
+        const scope = scopeInterface()
+        if (scope) return key === 'constructor' ? scope : scope.name
+      }
       return forCall(key, Reflect.get(global, key, global))
     },
     set(target, key, value) {
