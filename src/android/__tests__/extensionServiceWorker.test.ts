@@ -432,6 +432,42 @@ describe('the worker lifecycle events', () => {
     expect(worker.prompt).toBeUndefined()
   })
 
+  it("takes Worker and SharedWorker off the worker global too, as bare identifiers and through self (JSONVue's WORKER_API_AVAILABLE)", () => {
+    // The page's global as the WebView has it: both constructors on it, writable and configurable.
+    const page = new EventTarget() as EventTarget & Any
+    for (const name of ['Worker', 'SharedWorker']) {
+      Object.defineProperty(page, name, {
+        value: class {
+          constructor() {
+            throw new Error(`the page's ${name} ran`)
+          }
+        },
+        writable: true,
+        configurable: true
+      })
+    }
+    installServiceWorkerGlobals(page, {
+      origin: ORIGIN,
+      scriptUrl: SCRIPT,
+      version: '1.0.0',
+      send: () => undefined,
+      openTab: () => undefined,
+      prefix: 'w:'
+    })
+    expect(page.Worker).toBeUndefined()
+    expect(page.SharedWorker).toBeUndefined()
+    // Through `self`: absent, as in Chrome's ServiceWorkerGlobalScope.
+    const self = workerSelf(page)
+    expect('Worker' in self).toBe(false)
+    expect((self as Any).SharedWorker).toBeUndefined()
+    // The guard as JSONVue's background.js spells it, a bare identifier of the script's global:
+    // false, so the inline formatter runs and no `new Worker('js/workers/formatter.js')` dies
+    // on its error event.
+    const context = vm.createContext(page)
+    expect(vm.runInContext('typeof Worker != "undefined"', context)).toBe(false)
+    expect(vm.runInContext('typeof SharedWorker', context)).toBe('undefined')
+  })
+
   it("the global is a WorkerGlobalScope and a ServiceWorkerGlobalScope, through self too, and neither constructs (Google Dictionary's importScripts guard)", () => {
     const { worker } = pair()
     const scope = worker.WorkerGlobalScope as (new () => never) & { prototype: object }
@@ -460,6 +496,39 @@ describe('the worker lifecycle events', () => {
       "return typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope"
     ) as (self: unknown, scope: unknown) => boolean
     expect(guard(self, scope)).toBe(true)
+  })
+
+  it("through self and globalThis the global's constructor and tag are ServiceWorkerGlobalScope, the prototype and the page stay the global's (uVPN's store-sync role)", () => {
+    const { worker } = pair()
+    const serviceScope = worker.ServiceWorkerGlobalScope as new () => never
+    const self = workerSelf(worker)
+    Object.defineProperty(worker, 'self', { value: self, configurable: true, writable: true })
+    Object.defineProperty(worker, 'globalThis', { value: self, configurable: true, writable: true })
+    expect((self as Any).constructor).toBe(serviceScope)
+    expect((self as Any).constructor.name).toBe('ServiceWorkerGlobalScope')
+    expect(Object.prototype.toString.call(self)).toBe('[object ServiceWorkerGlobalScope]')
+    // The global itself keeps its own constructor and prototype: the interfaces answer
+    // `instanceof`, and nothing of the page's chain moves.
+    expect(worker.constructor).toBe(EventTarget)
+    expect(Object.getPrototypeOf(self)).toBe(Object.getPrototypeOf(worker))
+    // A proxy over a global the interfaces were never installed on answers with the global's own.
+    const bare = workerSelf({ navigator: {} }) as Any
+    expect(bare.constructor).toBe(Object)
+    expect(Object.prototype.toString.call(bare)).toBe('[object Object]')
+    // vuex-extension-sync's role selection as uVPN's serviceWorker.js spells it, run with the
+    // page's `globalThis` redefined to the proxy (as the bootstrap does) and `chrome.action` set:
+    // the background takes the master role and answers its popup's connect.
+    const role = new Function(
+      'globalThis',
+      'h',
+      'return "ServiceWorkerGlobalScope"===globalThis.constructor.name||"Window"===globalThis.constructor.name&&globalThis.location.href.includes("-extension")&&globalThis.location.href.includes("background")?"bg":h.action||globalThis.location.protocol.includes("-extension")?globalThis.location.href.includes("popup")?"popup":globalThis.location.href.includes("options")?"options":"page":"cs"'
+    ) as (globalThis: unknown, h: unknown) => string
+    const location = { href: `${ORIGIN}/_generated_background_page.html`, protocol: 'https:' }
+    Object.defineProperty(worker, 'location', { value: location, configurable: true })
+    expect(role(self, { action: {} })).toBe('bg')
+    // Through a Window's constructor on an origin without "-extension" the same expression read
+    // "page": the worker joined its own popup as a client, and nothing answered the connect.
+    expect(role({ constructor: { name: 'Window' }, location }, { action: {} })).toBe('page')
   })
 
   it("the page's navigator is a WorkerNavigator and its location a WorkerLocation, nothing else is, and neither constructs (Read&Write's message router)", () => {
