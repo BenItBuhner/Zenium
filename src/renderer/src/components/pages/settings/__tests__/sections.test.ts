@@ -9,6 +9,7 @@ import type {
   HostCapabilities,
   ImportSource,
   SafetyCheckResult,
+  SearchEngine,
   Settings,
   SyncStatus,
   Tab,
@@ -39,10 +40,11 @@ import {
   GENERIC_FONT_FAMILIES,
   MINIMUM_FONT_SIZE_STEPS
 } from '@shared/fonts'
+import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
-import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
+import { DEFAULT_SEARCH_ENGINES, withDefaultSearchEngineActive } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
@@ -2307,7 +2309,10 @@ describe('the section model', () => {
     expect(findRow(search.groups, 'full-urls')).not.toBeNull()
     // "Find in Settings" reads the same filtered rows: "phones" finds no phone-bar row here…
     expect(searchRows(desktop, 'phones').map((h) => h.row.id)).toEqual([])
-    expect(searchRows(desktop, 'address bar').map((h) => h.row.id)).toEqual(['full-urls'])
+    expect(searchRows(desktop, 'address bar').map((h) => h.row.id)).toEqual([
+      'customize-toolbar',
+      'full-urls'
+    ])
 
     // …the tablet shell is the desktop's (no phone bar, a bookmarks bar)…
     const tablet = on('tablet')
@@ -2847,6 +2852,116 @@ describe('what a row does', () => {
     expect(invoke).toHaveBeenCalledWith('defaultBrowser.request', { source: 'settings' })
   })
 
+  describe('About (settings-73, shortcuts-menus-164)', () => {
+    it('heads the page with the wordmark, the version with its channel, the engine and the copyright line', () => {
+      const version = row(section('about'), 'version')
+      if (version.kind !== 'custom') throw new Error('not a custom row')
+      expect(version.label).toBe('Zenium')
+      // A pre-release tag in the version is the Beta channel (as the updater reads it).
+      expect(version.description).toBe('Version 0.3.0-test · Beta')
+      expect(version.keywords).toEqual(
+        expect.arrayContaining(['version', '0.3.0-test', 'channel', 'copyright'])
+      )
+      expect(version.keywords).toContain('Android System WebView')
+      const html = renderToStaticMarkup(createElement(() => version.render()))
+      expect(html).toContain('class="zen-settings-about-wordmark">Zenium<')
+      expect(html).toContain('Version 0.3.0-test · Beta')
+      expect(html).toContain('Running on Chromium via Android System WebView')
+      expect(html).toMatch(/© 2026(–\d{4})? Zenium contributors · Apache License 2.0/)
+
+      const stable = row(section('about', state({ version: '0.4.27' })), 'version')
+      expect(stable.description).toBe('Version 0.4.27 · Stable')
+      const dev = row(
+        section(
+          'about',
+          state({
+            version: '0.4.27',
+            updates: emptyUpdateStatus('0.4.27', { os: 'linux', arch: 'x64', kind: 'dev' })
+          })
+        ),
+        'version'
+      )
+      expect(dev.description).toBe('Version 0.4.27 · Development build')
+    })
+
+    it('turns the update row into Relaunch to update once an update is downloaded', () => {
+      const release = {
+        version: '0.3.1',
+        tag: 'v0.3.1',
+        prerelease: false,
+        publishedAt: '2026-03-01T00:00:00Z',
+        releaseUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v0.3.1',
+        notesUrl: 'https://github.com/BenItBuhner/Zenium/releases/tag/v0.3.1',
+        asset: null
+      }
+      const ready = state({
+        updates: {
+          ...emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
+          phase: 'ready',
+          mode: 'in-place',
+          release
+        }
+      })
+      const about = section('about', ready)
+      expect(findRow(about.groups, 'check-updates')).toBeNull()
+      const relaunch = row(about, 'relaunch-to-update')
+      if (relaunch.kind !== 'action') throw new Error('not an action')
+      expect(relaunch).toMatchObject({
+        label: 'Relaunch to update',
+        description: '0.3.1 is downloaded and installs when Zenium relaunches.',
+        button: 'Relaunch'
+      })
+      relaunch.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('updates.install', undefined)
+
+      // An update found but not yet downloaded keeps the row that leads to the Updates page.
+      const available = section(
+        'about',
+        state({
+          updates: {
+            ...emptyUpdateStatus('0.3.0-test', { os: 'android', arch: 'arm64', kind: 'apk' }),
+            phase: 'available',
+            release
+          }
+        })
+      )
+      expect(findRow(available.groups, 'relaunch-to-update')).toBeNull()
+      expect(row(available, 'check-updates').label).toBe('Update to 0.3.1')
+    })
+
+    it('offers Get help, Report an issue and the licences page, where the Help menu goes', () => {
+      const about = section('about')
+      expect(allRows(about.groups).map((r) => r.id)).toEqual([
+        'version',
+        'check-updates',
+        'get-help',
+        'report-issue',
+        'default-browser',
+        'engine',
+        'upstream',
+        'licences'
+      ])
+      const help = row(about, 'get-help')
+      if (help.kind !== 'action') throw new Error('not an action')
+      expect(help.leaves).toBe('external')
+      help.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('app.openExternal', { url: HELP_URL })
+      const issue = row(about, 'report-issue')
+      if (issue.kind !== 'action') throw new Error('not an action')
+      expect(issue.leaves).toBe('external')
+      issue.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('app.openExternal', { url: ISSUES_URL })
+      const licences = row(about, 'licences')
+      if (licences.kind !== 'action') throw new Error('not an action')
+      expect(licences.label).toBe('Open-source licences')
+      expect(licences.leaves).toBe('chevron')
+      licences.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('page.open', { id: 'licences', section: undefined })
+      // The search finds the page under Chrome's name for it too.
+      expect(searchRows([about], 'credits').map((h) => h.row.id)).toContain('licences')
+    })
+  })
+
   it('a list item opens a sheet of rows about it; a destructive one confirms first', () => {
     const s = state({
       containers: [
@@ -2954,6 +3069,235 @@ describe('what a row does', () => {
     expect(added.rows).toEqual([])
     expect(groupShows(added)).toBe(true)
     expect(added.empty).toBe('No search engines added yet')
+  })
+
+  describe('Search › site search management on the desktop (omnibox-09, settings-43)', () => {
+    const mine = {
+      id: 'custom:mine',
+      name: 'Mine',
+      searchUrl: 'https://mine.example/?q=%s',
+      suggestUrl: null,
+      keyword: '@mine',
+      glyph: 'M',
+      source: 'custom' as const,
+      favicon: null
+    }
+    const wiki = {
+      id: 'custom:wiki',
+      name: 'Wiki',
+      searchUrl: 'https://wiki.example/w?search=%s',
+      suggestUrl: null,
+      keyword: '@wiki',
+      glyph: 'W',
+      source: 'custom' as const,
+      favicon: null
+    }
+    const forum = {
+      id: 'discovered:forum.example',
+      name: 'Forum',
+      searchUrl: 'https://forum.example/search?q=%s',
+      suggestUrl: null,
+      keyword: '@forum',
+      glyph: 'F',
+      source: 'discovered' as const,
+      favicon: 'https://forum.example/favicon.ico',
+      visitedAt: 5,
+      active: false
+    }
+    const def = PAGE.sections.find((x) => x.id === 'search')!
+    const searchOn = (
+      layout: FormFactor | undefined
+    ): { model: Model; ctx: ReturnType<typeof context> } => {
+      const s = state(
+        { searchEngines: [...DEFAULT_SEARCH_ENGINES, mine, wiki, forum] } as Partial<UIState>,
+        { searchEngines: [mine, wiki, forum], searchEngineId: 'custom:mine' }
+      )
+      const c = context(s)
+      return { model: buildSection(def, { ...c.ctx, formFactor: layout }), ctx: c }
+    }
+    const ids = (model: Model, group: string): string[] =>
+      model.groups.find((g) => g.id === group)?.rows.map((r) => r.id) ?? []
+    /** The ids of the rows an engine's sheet offers, in order. */
+    const sheetIds = (model: Model, id: string): string[] => {
+      const found = row(model, id)
+      if (found.kind !== 'item') throw new Error('not an item')
+      return found.sheet.groups.flatMap((g) => g.rows.map((r) => r.id))
+    }
+
+    it('lists the active engines under Added and the deactivated ones under Inactive, offered by neither the picker nor the keywords row', () => {
+      const { model } = searchOn('desktop')
+      expect(ids(model, 'search-engines')).toEqual([
+        'search-engine:custom:mine',
+        'search-engine:custom:wiki'
+      ])
+      expect(ids(model, 'inactive-search-engines')).toEqual([
+        'search-engine:discovered:forum.example'
+      ])
+      const inactive = model.groups.find((g) => g.id === 'inactive-search-engines')!
+      expect(inactive.heading).toBe('Inactive')
+      expect(inactive.empty).toBeUndefined()
+      // The heading says "Inactive"; the row does not say it again (§9.17) – it keeps its
+      // source, its shortcut and its host, as a row under Added does.
+      expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
+        kind: 'item',
+        description: 'Recently visited · @forum · forum.example'
+      })
+      for (const r of inactive.rows) expect(r.description).not.toMatch(/\bInactive\b/)
+      // Not the default's candidate: the picker lists the active engines alone …
+      const picker = row(model, 'search-engine')
+      if (picker.kind !== 'value') throw new Error('not a value row')
+      expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
+      expect(picker.options.map((o) => o.value)).toContain(wiki.id)
+      // … and so does the keywords row.
+      const keywords = row(model, 'search-keywords')
+      if (keywords.kind !== 'info') throw new Error('not an info row')
+      expect(keywords.description).toContain('@wiki')
+      expect(keywords.description).not.toContain('@forum')
+    })
+
+    it('the Inactive heading is not drawn while no engine is deactivated', () => {
+      const s = state({ searchEngines: [...DEFAULT_SEARCH_ENGINES, mine] } as Partial<UIState>, {
+        searchEngines: [mine],
+        searchEngineId: 'custom:mine'
+      })
+      const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
+      expect(model.groups.map((g) => g.id)).toEqual([
+        'search',
+        'search-engines',
+        'add-search-engine'
+      ])
+    })
+
+    it('Edit is a form row over the Add form pre-filled – name, shortcut, URL – saving through search.updateEngine', () => {
+      const { model } = searchOn('desktop')
+      const edit = row(model, 'search-engine:custom:wiki:edit')
+      if (edit.kind !== 'action') throw new Error('not an action')
+      expect(edit).toMatchObject({ label: 'Edit', button: 'Edit…' })
+      expect(edit.form).toMatchObject({
+        title: 'Edit search engine',
+        description: 'Put %s in the URL where the search terms go.'
+      })
+      const form = edit.form!.render(() => {})
+      if (!isValidElement<{ engine: SearchEngine; onSave: (edits: object) => void }>(form))
+        throw new Error('not an element')
+      expect(form.props.engine).toBe(wiki)
+      form.props.onSave({ name: 'Wiki 2', searchUrl: wiki.searchUrl, keyword: '@w' })
+      expect(invoke).toHaveBeenCalledWith('search.updateEngine', {
+        id: wiki.id,
+        name: 'Wiki 2',
+        searchUrl: wiki.searchUrl,
+        keyword: '@w'
+      })
+    })
+
+    it('Deactivate takes an added engine out of the URL bar, is held on the default, and Activate brings an inactive one back', () => {
+      const { model } = searchOn('desktop')
+      const deactivate = row(model, 'search-engine:custom:wiki:deactivate')
+      if (deactivate.kind !== 'action') throw new Error('not an action')
+      expect(deactivate.disabled).toBeFalsy()
+      expect(deactivate.description).toBe(
+        'Keeps Wiki in the list but out of the URL bar until you activate it.'
+      )
+      deactivate.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
+        id: wiki.id,
+        active: false
+      })
+      // The default engine stays active: its row says so and takes no press.
+      const held = row(model, 'search-engine:custom:mine:deactivate')
+      if (held.kind !== 'action') throw new Error('not an action')
+      expect(held.disabled).toBe(true)
+      expect(held.description).toBe('The default search engine stays active.')
+      // An inactive engine offers Activate in the place of Deactivate, and no Make default.
+      expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+        'search-engine:discovered:forum.example:edit',
+        'search-engine:discovered:forum.example:activate',
+        'search-engine:discovered:forum.example:remove'
+      ])
+      const activate = row(model, 'search-engine:discovered:forum.example:activate')
+      if (activate.kind !== 'action') throw new Error('not an action')
+      expect(activate.description).toBe('@forum works in the URL bar again.')
+      activate.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('search.setEngineActive', {
+        id: forum.id,
+        active: true
+      })
+      // Make default and Remove stay on an active engine.
+      expect(sheetIds(model, 'search-engine:custom:wiki')).toEqual([
+        'search-engine:custom:wiki:default',
+        'search-engine:custom:wiki:edit',
+        'search-engine:custom:wiki:deactivate',
+        'search-engine:custom:wiki:remove'
+      ])
+    })
+
+    it('the phone and tablet shells keep every engine under Added with Make default and Remove alone, the Inactive heading and the desktop rows gone', () => {
+      for (const layout of ['phone', 'tablet'] as const) {
+        const { model } = searchOn(layout)
+        expect(ids(model, 'search-engines')).toEqual([
+          'search-engine:custom:mine',
+          'search-engine:custom:wiki',
+          'search-engine:discovered:forum.example'
+        ])
+        expect(model.groups.some((g) => g.id === 'inactive-search-engines')).toBe(false)
+        // With no heading to say it, the row is the one place the engine reads inactive.
+        expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
+          description: 'Inactive · @forum · forum.example'
+        })
+        expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+          'search-engine:discovered:forum.example:remove'
+        ])
+        expect(sheetIds(model, 'search-engine:custom:wiki')).toEqual([
+          'search-engine:custom:wiki:default',
+          'search-engine:custom:wiki:remove'
+        ])
+        // The picker still leaves the deactivated engine out: the flag is the model's, not the
+        // layout's.
+        const picker = row(model, 'search-engine')
+        if (picker.kind !== 'value') throw new Error('not a value row')
+        expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
+      }
+    })
+
+    it('a deactivated engine made the default (the core activates it as it takes the default) leaves the Inactive group and stands under Added as the default, in the picker and the keywords row (A7)', () => {
+      // The list as the core writes it back: the flag deleted on the engine the id names.
+      const user = withDefaultSearchEngineActive([mine, wiki, forum], forum.id)
+      expect('active' in user[2]).toBe(false)
+      const s = state({ searchEngines: [...DEFAULT_SEARCH_ENGINES, ...user] } as Partial<UIState>, {
+        searchEngines: user,
+        searchEngineId: forum.id
+      })
+      const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
+      expect(model.groups.some((g) => g.id === 'inactive-search-engines')).toBe(false)
+      expect(ids(model, 'search-engines')).toEqual([
+        'search-engine:custom:mine',
+        'search-engine:custom:wiki',
+        'search-engine:discovered:forum.example'
+      ])
+      // The default's row, as any default's: its standing and its shortcut, the host left off.
+      expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
+        kind: 'item',
+        description: 'Default search engine · @forum'
+      })
+      // The default's sheet: Make default held, Deactivate held with its reason – the refusal.
+      expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+        'search-engine:discovered:forum.example:default',
+        'search-engine:discovered:forum.example:edit',
+        'search-engine:discovered:forum.example:deactivate',
+        'search-engine:discovered:forum.example:remove'
+      ])
+      const held = row(model, 'search-engine:discovered:forum.example:deactivate')
+      if (held.kind !== 'action') throw new Error('not an action')
+      expect(held.disabled).toBe(true)
+      expect(held.description).toBe('The default search engine stays active.')
+      const picker = row(model, 'search-engine')
+      if (picker.kind !== 'value') throw new Error('not a value row')
+      expect(picker.value).toBe(forum.id)
+      expect(picker.options.map((o) => o.value)).toContain(forum.id)
+      const keywords = row(model, 'search-keywords')
+      if (keywords.kind !== 'info') throw new Error('not an info row')
+      expect(keywords.description).toContain('@forum')
+    })
   })
 
   it('a per-site zoom is one item with a Remove zoom action that forgets the site', () => {
@@ -4691,7 +5035,8 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
       expect(group?.rows.map((r) => [r.kind, r.label])).toEqual([
         ['switch', 'Unload inactive tabs'],
         ['field', 'Unload after'],
-        ['field', 'Never unload these domains']
+        ['field', 'Never unload these domains'],
+        ['action', 'Add current site']
       ])
       const on = row(shell, 'unloading-enabled')
       if (on.kind !== 'switch') throw new Error('not a switch')

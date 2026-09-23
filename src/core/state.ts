@@ -81,12 +81,14 @@ import {
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeHomepage } from '../shared/homepage'
 import { sanitizeToolbarLayout } from '../shared/toolbarLayout'
+import { sanitizeToolbarPins } from '../shared/toolbarPins'
 import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
 import {
   allSearchEngines,
   defaultSearchEngineOf,
   isPickableSearchEngine,
-  sanitizeSearchEngines
+  sanitizeSearchEngines,
+  withDefaultSearchEngineActive
 } from '../shared/search'
 import {
   applyShortcutOverrides,
@@ -637,6 +639,7 @@ export class BrowserState {
       data.settings?.toolbarLayout,
       DEFAULT_SETTINGS.toolbarLayout
     )
+    this.settings.toolbarPins = sanitizeToolbarPins(data.settings?.toolbarPins)
     this.settings.devtoolsDock = sanitizeDevtoolsDock(
       data.settings?.devtoolsDock,
       DEFAULT_SETTINGS.devtoolsDock
@@ -848,6 +851,13 @@ export class BrowserState {
     if (!isPickableSearchEngine(this.searchEngines, this.settings.searchEngineId)) {
       this.settings.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     }
+    // The default active (settings-43): a profile a peer's build wrote can carry `active: false`
+    // on the engine it made the default; the flag goes here as it goes in `updateSettings`.
+    if (this.settings.searchEngines)
+      this.settings.searchEngines = withDefaultSearchEngineActive(
+        this.settings.searchEngines,
+        this.settings.searchEngineId
+      )
     for (const w of this.restoredWindows) {
       if (!m.spaces.some((s) => s.id === w.activeSpaceId)) w.activeSpaceId = m.activeSpaceId
       w.selection = Object.fromEntries(

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
+import { toolbarPinned, type ToolbarControl } from '@shared/toolbarPins'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
@@ -70,6 +71,8 @@ import { DownloadButton } from '../downloads/DownloadButton'
 import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
 import { actionable } from '@renderer/lib/extensions/toolbar'
+import { useViewport } from '@renderer/lib/formFactor'
+import { pinsFor, publishToolbarTiering } from '@renderer/lib/toolbarPins'
 import {
   mediaHubButtonFits,
   mediaHubFoldedAt,
@@ -78,7 +81,11 @@ import {
   mediaPlaying
 } from '@renderer/lib/mediaHub'
 
-/** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
+/**
+ * Back, forward, reload, the puzzle piece and the menu: in the row at every width, never folded
+ * by the tier. Forward alone can leave it by a setting (Look and Feel › Customise toolbar,
+ * `fixedButtons` below), and the puzzle piece stands only while there are extensions.
+ */
 const FIXED_BUTTONS = 5
 
 /**
@@ -221,8 +228,24 @@ export function NavRow({
   const tree = useBookmarkTree(state)
   // The star stays on a site and on an internal page whose registry entry keeps it (Chrome shows
   // it on chrome://settings; the new tab page hides it) – `pill.showStar`, v2 §10.1.
+  // The pins (Settings › Look and Feel › Customise toolbar, settings-36): the desktop's
+  // alone – the phone and the tablet keep their own bars (`pinsFor`). A control folded away is
+  // not drawn and not measured: Forward leaves the fixed set, a chip leaves the pill's tier, the
+  // hub's button folds as the width tier folds it, with the menu's "Now Playing…" row and the
+  // dot on ⋯ standing in the same way. The lit Reader View exit on a `zen://reader` tab is the
+  // document's own control (§10.1), never a pin's.
+  const { formFactor } = useViewport()
+  const pins = pinsFor(state, formFactor)
+  const forwardUp = toolbarPinned(pins, 'forward')
+  const readerPinned = toolbarPinned(pins, 'reader')
+  const translatePinned = toolbarPinned(pins, 'translate')
+  const starPinned = toolbarPinned(pins, 'star')
+  const mediaPinned = toolbarPinned(pins, 'media')
   const starred = Boolean(tab && !masked && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
   const bookmarked = Boolean(tab && starred && tree.hasUrl(tab.url))
+  // The chips the pins keep in the pill: the star, the translate glyph, an article's Reader View.
+  const starUp = starred && starPinned
+  const readerUp = Boolean(tab && !masked && !extension && tab.readerable) && readerPinned
   const menuButton = useRef<HTMLButtonElement>(null)
   // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
   // `mediaHubButtonFits`): at the 240 sidebar it is unmounted – never hidden with an opacity or
@@ -235,10 +258,14 @@ export function NavRow({
   // no pill to keep, so there the button stays whenever there is media.
   const downloadsUp = downloadButtonVisible(state, downloadsUiState)
   const puzzleUp = actionable(state.extensions).length > 0
+  // Forward folded by its pin leaves the fixed set (the hub's tier and the extensions' overflow
+  // count the buttons actually in the row).
+  const fixedButtons = FIXED_BUTTONS - (forwardUp ? 0 : 1)
   const hubUp =
+    mediaPinned &&
     mediaHubVisible(state) &&
     (compact ||
-      mediaHubButtonFits(rowWidth, FIXED_BUTTONS - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
+      mediaHubButtonFits(rowWidth, fixedButtons - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   // Decided here, from the same width the button is mounted by, so the dot and the button move
   // in one commit as the sidebar crosses 270 ↔ 240 – never both in a frame, never neither.
@@ -267,7 +294,7 @@ export function NavRow({
   const blocked = masked ? [] : blockedPopupsOf(state, tab?.id)
   // Translation: the glyph stays once the page has been offered or translated (in the accent
   // while the translation shows), and comes up on hover for every other web page.
-  const translation = tab && isWebPage ? translateStateOf(state, tab.id) : null
+  const translation = tab && isWebPage && translatePinned ? translateStateOf(state, tab.id) : null
   const translateBarUp = tab ? barStateOf(state, tab.id) !== null : false
   // The chips fit or hide by priority (`pillChipTiers.ts`, design language v2 §9.29; the #226
   // finding of five chips running past a 240 px sidebar's pill): the pill measures its content
@@ -327,16 +354,33 @@ export function NavRow({
   if (savePrompt && savePrompt.tabId === tab?.id) {
     chipsPresent.push({ id: 'key', tier: 'state', width: CHIP_WIDTH.iconButton })
   }
-  if (tab && starred) chipsPresent.push({ id: 'star', tier: 'star', width: CHIP_WIDTH.star })
+  if (tab && starUp) chipsPresent.push({ id: 'star', tier: 'star', width: CHIP_WIDTH.star })
   if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
   if (translation) chipsPresent.push({ id: 'translate', tier: 'info', width: CHIP_WIDTH.small })
-  if (tab && !masked && !extension && (tab.readerable || isReader)) {
+  if (tab && (readerUp || isReader)) {
     chipsPresent.push({ id: 'reader', tier: isReader ? 'state' : 'info', width: CHIP_WIDTH.small })
   }
   if (tab && isReader) {
     chipsPresent.push({ id: 'reader-prefs', tier: 'state', width: CHIP_WIDTH.small })
   }
   const fits = fittingChips(pillInner, chipsPresent)
+  // What the width tier hid of the pinned controls, for the Customise toolbar dialog's "Hidden
+  // at this width" (settings-36): the chips present in the pill that did not fit, and the hub's
+  // button while media plays and the row has no room for it – never a control the pins folded,
+  // and never one the page has no chip for. From the layout phase, as the hub's own word is.
+  const hiddenStar = Boolean(tab && starUp && !fits.has('star'))
+  const hiddenTranslate = Boolean(translation && !fits.has('translate'))
+  const hiddenReader = Boolean(tab && readerUp && !isReader && !fits.has('reader'))
+  const hiddenMedia = mediaPinned && mediaHubVisible(state) && !hubUp
+  useLayoutEffect(() => {
+    const hidden: ToolbarControl[] = []
+    if (hiddenReader) hidden.push('reader')
+    if (hiddenTranslate) hidden.push('translate')
+    if (hiddenStar) hidden.push('star')
+    if (hiddenMedia) hidden.push('media')
+    publishToolbarTiering(hidden)
+    return () => publishToolbarTiering([])
+  }, [hiddenReader, hiddenTranslate, hiddenStar, hiddenMedia])
   return (
     // The row's buttons sit 4 apart (Firefox's 32 pitch: the 28 box plus its 2 px outer
     // padding each side, `TOOLBAR_GAP`); the pill takes the rest between them.
@@ -366,14 +410,16 @@ export function NavRow({
       >
         <ArrowLeft className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </NavigationButton>
-      <NavigationButton
-        tab={tab}
-        title={hint('Forward', state, 'nav.forward')}
-        enabled={Boolean(tab?.canGoForward)}
-        command="tab.forward"
-      >
-        <ArrowRight className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
-      </NavigationButton>
+      {forwardUp && (
+        <NavigationButton
+          tab={tab}
+          title={hint('Forward', state, 'nav.forward')}
+          enabled={Boolean(tab?.canGoForward)}
+          command="tab.forward"
+        >
+          <ArrowRight className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+        </NavigationButton>
+      )}
       <button
         type="button"
         className="zen-toolbar-button"
@@ -599,29 +645,26 @@ export function NavRow({
                 collapsed={!fits.has('shield')}
               />
             )}
-            {tab &&
-              !masked &&
-              !extension &&
-              (isReader || (tab.readerable && fits.has('reader'))) && (
-                <PillChip
-                  label="Reader View"
-                  title={hint(
-                    isReader ? 'Exit Reader View' : 'Enter Reader View',
-                    state,
-                    'page.readerMode'
-                  )}
-                  pressed={isReader}
-                  className={cn(
-                    'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
-                    // The lit exit on the reader tab is never hidden (§9.29; the tier comment
-                    // above); unlit it is a tool and goes with the rest under a 130 px pill.
-                    isReader ? 'text-[var(--v2-control-accent)] opacity-100' : 'zen-pill-chip'
-                  )}
-                  onActivate={() => run('reader.toggle', { tabId: tab.id })}
-                >
-                  <BookOpenText className="h-3.5 w-3.5" />
-                </PillChip>
-              )}
+            {tab && !masked && !extension && (isReader || (readerUp && fits.has('reader'))) && (
+              <PillChip
+                label="Reader View"
+                title={hint(
+                  isReader ? 'Exit Reader View' : 'Enter Reader View',
+                  state,
+                  'page.readerMode'
+                )}
+                pressed={isReader}
+                className={cn(
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
+                  // The lit exit on the reader tab is never hidden (§9.29; the tier comment
+                  // above); unlit it is a tool and goes with the rest under a 130 px pill.
+                  isReader ? 'text-[var(--v2-control-accent)] opacity-100' : 'zen-pill-chip'
+                )}
+                onActivate={() => run('reader.toggle', { tabId: tab.id })}
+              >
+                <BookOpenText className="h-3.5 w-3.5" />
+              </PillChip>
+            )}
             {tab && isReader && (
               // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
               // View's while an article is open, whose popup is the preferences popover;
@@ -693,6 +736,7 @@ export function NavRow({
             )}
             {tab &&
               isWebPage &&
+              translatePinned &&
               state.translate.available &&
               (!translation || fits.has('translate')) && (
                 <PillChip
@@ -744,7 +788,7 @@ export function NavRow({
             )}
             {tab && !masked && <ZoomChip state={state} tab={tab} collapsed={!fits.has('zoom')} />}
             {tab && isWebPage && <AutofillChip state={state} tab={tab} />}
-            {tab && starred && (
+            {tab && starUp && (
               <StarChip
                 tab={tab}
                 filled={bookmarked}
@@ -766,7 +810,7 @@ export function NavRow({
         rowWidth={compact ? null : rowWidth}
         // The media and downloads buttons join the fixed set while they are in the row – the
         // hub's only while the tier has it up, not while it has folded into the menu.
-        fixedButtons={FIXED_BUTTONS + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
+        fixedButtons={fixedButtons + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
         compact={compact}
       />
       {/*

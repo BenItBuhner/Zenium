@@ -49,6 +49,7 @@ import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
 import { languageName, sortedByName } from '../shared/languageNames'
 import { orderMediaEntries } from '../shared/mediaHub'
+import { toolbarPinned } from '../shared/toolbarPins'
 import { serialiseMenu } from './rendererMenus'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
@@ -3325,6 +3326,9 @@ export class Menus {
         // row is where it goes; with the button up, the button is the hub). The phone has its
         // own chip and sheet (§9.33).
         ...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win)),
+        // Forward folded off the desktop's bar (Look and Feel › Customize toolbar, settings-36)
+        // heads the menu the same way: the row is where the button went.
+        ...desktop(...this.foldedForwardRow(win, active)),
         // The tabs and windows.
         newTab,
         searchTabs,
@@ -3475,6 +3479,29 @@ export class Menus {
       {
         label: 'Now Playing…',
         click: () => this.browser.emit('mediahub.open', undefined, win)
+      },
+      { type: 'separator' }
+    ]
+  }
+
+  /**
+   * The desktop bar's Forward button, folded into the menu when Look and Feel › Customize
+   * toolbar unpins it (`Settings.toolbarPins.forward === false`, `shared/toolbarPins.ts`):
+   * the row runs what the button ran and is disabled, not dropped, on the last entry (design
+   * language v2 §9.30), so the menu keeps its shape from one opening to the next. Nothing
+   * while the button is pinned – the bar is Forward then, and §9.13's rule is one home per
+   * control. The other pinnable controls' rows (Bookmark This Page, Reader View, Translate
+   * Page…, Now Playing…) are in the menu already; only Forward had none.
+   */
+  private foldedForwardRow(win: ZenWindow, active: Tab | undefined): Template {
+    if (win.formFactor !== 'desktop') return []
+    if (toolbarPinned(this.browser.state.settings.toolbarPins, 'forward')) return []
+    return [
+      {
+        label: 'Forward',
+        action: 'nav.forward',
+        enabled: Boolean(active?.canGoForward),
+        click: () => active && this.browser.tabs.goForward(active.id)
       },
       { type: 'separator' }
     ]

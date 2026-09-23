@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PRIVATE_CONTAINER_ID, type HostCapabilities, type Suggestion } from '../../shared/types'
 import { BOOKMARKS_BAR_ID, OTHER_BOOKMARKS_ID } from '../../shared/bookmarks'
+import { customSearchEngine } from '../../shared/search'
 import type { NetHost, StoreIO } from '../platform'
 import type { Browser } from '../browser'
 import { BookmarkService } from '../bookmarks'
@@ -499,6 +500,32 @@ describe('SuggestionService: keyword mode', () => {
     const scoped = await suggestions.suggest('@bookmarks ', null, win)
     expect(scoped).toHaveLength(1)
     expect(scoped[0]).toMatchObject({ kind: 'search', title: 'Search bookmarks' })
+  })
+
+  it('offers a deactivated engine nowhere: no starter for its `@`, no keyword mode, until activated (settings-43)', async () => {
+    const { suggestions, win, state } = setup()
+    const own = customSearchEngine(
+      'Marginalia',
+      'https://marginalia.example/?q=%s',
+      state.searchEngines
+    )
+    state.settings.searchEngines = [{ ...own, active: false }]
+    const starters = (rows: Suggestion[]): string[] =>
+      rows.filter((r) => r.kind === 'engine').map((r) => r.title)
+    expect(starters(await suggestions.suggest('@m', null, win))).toEqual([])
+    // `@marginalia cats` is a plain query, not the engine's keyword mode.
+    const typed = await suggestions.suggest('@marginalia cats', null, win)
+    expect(typed[0]).toMatchObject({ kind: 'search', title: '@marginalia cats' })
+    expect(typed.some((r) => r.subtitle === 'Search with Marginalia')).toBe(false)
+    // Activated, the starter and the keyword come back.
+    state.settings.searchEngines = [own]
+    expect(starters(await suggestions.suggest('@m', null, win))).toEqual(['@marginalia'])
+    const active = await suggestions.suggest('@marginalia cats', null, win)
+    expect(active[0]).toMatchObject({
+      kind: 'search',
+      title: 'cats',
+      subtitle: 'Search with Marginalia'
+    })
   })
 })
 

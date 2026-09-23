@@ -1,6 +1,8 @@
 import { protocol, type CustomScheme, type Session } from 'electron'
+import { CHROMIUM_LICENCES_HOST } from '../../shared/licences'
 import { ZEN_SCHEME, zenPageHtml, type ReaderPageLookup } from '../../shared/zenPages'
 import { EXTENSION_RESOURCE_SCHEME_PRIVILEGES } from './extensionApi/resourceOrigin'
+import type { ChromiumLicencesResponder } from './licences'
 import { NEW_TAB_BACKGROUND_HOST } from './newTabBackground'
 
 export { ZEN_SCHEME, describeNetError } from '../../shared/zenPages'
@@ -37,16 +39,20 @@ export type BackgroundImageResponder = () => Promise<Response>
 
 /**
  * Serve `zen://newtab`, `zen://blank`, `zen://error` and `zen://reader` (articles come from the
- * core), plus the new tab page's background image.
+ * core), plus the new tab page's background image and Chromium's credits document
+ * (`zen://chromium-licences`, `./licences.ts`).
  */
 export function installZenProtocol(
   ses: Session,
   reader: ReaderPageLookup,
-  background?: BackgroundImageResponder
+  background?: BackgroundImageResponder,
+  chromiumLicences?: ChromiumLicencesResponder
 ): void {
   if (ses.protocol.isProtocolHandled(ZEN_SCHEME)) return
   ses.protocol.handle(ZEN_SCHEME, (request) => {
-    if (background && hostOf(request.url) === NEW_TAB_BACKGROUND_HOST) return background()
+    const host = hostOf(request.url)
+    if (background && host === NEW_TAB_BACKGROUND_HOST) return background()
+    if (chromiumLicences && host === CHROMIUM_LICENCES_HOST) return chromiumLicences()
     const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
     return new Response(zenPageHtml(request.url, reader), { headers })
   })
