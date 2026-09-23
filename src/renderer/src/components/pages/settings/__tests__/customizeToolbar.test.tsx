@@ -177,17 +177,29 @@ describe('Look and Feel › the toolbar rows (settings-36)', () => {
     const appearance = groups.find((g) => g.id === 'appearance')!
     const ids = appearance.rows.map((r) => r.id)
     const layout = ids.indexOf('toolbar-layout')
+    // The default bar: the switch and the dialog's row; Reset has nothing to undo and is not drawn.
     expect(ids.slice(layout, layout + 4)).toEqual([
       'toolbar-layout',
       'show-forward-button',
       'customize-toolbar',
-      'toolbar-reset'
+      'tabs-right'
     ])
-    for (const id of ['show-forward-button', 'customize-toolbar', 'toolbar-reset']) {
+    for (const id of ['show-forward-button', 'customize-toolbar']) {
       expect(row(groups, id).layouts).toEqual(['desktop'])
     }
+    // With a control folded, Reset takes the row after the dialog's.
+    const folded = look(state({ toolbarPins: { star: false } })).groups
+    const foldedIds = folded.find((g) => g.id === 'appearance')!.rows.map((r) => r.id)
+    expect(foldedIds.slice(layout, layout + 5)).toEqual([
+      'toolbar-layout',
+      'show-forward-button',
+      'customize-toolbar',
+      'toolbar-reset',
+      'tabs-right'
+    ])
+    expect(row(folded, 'toolbar-reset').layouts).toEqual(['desktop'])
     for (const formFactor of ['phone', 'tablet'] as const) {
-      const other = look(state(), formFactor).groups
+      const other = look(state({ toolbarPins: { star: false } }), formFactor).groups
       for (const id of ['show-forward-button', 'customize-toolbar', 'toolbar-reset'])
         expect(findRow(other, id), `${id} on the ${formFactor}`).toBeNull()
     }
@@ -231,14 +243,17 @@ describe('Look and Feel › the toolbar rows (settings-36)', () => {
     )
   })
 
-  it('"Reset to default" is a dependent row while the bar is the default, and undoes every fold and the downloads key at once', () => {
+  it('"Reset to default" is not drawn while the bar is the default – never a disabled row on the first screen (§10.4, #297) – and, once something differs, undoes every fold and the downloads key at once', () => {
     const { groups } = look(state())
-    expect(row(groups, 'toolbar-reset')).toMatchObject({
-      kind: 'action',
-      button: 'Reset to default',
-      disabled: true,
-      description: 'Every control is where the default bar has it.'
-    })
+    expect(findRow(groups, 'toolbar-reset')).toBeNull()
+    // The default bar by way of an explicit key: still nothing to reset, still no row.
+    expect(
+      findRow(
+        look(state({ downloads: { ...DEFAULT_SETTINGS.downloads, alwaysShowButton: false } }))
+          .groups,
+        'toolbar-reset'
+      )
+    ).toBeNull()
     const changed = look(
       state({
         toolbarPins: { forward: false, media: false },
@@ -247,14 +262,24 @@ describe('Look and Feel › the toolbar rows (settings-36)', () => {
     )
     const reset = row(changed.groups, 'toolbar-reset')
     expect(reset).toMatchObject({
-      disabled: false,
+      kind: 'action',
+      button: 'Reset to default',
       description: '3 controls differ from the default bar.'
     })
     if (reset.kind !== 'action') throw new Error('not an action')
+    // Live, not dependent: the row is there because there is something to do.
+    expect(reset.disabled).toBeFalsy()
     reset.onPress?.()
     expect(changed.patches).toEqual([{ toolbarPins: {}, downloads: { alwaysShowButton: false } }])
     const one = look(state({ toolbarPins: { star: false } }))
     expect(row(one.groups, 'toolbar-reset')).toMatchObject({
+      description: '1 control differs from the default bar.'
+    })
+    // The downloads key alone counts as a departure the row can undo.
+    const key = look(
+      state({ downloads: { ...DEFAULT_SETTINGS.downloads, alwaysShowButton: true } })
+    )
+    expect(row(key.groups, 'toolbar-reset')).toMatchObject({
       description: '1 control differs from the default bar.'
     })
   })

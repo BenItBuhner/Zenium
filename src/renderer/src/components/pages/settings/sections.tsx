@@ -469,7 +469,10 @@ function lookSection({
         // one setting, `toolbarPins.forward` (`shared/toolbarPins.ts`) – and the dialog holds
         // every control the bar can fold into the app menu; Reset puts the default bar back,
         // the downloads button's own key (`downloads.alwaysShowButton`) included, since the
-        // dialog binds it as its Downloads row. The phone and the tablet keep their own bars.
+        // dialog binds it as its Downloads row. The Reset row stands only while there is
+        // something to reset – never a disabled row on the first screen (§10.4 as amended for
+        // #297; the Downloads "Use the default folder" row is the precedent). The phone and the
+        // tablet keep their own bars.
         {
           kind: 'switch',
           id: 'show-forward-button',
@@ -505,24 +508,24 @@ function lookSection({
             render: (close) => <CustomizeToolbarForm state={state} set={set} close={close} />
           }
         },
-        {
-          kind: 'action',
-          id: 'toolbar-reset',
-          label: 'Your toolbar',
-          description:
-            toolbarChanges === 0
-              ? 'Every control is where the default bar has it.'
-              : `${toolbarChanges} ${toolbarChanges === 1 ? 'control differs' : 'controls differ'} from the default bar.`,
-          keywords: ['reset', 'defaults', 'toolbar'],
-          layouts: ['desktop'],
-          button: 'Reset to default',
-          disabled: toolbarChanges === 0,
-          onPress: () =>
-            set({
-              toolbarPins: {},
-              downloads: { alwaysShowButton: DEFAULT_DOWNLOAD_SETTINGS.alwaysShowButton }
-            })
-        },
+        ...(toolbarChanges > 0
+          ? [
+              {
+                kind: 'action',
+                id: 'toolbar-reset',
+                label: 'Your toolbar',
+                description: `${toolbarChanges} ${toolbarChanges === 1 ? 'control differs' : 'controls differ'} from the default bar.`,
+                keywords: ['reset', 'defaults', 'toolbar'],
+                layouts: ['desktop'],
+                button: 'Reset to default',
+                onPress: () =>
+                  set({
+                    toolbarPins: {},
+                    downloads: { alwaysShowButton: DEFAULT_DOWNLOAD_SETTINGS.alwaysShowButton }
+                  })
+              } satisfies SettingsRow
+            ]
+          : []),
         {
           kind: 'switch',
           id: 'tabs-right',
