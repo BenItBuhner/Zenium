@@ -25,21 +25,25 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Records fullscreen video and the file chooser's camera (MED-01, GN-20, OS-22) on the phone,
- * on the media demos' base ([MediaDemoBase]: the loopback page server, real fingers on a page's
- * button and on any window's node, picture-in-picture, the notes) with a page of its own
+ * Records fullscreen video and the file chooser's camera (MED-01, GN-20, OS-22), the chrome's
+ * motion around a page's fullscreen (MOT-32), rotate-to-fullscreen (MED-02) and the exit hint
+ * for an element without a video (MED-03) on the phone, on the media demos' base
+ * ([MediaDemoBase]: the loopback page server, real fingers on a page's button and on any
+ * window's node, picture-in-picture, the notes) with a page of its own
  * (`fullscreen-demo-page.html`): a landscape WebM clip (#223's), a portrait one, a same-origin
  * `<iframe>` with the landscape clip in its own document (`fullscreen-demo-embed.html`, an
  * embedded player's shape), a canvas, an `<input type=file>` for images with the `capture`
- * attribute and a plain one for images.
+ * attribute and a plain one for images, and two buttons that play a clip inline with the
+ * native controls.
  *
  *  1. The landscape clip into fullscreen under a finger: the screen turns to landscape (the
  *     display's rotation, `dumpsys window`, the activity's `SENSOR_LANDSCAPE`) and the first-time
  *     exit hint stands along the bottom edge of the page, in its top layer.
  *  2. Back: the layer goes, the screen turns back, the chrome fades in over 120 ms (sampled per
  *     frame in the chrome), the hint is gone; the page's resize events are logged one by one –
- *     none may lay it out beyond the portrait window (`TabHost.setBounds` refuses the chrome's
- *     stale landscape frame, BH-32) – and the fade's start is placed against the page's landing.
+ *     none may lay it out beyond the screen it came on (`screen.width` at the event: a landscape
+ *     frame on a portrait screen is the chrome's stale measurement, BH-32) – and the fade's
+ *     start is placed against the page's landing.
  *  3. The same clip into fullscreen again: no hint the second time; the enter and the exit are
  *     the performance program's two measured scenes (`traceFrames`: `fullscreen-enter`,
  *     `fullscreen-exit`), then the clip goes fullscreen a third time for step 4.
@@ -61,8 +65,27 @@ import org.junit.runner.RunWith
  * 10. The embed: a finger on the iframe's clip takes it fullscreen from the frame's document (the
  *     main document's fullscreen element is the `<iframe>`, with no video in its subtree): the
  *     frame's own size report turns the screen, and the hint (its key reset) stands.
- * 11. The canvas: fullscreen with no video in it: the hint (its key reset) stands all the same,
- *     the screen does not turn.
+ * 11. The canvas: fullscreen with no video in it, the once-key left set by the videos before: the
+ *     exit hint stands all the same (MED-03: an element without a video has the way out told
+ *     every time), the screen does not turn, a finger on the page takes the toast away early;
+ *     then the same under the dark scheme, the toast going on its own (the design stills).
+ * 12. The chrome around a fullscreen (MOT-32): the bar element marked before the enter is the
+ *     same element after the exit, the window carries `data-page-fullscreen` and its chrome is
+ *     inert meanwhile, the bar stands off its edge by `--zen-fullscreen-away` (the store's phases
+ *     `leaving` then `away`, the progress never falling back) with the host's layer clip at rest;
+ *     Back has the bar return (`returning` then `home`) no earlier than the chrome's return fade,
+ *     the property gone at rest. Then the pair under reduced motion (the animator scale at 0,
+ *     when the WebView follows it live): the bar jumps – no progress between 0 and 1 – and the
+ *     return keeps the 120 ms fade (#311's rule).
+ * 13. Rotate-to-fullscreen (MED-02), the screen turned through the system's user rotation with
+ *     auto-rotate off (an emulator never turns): a paused clip takes no turn; the landscape clip
+ *     playing inline with the native controls goes fullscreen as the screen turns to landscape
+ *     (asked for inside the page's own `screen.orientation` change), the host holding
+ *     `SENSOR_LANDSCAPE` until the device itself reads landscape ([Host.deviceTurned] stands in
+ *     for the sensor), then handing the screen to the device (`FULL_SENSOR`), whose portrait
+ *     reading turns it back and ends the fullscreen – of a clip paused meanwhile; the portrait
+ *     clip playing takes no turn to landscape, enters on the turn back to portrait with the
+ *     screen held by nobody, and leaves on the turn to landscape (Chrome's edge cases).
  *
  * The emulator's camera is `-camera-back emulated` (the workflow), so the camera app has one; the
  * permission flow is real (CAMERA revoked after the install, `DEMO_REVOKE`). Every touch a step
@@ -156,6 +179,8 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         hintInTheDarkScheme()
         embedFullscreenTurnsAndHints()
         canvasFullscreenHints()
+        chromeStaysMountedBarAway()
+        rotateToFullscreen()
         note("\nend: fullscreenTab=${host.fullscreenTab?.tabId} rotation ${rotation()} requested ${requested()} capture directory ${captureFiles()}")
     }
 
@@ -247,12 +272,16 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         note("  the page's resize events over the exit: ${resizesAfter - resizesBefore}; each (ms after the back, the viewport, fullscreen): ${resizeLog(resizes)}")
         // The portrait window in CSS px (the emulator's 720 x 1600 at 1.75 is 411 x 914). Run 3's
         // exit laid the page out 806 x 324 for ~0.9 s: the chrome's stale landscape measurement,
-        // which TabHost.setBounds now refuses; no frame may be wider or taller than the window.
+        // which TabHost.setBounds now refuses. Each frame is held to the screen it came on
+        // (`sw`/`sh`: `screen.width`/`screen.height` as the resize fired): a landscape frame while
+        // the screen still stands landscape is the exit's own inline layout before the turn back
+        // (the before-profile run's 902 x 348 at 1980 ms was one laid out in portrait: the stale
+        // frame), and no frame may be wider or taller than its screen.
         val windowW = kotlin.math.ceil(width / density).toInt()
         val windowH = kotlin.math.ceil(height / density).toInt()
-        val oversized = resizes.filter { it.optInt("w") > windowW + 1 || it.optInt("h") > windowH + 1 }
-        note("  the portrait window is ${windowW}x$windowH CSS px; frames beyond it: ${if (oversized.isEmpty()) "none" else resizeLog(oversized)}")
-        check("no resize laid the page out beyond the portrait window (TabHost.setBounds refuses the stale landscape frame, BH-32)", oversized.isEmpty())
+        val oversized = resizes.filter { beyondItsScreen(it, windowW, windowH) }
+        note("  the portrait window is ${windowW}x$windowH CSS px; frames beyond the screen they came on: ${if (oversized.isEmpty()) "none" else resizeLog(oversized)}")
+        check("no resize laid the page out beyond the screen it came on (TabHost.setBounds refuses the stale landscape frame, BH-32)", oversized.isEmpty())
         // The lead's L2: the chrome's fade starts once the page has landed inline, not over the
         // hand-back. The landing is the page's last resize out of fullscreen that fits the window;
         // both clocks were started just before the back (the sampler's a few ms ahead).
@@ -296,7 +325,21 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
 
     private fun resizeLog(entries: List<JSONObject>): String =
         if (entries.isEmpty()) "none"
-        else entries.joinToString(" ") { "${it.optInt("at")}ms:${it.optInt("w")}x${it.optInt("h")}${if (it.optInt("fs") == 1) "(fullscreen)" else ""}" }
+        else entries.joinToString(" ") {
+            "${it.optInt("at")}ms:${it.optInt("w")}x${it.optInt("h")}${if (it.optInt("fs") == 1) "(fullscreen)" else ""}" +
+                (if (it.has("sw")) "@${it.optInt("sw")}x${it.optInt("sh")}" else "")
+        }
+
+    /**
+     * A resize that laid the page out wider or taller than the screen it came on (`sw`/`sh`, the
+     * page's `screen.width`/`screen.height` as the event fired; the portrait window for a page
+     * without them): a landscape frame on a portrait screen, the chrome's stale measurement (BH-32).
+     */
+    private fun beyondItsScreen(entry: JSONObject, windowW: Int, windowH: Int): Boolean {
+        val screenW = entry.optInt("sw", windowW)
+        val screenH = entry.optInt("sh", windowH)
+        return entry.optInt("w") > screenW + 1 || entry.optInt("h") > screenH + 1
+    }
 
     /**
      * 3. Fullscreen again: no hint – and the two scenes the performance program measures (PERF-5's
@@ -616,30 +659,440 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         shot("21-after-embed")
     }
 
-    /** 11. The canvas (B3): fullscreen with no video in it – the hint all the same, no turn. */
+    /**
+     * 11. The canvas (B3, MED-03): fullscreen with no video in it, the once-key left as the videos
+     * set it – the exit hint stands all the same, every time (Chrome tells the way out of an
+     * element's fullscreen each time; a video has it once, GN-20), no turn of the screen. The
+     * first touch on the page takes the toast away early (`shared/pageHint.ts`); under the dark
+     * scheme it stands its time and goes on its own. Back exits either.
+     */
     private fun canvasFullscreenHints() {
-        note("\n11. the canvas into fullscreen (no video: the hint is the layer's cue)")
-        coreInvoke("settings.update", """{"fullscreenHintDone":false}""")
-        check("the once-key is reset for the canvas", poll(4_000) { !hintDone() })
-        SystemClock.sleep(800)
+        note("\n11. the canvas into fullscreen (no video: the exit hint every time, MED-03)")
+        check("the once-key stands set from the videos before it (no reset: the canvas needs none)", hintDone())
         check("the canvas is touched", tapPageButton("stage", "Canvas", "the canvas goes fullscreen", 15_000) {
             host.fullscreenTab?.tabId == TAB && field("el") == "stage"
         })
-        val seen = awaitHint(6_000, present = true)
-        val hint = if (seen == null) null else awaitHintAtRest(2_500) ?: seen
+        val enteredAt = SystemClock.uptimeMillis()
+        val first = awaitHint(6_000, present = true)
+        val seenAt = SystemClock.uptimeMillis() - enteredAt
+        // Its spring in is short (a bounded wait: the finger below must come inside the stand); a
+        // still is ~100 ms, its encode on another thread.
+        val seen = if (first == null) null else awaitHintAtRest(800) ?: first
         shot("22-canvas-fullscreen-hint")
-        note("  host fullscreenTab=${host.fullscreenTab?.tabId}; page fs=${field("fs")} el=${field("el")}; hint: $hint")
-        check("the hint stands for a fullscreen with no video in it", seen != null)
-        check("the once-key is set again", poll(4_000) { hintDone() })
+        shot("design-exit-hint-canvas-light")
+        note("  host fullscreenTab=${host.fullscreenTab?.tabId}; page fs=${field("fs")} el=${field("el")}; hint $seenAt ms after the fullscreen: $seen")
+        check("the exit hint stands for a fullscreen with no video in it, the once-key set (MED-03)", seen != null)
+        check("the once-key stays as it was (the canvas's hint is not the once)", hintDone())
+        if (seen != null) {
+            val travel = translateYOf(seen)
+            check("the hint is the toast along the bottom edge", seen.optDouble("top") - travel > seen.optDouble("viewportHeight") / 2)
+            check("the hint wears the light palette", paletteOf(seen) == "light")
+            // The toast stands 2.8 s from its showing; a finger on the page inside that time takes
+            // it away at once – the touch is the page's, so the finger lands on the canvas itself.
+            val standing = SystemClock.uptimeMillis() - enteredAt - seenAt
+            if (standing < HINT_STAND_MS - 600) {
+                Finger().tap(width / 2f, height / 2f)
+                val gone = awaitHint(1_500, present = false) == null
+                note("  finger on the fullscreen canvas ${standing} ms into the hint's stand: gone within 1.5 s: $gone")
+                check("the first touch on the page takes the exit hint away early (MED-03)", gone)
+            } else {
+                note("  the hint's stand had run out before a finger could come ($standing ms after it showed; the emulator's frames): the touch is checked in no run this slow")
+                check("the first touch on the page takes the exit hint away early (MED-03)", awaitHint(2_000, present = false) == null)
+            }
+        }
         val turned = poll(3_000) { landscape() }
         note("  rotation ${rotation()} requested ${requested()} held=${host.fullscreenLandscape}")
         check("the screen stays portrait for a fullscreen without a video", !turned)
         check("the activity asks for nothing (UNSPECIFIED)", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
-        awaitHint(6_000, present = false)
+        check("the hint stays away once touched", awaitHint(1_000, present = true) == null)
         back()
         check("back leaves the canvas's fullscreen", poll(10_000) { host.fullscreenTab == null })
         SystemClock.sleep(1_500)
-        shot("23-end")
+        shot("23-after-the-canvas")
+        // The same under the dark scheme, the toast left to its own time (the design still's twin).
+        coreInvoke("settings.update", """{"colorScheme":"dark"}""")
+        SystemClock.sleep(1_000)
+        check("the canvas is touched again under the dark scheme", tapPageButton("stage", "Canvas", "the canvas goes fullscreen again", 15_000) {
+            host.fullscreenTab?.tabId == TAB && field("el") == "stage"
+        })
+        val shownAt = SystemClock.uptimeMillis()
+        val seenDark = awaitHint(6_000, present = true)
+        val hintDark = if (seenDark == null) null else awaitHintAtRest(2_000) ?: seenDark
+        shot("design-exit-hint-canvas-dark")
+        note("  hint under dark: $hintDark")
+        check("the exit hint stands again for the canvas (every time, not once)", seenDark != null)
+        check("the hint wears the dark palette", hintDark != null && paletteOf(hintDark) == "dark")
+        val goneAt = if (awaitHint(6_000, present = false) == null) SystemClock.uptimeMillis() - shownAt else -1L
+        note("  the hint gone on its own $goneAt ms after the fullscreen (its stand $HINT_STAND_MS ms after its showing)")
+        check("the hint goes on its own untouched", goneAt > 0)
+        back()
+        check("back leaves the canvas's fullscreen under the dark scheme", poll(10_000) { host.fullscreenTab == null })
+        coreInvoke("settings.update", """{"colorScheme":"light"}""")
+        SystemClock.sleep(1_500)
+        shot("23b-light-again")
+    }
+
+    /**
+     * 12. The chrome around a page's fullscreen (MOT-32): the phone bar marked before the enter
+     * is the same element after the exit (mounted throughout, with its state); while the layer
+     * is up the window carries `data-page-fullscreen`, its chrome is inert and the bar stands
+     * off its edge by `--zen-fullscreen-away` at 1 (its own property, summed into the bar-hide
+     * transform), the away store having gone `leaving` then `away` with the progress never
+     * falling back, the host's layer clip at rest (the reveal over). Back: the bar's return
+     * (`returning` then `home`) starts no earlier than the chrome's return fade – on the page's
+     * landing, never over the bars' settle – and the property is gone at rest. Then under reduced
+     * motion, when the WebView follows the animator scale live: the bar jumps (no progress
+     * between 0 and 1 on record) and the return keeps §11.3's 120 ms fade.
+     */
+    private fun chromeStaysMountedBarAway() {
+        note("\n12. the chrome around the fullscreen (MOT-32): the bar translates off and back")
+        installAwaySampler()
+        val barBefore = barState()
+        note("  before: $barBefore")
+        check("the phone bar stands docked before the fullscreen", barBefore != null && barBefore.optString("phase") == "home" && barBefore.optDouble("away") == 0.0)
+        val enteredAt = SystemClock.uptimeMillis()
+        val clips = ArrayList<String>()
+        tapPageButton("fs-land", "Play landscape fullscreen", "the video goes fullscreen over the chrome", 15_000) {
+            layerClip()?.let { if (clips.lastOrNull() != it) clips += it }
+            host.fullscreenTab?.tabId == TAB || field("fs") == "1"
+        }
+        // The layer's clip on its way to the window (the host's reveal), as the polls caught it.
+        val clipDeadline = SystemClock.uptimeMillis() + 1_500
+        while (SystemClock.uptimeMillis() < clipDeadline) {
+            val clip = layerClip()
+            if (clip != null && clips.lastOrNull() != clip) clips += clip
+            if (clip == null && clips.isNotEmpty()) break
+            SystemClock.sleep(30)
+        }
+        poll(10_000) { landscape() }
+        val settled = poll(5_000) { barState()?.optString("phase") == "away" }
+        val during = barState()
+        val away = awayLog(enteredAt = enteredAt)
+        note("  ${SystemClock.uptimeMillis() - enteredAt} ms after the touch: fullscreenTab=${host.fullscreenTab?.tabId}; the layer's clip on the way: ${if (clips.isEmpty()) "none caught" else clips.joinToString(" ")}; at rest: ${layerClip() ?: "the window (no clip)"}")
+        note("  the bar during the fullscreen: $during")
+        note("  the away store on the way out (ms since the touch: progress phase): ${awayText(away)}")
+        shot("24-fullscreen-bar-away")
+        check("the window carries data-page-fullscreen while the page's element is fullscreen", during?.optBoolean("pageFullscreen") == true)
+        check("the chrome under the layer is inert", during?.optBoolean("inert") == true)
+        check("the bar is away at rest (the store's phase)", settled)
+        check("the bar carries --zen-fullscreen-away at 1 (its own property, no root variable)", during != null && during.optDouble("away") == 1.0 && !during.optBoolean("rootAway"))
+        check("the bar stands off its edge, past its clip line", during != null && barOffItsEdge(during))
+        check("the bar left by its transform alone: translated by its own height", during != null && near(kotlin.math.abs(translateYOfMatrix(during.optString("transform"))), during.optDouble("barBottom") - during.optDouble("barTop")))
+        check("the away store went leaving then away", phasesOf(away).let { it.indexOf("leaving") in 0 until it.lastIndexOf("away") })
+        check("the progress never fell back on the way out", monotone(away.filter { it.optString("phase") == "leaving" }, rising = true))
+        check("the host's layer clip is at rest (the reveal over)", layerClip() == null)
+        SystemClock.sleep(600)
+        // Back: the fade sampler's clock is the return's; the away log is read past it.
+        installFadeSampler()
+        val fadeT0 = chromeJs("window.__fadeT0").toDoubleOrNull() ?: 0.0
+        back()
+        check("back leaves the fullscreen", poll(10_000) { host.fullscreenTab == null })
+        poll(10_000) { !landscape() }
+        SystemClock.sleep(LANDING_TIMEOUT_MS + 1_200L)
+        val after = barState()
+        val fades = fadeCalls()
+        val fadeAt = fades.firstOrNull(::isTheReturnFade)?.optInt("at")
+        val wayBack = awayLog(sinceChromeMs = fadeT0)
+        val returningAt = wayBack.firstOrNull { it.optString("phase") == "returning" }?.optDouble("at")
+        note("  the bar after the exit: $after")
+        note("  the return fade's animate() at $fadeAt ms on the sampler's clock; the away store on the way back (ms on the same clock: progress phase): ${awayText(wayBack, fadeT0)}")
+        check("the bar is the same element after the fullscreen (marked before it: mounted throughout)", after?.optString("mark") == "kept")
+        check("data-page-fullscreen is gone with the fullscreen", after?.optBoolean("pageFullscreen") == false)
+        check("the chrome is no longer inert", after?.optBoolean("inert") == false)
+        check("the bar is home at rest, the property removed", after != null && after.optString("phase") == "home" && after.optDouble("away") == 0.0 && after.optString("awayProperty").isEmpty())
+        check("the bar stands on its edge again, inside its clip line", after != null && barOnItsEdge(after))
+        check("the chrome's return started the 120 ms fade", fadeAt != null)
+        check("the away store went returning then home", phasesOf(wayBack).let { it.indexOf("returning") in 0 until it.lastIndexOf("home") })
+        check("the bar's return started with the fade, not before the landing (MOT-32 rides the return's clock)",
+            fadeAt != null && returningAt != null && returningAt - fadeT0 >= fadeAt - CLOCK_TOLERANCE_MS)
+        check("the progress never rose again on the way back", monotone(wayBack.filter { it.optString("phase") == "returning" }, rising = false))
+        shot("25-bar-back")
+        reducedMotionPair()
+    }
+
+    /**
+     * The pair under reduced motion: the animator scale at 0 is what the WebView reads into
+     * `prefers-reduced-motion`; when it follows the change live the bar is off, and back, at
+     * once (`SpringAnimation` jumps: nothing between 0 and 1 on record), the host's reveal is
+     * skipped (no clip caught) and the return keeps the 120 ms fade (#311's rule). When the
+     * WebView does not follow it within the run, the pair is skipped, not failed – as the loading
+     * feedback demo has it.
+     */
+    private fun reducedMotionPair() {
+        note("  reduced motion (animator duration scale 0)")
+        shell("settings put global animator_duration_scale 0")
+        shell("settings put global transition_animation_scale 0")
+        shell("settings put global window_animation_scale 0")
+        try {
+            var reduced = false
+            val deadline = SystemClock.uptimeMillis() + 4_000
+            while (!reduced && SystemClock.uptimeMillis() < deadline) {
+                reduced = chromeJs("matchMedia('(prefers-reduced-motion: reduce)').matches") == "true"
+                if (!reduced) SystemClock.sleep(400)
+            }
+            var animators = true
+            instrumentation.runOnMainSync { animators = android.animation.ValueAnimator.areAnimatorsEnabled() }
+            note("  the chrome sees prefers-reduced-motion: $reduced; the host's animators enabled: $animators")
+            if (!reduced) {
+                note("  (the WebView did not follow the scale within the run; the reduced-motion pair is skipped, not failed)")
+                return
+            }
+            val enteredAt = SystemClock.uptimeMillis()
+            val clips = ArrayList<String>()
+            tapPageButton("fs-land", "Play landscape fullscreen", "the video goes fullscreen under reduced motion", 15_000) {
+                layerClip()?.let { if (clips.lastOrNull() != it) clips += it }
+                host.fullscreenTab?.tabId == TAB || field("fs") == "1"
+            }
+            poll(10_000) { landscape() }
+            poll(5_000) { barState()?.optString("phase") == "away" }
+            val away = awayLog(enteredAt = enteredAt)
+            note("  the away store under reduced motion, out (ms since the touch: progress phase): ${awayText(away)}; the layer's clip caught: ${if (clips.isEmpty()) "none" else clips.joinToString(" ")}")
+            shot("26-reduced-fullscreen")
+            check("under reduced motion the bar is away at once (no progress between 0 and 1)", away.isNotEmpty() && away.all { it.optDouble("p") == 0.0 || it.optDouble("p") == 1.0 } && barState()?.optDouble("away") == 1.0)
+            if (!animators) check("under the system's animations off the host reveals nothing (no clip caught)", clips.isEmpty())
+            else note("  (the host's animators stay enabled in this process until it restarts: its reveal is not held to the jump here)")
+            SystemClock.sleep(600)
+            installFadeSampler()
+            val fadeT0 = chromeJs("window.__fadeT0").toDoubleOrNull() ?: 0.0
+            back()
+            check("back leaves the fullscreen under reduced motion", poll(10_000) { host.fullscreenTab == null })
+            poll(10_000) { !landscape() }
+            SystemClock.sleep(LANDING_TIMEOUT_MS + 1_200L)
+            val fades = fadeCalls()
+            val wayBack = awayLog(sinceChromeMs = fadeT0)
+            note("  the return fade's animate() calls: $fades; the away store back (ms on the sampler's clock: progress phase): ${awayText(wayBack, fadeT0)}")
+            check("under reduced motion the return keeps the 120 ms fade (#311's rule)", fades.any(::isTheReturnFade))
+            check("under reduced motion the bar is back at once (no progress between 0 and 1)", wayBack.isNotEmpty() && wayBack.all { it.optDouble("p") == 0.0 || it.optDouble("p") == 1.0 } && barState()?.optDouble("away") == 0.0)
+            shot("27-reduced-back")
+        } finally {
+            shell("settings put global animator_duration_scale 1")
+            shell("settings put global transition_animation_scale 1")
+            shell("settings put global window_animation_scale 1")
+            poll(4_000) { chromeJs("matchMedia('(prefers-reduced-motion: reduce)').matches") == "false" }
+        }
+    }
+
+    /**
+     * The away store's every change on record (`lib/fullscreenMotion.ts`, registered under its
+     * key): `at` on the chrome's `performance.now()` clock, the progress, the phase – hooked once.
+     * The bar element is marked, to be known again after the exit.
+     */
+    private fun installAwaySampler() {
+        chromeJs(
+            "(function(){window.__away=window.__away||[];if(!window.__awayHooked){window.__awayHooked=true;" +
+                "var st=window.__zenStores&&window.__zenStores['fullscreen-away'];if(st)st.subscribe(function(){var s=st.get();" +
+                "window.__away.push({at:performance.now(),p:s.progress,phase:s.phase})})}" +
+                "var bar=document.querySelector('.zen-phone-bar');if(bar)bar.__demoMark='kept'})()"
+        )
+    }
+
+    /**
+     * The bar as it stands: the store's phase and progress, the bar's own `--zen-fullscreen-away`
+     * (and whether the root carries one, which it never should), its mark, the window's
+     * `data-page-fullscreen`, the chrome's `inert`, the bar's box against its clip box (CSS px in
+     * the chrome's window), the edge it is docked at and its computed transform.
+     */
+    private fun barState(): JSONObject? {
+        val raw = chromeJs(
+            "(function(){var bar=document.querySelector('.zen-phone-bar');var clip=document.querySelector('.zen-phone-bar-clip');" +
+                "var win=document.querySelector('.zen-window');var main=document.querySelector('main[data-shell-chrome]');" +
+                "var st=window.__zenStores&&window.__zenStores['fullscreen-away'];var s=st?st.get():null;if(!bar||!clip||!win)return null;" +
+                "var b=bar.getBoundingClientRect(),c=clip.getBoundingClientRect();" +
+                "return JSON.stringify({phase:s?s.phase:'none',away:s?s.progress:-1,awayProperty:bar.style.getPropertyValue('--zen-fullscreen-away')," +
+                "rootAway:document.documentElement.style.getPropertyValue('--zen-fullscreen-away')!==''," +
+                "mark:bar.__demoMark||'',pageFullscreen:win.hasAttribute('data-page-fullscreen'),inert:!!(main&&main.hasAttribute('inert'))," +
+                "barTop:b.top,barBottom:b.bottom,clipTop:c.top,clipBottom:c.bottom,edge:bar.getAttribute('data-edge'),transform:getComputedStyle(bar).transform," +
+                "window:window.innerWidth+'x'+window.innerHeight})})()"
+        )
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return null
+        return runCatching { JSONObject(text) }.getOrNull()
+    }
+
+    /** The bar past its clip line: below the box's bottom edge when docked at the bottom, above its top edge when docked at the top. */
+    private fun barOffItsEdge(bar: JSONObject): Boolean =
+        if (bar.optString("edge") == "top") bar.optDouble("barBottom") <= bar.optDouble("clipTop") + 1.0
+        else bar.optDouble("barTop") >= bar.optDouble("clipBottom") - 1.0
+
+    /** The bar inside its clip box again, by more than a pixel. */
+    private fun barOnItsEdge(bar: JSONObject): Boolean =
+        if (bar.optString("edge") == "top") bar.optDouble("barBottom") > bar.optDouble("clipTop") + 1.0
+        else bar.optDouble("barTop") < bar.optDouble("clipBottom") - 1.0
+
+    /** The vertical translation of a computed `transform` (`matrix(a, b, c, d, tx, ty)` or `matrix3d(...)`), 0 for none. */
+    private fun translateYOfMatrix(transform: String): Double {
+        val numbers = Regex("-?[0-9.]+(?:e-?[0-9]+)?").findAll(transform.substringAfter('(', "")).map { it.value.toDoubleOrNull() ?: 0.0 }.toList()
+        return when {
+            transform.startsWith("matrix3d(") && numbers.size >= 14 -> numbers[13]
+            transform.startsWith("matrix(") && numbers.size >= 6 -> numbers[5]
+            else -> 0.0
+        }
+    }
+
+    /**
+     * The away store's changes since `enteredAt` (the driver's clock, taken to the chrome's by the
+     * two clocks' offset now) or since `sinceChromeMs` on the chrome's own clock.
+     */
+    private fun awayLog(enteredAt: Long? = null, sinceChromeMs: Double? = null): List<JSONObject> {
+        val raw = chromeJs("JSON.stringify({now:performance.now(),log:window.__away||[]})")
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return emptyList()
+        val all = runCatching { JSONObject(text) }.getOrNull() ?: return emptyList()
+        val now = all.optDouble("now")
+        val since = sinceChromeMs ?: enteredAt?.let { now - (SystemClock.uptimeMillis() - it) } ?: 0.0
+        val log = all.optJSONArray("log") ?: return emptyList()
+        return (0 until log.length()).mapNotNull { log.optJSONObject(it) }.filter { it.optDouble("at") >= since - CLOCK_TOLERANCE_MS }
+    }
+
+    /** The away entries as text: `at` from `from` (the chrome's clock), the progress and the phase. */
+    private fun awayText(entries: List<JSONObject>, from: Double? = null): String {
+        if (entries.isEmpty()) return "nothing logged"
+        val origin = from ?: entries.first().optDouble("at")
+        return entries.joinToString(" ") { "${(it.optDouble("at") - origin).toInt()}:${"%.3f".format(it.optDouble("p"))} ${it.optString("phase")}" }
+    }
+
+    private fun phasesOf(entries: List<JSONObject>): List<String> = entries.map { it.optString("phase") }
+
+    /** Whether the progress only rises (or only falls) across `entries`, as a spring heading one way does. */
+    private fun monotone(entries: List<JSONObject>, rising: Boolean): Boolean =
+        entries.zipWithNext().all { (a, b) -> if (rising) b.optDouble("p") >= a.optDouble("p") - 1e-6 else b.optDouble("p") <= a.optDouble("p") + 1e-6 }
+
+    /** The fullscreen layer's clip as the host's reveal has it (`View.clipBounds` on the engine's view's parent), or null for none. */
+    private fun layerClip(): String? {
+        var clip: String? = null
+        instrumentation.runOnMainSync {
+            val layer = host.fullscreenView?.parent as? android.view.View
+            clip = layer?.clipBounds?.let { "${it.left},${it.top}-${it.right},${it.bottom}" }
+        }
+        return clip
+    }
+
+    /**
+     * 13. Rotate-to-fullscreen (MED-02). An emulator never turns, so the screen is turned through
+     * the system's user rotation with auto-rotate off (`settings put system user_rotation`), and
+     * [Host.deviceTurned] stands in for the sensor's word that the device itself lies landscape.
+     *  (a) The landscape clip played inline with the native controls and paused: the screen turned
+     *      to landscape takes it nowhere (never for a paused video).
+     *  (b) Playing: the turn takes it fullscreen – the page's own `screen.orientation` change is
+     *      where it asks – the host holding `SENSOR_LANDSCAPE` and not yet following the device.
+     *  (c) The clip paused in fullscreen, the device read landscape: after its 400 ms the host
+     *      hands the screen to the device (`FULL_SENSOR`); the emulator's accelerometer reads
+     *      portrait, so the screen turns back and the page leaves the fullscreen (a paused
+     *      fullscreen video still exits on the turn); the orientation is given back.
+     *  (d) The portrait clip playing inline: the turn to landscape takes it nowhere, the turn back
+     *      to portrait takes it fullscreen with the screen held by nobody (a portrait video never
+     *      turns the screen), and the turn to landscape ends that fullscreen.
+     * With the device's rotation locked no turn of the screen comes, so nothing here runs – by
+     * construction (the unit tests have the decision; `rotateToFullscreen.ts`).
+     */
+    private fun rotateToFullscreen() {
+        note("\n13. rotate-to-fullscreen (MED-02): the screen turned through the system's user rotation")
+        val accelerometer = shell("settings get system accelerometer_rotation").trim()
+        val userRotation = shell("settings get system user_rotation").trim()
+        note("  settings before: accelerometer_rotation=$accelerometer user_rotation=$userRotation; rotation ${rotation()} requested ${requested()}")
+        shell("settings put system accelerometer_rotation 0")
+        shell("settings put system user_rotation 0")
+        pageJs("window.__turnsMark && window.__turnsMark()")
+        try {
+            check("the screen starts portrait, the page inline", poll(5_000) { !landscape() } && host.fullscreenTab == null)
+            // (a) A paused clip takes no turn.
+            check("Play landscape inline is touched", tapPageButton("play-land", "Play landscape inline", "the landscape clip plays inline with controls", 8_000) {
+                field("state") == "playing" && pageJs("document.getElementById('land').hasAttribute('controls')") == "true"
+            })
+            pageJs("document.getElementById('land').pause()")
+            check("the clip is paused for the turn", poll(3_000) { field("state") == "paused" })
+            shell("settings put system user_rotation 1")
+            val turnedA = poll(8_000) { landscape() }
+            SystemClock.sleep(2_500)
+            note("  (a) the screen turned to landscape with the clip paused: $turnedA; fullscreenTab=${host.fullscreenTab?.tabId} page fs=${field("fs")} el=${field("el")}; turns heard: ${turns()}")
+            check("(a) the screen turns to landscape through the user rotation", turnedA)
+            check("(a) a paused clip takes no turn (never for a paused video)", host.fullscreenTab == null && field("fs") == "0")
+            shot("28-rotated-paused-inline")
+            shell("settings put system user_rotation 0")
+            check("(a) the screen turns back to portrait", poll(8_000) { !landscape() })
+            SystemClock.sleep(1_500)
+            check("(a) still nothing fullscreen", host.fullscreenTab == null && field("fs") == "0")
+            // (b) Playing with the native controls: the turn takes it fullscreen.
+            pageJs("window.__turnsMark && window.__turnsMark()")
+            check("Play landscape inline is touched again", tapPageButton("play-land", "Play landscape inline", "the landscape clip plays inline", 8_000) { field("state") == "playing" })
+            SystemClock.sleep(800)
+            val turnedAt = SystemClock.uptimeMillis()
+            shell("settings put system user_rotation 1")
+            val entered = poll(12_000) { host.fullscreenTab?.tabId == TAB && field("el") == "land" }
+            val enteredMs = SystemClock.uptimeMillis() - turnedAt
+            SystemClock.sleep(1_000)
+            note("  (b) fullscreen $enteredMs ms after the user rotation: $entered; fullscreenTab=${host.fullscreenTab?.tabId} page fs=${field("fs")} el=${field("el")} state=${field("state")}; rotation ${rotation()} requested ${requested()} held=${host.fullscreenLandscape} follows=${host.fullscreenFollowsDevice}; turns heard: ${turns()}")
+            check("(b) the playing clip goes fullscreen as the screen turns to landscape (asked for inside the page's screen.orientation change)", entered)
+            check("(b) the page heard the turn as landscape", turns().contains("landscape"))
+            check("(b) the host holds SENSOR_LANDSCAPE for the fullscreen video", requested() == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE && host.fullscreenLandscape)
+            check("(b) the host does not follow the device yet (it has not turned)", !host.fullscreenFollowsDevice)
+            check("(b) no hint for a video seen fullscreen before", awaitHint(2_000, present = true) == null)
+            shot("29-rotate-to-fullscreen")
+            // (c) Paused in fullscreen; the device itself turned: the screen handed to the device.
+            pageJs("document.getElementById('land').pause()")
+            check("(c) the clip is paused in fullscreen", poll(3_000) { field("state") == "paused" })
+            shell("settings put system user_rotation 0")
+            SystemClock.sleep(800)
+            check("(c) the held screen stays landscape under the user rotation's portrait", landscape() && host.fullscreenTab?.tabId == TAB)
+            pageJs("window.__turnsMark && window.__turnsMark()")
+            val deviceAt = SystemClock.uptimeMillis()
+            instrumentation.runOnMainSync { host.deviceTurned(90) }
+            val following = poll(4_000) { host.fullscreenFollowsDevice }
+            val followingMs = SystemClock.uptimeMillis() - deviceAt
+            note("  (c) the device read landscape: following after $followingMs ms: $following; requested ${requested()}")
+            check("(c) ${FullscreenRotation.LOCK_TO_ANY_DELAY_MS} ms after the device reads landscape the host hands the screen to it (FULL_SENSOR)", following && requested() == ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR)
+            check("(c) the hand-over waits its ${FullscreenRotation.LOCK_TO_ANY_DELAY_MS} ms", followingMs >= FullscreenRotation.LOCK_TO_ANY_DELAY_MS - CLOCK_TOLERANCE_MS)
+            val portraitAgain = poll(10_000) { !landscape() }
+            val left = poll(10_000) { host.fullscreenTab == null && field("fs") == "0" }
+            SystemClock.sleep(1_500)
+            note("  (c) the screen back to portrait on the device's own reading: $portraitAgain; the fullscreen left on the turn: $left; rotation ${rotation()} requested ${requested()} held=${host.fullscreenLandscape}; turns heard: ${turns()}")
+            check("(c) the device's portrait reading turns the screen back (FULL_SENSOR follows the sensor, rotation lock or not)", portraitAgain)
+            check("(c) the turn back ends the fullscreen of the paused clip (a fullscreen video paused still exits)", left)
+            check("(c) the orientation is given back (UNSPECIFIED), the host holding nothing", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED && !host.fullscreenLandscape)
+            shot("30-rotated-back-out")
+            // (d) The portrait clip: no turn takes it to landscape; the turn back to portrait takes it fullscreen.
+            pageJs("window.__turnsMark && window.__turnsMark()")
+            check("Play portrait inline is touched", tapPageButton("play-port", "Play portrait inline", "the portrait clip plays inline with controls", 8_000) {
+                field("state") == "playing" && pageJs("document.getElementById('port').hasAttribute('controls')") == "true"
+            })
+            SystemClock.sleep(800)
+            shell("settings put system user_rotation 1")
+            check("(d) the screen turns to landscape", poll(8_000) { landscape() })
+            SystemClock.sleep(2_500)
+            note("  (d) landscape with the portrait clip playing: fullscreenTab=${host.fullscreenTab?.tabId} fs=${field("fs")} el=${field("el")}; turns heard: ${turns()}")
+            check("(d) a portrait clip takes no turn to landscape", host.fullscreenTab == null && field("fs") == "0")
+            shell("settings put system user_rotation 0")
+            val enteredPortrait = poll(12_000) { host.fullscreenTab?.tabId == TAB && field("el") == "port" }
+            SystemClock.sleep(1_000)
+            note("  (d) the turn back to portrait: fullscreen $enteredPortrait; fullscreenTab=${host.fullscreenTab?.tabId} fs=${field("fs")} el=${field("el")}; rotation ${rotation()} requested ${requested()} held=${host.fullscreenLandscape}; turns heard: ${turns()}")
+            check("(d) the playing portrait clip goes fullscreen on the turn to portrait", enteredPortrait)
+            check("(d) the host holds nothing for a portrait video (UNSPECIFIED, the screen the system's)", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED && !host.fullscreenLandscape && !landscape())
+            shot("31-portrait-rotate-to-fullscreen")
+            shell("settings put system user_rotation 1")
+            val leftPortrait = poll(12_000) { host.fullscreenTab == null && field("fs") == "0" }
+            note("  (d) the turn to landscape: left the fullscreen: $leftPortrait; rotation ${rotation()}; turns heard: ${turns()}")
+            check("(d) the turn to landscape ends the portrait clip's fullscreen", leftPortrait)
+            pageJs("document.getElementById('port').pause()")
+            check("(d) the clip is paused before the turn back", poll(3_000) { field("state") == "paused" })
+            shell("settings put system user_rotation 0")
+            check("(d) the screen is portrait again", poll(8_000) { !landscape() })
+            SystemClock.sleep(1_500)
+            check("(d) nothing fullscreen at the end", host.fullscreenTab == null && field("fs") == "0")
+            shot("32-end")
+        } finally {
+            pageJs("(function(){['land','port'].forEach(function(id){var v=document.getElementById(id);if(v){v.pause();v.removeAttribute('controls')}})})()")
+            shell(if (userRotation == "null" || userRotation.isEmpty()) "settings delete system user_rotation" else "settings put system user_rotation $userRotation")
+            shell(if (accelerometer == "null" || accelerometer.isEmpty()) "settings delete system accelerometer_rotation" else "settings put system accelerometer_rotation $accelerometer")
+            note("  settings after: accelerometer_rotation=${shell("settings get system accelerometer_rotation").trim()} user_rotation=${shell("settings get system user_rotation").trim()}")
+        }
+    }
+
+    /** The screen's turns the page heard since its last mark (`__turns`): `at:type(fs el)` each, or none. */
+    private fun turns(): String {
+        val raw = pageJs("window.__turns ? window.__turns() : null")
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return "none"
+        val all = runCatching { JSONArray(text) }.getOrNull() ?: return "none"
+        if (all.length() == 0) return "none"
+        return (0 until all.length()).mapNotNull { all.optJSONObject(it) }
+            .joinToString(" ") { "${it.optInt("at")}ms:${it.optString("type")}(fs=${it.optInt("fs")} ${it.optString("el")})" }
     }
 
     /** What the embed's document sees (`__embedState` through the top document; same origin). */
@@ -968,6 +1421,8 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         /** How long the return fade waits on the landing at most (`LANDING_TIMEOUT_MS`, lib/fullscreenLanding.ts), and a timer's tolerance against the sampler's clock. */
         private const val LANDING_TIMEOUT_MS = 2_500
         private const val CLOCK_TOLERANCE_MS = 60
+        /** How long the exit hint's toast stands from its showing (`TOAST_SHOW_MS`, `@shared/toastCard`). */
+        private const val HINT_STAND_MS = 2_800L
         /** A measured scene's rest after its motion, for the last frames to land in the record. */
         private const val SCENE_REST_MS = 1_000L
         /** The chooser's entry for `ACTION_IMAGE_CAPTURE`: the camera app's label. */
