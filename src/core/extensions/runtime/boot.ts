@@ -136,6 +136,12 @@ export interface BootStats {
    */
   flow?: Record<string, FlowStats>
   /**
+   * The webpack chunks of the content scripts' module graphs under the `with` fallback: run in
+   * the content script's scope, imported plain on the page's global, thrown
+   * (`extensionChunkRelay.ts`).
+   */
+  chunks?: { scoped: number; plain: number; failed: number }
+  /**
    * The first uncaught errors of the document after the bootstrap ran (a debug world's
    * capturing `error` listener), with the stack and, for a script the page holds inline (an
    * element a content script wrote), the source around the throw: a console line names such a

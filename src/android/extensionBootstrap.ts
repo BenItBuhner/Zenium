@@ -35,6 +35,7 @@ import {
   type ShieldResult
 } from './extensionIsolation'
 import { installModuleChrome } from './extensionModuleChrome'
+import { createChunkRelay, type ChunkRelay, type ChunkStats } from './extensionChunkRelay'
 import {
   createScriptRecovery,
   type ScriptRecovery,
@@ -195,6 +196,8 @@ declare const __zenExtBoot: Boot
   let scriptRecovery: ScriptRecovery | null = null
   /** Content mode: extension-origin fetches the page's CSP refused, and the stylesheet recovery's reads (see below). */
   let fetchRelay: FetchRelay | null = null
+  /** Content mode under the `with` fallback: webpack chunks of a module graph run in the content script's scope (see below). */
+  let chunkRelay: ChunkRelay | null = null
   transport.listen((event) => {
     bridgeTraffic.pageBound++
     let message: Record<string, unknown>
@@ -217,6 +220,13 @@ declare const __zenExtBoot: Boot
     }
     if (message.t === 'extFetchDone') {
       fetchRelay?.done(String(message.id), message)
+      return
+    }
+    if (message.t === 'chunkDone') {
+      chunkRelay?.done(
+        String(message.id),
+        message.ok === true ? null : String(message.error ?? 'the host refused')
+      )
       return
     }
     const engine = engines.get(ep)
@@ -768,6 +778,12 @@ declare const __zenExtBoot: Boot
       enumerable: true,
       configurable: true
     })
+    // The module graphs' webpack chunks: run in the content script's scope, imported plain, thrown.
+    Object.defineProperty(stats, 'chunks', {
+      get: (): ChunkStats | undefined => chunkRelay?.stats(),
+      enumerable: true,
+      configurable: true
+    })
     // The document's first uncaught errors, for the compat sweep: a console line gives an inline
     // script's error as `<document URL>:1`, which tells neither the code nor the caller; the
     // event still carries the stack, and the script element still runs while it is dispatched.
@@ -841,6 +857,27 @@ declare const __zenExtBoot: Boot
   }
   const scopes = new Map<string, Scope>()
 
+  // A webpack chunk of a content script's module graph under the `with` fallback runs as a block
+  // of the content script's scope, asked of the host by the stub the chunk was served as
+  // (`extensionChunkRelay.ts`): in a top frame only (`evaluateJavascript` takes no frame), and
+  // only where this copy made the extension's content scope, which is where the graph started.
+  chunkRelay = createChunkRelay({
+    canRun: (extId) => frame.isTopFrame && scopes.has(`${extId}/with/content`),
+    request: (id, extId, url) =>
+      post(
+        primordials.stringify({
+          t: 'chunkScript',
+          token: content.token,
+          ep: endpointIdFor(extId),
+          ext: extId,
+          id,
+          url
+        })
+      ),
+    warn: primordials.warn
+  })
+  const chunks = chunkRelay
+
   const mirrorOnto = (target: Any): ((name: string, value: unknown) => void) => {
     return (name, value) => {
       if (typeof name !== 'string' || builtins.has(name)) return
@@ -906,11 +943,13 @@ declare const __zenExtBoot: Boot
       // scope: the host brackets the served module text, and these accessors answer the
       // extension's `chrome` and, as `self`, its scope there while the module's body runs, so
       // a webpack chunk registers on the content script's own registry
-      // (extensionModuleChrome.ts).
+      // (extensionModuleChrome.ts); a webpack chunk served as the stub runs in the scope itself
+      // (`__zenExtChunk`, extensionChunkRelay.ts).
       installModuleChrome(
         realWindow,
         (id) => scopes.get(`${id}/with/content`)?.chrome,
-        (id) => scopes.get(`${id}/with/content`)?.window as object | undefined
+        (id) => scopes.get(`${id}/with/content`)?.window as object | undefined,
+        (id, url) => chunks.claim(id, url)
       )
     }
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
@@ -1036,6 +1075,19 @@ declare const __zenExtBoot: Boot
     }
     if (typeof fn !== 'function') throw new Error('no script')
     const w = scope.window
+    // A webpack chunk of the content script's module graph (`chunkScript`, the stub's ask): the
+    // block runs in the scope and the stub's wait is settled here, the chunk's throw as its
+    // rejection; the host hears nothing of it but the exec's own outcome.
+    if (kind === 'chunk') {
+      let error: string | null = null
+      try {
+        ;(fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
+      } catch (e) {
+        error = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+      }
+      chunks.ran(String(options.id ?? ''), error)
+      return null
+    }
     return settleLater(
       scope,
       (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)

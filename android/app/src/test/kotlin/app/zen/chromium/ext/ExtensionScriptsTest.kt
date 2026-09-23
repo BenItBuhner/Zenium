@@ -322,4 +322,39 @@ class ExtensionScriptsTest {
         assertFalse(ExtensionScripts.declaresChrome("x".repeat(ExtensionScripts.MODULE_SCAN_HEAD) + ";let chrome = 1;"))
         assertTrue(ExtensionScripts.declaresChrome("x".repeat(ExtensionScripts.MODULE_SCAN_HEAD - 16) + ";let chrome = 1;"))
     }
+
+    @Test
+    fun aPageModuleGraphIsToldByTheDocumentAndTheOriginHeaderNeverByTheReferer() {
+        val origin = "https://becfinhbfclcgokjlobojlnldbfillpf.ext.zenium.invalid/"
+        val page = "https://example.com/article"
+        // The entry a content script `import()`ed, and its static dependency (whose Referer is the
+        // entry, on the extension origin: the same answer, the Referer is not an input).
+        assertTrue(ExtensionScripts.isPageModuleGraph("assets/content.js", false, page, origin, true, false))
+        assertTrue(ExtensionScripts.isPageModuleGraph("assets/polyfill.js", false, page, origin, true, false))
+        assertTrue(ExtensionScripts.isPageModuleGraph("chunks/6380.mjs", false, null, origin, true, false))
+        // An extension page open in a tab (an options page) has its own `chrome`: served plain.
+        assertFalse(ExtensionScripts.isPageModuleGraph("assets/options.js", false, origin + "options.html", origin, true, false))
+        // The document itself, a classic `<script src>` (no `Origin`), a non-script, isolated worlds.
+        assertFalse(ExtensionScripts.isPageModuleGraph("options.html", true, page, origin, true, false))
+        assertFalse(ExtensionScripts.isPageModuleGraph("assets/content.js", false, page, origin, false, false))
+        assertFalse(ExtensionScripts.isPageModuleGraph("assets/styles.css", false, page, origin, true, false))
+        assertFalse(ExtensionScripts.isPageModuleGraph("assets/content.js", false, page, origin, true, true))
+    }
+
+    @Test
+    fun aWebpackChunkOfAPageGraphIsServedAsTheStubThatRunsItInTheScopeOrImportsItPlain() {
+        val id = "ajphlblkfpppdpkgokiejbjfohfohhmk"
+        val url = "https://$id.ext.zenium.invalid/chunks/6380.js"
+        val stub = ExtensionScripts.chunkStub(id, url)
+        assertEquals(
+            "if(!(globalThis.__zenExtChunk&&await globalThis.__zenExtChunk(\"$id\",\"$url\")))await import(\"$url?zenium-plain=1\");\n",
+            stub
+        )
+        // A URL with a query of its own keeps it, the plain mark appended.
+        assertTrue(ExtensionScripts.chunkStub(id, "$url?v=3").contains("await import(\"$url?v=3&zenium-plain=1\")"))
+        assertEquals("zenium-plain", ExtensionScripts.PLAIN_QUERY)
+        // ASCII, one line: the module the WebView evaluates as the chunk's own text.
+        assertTrue(stub.all { it.code < 128 })
+        assertEquals(1, stub.trimEnd().lines().size)
+    }
 }
