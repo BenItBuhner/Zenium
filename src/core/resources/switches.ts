@@ -102,6 +102,22 @@ export function baselineDisabledFeatures(os: string): string[] {
 }
 
 /**
+ * Switches an OS needs whatever the resource settings say, beside the disabled features.
+ *
+ * Linux: Chromium's `speechSynthesis` talks to Speech Dispatcher, and the client is only
+ * compiled in behind `--enable-speech-dispatcher` – without it `getVoices()` is empty and every
+ * utterance ends at once, as Electron ships. Windows and macOS use their platform engines and
+ * need nothing. The switch alone is harmless when the daemon is absent (still no voices).
+ */
+export const LINUX_BASELINE_SWITCHES: readonly StartupSwitch[] = [
+  { name: 'enable-speech-dispatcher' }
+]
+
+export function baselineSwitches(os: string): StartupSwitch[] {
+  return os === 'linux' ? LINUX_BASELINE_SWITCHES.map((sw) => ({ ...sw })) : []
+}
+
+/**
  * The switches to put on the command line for a profile: its own, with the baseline features
  * merged into its one `disable-features` (Chromium reads a single such switch; a second one
  * replaces the first).

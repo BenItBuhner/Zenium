@@ -139,13 +139,16 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     allowOnce: true,
     support: { desktop: 'enforced', android: 'n-a' }
   },
+  // The device rows: a chooser is the prompt (`promptLabel` stays null – the site is never asked
+  // with a bubble), `block` refuses the site without one, and what a pick grants is one DEVICE
+  // (`DeviceGrant`, the setting's data), never a blanket allow.
   {
     id: 'usb',
     label: 'USB devices',
-    description: 'Zenium does not connect sites to USB devices',
+    description: 'Sites can ask to connect to USB devices',
     group: 'permissions',
-    builtInDefault: 'deny',
-    choices: ['deny'],
+    builtInDefault: 'ask',
+    choices: ['ask', 'deny'],
     promptLabel: null,
     allowOnce: false,
     support: { desktop: 'enforced', android: 'n-a' }
@@ -153,10 +156,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
   {
     id: 'serial',
     label: 'Serial ports',
-    description: 'Zenium does not connect sites to serial ports',
+    description: 'Sites can ask to connect to serial ports',
     group: 'permissions',
-    builtInDefault: 'deny',
-    choices: ['deny'],
+    builtInDefault: 'ask',
+    choices: ['ask', 'deny'],
     promptLabel: null,
     allowOnce: false,
     support: { desktop: 'enforced', android: 'n-a' }
@@ -164,10 +167,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
   {
     id: 'hid',
     label: 'HID devices',
-    description: 'Zenium does not connect sites to HID devices',
+    description: 'Sites can ask to connect to HID devices',
     group: 'permissions',
-    builtInDefault: 'deny',
-    choices: ['deny'],
+    builtInDefault: 'ask',
+    choices: ['ask', 'deny'],
     promptLabel: null,
     allowOnce: false,
     support: { desktop: 'enforced', android: 'n-a' }
@@ -175,10 +178,10 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
   {
     id: 'bluetooth',
     label: 'Bluetooth devices',
-    description: 'Zenium does not connect sites to Bluetooth devices',
+    description: 'Sites can ask to connect to Bluetooth devices',
     group: 'permissions',
-    builtInDefault: 'deny',
-    choices: ['deny'],
+    builtInDefault: 'ask',
+    choices: ['ask', 'deny'],
     promptLabel: null,
     allowOnce: false,
     support: { desktop: 'enforced', android: 'n-a' }
@@ -317,6 +320,8 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     allowOnce: false,
     support: { desktop: 'enforced', android: 'enforced' }
   },
+  // The one source of a site's mute: "Mute Site", this row and the site-information row all
+  // read and write it, and every tab of the site follows it (`TabManager.followSoundSetting`).
   {
     id: 'sound',
     label: 'Sound',
@@ -326,7 +331,7 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
-    support: { desktop: 'stored', android: 'stored' }
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'zoom-levels',
@@ -573,6 +578,18 @@ export function builtInDefault(permission: string): ContentDefault {
  * request's media types say); the answer is stored per row, as Chrome keeps them.
  */
 export const MEDIA_ROWS: readonly string[] = ['camera', 'microphone']
+
+/**
+ * The rows whose grant is one device picked in a chooser (`DeviceGrant`), never a blanket
+ * allow: their `ask` means "a chooser may open", and the engine's status check for them asks
+ * "may the site request a device at all?", which anything but `deny` answers yes.
+ */
+export const DEVICE_KINDS = ['bluetooth', 'usb', 'serial', 'hid'] as const
+export type DeviceKindId = (typeof DEVICE_KINDS)[number]
+
+export function isDeviceKind(permission: string): permission is DeviceKindId {
+  return (DEVICE_KINDS as readonly string[]).includes(contentSettingId(permission))
+}
 
 /** The words after "Allow <site> to …" for a prompted permission (`null`: never asked). */
 export function promptLabelFor(permission: string): string | null {

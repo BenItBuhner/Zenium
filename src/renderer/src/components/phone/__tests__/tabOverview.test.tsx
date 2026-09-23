@@ -138,7 +138,7 @@ const AREA = { x: 0, y: 0, width: 220, height: 600 }
  * loose cards below, the New Tab card last.
  */
 const GRID = 'grid'
-/** The pane's slot (the strip and the grid or the explainer), under the header and the segment. */
+/** The pane's slot (the strip and the grid or the empty note), under the header and the segment. */
 const SLOT = 'slot'
 const DEFAULT_LAYOUT: Array<[string, DOMRect]> = [
   [GRID, new DOMRect(0, 0, 220, 600)],
@@ -2079,6 +2079,48 @@ describe('the private pane', () => {
   })
 
   /*
+   * TAB-03: the pane's own entry shows the cover, never the cards. Coming to the Private pane
+   * from the Tabs pane under the lock, the cover and the inert grid are in the commit that
+   * brings the pane – no frame of a card sharp before the cover – and the still of the pane on
+   * the way out carries the cover with it, so the fade shows the cover too.
+   */
+  it('entering the Private pane under the lock brings the cover with the pane, and its still leaves covered', async () => {
+    const { applyPrivateLock, resetPrivateLock } = await import('@renderer/lib/privateLock')
+    try {
+      act(() => applyPrivateLock({ locked: true, screenLock: true }))
+      render(mixed())
+      expect(selected('tabs')).toBe(true)
+      expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
+      act(() => segment('private').click())
+      const cover = host!.querySelector<HTMLElement>('[data-testid="private-lock-cover"]')!
+      expect(cover).not.toBeNull()
+      expect(cover.getAttribute('aria-label')).toBe('Private tabs locked')
+      expect(cover.querySelector('[data-testid="private-lock-unlock"]')).not.toBeNull()
+      expect(grid().hasAttribute('inert')).toBe(true)
+      expect(grid().getAttribute('aria-hidden')).toBe('true')
+      expect(host!.textContent).not.toContain('one.example')
+      expect(host!.textContent).not.toContain('two.example')
+      expect(
+        Array.from(grid().querySelectorAll('.zen-overview-card-title')).map((t) => t.textContent)
+      ).toEqual(['Private tab', 'Private tab'])
+      // Leaving the pane: the still of it is the covered pane – a copy of the slot, cover included.
+      // (The Tabs pane's still from the way in may still be fading – here without `animate()`
+      // it waits on its timer – so the newest still is the one to read.)
+      act(() => segment('tabs').click())
+      const still = [...host!.querySelectorAll<HTMLElement>('[data-testid="pane-still"]')].at(-1)!
+      expect(still).not.toBeNull()
+      expect(
+        still.dataset.pane ?? still.querySelector('[data-pane]')?.getAttribute('data-pane')
+      ).toBe('private')
+      expect(still.querySelector('.zen-private-lock')).not.toBeNull()
+      expect(still.textContent).not.toContain('one.example')
+      expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
+    } finally {
+      act(() => resetPrivateLock())
+    }
+  })
+
+  /*
    * The lock cover over the Private pane (INC-05, v2 §9.19): nothing of a locked private tab's
    * identity shows or reads before the unlock – the cards' title rows read "Private tab" behind
    * the mask, their names say the same, the grid is inert and hidden from readers under the
@@ -2162,20 +2204,57 @@ describe('the private pane', () => {
     }
   })
 
-  it('with no private tab the private pane is the explainer, whose button asks for a private tab', () => {
+  it('with no private tab the private pane is §9.17’s sentence with New private tab as its one follow-up, never a card', () => {
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
     act(() => segment('private').click())
     expect(host!.querySelector('.zen-overview-grid')).toBeNull()
     const empty = host!.querySelector<HTMLElement>('[data-testid="overview-private-empty"]')!
-    expect(empty.querySelector('h2')!.textContent).toBe('No private tabs')
+    // TAB-03 as §9.34 writes it: a standing state, not a message – the phone panels' one-sentence
+    // note (the Groups pane's, `PhoneEmptyNote`) in the pane's flow under the segment, "No private
+    // tabs" and the follow-up beneath it; no title-plus-description pair, no glyph, no message
+    // card (the explainer of what private keeps is the private new tab page's, NTP-31).
+    expect(empty.classList.contains('zen-overview-private-empty')).toBe(true)
+    const note = empty.querySelector<HTMLElement>(':scope > .zen-phone-empty')!
+    expect(note).not.toBeNull()
+    expect(note.querySelector('p')!.textContent).toBe('No private tabs')
+    expect(empty.querySelector('h2')).toBeNull()
+    expect(empty.querySelector('svg')).toBeNull()
+    expect(empty.querySelector('.zen-private-explainer')).toBeNull()
+    expect(empty.querySelector('[data-surface="page"]')).toBeNull()
+    expect(empty.textContent).toBe('No private tabsNew private tab')
+    // No cover: with nothing open there is nothing the lock protects.
+    expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
     expect(countShown()).toBe('0 tabs')
-    const button = empty.querySelector<HTMLElement>('[data-testid="overview-private-empty-new"]')!
-    // A button, so sentence case (v2 §9.1); the menus' rows stay Title Case.
+    // The follow-up is the note's secondary button (§9.17: 88 minimum at 40, 16 beneath, never
+    // primary) – the one control in the pane. A button, so sentence case (v2 §9.1).
+    const buttons = Array.from(empty.querySelectorAll<HTMLElement>('button'))
+    expect(buttons).toHaveLength(1)
+    const button = buttons[0]!
+    expect(button.classList.contains('zen-v2-button')).toBe(true)
+    expect(button.classList.contains('zen-phone-empty-action')).toBe(true)
+    expect(button.hasAttribute('data-primary')).toBe(false)
     expect(button.textContent).toBe('New private tab')
     expect(newTabRequests(() => act(() => button.click()))).toEqual([
       { containerId: PRIVATE_CONTAINER_ID }
     ])
-    // The first private tab replaces the explainer with the grid.
+    // The pane's two rules are the Groups pane's own (main.css): the window family's inks and
+    // fills read to the note, and the 48 under the segment; nothing of the card is left.
+    const rules = rulesOf(readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8'))
+    const family = rules.find((r) => r.selectors.includes('.zen-overview-private-empty'))!
+    expect(family.selectors).toContain('.zen-overview-groups')
+    expect(family.declarations.get('--v2-text-deemphasized')?.value).toBe(
+      'var(--v2-control-text-deemphasized)'
+    )
+    expect(family.declarations.get('--v2-fill')?.value).toBe('var(--v2-control-fill)')
+    const top = rules.find((r) =>
+      r.selectors.includes('.zen-overview-private-empty > .zen-phone-empty')
+    )!
+    expect(top.selectors).toContain('.zen-overview-groups > .zen-phone-empty')
+    expect(top.declarations.get('padding-top')?.value).toBe('48px')
+    expect(rules.some((r) => r.selectors.some((s) => s.includes('.zen-private-explainer')))).toBe(
+      false
+    )
+    // The first private tab replaces the sentence with the grid.
     render(
       withPrivate(
         stateOf([tab('a', 'https://a.example/'), privateTab('p1', 'https://one.example/')], [])
@@ -2187,9 +2266,9 @@ describe('the private pane', () => {
 
   /*
    * The last private tab closing returns the overview to the Tabs pane, picked or followed
-   * (Chrome's switcher); the explainer is still a pick away with none open.
+   * (Chrome's switcher); the empty note is still a pick away with none open.
    */
-  it('returns to the Tabs pane when the last private tab closes with the Private pane picked; Private picked again is the explainer', () => {
+  it('returns to the Tabs pane when the last private tab closes with the Private pane picked; Private picked again is the empty note', () => {
     const state = mixed()
     render(state)
     act(() => segment('private').click())
@@ -2222,7 +2301,7 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
     expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
 
-    // Private picked with none open: the explainer, as before.
+    // Private picked with none open: the empty note, as before.
     act(() => segment('private').click())
     expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
     expect(selected('private')).toBe(true)
@@ -2243,7 +2322,7 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
   })
 
-  it('opening the overview on an empty private session with Private picked shows the explainer, not the Tabs pane', () => {
+  it('opening the overview on an empty private session with Private picked shows the empty note, not the Tabs pane', () => {
     // No transition from some to none: the pick holds (a pick made before the overview came up).
     act(() => privateTabsStore.set({ pane: 'private' }))
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))

@@ -82,6 +82,61 @@ export interface EngineConfig {
    * from its heap (`ext.env`'s `messageLimit`): a message the host would refuse never crosses.
    */
   maxMessageLength?: number
+  /** The bound on what this endpoint posts ahead of the host's reading ([FlowLimits]); the defaults otherwise. */
+  flow?: Partial<FlowLimits>
+}
+
+/**
+ * The per-endpoint bound on messages posted and not yet read by the host. A frame's posts land
+ * on the host's Java heap as pending `onPostMessage` callbacks until its main thread takes each
+ * one; a burst of big messages (Trust Wallet's background on WebView 156, compat round 11b: a
+ * 144 K-char store snapshot to each subscriber on connect, a thousand of them in seconds) filled
+ * that heap before the host read the first, past every bound the host keeps on what it has read.
+ * The engine knows what the host has read: the channel is ordered, so the host's reply to any
+ * post proves every earlier post was taken off the heap. Every post is counted; a `msg` or
+ * `portMsg` that would take the unread chars or count over [inFlightChars] / [inFlightCount]
+ * waits at the page (serialized already, in order) until a reply says there is room – a reply
+ * the engine asks for itself (a `runtime.getContexts` of nothing, the fence) when none is due.
+ * What waits is bounded too: over [heldChars] or [heldCount] the arrival is dropped, a `msg`
+ * with the host guard's own error, a `portMsg` silently, and the extension's error console gets
+ * one line per such episode. Chars are UTF-16 units of the serialized envelope.
+ */
+export interface FlowLimits {
+  /** Chars posted and not yet read before a `msg` / `portMsg` waits; a lone post of any size always goes. */
+  inFlightChars: number
+  /** Posts not yet read before a `msg` / `portMsg` waits. */
+  inFlightCount: number
+  /** Chars waiting at the page beyond which a `msg` / `portMsg` is dropped (the first waiting post is always kept). */
+  heldChars: number
+  /** Posts waiting at the page beyond which a `msg` / `portMsg` is dropped. */
+  heldCount: number
+}
+
+/** The flow bound's counters, live on [EmulatedEngine.flow] (the debug stats and the compat sweep read them). */
+export interface FlowStats {
+  /** Posts handed to the transport, of every kind, and their chars. */
+  posted: number
+  postedChars: number
+  /** Posts the host is known to have read (fenced by a reply), and their chars. */
+  read: number
+  readChars: number
+  /** The most chars posted and unread at once. */
+  inFlightPeak: number
+  /** Posts waiting at the page right now, and their chars. */
+  held: number
+  heldChars: number
+  /** The most waiting at once. */
+  heldPeak: number
+  heldCharsPeak: number
+  /** Bounded posts that waited at all. */
+  delayed: number
+  /** Posts dropped at the ceiling, and their chars. */
+  dropped: number
+  droppedChars: number
+  /** Fences the engine posted itself. */
+  fences: number
+  /** Console lines posted (one per drop episode). */
+  warnings: number
 }
 
 export interface EngineTransport {
@@ -100,6 +155,16 @@ export interface EngineOptions {
    * (`iconWire.ts`); the realm's own, captured at creation, by default. Tests hand in theirs.
    */
   iconWire?: IconWireEnv
+  /**
+   * The `this` an API callback or event listener is called with. Chrome runs a frame's through
+   * Blink with an undefined receiver (`ScriptContext::SafeCallFunction`, the frame branch) and
+   * a service worker's with the worker's global (its other branch), so a strict-mode listener
+   * that reads `this` – ZeroOmega's `chrome.proxy.settings.get({}, impl._proxyChangeListener)`,
+   * an ES module's unbound method reading `this._proxyChangeWatchers` – finds the global in a
+   * worker and throws in a page. Undefined by default (the frame's); the emulated worker page
+   * hands in what its script reads as `self`.
+   */
+  receiver?: object
 }
 
 /**
@@ -174,6 +239,8 @@ export interface EmulatedEngine {
   call(ns: string, method: string, args: unknown[]): Promise<unknown>
   onHostEvent(listener: (namespace: string, event: string, args: unknown[]) => void): void
   diagnostics: ShimDiagnostics | null
+  /** The flow bound's counters ([FlowStats]), updated in place. */
+  flow: FlowStats
 }
 
 interface PendingCall {
@@ -233,6 +300,29 @@ export const MESSAGE_TOO_LONG = 'Message length exceeded maximum allowed length.
 /** Chrome's `kMaxMessageLength`, 64 MB, as the default when the host names no limit. */
 export const MAX_MESSAGE_LENGTH = 64 * 1024 * 1024
 
+/**
+ * The host guard's error for a message it dropped under a flood (`ext/BridgeForward.kt`'s
+ * `MESSAGE_REFUSED`, the same text): what a `runtime.sendMessage` dropped at the page hears.
+ */
+export const MESSAGE_REFUSED =
+  'Zenium dropped this message: too many messages from this frame were waiting to reach the browser.'
+
+/** The error console's line for a drop episode at the page (a fixed text: the ring folds repeats). */
+export const WARN_FLOW_DROPPED =
+  'Bridge messages were dropped at the page: too many were waiting for the browser to read them. The page sends faster than the browser can take; batch or throttle its calls.'
+
+/**
+ * [FlowLimits] by default: a megabyte of chars (two on the Java heap) and 512 posts unread per
+ * endpoint before a message waits, four times that waiting before one is dropped. The chars
+ * bound never exceeds the host's message limit, so a lone message the host takes always goes.
+ */
+export const FLOW_IN_FLIGHT_CHARS = 1024 * 1024
+export const FLOW_IN_FLIGHT_COUNT = 512
+export const FLOW_HELD_COUNT = 4096
+
+/** Reply-bearing posts remembered for the fence, at most; a burst past this forgets its oldest (a later reply still fences them). */
+const FLOW_MARKS = 8192
+
 const isExtensionId = (value: unknown): value is string =>
   typeof value === 'string' && EXTENSION_ID.test(value)
 
@@ -246,6 +336,8 @@ export function createEmulatedEngine(
   options: EngineOptions = {}
 ): EmulatedEngine {
   const root = (options.root ?? globalThis) as Record<string, unknown>
+  /** What callbacks and listeners are called with as `this` ([EngineOptions.receiver]). */
+  const receiver: object | undefined = options.receiver
   let seq = 0
   const pending = new Map<number, PendingCall>()
   const ports = new Map<string, { port: Port; connected: boolean }>()
@@ -257,12 +349,15 @@ export function createEmulatedEngine(
     }, 0)
   }
 
-  /** [message] stamped for the host and serialized; undefined (logged) when it cannot be. */
+  /**
+   * [message] stamped for the host and serialized; undefined (logged) when it cannot be. The
+   * stamps go first: the host reads a big message's envelope with a scanner that walks the
+   * text's top-level members (`ext/BridgeEnvelope.kt`), and `token`, `ep` and `t` at the head
+   * are read before the payload is reached.
+   */
   const serialize = (message: Record<string, unknown>): string | undefined => {
-    message.token = config.token
-    message.ep = config.endpointId
     try {
-      return primordials.stringify(message)
+      return primordials.stringify({ token: config.token, ep: config.endpointId, ...message })
     } catch (error) {
       primordials.error('[Zenium] extension bridge post failed', error)
       return undefined
@@ -277,33 +372,200 @@ export function createEmulatedEngine(
     }
   }
 
-  const post = (message: Record<string, unknown>): void => {
-    const text = serialize(message)
-    if (text !== undefined) deliver(text)
-  }
-
   const maxMessageLength = config.maxMessageLength ?? MAX_MESSAGE_LENGTH
 
+  // --- the flow bound ([FlowLimits]) -------------------------------------------------------------
+
+  const inFlightChars =
+    config.flow?.inFlightChars ?? Math.min(FLOW_IN_FLIGHT_CHARS, maxMessageLength)
+  const limits: FlowLimits = {
+    inFlightChars,
+    inFlightCount: config.flow?.inFlightCount ?? FLOW_IN_FLIGHT_COUNT,
+    heldChars: config.flow?.heldChars ?? 4 * inFlightChars,
+    heldCount: config.flow?.heldCount ?? FLOW_HELD_COUNT
+  }
+  const flow: FlowStats = {
+    posted: 0,
+    postedChars: 0,
+    read: 0,
+    readChars: 0,
+    inFlightPeak: 0,
+    held: 0,
+    heldChars: 0,
+    heldPeak: 0,
+    heldCharsPeak: 0,
+    delayed: 0,
+    dropped: 0,
+    droppedChars: 0,
+    fences: 0,
+    warnings: 0
+  }
+  /** Chars and posts handed to the transport so far, and the point up to which the host is known to have read them. */
+  let postedChars = 0
+  let postedCount = 0
+  let readChars = 0
+  let readCount = 0
+  /** Reply-bearing posts in the order they went, each with the counters as they stood after it. */
+  const marks: { id: number; chars: number; count: number }[] = []
+  /** Posts waiting at the page, in order: serialized texts, with the id of a `msg` (its reply). */
+  const held: { text: string; id?: number }[] = []
+  let heldChars = 0
+  /** The fence the engine posted itself and has no reply to yet. */
+  let fenceId: number | null = null
+  /** A drop episode's console line went; reset when the wait drains. */
+  let dropWarned = false
+
+  /** The one hand-over to the transport: counts the post and, for one that gets a reply, marks it. */
+  const send = (text: string, id?: number): void => {
+    postedCount += 1
+    postedChars += text.length
+    flow.posted = postedCount
+    flow.postedChars = postedChars
+    const unread = postedChars - readChars
+    if (unread > flow.inFlightPeak) flow.inFlightPeak = unread
+    if (id !== undefined) {
+      marks.push({ id, chars: postedChars, count: postedCount })
+      if (marks.length > FLOW_MARKS) marks.splice(0, marks.length - FLOW_MARKS)
+    }
+    deliver(text)
+  }
+
+  /** Whether [chars] more may go now: nothing unread, or room under both in-flight bounds. */
+  const fits = (chars: number): boolean => {
+    const unread = postedCount - readCount
+    return (
+      unread === 0 ||
+      (postedChars - readChars + chars <= limits.inFlightChars && unread < limits.inFlightCount)
+    )
+  }
+
   /**
-   * Posts a messaging envelope after Chrome's `kMaxMessageLength` check, made here in the
+   * A reply that costs the host nothing and changes nothing (`runtime.getContexts` filtered to
+   * no context answers `[]`), posted behind what waits: its reply says everything before it was
+   * read. One outstanding at a time.
+   */
+  const fence = (): void => {
+    const id = ++seq
+    fenceId = id
+    flow.fences += 1
+    pending.set(id, { resolve: () => undefined, reject: () => undefined })
+    const text = serialize({
+      t: 'call',
+      id,
+      ns: 'runtime',
+      method: 'getContexts',
+      args: [{ contextIds: [] }]
+    })
+    if (text !== undefined) send(text, id)
+  }
+
+  /** Sends what waits and fits, in order; asks for a fence while something still waits. */
+  const flush = (): void => {
+    while (held.length > 0 && fits(held[0].text.length)) {
+      const next = held.shift() as { text: string; id?: number }
+      heldChars -= next.text.length
+      send(next.text, next.id)
+    }
+    flow.held = held.length
+    flow.heldChars = heldChars
+    if (held.length > 0) {
+      if (fenceId === null) fence()
+    } else dropWarned = false
+  }
+
+  /** A post that goes past what waits (a call, a listen, a reply to the host): counted, never held. */
+  const post = (message: Record<string, unknown>): void => {
+    const text = serialize(message)
+    if (text !== undefined) send(text)
+  }
+
+  /** The drop episode's one line: the page's console and, through the host, the extension's error console. */
+  const warnOnce = (): void => {
+    if (dropWarned) return
+    dropWarned = true
+    flow.warnings += 1
+    primordials.warn(`[Zenium] ${WARN_FLOW_DROPPED}`)
+    post({ t: 'console', level: 'warning', message: WARN_FLOW_DROPPED })
+  }
+
+  /**
+   * A `msg` or `portMsg`: sent when nothing waits and it fits, held at the page otherwise, in
+   * order; false when the wait is at its ceiling and the message is dropped instead.
+   */
+  const postBounded = (text: string, id?: number): boolean => {
+    if (held.length === 0 && fits(text.length)) {
+      send(text, id)
+      return true
+    }
+    if (
+      held.length > 0 &&
+      (heldChars + text.length > limits.heldChars || held.length >= limits.heldCount)
+    ) {
+      flow.dropped += 1
+      flow.droppedChars += text.length
+      warnOnce()
+      return false
+    }
+    held.push({ text, id })
+    heldChars += text.length
+    flow.delayed += 1
+    flow.held = held.length
+    flow.heldChars = heldChars
+    if (held.length > flow.heldPeak) flow.heldPeak = held.length
+    if (heldChars > flow.heldCharsPeak) flow.heldCharsPeak = heldChars
+    if (fenceId === null) fence()
+    return true
+  }
+
+  /** A post that keeps its place behind what waits (a port's disconnect after its held messages). */
+  const postBehind = (message: Record<string, unknown>): void => {
+    const text = serialize(message)
+    if (text === undefined) return
+    if (held.length === 0) send(text)
+    else {
+      held.push({ text })
+      heldChars += text.length
+      flow.held = held.length
+      flow.heldChars = heldChars
+    }
+  }
+
+  /** The host answered post [id]: everything posted up to it has been read; what waits may go. */
+  const replied = (id: number): void => {
+    const at = marks.findIndex((mark) => mark.id === id)
+    if (at >= 0) {
+      const mark = marks[at]
+      marks.splice(0, at + 1)
+      if (mark.chars > readChars) readChars = mark.chars
+      if (mark.count > readCount) readCount = mark.count
+      flow.read = readCount
+      flow.readChars = readChars
+    }
+    if (id === fenceId) fenceId = null
+    flush()
+  }
+
+  /**
+   * Serializes a messaging envelope after Chrome's `kMaxMessageLength` check, made here in the
    * sender's realm on the serialized text: over the limit nothing is posted and the caller gets
    * `tooLong()` thrown, as Chrome throws from `runtime.sendMessage` and `port.postMessage`. The
    * limit is the host's, so a message its bridge would refuse on raw length (the phone's heap,
    * not Chrome's 64 MB) stops in the realm that built it: a popup broadcasting its whole store
    * to its pages on every change hears the error in place of a dead process.
    */
-  const postMeasured = (message: Record<string, unknown>, tooLong: () => Error): void => {
+  const measured = (message: Record<string, unknown>, tooLong: () => Error): string | undefined => {
     const text = serialize(message)
-    if (text === undefined) return
+    if (text === undefined) return undefined
     if (text.length > maxMessageLength) throw tooLong()
-    deliver(text)
+    return text
   }
 
   const call = (ns: string, method: string, args: unknown[]): Promise<unknown> =>
     new Promise((resolve, reject) => {
       const id = ++seq
       pending.set(id, { resolve, reject })
-      post({ t: 'call', id, ns, method, args })
+      const text = serialize({ t: 'call', id, ns, method, args })
+      if (text !== undefined) send(text, id)
     })
 
   /**
@@ -344,7 +606,7 @@ export function createEmulatedEngine(
         const results: unknown[] = []
         for (const listener of [...listeners]) {
           try {
-            results.push(listener(...args))
+            results.push(Reflect.apply(listener, receiver, args))
           } catch (error) {
             results.push(undefined)
             primordials.error(`[Zenium] chrome.${fullName} listener threw`, error)
@@ -358,11 +620,11 @@ export function createEmulatedEngine(
       addRules: () => undefined,
       getRules: (...raw: unknown[]) => {
         const cb = takeCallback(raw)
-        if (cb) cb([])
+        if (cb) Reflect.apply(cb, receiver, [[]])
       },
       removeRules: (...raw: unknown[]) => {
         const cb = takeCallback(raw)
-        if (cb) cb()
+        if (cb) Reflect.apply(cb, receiver, [])
       }
     })
     events.set(fullName, event)
@@ -418,8 +680,7 @@ export function createEmulatedEngine(
     promise.then(
       (value) => {
         try {
-          if (value === undefined) callback()
-          else callback(value)
+          Reflect.apply(callback, receiver, value === undefined ? [] : [value])
         } catch (error) {
           rethrow(error)
         }
@@ -427,7 +688,7 @@ export function createEmulatedEngine(
       (error: unknown) => {
         withLastError(errorMessage(error), () => {
           try {
-            callback()
+            Reflect.apply(callback, receiver, [])
           } catch (thrown) {
             rethrow(thrown)
           }
@@ -455,10 +716,11 @@ export function createEmulatedEngine(
     const reply = new Promise<unknown>((resolve, reject) => {
       pending.set(id, { resolve, reject })
     })
+    let text: string | undefined
     try {
       // Chrome throws the oversized-message TypeError from `sendMessage` itself, synchronously,
       // before any promise or callback is in play.
-      postMeasured(
+      text = measured(
         {
           t: 'msg',
           id,
@@ -472,6 +734,12 @@ export function createEmulatedEngine(
     } catch (error) {
       pending.delete(id)
       throw error
+    }
+    if (text !== undefined && !postBounded(text, id)) {
+      // Dropped at the page's ceiling: the sender hears what it would hear from the host's guard.
+      const entry = pending.get(id)
+      pending.delete(id)
+      entry?.reject(new Error(MESSAGE_REFUSED))
     }
     return reply
   }
@@ -507,11 +775,14 @@ export function createEmulatedEngine(
         const entry = ports.get(portId)
         if (!entry || !entry.connected)
           throw new Error('Attempting to use a disconnected port object')
-        if (!local)
-          postMeasured(
-            { t: 'portMsg', portId, data: message === undefined ? null : message },
-            () => new Error(MESSAGE_TOO_LONG)
-          )
+        if (local) return
+        const text = measured(
+          { t: 'portMsg', portId, data: message === undefined ? null : message },
+          () => new Error(MESSAGE_TOO_LONG)
+        )
+        // A port message has no reply to carry a refusal: dropped at the ceiling, it goes the
+        // way the host's guard drops one, silently, with the episode's console line.
+        if (text !== undefined) postBounded(text)
       },
       disconnect: () => {
         const entry = ports.get(portId)
@@ -520,7 +791,7 @@ export function createEmulatedEngine(
         ports.delete(portId)
         events.delete(`Port.onMessage:${portId}`)
         events.delete(`Port.onDisconnect:${portId}`)
-        if (!local) post({ t: 'portDisconnect', portId })
+        if (!local) postBehind({ t: 'portDisconnect', portId })
       }
     }
     ports.set(portId, { port, connected: true })
@@ -801,7 +1072,11 @@ export function createEmulatedEngine(
         manifestVersion: config.manifestVersion,
         context: contentScript ? 'content' : 'page'
       }),
-      optional.length > 0 ? { root, granted: config.permissions } : { root }
+      {
+        root,
+        ...(optional.length > 0 ? { granted: config.permissions } : {}),
+        ...(receiver ? { receiver } : {})
+      }
     )
     // The shim always builds `storage`; Chrome only exposes it with the permission.
     if (!granted('storage')) delete chrome.storage
@@ -862,6 +1137,8 @@ export function createEmulatedEngine(
     switch (message.t) {
       case 'reply': {
         const id = Number(message.id)
+        // Whatever the answer, the post it answers was read, and every post before it.
+        replied(id)
         const entry = pending.get(id)
         if (!entry) return
         pending.delete(id)
@@ -941,6 +1218,7 @@ export function createEmulatedEngine(
     onHostEvent: (listener) => {
       hostEventListeners.push(listener)
     },
-    diagnostics
+    diagnostics,
+    flow
   }
 }

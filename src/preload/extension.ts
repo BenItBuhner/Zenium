@@ -78,14 +78,17 @@ function eventDelivery(raw: unknown): EventDelivery | undefined {
  * access), the content-script storage prelude when the install directory carries one, the
  * permissions the host withheld from the engine's manifest, and the API permissions granted
  * (the permission-gated namespaces follow those). Every toggle off, no prelude, nothing
- * withheld and no grant view when the host cannot be asked.
+ * withheld and no grant view when the host cannot be asked. Null when the host answers null:
+ * a context of an extension it never loaded – one of the engine's own component extensions
+ * (Chromium's PDF viewer), which keeps Chromium's `chrome.*` and gets no shim.
  */
-function optionsFromHost(): ShimOptions {
+function optionsFromHost(): ShimOptions | null {
   const toggles: Record<string, boolean> = { userScripts: false }
   const options: ShimOptions = { toggles }
   try {
     const raw: unknown = ipcRenderer.sendSync(TOGGLES)
-    if (raw !== null && typeof raw === 'object') {
+    if (raw === null) return null
+    if (typeof raw === 'object') {
       const record = raw as Record<string, unknown>
       const sent = record.toggles
       if (sent !== null && typeof sent === 'object') {
@@ -123,6 +126,7 @@ function optionsFromHost(): ShimOptions {
 function install(kind: 'frame' | 'worker'): void {
   const host = makeHost(kind)
   const options = optionsFromHost()
+  if (options === null) return
   try {
     if (!process.contextIsolated) {
       installExtensionApi(host, API_SPEC, options)

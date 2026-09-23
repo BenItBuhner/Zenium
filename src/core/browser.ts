@@ -45,6 +45,7 @@ import { PrivacyService } from './privacy'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
+import { DeviceChooserService } from './deviceChooser'
 import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
 import { TabManager, isTabSection } from './tabs'
@@ -155,6 +156,7 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
+import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
 import { sanitizePrivacySettings } from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
@@ -246,6 +248,8 @@ export class Browser {
   readonly external: ExternalLaunches
   /** HTTP authentication and client-certificate prompts. */
   readonly security: SecurityPromptService
+  /** The device choosers of Web Bluetooth, WebUSB, Web Serial and WebHID, and Bluetooth pairing. */
+  readonly devices: DeviceChooserService
   /** `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, shown by the chrome. */
   readonly pageDialogs: PageDialogService
   /** Window-modal questions ("Close N tabs?", "Quit Zenium?"), shown by a window's chrome. */
@@ -429,12 +433,18 @@ export class Browser {
     this.popups = new PopupBlocker(this)
     this.external = new ExternalLaunches(this)
     this.security = new SecurityPromptService(this)
+    this.devices = new DeviceChooserService(this)
     this.pageDialogs = new PageDialogService(this)
     this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
     this.fullscreen = new FullscreenService(this)
     this.pages = new PageService(this)
     this.tabs = new TabManager(this)
+    // A site's mute is its `sound` setting: tabs follow every change of it, from wherever it came.
+    this.permissions.subscribe((change) => {
+      if (change.permission === 'sound') this.tabs.followSoundSetting(change.origin)
+    })
+    this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
     this.inactiveTabs = new InactiveTabsService(this)
@@ -506,6 +516,9 @@ export class Browser {
       lastSafetyCheck: this.privacy.lastSafetyCheck(),
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
+      deviceChoosers: this.devices.list(),
+      devicePairings: this.devices.listPairings(),
+      deviceGrants: this.permissions.deviceGrants(),
       pageDialogs: this.pageDialogs.list(),
       closingTabIds: this.tabs.closingTabIds(),
       screenCaptureRequests: this.screenCapture.list(),
@@ -865,6 +878,24 @@ export class Browser {
     return true
   }
 
+  /**
+   * Close every private window (the private window's app menu and the macOS Window menu,
+   * profiles-25), which ends the private session with the last of them. Each closes as the
+   * user's own close would – its tab-count warning, its downloads, its pages' `beforeunload` –
+   * the other windows first and the asking one last, so what was asked from stays in view
+   * until the rest have gone; a refusal along the way keeps the rest open. Resolves true once
+   * every one closed.
+   */
+  async closePrivateWindows(from?: ZenWindow): Promise<boolean> {
+    const targets = this.allWindows().filter((w) => w.isPrivate)
+    const ordered = [...targets.filter((w) => w !== from), ...targets.filter((w) => w === from)]
+    for (const win of ordered) {
+      if (!win.alive || win.isClosing) continue
+      if (!(await this.requestWindowClose(win))) return false
+    }
+    return true
+  }
+
   private async confirmWindowClose(win: ZenWindow): Promise<boolean> {
     const count = this.tabs.closingTabCount(win)
     const warnTabs = this.state.settings.warnOnCloseWindow && count > 1
@@ -1027,8 +1058,10 @@ export class Browser {
     if (this.allWindows().some((w) => w.isPrivate)) return
     if (this.tabs.privateTabs().length > 0) return
     this.downloads.endPrivateSession()
-    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome.
+    // Certificates proceeded past in private windows are forgotten with the session, as in Chrome,
+    // and so are the permission prompts answered in them.
     this.security.certificateExceptions.forgetContainer(PRIVATE_CONTAINER_ID)
+    this.permissions.forgetContainer(PRIVATE_CONTAINER_ID)
     void this.platform.sessions.clearPrivate()
   }
 
@@ -2642,6 +2675,14 @@ export class Browser {
       'privacy.setThirdPartyCookiesPrivate': ({ mode }, win) =>
         this.protection.setThirdPartyCookiesPrivate(mode, win),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
+      'devices.respond': ({ id, deviceId }) => this.devices.respond(id, deviceId),
+      'devices.respondPairing': ({ id, response }) => this.devices.respondPairing(id, response),
+      'devices.forget': ({ origin, kind, deviceId }) =>
+        this.permissions.forgetDevice(
+          kind,
+          origin,
+          deviceId === undefined ? undefined : { deviceId, name: '' }
+        ),
       'pageDialog.respond': ({ id, response }) => this.pageDialogs.respond(id, response),
       'window.respondPrompt': ({ id, accepted }) => this.windowPrompts.respond(id, accepted),
       'session.crashRestore': ({ restore }) => this.session.crashRestore(restore),
@@ -3548,6 +3589,8 @@ export class Browser {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
       } else if (key === 'shortcutPreset') {
         if (isShortcutPreset(value)) s.shortcutPreset = value
+      } else if (key === 'devtoolsDock') {
+        s.devtoolsDock = sanitizeDevtoolsDock(value, s.devtoolsDock)
       } else if (key === 'searchEngines') {
         // The user's engines whole (a Settings row sends the edited list); the default is kept.
         const keep =

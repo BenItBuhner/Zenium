@@ -570,9 +570,18 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
    * What the calling extension context installs its shim with: `ShimOptions.toggles`, the
    * content-script storage prelude when its install directory carries one, the withheld
    * permissions and the granted API permissions. Every toggle off, no prelude and no grants
-   * for a stranger.
+   * for a stranger. Null – no shim at all – for a context of an extension this host never
+   * loaded: the engine's own component extensions (Chromium's PDF viewer,
+   * `mhjfbmdgcfjbbpaeojofohoefgiehjai`) run on Chromium's `chrome.*` and stall when the shim
+   * replaces it (the viewer's callbacks get the shim's empty answers).
    */
-  private shimOptionsFor(sender: Sender | null): HostShimOptions {
+  private shimOptionsFor(sender: Sender | null): HostShimOptions | null {
+    const extensionId = sender
+      ? sender.kind === 'frame'
+        ? extensionIdOfFrame(sender.frame)
+        : extensionIdFromUrl(sender.worker.scope)
+      : null
+    if (extensionId && !this.extensions.has(extensionId)) return null
     try {
       const { extensionId, extension } = this.contextFor(sender)
       return {

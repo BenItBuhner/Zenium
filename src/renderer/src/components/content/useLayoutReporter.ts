@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import type { LayoutReport, Rect, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { contentRadius } from '@renderer/lib/contentRadius'
 import {
   chromeUnderPages,
   COVER_WAIT_MS,
@@ -225,10 +226,11 @@ export function useLayoutReporter(
       if (fullscreenTabId !== null || !area) return
       const tab = activeTab(state)
       const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
-      const radius =
-        parseFloat(
-          getComputedStyle(document.documentElement).getPropertyValue('--zen-content-radius')
-        ) || 0
+      // The radius is the theme's rule, not a read of the root's variable: this effect runs
+      // before the theme hook's on the first commit (a child's effects before its parent's), so
+      // the read found the stylesheet's default, and the views' first frame was rounded
+      // differently from the frame around them.
+      const radius = contentRadius(state, formFactor)
       let placements = placementsFor(area, visibleTabIds(state), group, radius, gap).map((p) => {
         const c = viewCover(area, p.rect, band)
         return c ? { ...p, cover: c } : p

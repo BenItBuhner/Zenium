@@ -1,6 +1,7 @@
 import type {
   CertificateError,
   ClosedTabEntry,
+  DevtoolsDock,
   HistoryTransition,
   NavigationSnapshot,
   Point,
@@ -78,7 +79,7 @@ import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
 import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
-import { safeOrigin } from './permissions'
+import { permissionSite, safeOrigin } from './permissions'
 import { certificateSiteOf } from './security'
 import { openedWindowKind, planWindowOpen } from './windowOpen'
 import { parseDropKey } from './tabDrag'
@@ -556,6 +557,7 @@ export class TabManager {
           }, true)
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
+          this.browser.devices.cancelForTab(tabId)
           this.browser.permissions.onTabNavigated(tabId, url)
           // Whatever the PDF viewer reported was about the document before this one.
           this.browser.pdf.onNavigated(tabId)
@@ -734,6 +736,9 @@ export class TabManager {
         state.devtoolsOpenFor.delete(tabId)
         state.commitVolatile()
       },
+      // The toolbox's own dock buttons: remembered like the menu's choice (§9.29), for the next
+      // opening; the other open toolboxes stand where they are, as Chrome's do.
+      onDevtoolsDockChanged: (dock) => this.setDevtoolsDock(dock, ownerWindow(), { move: false }),
       onFoundInPage: (result) => {
         if (!result.finalUpdate) return
         const win = ownerWindow()
@@ -1207,6 +1212,7 @@ export class TabManager {
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
+    this.browser.devices.cancelForTab(tabId)
     this.browser.permissions.onTabGone(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.autofill.onTabGone(tabId)
@@ -1478,6 +1484,7 @@ export class TabManager {
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
+    this.browser.devices.cancelForTab(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
@@ -2113,45 +2120,75 @@ export class TabManager {
     this.browser.state.commit()
   }
 
-  /** Whether the user chose "Mute Site" for the host of `url`. */
+  /**
+   * Whether the site of `url` is muted: its `sound` content setting resolves to block (the one
+   * source of "Mute Site", Settings › Site settings › Sound and the site-information row alike).
+   * Pages without a site (`zen://`, `about:blank`) are never muted by a setting, as Chrome's
+   * internal pages are allowed every content whatever the default.
+   */
   siteMuted(url: string): boolean {
-    const host = domainOf(url)
-    return host !== '' && this.settings.mutedHosts.includes(host)
+    return permissionSite(url) !== null && this.browser.permissions.resolve('sound', url) === 'deny'
   }
 
   /**
-   * Chrome's "Mute Site": every tab of the host goes quiet (and stays so on later visits) until
-   * the site is unmuted again. Tabs that leave the host regain their sound.
+   * Chrome's "Mute Site": every tab of the site goes quiet (and stays so on later visits) until
+   * the site is unmuted again. Tabs that leave the site regain their sound. Writes the site's
+   * `sound` setting – as Chrome, an exception equal to the default is cleared rather than kept –
+   * and `followSoundSetting` mutes the tabs when the change lands.
    */
   toggleMuteSite(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    const host = domainOf(tab.url)
-    if (!host) return
-    const muted = !this.settings.mutedHosts.includes(host)
-    this.settings.mutedHosts = muted
-      ? [...this.settings.mutedHosts, host]
-      : this.settings.mutedHosts.filter((h) => h !== host)
+    const site = permissionSite(tab.url)
+    if (!site) return
+    const wanted: 'allow' | 'deny' = this.siteMuted(tab.url) ? 'allow' : 'deny'
+    const permissions = this.browser.permissions
+    permissions.set('sound', site, wanted === permissions.effectiveDefault('sound') ? null : wanted)
+  }
+
+  /**
+   * A `sound` decision changed (Mute Site, a Settings row, a reset): every tab of the site – of
+   * every site, for the default – takes the setting's answer, as Chrome mutes and unmutes on the
+   * spot. Wired by the browser once the permission store exists.
+   */
+  followSoundSetting(origin: string | null): void {
+    let changed = false
     for (const t of Object.values(this.model.tabs)) {
-      if (domainOf(t.url) !== host || t.muted === muted) continue
+      if (origin !== null && permissionSite(t.url) !== origin) continue
+      const muted = this.siteMuted(t.url)
+      if (t.muted === muted) continue
       t.muted = muted
       this.view(t.id)?.setMuted(muted)
+      changed = true
     }
+    if (changed) this.browser.state.commit()
+  }
+
+  /**
+   * Before the `sound` setting was the source, "Mute Site" kept bare hosts (`www.` stripped) in
+   * `settings.mutedHosts`. Each host becomes a `sound` block for the origins the old rule
+   * covered (`soundSitesOfMutedHost`) and the list is emptied; a profile that carries hosts
+   * again later (an older device syncing them in) is migrated the same way.
+   */
+  migrateMutedHosts(): void {
+    const hosts = this.settings.mutedHosts
+    if (hosts.length === 0) return
+    for (const host of hosts)
+      for (const origin of soundSitesOfMutedHost(host))
+        this.browser.permissions.set('sound', origin, 'deny')
+    this.settings.mutedHosts = []
     this.browser.state.commit()
   }
 
-  /** A navigation crossed a site boundary: pick up or drop the host's mute with it. */
+  /** A navigation crossed a site boundary: pick up or drop the site's mute with it. */
   private followSiteMute(tab: Tab, view: TabView, fromUrl: string, toUrl: string): void {
-    const from = domainOf(fromUrl)
-    const to = domainOf(toUrl)
-    if (from === to) return
-    const muted = this.settings.mutedHosts
-    if (to && muted.includes(to)) {
+    if (permissionSite(fromUrl) === permissionSite(toUrl)) return
+    if (this.siteMuted(toUrl)) {
       if (!tab.muted) {
         tab.muted = true
         view.setMuted(true)
       }
-    } else if (from && muted.includes(from) && tab.muted) {
+    } else if (this.siteMuted(fromUrl) && tab.muted) {
       tab.muted = false
       view.setMuted(false)
     }
@@ -3478,12 +3515,30 @@ export class TabManager {
     )
   }
 
+  /** The developer tools open at the remembered dock (`settings.devtoolsDock`; §9.29). */
   toggleDevtools(tabId: string, mode: 'toggle' | 'inspect' | 'console' = 'toggle'): void {
     if (!this.browser.state.capabilities.devtools) {
       this.browser.toast('Developer tools are not available on this device.')
       return
     }
-    this.view(tabId)?.openDevTools(mode)
+    this.view(tabId)?.openDevTools(mode, this.browser.state.settings.devtoolsDock)
+  }
+
+  /**
+   * Where the developer tools stand (design language v2 §9.29: "bottom or right, the user's last
+   * choice remembered, undocked on offer"). The choice is kept in the settings for every later
+   * opening; from the app menu's rows (`move`, the default) every open toolbox moves to it as
+   * well, where the host can move one (`TabView.setDevtoolsDock`). A choice read back from a
+   * toolbox's own buttons (`onDevtoolsDockChanged`) is remembered alone: that toolbox has moved
+   * itself, and the others stand as Chrome's do until they are next opened.
+   */
+  setDevtoolsDock(dock: DevtoolsDock, win: ZenWindow, options: { move?: boolean } = {}): void {
+    const state = this.browser.state
+    if (!state.capabilities.devtools) return
+    if (state.settings.devtoolsDock !== dock)
+      this.browser.updateSettings({ devtoolsDock: dock }, win)
+    if (options.move === false) return
+    for (const tabId of state.devtoolsOpenFor) this.view(tabId)?.setDevtoolsDock?.(dock)
   }
 
   unloadSpace(spaceId: string): void {
@@ -3683,4 +3738,17 @@ function domainOf(url: string): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * The origins a pre-migration "Mute Site" host stood for: the old rule matched the hostname with
+ * `www.` stripped, so a site name covers its https origin and its `www.` one; an address or a
+ * single-label name (`localhost`, a LAN box) has no `www.` and is as likely plain http.
+ */
+export function soundSitesOfMutedHost(host: string): string[] {
+  const name = host.trim().toLowerCase()
+  if (!name || /[\s/|]/.test(name)) return []
+  const address = /^[\d.]+$/.test(name) || name.includes(':') || !name.includes('.')
+  if (address) return [`https://${name}`, `http://${name}`]
+  return [`https://${name}`, `https://www.${name}`]
 }

@@ -82,11 +82,65 @@ vi.mock('electron', async () => {
       return {}
     }
   }
+  /**
+   * A DevTools frontend page as `webContents.devToolsWebContents` gives it: records the scripts
+   * the host runs in it and carries the `console-message` a dock change writes.
+   */
+  class FakeDevtoolsFrontend extends EventEmitter {
+    readonly scripts: string[] = []
+    /** Scripts that reject, by a substring: a frontend without the module the host imports. */
+    rejecting: string | null = null
+    private closed = false
+    isDestroyed(): boolean {
+      return this.closed
+    }
+    executeJavaScript(code: string): Promise<unknown> {
+      this.scripts.push(code)
+      if (this.rejecting && code.includes(this.rejecting))
+        return Promise.reject(new Error('module not found'))
+      return Promise.resolve('ok')
+    }
+    close(): void {
+      this.closed = true
+    }
+  }
   class FakeWebContents extends EventEmitter {
     private static nextId = 1
     readonly id = FakeWebContents.nextId++
     private closed = false
     readonly debugger = new FakeDebugger()
+    /** Every `openDevTools` call's options, in order (`{ mode, activate }`). */
+    readonly devtoolsOpened: Array<Record<string, unknown>> = []
+    /** Every `inspectElement` call's point. */
+    readonly inspected: Array<[number, number]> = []
+    devtoolsClosedCount = 0
+    private frontend: FakeDevtoolsFrontend | null = null
+    /** The frontend of the toolbox that is up, as Electron's accessor gives it (null when closed). */
+    get devToolsWebContents(): FakeDevtoolsFrontend | null {
+      return this.frontend
+    }
+    isDevToolsOpened(): boolean {
+      return this.frontend !== null
+    }
+    /** Opens synchronously; `devtools-opened` follows once the frontend has loaded, as Electron's does. */
+    openDevTools(options: Record<string, unknown>): void {
+      this.devtoolsOpened.push(options)
+      if (this.frontend) return
+      this.frontend = new FakeDevtoolsFrontend()
+      setImmediate(() => {
+        if (this.frontend) this.emit('devtools-opened')
+      })
+    }
+    closeDevTools(): void {
+      if (!this.frontend) return
+      this.devtoolsClosedCount++
+      this.frontend.close()
+      this.frontend = null
+      this.emit('devtools-closed')
+    }
+    inspectElement(x: number, y: number): void {
+      this.inspected.push([x, y])
+    }
     /** Events sent to the main frame's widget (`sendInputEvent`, the fallback path). */
     readonly widgetEvents: Array<Record<string, unknown>> = []
     /** The renderer's OS process; a test moves the page to another renderer by changing it. */
@@ -473,6 +527,149 @@ describe('a hidden tab page and the keyboard', () => {
  * the resource governor holds its own: attached for the action, detached once nothing is
  * pending, an existing session used and left alone, and never `Runtime.enable`.
  */
+/**
+ * The developer tools' dock (design language v2 §9.29): the toolbox opens at the dock the core
+ * remembers – Electron's own `bottom` / `right` / `left` / `undocked` modes, never the Browser
+ * Console's `detach`, which loses the frontend's dock buttons – and, once its frontend has
+ * loaded, is dressed: the seam's hairline and the hook that reads its own dock buttons back.
+ */
+describe('ElectronTabView and the developer tools dock', () => {
+  interface DevtoolsContents {
+    devtoolsOpened: Array<Record<string, unknown>>
+    inspected: Array<[number, number]>
+    devtoolsClosedCount: number
+    devToolsWebContents: {
+      scripts: string[]
+      rejecting: string | null
+      emit(event: string, ...args: unknown[]): boolean
+    } | null
+    isDevToolsOpened(): boolean
+  }
+  const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
+  const setup = (): {
+    view: ElectronTabView
+    wc: DevtoolsContents
+    docks: string[]
+    opened: () => number
+    closed: () => number
+  } => {
+    const docks: string[] = []
+    let opened = 0
+    let closed = 0
+    const events = new Proxy({} as TabViewEvents, {
+      get: (_t, name) => {
+        if (name === 'onDevtoolsDockChanged') return (dock: string): void => void docks.push(dock)
+        if (name === 'onDevtoolsOpened') return (): void => void opened++
+        if (name === 'onDevtoolsClosed') return (): void => void closed++
+        return (): undefined => undefined
+      }
+    })
+    const host = new ElectronTabViewHost(sessions)
+    const view = host.createView(
+      { id: 'tab_devtools', containerId: 'default' } as Tab,
+      events,
+      detachedWindow
+    ) as ElectronTabView
+    const wc = view.webContents as unknown as DevtoolsContents
+    return { view, wc, docks, opened: () => opened, closed: () => closed }
+  }
+
+  it('opens at the remembered dock with Electron’s own mode names, and toggles closed', () => {
+    for (const dock of ['bottom', 'right', 'left', 'undocked'] as const) {
+      const { view, wc } = setup()
+      view.openDevTools('toggle', dock)
+      expect(wc.devtoolsOpened).toEqual([{ mode: dock, activate: true }])
+      expect(wc.isDevToolsOpened()).toBe(true)
+      view.openDevTools('toggle', dock)
+      expect(wc.isDevToolsOpened()).toBe(false)
+      expect(wc.devtoolsClosedCount).toBe(1)
+    }
+  })
+
+  it('never opens a tab’s toolbox detached: that mode is the Browser Console’s', () => {
+    const { view, wc } = setup()
+    view.openDevTools('console', 'undocked')
+    view.openDevTools('inspect', 'right')
+    for (const call of wc.devtoolsOpened) expect(call.mode).not.toBe('detach')
+  })
+
+  it('inspects the clicked node at the dock when the toolbox was closed, in place when it is up', () => {
+    const { view, wc } = setup()
+    view.inspectElementAt(333, 44, 'right')
+    expect(wc.devtoolsOpened).toEqual([{ mode: 'right', activate: true }])
+    expect(wc.inspected).toEqual([[333, 44]])
+    view.inspectElementAt(5, 6, 'bottom')
+    // Up already: no second opening (which would move it), the node alone.
+    expect(wc.devtoolsOpened).toHaveLength(1)
+    expect(wc.inspected).toEqual([
+      [333, 44],
+      [5, 6]
+    ])
+    // The element picker from the chord opens the toolbox at the dock and picks from the corner.
+    const chord = setup()
+    chord.view.openDevTools('inspect', 'bottom')
+    expect(chord.wc.devtoolsOpened).toEqual([{ mode: 'bottom', activate: true }])
+    expect(chord.wc.inspected).toEqual([[0, 0]])
+  })
+
+  it('dresses the frontend once it has loaded – the seam’s hairline and the dock hook – and tells the core the toolbox’s opening', async () => {
+    const { view, wc, opened } = setup()
+    view.openDevTools('toggle', 'bottom')
+    expect(opened()).toBe(0)
+    await settle()
+    expect(opened()).toBe(1)
+    const scripts = wc.devToolsWebContents!.scripts
+    expect(scripts.some((s) => s.includes('setIsDocked'))).toBe(true)
+    expect(scripts.some((s) => s.includes('zenium-seam'))).toBe(true)
+    // The hairline is the chrome's `--v2-border`, light and dark, and nothing wider than the
+    // split widget's sidebar border is touched.
+    const seam = scripts.find((s) => s.includes('zenium-seam'))!
+    expect(seam).toContain('rgb(0 0 0 / 0.15)')
+    expect(seam).toContain('rgb(255 255 255 / 0.12)')
+    expect(seam).toContain('.shadow-split-widget-sidebar')
+  })
+
+  it('reads the toolbox’s own dock buttons back from its console and hands the dock to the core', async () => {
+    const { view, wc, docks } = setup()
+    view.openDevTools('toggle', 'bottom')
+    await settle()
+    const frontend = wc.devToolsWebContents!
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:right' })
+    frontend.emit('console-message', { message: 'Request Autofill.enable failed.' })
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:undocked' })
+    frontend.emit('console-message', { message: 'zenium-devtools-dock:sideways' })
+    expect(docks).toEqual(['right', 'undocked'])
+  })
+
+  it('moves an open toolbox through the frontend’s own dock controller, and reopens at the dock when the frontend cannot', async () => {
+    const { view, wc, closed } = setup()
+    view.openDevTools('toggle', 'bottom')
+    await settle()
+    const frontend = wc.devToolsWebContents!
+    view.setDevtoolsDock('right')
+    await settle()
+    const move = frontend.scripts.at(-1)!
+    expect(move).toContain('DockController')
+    expect(move).toContain('"right"')
+    expect(closed()).toBe(0)
+    expect(wc.devtoolsOpened).toHaveLength(1)
+
+    // A frontend without the module: the toolbox is closed and reopened at the dock instead.
+    frontend.rejecting = 'DockController'
+    view.setDevtoolsDock('undocked')
+    await settle()
+    await settle()
+    expect(closed()).toBe(1)
+    expect(wc.devtoolsOpened.at(-1)).toEqual({ mode: 'undocked', activate: true })
+    expect(wc.isDevToolsOpened()).toBe(true)
+
+    // Nothing to move while the toolbox is closed.
+    const idle = setup()
+    idle.view.setDevtoolsDock('right')
+    expect(idle.wc.devtoolsOpened).toEqual([])
+  })
+})
+
 describe('ElectronTabView.sendInput and the DevTools session', () => {
   interface FakeDebug {
     attached: boolean

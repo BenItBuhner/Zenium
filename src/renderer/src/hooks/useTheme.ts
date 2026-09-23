@@ -10,6 +10,7 @@ import {
   type RGB,
   type ResolvedTheme
 } from '@shared/theme'
+import { contentRadius } from '@renderer/lib/contentRadius'
 import { isTouchLayout, type FormFactor } from '@renderer/lib/formFactor'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
@@ -216,6 +217,10 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
   // A blend in flight stops with the chrome.
   useEffect(() => cancel, [cancel])
 
+  // The frame's radius: the desktop's 10, the phone's 14, none borderless – and none while a
+  // developer toolbox is docked in the frame (§9.29, `lib/contentRadius.ts`); the layout
+  // reporter reads the same rule for the page views, so the two never disagree.
+  const radius = contentRadius(state, formFactor)
   useEffect(() => {
     const root = document.documentElement
     root.style.setProperty('--zen-wallpaper', wallpaper)
@@ -223,12 +228,12 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     root.style.setProperty('--zen-sidebar-width', `${state.settings.sidebarWidth}px`)
     const borderless = state.settings.borderless || state.window.fullscreen
     // Phones keep a slimmer frame around the content card; the bottom bar sits right under it.
-    const phone = formFactor === 'phone'
     root.style.setProperty('--zen-padding', `${chromeGutter(formFactor, borderless)}px`)
-    root.style.setProperty('--zen-content-radius', borderless ? '0px' : phone ? '14px' : '10px')
+    root.style.setProperty('--zen-content-radius', `${radius}px`)
   }, [
     wallpaper,
     formFactor,
+    radius,
     state.settings.sidebarWidth,
     state.settings.borderless,
     state.window.fullscreen,

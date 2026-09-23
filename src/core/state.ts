@@ -15,6 +15,9 @@ import type {
   Container,
   CrashRestoreOffer,
   DefaultBrowserStatus,
+  DeviceChooser,
+  DeviceGrant,
+  DevicePairingPrompt,
   DownloadItem,
   DownloadsProgress,
   ExtensionInfo,
@@ -78,6 +81,7 @@ import {
 import { sanitizePhoneBar } from '../shared/phoneBar'
 import { sanitizeHomepage } from '../shared/homepage'
 import { sanitizeToolbarLayout } from '../shared/toolbarLayout'
+import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
 import {
   allSearchEngines,
   defaultSearchEngineOf,
@@ -265,6 +269,9 @@ export interface StateExtras {
   lastSafetyCheck: SafetyCheckResult | null
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
+  deviceChoosers: DeviceChooser[]
+  devicePairings: DevicePairingPrompt[]
+  deviceGrants: DeviceGrant[]
   pageDialogs: PageDialog[]
   /** Tabs whose `requestClose` is in flight, their pages asked "Leave site?" (`TabManager.closingTabIds`). */
   closingTabIds: string[]
@@ -418,6 +425,9 @@ export class BrowserState {
     lastSafetyCheck: null,
     permissionPrompts: [],
     securityPrompts: [],
+    deviceChoosers: [],
+    devicePairings: [],
+    deviceGrants: [],
     pageDialogs: [],
     closingTabIds: [],
     screenCaptureRequests: [],
@@ -626,6 +636,10 @@ export class BrowserState {
     this.settings.toolbarLayout = sanitizeToolbarLayout(
       data.settings?.toolbarLayout,
       DEFAULT_SETTINGS.toolbarLayout
+    )
+    this.settings.devtoolsDock = sanitizeDevtoolsDock(
+      data.settings?.devtoolsDock,
+      DEFAULT_SETTINGS.devtoolsDock
     )
     this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
       ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
