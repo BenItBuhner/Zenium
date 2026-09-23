@@ -11,7 +11,7 @@ import {
 } from 'electron'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs'
-import { copyFile, rename, rm, stat } from 'node:fs/promises'
+import { copyFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
@@ -25,7 +25,8 @@ import {
   interruptReasonFromHttpStatus,
   interruptReasonFromNetError,
   interruptReasonFromRangeResponse,
-  isAttachmentDisposition
+  isAttachmentDisposition,
+  sanitizeDownloadName
 } from '../../shared/downloads'
 import type { DownloadHost } from '../../core/platform'
 import type { DownloadService } from '../../core/downloads'
@@ -933,6 +934,23 @@ export class ElectronDownloads implements DownloadHost {
   /** Where new downloads go right now: the setting's folder when usable, else the platform's. */
   currentDirectory(): string {
     return downloadDir()
+  }
+
+  /**
+   * A file the engine produced itself (a web capture) into the downloads folder, under a name
+   * kept unique the way a download's is (`name(1).ext`); the core lists it as a completed
+   * download. `data` is base64. Null when the write fails (a folder without write permission).
+   */
+  async saveFile(file: { name: string; mimeType: string; data: string }): Promise<string | null> {
+    const name = sanitizeDownloadName(basename(file.name))
+    if (name === '') return null
+    try {
+      const path = uniquePath(downloadDir(), name)
+      await writeFile(path, Buffer.from(file.data, 'base64'))
+      return path
+    } catch {
+      return null
+    }
   }
 
   pause(id: string): void {
