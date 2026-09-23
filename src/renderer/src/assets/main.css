@@ -7908,8 +7908,18 @@
 :root[data-form-factor='tablet'] .zen-group-fold > .zen-group-rows > .zen-tab:not(.justify-center) {
   margin-left: 24px;
 }
+/*
+ * While the block's extent runs on the fold's spring (`useGroupFold`) the shell clips, and
+ * nothing in it shrinks to the extent: a flex child squeezes to its min-content under a shell
+ * held shorter than its content – the header from 32 to its glyph's 21, the rows with it, and
+ * back with a pop at rest – where the fold means the rows folding up under a header that stands
+ * 32 in its place, cut by the shell's edge (the strip's chip and members the same way along x).
+ */
 .zen-group-fold[data-folding] {
   overflow: hidden;
+}
+.zen-group-fold[data-folding] > * {
+  flex-shrink: 0;
 }
 
 /*
