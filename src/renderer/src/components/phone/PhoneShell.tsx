@@ -33,6 +33,7 @@ import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
+import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { openSettings } from '@renderer/lib/pages'
@@ -483,9 +484,16 @@ export function PhoneBar({
   const layout = barLayout(state)
   const inset = `var(--zen-inset-${edge})`
   // Docked at the bottom edge the bar fades on the page's recede (main.css reads `--zen-recede`
-  // on it, §11.1); the top-docked bar registers too and its rule ignores the value.
+  // on it, §11.1); the top-docked bar registers too and its rule ignores the value. Under the
+  // new tab page's field arriving it fades on the morph's value, and the pill's slot fills in as
+  // the well by the handover's (lib/fakeboxMorph.ts): both carry those values the same way, the
+  // pill's words taking the pill's (main.css), so a scroll's or a spring's frame recalculates
+  // the bar and the pill alone, not the chrome from the root down.
   const barRef = useRef<HTMLElement>(null)
   useRecedeSurface(barRef)
+  useFakeboxSurface(barRef)
+  const pillRef = useRef<HTMLDivElement>(null)
+  useFakeboxSurface(pillRef)
   const groupStrip = strip ? (
     <GroupStrip presence={strip} edge={edge} overviewOpen={overviewOpen} inert={inert} />
   ) : null
@@ -560,6 +568,7 @@ export function PhoneBar({
           label is hidden from the tree, the address button says the space instead).
         */}
           <div
+            ref={pillRef}
             className={cn(
               'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
               // The resting pill's fill and pressed fill are the window family's (§9.29; main.css);

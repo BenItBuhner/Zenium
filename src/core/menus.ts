@@ -1541,7 +1541,12 @@ export class Menus {
               click: () => tabs.toggleEssential(tabId, win)
             }
       ),
-      { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
+      {
+        label: 'Rename Tab…',
+        // The pick mounts the row's rename field: the keyboard stays in the chrome for it.
+        keepsKeyboard: true,
+        click: () => this.browser.emit('tab.startRename', { tabId }, win)
+      },
       { label: 'Change Icon…', click: () => this.browser.emit('tab.pickIcon', { tabId }, win) }
     ]
 
@@ -2214,6 +2219,8 @@ export class Menus {
       ...open,
       {
         label: 'Rename Group…',
+        // The pick mounts the row's rename field: the keyboard stays in the chrome for it.
+        keepsKeyboard: true,
         click: () => browser.emit('folder.startRename', { folderId: id }, win)
       },
       {
