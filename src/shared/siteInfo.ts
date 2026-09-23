@@ -363,7 +363,12 @@ export const PERMISSION_LABELS: Record<string, string> = {
   'top-level-storage-access': 'Cookies for embedded sites',
   'window-management': 'Manage windows on all displays',
   'idle-detection': 'Know when you are active',
-  ads: 'Ads and trackers'
+  ads: 'Ads and trackers',
+  sound: 'Sound',
+  usb: 'USB devices',
+  serial: 'Serial ports',
+  hid: 'HID devices',
+  bluetooth: 'Bluetooth devices'
 }
 
 /**

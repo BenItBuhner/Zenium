@@ -15,20 +15,44 @@ import {
   CHOOSER_UDEV_HINT,
   chooserTabStop,
   chooserTitle,
-  closeDeviceChooser,
   currentDeviceChooser,
   currentDevicePairing,
   isCompletePin,
   listMove,
-  openDeviceChooser,
   pairingDescription,
   pairingTitle,
   PIN_LENGTH,
   sanitizePin
 } from '@renderer/lib/devices'
 import { hostLabels } from '@renderer/lib/screenPicker'
+import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
 import { ConfirmDialog } from '../dialogs/ConfirmDialog'
 import { V2Field, V2FormField } from '../extensions/v2'
+
+/**
+ * How long the chooser waits for the page's picture before it shows over a blank one: the page
+ * keeps painting behind a `requestDevice()` call, so the capture is quick; a page that will not
+ * answer does not hold the chooser.
+ */
+const SNAPSHOT_WAIT_MS = 250
+
+/** The chooser is about to show over `tabId`: the page gives way to its picture, the chrome takes the keyboard. */
+export async function openDeviceChooser(tabId: string | null): Promise<void> {
+  if (tabId) {
+    await Promise.race([
+      captureActiveTab(tabId),
+      new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_WAIT_MS))
+    ])
+  }
+  run('focus.chrome', undefined)
+  uiStore.set({ deviceChooserOpen: true })
+}
+
+export function closeDeviceChooser(): void {
+  if (uiStore.get().deviceChooserOpen) uiStore.set({ deviceChooserOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
 
 /** The 16 glyph of each kind (§9.23's title glyph, and the rows' lead). */
 export const DEVICE_KIND_GLYPH: Record<DeviceKind, LucideIcon> = {

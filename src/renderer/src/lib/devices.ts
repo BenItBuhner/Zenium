@@ -5,24 +5,16 @@ import type {
   DevicePairingPrompt,
   UIState
 } from '@shared/types'
-import { run } from '@renderer/lib/api'
 import { activeTab } from '@renderer/lib/selectors'
 import { hostOf } from '@renderer/lib/siteSettings'
-import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
 
 /**
  * The words and the state reads of the device chooser (MW-32..35: Web Bluetooth, WebUSB, Web
  * Serial, WebHID – `components/devices/DeviceChooserDialog`), its pairing prompt and the device
  * rows of the site-information surfaces and Settings › Site settings, kept apart from the
- * rendering so they can be read and tested on their own.
+ * rendering so they can be read and tested on their own. Nothing here touches the UI store: the
+ * chooser's open and close live with the dialog.
  */
-
-/**
- * How long the chooser waits for the page's picture before it shows over a blank one: the page
- * keeps painting behind a `requestDevice()` call, so the capture is quick; a page that will not
- * answer does not hold the chooser.
- */
-const SNAPSHOT_WAIT_MS = 250
 
 /** The kinds in the catalogue's order (`shared/contentSettings.ts`): usb, serial, hid, bluetooth. */
 export const DEVICE_KIND_ORDER: readonly DeviceKind[] = ['usb', 'serial', 'hid', 'bluetooth']
@@ -200,22 +192,4 @@ function hex4(n: number): string {
 /** "<Kind label> — N", the site-information row's label for a kind the site has grants of. */
 export function grantsRowLabel(kind: DeviceKind, count: number): string {
   return `${DEVICE_KIND_WORDS[kind].label} — ${count}`
-}
-
-/** The chooser is about to show over `tabId`: the page gives way to its picture, the chrome takes the keyboard. */
-export async function openDeviceChooser(tabId: string | null): Promise<void> {
-  if (tabId) {
-    await Promise.race([
-      captureActiveTab(tabId),
-      new Promise<void>((resolve) => setTimeout(resolve, SNAPSHOT_WAIT_MS))
-    ])
-  }
-  run('focus.chrome', undefined)
-  uiStore.set({ deviceChooserOpen: true })
-}
-
-export function closeDeviceChooser(): void {
-  if (uiStore.get().deviceChooserOpen) uiStore.set({ deviceChooserOpen: false })
-  invalidateSnapshot()
-  returnFocusToPage()
 }
