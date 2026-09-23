@@ -6,7 +6,13 @@ import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import { placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useBackSurface } from '@renderer/lib/back'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import { ChromePortal, popoverStyle, useLightDismiss, type PopoverBox } from '@renderer/lib/portals'
+import {
+  ChromePortal,
+  popoverStyle,
+  scrollbarGutter,
+  useLightDismiss,
+  type PopoverBox
+} from '@renderer/lib/portals'
 import {
   typeaheadExtend,
   typeaheadKey,
@@ -25,7 +31,22 @@ export interface MenulistOption<T extends string> {
    * is a §9.2 description.
    */
   description?: string
+  /**
+   * A specimen of this font family (a font picker): "Aa" drawn in the face at the row's
+   * trailing end, the label kept in the chrome's type. The face is what is being chosen, so the
+   * row shows it – but not as its own name: a symbol face (D050000L, Wingdings) drawn in itself
+   * writes its name as dingbats, and a row is its text (§9.13). A list with specimens keeps the
+   * check's 16 slot on every row, so they line up; the trigger shows the name alone.
+   */
+  font?: string
 }
+
+/**
+ * §5's 332, the widest a menulist's popup grows to for its longest row – the trigger's own width
+ * past that (`.zen-v2-menulist-popup`'s `max-width`, main.css; the same figure here for the
+ * placement, so the box the renderer places is the box the stylesheet draws).
+ */
+export const MENULIST_MAX_WIDTH = 332
 
 /** A row after the options that acts rather than picks ("Choose another folder…"). */
 export interface MenulistAction {
@@ -72,7 +93,9 @@ export interface MenulistPopoverProps<T extends string> {
  * check on the current option; as wide as the trigger at least and growing to its longest row
  * within §5's 332 (`.zen-v2-menulist-popup`, main.css; the trigger's width rides in
  * `--zen-anchor-width`), as tall as its rows up to the chrome layer's cap, flipped above the
- * trigger when it would cross the bottom margin (`placeUnder`). The current option takes the
+ * trigger when it would cross the bottom margin (`placeUnder`); a list taller than the cap
+ * scrolls and is wider by its scrollbar (`scrollbarGutter`), so the bar takes nothing from the
+ * rows. The current option takes the
  * focus as the list comes up and is scrolled into view; arrows, Home and End move the cursor,
  * letters type ahead (lib/typeahead.ts: a second's buffer, a repeated letter cycling), Enter or
  * Space picks, Tab wraps inside, Escape hands the focus back to the trigger (`usePopover`); the
@@ -112,7 +135,22 @@ function List<T extends string>({
   useLayoutEffect(() => {
     const el = ref.current
     if (!el || !ready) return
-    setBox(placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight))
+    const width = el.offsetWidth
+    const height = el.offsetHeight
+    const placed = placeUnder(anchor, { measured: width }, height)
+    // Taller than its room the list scrolls, and the bar would take its width from the rows and
+    // clip the longest ("16 px" in a 25-stop size list): the popup grows by the bar instead,
+    // still within its CSS max-width – §5's 332, or the trigger's own width past that.
+    const gutter = height > placed.maxHeight ? scrollbarGutter() : 0
+    setBox(
+      gutter > 0
+        ? placeUnder(
+            anchor,
+            { measured: Math.min(width + gutter, Math.max(MENULIST_MAX_WIDTH, anchor.width)) },
+            height
+          )
+        : placed
+    )
   }, [anchor, options.length, actions.length, ready])
   usePopover(ref, {
     onClose,
@@ -144,6 +182,7 @@ function List<T extends string>({
   }
 
   if (!ready) return null
+  const specimens = options.some((option) => option.font)
   return (
     <ChromePortal>
       <div
@@ -185,7 +224,20 @@ function List<T extends string>({
               ) : (
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
               )}
-              {selected && <Check aria-hidden />}
+              {option.font && (
+                <span
+                  className="zen-v2-menulist-option-specimen"
+                  style={{ fontFamily: option.font }}
+                  aria-hidden
+                >
+                  Aa
+                </span>
+              )}
+              {selected ? (
+                <Check aria-hidden />
+              ) : (
+                specimens && <span className="zen-v2-menulist-option-mark" aria-hidden />
+              )}
             </button>
           )
         })}

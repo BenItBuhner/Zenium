@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  The fonts / languages / appearance demo's article (FontsLanguagesUiDemo.kt). The page leaves its
+  type to the browser on purpose: no font-size anywhere but the heading's em and the byline's
+  11 px small print, so Settings > Appearance > Customise fonts' size and standard family are what
+  the text is set in, and a change there lays the page out again while it is open
+  (WebSettings.defaultFontSize, no reload); the small print is what the minimum font size lifts
+  (WebSettings.minimumFontSize, Blink's hard floor). The <pre> block is the fixed-width text the
+  fixed size scales at Chrome's 13/16 ratio. The page
+  follows prefers-color-scheme, so a colour scheme change in Look and Feel repaints it with the
+  chrome. Six paragraphs make it an article to the reader core's readability probe, which is what
+  Reader View needs; the reader's Translate row then translates them into the first preferred
+  language.
+-->
+<title>Notes from a river ferry: a season of crossings, cargo and the people who wait on the bank</title>
+<style>
+  body { margin: 0; padding: 24px 20px 120px; line-height: 1.5; color: #1f2328; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e6e6e6; background: #121212; } pre { background: #1e1e22; } }
+  h1 { font-size: 1.6em; line-height: 1.25; margin: 0 0 6px; }
+  .by { opacity: .65; margin-bottom: 4px; }
+  .small { font-size: 11px; opacity: .65; margin-bottom: 22px; }
+  p { margin: 0 0 16px; }
+  pre { background: #f3f3f5; padding: 12px; overflow: auto; border-radius: 6px; }
+</style>
+</head>
+<body>
+<article>
+  <h1>Notes from a river ferry</h1>
+  <div class="by">Zenium fonts and languages demo · six paragraphs, about five hundred words</div>
+  <div class="small" id="small-print">Small print at 11 px: the ferry runs in all weathers but fog; fares are posted on the east bank; dogs travel free.</div>
+  <p>The ferry leaves the east bank on the hour and the west bank on the half hour, and it has done so for as long as anyone in either village can remember. It carries twelve passengers, two bicycles and whatever fits between them: crates of apples in the autumn, a goat once, and every Thursday the post. The crossing takes eleven minutes when the river is low and closer to twenty when the spring water pushes the boat sideways and the ferryman has to point the bow a long way upstream to land where he means to.</p>
+  <p>There is no timetable printed anywhere. People learn the hours from each other, and the ferry is early or late by the same few minutes every day, so that regulars speak of the quarter past as if it were a fixed point rather than an average. Visitors who arrive with a printed plan find this unsettling for a morning and then stop noticing. The bench on the west bank has a roof; the one on the east bank has a view; the argument over which is better has outlasted three ferrymen.</p>
+  <p>The boat itself is a flat wooden hull with a small diesel engine, painted the same green as the shutters of the inn, which is where the paint came from. A chain runs across the river above the boat and the ferry hangs from it on a pulley, so the current can only carry it along the chain and never downstream. On calm days the engine does most of the work; on windy days the chain does, and the ferryman spends the crossing talking about the weather rather than steering.</p>
+  <p>Cargo is priced by the piece, not the weight, which produces a great deal of ingenuity in packing. A single large basket costs the same as a small one, so baskets grow over the years until the ferryman refuses them, and then they shrink again for a season. Bicycles are free if their owner pedals to the boat and pays for themselves; a bicycle sent alone, as happens when someone forgets it on the far side, pays the full fare and rides in the bow like a passenger.</p>
+  <p>The people who wait on the bank are the other half of the service. They pass on messages, hold parcels for neighbours who have missed a crossing, and tell the ferryman who is ill, who has moved away and who is expected back. A crossing with no one waiting on the far side is rare enough to be remarked on. The ferryman keeps a notebook of such things in the wheelhouse, not because anyone asked him to, but because a river has a memory and somebody ought to write it down.</p>
+  <p>The notebook's shorthand for a day looks like this, one line per crossing, and the old hands can read the whole week from it at a glance:</p>
+  <pre>07:00 E-W 4p 1b post    09:30 W-E 7p 2b apples
+11:00 E-W 12p full      14:30 W-E 3p goat (no fare)</pre>
+  <p>When the bridge was proposed, twenty miles downstream where the valley narrows, the villages sent a letter saying that they would use it gladly for lorries and funerals and keep the ferry for everything else. The bridge was built, the lorries went that way, and the ferry still leaves the east bank on the hour. On the first crossing of the year the ferryman writes the date at the top of a fresh page, and the season begins.</p>
+</article>
+</body>
+</html>

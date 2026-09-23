@@ -1372,6 +1372,24 @@ export function viewportSize(): Size {
   return { width: window.innerWidth, height: window.innerHeight }
 }
 
+/**
+ * The width a vertical scrollbar takes from the content it scrolls in this document right now:
+ * the chassis's 8 on a fine pointer (`::-webkit-scrollbar`, main.css), 0 for an overlay bar (a
+ * coarse pointer's thin bar, macOS). Read off a hidden probe that scrolls, for a surface that
+ * measures its rows before its height is capped (the menulist popup, §9.13): once it scrolls,
+ * the bar would take that width from the rows and clip the longest, so the surface grows by it
+ * instead.
+ */
+export function scrollbarGutter(doc: Document = document): number {
+  const probe = doc.createElement('div')
+  probe.style.cssText =
+    'position:fixed;top:0;left:0;width:100px;height:100px;overflow:scroll;visibility:hidden;pointer-events:none'
+  doc.body.appendChild(probe)
+  const gutter = probe.offsetWidth - probe.clientWidth
+  probe.remove()
+  return Math.max(0, gutter)
+}
+
 /** A `DOMRect` as the plain rect the placement helpers take. */
 export function toRect(r: DOMRect): Rect {
   return { x: r.left, y: r.top, width: r.width, height: r.height }

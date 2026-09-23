@@ -720,6 +720,85 @@ describe('a section’s drill-in page (zen://settings/<section>/<page>, §10.2)'
   })
 })
 
+describe('Languages’ Add language page (zen://settings/languages/add?list=<list>, §10.2, #350 ruling 3)', () => {
+  const panes = (el: ParentNode): HTMLElement[] =>
+    Array.from(el.querySelectorAll<HTMLElement>('.zen-settings-drill-in'))
+
+  it('stands over Languages on the phone layout as the find-and-pick page for the list its address names', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/languages/add?list=always'))
+    expect(el.querySelector('.zen-settings-phone')?.getAttribute('data-page')).toBe('add')
+    const [section, page] = panes(el)
+    expect(panes(el)).toHaveLength(2)
+    expect(section?.hasAttribute('inert')).toBe(true)
+    expect(page?.querySelector('.zen-settings-bar-title')?.textContent).toBe('Add language')
+    expect(page?.querySelector('.zen-settings-back')?.getAttribute('aria-label')).toBe(
+      'Back to Languages'
+    )
+    const body = page?.querySelector<HTMLElement>('[data-testid="add-language-page"]')
+    expect(body?.getAttribute('data-list')).toBe('always')
+    // The field pinned first under the bar, the rows – the translator's languages less the
+    // Always translate list – after it.
+    expect(body?.firstElementChild?.querySelector('input[role="searchbox"]')).not.toBeNull()
+    expect(body?.querySelector('[role="group"]')?.getAttribute('aria-label')).toBe(
+      'Always translate'
+    )
+    expect(
+      [...(body?.querySelectorAll('[role="group"] > button .zen-settings-label') ?? [])].map(
+        (l) => l.textContent
+      )
+    ).toEqual(['English', 'French', 'German', 'Spanish'])
+    // No address for the list: the preferred list, the catalogue less what is on it.
+    act(() => root!.unmount())
+    root = null
+    mount?.remove()
+    const plain = mountPage(state(ANDROID, 'android', {}, 'zen://settings/languages/add'))
+    const preferred = plain.querySelector<HTMLElement>('[data-testid="add-language-page"]')
+    expect(preferred?.getAttribute('data-list')).toBe('preferred')
+    expect(preferred?.querySelector('[role="group"]')?.getAttribute('aria-label')).toBe(
+      'Add language'
+    )
+    expect(preferred!.querySelectorAll('[role="group"] > button').length).toBeGreaterThan(150)
+  })
+
+  it('every Add row of the section opens the one page with its list in the address, no sheet', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/languages'))
+    expect(panes(el)).toHaveLength(1)
+    for (const [rowId, list] of [
+      ['languages-add', 'preferred'],
+      ['languages-always-add', 'always'],
+      ['languages-never-add', 'never']
+    ]) {
+      invoke.mockClear()
+      const row = el.querySelector<HTMLButtonElement>(`[data-row="${rowId}"]`)!
+      expect(row, rowId).not.toBeNull()
+      expect(row.getAttribute('aria-haspopup')).toBeNull()
+      act(() => row.click())
+      expect(invoke).toHaveBeenCalledWith('page.navigate', {
+        tabId: 'settings',
+        section: 'languages',
+        subpage: 'add',
+        query: { list }
+      })
+      expect(el.querySelector('[role="dialog"]')).toBeNull()
+    }
+  })
+
+  it('on the two-pane layout the address shows the section, and each Add row’s button opens the filtered dialog instead (§10.5)', () => {
+    viewport(TWO_PANE_MIN_WIDTH)
+    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/languages/add?list=never'))
+    expect(markup).toContain('data-layout="two-pane"')
+    expect(markup).not.toContain('zen-settings-drill-in')
+    expect(markup).not.toContain('data-testid="add-language-page"')
+    for (const rowId of ['languages-add', 'languages-always-add', 'languages-never-add']) {
+      expect(markup).toMatch(
+        new RegExp(`data-row="${rowId}"[\\s\\S]*?aria-haspopup="dialog"[^>]*>Add…<`)
+      )
+    }
+  })
+})
+
 describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () => {
   /** Settings opened from a site's information sheet: the site's tab is the opener. */
   function fromSheet(url: string): UIState {

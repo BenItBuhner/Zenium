@@ -117,8 +117,12 @@ interface Props {
   contentKey?: string
   /** Measure the detents again whenever the content changes size (`BottomSheet`'s `fitContent`). */
   fitContent?: boolean
-  /** Come in expanded: an editor whose body is the document (`BottomSheet`'s `openExpanded`). */
-  openExpanded?: boolean
+  /**
+   * Come in expanded: an editor whose body is the document (`BottomSheet`'s `openExpanded`), or
+   * `'overflow'` for a §9.13 picker – expanded and scrolled to the checked option only when its
+   * rows exceed the peek.
+   */
+  openExpanded?: boolean | 'overflow'
   /**
    * The body is a list of rows: the sheet stands at most 80 % of the layer and the list scrolls
    * under the title (§9.20, `BottomSheet`'s `body`); a form or a prompt stands as tall as it is.

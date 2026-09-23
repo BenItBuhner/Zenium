@@ -1,16 +1,21 @@
-import type { JSX, ReactNode } from 'react'
-import { useState } from 'react'
-import { ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
+import type { FocusEvent, JSX, ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { cn } from '@renderer/lib/utils'
-import { V2Button } from '../../extensions/v2'
+import type { InternalPageQuery } from '@shared/internalPages'
+import { V2Button, V2IconButton } from '../../extensions/v2'
 import { V2Menulist } from '../../extensions/V2Menulist'
+import { LocalMenu } from '../../menus/LocalMenu'
 import { Slider } from '../../ui/slider'
 import {
   currentOptionLabel,
   groupShows,
+  itemMenuItems,
   type ActionRow,
   type FieldRow,
   type RowGroup,
+  type RowMenu,
   type SettingsRow,
   type SliderRow,
   type SwitchRow,
@@ -56,10 +61,11 @@ export interface RowContext {
   open(request: SheetRequest): void
   /**
    * Open the drill-in page an action row names (`ActionRow.page`, §10.2) for the section the
-   * row belongs to; the phone layout's (`PhoneSettings`). Absent – the two-pane layout, a test
+   * row belongs to, with the row's `pageQuery` in the page's address (which list an Add row
+   * adds to); the phone layout's (`PhoneSettings`). Absent – the two-pane layout, a test
    * without a page – the row falls back to its `form`.
    */
-  openPage?(rowId: string, page: string): void
+  openPage?(rowId: string, page: string, query?: InternalPageQuery): void
 }
 
 /**
@@ -165,7 +171,7 @@ export function RowView({
           haspopup={!opensPage && (row.confirm || row.form || row.prompts) ? 'dialog' : undefined}
           trailing={opensPage ? <ChevronRight aria-hidden="true" /> : actionGlyph(row)}
           onPress={() => {
-            if (opensPage) ctx.openPage!(row.id, row.page!)
+            if (opensPage) ctx.openPage!(row.id, row.page!, row.pageQuery)
             else if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
             else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
             else if (row.closesSheet) dismissSheet(() => row.onPress?.())
@@ -241,8 +247,8 @@ export function RowView({
         </div>
       )
     case 'slider':
-      // §10.4's slider row: the value beside the label on the text's first line, the slider on
-      // the 40 px line under the text; the block is the row's, so it keeps its 16 px gutter.
+      // §10.4's slider row: the value on the label's line, the description, then the 44 px step
+      // buttons with the track between them; the block is the row's, so it keeps its 16 px gutter.
       return (
         <div
           className={cn(
@@ -289,10 +295,10 @@ function pressAction(row: ActionRow, ctx: RowContext, dismissSheet: SheetDismiss
 
 /**
  * A model row in the desktop vocabulary. Info and custom rows are the phone's, and so is an item
- * row unless it carries its one `action`, which then trails it as a button in place of a dialog;
- * a value row trails a menulist, a switch row is a check row, a field row holds its field, an
- * action with a `button` trails it and any other action is the whole-row target with its
- * leaving glyph.
+ * row unless it carries its one `action`, which then trails it as a button in place of a dialog,
+ * or its `menu`, the 28 ⋯ over its sheet's actions; a value row trails a menulist, a switch row
+ * is a check row, a field row holds its field, an action with a `button` trails it and any
+ * other action is the whole-row target with its leaving glyph.
  */
 function DesktopRowView({
   row,
@@ -388,17 +394,60 @@ function DesktopRowView({
           </ControlRow>
         )
       }
+      // Several actions and nothing to set (§10.5): the row is static and trails the 28 ⋯ whose
+      // menu is its sheet's action rows; on one line it is a control row (§9.21: the button plus
+      // 8 – `data-control`, as `ListRow control` marks it).
+      if (row.menu !== undefined) {
+        return (
+          <div
+            ref={attachLineCount}
+            data-row={row.id}
+            data-static=""
+            data-tone={row.tone}
+            data-control={!row.description && !caption ? '' : undefined}
+            className={cn(
+              'zen-settings-row zen-v2-row',
+              row.disabled && 'zen-settings-row-disabled'
+            )}
+          >
+            {row.leading && (
+              <span className="zen-settings-leading" aria-hidden="true">
+                {row.leading}
+              </span>
+            )}
+            <RowText label={row.label} description={row.description} caption={caption} />
+            <span className="zen-settings-trailing zen-settings-control">
+              <RowMenuButton
+                menu={{ label: row.menu, items: itemMenuItems(row) }}
+                title={row.label}
+                disabled={row.disabled}
+              />
+            </span>
+          </div>
+        )
+      }
       return <RowView row={row} ctx={ctx} caption={caption} />
     default:
       return <RowView row={row} ctx={ctx} caption={caption} />
   }
 }
 
+/** A held step button (§10.4) waits this long before it repeats, then steps at this interval. */
+const HOLD_REPEAT_DELAY_MS = 400
+const HOLD_REPEAT_INTERVAL_MS = 100
+
 /**
- * The slider of a slider row: the zoom sheet's `zen-zoom-slider` (§10.4) with the value as text
- * beside it, the text following the drag and the row's `onChange` running when the thumb is let
- * go. `labelled` draws the phone block – label and value on the first line, the description,
- * then the slider – where the desktop's control sits in its row's trailing slot.
+ * The slider of a slider row: the zoom sheet's `zen-zoom-slider` with the value as text, the
+ * text following the drag and the row's `onChange` running when the thumb is let go. `labelled`
+ * draws §10.4's phone row – the label with the value on its line in `tabular-nums`, the
+ * description, then the 44 px − and + step buttons with the track between them (the Default
+ * zoom block's stepper form, one step of the row's `step` per press, a hold repeating it), no
+ * labels under the track's ends – where the desktop's control sits in its row's trailing slot.
+ *
+ * The control tells the row when it is left (`SliderRow.onLeave`): the focus moving out of it
+ * – to another row's button, as a finger lands there – and its unmount, the sheet closing or
+ * the drill-in leaving with it. A builder that coalesces the row's steps commits on either
+ * (the fonts group's draft), so a close inside the quiet window loses no step.
  */
 function SliderControl({
   row,
@@ -416,9 +465,19 @@ function SliderControl({
     setSeen(row.value)
     setLocal(row.value)
   }
+  const leave = useRef(row.onLeave)
+  useEffect(() => {
+    leave.current = row.onLeave
+  })
+  useEffect(() => () => leave.current?.(), [])
+  // The focus left the control for somewhere outside it; − to + within it is not a leave.
+  const onBlur = (e: FocusEvent<HTMLElement>): void => {
+    const to = e.relatedTarget
+    if (!(to instanceof Node) || !e.currentTarget.contains(to)) row.onLeave?.()
+  }
   const slider = (
     <Slider
-      className="zen-zoom-slider zen-settings-slider"
+      className={cn('zen-zoom-slider zen-settings-slider', labelled && 'min-w-0 flex-1')}
       aria-label={row.label}
       aria-valuetext={row.format(local)}
       min={row.min}
@@ -432,22 +491,161 @@ function SliderControl({
   )
   if (!labelled) {
     return (
-      <span className="zen-settings-slider-control">
+      <span className="zen-settings-slider-control" onBlur={onBlur}>
         {slider}
         <span className="zen-settings-slider-value">{row.format(local)}</span>
       </span>
     )
   }
   return (
-    <span className="zen-settings-row-text zen-settings-slider-block">
+    <span className="zen-settings-row-text zen-settings-slider-block" onBlur={onBlur}>
       {caption && <span className="zen-settings-caption">{caption}</span>}
       <span className="zen-settings-slider-head">
         <span className="zen-settings-label">{row.label}</span>
         <span className="zen-settings-slider-value">{row.format(local)}</span>
       </span>
       {row.description && <span className="zen-settings-description">{row.description}</span>}
-      {slider}
+      <span className="zen-zoom-stepper zen-settings-slider-stepper flex items-center">
+        <StepButton row={row} value={local} direction={-1} />
+        {slider}
+        <StepButton row={row} value={local} direction={1} />
+      </span>
     </span>
+  )
+}
+
+/**
+ * One of the phone slider row's two 44 px step buttons (§10.4): the shared icon button, named
+ * for what it does to the row ("Decrease Font size"), disabled at the ladder's end with the
+ * row's own .4 rule keeping one opacity. A press steps once (`row.onChange` with the next stop:
+ * a commit at once for a row like the zoom block's, a step of the page's draft for a row that
+ * coalesces – the fonts rows, whose commit follows the quiet after the sequence); a hold
+ * repeats the step (`HOLD_REPEAT_*`) until the finger lifts or leaves, each repeat the same
+ * `onChange`, so a coalescing row commits a hold once, at its end. The pointer's press is the
+ * step, so the `click` a pointer sends after it – `detail`
+ * 1, its tap or click count – is not one: on Android a tap's click is the gesture detector's
+ * own event, arriving after `pointerup` by as much as the WebView's frame allows, so nothing
+ * that keys off time may stand between them (emulator run 35815936330 read three taps of seven
+ * twice). The keyboard's press (Enter, Space) and an assistive technology's activation are the
+ * click with no pointer before it – `detail` 0 – and step once.
+ */
+function StepButton({
+  row,
+  value,
+  direction
+}: {
+  row: SliderRow
+  value: number
+  direction: -1 | 1
+}): JSX.Element {
+  const step = (): void => {
+    const next = Math.min(row.max, Math.max(row.min, value + direction * row.step))
+    if (next !== row.value) row.onChange(next)
+  }
+  // The hold's timers step from the latest value, not the one the press rendered with.
+  const latest = useRef(step)
+  useEffect(() => {
+    latest.current = step
+  })
+  const timer = useRef<{ kind: 'delay' | 'repeat'; id: number } | null>(null)
+  const hold = useRef(row.onHold)
+  useEffect(() => {
+    hold.current = row.onHold
+  })
+  // The release (up, cancel, leave, unmount) ends the hold: the row hears it once per press.
+  const stop = useCallback((): void => {
+    const t = timer.current
+    if (t) {
+      if (t.kind === 'delay') window.clearTimeout(t.id)
+      else window.clearInterval(t.id)
+      timer.current = null
+      hold.current?.(false)
+    }
+  }, [])
+  useEffect(() => stop, [stop])
+  const atEnd = direction < 0 ? value <= row.min : value >= row.max
+  const disabled = row.disabled === true || atEnd
+  // The ladder's end reached under a held finger disables the button, and a disabled control
+  // need not hear the pointer's up: the hold ends here.
+  useEffect(() => {
+    if (disabled) stop()
+  }, [disabled, stop])
+  return (
+    <V2IconButton
+      icon={direction < 0 ? Minus : Plus}
+      label={`${direction < 0 ? 'Decrease' : 'Increase'} ${row.label}`}
+      className="shrink-0"
+      disabled={disabled}
+      onPointerDown={(e) => {
+        if (e.button !== 0 || disabled) return
+        stop()
+        hold.current?.(true)
+        latest.current()
+        timer.current = {
+          kind: 'delay',
+          id: window.setTimeout(() => {
+            timer.current = {
+              kind: 'repeat',
+              id: window.setInterval(() => latest.current(), HOLD_REPEAT_INTERVAL_MS)
+            }
+          }, HOLD_REPEAT_DELAY_MS)
+        }
+      }}
+      onPointerUp={stop}
+      onPointerCancel={stop}
+      onPointerLeave={stop}
+      onClick={(e) => {
+        if (e.detail === 0) latest.current()
+      }}
+    />
+  )
+}
+
+/**
+ * An item row's ⋯ on the desktop (§10.5): the shared 28 px icon button in the row's trailing
+ * slot, in the row's full ink, opening the shared `LocalMenu` from it – a popover flush under
+ * the button (§9.20) – with the row's items, a disabled one listed at .4 (§9.30: Move Up on
+ * the first row stays where the eye expects it). The button is the one target in a static row,
+ * so it rings at its own offset; a dependent row's button is disabled with the row
+ * (`aria-disabled` on the row, `disabled` on the button, one .4 – the
+ * `.zen-settings-row-disabled` rule keeps the button's own off).
+ */
+function RowMenuButton({
+  menu,
+  title,
+  disabled
+}: {
+  menu: RowMenu
+  title: string
+  disabled?: boolean
+}): JSX.Element {
+  const [anchor, setAnchor] = useState<Anchor | null>(null)
+  return (
+    <>
+      <V2IconButton
+        icon={Ellipsis}
+        label={menu.label}
+        className="zen-settings-row-menu"
+        aria-haspopup="menu"
+        aria-expanded={anchor !== null || undefined}
+        disabled={disabled}
+        onClick={(e) => setAnchor(anchorOf(e.currentTarget))}
+      />
+      {anchor && (
+        <LocalMenu
+          anchor={anchor}
+          title={title}
+          items={menu.items.map((item) => ({
+            id: item.id,
+            label: item.label,
+            disabled: item.disabled,
+            danger: item.danger,
+            onSelect: item.onSelect
+          }))}
+          onClose={() => setAnchor(null)}
+        />
+      )}
+    </>
   )
 }
 

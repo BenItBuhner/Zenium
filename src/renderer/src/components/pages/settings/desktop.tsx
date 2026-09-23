@@ -6,25 +6,30 @@ import {
   type InternalPageDefinition,
   type InternalPageSection
 } from '@shared/internalPages'
-import type { FormFactor, Tab, UIState } from '@shared/types'
+import type { FormFactor, Settings, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useDownloadDirectory } from '@renderer/lib/downloadDirectory'
 import { useImportSources } from '@renderer/lib/importSources'
 import { privateLockStore } from '@renderer/lib/privateLock'
+import { useLocalFonts } from '@renderer/lib/localFonts'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useRemoteTabs } from '@renderer/lib/remoteTabs'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DialogStack } from './dialogs'
+import { useFontsDraft } from './fontsDraft'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
 import { searchRows, type RowGroup, type SearchHit, type SectionModel } from './model'
 import { GroupList, RowView, type RowContext } from './rows'
 import { buildSection, buildSections, type SectionContext } from './sections'
 import { SheetStack } from './sheets'
 import { useSheetStack } from './useSheetStack'
+
+/** A settings patch to the core (`SectionContext.set`); one function, so the fonts draft's hook keeps it. */
+const settingsUpdate = (patch: Partial<Settings>): void => run('settings.update', patch)
 
 /**
  * The Settings tab where two panes fit (design language v2 §10.5; Zen's `about:preferences`):
@@ -91,6 +96,9 @@ export function DesktopSettings({
     sectionId === 'downloads',
     state.settings.downloads?.directory ?? null
   )
+  // The computer's font families while Look and Feel is the open category, on a host whose
+  // engine takes the family rows (Customise fonts' menulists; a phone host lists the generic names).
+  const localFonts = useLocalFonts(sectionId === 'look' && state.capabilities.genericFontFamilies)
   // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
   // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
   syncSetupStore.use((s) => s.folder)
@@ -100,12 +108,15 @@ export function DesktopSettings({
   // phone in landscape draws that row through these panes (the phone host's word; a desktop
   // host never shows the row).
   const screenLock = privateLockStore.use((s) => s.screenLock)
+  // Customise fonts' draft: a phone in landscape draws the ± rows through these panes, and
+  // their steps coalesce into one commit per quiet sequence, flushed when the category changes.
+  const fontsDraft = useFontsDraft(state.settings.fonts, settingsUpdate, sectionId)
   const ctx: SectionContext = {
     state,
     tab,
     pointer,
     formFactor,
-    set: (patch) => run('settings.update', patch),
+    set: settingsUpdate,
     navigate: (section) => run('page.navigate', { tabId: tab.id, section, replace: true }),
     openBarEditor: () => void openBarEditor(tab.id),
     boost: (tabId) => {
@@ -117,7 +128,9 @@ export function DesktopSettings({
     readAloudVoices,
     dictionary,
     importSources,
-    downloadDirectory
+    downloadDirectory,
+    localFonts,
+    fontsDraft
   }
 
   // The search: a query while it is not empty. A section change (the nav, back, forward)
