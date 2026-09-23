@@ -419,7 +419,11 @@ export function windowInsetsOf(payload: unknown): WindowInsets {
   return insets
 }
 
-/** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
+/**
+ * Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). Beside `pause`,
+ * `teardown` is sent by Android alone: the desktop's quit destroys its views itself and never
+ * sends it.
+ */
 export interface HostEventPayloads {
   /**
    * The window's safe-area insets, and whether the system bars are still on their way back from
