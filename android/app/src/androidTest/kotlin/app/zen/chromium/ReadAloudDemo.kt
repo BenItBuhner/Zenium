@@ -267,7 +267,9 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         if (survived) {
             finding("  seeded tab survived the relaunch: yes")
         } else {
-            val why = if (loseSeededTab) "closed by the stand-in before the relaunch, -e loseSeededTab true" else "the outgoing core closed it on destroy — the wave-5 race"
+            // The real path reads the loss from the tab's absence alone, so it names the shape,
+            // not a cause: once the wave-5 fix lands, a `no` here is a new finding, not the old race.
+            val why = if (loseSeededTab) "closed by the stand-in before the relaunch, -e loseSeededTab true" else "lost across the relaunch: the wave-5 race's shape"
             finding("  seeded tab survived the relaunch: no ($why); re-opening the article")
             tabId = jsonString(coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/")},\"active\":true}"))
         }
