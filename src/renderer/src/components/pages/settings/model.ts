@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { InternalPageSection } from '@shared/internalPages'
+import type { InternalPageQuery, InternalPageSection } from '@shared/internalPages'
 import { matchesQuery } from '@shared/internalPages'
 import type { FormFactor } from '@shared/types'
 
@@ -52,6 +52,14 @@ export interface RowOption {
    * without one come first, then each heading's options in the order the headings first appear.
    */
   group?: string
+  /**
+   * The option's font family as a CSS value (a font picker's rows – the face is the choice, so
+   * the row shows it): the desktop's menulist popover draws an "Aa" specimen in it after the
+   * label (`MenulistOption.font`; the label stays in the chrome's type, since a symbol face
+   * drawn in itself writes its name as dingbats); the phone's picker rows, the platform's word
+   * aliases, draw their labels in it themselves (`fontBlocks.tsx`).
+   */
+  font?: string
 }
 
 /** The picker sheet's option groups: the ungrouped options first (heading null), then each heading's. */
@@ -138,6 +146,12 @@ export interface ActionRow extends RowBase {
    */
   page?: string
   /**
+   * The query the drill-in page opens with (`zen://settings/languages/add?list=always`): what
+   * of the row's context the page needs – which list an Add row adds to, so one page serves
+   * every Add row of the section (§10.2). Only with `page`.
+   */
+  pageQuery?: InternalPageQuery
+  /**
    * `onPress` opens a surface of its own over the page (an editor sheet): inside an item's sheet
    * the row dismisses that sheet first and presses once it has gone, so the editor is the one
    * sheet over the page and may open its own pickers (§9.24: a sheet opens one sheet, and that
@@ -151,12 +165,16 @@ export interface FormSheet {
   title: string
   description?: string
   /**
-   * The body is a list of rows rather than a form (the site-data viewer): the desktop dialog
-   * stands at most 80% of the frame and scrolls under its title block, and its footer takes the
-   * list form – a hairline in the gutter, the buttons at 12 (§9.20; `data-body="list"`); the
-   * phone sheet takes the same cap at its expanded detent (`BottomSheet`'s `body`).
+   * The body is a list of rows rather than a form (the site-data viewer, the Add language
+   * dialog with its filter field): the desktop dialog stands at most 80% of the frame and
+   * scrolls under its title block, and its footer takes the list form – a hairline in the
+   * gutter, the buttons at 12 (§9.20; `data-body="list"`); the phone sheet takes the same cap
+   * at its expanded detent (`BottomSheet`'s `body`). `picker` is a list whose rows are the
+   * options of the row's current value (the Standard font's families): the same dialog on the
+   * desktop, and on the phone a §9.13 picker sheet – expanded and scrolled to the checked
+   * option when its rows exceed the peek (`sheets.tsx`), under the same cap.
    */
-  body?: 'list'
+  body?: 'list' | 'picker'
   render(close: () => void): ReactNode
 }
 
@@ -183,9 +201,15 @@ export interface FieldRow extends RowBase {
 }
 
 /**
- * A bounded number on §10.4's slider row: the value as text beside the label, the slider – the
- * zoom sheet's `zen-zoom-slider` – under the text on a phone and trailing it on the desktop.
- * The slider commits when the thumb is let go; the text follows the drag.
+ * A bounded number over a ladder of stops as the phone's §10.4 slider row: the value in
+ * `tabular-nums` on the label's line, the description, then the 44 px − and + step buttons with
+ * the track (the zoom sheet's `zen-zoom-slider`) between them; a press steps once, a hold
+ * repeats, the thumb commits when it is let go and the text follows the drag. No labels under
+ * the track's ends: the value on the label's line is what the row says. The desktop has no
+ * slider on a page (§10.5): a level in Settings is a menulist of its stops (a `value` row over
+ * them, as Default zoom's 100% – the fonts group's sizes), so a builder that keeps a slider row
+ * on the two-pane layout as well (the Resources budgets) draws the phone's control trailing its
+ * text there, with the value at its end, until that group moves to the menulist too.
  */
 export interface SliderRow extends RowBase {
   kind: 'slider'
@@ -193,9 +217,53 @@ export interface SliderRow extends RowBase {
   min: number
   max: number
   step: number
-  /** The value as the row shows it ("70%"). */
+  /** The value as the row shows it ("70%", "16 px"). */
   format(value: number): string
+  /**
+   * A step (a press, one of a hold's repeats) or the thumb let go. A row whose builder
+   * coalesces its steps (the fonts group's draft, the Android performance gate's ruling for
+   * #350) moves its own value here and commits once the sequence is quiet; any other commits
+   * at once.
+   */
   onChange(value: number): void
+  /**
+   * The row is left: its focus moves out of the control (a finger on another row), or the
+   * control goes (its sheet closes, its drill-in is left). A coalescing builder commits what
+   * this row's steps have pending, so no step is lost to a close inside the quiet window –
+   * and only this row's: the blur a finger on another row's button causes is no end to the
+   * sequence that finger begins.
+   */
+  onLeave?(): void
+  /**
+   * A step button is held: `true` at the pointer's down, `false` at its up, cancel or leave.
+   * A coalescing builder waits with its commit while the button is down – the hold's repeats
+   * are steps – and starts its quiet window at the release (the ruling's "the hold's end"), so
+   * a hold commits once, whatever its length.
+   */
+  onHold?(held: boolean): void
+}
+
+/** One entry of an item row's desktop ⋯ menu; Title Case, as Zen's menu items are (§9.1). */
+export interface RowMenuItem {
+  id: string
+  label: string
+  /** Not applicable now (Move Up on the first row): the item stays listed at §9.30's .4. */
+  disabled?: boolean
+  /** A destructive item, in the danger ink. */
+  danger?: boolean
+  onSelect(): void
+}
+
+/**
+ * An item row's ⋯ on the desktop (§10.5): a row with several actions and nothing to set trails
+ * the 28 px icon button in the full ink, whose menu – the shared `LocalMenu`, a popover flush
+ * under the button (§9.20) – lists the item sheet's action rows (`itemMenuItems`). The phone
+ * never draws it: there the row is the item row, and the whole row opens the sheet (§10.4).
+ */
+export interface RowMenu {
+  /** The button's accessible name ("Options for English"). */
+  label: string
+  items: readonly RowMenuItem[]
 }
 
 /** A fact: label and description, optionally a leading or trailing glyph or value; nothing to press. */
@@ -215,7 +283,11 @@ export interface InfoRow extends RowBase {
   danger?: boolean
 }
 
-/** One thing in a list (a container, a route, a Boost): opens a sheet of rows about it. */
+/**
+ * One thing in a list (a container, a route, a Boost, a preferred language): on the phone a
+ * plain row – no control, no chevron, no ⋯ – whose whole tap opens a sheet of rows about it
+ * (§10.4); on the desktop the same row unless it names its one `action` or its `menu`.
+ */
 export interface ItemRow extends RowBase {
   kind: 'item'
   leading?: ReactNode
@@ -229,6 +301,36 @@ export interface ItemRow extends RowBase {
    * and holds the action as a row of its own, so `sheet` stays what it is.
    */
   action?: InlineAction
+  /**
+   * The row has several actions and nothing to set (a preferred language's Move Up / Move Down
+   * / Remove): on a mouse it is static and trails the 28 px ⋯ named by this label ("Options for
+   * English"), whose menu is the sheet's action rows (`itemMenuItems`, §10.5) – no dialog opens
+   * to hold a list of actions. The phone keeps the item row and its sheet. Not with `action`.
+   */
+  menu?: string
+}
+
+/**
+ * The desktop ⋯ menu of an item row (`ItemRow.menu`, §10.5): the action rows of its sheet, in
+ * their order, each an item – disabled where the row is (Move Up on the first row, at .4),
+ * in the danger ink where the row is destructive – running the row's press. Rows of other
+ * kinds (a value to set) take the row out of the menu's form; a builder that has them keeps
+ * the item's dialog instead.
+ */
+export function itemMenuItems(row: ItemRow): RowMenuItem[] {
+  return allRows(row.sheet.groups).flatMap((r) =>
+    r.kind === 'action'
+      ? [
+          {
+            id: r.id,
+            label: r.label,
+            disabled: r.disabled,
+            danger: r.destructive,
+            onSelect: () => r.onPress?.()
+          }
+        ]
+      : []
+  )
 }
 
 /** An item row's one action as the desktop's trailing button (`ItemRow.action`, §10.5). */

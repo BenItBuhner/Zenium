@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import type { PageViewport } from '@shared/capture'
 import {
   INTERNAL_PAGES,
   pageForOverlayKind,
@@ -216,8 +217,13 @@ export interface HoverCardState {
   tabId: string | null
   /** The row's box, viewport coordinates: the card is start-aligned with it. */
   anchor: Rect | null
-  /** The sidebar's box: the card sits flush against its edge (gap 0). */
+  /**
+   * The box the rows live in: the sidebar's – the card sits flush against its inner edge (gap
+   * 0) – or, with the tabs along the caption band (§9.37), the band's: the card hangs under it.
+   */
   sidebar: Rect | null
+  /** The rows' axis: `x` for the strip along the band (the card under it), the sidebar's otherwise. */
+  axis?: 'x'
   /** What put it up: the pointer resting on the row, or keyboard focus landing on it. */
   by: 'pointer' | 'focus' | null
 }
@@ -447,6 +453,14 @@ export interface UiState {
   /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
   defaultBrowserPrompt: boolean
   /**
+   * The desktop's Web capture overlay (`components/capture/CaptureOverlay.tsx`) is up over the
+   * page's picture for `tabId`: the §9.5 scrim with the marquee's cut-out, the toolbar, then the
+   * result card. `viewport` is the page's geometry as the overlay opened (`page.viewport`), null
+   * when the host had none – the marquee is off then and only the visible area and the full
+   * page are offered. `seq` tells one opening from the next.
+   */
+  capture: { tabId: string; viewport: PageViewport | null; seq: number } | null
+  /**
    * The desktop's default-browser prompt has been asked for – "Make default" on the strip – and
    * says what the OS will do before the hand-off (`DefaultBrowserPrompt.tsx`): where it was
    * asked from, or null. `defaultBrowserPrompt` goes true once it is up over the page's picture.
@@ -470,9 +484,11 @@ export interface UiState {
    * a chrome control had the focus when it opened, so the page does not take it back on close.
    * A request only, as `translateSelection`: the popover holds the capture and the keyboard
    * itself (`useFloatingChrome`). With `pick` it is the empty pane's picker instead
-   * (`TabPickRequest`), hanging from the pane's button and holding no capture.
+   * (`TabPickRequest`), hanging from the pane's button and holding no capture. With `from`
+   * `'strip'` it was the horizontal strip's All tabs button (§9.37) that opened it, and the
+   * popover hangs from that button, end-aligned under the band.
    */
-  tabSearch: { keyboard: boolean; pick?: TabPickRequest } | null
+  tabSearch: { keyboard: boolean; pick?: TabPickRequest; from?: 'strip' } | null
   /**
    * The group editor bubble (tabs-13) is up beside a folder's header row in the sidebar.
    * `keyboard`: the header had the focus when it opened (Space or Enter, the folder menu from
@@ -599,6 +615,7 @@ export const uiStore = createStore<UiState>(
     tabsMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
+    capture: null,
     defaultBrowserAsk: null,
     install: null,
     mediaSheet: null,
@@ -1106,6 +1123,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
+    !ui.capture &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
     !ui.importDialog &&
@@ -1169,6 +1187,7 @@ export function invalidateSnapshot(): void {
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
+    !ui.capture &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
     !ui.importDialog &&
@@ -1870,6 +1889,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
+    ui.capture !== null ||
     ui.install !== null ||
     ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||

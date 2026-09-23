@@ -24,6 +24,7 @@ import { SecurityPrompts } from './security/SecurityPromptDialog'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
+import { CaptureLayer } from './capture/CaptureOverlay'
 import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
 import { InstallDialogLayer } from './install/InstallDialog'
 import { StarDialog } from './bookmarks/StarDialog'
@@ -70,7 +71,9 @@ const TAB_ICONS = [
  * password", `LeakWarnings`), the autofill prompts (save / update a login,
  * save an address or a card, choose a passkey account), the address and card editors of
  * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from
- * the chrome, the print preview (Chrome's constrained window at the frame's size) and, on
+ * the chrome, the print preview (Chrome's constrained window at the frame's size), the
+ * desktop's Web capture overlay (`CaptureLayer`: the dimmed page with the marquee, then the
+ * result card) and, on
  * phones, the media sheet the pill's Now playing chip opens (`MediaSheet`) and the long-screenshot
  * editor the screenshot card's Capture more opens (`LongScreenshotSheet`). The modal ones
  * render through the `FrameDialogHost` this mounts, so they centre
@@ -139,6 +142,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <LongScreenshotLayer />
       <InstallDialogLayer state={state} />
       <ScreenPickerLayer state={state} />
+      <CaptureLayer />
       <ShareLayer state={state} />
       <LeakWarnings state={state} />
       <AutofillPrompts state={state} />

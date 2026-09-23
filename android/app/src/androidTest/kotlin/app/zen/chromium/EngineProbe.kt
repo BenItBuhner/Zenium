@@ -7,6 +7,7 @@ import android.util.Log
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -32,6 +33,9 @@ import java.util.concurrent.TimeUnit
  *  - a reflection dump of the WebView, WebSettings, WebViewClient, WebChromeClient and
  *    androidx.webkit surfaces, and the (absence of) anything extension-related in them;
  *  - what loading a `chrome-extension://` URL does, and what `chrome` is inside a page;
+ *  - what a page can do with a `chrome-extension://<id>/...` subresource URL, request kind by
+ *    request kind, and whether `shouldInterceptRequest` sees such a request at all (the getURL
+ *    precondition, `extensionSchemeRequests`);
  *  - what an https origin served purely through `shouldInterceptRequest` can do: subresources,
  *    module scripts, fetch, sync XHR, 302 (subresource and top-level), Range, POST bodies, CORS
  *    between two intercepted origins, WebSocket, service worker registration, storage.
@@ -55,6 +59,7 @@ class EngineProbe {
             "providerFeatures" to ::providerFeatures,
             "reflection" to ::reflection,
             "chromeExtensionUrl" to ::chromeExtensionUrl,
+            "extensionSchemeRequests" to ::extensionSchemeRequests,
             "pageGlobals" to ::pageGlobals,
             "redirectResponse" to ::redirectResponse,
             "isolatedWorld" to ::isolatedWorld,
@@ -254,6 +259,166 @@ class EngineProbe {
         return result
     }
 
+    /**
+     * The getURL precondition (compat round 11): what this WebView does with a
+     * `chrome-extension://<id>/...` URL a page asks for by every means an extension has, and
+     * whether `shouldInterceptRequest` sees the request at all – or the WebView fails it first.
+     * Two documents stand in for the two places an extension's code runs: a web page (a content
+     * script's page; its script runs in a named world where the provider has them, as the
+     * runtime's content scripts do there, and in the main world) and a page on the served
+     * extension origin (an extension page). Zenium's tabs load web pages under
+     * MIXED_CONTENT_COMPATIBILITY_MODE and extension pages under MIXED_CONTENT_ALWAYS_ALLOW; the
+     * web page is measured under both, since a scheme the WebView has not registered as secure is
+     * mixed content for an https document and the mode alone may fail a request before it is made.
+     * Recorded per document: the page-side outcome of every request kind (fetch, no-cors fetch,
+     * XHR, img, classic script, module script, dynamic import, stylesheet, iframe), every
+     * `chrome-extension:` request the interceptor saw (the URL and scheme as handed over, its
+     * headers), every `shouldOverrideUrlLoading` and `onReceivedError` for one, and what
+     * `new URL(...).origin`, `location.origin` and a postMessage aimed at the
+     * `chrome-extension://` origin do.
+     */
+    private fun extensionSchemeRequests(): JSONObject {
+        val result = JSONObject()
+            .put("probeExtensionId", PROBE_EXT_ID)
+            .put("chromeExtensionBase", "chrome-extension://$PROBE_EXT_ID/")
+            .put("servedOrigin", "https://$PROBE_EXT_ID$ORIGIN_SUFFIX")
+        val worlds = WebViewFeature.isFeatureSupported(WebViewFeature.JS_INJECTION_IN_FRAME_AND_WORLD)
+        result.put("isolatedWorldsSupported", worlds)
+        val cases = mutableListOf(
+            SchemeCase("webPage-mainWorld-compatibilityMode", PROBE_PAGE_URL, WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE, isolatedWorld = false),
+            SchemeCase("webPage-mainWorld-alwaysAllow", PROBE_PAGE_URL, WebSettings.MIXED_CONTENT_ALWAYS_ALLOW, isolatedWorld = false),
+            SchemeCase("extensionPage-alwaysAllow", PROBE_EXT_PAGE_URL, WebSettings.MIXED_CONTENT_ALWAYS_ALLOW, isolatedWorld = false)
+        )
+        if (worlds) {
+            cases += SchemeCase("webPage-isolatedWorld-compatibilityMode", "$PROBE_PAGE_URL?world=isolated", WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE, isolatedWorld = true)
+            cases += SchemeCase("webPage-isolatedWorld-alwaysAllow", "$PROBE_PAGE_URL?world=isolated", WebSettings.MIXED_CONTENT_ALWAYS_ALLOW, isolatedWorld = true)
+        }
+        val measured = JSONObject()
+        for (case in cases) {
+            measured.put(case.name, runCatching { schemeCase(case) }.getOrElse { JSONObject().put("error", it.toString()) })
+        }
+        return result.put("cases", measured)
+    }
+
+    private class SchemeCase(val name: String, val url: String, val mixedContentMode: Int, val isolatedWorld: Boolean)
+
+    private fun schemeCase(case: SchemeCase): JSONObject {
+        val seen = JSONArray()
+        val overrides = JSONArray()
+        val errors = JSONArray()
+        val latch = CountDownLatch(1)
+        lateinit var view: WebView
+        instrumentation.runOnMainSync {
+            view = WebView(app)
+            view.settings.javaScriptEnabled = true
+            view.settings.domStorageEnabled = true
+            view.settings.mixedContentMode = case.mixedContentMode
+            if (case.isolatedWorld) {
+                val world = WebViewCompat.getExecutionWorld(view, "zenium-probe-scheme")
+                WebViewCompat.addJavaScriptOnEvent(
+                    view,
+                    "(function () { function run() { $SCHEME_PROBE_BODY } if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else run(); })();",
+                    WebViewCompat.INJECTION_EVENT_DOCUMENT_START,
+                    setOf("*"),
+                    world
+                )
+            }
+            view.webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse? =
+                    serveSchemeProbe(request, seen)
+
+                override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
+                    if (request.url.scheme == "chrome-extension") {
+                        synchronized(overrides) { overrides.put(JSONObject().put("url", request.url.toString()).put("mainFrame", request.isForMainFrame)) }
+                    }
+                    return false
+                }
+
+                override fun onReceivedError(v: WebView, request: WebResourceRequest, error: WebResourceError) {
+                    synchronized(errors) {
+                        errors.put(
+                            JSONObject().put("url", request.url.toString()).put("mainFrame", request.isForMainFrame)
+                                .put("errorCode", error.errorCode).put("description", error.description.toString())
+                        )
+                    }
+                }
+
+                override fun onPageFinished(v: WebView, url: String) { latch.countDown() }
+            }
+            view.loadUrl(case.url)
+        }
+        val result = JSONObject()
+            .put("document", case.url)
+            .put("mixedContentMode", mixedContentModeName(case.mixedContentMode))
+            .put("scriptWorld", if (case.isolatedWorld) "isolated" else "main")
+        result.put("pageFinished", latch.await(20, TimeUnit.SECONDS))
+        val deadline = System.currentTimeMillis() + 30_000
+        var page = "null"
+        while (System.currentTimeMillis() < deadline) {
+            page = evaluate(view, "document.documentElement.getAttribute('data-probe')")
+            if (page != "null" && page.contains("\"done\":true")) break
+            Thread.sleep(400)
+        }
+        result.put("page", runCatching { JSONObject(page) }.getOrElse { JSONObject().put("raw", page) })
+        synchronized(seen) { result.put("chromeExtensionRequestsSeenByInterceptor", JSONArray(seen.toString())) }
+        synchronized(overrides) { result.put("shouldOverrideUrlLoading", JSONArray(overrides.toString())) }
+        synchronized(errors) { result.put("onReceivedError", JSONArray(errors.toString())) }
+        instrumentation.runOnMainSync { view.destroy() }
+        return result
+    }
+
+    /**
+     * The scheme probe's interceptor: every `chrome-extension:` request is recorded as handed
+     * over and answered with the file it names (so a request that gets here can also be seen to
+     * be used: the script's attribute, the stylesheet's variable, the image's width); the two
+     * documents and the served-origin frame come from here as well.
+     */
+    private fun serveSchemeProbe(request: WebResourceRequest, seen: JSONArray): WebResourceResponse? {
+        val url = request.url
+        val path = url.path ?: "/"
+        if (url.scheme == "chrome-extension") {
+            synchronized(seen) {
+                val headers = JSONObject()
+                request.requestHeaders?.forEach { (name, value) -> headers.put(name, value) }
+                seen.put(
+                    JSONObject().put("url", url.toString()).put("scheme", url.scheme).put("host", url.host).put("path", path)
+                        .put("method", request.method).put("mainFrame", request.isForMainFrame).put("headers", headers)
+                )
+            }
+            if (url.host != PROBE_EXT_ID) return notFound()
+            return when (path) {
+                "/x.json" -> text("application/json", """{"ok":"chrome-extension"}""")
+                "/x.png" -> bytes("image/png", Base64.decode(PIXEL_PNG, Base64.DEFAULT))
+                "/x.js" -> text("text/javascript", "document.documentElement.setAttribute('data-classic', 'ran');")
+                "/x.mjs" -> text("text/javascript", "document.documentElement.setAttribute('data-module', 'ran'); export const value = 'dynamic';")
+                "/x.css" -> text("text/css", "html{--probe-css:served}")
+                "/frame.html" -> text("text/html", "<script>parent.postMessage('frame-ok', '*')</script>")
+                else -> notFound()
+            }
+        }
+        val host = url.host ?: return null
+        val extensionHost = "$PROBE_EXT_ID$ORIGIN_SUFFIX"
+        return when {
+            host == PROBE_PAGE_HOST && path == "/probe.html" -> text("text/html", schemeProbeDocument(inlineScript = url.getQueryParameter("world") != "isolated"))
+            host == extensionHost && path == "/probe.html" -> text("text/html", schemeProbeDocument(inlineScript = true))
+            host == extensionHost && path == "/frame.html" -> text("text/html", POST_MESSAGE_FRAME_HTML)
+            host == PROBE_PAGE_HOST || host == extensionHost -> notFound()
+            else -> null
+        }
+    }
+
+    private fun schemeProbeDocument(inlineScript: Boolean): String =
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>scheme-probe</title></head><body><p>probe</p>" +
+            (if (inlineScript) "<script>(function () { $SCHEME_PROBE_BODY })();</script>" else "") +
+            "</body></html>"
+
+    private fun mixedContentModeName(mode: Int): String = when (mode) {
+        WebSettings.MIXED_CONTENT_ALWAYS_ALLOW -> "MIXED_CONTENT_ALWAYS_ALLOW"
+        WebSettings.MIXED_CONTENT_NEVER_ALLOW -> "MIXED_CONTENT_NEVER_ALLOW"
+        WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE -> "MIXED_CONTENT_COMPATIBILITY_MODE"
+        else -> mode.toString()
+    }
+
     /** `chrome`, `browser` and the user agent as a plain page sees them. */
     private fun pageGlobals(): JSONObject {
         val (view, _) = loadAndWait("about:blank", null, 10)
@@ -415,6 +580,100 @@ class EngineProbe {
         private const val CHROME_EXTENSION_URL = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/manifest.json"
         private const val PIXEL_PNG =
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4v5/hPwAHqAOaHEfGcwAAAABJRU5ErkJggg=="
+
+        /** The scheme probe's stand-in extension (an id of Chrome's shape) and the two documents. */
+        private const val PROBE_EXT_ID = "abcdefghijklmnopabcdefghijklmnop"
+        private const val PROBE_PAGE_HOST = "probe-page.zenium.invalid"
+        private const val PROBE_PAGE_URL = "https://$PROBE_PAGE_HOST/probe.html"
+        private const val PROBE_EXT_PAGE_URL = "https://$PROBE_EXT_ID$ORIGIN_SUFFIX/probe.html"
+
+        /** The served-origin frame the postMessage step aims at: it announces itself and echoes what reaches it. */
+        private const val POST_MESSAGE_FRAME_HTML =
+            "<script>parent.postMessage('ready', '*'); window.addEventListener('message', function (e) { parent.postMessage({ echo: e.data, origin: e.origin }, '*'); });</script>"
+
+        /**
+         * The page side of the scheme probe (a function body; runs inline in the document or,
+         * deferred to DOMContentLoaded, in a named world). Every request kind aims at
+         * `chrome-extension://<id>/x.*`; the outcome of each is recorded on the document element
+         * (`data-probe`), which both worlds share, once every step has settled. A script the page
+         * runs sets a document attribute rather than a global, since a `<script>` element inserted
+         * from a named world runs in the main world.
+         */
+        private val SCHEME_PROBE_BODY = """
+            var ID = '$PROBE_EXT_ID';
+            var base = 'chrome-extension://' + ID + '/';
+            var served = 'https://' + ID + '$ORIGIN_SUFFIX';
+            var root = document.documentElement;
+            var r = { done: false, location: location.href, origin: location.origin, isSecureContext: isSecureContext, steps: {} };
+            function publish() { root.setAttribute('data-probe', JSON.stringify(r)); }
+            try { var u = new URL(base + 'x.json'); r.url = { href: u.href, origin: u.origin, protocol: u.protocol, host: u.host, pathname: u.pathname }; } catch (e) { r.url = 'error: ' + e.message; }
+            try { var a = document.createElement('a'); a.href = base + 'x.json'; r.anchor = { href: a.href, origin: a.origin, host: a.host, protocol: a.protocol }; } catch (e) { r.anchor = 'error: ' + e.message; }
+            function err(e) { return 'error: ' + (e && e.name ? e.name + ': ' : '') + (e && e.message ? e.message : String(e)); }
+            function bad(step) { return function (e) { r.steps[step] = { outcome: err(e) }; }; }
+            function element(step, make, after) {
+              return new Promise(function (res) {
+                var el = make();
+                var settled = false;
+                function done(v) { if (settled) return; settled = true; r.steps[step] = v; if (after) { try { after(v, el); } catch (e) { v.after = err(e); } } res(); }
+                el.onload = function () { done({ outcome: 'load' }); };
+                el.onerror = function () { done({ outcome: 'error' }); };
+                setTimeout(function () { done({ outcome: 'timeout' }); }, 8000);
+                (document.head || root).appendChild(el);
+              });
+            }
+            var steps = [
+              fetch(base + 'x.json?fetch').then(function (q) { return q.text().then(function (t) { r.steps.fetch = { outcome: 'response', status: q.status, type: q.type, body: t.slice(0, 40) }; }); }).catch(bad('fetch')),
+              fetch(base + 'x.json?nocors', { mode: 'no-cors' }).then(function (q) { r.steps.fetchNoCors = { outcome: 'response', status: q.status, type: q.type }; }).catch(bad('fetchNoCors')),
+              new Promise(function (res) {
+                var x = new XMLHttpRequest();
+                var settled = false;
+                function done(v) { if (settled) return; settled = true; r.steps.xhr = v; res(); }
+                try {
+                  x.open('GET', base + 'x.json?xhr');
+                  x.onload = function () { done({ outcome: 'load', status: x.status, body: String(x.responseText).slice(0, 40) }); };
+                  x.onerror = function () { done({ outcome: 'error', status: x.status }); };
+                  x.send();
+                  setTimeout(function () { done({ outcome: 'timeout', readyState: x.readyState, status: x.status }); }, 8000);
+                } catch (e) { done({ outcome: err(e) }); }
+              }),
+              element('image', function () { var img = document.createElement('img'); img.src = base + 'x.png?img'; return img; }, function (v, el) { v.naturalWidth = el.naturalWidth; }),
+              element('classicScript', function () { var s = document.createElement('script'); s.src = base + 'x.js?classic'; return s; }, function (v) { v.ran = root.getAttribute('data-classic') === 'ran'; }),
+              element('moduleScript', function () { var s = document.createElement('script'); s.type = 'module'; s.src = base + 'x.mjs?module'; return s; }, function (v) { v.ran = root.getAttribute('data-module') === 'ran'; }),
+              import(base + 'x.mjs?dynamic').then(function (m) { r.steps.dynamicImport = { outcome: 'module', value: m.value }; }).catch(bad('dynamicImport')),
+              element('stylesheet', function () { var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = base + 'x.css?css'; return l; }, function (v) { v.applied = getComputedStyle(root).getPropertyValue('--probe-css').trim(); }),
+              new Promise(function (res) {
+                var settled = false;
+                function done(v) { if (settled) return; settled = true; r.steps.iframe = v; res(); }
+                window.addEventListener('message', function (e) { if (e.data === 'frame-ok') done({ outcome: 'frame-ok', frameOrigin: e.origin }); });
+                var f = document.createElement('iframe');
+                f.onload = function () { setTimeout(function () { done({ outcome: 'load-without-message' }); }, 1500); };
+                f.src = base + 'frame.html?frame';
+                setTimeout(function () { done({ outcome: 'timeout' }); }, 8000);
+                root.appendChild(f);
+              }),
+              new Promise(function (res) {
+                var pm = r.steps.postMessage = { echoes: [] };
+                var settled = false;
+                function done() { if (settled) return; settled = true; res(); }
+                var f = document.createElement('iframe');
+                window.addEventListener('message', function (e) {
+                  if (e.source !== f.contentWindow) return;
+                  if (e.data === 'ready') {
+                    pm.frameOrigin = e.origin;
+                    try { f.contentWindow.postMessage('to-chrome-extension-origin', base.slice(0, -1)); pm.chromeExtensionTargetOrigin = 'posted'; } catch (e1) { pm.chromeExtensionTargetOrigin = err(e1); }
+                    try { f.contentWindow.postMessage('to-served-origin', served); pm.servedTargetOrigin = 'posted'; } catch (e2) { pm.servedTargetOrigin = err(e2); }
+                    setTimeout(done, 2500);
+                  } else if (e.data && e.data.echo) {
+                    pm.echoes.push({ echo: e.data.echo, senderOriginAsTheFrameSawIt: e.data.origin });
+                  }
+                });
+                f.src = served + '/frame.html?pm';
+                setTimeout(done, 8000);
+                root.appendChild(f);
+              })
+            ];
+            Promise.allSettled(steps).then(function () { r.done = true; publish(); });
+        """.trimIndent()
         private val INDEX_HTML = """
             <!doctype html><html><head><meta charset="utf-8">
             <link rel="stylesheet" href="/style.css">

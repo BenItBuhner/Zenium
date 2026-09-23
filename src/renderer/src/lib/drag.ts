@@ -7,6 +7,7 @@ import { VelocityTracker } from './motion/velocity'
 import { gapCentre, slideOffsets, slotAt, slotKey, type Span } from './reorder'
 import { activeTab, tabTitle } from './selectors'
 import { createStore } from './store'
+import { STRIP_TEAR_PAST } from './tabStripLayout'
 import {
   browserStore,
   captureActiveTab,
@@ -33,6 +34,11 @@ import {
  * Zenium window under the pointer or into a new one there. The core follows the drag across
  * windows; a window hovered by a drag from another window gets `tab.dragOver` and shows the
  * same ghost, caret and sliding rows for it (`remoteDragOver`).
+ *
+ * With the tabs along the caption band (design language v2 §9.37) the same session runs with
+ * its axis turned: slots are read left to right off the strip's rows, the caret stands upright
+ * in the gap, the region autoscrolls at its left and right edges, and a tab pulled 16 past the
+ * band tears off.
  */
 export type GhostKind = 'row' | 'into' | 'tearoff'
 
@@ -61,12 +67,15 @@ const REMOTE_GRAB = { dx: 24, dy: 18 }
 
 type Caret = CaretPlacement
 
+/** The axis a list's rows are laid along: the sidebar's column, or the strip along the band (§9.37). */
+type Axis = 'x' | 'y'
+
 type DropTarget =
   /**
    * A slot of a tab list, read off the rows' geometry: the lifted row's own list (its hole is
    * `liftedAt` among the others) or another list here (pinned from regular, a remote drag, a
    * tile from Essentials; `liftedAt` is then the count, a hole past the end). The rows slide on
-   * that list's motion to open the gap.
+   * that list's motion to open the gap; `land` is where the ghost's top-left glides to on a drop.
    */
   | {
       kind: 'slot'
@@ -75,6 +84,7 @@ type DropTarget =
       index: number
       liftedAt: number
       caret: Caret
+      land: { x: number; y: number }
       motion: SlideMotion
       rows: HTMLElement[]
       shift: number
@@ -101,7 +111,13 @@ interface Session {
   motion: SlideMotion | null
   /** The list whose rows are slid open right now, own or not. */
   slid: SlideMotion | null
-  sidebar: HTMLElement | null
+  /**
+   * The chrome the tab rows live in, where a drag is this window's own (`inSidebar`): the
+   * sidebar; with the tabs along the caption band (§9.37) the band and the rail beside the frame.
+   */
+  chrome: HTMLElement[]
+  /** The strip's band when the rows run along it: past it by `STRIP_TEAR_PAST` the tab tears off. */
+  band: HTMLElement | null
   /** The content viewport (`data-tear-zone`): the page the split targets show over. */
   page: HTMLElement | null
   /** Pointer offset inside the picked-up row and the row's size: the ghost keeps both. */
@@ -321,6 +337,22 @@ function listOf(rowEl: HTMLElement): HTMLElement | null {
   return rowEl.closest<HTMLElement>('[data-split-row]')?.parentElement ?? rowEl.parentElement
 }
 
+/**
+ * The chrome a drag counts as this window's own: the sidebar the row sits in – or, with the
+ * tabs along the caption band (§9.37), the band and the rail beside the frame, whichever the
+ * row (a strip tab, a rail tile) came from; a remote drag (no row) takes what the window shows.
+ */
+function rowsChrome(rowEl: HTMLElement | null): Pick<Session, 'chrome' | 'band'> {
+  const band =
+    rowEl?.closest<HTMLElement>('[data-tab-strip]') ??
+    document.querySelector<HTMLElement>('[data-tab-strip]')
+  const aside = rowEl?.closest<HTMLElement>('aside') ?? document.querySelector<HTMLElement>('aside')
+  const chrome: HTMLElement[] = []
+  if (aside) chrome.push(aside)
+  if (band) chrome.push(band)
+  return { chrome, band }
+}
+
 function begin(tab: Tab, rowEl: HTMLElement, startX: number, startY: number): void {
   if (session) end(session, false)
   const rect = rowEl.getBoundingClientRect()
@@ -336,7 +368,7 @@ function begin(tab: Tab, rowEl: HTMLElement, startX: number, startY: number): vo
     scroller,
     motion,
     slid: null,
-    sidebar: rowEl.closest<HTMLElement>('aside'),
+    ...rowsChrome(rowEl),
     page: pageViewport(),
     dx: startX - rect.left,
     dy: startY - rect.top,
@@ -392,7 +424,7 @@ function beginRemote(over: TabDragOver): void {
     scroller,
     motion,
     slid: null,
-    sidebar: document.querySelector<HTMLElement>('aside'),
+    ...rowsChrome(rowEl),
     page: pageViewport(),
     dx: REMOTE_GRAB.dx,
     dy: REMOTE_GRAB.dy,
@@ -438,7 +470,7 @@ function drop(s: Session, x: number, y: number): void {
       run('tab.dragEnd', { tabId: s.tabId, x, y, outcome: 'cancel' })
       hideCaret()
       // The ghost glides into the gap its neighbours opened; the row shows there once it landed.
-      settle(s, { x: target.caret.x - 8, y: target.caret.y - s.height / 2 }, true)
+      settle(s, target.land, true)
       return
     }
     case 'key':
@@ -556,19 +588,28 @@ function ownRect(s: Session): DOMRect | null {
   )
 }
 
-function inSidebar(s: Session, x: number, y: number): boolean {
-  const r = s.sidebar?.getBoundingClientRect()
+function within(el: HTMLElement | null | undefined, x: number, y: number): boolean {
+  const r = el?.getBoundingClientRect()
   return Boolean(r && x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+}
+
+function inSidebar(s: Session, x: number, y: number): boolean {
+  return s.chrome.some((el) => within(el, x, y))
 }
 
 /**
  * The zones that take room of their own (an empty Essentials grid's "Drop here") are offered
- * once the pointer is in the sidebar above the tab panel, where nothing under it can shift.
+ * once the pointer is in the sidebar above the tab panel, where nothing under it can shift –
+ * or anywhere in the rail beside the frame, which holds no tab panel (§9.37).
  */
 function offerZones(s: Session, x: number, y: number): void {
-  if (dropStore.get().zones || !inSidebar(s, x, y)) return
-  const panel = s.scroller?.getBoundingClientRect()
-  if (panel && y < panel.top) dropStore.set({ zones: true })
+  if (dropStore.get().zones) return
+  const aside = s.chrome.find((el) => el.matches('aside'))
+  if (!aside || !within(aside, x, y) || !s.scroller) return
+  const above = aside.contains(s.scroller)
+    ? y < s.scroller.getBoundingClientRect().top
+    : Boolean(s.band?.contains(s.scroller))
+  if (above) dropStore.set({ zones: true })
 }
 
 /** The content viewport the split targets show over; the page is what tears a tab off. */
@@ -630,6 +671,17 @@ function resolve(x: number, y: number, s: Session): DropTarget {
     return { kind: 'key', key, caret: null, into: true }
   }
   if (under?.closest('[data-tear-zone]')) return tearOff(s)
+  // A tab of the strip pulled down past the band (§9.37: 16 past it) leaves the window – over
+  // the toolbar row, the bookmarks bar, whatever lies there that is no target of its own. Not
+  // over the rail: that is the window's chrome still, its zones on offer, and a release there
+  // sends the row home like the sidebar's empty space does.
+  if (
+    s.band &&
+    s.band.contains(s.scroller) &&
+    y > s.band.getBoundingClientRect().bottom + STRIP_TEAR_PAST &&
+    !inSidebar(s, x, y)
+  )
+    return tearOff(s)
   return { kind: 'none' }
 }
 
@@ -639,12 +691,31 @@ function tearOff(s: Session): DropTarget {
 }
 
 /**
+ * A box read along a list's axis: `start` / `end` along it (top / bottom of a row in a column,
+ * left / right of a tab along the strip), `cross` / `size` across it.
+ */
+interface AxisBox {
+  start: number
+  end: number
+  cross: number
+  size: number
+}
+
+function along(r: DOMRect, axis: Axis): AxisBox {
+  return axis === 'y'
+    ? { start: r.top, end: r.bottom, cross: r.left, size: r.width }
+    : { start: r.left, end: r.right, cross: r.top, size: r.height }
+}
+
+/**
  * The slot of `list` under the pointer, read off the rows as drawn, not hit-tested: the pointer
  * over the gap the neighbours opened must keep resolving to that gap. When the lifted row is one
  * of the rows its slot is the hole; otherwise the hole is past the end and the incoming row is
  * as tall as the list's rows. The band runs from the first row to the last; for the regular
  * list it reaches down to the end of the scroller, so the empty space under the rows means
- * "after the last one".
+ * "after the last one". Read along the list's axis (`motion.axis`): the sidebar's column, or
+ * the strip along the caption band (§9.37) where the same rules run left to right and the
+ * caret stands upright in the gap.
  */
 function resolveSlot(
   x: number,
@@ -653,6 +724,9 @@ function resolveSlot(
   list: HTMLElement,
   motion: SlideMotion
 ): DropTarget | null {
+  const axis = motion.axis
+  const pointer = axis === 'y' ? y : x
+  const across = axis === 'y' ? x : y
   const rows = listRows(list)
   // A split group's row stands under its anchor's id but is not the hole a lifted segment left:
   // the row stays, with the segment's slot open in it, and the segment lands like a row from
@@ -663,57 +737,70 @@ function resolveSlot(
   if (!ownEl && others.length === 0) return null
   const liftedAt = ownEl ? rows.indexOf(ownEl) : others.length
   const spans: Span[] = others.map((r) => {
-    const rr = motion.restingRect(r.dataset.tabId ?? '') ?? r.getBoundingClientRect()
-    return { start: rr.top, end: rr.bottom }
+    const rr = along(motion.restingRect(r.dataset.tabId ?? '') ?? r.getBoundingClientRect(), axis)
+    return { start: rr.start, end: rr.end }
   })
-  const gap = rowGap(list)
-  const band = list.getBoundingClientRect()
-  let own: Span & { left: number; width: number }
+  const gap = rowGap(list, axis)
+  const band = along(list.getBoundingClientRect(), axis)
+  let own: AxisBox
   if (ownEl) {
-    const r = motion.restingRect(s.tabId) ?? ownEl.getBoundingClientRect()
-    own = { start: r.top, end: r.bottom, left: r.left, width: r.width }
+    own = along(motion.restingRect(s.tabId) ?? ownEl.getBoundingClientRect(), axis)
   } else {
-    // The virtual hole after the last row, one row tall.
-    const last = spans[spans.length - 1] ?? { start: band.top, end: band.top }
+    // The virtual hole after the last row, one row long.
+    const last = spans[spans.length - 1] ?? { start: band.start, end: band.start }
     const sample = others[others.length - 1]?.getBoundingClientRect()
-    const height = sample?.height ?? s.height
+    const length = sample ? along(sample, axis).end - along(sample, axis).start : s.height
     const start = last.end + gap
-    own = { start, end: start + height, left: band.left, width: band.width }
+    own = { start, end: start + length, cross: band.cross, size: band.size }
   }
-  const top = Math.min(own.start, spans[0]?.start ?? own.start)
-  let bottom = Math.max(own.end, spans[spans.length - 1]?.end ?? own.end)
+  const first = Math.min(own.start, spans[0]?.start ?? own.start)
+  let last = Math.max(own.end, spans[spans.length - 1]?.end ?? own.end)
   const scroller = list.closest<HTMLElement>('[data-tab-scroller]')
   if (list.dataset.tabList === 'regular' && scroller)
-    bottom = Math.max(bottom, scroller.getBoundingClientRect().bottom)
-  if (x < band.left || x > band.right || y < top || y > bottom) return null
+    last = Math.max(last, along(scroller.getBoundingClientRect(), axis).end)
+  if (across < band.cross || across > band.cross + band.size || pointer < first || pointer > last)
+    return null
   const mids = others.map((r) => {
-    const v = motion.visualRect(r.dataset.tabId ?? '') ?? r.getBoundingClientRect()
-    return (v.top + v.bottom) / 2
+    const v = along(motion.visualRect(r.dataset.tabId ?? '') ?? r.getBoundingClientRect(), axis)
+    return (v.start + v.end) / 2
   })
-  const index = slotAt(y, mids)
+  const index = slotAt(pointer, mids)
   const ids = others.map((r) => r.dataset.tabId ?? '')
   const named = slotKey(ids, liftedAt, index)
   // A row from elsewhere never "stays": past the end it lands after the last row – unless the
   // slot is named by the lifted tab itself (the split row it anchors), which is its own.
   const key = named.key
   const stay = ownEl ? named.stay : Boolean(key?.startsWith(`tab:${s.tabId}:`))
-  const cy = gapCentre(liftedAt, index, spans, own)
+  const centre = gapCentre(liftedAt, index, spans, own)
+  // The caret in the gap, inset from the row's ends (8 along a column's row; 4 along the
+  // strip's 32 row, the Essentials grid's upright caret), and where the ghost lands: its slot's
+  // start edge, centred on the gap along the axis.
+  const caret: Caret =
+    axis === 'y'
+      ? { x: own.cross + 8, y: centre, width: own.size - 16 }
+      : { axis: 'x', x: centre, y: own.cross + 4, height: own.size - 8 }
+  const land =
+    axis === 'y'
+      ? { x: own.cross, y: centre - s.height / 2 }
+      : { x: centre - s.width / 2, y: own.cross }
   return {
     kind: 'slot',
     key,
     stay,
     index,
     liftedAt,
-    caret: { x: own.left + 8, y: cy, width: own.width - 16 },
+    caret,
+    land,
     motion,
     rows: others,
     shift: own.end - own.start + gap
   }
 }
 
-function rowGap(list: HTMLElement | null): number {
+function rowGap(list: HTMLElement | null, axis: Axis = 'y'): number {
   if (!list) return 0
-  return parseFloat(getComputedStyle(list).rowGap) || 0
+  const style = getComputedStyle(list)
+  return parseFloat(axis === 'y' ? style.rowGap : style.columnGap) || 0
 }
 
 // ---------------------------------------------------------------------------
@@ -780,11 +867,14 @@ function scheduleAutoscroll(s: Session): void {
     const el = s.scroller
     if (el) {
       const { x, y } = s.pointer
-      const step = autoscrollStep(el.getBoundingClientRect(), x, y)
+      const axis: Axis = s.motion?.axis ?? 'y'
+      const step = autoscrollStep(el.getBoundingClientRect(), x, y, axis)
       if (step !== 0) {
-        const before = el.scrollTop
-        el.scrollTop += step
-        if (el.scrollTop !== before) apply(resolve(x, y, s), s)
+        const before = axis === 'y' ? el.scrollTop : el.scrollLeft
+        if (axis === 'y') el.scrollTop += step
+        else el.scrollLeft += step
+        const after = axis === 'y' ? el.scrollTop : el.scrollLeft
+        if (after !== before) apply(resolve(x, y, s), s)
       }
     }
     s.frame = requestAnimationFrame(tick)
