@@ -53,6 +53,7 @@ import {
 } from '../../shared/fonts'
 import { defer } from '../../core/platform'
 import { standinScale } from '../../shared/pageStandin'
+import type { PageViewport } from '../../shared/capture'
 import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
 import type { PdfRenderOptions } from '../../shared/print'
 import type {
@@ -77,6 +78,7 @@ import type {
 } from '../../core/platform'
 import type { SessionManager } from './sessions'
 import { downloadDir } from './downloads'
+import { uniquePath } from './uniquePath'
 import { frameById, frameIdOf } from './extensionApi/frames'
 import type { ElectronWindow } from './window'
 
@@ -1040,7 +1042,8 @@ export class ElectronTabView implements TabView {
         if (image.isEmpty()) return null
         png = nativeImage.createFromBuffer(image.toPNG()).toPNG()
       }
-      const filePath = join(downloadDir(), fileName)
+      // Two screenshots in one second keep both files (`… (1).png`), as a download would.
+      const filePath = uniquePath(downloadDir(), fileName)
       await writeFile(filePath, png)
       return filePath
     } catch {
@@ -1413,42 +1416,79 @@ export class ElectronTabView implements TabView {
   /**
    * Full-page and region captures go through the DevTools protocol (`captureBeyondViewport`
    * paints what is scrolled out of view); the viewport uses the cheaper `capturePage`. When the
-   * debugger cannot be attached (DevTools already open) regions fall back to cropping the
-   * viewport paint.
+   * debugger cannot be attached (DevTools already open), the paint fails, or the session is an
+   * extension's (`pageDebugger.ts`: `captureBeyondViewport` sets and clears a device-metrics
+   * override, which would clobber the extension's own, so such a page is left to it), a full
+   * page or region falls back to cropping the viewport paint and the answer says so
+   * (`fallback: 'viewport'`).
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
     const wc = this.wc
     if (wc.isDestroyed()) return null
     const format = options.format
     const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
+    let fallback: AgentCapture['fallback']
     if (options.mode !== 'viewport') {
-      try {
-        return await this.captureWithDevtools(options, mimeType)
-      } catch {
-        /* fall through to capturePage */
+      if (!hasForeignDebuggerOwner(wc.id)) {
+        try {
+          return await this.captureWithDevtools(options, mimeType)
+        } catch {
+          /* fall through to capturePage */
+        }
       }
+      fallback = 'viewport'
     }
     try {
       let image = await wc.capturePage()
       if (image.isEmpty()) return null
       if (options.mode === 'region' && options.region) {
-        // capturePage works in DIPs relative to the view: CSS px × zoom, minus the scroll offset.
-        const zoom = wc.getZoomFactor()
-        const scroll = (await wc
-          .executeJavaScript('({x: window.scrollX, y: window.scrollY})', true)
-          .catch(() => ({ x: 0, y: 0 }))) as { x: number; y: number }
+        // `capturePage` hands the device pixels over as a 1x bitmap: the region's CSS px, minus
+        // the scroll offset, times the page's device pixel ratio (the display's scale times the
+        // zoom – `window.devicePixelRatio` carries both).
+        const geometry = await this.viewport()
+        const scroll = geometry ?? { scrollX: 0, scrollY: 0 }
+        const ratio = geometry?.devicePixelRatio ?? wc.getZoomFactor()
         const size = image.getSize()
         const r = options.region
-        const x = Math.max(0, Math.round((r.x - scroll.x) * zoom))
-        const y = Math.max(0, Math.round((r.y - scroll.y) * zoom))
-        const width = Math.min(size.width - x, Math.round(r.width * zoom))
-        const height = Math.min(size.height - y, Math.round(r.height * zoom))
+        const x = Math.max(0, Math.round((r.x - scroll.scrollX) * ratio))
+        const y = Math.max(0, Math.round((r.y - scroll.scrollY) * ratio))
+        const width = Math.min(size.width - x, Math.round(r.width * ratio))
+        const height = Math.min(size.height - y, Math.round(r.height * ratio))
         if (width <= 0 || height <= 0) return null
         image = image.crop({ x, y, width, height })
       }
       const size = image.getSize()
       const buffer = format === 'png' ? image.toPNG() : image.toJPEG(75)
-      return { data: buffer.toString('base64'), mimeType, width: size.width, height: size.height }
+      const result: AgentCapture = {
+        data: buffer.toString('base64'),
+        mimeType,
+        width: size.width,
+        height: size.height
+      }
+      if (fallback) result.fallback = fallback
+      return result
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * The page's geometry for the chrome's capture overlay (`shared/capture.ts`): read in the
+   * isolated world (the page sees no script of ours), with the zoom factor from the engine.
+   * `window.devicePixelRatio` in a Chromium page is the display's scale times the page zoom,
+   * so it is the device pixels per page CSS pixel as `capturePage`'s bitmap has them. A page
+   * that has not finished loading holds script evaluation until it has: an unanswered read
+   * within `VIEWPORT_TIMEOUT_MS` counts as no geometry.
+   */
+  async viewport(): Promise<PageViewport | null> {
+    const wc = this.wc
+    if (wc.isDestroyed()) return null
+    try {
+      const raw = await Promise.race([
+        wc.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: VIEWPORT_SCRIPT }], true),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), VIEWPORT_TIMEOUT_MS))
+      ])
+      return pageViewportFrom(raw, wc.getZoomFactor())
     } catch {
       return null
     }
@@ -1566,6 +1606,62 @@ export function fullPagePaint(
   return {
     scale: z,
     maxHeight: Math.max(1, Math.min(MAX_CAPTURE_HEIGHT, Math.floor(MAX_CAPTURE_PIXELS / (z * d))))
+  }
+}
+
+/** A page that has not finished loading holds script evaluation; the geometry read gives up after this. */
+const VIEWPORT_TIMEOUT_MS = 1500
+
+/**
+ * The page's geometry, read in the isolated world: the layout viewport's scroll offset and
+ * size, `devicePixelRatio` (the display's scale times the page zoom in a Chromium page) and the
+ * document's scrollable size (the larger of the root's and the body's, never smaller than the
+ * viewport). One expression, so a single evaluation answers it.
+ */
+const VIEWPORT_SCRIPT = `(function () {
+  var d = document.documentElement, b = document.body
+  return {
+    sx: window.scrollX, sy: window.scrollY,
+    vw: window.innerWidth, vh: window.innerHeight,
+    dpr: window.devicePixelRatio,
+    dw: Math.max(d ? d.scrollWidth : 0, b ? b.scrollWidth : 0, window.innerWidth),
+    dh: Math.max(d ? d.scrollHeight : 0, b ? b.scrollHeight : 0, window.innerHeight)
+  }
+})()`
+
+/**
+ * `VIEWPORT_SCRIPT`'s answer as the chrome's `PageViewport`, with the engine's zoom factor
+ * (the page cannot read its own). Null for anything but a full answer with finite numbers – a
+ * page that did not answer in time, a view with no document – and null too for a viewport
+ * of no size (a view not yet laid out), which nothing could be captured from.
+ */
+export function pageViewportFrom(raw: unknown, zoom: number): PageViewport | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const num = (key: string): number | null => {
+    const v = r[key]
+    return typeof v === 'number' && Number.isFinite(v) ? v : null
+  }
+  const sx = num('sx')
+  const sy = num('sy')
+  const vw = num('vw')
+  const vh = num('vh')
+  const dpr = num('dpr')
+  const dw = num('dw')
+  const dh = num('dh')
+  if (sx === null || sy === null || vw === null || vh === null || dw === null || dh === null)
+    return null
+  if (!(vw > 0) || !(vh > 0)) return null
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  return {
+    scrollX: Math.max(0, sx),
+    scrollY: Math.max(0, sy),
+    width: vw,
+    height: vh,
+    zoom: z,
+    devicePixelRatio: dpr !== null && dpr > 0 ? dpr : z,
+    documentWidth: Math.max(dw, vw),
+    documentHeight: Math.max(dh, vh)
   }
 }
 
