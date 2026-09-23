@@ -109,7 +109,8 @@ export function Sidebar({
   // the rail and the frame staying put. The `<aside>` keeps the rail's 56 in the window's row
   // throughout; what it holds sits in a box of its own (`flyoutRef`) that the spring widens from
   // the rail's 56 to the rail plus the panel, its surface drawn from the rail's edge (main.css:
-  // the frame's shadow rule, its hairline in the rail's last column – the cascade's 1 px overlap),
+  // the frame's shadow rule, its edge in the rail's last column – the cascade's 1 px overlap –
+  // its own ring clipped off that edge so the shared pixel keeps the frame's one hairline),
   // so the flyout's rows are the rail's rows – the same elements, the same y, each running across
   // the seam with its glyph in the rail's tile and its title in the panel. A touch screen has no
   // pointer to rest and no flyout; the compact-mode reveal (`floating`) is its own surface.

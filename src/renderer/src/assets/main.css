@@ -1783,11 +1783,17 @@
    * variable) to the box's far edge, on the window's own gradient (`--zen-bg`, fixed to the
    * viewport so the stretch it paints is the very stretch the window would paint there) under
    * the window's grain, with the frame's shadow rule (§9.20, `--zen-frame-shadow`) at its
-   * edges: a 1 px spread outside the surface, so the flyout's hairline stands in the rail's
-   * LAST column – the column the frame's own hairline stands in at rest, the frame beginning
-   * where the rail ends – overlapping the rail by that 1 px, the two hairlines sharing the
-   * pixel (the cascade's rule). The surface runs the window's full height, so the shadow's top
-   * and bottom fall outside the window, where the root's `overflow: hidden` clips them. It is
+   * edges: a 1 px spread outside the surface, so the flyout's edge falls in the rail's LAST
+   * column – the column the frame's own hairline stands in at rest, the frame beginning where
+   * the rail ends – overlapping the rail by that 1 px, the parent's hairline and the child's
+   * sharing the pixel (the cascade's rule). The shared pixel draws ONE hairline at one alpha:
+   * the surface's own ring and its 14 px fall are clipped off its START edge (`clip-path`: 0
+   * on the rail's side, a generous negative on the three free sides so nothing of the shadow
+   * is cut there) – stacked, the two .08 rings would read ≈ .154, the heaviest line in the
+   * window, and §9.20 says the child's ring is clipped off the shared edge, not stacked on the
+   * parent's. The far edge keeps its hairline and fall over the page's picture. The surface
+   * runs the window's full height, so the shadow's top and bottom fall outside the window,
+   * where the root's `overflow: hidden` clips them (the clip's slack there is moot). It is
    * the window's chrome, not a panel: no radius, no blur, no border. Above the frame at 40 with
    * the compact sidebar's reveal, under the hover card (80) and the chrome layer's popovers and
    * menus (100), which its rows raise. `data-flyout-rows` is the Sidebar's mark that the rows
@@ -1809,11 +1815,13 @@
     background: var(--zen-bg);
     background-attachment: fixed;
     box-shadow: var(--zen-frame-shadow);
+    clip-path: inset(-24px -24px -24px 0);
     transition: background 600ms var(--zen-ease);
     pointer-events: none;
   }
   .zen-rail-flyout[data-flyout-rows][data-side='right']::before {
     inset: 0 var(--zen-rail-rest) 0 0;
+    clip-path: inset(-24px 0 -24px -24px);
   }
   .zen-rail-flyout[data-flyout-rows] > .zen-texture {
     left: var(--zen-rail-rest);

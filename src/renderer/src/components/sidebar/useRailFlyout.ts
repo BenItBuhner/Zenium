@@ -77,9 +77,10 @@ export interface RailFlyoutOptions {
  * out with no dwell and holds it while the focus stays inside.
  *
  * The cascade's placement (§9.20, main.css's `.zen-rail-flyout` rules): the flyout's surface
- * begins at the rail's edge with the frame's own shadow rule, so its hairline stands in the
- * rail's last column – the column the frame's hairline stands in at rest – overlapping the rail
- * by that 1 px, the two hairlines sharing the pixel; the rows run across the seam, one element
+ * begins at the rail's edge with the frame's own shadow rule, its edge in the rail's last column
+ * – the column the frame's hairline stands in at rest – overlapping the rail by that 1 px, the
+ * surface's own ring clipped off that shared edge so the pixel draws the frame's one hairline
+ * at one alpha, not two rings stacked; the rows run across the seam, one element
  * each, the glyph in the rail's tile where the compact row drew it and the title in the panel,
  * so the flyout is start-aligned to the row that opened it by construction (nothing moves under
  * the pointer); and that row keeps its lit fill in the rail while the flyout stands

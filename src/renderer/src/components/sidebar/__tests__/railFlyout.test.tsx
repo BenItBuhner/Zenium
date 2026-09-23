@@ -364,23 +364,28 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     expect(aside().hasAttribute('data-flyout-offered')).toBe(false)
   })
 
-  it('is the cascade’s surface (§9.20): the panel from the rail’s edge on the window’s own gradient fixed to the viewport, the frame’s shadow rule spreading its hairline 1 px into the rail, at 40, the title cut while the width moves', () => {
+  it('is the cascade’s surface (§9.20): the panel from the rail’s edge on the window’s own gradient fixed to the viewport, the frame’s shadow rule with its ring clipped off the shared edge – one hairline at one alpha – at 40, the title cut while the width moves', () => {
     expect(rule('.zen-rail-flyout[data-flyout-rows]')).toContain('z-index: 40')
     // The box itself draws nothing: the panel's surface is its ::before, beginning at the
-    // rail's width – so the shadow's 1 px spread lands in the rail's last column, the frame's
-    // own hairline column at rest.
+    // rail's width – its 1 px spread would land in the rail's last column, the frame's own
+    // hairline column at rest, and stack the two .08 rings into ≈ .154 there; the clip cuts
+    // the surface's ring and its fall off the START edge alone (0 on the rail's side, slack on
+    // the three free sides beyond the 14 px blur), so the shared pixel keeps the frame's one
+    // hairline and the far edge keeps its own.
     const surface = rule('.zen-rail-flyout[data-flyout-rows]::before')
     expect(surface).toContain('inset: 0 0 0 var(--zen-rail-rest)')
     expect(surface).toContain('background: var(--zen-bg)')
     expect(surface).toContain('background-attachment: fixed')
     expect(surface).toContain('box-shadow: var(--zen-frame-shadow)')
+    expect(surface).toContain('clip-path: inset(-24px -24px -24px 0)')
     expect(surface).toContain('z-index: -1')
     expect(css).toMatch(
       /--zen-frame-shadow:\s*0 0 0 1px rgb\(var\(--zen-fg-rgb\) \/ 0\.08\), 0 2px 14px rgb\(0 0 0 \/ 0\.08\)/
     )
-    expect(rule(".zen-rail-flyout[data-flyout-rows][data-side='right']::before")).toContain(
-      'inset: 0 var(--zen-rail-rest) 0 0'
-    )
+    // The right-hand pose mirrors both: the surface's inset and the clipped END edge.
+    const right = rule(".zen-rail-flyout[data-flyout-rows][data-side='right']::before")
+    expect(right).toContain('inset: 0 var(--zen-rail-rest) 0 0')
+    expect(right).toContain('clip-path: inset(-24px 0 -24px -24px)')
     const grain = rule('.zen-rail-flyout[data-flyout-rows] > .zen-texture')
     expect(grain).toContain('left: var(--zen-rail-rest)')
     expect(grain).toContain('background-attachment: fixed')
