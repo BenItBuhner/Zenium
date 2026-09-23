@@ -60,6 +60,8 @@ object BlinkTrace {
     const val PAINT = "Paint"
     const val STYLE_RECALC = "UpdateLayoutTree"
     const val LAYER_UPDATE = "UpdateLayer"
+    /** The category of a `performance.mark()`'s trace event. */
+    const val USER_TIMING = "blink.user_timing"
     val SCRIPT: Set<String> = setOf("FunctionCall", "EvaluateScript")
     /**
      * V8 compiling: a script's (`v8.compile`) and, with `disabled-by-default-v8.compile` on, the
@@ -169,7 +171,14 @@ object BlinkTrace {
         /** The window's length, ms – the trace's own span when the whole trace was read. */
         val windowMs: Double,
         /** The whole trace was read: no window was given, or the window held no main-thread event. */
-        val whole: Boolean
+        val whole: Boolean,
+        /**
+         * The window's user timing marks (`performance.mark()`, category `blink.user_timing`) by
+         * name, every thread: what a driver planted to be counted – the Android platform's
+         * `fonts.apply` mark, one per commit of the fonts (the ± ruling's "exactly one per
+         * sequence in the trace"). Empty when none was in the window.
+         */
+        val marks: Map<String, Int> = emptyMap()
     ) {
         /** `count` per frame – per one frame when the trace saw none, so a count without frames still reads. */
         fun perFrame(count: Int): Double = count.toDouble() / max(frames, 1)
@@ -214,6 +223,14 @@ object BlinkTrace {
             sb.append(",\"threads\":").append(threads)
             sb.append(",\"windowMs\":").append(FrameStats.number(windowMs, 1))
             sb.append(",\"whole\":").append(whole)
+            if (marks.isNotEmpty()) {
+                sb.append(",\"marks\":{")
+                marks.entries.forEachIndexed { i, (name, count) ->
+                    if (i > 0) sb.append(',')
+                    sb.append(FrameStats.quote(name)).append(':').append(count)
+                }
+                sb.append('}')
+            }
             return sb.append("}").toString()
         }
 
@@ -239,6 +256,9 @@ object BlinkTrace {
             if (compileMs >= 0.5) sb.append(" (compiling ").append(f0(compileMs)).append(")")
             sb.append(", style ").append(f0(styleRecalcMs)).append(", layout ").append(f0(layoutMs))
                 .append(", paint ").append(f0(paintMs)).append(" ms")
+            if (marks.isNotEmpty()) {
+                sb.append("; marks ").append(marks.entries.joinToString(", ") { (name, count) -> "$name ×$count" })
+            }
             return sb.toString()
         }
     }
@@ -323,6 +343,7 @@ object BlinkTrace {
 
     private fun read(reader: Reader, window: Window?): Pass {
         val threads = LinkedHashMap<Long, ThreadAcc>()
+        val marks = LinkedHashMap<String, Int>()
         var everything = 0
         val json = Json(reader as? BufferedReader ?: BufferedReader(reader, 1 shl 16))
         try {
@@ -359,6 +380,12 @@ object BlinkTrace {
                     "I", "i", "R", "n" -> {
                         thread.events++
                         if (name == FRAME_INSTANT) thread.frameInstants++
+                        // A `performance.mark()`: `R` on today's Chromium, `I` on older ones. Its
+                        // category list is the one word, or holds it.
+                        val cat = event["cat"] as? String
+                        if (cat != null && (cat == USER_TIMING || cat.split(',').contains(USER_TIMING))) {
+                            marks[name] = (marks[name] ?: 0) + 1
+                        }
                     }
                 }
             }
@@ -378,7 +405,7 @@ object BlinkTrace {
                 Reading(
                     found = false, thread = null, frames = 0, frameMs = null, busyMs = 0.0, scriptMs = 0.0,
                     layoutCount = 0, paintCount = 0, styleRecalcCount = 0, layerChurn = 0, longTasks = 0, longestTaskMs = 0.0,
-                    events = 0, threads = threads.size, windowMs = windowMs, whole = window == null
+                    events = 0, threads = threads.size, windowMs = windowMs, whole = window == null, marks = marks
                 ),
                 everything
             )
@@ -423,7 +450,8 @@ object BlinkTrace {
                 events = t.events,
                 threads = threads.size,
                 windowMs = windowMs,
-                whole = window == null
+                whole = window == null,
+                marks = marks
             ),
             t.everything
         )

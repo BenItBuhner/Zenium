@@ -66,7 +66,10 @@ import java.io.File
  * scenes – the colour scheme picker's open and the pick that closes it
  * (`colour-scheme-picker-open` / `-pick`), the two runs of step presses
  * (`font-size-step-presses`, `minimum-font-size-step-presses`, `gesture`: the fingers on the +
- * in turn, each step applied as it lands), the font picker's open and pick
+ * in turn, each stepping the row's own value, the sequence committed once when it is quiet –
+ * the Android performance gate's ruling, [stepPresses]: at most three long tasks over the whole
+ * sequence, exactly one `fonts.apply` in its trace, the value moved on every press), the font
+ * picker's open and pick
  * (`font-family-picker-open` / `-pick`), the language row's item sheet open and its Move Up
  * (`language-item-sheet-open` / `-move-up`), Add language's page open and the pick that leaves
  * it (`add-language-page-open` / `-pick`), the Text preferences sheet's open and its close on a
@@ -576,8 +579,9 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         beat()
 
         // Font size: three presses on the row's + (16 -> 17 -> 18 -> 20 px). Each press steps
-        // the ladder once and is applied at once (§10.4: the zoom block's stepper rule), and the
-        // open article's body text follows.
+        // the row's own value and the preview; the sequence commits once when it is quiet (the
+        // ruling's coalescing, 150 ms after the last step), and the open article's body text
+        // follows the one commit.
         val sizeTook = stepPresses(FONT_SIZE_ROW_ID, FONT_SIZE_ROW, FONT_SIZE_PRESSES, "font-size-step-presses") {
             fonts().optInt("size") == 20
         }
@@ -591,8 +595,9 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         SystemClock.sleep(600)
         snap("customise-fonts-size-20")
 
-        // Minimum font size: seven presses to 12 px (none, 6, 7 … 12). The article's 11 px small
-        // print is lifted to 12.
+        // Minimum font size: seven presses to 12 px (none, 6, 7 … 12), one commit for the seven
+        // (run 7's seven commits, one per press, is what the ruling forbids). The article's 11 px
+        // small print is lifted to 12.
         awaitRow(MINIMUM_FONT_SIZE_ROW_ID, MINIMUM_FONT_SIZE_ROW)
         SystemClock.sleep(600)
         val minimumTook = stepPresses(MINIMUM_FONT_SIZE_ROW_ID, MINIMUM_FONT_SIZE_ROW, MINIMUM_FONT_SIZE_PRESSES, "minimum-font-size-step-presses") {
@@ -663,12 +668,25 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
     /**
      * `presses` fingers in turn on the + of the ± row `rowId` (its label `label`; the button is
-     * named "Increase `label`", §10.4): each press steps the ladder once and is applied at once
-     * – the row's value and the core's setting follow each finger, no release to wait for. The
-     * `gesture` scene named `scene`, the fingers [STEP_PRESS_GAP_MS] apart (well under the hold
-     * that would start the button repeating); the button is placed before the clock starts
-     * ([controlPoint]: the tree's node named for it, else the document's box – the tree's range
-     * node for the track, when it has one, is noted). `took` is the claim polled after the block.
+     * named "Increase `label`", §10.4), the `gesture` scene named `scene`. The Android
+     * performance gate's ruling for #350's final run: a press sequence is ONE gesture scene with
+     * the gesture budget's three long tasks for the whole of it, hold-repeat included, and the
+     * row meets it by coalescing – each press steps the row's own value and the preview (a state
+     * update and a label), and the commit (`settings.update`, the core's broadcast, the host's
+     * `fonts.apply`, every page's restyle) runs ONCE per quiet sequence, 150 ms after the last
+     * step or the hold's end. The fingers land [STEP_PRESS_GAP_MS] apart – about 100 ms down to
+     * down, the hold's own repeat interval, inside the quiet window – so the sequence is one.
+     *
+     * Three claims are made on the scene beside the budget's, the ruling's: at most three long
+     * tasks over the whole sequence (the trace's count, `trace.longTasks`); exactly one
+     * `fonts.apply` in the trace (the Android platform plants `performance.mark('fonts.apply')`
+     * before it sends the command, a `blink.user_timing` event [BlinkTrace] counts by name, and
+     * the chrome document's own timeline is read on both sides of the block as a second witness);
+     * and the row's value moved on every press (a `MutationObserver` on the row's value label,
+     * planted before the clock starts and read after it: one new value per press, the last the
+     * row's). The button is placed before the clock starts ([controlPoint]: the tree's node
+     * named for it, else the document's box – the tree's range node for the track, when it has
+     * one, is noted). `took` is the claim polled after the block.
      */
     private fun stepPresses(rowId: String, label: String, presses: Int, scene: String, took: () -> Boolean): Boolean {
         val name = "Increase $label"
@@ -679,14 +697,57 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             check("the $rowId row's + button is on screen to touch", false)
             return false
         }
-        Log.i(tag, "± row $rowId: $presses fingers on '$name' at ${plus.x},${plus.y}")
-        return scene(scene, JankBudget.Kind.GESTURE, timeoutMs = 8_000, took = took) {
+        val before = sliderValue(rowId)
+        val appliesBefore = fontsApplyMarks()
+        val observing = chromeString(observeValueJs(rowId))
+        Log.i(tag, "± row $rowId: $presses fingers on '$name' at ${plus.x},${plus.y}, ${STEP_PRESS_GAP_MS} ms between; value $before; observer: $observing; fonts.apply marks so far: $appliesBefore")
+        val measured = traceFrames(scene, JankBudget.Kind.GESTURE) {
             repeat(presses) { i ->
                 if (i > 0) SystemClock.sleep(STEP_PRESS_GAP_MS)
                 Finger().tap(plus)
             }
+            SystemClock.sleep(MOTION_MS)
         }
+        val tookIt = poll(8_000, took)
+        val moves = chromeJson(READ_VALUE_MOVES_JS)
+        val values = moves.optJSONArray("values")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+        val times = moves.optJSONArray("times")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+        val appliesAfter = fontsApplyMarks()
+        val applied = if (appliesBefore >= 0 && appliesAfter >= 0) appliesAfter - appliesBefore else -1
+        val trace = measured.trace
+        val longTasks = trace?.longTasks
+        val marked = trace?.marks?.get("fonts.apply") ?: 0
+        val after = sliderValue(rowId)
+        finding(
+            "  the sequence ($scene): $presses presses, ${STEP_PRESS_GAP_MS} ms between; the value moved $before -> ${values.joinToString(" -> ").ifEmpty { "(no move seen)" }} (at ${times.joinToString(", ")} ms of the chrome's clock), reads $after after; " +
+                "long tasks over the whole sequence: ${longTasks ?: "no trace (${measured.traceMissing})"} (budget ${JankBudget.GESTURE_BUDGET.longTasks}); " +
+                "fonts.apply in the trace: $marked; in the chrome's timeline: ${if (applied >= 0) applied else "unread"}"
+        )
+        check("$scene: at most ${JankBudget.GESTURE_BUDGET.longTasks} long tasks over the whole press sequence (the ruling: one gesture scene, no per-press budget)", longTasks != null && longTasks <= JankBudget.GESTURE_BUDGET.longTasks)
+        check("$scene: exactly one fonts.apply per sequence in the trace (the commit coalesced: one settings.update, one broadcast, one host apply)", marked == 1 && (applied < 0 || applied == 1))
+        check("$scene: the row's value moved on every press ($presses new values, each a step on from the last)", values.size == presses && values.distinct().size == presses && values.none { it == before } && values.lastOrNull() == after)
+        return tookIt
     }
+
+    /**
+     * How many `fonts.apply` marks the chrome document's performance timeline holds (the Android
+     * platform's `performance.mark` before each `fonts.apply` it sends); -1 when the chrome did
+     * not answer.
+     */
+    private fun fontsApplyMarks(): Int = chromeJs("performance.getEntriesByName('fonts.apply').length").trim().toIntOrNull() ?: -1
+
+    /**
+     * Plant a `MutationObserver` on the ± row's value label that records each new text with the
+     * chrome's clock (`performance.now()`, ms) – nothing else runs in the chrome for it, so the
+     * scene stays the fingers' – and answer with what the label reads; [READ_VALUE_MOVES_JS]
+     * reads the record and stops the observer.
+     */
+    private fun observeValueJs(rowId: String): String =
+        "(function(){var el=document.querySelector('[data-row=\"$rowId\"] .zen-settings-slider-value');if(!el)return 'no value label';" +
+            "if(window.__zenStepRecord&&window.__zenStepRecord.stop)window.__zenStepRecord.stop();" +
+            "var last=(el.textContent||'').trim();var rec=window.__zenStepRecord={from:last,values:[],times:[]};" +
+            "var mo=new MutationObserver(function(){var v=(el.textContent||'').trim();if(v!==last){last=v;rec.values.push(v);rec.times.push(Math.round(performance.now()))}});" +
+            "mo.observe(el,{childList:true,characterData:true,subtree:true});rec.stop=function(){mo.disconnect()};return 'observing '+last})()"
 
     // --- 3. CT-23 back, and Reset fonts -----------------------------------------------------------------
 
@@ -1482,11 +1543,19 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
          */
         private const val FONT_SIZE_PRESSES = 3
         private const val MINIMUM_FONT_SIZE_PRESSES = 7
-        /** Between two fingers on a step button: past the row's ripple, well under the 400 ms hold that starts the button repeating. */
-        private const val STEP_PRESS_GAP_MS = 350L
+        /**
+         * Between a finger's lift and the next finger on a step button: with the tap's 60 ms
+         * down, about 100 ms down to down – the hold's own repeat interval, inside the row's
+         * 150 ms quiet window, so the sequence commits once (the ruling); well under the 400 ms
+         * hold that starts the button repeating.
+         */
+        private const val STEP_PRESS_GAP_MS = 40L
         private val WORKING = setOf("detecting", "downloading", "translating")
         /** What a measured scene's block gives the motion after the finger (or the back). */
         private const val MOTION_MS = 3_000L
+        /** The record [observeValueJs] keeps, as JSON (`from`, `values`, `times`), the observer stopped. */
+        private const val READ_VALUE_MOVES_JS =
+            "(function(){var r=window.__zenStepRecord;if(!r)return '{}';if(r.stop)r.stop();return JSON.stringify({from:r.from,values:r.values,times:r.times})})()"
 
         private const val SCHEME_JS = "matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'"
         private const val BODY_FONT_SIZE_JS = "getComputedStyle(document.body).fontSize"

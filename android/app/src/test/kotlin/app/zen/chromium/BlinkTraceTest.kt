@@ -221,6 +221,32 @@ class BlinkTraceTest {
     }
 
     @Test
+    fun `user timing marks are counted by name in the window, on any thread - R or I, the category alone or in a list - and absent from the JSON without any`() {
+        val mark = { tid: Int, ts: Long, ph: String, name: String, cat: String ->
+            """{"pid":1,"tid":$tid,"ts":$ts,"ph":"$ph","cat":"$cat","name":"$name","s":"t","args":"__stripped__"}"""
+        }
+        val text = "[" + listOf(
+            event(7, 1_000, "X", BlinkTrace.FRAME, 8_000),
+            mark(7, 1_500, "R", "fonts.apply", BlinkTrace.USER_TIMING), // the platform's mark, on the main thread
+            mark(7, 1_600, "I", "fonts.apply", "blink.user_timing,rail"), // an older Chromium's phase, a category list
+            mark(9, 1_700, "R", "probe:touchstart:w0", BlinkTrace.USER_TIMING), // another thread: counted all the same
+            mark(7, 1_800, "R", "fonts.apply", "blink"), // not a user timing event, whatever its name
+            mark(7, 9_000, "R", "fonts.apply", BlinkTrace.USER_TIMING) // past the window
+        ).joinToString(",") + "]"
+        val reading = BlinkTrace.parse(text, Window(0, 5_000))
+        assertEquals(mapOf("fonts.apply" to 2, "probe:touchstart:w0" to 1), reading.marks)
+        assertTrue(reading.toJson(), reading.toJson().endsWith(",\"marks\":{\"fonts.apply\":2,\"probe:touchstart:w0\":1}}"))
+        assertEquals(2, JSONObject(reading.toJson()).getJSONObject("marks").getInt("fonts.apply"))
+        assertTrue(reading.describe(), reading.describe().endsWith("; marks fonts.apply ×2, probe:touchstart:w0 ×1"))
+        // The whole trace: the late mark counts too.
+        assertEquals(3, BlinkTrace.parse(text).marks["fonts.apply"])
+        // No mark in the trace: no key, no line.
+        assertTrue(scene.marks.isEmpty())
+        assertFalse(scene.toJson(), scene.toJson().contains("marks"))
+        assertFalse(scene.describe(), scene.describe().contains("marks"))
+    }
+
+    @Test
     fun `a trace with frames as instants alone counts them, with no main-thread time`() {
         val text = "[" + listOf(
             event(3, 100, "I", BlinkTrace.FRAME_INSTANT),
