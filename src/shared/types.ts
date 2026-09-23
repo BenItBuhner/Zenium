@@ -3187,8 +3187,24 @@ export interface PageDialogResponse {
 export interface WindowPrompt {
   id: string
   kind: 'close-tabs' | 'quit'
-  /** How many tabs close. */
+  /**
+   * How many tabs close, for the warning about them ("You are about to quit with N tabs open");
+   * 0 when that warning is not part of the question – a single tab, or the setting off – and the
+   * downloads alone are asked about.
+   */
   count: number
+  /**
+   * The downloads in progress the answer ends (downloads-35): every one when Zenium quits – the
+   * quit itself, or the last window closing where that quits – the private ones when the last
+   * private window closes. Null when none is running. One prompt carries both questions.
+   */
+  downloads: WindowPromptDownloads | null
+}
+
+/** The downloads a window prompt asks about, and what ends them. */
+export interface WindowPromptDownloads {
+  count: number
+  end: 'quit' | 'private-window'
 }
 
 /** The last run ended without a clean shutdown; the chrome offers to bring its pages back. */

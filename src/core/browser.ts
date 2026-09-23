@@ -25,7 +25,8 @@ import type {
   Tab,
   TabSection,
   WindowChrome,
-  WindowKind
+  WindowKind,
+  WindowPromptDownloads
 } from '../shared/types'
 import { CONTENT_SETTINGS } from '../shared/contentSettings'
 import { BrowserState, type PersistedWindow } from './state'
@@ -829,11 +830,40 @@ export class Browser {
 
   private async confirmWindowClose(win: ZenWindow): Promise<boolean> {
     const count = this.tabs.closingTabCount(win)
-    if (this.state.settings.warnOnCloseWindow && count > 1) {
-      if (!(await this.windowPrompts.ask(win, 'close-tabs', count))) return false
+    const warnTabs = this.state.settings.warnOnCloseWindow && count > 1
+    const downloads = this.downloadsEndedByClosing(win)
+    if (warnTabs || downloads) {
+      const asked = await this.windowPrompts.ask(win, 'close-tabs', warnTabs ? count : 0, downloads)
+      if (!asked) return false
     }
     if (this.quitting) return true
     return this.confirmUnloadAll(this.tabs.viewsClosingWith(win), [win])
+  }
+
+  /**
+   * The downloads in progress that closing `win` would end (downloads-35, Chrome's "Download is
+   * in progress" on the last window): every one when it is the last window and closing it quits
+   * (every desktop but macOS, where the app stays up without a window), the private ones when it
+   * is the last private window (the private session ends with it, and its transfers with the
+   * session). Null when none would.
+   */
+  private downloadsEndedByClosing(win: ZenWindow): WindowPromptDownloads | null {
+    const others = this.allWindows().filter((w) => w !== win)
+    if (others.length === 0 && this.state.platform !== 'darwin') return this.downloadsEndedByQuit()
+    if (win.isPrivate && !others.some((w) => w.isPrivate)) {
+      const count = this.downloads.activeCount({ private: true })
+      return count > 0 ? { count, end: 'private-window' } : null
+    }
+    return null
+  }
+
+  /**
+   * The downloads in progress that quitting would end – every one that is running: the private
+   * ones for good, the others parked as interrupted by `shutdown` to be resumed next launch.
+   */
+  private downloadsEndedByQuit(): WindowPromptDownloads | null {
+    const count = this.downloads.activeCount()
+    return count > 0 ? { count, end: 'quit' } : null
   }
 
   /**
@@ -894,8 +924,12 @@ export class Browser {
     if (windows.length === 0) return true
     const win = from?.alive ? from : this.focusedWindow()
     const count = this.tabs.openTabCount()
-    if (this.state.settings.warnOnCloseWindow && count > 1) {
-      if (!(await this.windowPrompts.ask(win, 'quit', count))) return false
+    const warnTabs = this.state.settings.warnOnCloseWindow && count > 1
+    // The downloads a quit ends are asked about in the same prompt as the tabs (downloads-35).
+    const downloads = this.downloadsEndedByQuit()
+    if (warnTabs || downloads) {
+      if (!(await this.windowPrompts.ask(win, 'quit', warnTabs ? count : 0, downloads)))
+        return false
     }
     if (this.quitting) return true
     const tabIds = windows.flatMap((w) => [...this.tabs.viewsOwnedBy(w).keys()])

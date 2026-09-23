@@ -5,14 +5,16 @@ import { run } from '@renderer/lib/api'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
+import { windowPromptText } from '@renderer/lib/windowPrompt'
 import { wrapTab } from '../bookmarks/popover'
 import { useEscapeTrap } from '../bookmarks/escape'
 
 /**
  * The questions the core asks about the window as a whole before it closes ("Close N tabs?")
- * or Zenium quits ("Quit Zenium?"): one at a time per window, over the page's picture, in the
- * middle of the content frame through TabDialogs' `FrameDialogHost` (whose scrim dims the frame
- * only, §9.5). The answer goes back to the flow that asked, which then goes on or stops.
+ * or Zenium quits ("Quit Zenium?"), and about the downloads the answer would end (downloads-35):
+ * one at a time per window, over the page's picture, in the middle of the content frame through
+ * TabDialogs' `FrameDialogHost` (whose scrim dims the frame only, §9.5). The answer goes back to
+ * the flow that asked, which then goes on or stops.
  */
 export function WindowPromptDialog({ state }: { state: UIState }): JSX.Element | null {
   const prompt = state.window.prompt
@@ -24,9 +26,11 @@ export function WindowPromptDialog({ state }: { state: UIState }): JSX.Element |
 const SNAPSHOT_WAIT_MS = 250
 
 /**
- * A v2 dialog (draft §9.23): title, one line of description, a checkbox that turns the warning
- * off for good (Firefox's), Cancel and one primary button. Enter accepts, Escape and the scrim
- * cancel, Tab wraps, focus starts on the primary (§9.22).
+ * A v2 dialog (draft §9.23): title, one line of description, a checkbox that turns the tabs
+ * warning off for good (Firefox's), Cancel and one primary button. The download question, when
+ * it comes with the tabs warning, is a body line between the title block and the checkbox; alone
+ * it is the description and the checkbox stays away (nothing about the tabs is asked). Enter
+ * accepts, Escape and the scrim cancel, Tab wraps, focus starts on the primary (§9.22).
  */
 function WindowPromptView({
   prompt,
@@ -71,19 +75,19 @@ function WindowPromptView({
   useEscapeTrap(true, cancel)
   useFrameDialog({ onScrimPress: cancel })
 
-  const quit = prompt.kind === 'quit'
-  const n = prompt.count
-  const tabs = n === 1 ? '1 tab' : `${n} tabs`
+  const text = windowPromptText(prompt)
   const titleId = `zen-window-prompt-title-${prompt.id}`
   const descId = `zen-window-prompt-desc-${prompt.id}`
+  const downloadsId = `zen-window-prompt-downloads-${prompt.id}`
   return (
     <div
       ref={dialogRef}
       role="alertdialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      aria-describedby={descId}
+      aria-describedby={text.downloadLine ? `${descId} ${downloadsId}` : descId}
       data-window-prompt={prompt.kind}
+      data-downloads={prompt.downloads?.count}
       className="zen-animate-pop zen-bm-dialog flex max-w-[calc(100%-24px)] flex-col"
       style={{ width: POPOVER_WIDTH.form }}
       onMouseDown={(e) => e.stopPropagation()}
@@ -91,12 +95,10 @@ function WindowPromptView({
     >
       <div className="zen-bm-title-block">
         <h2 id={titleId} className="zen-bm-title">
-          {quit ? 'Quit Zenium?' : `Close ${tabs}?`}
+          {text.title}
         </h2>
         <p id={descId} className="zen-bm-title-desc">
-          {quit
-            ? `You are about to quit with ${tabs} open.`
-            : `You are about to close this window and its ${tabs}.`}
+          {text.description}
         </p>
       </div>
       <form
@@ -106,21 +108,28 @@ function WindowPromptView({
           respond(true)
         }}
       >
-        <label className="flex items-center gap-2 text-[13px]">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-[var(--v2-accent)]"
-            checked={keepWarning}
-            onChange={(e) => setKeepWarning(e.target.checked)}
-          />
-          Warn before closing a window with multiple tabs
-        </label>
+        {text.downloadLine && (
+          <p id={downloadsId} className="text-[15px] leading-5 text-[var(--v2-text)]">
+            {text.downloadLine}
+          </p>
+        )}
+        {text.tabsWarning && (
+          <label className="flex items-center gap-2 text-[13px]">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-[var(--v2-accent)]"
+              checked={keepWarning}
+              onChange={(e) => setKeepWarning(e.target.checked)}
+            />
+            Warn before closing a window with multiple tabs
+          </label>
+        )}
         <div className="zen-bm-footer justify-end">
           <button type="button" className="zen-button" onClick={cancel}>
             Cancel
           </button>
           <button ref={acceptRef} type="submit" className="zen-button" data-variant="primary">
-            {quit ? 'Quit' : 'Close tabs'}
+            {text.verb}
           </button>
         </div>
       </form>
