@@ -746,13 +746,14 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * [DRAG_OUT_CARRY_MS]; the rest there, [DRAG_OUT_REST_MS] (the stand-in takes the slot on
      * the dwell, the group has lost its last card, its shell dissolves with the finger down);
      * the lift; the drop's landing in what is left of [LEAVE_SETTLE_MS]. Two looks at the boxes
-     * ([leaveBox]): [LEAVE_PEEK_MS] into the rest – the shell's top against the card's, the cells'
-     * `translateY` (the rows below held at one offset, the loose card on its own) – and
-     * [DRAG_OUT_GLIDE_PEEK_MS] in – the frame gone, every cell below the same way along on the
-     * one glide (placed against the pane, the row under the group was at 0 already and the rows
-     * further down still on their way: the two waves). Afterwards the tab is loose (its folder
-     * none) and the group's empty shell gone; [dismissLeaveGroup] closes the tab and deletes the
-     * folder.
+     * ([leaveBox], [standIn]): [LEAVE_PEEK_MS] into the rest – the shell's top against the card's,
+     * the cells' `translateY` (the rows below held at one offset; the dropped card's own cell,
+     * the stand-in under the ghost, gliding from inside the group to the slot it took – the one
+     * cell [describeLeave] counts as moving with the frame's shrink) – and [DRAG_OUT_GLIDE_PEEK_MS]
+     * in – the frame gone, every cell below the same way along on the one glide (placed against
+     * the pane, the row under the group was at 0 already and the rows further down still on
+     * their way: the two waves). Afterwards the tab is loose (its folder none) and the group's
+     * empty shell gone; [dismissLeaveGroup] closes the tab and deletes the folder.
      */
     private fun dragOutScene() {
         val folderId = coreInvoke(
@@ -808,16 +809,17 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             scene("overview-group-leave-drag-out", JankBudget.Kind.SPRING, profile = true) {
                 f.moveBy(dx, dy, DRAG_OUT_CARRY_MS)
                 SystemClock.sleep(LEAVE_PEEK_MS)
-                peek = leaveBox(folderId)
+                peek = "${leaveBox(folderId)}; the dropped card's stand-in ${standIn(tabId)}"
                 SystemClock.sleep(DRAG_OUT_GLIDE_PEEK_MS - LEAVE_PEEK_MS)
-                glidePeek = leaveBox(folderId)
+                glidePeek = "${leaveBox(folderId)}; the dropped card's stand-in ${standIn(tabId)}"
                 SystemClock.sleep(DRAG_OUT_REST_MS - DRAG_OUT_GLIDE_PEEK_MS)
                 f.up()
                 SystemClock.sleep(LEAVE_SETTLE_MS - DRAG_OUT_CARRY_MS - DRAG_OUT_REST_MS)
             }
             finding(
                 "overview-group-leave-drag-out: the ghost $ghost on the press, carried ${dx.roundToInt()}, ${dy.roundToInt()} px to the slot; ${cardsInGrid()} cards in the grid; " +
-                    "the $DISSOLVE_GROUP_NAME group ${leaveGroupState(folderId)}; its card ${tabFolder(tabId)}; $LEAVE_PEEK_MS ms into the rest: $peek; $DRAG_OUT_GLIDE_PEEK_MS ms in: $glidePeek; ${leaveLine()}"
+                    "the $DISSOLVE_GROUP_NAME group ${leaveGroupState(folderId)}; its card ${tabFolder(tabId)}; $LEAVE_PEEK_MS ms into the rest: $peek; $DRAG_OUT_GLIDE_PEEK_MS ms in: $glidePeek; ${leaveLine()} " +
+                    "(a cell moving with the frame's shrink here is the dropped card's stand-in on its own glide into the slot it took, the tracker's, not the leave's hold: the rows below stand at their one offset meanwhile)"
             )
             SystemClock.sleep(FOLD_REST_MS)
             closeOverview()
@@ -864,6 +866,20 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
 
     /** `up, <transform>` when the lift's ghost stands over the grid (the long press fired), `none` otherwise. */
     private fun liftGhost(): String = jsString("(function(){var g=document.querySelector('.zen-overview-ghost');return g?'up, '+(g.style.transform||'no transform'):'none'})()")
+
+    /**
+     * The dropped card's own cell in the grid – the stand-in under the ghost while the finger is
+     * down (`OverviewCard` at 0.35 opacity; 0 once dropping), gliding from where the card stood
+     * inside the group to the slot it took on the dwell, on the tracker's glide, not the leave's
+     * hold – its `translateY` and opacity, and whether it is still inside the group's shell. The
+     * one cell [describeLeave] counts as moving with the frame's shrink in the drag-out: the rows
+     * below stand at their one offset meanwhile.
+     */
+    private fun standIn(tabId: String): String = jsString(
+        "(function(){var c=document.querySelector('.zen-overview-grid [data-cell=${JSONObject.quote(tabId)}]');if(!c)return 'no cell of its own';" +
+            "var tf=c.style.transform,k=tf.indexOf(','),y=k<0?0:Math.round(parseFloat(tf.slice(k+1))*10)/10,card=c.querySelector('.zen-overview-card');" +
+            "return 'translateY '+y+', opacity '+(card&&card.style.opacity!==''?card.style.opacity:'1')+(c.closest('.zen-group')?', still inside the group':'')})()"
+    )
 
     /** Where the core has a tab: `loose (no folder)`, `in folder <id>`, or `closed`. */
     private fun tabFolder(tabId: String): String {
