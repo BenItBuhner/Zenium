@@ -910,4 +910,66 @@ describe('the site-information sheet lists the chips as rows', () => {
     expect(glyph.classList.contains('text-[var(--v2-danger)]')).toBe(true)
     expect(block.textContent).toContain('Not secure')
   })
+
+  /*
+   * The title block's line under the host names what is wrong with a failed certificate, never
+   * its issuer: an invalid certificate's issuer offered like a credential says nothing true. The
+   * issuer stays where the certificate is described – the Connection level's detail.
+   */
+  it('names the certificate’s fault under the host, not its issuer, which the Connection level’s detail keeps', async () => {
+    const issuer = 'COMODO RSA Domain Validation Secure Server CA'
+    const failed = tab('https://expired.badssl.com/', {
+      certificateError: {
+        code: -201,
+        url: 'https://expired.badssl.com/',
+        certificate: {
+          subjectName: '*.badssl.com',
+          issuerName: issuer,
+          validStart: 1_427_846_400_000,
+          validExpiry: 1_428_883_200_000,
+          fingerprint: 'sha256/abc'
+        },
+        bypassed: true
+      }
+    })
+    await open(state(failed))
+    const block = document.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    expect(block.querySelector('p')!.textContent).toBe('Not secure · Certificate expired')
+    expect(block.textContent).not.toContain(issuer)
+    const items = (): HTMLElement[] =>
+      Array.from(document.querySelectorAll<HTMLElement>('.zen-sheet .zen-sheet-item'))
+    const connection = items().find((el) =>
+      el.getAttribute('aria-label')?.startsWith('Connection')
+    )!
+    act(() => connection.click())
+    await vi.waitFor(() => {
+      const issued = Array.from(document.querySelectorAll<HTMLElement>('.zen-sheet *')).find(
+        (el) => el.children.length === 0 && el.textContent === issuer
+      )
+      expect(issued).not.toBeUndefined()
+    })
+  })
+
+  it('the fault follows the code: the wrong site for a name mismatch', async () => {
+    const mismatch = tab('https://wrong.host.badssl.com/', {
+      certificateError: {
+        code: -200,
+        url: 'https://wrong.host.badssl.com/',
+        certificate: null,
+        bypassed: false
+      }
+    })
+    await open(state(mismatch))
+    expect(document.querySelector('.zen-sheet-title-block p')!.textContent).toBe(
+      'Not secure · Certificate not valid for this site'
+    )
+  })
+
+  it('the fault reads off the failed load’s code alone when the core reports no more: not trusted for an unknown authority', async () => {
+    const untrusted = tab('https://self-signed.badssl.com/', { errorCode: -202 })
+    await open(state(untrusted))
+    expect(document.querySelector('.zen-sheet-title-block p')!.textContent).toBe(
+      'Not secure · Certificate not trusted'
+    )
+  })
 })

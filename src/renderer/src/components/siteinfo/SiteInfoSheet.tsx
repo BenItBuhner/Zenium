@@ -28,6 +28,7 @@ import type { Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import {
   certificateErrorDetail,
+  certificateFault,
   cookieBytes,
   describeSite,
   formatBytes,
@@ -177,6 +178,11 @@ interface Security {
   certificate: SiteCertificate | null
   /** The certificate failed verification and the connection reports as not secure. */
   certificateError: boolean
+  /**
+   * What is wrong with the certificate, in a word or two, for the title block's line under the
+   * host ("Certificate expired"); only on a certificate error, whose issuer the line never names.
+   */
+  fault?: string
 }
 
 /**
@@ -232,7 +238,10 @@ function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Sec
           ? `${certificateErrorDetail(error)} ${describeNetError(error.code, '')}`.trim()
           : 'The certificate this site sent could not be verified.',
         certificate: cert,
-        certificateError: true
+        certificateError: true,
+        // The fault by the error's code, or by the failed load's when the core reported the code
+        // alone; the certificate's dates tell expired from not yet valid.
+        fault: certificateFault(error?.code ?? tab.errorCode, error?.certificate ?? null)
       }
     case 'dangerous':
       return {
@@ -749,9 +758,12 @@ function SheetTitle({
     tab.containerId !== DEFAULT_CONTAINER_ID && tab.containerId !== PRIVATE_CONTAINER_ID
       ? state.containers.find((c) => c.id === tab.containerId)?.name
       : undefined
+  // Under the verdict, who vouches for a valid certificate – or, when the certificate failed
+  // verification, what is wrong with it: an invalid certificate's issuer is no credential to
+  // offer here (the Connection level's certificate detail still lists it).
   const line = [
     extension ? extensionPageLine(extension) : security.short,
-    security.certificate?.issuer || null,
+    security.fault ?? (security.certificate?.issuer || null),
     container
   ].filter((p): p is string => Boolean(p))
   return (

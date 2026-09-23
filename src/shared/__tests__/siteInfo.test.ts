@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   certificateErrorDetail,
+  certificateFault,
   cookieBytes,
   cookieHosts,
   describeSite,
@@ -194,6 +195,33 @@ describe('certificate errors in site information', () => {
     expect(certificateErrorDetail({ ...error, bypassed: true })).toContain(
       'proceed past a certificate warning'
     )
+  })
+
+  it('names the fault in a word or two, never the issuer: expired or not yet valid by the dates, the wrong site, an untrusted or revoked one, not valid for the rest', () => {
+    const now = 1_750_000_000_000
+    expect(certificateFault(-201, error.certificate, now)).toBe('Certificate expired')
+    // The host's dates put the certificate's start after now: not yet valid, not expired.
+    expect(certificateFault(-201, { ...error.certificate!, validStart: now + 1_000 }, now)).toBe(
+      'Certificate not yet valid'
+    )
+    // No dates from the host (0, or no certificate at all): an invalid date reads as expired.
+    expect(certificateFault(-201, { ...error.certificate!, validStart: 0 }, now)).toBe(
+      'Certificate expired'
+    )
+    expect(certificateFault(-201, null, now)).toBe('Certificate expired')
+    expect(certificateFault(-200, error.certificate, now)).toBe(
+      'Certificate not valid for this site'
+    )
+    expect(certificateFault(-202, error.certificate, now)).toBe('Certificate not trusted')
+    expect(certificateFault(-206, error.certificate, now)).toBe('Certificate revoked')
+    for (const code of [-203, -207, -208, -213, null]) {
+      expect(certificateFault(code, error.certificate, now)).toBe('Certificate not valid')
+    }
+    for (const code of [-200, -201, -202, -206, -207]) {
+      expect(certificateFault(code, error.certificate, now)).not.toContain(
+        error.certificate!.issuerName
+      )
+    }
   })
 
   it('lists the refused certificate as the card does, and nothing when the host could not describe it', () => {
