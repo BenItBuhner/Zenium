@@ -41,6 +41,18 @@ export const FIND_MATCHES = 2
  */
 export const HANGING_PATH = '/never-answers.html'
 
+/**
+ * The download the `downloads` scenario takes (BUG-030 / downloads-01): a file the server sends
+ * with `Content-Disposition: attachment` in a type no page renders, so a navigation to it is a
+ * download and nothing commits in the tab; and the page with a link to it, for the Alt+click
+ * that downloads a link as Chrome's does. Neither is one of {@link BOOT_PAGES}: the boot family
+ * never sees them, and the fixture's page table stays the three pages.
+ */
+export const DOWNLOAD_FIXTURE = {
+  page: { path: '/download.html', title: 'Smoke fixture: download page', linkId: 'attachment' },
+  file: { path: '/files/smoke-attachment.bin', filename: 'smoke-attachment.bin', size: 4096 }
+}
+
 const html = (title, body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head>` +
   `<body style="margin:0;font:18px/1.5 sans-serif;color:#222">` +
@@ -74,6 +86,20 @@ export function bootPages(origin) {
   }
 }
 
+/**
+ * The download page ({@link DOWNLOAD_FIXTURE.page}): one link to the attachment, large enough
+ * for a pointer driven from outside to hit its middle. `address` is the server's, for the note.
+ */
+export function downloadPage(address) {
+  const { page, file } = DOWNLOAD_FIXTURE
+  return html(
+    page.title,
+    heading('Download page') +
+      `<p style="font-size:28px;line-height:2"><a id="${page.linkId}" href="${file.path}">Download ${file.filename}</a></p>` +
+      `<p>The link is a file the harness's server at 127.0.0.1:${address?.port ?? '?'} sends as an attachment: a click downloads it, and so does an Alt+click.</p>`
+  )
+}
+
 /** {@link BOOT_PAGES} with each page's URL on `origin`. */
 export function bootPageUrls(origin) {
   return Object.fromEntries(
@@ -97,8 +123,9 @@ export function isWebPage(url) {
  * and `handoff`, each `{ path, title, url }`, plus `origin` and `port`. `requests` lists what
  * was fetched (path, Host header, Sec-Fetch-Dest) so a run can show the pages came from here;
  * `hanging` is the address that never answers ({@link HANGING_PATH}: `{ path, url }`) with
- * `held()` the number of its requests the server is sitting on; `close()` stops the server, the
- * held connections included.
+ * `held()` the number of its requests the server is sitting on; `download` is the attachment and
+ * the page linking to it ({@link DOWNLOAD_FIXTURE}, each with its `url`); `close()` stops the
+ * server, the held connections included.
  */
 export function startBootFixture() {
   const requests = []
@@ -123,6 +150,21 @@ export function startBootFixture() {
       res.end()
       return
     }
+    if (pathname === DOWNLOAD_FIXTURE.file.path) {
+      // A download and nothing else: an attachment in a type no page renders.
+      res.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-disposition': `attachment; filename="${DOWNLOAD_FIXTURE.file.filename}"`,
+        'content-length': String(DOWNLOAD_FIXTURE.file.size)
+      })
+      res.end(Buffer.alloc(DOWNLOAD_FIXTURE.file.size, 0x5a))
+      return
+    }
+    if (pathname === DOWNLOAD_FIXTURE.page.path) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(downloadPage(server.address()))
+      return
+    }
     const page = pages && pages[pathname]
     if (!page) {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
@@ -143,6 +185,10 @@ export function startBootFixture() {
         origin,
         ...bootPageUrls(origin),
         hanging: { path: HANGING_PATH, url: `${origin}${HANGING_PATH}` },
+        download: {
+          page: { ...DOWNLOAD_FIXTURE.page, url: `${origin}${DOWNLOAD_FIXTURE.page.path}` },
+          file: { ...DOWNLOAD_FIXTURE.file, url: `${origin}${DOWNLOAD_FIXTURE.file.path}` }
+        },
         held: () => held.length,
         requests,
         close: () =>

@@ -79,6 +79,30 @@ const SITE_ROW = 'tracking-site-current'
 /** A row id as `?row=` may carry it: the ids are words, colons and dashes (`sync-scope:openTabs`). */
 const ROW_ID_RE = /^[\w:-]+$/
 
+/**
+ * The page's custom property for a landing's end pad (`main.css`: the column's body takes it as
+ * `padding-bottom` while the page carries `data-landing`).
+ */
+const LANDING_PAD = '--zen-settings-landing-pad'
+
+/**
+ * How far the column must pad its end for `group` to scroll to its top. A group near a section's
+ * end reaches only as far as the content under it allows – the desktop's #356 measured Sync's
+ * Open tabs group mid-page at a 1000 px window, the column's scroll maxed at 169 – so the column
+ * pads by what is missing, as Chrome's settings pages pad the page for a deep link. The top is
+ * the column's scroll padding where it has some (the desktop's sticky find field, §10.5), so
+ * the landed group's heading shows under the field rather than behind it. 0 when the group can
+ * already reach the top, or when the group is in no column (a test without layout).
+ */
+function landingPad(group: HTMLElement): number {
+  const column = group.closest<HTMLElement>('.zen-settings-scroll, .zen-settings-content')
+  if (!column) return 0
+  const top =
+    group.getBoundingClientRect().top - column.getBoundingClientRect().top + column.scrollTop
+  const inset = parseFloat(getComputedStyle(column).scrollPaddingTop) || 0
+  return Math.max(0, Math.ceil(top - inset + column.clientHeight - column.scrollHeight))
+}
+
 /** What a section's drill-in page is handed: the section's context, the address's parameters, the tab. */
 export interface SubpageProps {
   ctx: SectionContext
@@ -121,19 +145,31 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   // later visit to the section from the landing or the nav has no `site` or `row` and opens at
   // the top. The site's row is the opener's site's (`trackingGroups`); a restored tab without its
   // opener has none, and the page opens at the top as it would, as it does for a row the section
-  // does not have.
+  // does not have. The column pads its end while the landing is asked (`landingPad`), so a
+  // group near the section's end reaches the top too; an ordinary section keeps its end.
   const site = current?.id === 'privacy' ? (ref?.query?.site ?? null) : null
   const asked = ref?.query?.row
   const row = site ? SITE_ROW : asked && ROW_ID_RE.test(asked) ? asked : null
   useLayoutEffect(() => {
-    if (!row) return
-    root.current
-      ?.querySelector(`[data-row="${row}"]`)
-      ?.closest('[data-group]')
-      ?.scrollIntoView({ block: 'start' })
+    const page = root.current
+    if (!page) return
+    // The pad is measured with none on, so a layout change under the landing re-measures it.
+    page.style.removeProperty(LANDING_PAD)
+    const group = row
+      ? page.querySelector(`[data-row="${row}"]`)?.closest<HTMLElement>('[data-group]')
+      : null
+    if (!group) return
+    const pad = landingPad(group)
+    if (pad > 0) page.style.setProperty(LANDING_PAD, `${pad}px`)
+    group.scrollIntoView({ block: 'start' })
   }, [row, tab.url, twoPane])
   return (
-    <div ref={root} className="zen-settings-page" data-layout={twoPane ? 'two-pane' : 'phone'}>
+    <div
+      ref={root}
+      className="zen-settings-page"
+      data-layout={twoPane ? 'two-pane' : 'phone'}
+      data-landing={row ? '' : undefined}
+    >
       {twoPane ? (
         <DesktopSettings
           state={state}
