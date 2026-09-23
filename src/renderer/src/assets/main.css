@@ -523,6 +523,44 @@
   background: var(--v2-control-fill-hover);
 }
 /*
+ * The confirmation prompt (components/dialogs/ConfirmDialog.tsx; §9.23, §9.20, §9.11, §9.22):
+ * a notice at 320 on the frame's dialog host – the `.zen-v2-dialog` chrome and the shared title
+ * block (16, the title's 22, 4, 20 a description line, 16 to the body) – then its body: the
+ * check row, when the prompt has one, as the body's only element, running edge to edge like a
+ * form's rows (§9.25: the row's own 16 is the prompt's one gutter, so its box sits where the
+ * title's text starts), and the footer – Cancel and the verb at the button's 96, 8 apart,
+ * hugging the right (§9.11) – 16 under whatever stands above it and 16 to the bottom edge. No
+ * hairline anywhere and no margin of the footer's own: a one-line notice measures
+ * 1 + 16 + 22 + 4 + 20 + 16 + 32 + 16 + 1 = 128 and a two-line one 148 (pr-360 §D: the
+ * `.zen-bm-*` chrome gave 153 – a transparent hairline under the title block and a 4 the footer
+ * carried). Unlayered, beside the button, and the check row's reach past the gutter carries the
+ * body's specificity: the row primitive's own unlayered `width: 100%` (`.zen-v2-row`, later in
+ * this file, one class) beat a one-class rule here by order while the negative margin still
+ * applied – the row ran from the left border to 32 short of the right (pr-392 A1). The prompt's
+ * ring rules are the chassis's: none on the container that holds the focus
+ * (`[role='alertdialog'][tabindex='-1']` above), the shared v2 ring on its controls.
+ */
+.zen-confirm-dialog {
+  display: flex;
+  max-width: calc(100% - 24px);
+  flex-direction: column;
+}
+.zen-confirm-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--v2-card-padding);
+  padding: 0 var(--v2-card-padding) var(--v2-card-padding);
+}
+.zen-confirm-dialog-body > .zen-confirm-dialog-check {
+  width: calc(100% + 2 * var(--v2-card-padding));
+  margin: 0 calc(-1 * var(--v2-card-padding));
+}
+.zen-confirm-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/*
  * The first run's own controls keep the ring under the coarse-pointer suppressor further down,
  * as every v2 control does (§9.6), in the window's accent; inside the row, since rows run edge to
  * edge.
@@ -4788,9 +4826,13 @@
   .zen-button:disabled {
     opacity: 0.4;
   }
+  /*
+   * The ring stands outside the fill at the shared offset (§4, pr-357 §D): on the primary's
+   * accent fill a ring at offset 0 is the accent on the accent, 1.00:1, no ring at all.
+   */
   .zen-button:focus-visible {
     outline: 2px solid var(--v2-accent);
-    outline-offset: 0;
+    outline-offset: var(--v2-ring-offset);
   }
   .zen-button[data-variant='primary'] {
     background: var(--v2-accent);
