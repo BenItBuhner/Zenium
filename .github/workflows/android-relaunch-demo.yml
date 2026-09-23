@@ -1,0 +1,80 @@
+name: Android relaunch race demo
+
+# The device proof against the relaunch tab-loss race (#344 finding 5; the nightly's status-bar
+# late write and read-aloud's lost seeded tab). The driver (RelaunchDemo) seeds one tab on a
+# loopback page and relaunches the browser's activity over the running one eight times – the
+# `FLAG_ACTIVITY_CLEAR_TASK` start that tears the old host down while the new chrome boots in the
+# same process – noting per relaunch whether the seeded tab is in the new session and still in
+# state.json on disk once the old core's straggle window has passed, and every write the storage
+# refused as a destroyed or superseded host's. The claims over the set fail the run under
+# `assert`. Dispatch-only, like the other demos; the build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      assert:
+        description: Fail when a claim does not hold
+        type: boolean
+        default: true
+      relaunches:
+        description: How many relaunches in a row
+        type: string
+        default: '8'
+      api-level:
+        description: System image (34 is the phone shards' image, 35 is Android 15)
+        type: choice
+        default: '34'
+        options:
+          - '34'
+          - '35'
+  push:
+    branches:
+      - cursor/android-relaunch-race-e201
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-relaunch-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Relaunch race demo
+    # The `[relaunch-run]` gate for a PR's temporary push trigger (the run budget is one run and
+    # one retry): under one, only a head commit that says so records.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[relaunch-run]')
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      api-level: ${{ inputs.api-level || '34' }}
+      # The shared driver picks the demo from its environment (see the script's header). The
+      # handshake directory is the media demos' (the driver is built on their base).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.RelaunchDemo
+        DEMO_DIR=media-demo
+        DEMO_OUT=artifacts/android-relaunch-demo
+        DEMO_VIDEO=android-relaunch-race-demo.mp4
+        DEMO_ARGS=-e assert ${{ (github.event_name != 'workflow_dispatch' || inputs.assert) && 'true' || 'false' }} -e relaunches ${{ inputs.relaunches || '8' }}
+      timeout-minutes: 45
+      artifact-name: android-relaunch-demo
+      artifact-path: artifacts/android-relaunch-demo/
+
+  # One more boot when the emulator itself went away under the driver, never when the driver failed.
+  record-again:
+    name: Relaunch race demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      api-level: ${{ inputs.api-level || '34' }}
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.RelaunchDemo
+        DEMO_DIR=media-demo
+        DEMO_OUT=artifacts/android-relaunch-demo
+        DEMO_VIDEO=android-relaunch-race-demo.mp4
+        DEMO_ARGS=-e assert ${{ (github.event_name != 'workflow_dispatch' || inputs.assert) && 'true' || 'false' }} -e relaunches ${{ inputs.relaunches || '8' }}
+      timeout-minutes: 45
+      artifact-name: android-relaunch-demo-second-boot
+      artifact-path: artifacts/android-relaunch-demo/
