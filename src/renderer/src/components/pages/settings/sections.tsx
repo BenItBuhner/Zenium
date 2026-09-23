@@ -73,7 +73,7 @@ import {
   shortcutHint
 } from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
-import { displayUrl, inputToUrl } from '@shared/url'
+import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
 import { homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
@@ -1359,9 +1359,10 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
 // Tab Management
 // ---------------------------------------------------------------------------
 
-function tabsSection({ state, set }: SectionContext): RowGroup[] {
+function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
   const s = state.settings
   const windows = state.capabilities.windows
+  const currentSite = currentUnloadSite(state, tab)
   // #129's session rows follow the desktop panel: a crash offer and a "Close N tabs?" question
   // are a windowed host's (Android's runs end by the process going, its pages just come back).
   const sessionRows: SettingsRow[] = windows
@@ -1588,12 +1589,56 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
             })
             return undefined
           }
+        },
+        // Chrome's "Add current site" (Performance › Always keep these sites active): the site
+        // Settings was opened from, one press; a dependent row of the switch like the two
+        // fields (§10.4), and laid out at .4 with its reason when there is no site to add.
+        {
+          kind: 'action',
+          id: 'unloading-add-current',
+          label: 'Add current site',
+          description: currentSite.listed
+            ? `${currentSite.listed} is already on the list.`
+            : currentSite.domain
+              ? `${currentSite.domain} – every page of the site stays loaded.`
+              : 'Open a page, then come back to Settings from it.',
+          keywords: ['never unload', 'current site', 'this site', 'keep active'],
+          disabled: !s.unloadEnabled || currentSite.domain === null,
+          button: 'Add',
+          onPress: () => {
+            const domain = currentSite.domain
+            if (domain && !s.unloadExcludedDomains.includes(domain))
+              set({ unloadExcludedDomains: [...s.unloadExcludedDomains, domain] })
+          }
         }
       ]
     },
     ...sleepingTabsGroups(s, set)
   )
   return groups
+}
+
+/**
+ * The site "Add current site" puts on the never-unload list: the registrable domain (eTLD+1) of
+ * the page Settings was opened from – the tab's opener, as Use current page reads it – which is
+ * what the core's unload pass matches an entry against (`sleepCandidates`: `domainOf(tab.url)`
+ * equals the entry), so `mail.google.com` goes on as `google.com` and every page of the site
+ * stays loaded. `listed` names the domain when it is on the list already – the row is laid out
+ * at .4 and says so rather than adding a twin. No site for a chrome page (Settings opened from
+ * the menu of a blank tab or from History), an extension page, or a private window, whose sites
+ * are nothing to remember.
+ */
+function currentUnloadSite(
+  state: UIState,
+  tab: Tab
+): { domain: string | null; listed: string | null } {
+  const opener = tab.openerTabId ? state.tabs[tab.openerTabId] : undefined
+  if (!opener || state.window.kind === 'private' || !isWebPageUrl(opener.url))
+    return { domain: null, listed: null }
+  const domain = getDomain(opener.url)
+  if (!domain) return { domain: null, listed: null }
+  const listed = state.settings.unloadExcludedDomains.some((d) => d.toLowerCase() === domain)
+  return listed ? { domain: null, listed: domain } : { domain, listed: null }
 }
 
 /**

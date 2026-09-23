@@ -4650,7 +4650,8 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
       expect(group?.rows.map((r) => [r.kind, r.label])).toEqual([
         ['switch', 'Unload inactive tabs'],
         ['field', 'Unload after'],
-        ['field', 'Never unload these domains']
+        ['field', 'Never unload these domains'],
+        ['action', 'Add current site']
       ])
       const on = row(shell, 'unloading-enabled')
       if (on.kind !== 'switch') throw new Error('not a switch')
