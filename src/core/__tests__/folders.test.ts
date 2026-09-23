@@ -319,7 +319,7 @@ describe('the tab menu’s group items (context-menus-91)', () => {
 })
 
 describe('the folder header menu (tabs-13)', () => {
-  it('runs act / change / destroy: New Tab in Folder and Move Folder to New Window – Edit Folder… with Zenium’s live folder item – Unpack and Close – Delete Folder', () => {
+  it('runs act / change / destroy: New Tab in Folder – Edit Folder… with Zenium’s live folder item and Move Folder to New Window last – Unpack and Close – Delete Folder', () => {
     const h = harness()
     const space = h.win.activeSpaceId
     const folder = h.browser.createFolder(space, 'Docs', '📁', h.win, { rename: false })
@@ -327,12 +327,14 @@ describe('the folder header menu (tabs-13)', () => {
     h.open('https://b.test/', { folderId: folder.id })
     h.browser.menus.showFolderContextMenu(folder.id, h.win)
     const shown = labels(h.shown())
+    // Move Folder to New Window is a change of place: it closes the change group, as the tab
+    // menu files Move Tab to New Window with its place-changing verbs, not beside New Tab.
     expect(shown).toEqual([
       'New Tab in Folder',
-      'Move Folder to New Window',
       '-',
       'Edit Folder…',
       'Make Live Folder…',
+      'Move Folder to New Window',
       '-',
       'Unpack Folder',
       'Close Folder (2 Tabs)',
@@ -372,13 +374,13 @@ describe('the folder header menu (tabs-13)', () => {
     const top = h.shown().map((i) => (i.type === 'separator' ? '-' : (i.label ?? '')))
     expect(top).toEqual([
       'New Tab in Folder',
-      'Move Folder to New Window',
       '-',
       'Edit Folder…',
       'Refresh Live Folder',
       'Refresh Every',
       'Live Folder Settings…',
       'Stop Updating (make static)',
+      'Move Folder to New Window',
       '-',
       'Unpack Folder',
       'Close Folder (1 Tab)',
@@ -558,10 +560,10 @@ describe('the folder header menu (tabs-13)', () => {
     h.browser.menus.showFolderContextMenu(folder.id, moved)
     expect(labels(h.shown())).toEqual([
       'New Tab in Folder',
-      'Move Folder to New Window',
       '-',
       'Edit Folder…',
       'Make Live Folder…',
+      'Move Folder to New Window',
       '-',
       'Unpack Folder',
       'Close Folder (2 Tabs)',
