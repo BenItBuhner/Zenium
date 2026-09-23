@@ -26,11 +26,14 @@ export function WindowPromptDialog({ state }: { state: UIState }): JSX.Element |
 const SNAPSHOT_WAIT_MS = 250
 
 /**
- * A v2 dialog (draft §9.23): title, one line of description, a checkbox that turns the tabs
- * warning off for good (Firefox's), Cancel and one primary button. The download question, when
- * it comes with the tabs warning, is a body line between the title block and the checkbox; alone
- * it is the description and the checkbox stays away (nothing about the tabs is asked). Enter
- * accepts, Escape and the scrim cancel, Tab wraps, focus starts on the primary (§9.22).
+ * A v2 dialog (draft §9.23): a title block – the title, its description and, when the download
+ * sentence comes with the tabs warning, that sentence as a second description paragraph at the
+ * first's size and ink (the body is for copy that introduces other content; the checkbox is the
+ * tabs warning's, not the sentence's) – then the checkbox that turns the tabs warning off for
+ * good (Firefox's) as the body's one element, Cancel and one primary button. Alone, the sentence
+ * is the description and the checkbox stays away (nothing about the tabs is asked). Enter
+ * accepts, Escape and the scrim cancel, Tab wraps, focus starts on the primary (the chassis's
+ * rule today; §9.22's container rule is the coordinator's chassis item, #340).
  */
 function WindowPromptView({
   prompt,
@@ -85,7 +88,7 @@ function WindowPromptView({
       role="alertdialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      aria-describedby={text.downloadLine ? `${descId} ${downloadsId}` : descId}
+      aria-describedby={text.downloadDescription ? `${descId} ${downloadsId}` : descId}
       data-window-prompt={prompt.kind}
       data-downloads={prompt.downloads?.count}
       className="zen-animate-pop zen-bm-dialog flex max-w-[calc(100%-24px)] flex-col"
@@ -100,6 +103,11 @@ function WindowPromptView({
         <p id={descId} className="zen-bm-title-desc">
           {text.description}
         </p>
+        {text.downloadDescription && (
+          <p id={downloadsId} className="zen-bm-title-desc">
+            {text.downloadDescription}
+          </p>
+        )}
       </div>
       <form
         className="zen-bm-form"
@@ -108,11 +116,6 @@ function WindowPromptView({
           respond(true)
         }}
       >
-        {text.downloadLine && (
-          <p id={downloadsId} className="text-[15px] leading-5 text-[var(--v2-text)]">
-            {text.downloadLine}
-          </p>
-        )}
         {text.tabsWarning && (
           <label className="flex items-center gap-2 text-[13px]">
             <input

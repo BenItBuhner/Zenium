@@ -3,16 +3,20 @@ import type { WindowPrompt, WindowPromptDownloads } from '@shared/types'
 /**
  * The words of a window prompt (v2 draft §9.23): the two questions the core may ask at once –
  * the tabs that close ("Close N tabs?", "Quit Zenium?") and the downloads the answer would end
- * (downloads-35, Chrome's "A download is currently in progress…") – as one prompt. With the tabs
- * warning the download question is a body line under the title block; alone, it is the title
- * block's description, the prompt's one paragraph.
+ * (downloads-35) – as one prompt. Both are the title block's. With the tabs warning the download
+ * sentence is a second description paragraph under the warning's, at the description's own size
+ * and ink: §9.23's body copy introduces other content, and the sentence introduces nothing – the
+ * checkbox is the tabs warning's. Alone, the sentence is the block's one description.
  */
 export interface WindowPromptText {
   title: string
   /** The title block's description. */
   description: string
-  /** The download question as a body line, when the description is the tabs warning's. */
-  downloadLine: string | null
+  /**
+   * The download sentence as the title block's second description paragraph, when the first is
+   * the tabs warning's; null with no download, or when the sentence is the description itself.
+   */
+  downloadDescription: string | null
   /** The primary button. */
   verb: string
   /** Whether the "Warn before closing a window with multiple tabs" checkbox belongs. */
@@ -33,13 +37,13 @@ export function windowPromptText(prompt: WindowPrompt): WindowPromptText {
   const tabs = `${prompt.count} tabs`
   const downloads = prompt.downloads
   if (tabsWarning) {
-    // The prompt as it was, the download question added under its description.
+    // The prompt as it was, the download sentence a second paragraph under its description.
     return {
       title: quit ? 'Quit Zenium?' : `Close ${tabs}?`,
       description: quit
         ? `You are about to quit with ${tabs} open.`
         : `You are about to close this window and its ${tabs}.`,
-      downloadLine: downloads ? downloadsSentence(downloads) : null,
+      downloadDescription: downloads ? downloadsSentence(downloads) : null,
       verb: quit ? 'Quit' : 'Close tabs',
       tabsWarning
     }
@@ -49,7 +53,7 @@ export function windowPromptText(prompt: WindowPrompt): WindowPromptText {
   return {
     title: quitting ? 'Quit Zenium?' : 'Close private window?',
     description: downloads ? downloadsSentence(downloads) : '',
-    downloadLine: null,
+    downloadDescription: null,
     verb: quitting ? 'Quit' : 'Close window',
     tabsWarning
   }
