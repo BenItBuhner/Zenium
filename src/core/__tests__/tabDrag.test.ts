@@ -13,6 +13,7 @@ import type { PanelView, PanelViewHost } from '../../main/platform/extensionApi/
 import type { ApiHost, LoadedExtension } from '../../main/platform/extensionApi/types'
 import { Browser } from '../browser'
 import { NoExtensions } from '../hostDefaults'
+import { folderTabs } from '../model'
 import type {
   ExtensionHost,
   Platform,
@@ -428,6 +429,177 @@ describe('tear-off', () => {
     expect(torn?.kind).toBe('synced')
     expect(f.browser.tabs.tab(tab.id)?.windowId).toBe(torn?.id)
     expect(torn?.selectedTabIn(torn.activeSpace())).toBe(tab.id)
+  })
+})
+
+/**
+ * "Move Folder to New Window" (context-menus-107, Chrome's "Move group to new window"): the
+ * folder's tabs go to a window of their own with the folder – the tab's window rule applied to
+ * the group as one.
+ */
+describe('a folder moved to a new window', () => {
+  function grouped(
+    f: Fixture,
+    win: ZenWindow,
+    urls: string[]
+  ): { folder: ReturnType<Browser['createFolder']>; tabs: Tab[] } {
+    const folder = f.browser.createFolder(win.activeSpace().id, 'Docs', '📁', win, {
+      rename: false
+    })
+    const tabs = urls.map((url) => f.openPage(win, url))
+    for (const tab of tabs) f.browser.tabs.moveToFolder(tab.id, folder.id)
+    return { folder, tabs }
+  }
+
+  it('takes the tabs into a blank window with the folder, the source moving on past the folder', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const space = win.activeSpace()
+    const before = f.openPage(win, 'https://before.test/')
+    const { folder, tabs } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
+    const after = f.openPage(win, 'https://after.test/')
+    // Showing a member as the folder goes.
+    f.browser.tabs.activateTab(tabs[1].id, win)
+    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
+    if (!moved) throw new Error('no new window')
+    expect(f.browser.allWindows()).toEqual(expect.arrayContaining([win, moved]))
+    // Shared tabs (sync all) can only live alone in a blank window; the folder follows them
+    // into its space, its members still, and the window shows the member the source showed.
+    expect(moved.kind).toBe('unsynced')
+    expect(moved.initialBounds).toBeNull()
+    expect(moved.localSpace?.tabIds).toEqual(tabs.map((t) => t.id))
+    expect(folder.spaceId).toBe(moved.localSpace?.id)
+    expect(tabs.map((t) => t.folderId)).toEqual([folder.id, folder.id])
+    expect(folderTabs(f.browser.state.model, folder.id).map((t) => t.id)).toEqual(
+      tabs.map((t) => t.id)
+    )
+    expect(moved.selectedTabIn(moved.activeSpace())).toBe(tabs[1].id)
+    expect(Object.keys(f.browser.state.snapshot(moved).folders)).toEqual([folder.id])
+    // The source keeps the tabs around the folder and shows the next one beyond it, its own
+    // chrome no longer listing the folder.
+    expect(space.tabIds).toEqual([before.id, after.id])
+    expect(win.selectedTabIn(space)).toBe(after.id)
+    expect(f.browser.state.snapshot(win).folders[folder.id]).toBeUndefined()
+  })
+
+  it('falls back to the tab before the folder when nothing follows it, and leaves the selection alone when it was elsewhere', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const space = win.activeSpace()
+    const before = f.openPage(win, 'https://before.test/')
+    const { folder, tabs } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
+    f.browser.tabs.activateTab(tabs[0].id, win)
+    f.browser.tabs.moveFolderToNewWindow(folder.id, win)
+    expect(win.selectedTabIn(space)).toBe(before.id)
+    // Another folder, the selection on a tab outside it: it stays.
+    const second = grouped(f, win, ['https://c.test/'])
+    f.browser.tabs.activateTab(before.id, win)
+    const moved = f.browser.tabs.moveFolderToNewWindow(second.folder.id, win)
+    expect(win.selectedTabIn(space)).toBe(before.id)
+    expect(moved?.selectedTabIn(moved.activeSpace())).toBe(second.tabs[0].id)
+  })
+
+  it('under "sync only pinned tabs" the window is a synced one that owns the tabs, the folder staying in its space', () => {
+    const f = fixture()
+    f.browser.state.settings.windowSync = 'pinned'
+    const win = f.browser.focusedWindow()
+    const space = win.activeSpace()
+    const { folder, tabs } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
+    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
+    if (!moved) throw new Error('no new window')
+    expect(moved.kind).toBe('synced')
+    expect(moved.activeSpaceId).toBe(space.id)
+    expect(tabs.map((t) => t.windowId)).toEqual([moved.id, moved.id])
+    expect(tabs.map((t) => t.spaceId)).toEqual([space.id, space.id])
+    expect(folder.spaceId).toBe(space.id)
+    // The member the source was showing (the last page opened) is what the new window shows.
+    expect(moved.selectedTabIn(space)).toBe(tabs[1].id)
+    // The source no longer lists the tabs; the folder is in both windows' state, its members
+    // only in the new one.
+    expect(f.browser.state.snapshot(win).spaces[0].tabIds).toEqual([])
+    expect(f.browser.state.snapshot(moved).spaces[0].tabIds).toEqual(tabs.map((t) => t.id))
+    expect(f.browser.state.snapshot(win).folders[folder.id]).toBe(folder)
+    expect(f.browser.state.snapshot(moved).folders[folder.id]).toBe(folder)
+  })
+
+  it('a private window’s folder gets another private window', () => {
+    const f = fixture()
+    const a = f.browser.focusedWindow()
+    f.openPage(a, 'https://example.com')
+    const priv = f.browser.createWindow({
+      kind: 'private',
+      from: a,
+      bounds: { x: 1400, y: 100, width: 800, height: 600 },
+      empty: true
+    })
+    const { folder, tabs } = grouped(f, priv, ['https://a.test/', 'https://b.test/'])
+    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, priv)
+    if (!moved) throw new Error('no new window')
+    expect(moved.kind).toBe('private')
+    expect(moved.localSpace?.tabIds).toEqual(tabs.map((t) => t.id))
+    expect(folder.spaceId).toBe(moved.localSpace?.id)
+  })
+
+  it('a blank window left with nothing closes behind the folder', async () => {
+    const f = fixture()
+    const a = f.browser.focusedWindow()
+    f.openPage(a, 'https://example.com')
+    const blank = f.browser.createWindow({
+      kind: 'unsynced',
+      from: a,
+      bounds: { x: 1400, y: 100, width: 800, height: 600 },
+      empty: true
+    })
+    const { folder, tabs } = grouped(f, blank, ['https://a.test/', 'https://b.test/'])
+    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, blank)
+    if (!moved) throw new Error('no new window')
+    expect(moved.kind).toBe('unsynced')
+    expect(moved.localSpace?.tabIds).toEqual(tabs.map((t) => t.id))
+    expect(blank.localSpace?.tabIds).toEqual([])
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.hostOf(blank).closed).toBe(true)
+    expect(f.browser.allWindows()).toHaveLength(2)
+  })
+
+  it('opens a saved folder first – its pages back as its tabs – and moves it whole', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const space = win.activeSpace()
+    const keep = f.openPage(win, 'https://keep.test/')
+    const { folder } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
+    f.browser.closeFolder(folder.id, win)
+    expect(folder.savedTabs?.map((p) => p.url)).toEqual(['https://a.test/', 'https://b.test/'])
+    expect(folderTabs(f.browser.state.model, folder.id)).toEqual([])
+    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
+    if (!moved) throw new Error('no new window')
+    expect(folder.savedTabs ?? null).toBeNull()
+    expect(folder.spaceId).toBe(moved.localSpace?.id)
+    const members = folderTabs(f.browser.state.model, folder.id)
+    expect(members.map((t) => t.url)).toEqual(['https://a.test/', 'https://b.test/'])
+    expect(moved.localSpace?.tabIds).toEqual(members.map((t) => t.id))
+    expect(moved.selectedTabIn(moved.activeSpace())).toBe(members[0].id)
+    expect(space.tabIds).toEqual([keep.id])
+    expect(win.selectedTabIn(space)).toBe(keep.id)
+  })
+
+  it('a member leaves its split behind; an empty or unknown folder moves nothing', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const loose = f.openPage(win, 'https://loose.test/')
+    const { folder, tabs } = grouped(f, win, ['https://a.test/'])
+    f.browser.tabs.createSplit([tabs[0].id, loose.id], 'horizontal', win)
+    expect(tabs[0].splitGroupId).not.toBeNull()
+    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
+    if (!moved) throw new Error('no new window')
+    expect(tabs[0].splitGroupId).toBeNull()
+    expect(loose.splitGroupId).toBeNull()
+    expect(Object.keys(f.browser.state.model.splitGroups)).toEqual([])
+    const empty = f.browser.createFolder(win.activeSpace().id, 'Empty', '📁', win, {
+      rename: false
+    })
+    expect(f.browser.tabs.moveFolderToNewWindow(empty.id, win)).toBeNull()
+    expect(f.browser.tabs.moveFolderToNewWindow('folder:gone', win)).toBeNull()
+    expect(f.browser.allWindows()).toHaveLength(2)
   })
 })
 

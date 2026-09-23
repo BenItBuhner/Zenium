@@ -2050,10 +2050,14 @@ export class Menus {
     // group – which forgets what the folder holds, or closes its tabs with it, and so asks first
     // through the chrome's prompt when there is anything to lose (`folder.confirmDelete`). New
     // Tab in Folder on a saved folder opens it first – its pages back as its tabs – and adds the
-    // tab behind them (`newTabInFolder`), so the plain-ink verb loses nothing (§5, §9.1). No
-    // Rename Folder… and no Expand or Collapse Folder: each duplicates a control the row already
-    // has (the editor's Name field, the header's own click). Zen's word is Folder; the touch
-    // hosts say Group.
+    // tab behind them (`newTabInFolder`), so the plain-ink verb loses nothing (§5, §9.1). An
+    // open folder with tabs closes the act group with Move Folder to New Window (Chrome's Move
+    // group to new window, context-menus-107): its tabs and the folder go to a window of their
+    // own beside this one (`moveFolderToNewWindow`), on a host with windows to give; the saved
+    // folder keeps its three rows (Open Folder brings the pages back here). No Rename Folder…
+    // and no Expand or Collapse Folder: each duplicates a control the row already has (the
+    // editor's Name field, the header's own click). Zen's word is Folder; the touch hosts say
+    // Group.
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     const saved = isSavedFolder(state.model, folder)
     const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
@@ -2063,7 +2067,11 @@ export class Menus {
         label: `Open Folder (${tabs})`,
         click: () => this.browser.openFolder(folderId, win)
       }),
-      { label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }
+      { label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) },
+      ...when(!saved && count > 0 && state.capabilities.windows, {
+        label: 'Move Folder to New Window',
+        click: () => void this.browser.tabs.moveFolderToNewWindow(folderId, win)
+      })
     ]
     const change: Template = [
       {

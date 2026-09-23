@@ -509,11 +509,15 @@ export function nextFolderColor(model: Model, spaceId: string): FolderColor {
   return palette.find((c) => !used.includes(c)) ?? palette[used.length % palette.length]
 }
 
-/** The folder's tabs in the space's order, the collapsed header's count and the group's members. */
+/**
+ * The folder's tabs in the space's order, the collapsed header's count and the group's members.
+ * The space may be a window's own (a folder moved with its tabs into a blank or private window,
+ * `TabManager.moveFolderToNewWindow`).
+ */
 export function folderTabs(model: Model, folderId: string): Tab[] {
   const folder = model.folders[folderId]
   if (!folder) return []
-  const space = model.spaces.find((s) => s.id === folder.spaceId)
+  const space = getSpace(model, folder.spaceId)
   const ordered = space ? space.tabIds.map((id) => model.tabs[id]).filter(Boolean) : []
   return ordered.filter((t) => t.folderId === folderId)
 }

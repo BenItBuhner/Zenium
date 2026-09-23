@@ -20,6 +20,7 @@ import {
   dissolveSplitGroup,
   essentialsForSpace,
   folderOpened,
+  folderTabs,
   getSpace,
   insertTabIntoSpace,
   isSavedFolder,
@@ -2848,6 +2849,92 @@ export class TabManager {
     }
     this.activateTab(tabId, win)
     this.showNeighbour(source, leaving, tabId)
+    this.closeIfEmptied(source)
+    this.browser.state.commit()
+    return win
+  }
+
+  /**
+   * The folder menu's "Move Folder to New Window" (context-menus-107; Chrome's "Move group to
+   * new window"): the folder's tabs go to a window of their own beside this one, the folder
+   * with them – its name, colour and fold. Which kind of window is the tab's rule
+   * (`moveTabToNewWindow`): a folder of a private window gets another private window; under
+   * "sync only pinned tabs" a folder of unpinned members gets a synced window that owns them,
+   * the folder staying in its space; every other folder – its tabs shared across synced windows
+   * – gets a blank window, the one kind that can hold them alone, and follows them into its
+   * space (the window's own, so the folder is that window's until it closes). A SAVED folder
+   * opens first – its pages back as its tabs – and goes whole; a member's split view is left
+   * behind (a split lives in one space of one window). Every window showing a member moves on
+   * past the folder (Firefox's rule over the folder as one: the next tab beyond it, else the one
+   * before it); the new window shows the member the source was showing, else the first. Returns
+   * the new window, or null with nothing to move (an empty folder, none) or no windows on this
+   * host.
+   */
+  moveFolderToNewWindow(
+    folderId: string,
+    source: ZenWindow = this.browser.focusedWindow()
+  ): ZenWindow | null {
+    const m = this.model
+    const folder = m.folders[folderId]
+    if (!folder) return null
+    if (!this.browser.state.capabilities.windows) {
+      this.browser.toast('Multiple windows are not available on this device.', 'info', source)
+      return null
+    }
+    this.restoreSavedFolder(folderId, source)
+    const members = folderTabs(m, folderId)
+    const from = getSpace(m, folder.spaceId)
+    if (members.length === 0 || !from) return null
+    const member = (tabId: string | null): tabId is string =>
+      tabId !== null && members.some((t) => t.id === tabId)
+    const outside = (t: Tab): boolean => t.folderId !== folderId
+    const showing = this.browser
+      .allWindows()
+      .map((w) => ({ w, selected: w.selectedTabIn(from) }))
+      .filter((s): s is { w: ZenWindow; selected: string } => member(s.selected))
+      .map(({ w, selected }) => {
+        const ordered = orderedTabsForSpace(
+          m,
+          from,
+          this.settings.containerSpecificEssentials,
+          w.id
+        )
+        const at = ordered.findIndex((t) => t.id === selected)
+        const next =
+          ordered.slice(at + 1).find(outside) ??
+          ordered.slice(0, Math.max(0, at)).reverse().find(outside) ??
+          null
+        return { w, selected, next: next?.id ?? null }
+      })
+    const shown = showing.find((s) => s.w === source)?.selected ?? members[0].id
+    const ownsAlone =
+      !from.windowId && this.settings.windowSync === 'pinned' && members.every((t) => !t.pinned)
+    const kind: WindowKind = source.isPrivate ? 'private' : ownsAlone ? 'synced' : 'unsynced'
+    const win = this.browser.createWindow({ kind, from: source, bounds: null, empty: true })
+    for (const tab of members) removeTabFromSplit(m, tab.id)
+    if (win.localSpace) {
+      const space = win.localSpace
+      for (const tab of members) {
+        // The model's move (not the manager's): the folder is not left, it comes along.
+        moveTab(
+          m,
+          tab,
+          {
+            spaceId: space.id,
+            section: tab.pinned ? 'pinned' : 'regular',
+            index: Number.MAX_SAFE_INTEGER
+          },
+          this.settings.essentialsMax
+        )
+        tab.folderId = folderId
+      }
+      folder.spaceId = space.id
+    } else {
+      for (const tab of members) tab.windowId = win.id
+      win.activeSpaceId = from.id
+    }
+    this.activateTab(shown, win)
+    for (const s of showing) this.showNeighbour(s.w, { space: from, next: s.next }, s.selected)
     this.closeIfEmptied(source)
     this.browser.state.commit()
     return win
