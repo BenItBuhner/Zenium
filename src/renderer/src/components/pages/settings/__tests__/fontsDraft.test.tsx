@@ -127,7 +127,8 @@ describe('the ± rows coalesce (the Android performance gate’s ruling for #350
     for (let i = 0; i < 7; i++) {
       tap(plus)
       seen.push(valueOf(id))
-      // The taps land 100 ms apart, down to down: inside the quiet window, nothing commits.
+      // The taps land 100 ms apart, down to down – the hold's own cadence: inside the quiet
+      // window, nothing commits.
       act(() => {
         vi.advanceTimersByTime(40)
       })
@@ -185,6 +186,59 @@ describe('the ± rows coalesce (the Android performance gate’s ruling for #350
     expect(set).toHaveBeenLastCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, size: 22 } })
   })
 
+  it('presses 300 ms apart – a person’s repeated taps, the emulator’s injected ones in run 8 – are one sequence and one commit; a 500 ms pause ends the sequence, and the next press is a new one with its own commit', () => {
+    vi.useFakeTimers()
+    const set = vi.fn()
+    render(<Fonts fonts={DEFAULT_FONT_SETTINGS} set={set} />)
+    const id = 'fonts-minimum-size-phone'
+    const plus = plusOf(id)
+    const seen: string[] = []
+    for (let i = 0; i < 7; i++) {
+      // 300 ms down to down: the tap's 60 ms, then 240 more before the next finger.
+      if (i > 0) {
+        act(() => {
+          vi.advanceTimersByTime(240)
+        })
+      }
+      tap(plus)
+      seen.push(valueOf(id))
+      expect(set).not.toHaveBeenCalled()
+    }
+    expect(seen).toEqual(['6 px', '7 px', '8 px', '9 px', '10 px', '11 px', '12 px'])
+    act(() => {
+      vi.advanceTimersByTime(FONTS_COMMIT_QUIET_MS - 1)
+    })
+    expect(set).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, minimumSize: 12 } })
+
+    // A press, a 500 ms pause, a press: two sequences, two commits, each with its own value.
+    set.mockClear()
+    act(() =>
+      root?.render(<Fonts fonts={{ ...DEFAULT_FONT_SETTINGS, minimumSize: 12 }} set={set} />)
+    )
+    tap(plus)
+    expect(valueOf(id)).toBe('13 px')
+    act(() => {
+      vi.advanceTimersByTime(440)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, minimumSize: 13 } })
+    act(() =>
+      root?.render(<Fonts fonts={{ ...DEFAULT_FONT_SETTINGS, minimumSize: 13 }} set={set} />)
+    )
+    tap(plus)
+    expect(valueOf(id)).toBe('14 px')
+    act(() => {
+      vi.advanceTimersByTime(FONTS_COMMIT_QUIET_MS)
+    })
+    expect(set).toHaveBeenCalledTimes(2)
+    expect(set).toHaveBeenLastCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, minimumSize: 14 } })
+  })
+
   it('a hold steps every 100 ms after the 400 ms delay and commits once, at its end', () => {
     vi.useFakeTimers()
     const set = vi.fn()
@@ -232,7 +286,7 @@ describe('the ± rows coalesce (the Android performance gate’s ruling for #350
     expect(set).toHaveBeenCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, minimumSize: 11 } })
   })
 
-  it('a hold to the ladder’s end disables the button under the finger and still commits once, 150 ms after the last step', () => {
+  it('a hold to the ladder’s end disables the button under the finger and still commits once, the quiet window after the last step', () => {
     vi.useFakeTimers()
     const set = vi.fn()
     // Four stops from the top: 18, 20, 22, 24 px.

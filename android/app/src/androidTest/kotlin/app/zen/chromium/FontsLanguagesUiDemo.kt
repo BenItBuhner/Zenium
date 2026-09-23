@@ -580,8 +580,8 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
         // Font size: three presses on the row's + (16 -> 17 -> 18 -> 20 px). Each press steps
         // the row's own value and the preview; the sequence commits once when it is quiet (the
-        // ruling's coalescing, 150 ms after the last step), and the open article's body text
-        // follows the one commit.
+        // ruling's coalescing, `FONTS_COMMIT_QUIET_MS` – 400 ms – after the last step), and
+        // the open article's body text follows the one commit.
         val sizeTook = stepPresses(FONT_SIZE_ROW_ID, FONT_SIZE_ROW, FONT_SIZE_PRESSES, "font-size-step-presses") {
             fonts().optInt("size") == 20
         }
@@ -596,7 +596,9 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         snap("customise-fonts-size-20")
 
         // Minimum font size: seven presses to 12 px (none, 6, 7 … 12), one commit for the seven
-        // (run 7's seven commits, one per press, is what the ruling forbids). The article's 11 px
+        // (run 7's seven commits, one per press, is what the ruling forbids; run 8's four came
+        // of a 150 ms window shorter than the gaps between the emulator's taps, and of the
+        // Font size button's blur flushing the other row's first step). The article's 11 px
         // small print is lifted to 12.
         awaitRow(MINIMUM_FONT_SIZE_ROW_ID, MINIMUM_FONT_SIZE_ROW)
         SystemClock.sleep(600)
@@ -673,9 +675,12 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
      * the gesture budget's three long tasks for the whole of it, hold-repeat included, and the
      * row meets it by coalescing – each press steps the row's own value and the preview (a state
      * update and a label), and the commit (`settings.update`, the core's broadcast, the host's
-     * `fonts.apply`, every page's restyle) runs ONCE per quiet sequence, 150 ms after the last
-     * step or the hold's end. The fingers land [STEP_PRESS_GAP_MS] apart – about 100 ms down to
-     * down, the hold's own repeat interval, inside the quiet window – so the sequence is one.
+     * `fonts.apply`, every page's restyle) runs ONCE per quiet sequence, the row's quiet window
+     * (`FONTS_COMMIT_QUIET_MS`, 400 ms) after the last step or the hold's end. The fingers are
+     * asked [STEP_PRESS_GAP_MS] apart – about 100 ms down to down – and land 150 to 300 ms
+     * apart on the emulator (run 8: 146 to 285 ms; the UI thread's 150 to 400 ms frames on the
+     * software GPU gate each synchronous injection), a person's own cadence, inside the window
+     * either way – so the sequence is one.
      *
      * Three claims are made on the scene beside the budget's, the ruling's: at most three long
      * tasks over the whole sequence (the trace's count, `trace.longTasks`); exactly one
@@ -1545,9 +1550,10 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         private const val MINIMUM_FONT_SIZE_PRESSES = 7
         /**
          * Between a finger's lift and the next finger on a step button: with the tap's 60 ms
-         * down, about 100 ms down to down – the hold's own repeat interval, inside the row's
-         * 150 ms quiet window, so the sequence commits once (the ruling); well under the 400 ms
-         * hold that starts the button repeating.
+         * down, about 100 ms down to down as asked – the hold's own repeat interval – and 150
+         * to 300 ms as the emulator lands them (each injection waits on the UI thread's frame),
+         * inside the row's 400 ms quiet window either way, so the sequence commits once (the
+         * ruling); well under the 400 ms hold that starts the button repeating.
          */
         private const val STEP_PRESS_GAP_MS = 40L
         private val WORKING = setOf("detecting", "downloading", "translating")

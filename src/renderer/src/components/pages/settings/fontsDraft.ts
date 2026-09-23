@@ -44,11 +44,17 @@ export interface FontsDraft {
 }
 
 /**
- * How long a step sequence is quiet before it commits, ms: after the last press, or after the
- * last of a hold's repeats (the hold steps every 100 ms, so a hold commits once, at its end).
- * The ruling's "about 150 ms".
+ * How long a step sequence is quiet before it commits, ms: the timer restarts on every step,
+ * so the commit comes this long after the last press, or after the last of a hold's repeats
+ * (the hold steps every 100 ms, so a hold commits once, at its end plus the window). The
+ * window is longer than a gap between taps: a person tapping a button repeatedly lands about
+ * 200 to 300 ms apart, and #350's run 8 on the emulator (35827411459) saw its seven injected
+ * taps 146 to 285 ms apart – past the ruling's first "about 150 ms", which split that
+ * sequence into four commits. 400 ms closes over both; a longer pause is a new sequence,
+ * committed on its own. (A held button suspends the timer altogether – `hold` – so a hold's
+ * 400 ms delay before it repeats never commits the first step early.)
  */
-export const FONTS_COMMIT_QUIET_MS = 150
+export const FONTS_COMMIT_QUIET_MS = 400
 
 /**
  * A draft that commits every change at once: the two-pane layout's menulists, which have no
