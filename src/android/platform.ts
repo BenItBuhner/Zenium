@@ -98,7 +98,7 @@ import {
   type ExtRequestEvent
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
-import { onFullscreenEntered } from './fullscreenHint'
+import { FullscreenHintCues } from './fullscreenHint'
 import { AndroidNewTabBackground } from './newTabBackground'
 import { AndroidSyncHost } from './sync'
 import { AndroidSiteData } from './siteData'
@@ -636,9 +636,10 @@ export interface HostEventPayloads {
    * (`Host.enterFullscreen`), a video's, a canvas's or an embed's alike, with the page's word
    * on whether the element shows a video (`video`; null when the page said nothing in time). The
    * exit hint's cue – the first time for a video (GN-20), every time for an element without one
-   * (MED-03); the video's size, which turns the screen, stays the host's own.
+   * (MED-03); the video's size, which turns the screen, stays the host's own. A `false` that
+   * trailed the host's cap comes as a second cue for the same fullscreen, marked `late`.
    */
-  'fullscreen.entered': { tabId: string; video?: boolean | null }
+  'fullscreen.entered': { tabId: string; video?: boolean | null; late?: boolean }
   /**
    * A toast the host raises itself on the chrome's message cards (v2 §9.33), where it cannot
    * go through the core's own (`Browser.toast` has no action): the file chooser's camera
@@ -1176,6 +1177,17 @@ export class AndroidPlatform implements Platform {
   /** The runtime behind the store, once `createExtensions` built it (null in the preview host). */
   private extensionRuntime: AndroidExtensionRuntime | null = null
   private readonly bootEnvironment: PageEnvironment | null
+  /**
+   * The exit hint's cues per tab (`fullscreen.entered`). The chrome is under the fullscreen
+   * layer: the hint is drawn in the page's top layer (`shared/pageHint.ts`), as the desktop's
+   * fullscreen hints are.
+   */
+  private readonly fullscreenHints = new FullscreenHintCues((tabId) => ({
+    settings: () => this.browser.state.settings,
+    dark: () => this.browser.darkScheme(),
+    markShown: () => this.browser.updateSettings({ fullscreenHintDone: true }, this.window),
+    post: (hint) => this.bridge.send('view.postMessage', { tabId, message: { type: 'hint', hint } })
+  }))
 
   /**
    * `io` is the profile's store, complete: `bootAndroid` builds it and adopts the documents the
@@ -1903,18 +1915,10 @@ export class AndroidPlatform implements Platform {
       case 'fullscreen.entered': {
         const p = payload as Partial<HostEventPayloads['fullscreen.entered']>
         if (typeof p.tabId !== 'string') return
-        const tabId = p.tabId
-        // The chrome is under the fullscreen layer: the hint is drawn in the page's top layer
-        // (`shared/pageHint.ts`), as the desktop's fullscreen hints are.
-        onFullscreenEntered(
-          {
-            settings: () => browser.state.settings,
-            dark: () => browser.darkScheme(),
-            markShown: () => browser.updateSettings({ fullscreenHintDone: true }, this.window),
-            post: (hint) =>
-              this.bridge.send('view.postMessage', { tabId, message: { type: 'hint', hint } })
-          },
-          typeof p.video === 'boolean' ? p.video : null
+        this.fullscreenHints.entered(
+          p.tabId,
+          typeof p.video === 'boolean' ? p.video : null,
+          p.late === true
         )
         return
       }

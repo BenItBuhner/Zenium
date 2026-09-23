@@ -269,11 +269,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * The exit hint's cue to the chrome (`fullscreen.entered`): after the view's reveal, with the
      * page's word on whether the fullscreen element shows a video – the first time for a video
-     * (GN-20), every time for an element without one (MED-03; [FullscreenHintCue]).
+     * (GN-20), every time for an element without one (MED-03; [FullscreenHintCue]) – and again,
+     * `late`, when a `false` trails a cue that went out without the word.
      */
     private val hintCue = FullscreenHintCue(
         schedule = ::postDelayed,
-        cue = { tabId, video -> chrome.hostEvent("fullscreen.entered", json("tabId" to tabId, "video" to video)) }
+        cue = { tabId, video, late -> chrome.hostEvent("fullscreen.entered", json("tabId" to tabId, "video" to video, "late" to late)) }
     )
     /**
      * The bars' way back after a fullscreen: the chrome holds its return fade while they settle

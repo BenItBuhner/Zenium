@@ -16,6 +16,12 @@ import type { Settings } from '@shared/types'
  * the hint's showing too, so the first video after it does not repeat the same words. The record
  * is written before the hint is posted, so a second report inside the settings' round trip
  * cannot show it twice.
+ *
+ * The host waits on the page's word up to a cap (`FullscreenHintCue.CAP_MS`) and cues without
+ * one past it, taken as a video's: GN-20's once, never a toast over a second video's fullscreen
+ * for a slow page. A `false` that trails the cap – the element had no video after all – comes
+ * as a second cue marked `late`, and the toast the cap withheld goes up then (`FullscreenHintCues`),
+ * unless the wordless cue's own already stands for this fullscreen: one hint per fullscreen.
  */
 
 /** The page's word on the fullscreen element: a video, none, or nothing said (yet). */
@@ -48,4 +54,27 @@ export function onFullscreenEntered(
   if (!io.settings().fullscreenHintDone) io.markShown()
   io.post(fullscreenExitHint(io.dark()))
   return true
+}
+
+/**
+ * The cues per tab as the host sends them: a fresh cue (`fullscreen.entered`) decides as
+ * `onFullscreenEntered` does and its outcome is kept for the tab; the late cue that a trailing
+ * `false` brings shows the toast only when the fresh one showed nothing – the hint stands once
+ * per fullscreen. A fresh cue always comes first for a fullscreen, so the memory needs no
+ * clearing at the exit: the next fullscreen's own cue writes it over.
+ */
+export class FullscreenHintCues {
+  /** The tabs whose last fresh cue showed the hint. */
+  private readonly shown = new Set<string>()
+
+  constructor(private readonly io: (tabId: string) => FullscreenHintIo) {}
+
+  /** A cue for the tab; returns whether the hint went up. */
+  entered(tabId: string, video: FullscreenVideoWord, late = false): boolean {
+    if (late && this.shown.has(tabId)) return false
+    const shown = onFullscreenEntered(this.io(tabId), video)
+    if (shown) this.shown.add(tabId)
+    else this.shown.delete(tabId)
+    return shown
+  }
 }

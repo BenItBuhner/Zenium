@@ -7,10 +7,12 @@ import org.junit.Test
 /**
  * The exit hint's cue (GN-20, MED-03): the chrome hears of a fullscreen half a second after the
  * engine's view went up, with the page's word on whether the element shows a video – waited for
- * up to the cap, never past it; the exit before the cue drops it.
+ * up to the cap, never past it; the exit before the cue drops it. A `false` that trails a
+ * wordless cue is cued again, late, while the fullscreen stands.
  */
 class FullscreenHintCueTest {
     private val cued = mutableListOf<Pair<String, Boolean?>>()
+    private val late = mutableListOf<Pair<String, Boolean?>>()
     private val scheduled = mutableListOf<Pair<Long, () -> Unit>>()
     private var cancelled = 0
     private val cue = FullscreenHintCue(
@@ -22,7 +24,7 @@ class FullscreenHintCueTest {
             }
             cancel
         },
-        cue = { tabId, video -> cued += tabId to video }
+        cue = { tabId, video, isLate -> (if (isLate) late else cued) += tabId to video }
     )
 
     /** The delays run out, one round: every block scheduled so far runs. */
@@ -83,9 +85,67 @@ class FullscreenHintCueTest {
         elapse()
         elapse()
         assertEquals(listOf("t1" to false, "t1" to null), cued)
-        // A word after the cue is the next fullscreen's at most, never a second cue for this one.
+        assertTrue(late.isEmpty())
+        // A word after a cue that had one is the next fullscreen's at most, never a second cue for this one.
+        cue.exited("t1")
+        cue.entered("t1")
         cue.reported("t1", active = true, video = false, mainFrame = true)
-        assertEquals(2, cued.size)
+        elapse()
+        cue.reported("t1", active = true, video = false, mainFrame = true)
+        assertEquals(3, cued.size)
+        assertTrue(late.isEmpty())
+    }
+
+    @Test
+    fun aFalseTrailingTheCapIsCuedLateOnceWhileTheFullscreenStands() {
+        cue.entered("t1")
+        elapse()
+        elapse()
+        assertEquals(listOf("t1" to null), cued)
+        // The canvas's word past the cap: the toast the cap withheld is owed (MED-03), cued late – once.
+        cue.reported("t1", active = true, video = false, mainFrame = true)
+        assertEquals(listOf("t1" to false), late)
+        cue.reported("t1", active = true, video = false, mainFrame = true)
+        assertEquals(1, late.size)
+        assertEquals(1, cued.size)
+        assertTrue(scheduled.isEmpty())
+        // The next fullscreen starts clean: its own cue, no late word carried over.
+        cue.exited("t1")
+        cue.entered("t1")
+        cue.reported("t1", active = true, video = true, mainFrame = true)
+        elapse()
+        assertEquals(listOf("t1" to null, "t1" to true), cued)
+        assertEquals(1, late.size)
+    }
+
+    @Test
+    fun aLateTrueConfirmsTheWordlessCueAndTheExitEndsTheWait() {
+        cue.entered("t1")
+        elapse()
+        elapse()
+        // A video's late word (an embed's player): the wordless cue was the video's treatment already; nothing more.
+        cue.reported("t1", active = true, video = true, mainFrame = false)
+        assertTrue(late.isEmpty())
+        // The main document's `false` after a frame's `true` does not unsay it, late either.
+        cue.reported("t1", active = true, video = false, mainFrame = true)
+        assertTrue(late.isEmpty())
+        // The word after the exit is no late cue: the fullscreen it was for is over.
+        cue.exited("t1")
+        cue.entered("t2")
+        elapse()
+        elapse()
+        assertEquals(listOf("t1" to null, "t2" to null), cued)
+        cue.exited("t2")
+        cue.reported("t2", active = true, video = false, mainFrame = true)
+        assertTrue(late.isEmpty())
+        // Another tab's word is not this tab's late one.
+        cue.entered("t1")
+        elapse()
+        elapse()
+        cue.reported("t3", active = true, video = false, mainFrame = true)
+        assertTrue(late.isEmpty())
+        cue.reported("t1", active = true, video = false, mainFrame = true)
+        assertEquals(listOf("t1" to false), late)
     }
 
     @Test
