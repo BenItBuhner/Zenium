@@ -3259,6 +3259,102 @@ async function scenarioWalkthrough() {
       return detail
     })
 
+    await s.step('horizontal-tabs', async () => {
+      await s.reset()
+      // Look and Feel's Layout row (design language v2 §9.37, §10.4): one image radio of four
+      // cards – Only sidebar, Sidebar and top toolbar, Collapsed sidebar, Horizontal tabs – and
+      // a click applies live. Horizontal tabs re-shells the window: the tab rows leave the
+      // sidebar for the strip along the caption band and the sidebar becomes the rail beside
+      // the frame; Only sidebar (the run's layout) puts them back. The rows are the same rows
+      // either way (`data-testid="tab"`), so the count holds across the flip.
+      const root = s.chrome.locator('[data-testid="chrome-root"]').first()
+      const before = (await root.getAttribute('data-layout')) ?? 'single'
+      const page = s.chrome.locator('[data-testid="settings-page"]')
+      const rowsBefore = await s.sidebarTabCount()
+      if (IS_MAC) {
+        await s.press('Meta+,')
+      } else {
+        const button = s.chrome.locator('[data-zen-app-menu-button]').first()
+        await button.click({ timeout: 5000 })
+        const menu = s.chrome.locator('.zen-v2-menu[role="menu"]').first()
+        await menu.waitFor({ state: 'visible', timeout: 5000 })
+        await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click({ timeout: 5000 })
+        await menu.waitFor({ state: 'hidden', timeout: 5000 })
+      }
+      await page.first().waitFor({ state: 'visible', timeout: 10000 })
+      await s.settle()
+      const cards = s.chrome.locator('[data-layout-cards] [role="radio"]')
+      // The radio carries its value and its checked state on itself: a card is the radio
+      // matched, not a descendant of it.
+      const card = (value) =>
+        s.chrome.locator(`[data-layout-cards] [role="radio"][data-value="${value}"]`)
+      const captions = await cards.locator('.zen-settings-icon-caption').allTextContents()
+      const expected = [
+        'Only sidebar',
+        'Sidebar and top toolbar',
+        'Collapsed sidebar',
+        'Horizontal tabs'
+      ]
+      if (captions.join('|') !== expected.join('|')) {
+        throw new Error(
+          `the Layout cards read "${captions.join('|')}", expected "${expected.join('|')}"`
+        )
+      }
+      const strip = s.chrome.locator('[data-testid="tab-strip"]').first()
+      const sidebarRows = s.chrome.locator('aside:not([data-rail]) [data-testid="tab"]')
+      let stripRows = 0
+      let checked = null
+      try {
+        await card('horizontal').click({ timeout: 5000 })
+        await strip.waitFor({ state: 'visible', timeout: 5000 })
+        await waitFor(
+          async () => (await root.getAttribute('data-layout')) === 'horizontal',
+          5000,
+          'the chrome root marked data-layout="horizontal"'
+        )
+        await s.settle()
+        if ((await sidebarRows.count()) !== 0) {
+          throw new Error('tab rows still stand in the sidebar under the horizontal layout')
+        }
+        stripRows = await strip.locator('[data-testid="tab"]').count()
+        if (stripRows !== rowsBefore + 1) {
+          throw new Error(
+            `${stripRows} rows in the strip, expected ${rowsBefore + 1} (the Settings tab among them)`
+          )
+        }
+        if (!(await s.chrome.locator('aside[data-rail]').first().isVisible())) {
+          throw new Error('the sidebar did not become the rail beside the frame')
+        }
+        checked = await s.chrome
+          .locator('[data-layout-cards] [role="radio"][aria-checked="true"]')
+          .first()
+          .getAttribute('data-value')
+        if (checked !== 'horizontal') {
+          throw new Error(`the checked Layout card is "${checked}", expected "horizontal"`)
+        }
+        await s.shot('08c-horizontal-tabs')
+      } finally {
+        // Back to the layout the run started with, whatever happened above.
+        await card(before)
+          .click({ timeout: 5000 })
+          .catch(() => undefined)
+      }
+      await strip.waitFor({ state: 'hidden', timeout: 5000 })
+      await waitFor(
+        async () => (await sidebarRows.count()) === rowsBefore + 1,
+        5000,
+        `the ${rowsBefore + 1} tab rows back in the sidebar`
+      )
+      await s.press(`${ACCEL}+w`)
+      await page.first().waitFor({ state: 'hidden', timeout: 8000 })
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore,
+        8000,
+        `the Settings row gone (${rowsBefore} rows before)`
+      )
+      return { before, captions, stripRows, checked }
+    })
+
     await s.step('context-menu', async () => {
       await s.reset()
       const tab = (await s.tabs()).find((t) => t.url.startsWith(page.url))
