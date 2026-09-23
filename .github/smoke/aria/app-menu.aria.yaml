@@ -16,11 +16,7 @@
   - menuitem "Translate Page…"
   - menuitem "Reader View" [disabled]
   - menuitem "Listen to This Page" [disabled]
-  - separator
-  - menuitem "Save Page As…"
-  - menuitem "Create Shortcut…"
-  - menuitem "Web Capture…"
-  - menuitem "Print…"
+  - menuitem "Save and Share"
   - separator
   - menuitem "Settings"
   - menuitem "More Tools"
