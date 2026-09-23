@@ -493,6 +493,12 @@ export interface Tab {
 export type FolderColor =
   'grey' | 'blue' | 'red' | 'yellow' | 'green' | 'pink' | 'purple' | 'cyan' | 'orange'
 
+/**
+ * The scheme a group colour is drawn for (design language v2 §9.14: one set a scheme): the
+ * chrome's resolved theme – the root's `data-theme` – never the setting's 'system'.
+ */
+export type FolderColorScheme = Exclude<ColorScheme, 'system'>
+
 /** A page of a saved (closed) group: what "Open" brings back (Chrome's saved tab groups). */
 export interface SavedGroupTab {
   url: string
