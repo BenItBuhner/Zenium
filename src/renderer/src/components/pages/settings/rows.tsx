@@ -40,9 +40,11 @@ import { useSheetDismiss, type SheetDismiss } from './sheetContext'
  * a dialog (`dialogs.tsx`), through the same `open`.
  *
  * Whatever trails the text centres on the row (§9.18) – until the text runs to three lines (a
- * description wrapped, or a search result's caption above the label), when the control centres
- * on the label's line instead. The row measures its own text block for that: `data-lines="3"`
- * and `--zen-settings-label-top` (the label line's offset in the block) go on the row.
+ * description wrapped, or a search result's caption above the label), when the control sits
+ * with the label instead: on its line, or, taller than the line, with the label centred on
+ * the control's box and the description after it. The row measures its own text block for
+ * that: `data-lines="3"` and `--zen-settings-label-top` (the label's offset in the block) go
+ * on the row; which box its control is, the row says by its class (main.css).
  */
 
 /** Which of the two row vocabularies a list draws (§10.4 / §10.5). */
@@ -400,7 +402,8 @@ function DesktopRowView({
       }
       // Several actions and nothing to set (§10.5): the row is static and trails the 28 ⋯ whose
       // menu is its sheet's action rows; on one line it is a control row (§9.21: the button plus
-      // 8 – `data-control`, as `ListRow control` marks it).
+      // 8 – `data-control`, as `ListRow control` marks it); `zen-settings-menu-row` names the
+      // button's box for the three-line seat (§9.18, main.css).
       if (row.menu !== undefined) {
         return (
           <div
@@ -410,7 +413,7 @@ function DesktopRowView({
             data-tone={row.tone}
             data-control={!row.description && !caption ? '' : undefined}
             className={cn(
-              'zen-settings-row zen-v2-row',
+              'zen-settings-row zen-settings-menu-row zen-v2-row',
               row.disabled && 'zen-settings-row-disabled'
             )}
           >
