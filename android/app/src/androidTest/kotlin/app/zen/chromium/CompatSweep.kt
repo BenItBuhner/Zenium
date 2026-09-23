@@ -1690,7 +1690,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun vpn(label: String, pac: Boolean = false, consent: Boolean = false, connectSelector: String? = null, connectWords: String? = null, tapConsent: Boolean = false, hasPopup: Boolean = true): (Row, JSONObject) -> Grade = vpn@{ row, entry ->
         val extra = JSONObject()
         val factor = speedFactor(entry)
-        val bg = backgroundView(row.id)
+        // Woken when it idled out during the row's earlier stages (UltraSurf's had, in round 12's
+        // BEFORE run: "no background view" with the popup up and connected).
+        val bg = awakeBackground(row.id, factor)
         val proxy = if (bg != null) {
             tabEval(bg, PROXY_PROBE)
             poll(10_000, 250) { tabEval(bg, "window.__zenProxyProbe && window.__zenProxyProbe.done ? JSON.stringify(window.__zenProxyProbe) : null").takeIf { it != "null" } }?.let(::json)
@@ -4779,8 +4781,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * Proxy SwitchyOmega 3 (ZeroOmega): its popup (`popup-iframe.html`, the profile list in a
      * same-origin frame) switches `chrome.proxy.settings` between its profiles. Its default
      * "proxy" profile is a fixed server at `127.0.0.1:8080`, where nothing listens on the
-     * emulator, so once ProxyController has the override the fixture comes back as the WebView's
-     * `ERR_PROXY_CONNECTION_FAILED` page, and "[Direct]" picked next brings the fixture back:
+     * emulator, so once ProxyController has the override the fixture comes back as the
+     * `ERR_PROXY_CONNECTION_FAILED` error page (Zenium's own, `zen://error?code=-100`, in the
+     * tab; [PAGE_OR_ERROR]), and "[Direct]" picked next brings the fixture back:
      * the two readings together are the pass (the extension's choice applied and cleared at the
      * WebView). The worker's `chrome.proxy` shape is read first, as [vpn] reads it. The runtime
      * drops a disabled extension's proxy value on its own, so the row's cleanup leaves no override.
@@ -4788,7 +4791,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun proxySwitcher(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val bg = backgroundView(row.id)
+        val bg = awakeBackground(row.id, factor)
         val proxy = if (bg != null) probe(bg, PROXY_PROBE, "__zenProxyProbe", scaled(10_000, factor)) else JSONObject().put("pass", false).put("note", "no background view")
         extra.put("proxy", proxy)
         val (tab, view) = fixture("echo-headers?omega", factor, 1_500)
@@ -4839,8 +4842,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val restored = back.optBoolean("loaded")
         val note = "chrome.proxy: ${proxy.toString().take(160)}; profile taps ${steps.toString().take(220)}; fixture through the proxy profile: ${through.toString().take(140)}; back on [Direct]: ${back.toString().take(120)}"
         return when {
-            failedThrough && restored -> Grade("P", "ZeroOmega: the proxy profile's fixed server reached ProxyController (the fixture came back as the WebView's ${through.optString("code").ifEmpty { "proxy error" }} page) and [Direct] cleared it (the fixture loaded again): $note", extra)
-            failedThrough -> Grade("PARTIAL", "ZeroOmega: the proxy profile's fixed server reached ProxyController (${through.optString("code").ifEmpty { "the WebView's error page" }}) but [Direct] did not bring the fixture back within the wait: $note", extra)
+            failedThrough && restored -> Grade("P", "ZeroOmega: the proxy profile's fixed server reached ProxyController (the fixture came back as the ${through.optString("code").ifEmpty { "proxy error" }} error page) and [Direct] cleared it (the fixture loaded again): $note", extra)
+            failedThrough -> Grade("PARTIAL", "ZeroOmega: the proxy profile's fixed server reached ProxyController (${through.optString("code").ifEmpty { "the error page" }}) but [Direct] did not bring the fixture back within the wait: $note", extra)
             !proxy.optBoolean("pass") -> Grade("F", "ZeroOmega: the proxy API is not Chrome's shape in the worker: $note", extra)
             !proxied.optBoolean("clicked") -> Grade("F", "ZeroOmega: no 'proxy' profile to tap in the popup: $note", extra)
             else -> Grade("F", "ZeroOmega: the proxy profile tapped and the fixture still loaded directly (the override never reached the WebView): $note", extra)
@@ -5333,7 +5336,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("bnlofglpdlboacepdieejiecfbfpmhlb", "Turbo VPN", "turbo-vpn", core = vpn("Turbo VPN")),
         Row("lgjhepbpjcmfmjlpkkdjlbgomamkgonb", "Google Docs Dark Mode", "google-docs-dark-mode", core = siteGate("Google Docs Dark Mode", "https://docs.google.com/document/u/0/", "link[href*='lgjhepbpjcmfmjlpkkdjlbgomamkgonb'], style[id*='dark'], [class*='docs-dark']", Regex("^https://docs\\.google\\.com/document/"), "a Google sign-in (its script runs on a document)")),
         Row("jnhgnonknehpejjnehehllkliplmbmhn", "Web Scraper", "web-scraper", core = notOnThePhone("Web Scraper: its whole surface is a devtools panel (devtools_page); the phone has no devtools to host it: WebView limit")),
-        Row("eljapbgkmlngdpckoiiibecpemleclhh", "Fonts Ninja", "fonts-ninja", core = actionMarker("Fonts Ninja", "styled-light.html?fonts", "(function(){var f=document.querySelector('iframe[src*=\"frame.html\"], iframe[src*=\"eljapbgkmlngdpckoiiibecpemleclhh\"]');var marks=document.querySelectorAll('[id*=\"fontsninja\"], [class*=\"fontsninja\"], [id*=\"fonts-ninja\"], [class*=\"fonts-ninja\"], fonts-ninja, [id*=\"fontface-ninja\"], [class*=\"fontface-ninja\"]');var r=f?f.getBoundingClientRect():{width:0,height:0};return JSON.stringify({pass:!!f||marks.length>0,frame:!!f,marks:marks.length,w:Math.round(r.width),h:Math.round(r.height)})})()")),
+        // Fonts Ninja's content script mounts `<fn-ninja-root data-fn="v9" popover="manual">` on
+        // `document.documentElement` with a closed shadow root, and its `frame.html` loads inside
+        // it (the page context's hello in the bridge); the host is what the page can see of it.
+        Row("eljapbgkmlngdpckoiiibecpemleclhh", "Fonts Ninja", "fonts-ninja", core = actionMarker("Fonts Ninja", "styled-light.html?fonts", "(function(){var host=document.querySelector('fn-ninja-root, [data-fn]');var f=document.querySelector('iframe[src*=\"frame.html\"], iframe[src*=\"eljapbgkmlngdpckoiiibecpemleclhh\"]');var marks=document.querySelectorAll('[id*=\"fontsninja\"], [class*=\"fontsninja\"], [id*=\"fonts-ninja\"], [class*=\"fonts-ninja\"], fonts-ninja, [id*=\"fontface-ninja\"], [class*=\"fontface-ninja\"]');var el=host||f;var r=el?el.getBoundingClientRect():{width:0,height:0};var open=false;try{open=!!host&&host.matches(':popover-open')}catch(e){}return JSON.stringify({pass:!!host||!!f||marks.length>0,host:host?host.tagName.toLowerCase():null,dataFn:host?host.getAttribute('data-fn'):null,shadow:host?(host.shadowRoot?'open':'closed or none'):null,popoverOpen:open,frame:!!f,marks:marks.length,w:Math.round(r.width),h:Math.round(r.height)})})()")),
         Row("pfnededegaaopdmhkdmcofjmoldfiped", "ZeroOmega", "zeroomega", core = ::proxySwitcher),
         Row("iplffkdpngmdjhlpjmppncnlhomiipha", "Unpaywall", "unpaywall", core = ::unpaywall),
         Row("dfffkbbackkpgmddopaeohbdgfckogdn", "Audio Master mini", "audio-master-mini", core = captureLimit("Audio Master mini", "/volume|bass|boost|equal/i")),
@@ -6622,12 +6628,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){" + FRAMED_DOCS + "var parts=[];docs.forEach(function(doc){if(doc.d.body)parts.push((doc.d.body.innerText||'').replace(/\\s+/g,' ').trim())});" +
                 "var text=parts.join(' | ').replace(/\\s+/g,' ').trim();return JSON.stringify({text:text.slice(0,400),len:text.length,frames:docs.length-1})})()"
         /**
-         * The fixture tab after a reload with a proxy override in place: the WebView's own error
-         * page (`net::ERR_...` quoted in it) or the `echo-headers` page loaded (`window.__headers`).
+         * The fixture tab after a reload with a proxy override in place: an error page, or the
+         * `echo-headers` page loaded (`window.__headers`). The error page is Zenium's own
+         * (`zen://error?code=-100&description=ERR_PROXY_CONNECTION_FAILED&url=...`, "This site
+         * can't be reached ... unexpectedly closed the connection." in the tab) since the core
+         * puts it in place of the WebView's; the WebView's stock page (`net::ERR_...` quoted,
+         * "Webpage not available") is still read for a load that failed before the core's hook.
+         * The code is the `description` parameter, else the `ERR_...` token of the text.
          */
         private const val PAGE_OR_ERROR =
-            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var err=/could not be loaded because|Webpage not available|net::ERR_/i.test(t);var code=(t.match(/net::ERR_[A-Z_]+/)||[''])[0];var loaded=!!window.__headers&&!err;" +
-                "return JSON.stringify({pass:err||loaded,errorPage:err,loaded:loaded,code:code,text:t.slice(0,160),url:location.href.slice(0,80)})})()"
+            "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var zen=/^zen:\\/\\/error/i.test(location.href);var err=zen||/could not be loaded because|Webpage not available|This site can.t be reached|net::ERR_|\\bERR_[A-Z_]{4,}\\b/i.test(t);" +
+                "var m=location.href.match(/[?&]description=(ERR_[A-Z_]+)/)||t.match(/(?:net::)?(ERR_[A-Z_]+)/);var code=m?m[1]:'';var loaded=!!window.__headers&&!err;" +
+                "return JSON.stringify({pass:err||loaded,errorPage:err,zenError:zen,loaded:loaded,code:code,text:t.slice(0,160),url:location.href.slice(0,80)})})()"
         /** ImTranslator's popup: "Bonjour le monde" put in its first shown text box (in the popup or a frame of it), with the input events a keyboard would send. */
         private const val IMTRANSLATOR_TYPE =
             "(function(){" + FRAMED_DOCS + "var visible=function(n){var r=n.getBoundingClientRect();return r.width>40&&r.height>16};var hit=null,doc=null;" +
