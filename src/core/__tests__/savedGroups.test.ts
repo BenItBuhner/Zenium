@@ -248,16 +248,20 @@ describe('a saved group (TAB-16)', () => {
     expect(isSavedFolder(m, m.folders[folder])).toBe(true)
   })
 
-  it('a tab joining a saved group opens it: the kept pages go, and the group counts as used', () => {
+  it('a tab joining a saved group opens it: the kept pages go, the group unfolds and counts as used', () => {
     const h = harness()
     const m = h.browser.state.model
     const folder = h.group('Trip')
     h.open('https://a.test/', { folderId: folder })
     h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
+    // Closing folded it shut with its pages (the desktop's saved chip); the tab moved into it
+    // must not find it folded around itself: it is live and unfolded, whichever way it came.
+    expect(m.folders[folder].collapsed).toBe(true)
     m.folders[folder].lastUsedAt = 1
     const loose = h.open('https://loose.test/')
     h.browser.tabs.moveToFolder(loose, folder)
     expect(m.folders[folder].savedTabs).toBeNull()
+    expect(m.folders[folder].collapsed).toBe(false)
     expect(m.folders[folder].lastUsedAt).toBeGreaterThan(1)
     expect(isSavedFolder(m, m.folders[folder])).toBe(false)
 
@@ -266,6 +270,7 @@ describe('a saved group (TAB-16)', () => {
     h.open('https://again.test/', { folderId: again })
     h.browser.handleCommand(h.win, 'folder.close', { folderId: again })
     expect(isSavedFolder(m, m.folders[again])).toBe(true)
+    expect(m.folders[again].collapsed).toBe(true)
     const entry = h.browser.state.recentlyClosed.find(
       (e) => e.kind === 'tab' && e.folderId === again
     )!
@@ -274,6 +279,16 @@ describe('a saved group (TAB-16)', () => {
     const restored = Object.values(m.tabs).find((t) => t.url === 'https://again.test/')!
     expect(restored.folderId).toBe(again)
     expect(m.folders[again].savedTabs).toBeNull()
+    expect(m.folders[again].collapsed).toBe(false)
+
+    // A new tab made in the saved group, the third way in: the same.
+    const third = h.group('Third')
+    h.open('https://third.test/', { folderId: third })
+    h.browser.handleCommand(h.win, 'folder.close', { folderId: third })
+    expect(m.folders[third].collapsed).toBe(true)
+    h.open('https://new.test/', { folderId: third })
+    expect(m.folders[third].savedTabs).toBeNull()
+    expect(m.folders[third].collapsed).toBe(false)
   })
 
   it('rename and colour keep the saved pages; delete removes the group', () => {

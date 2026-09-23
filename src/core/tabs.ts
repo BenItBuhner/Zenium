@@ -1834,7 +1834,8 @@ export class TabManager {
    * nothing behind – no page, no last use – as it leaves no recently closed entry, and the
    * group's live members are its regular ones (`regularFolderTabs`). A saved group folds shut:
    * the desktop sidebar lists a saved group's pages under its header only when it is unfolded
-   * (collapsed by default, Chrome's saved-group chip), and `openFolder` unfolds it again.
+   * (collapsed by default, Chrome's saved-group chip), and the tab that brings it back to life
+   * unfolds it again (`folderOpened` – Open Folder, a reopened closed tab, a move into it).
    */
   private saveFolderOnLastClose(tab: Tab, closedAt: number): void {
     const folderId = tab.folderId
