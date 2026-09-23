@@ -9858,10 +9858,13 @@
  * Three text lines (§9.18): the control leaves the row's centre for the label's line. The row
  * measures where that line starts in its text block (`rows.tsx`); the control's box is then the
  * label's line box, so its content centres on it – (line − control) / 2 without stating either.
+ * The box is the line's height, not a minimum of it: a minimum grows to a 32 menulist or
+ * button, which then sits with its top on the label's top and its centre 6 low (a 28 icon
+ * button 4 low); a fixed box lets the taller control overhang the line evenly.
  */
 .zen-settings-row[data-lines='3'] > .zen-settings-trailing {
   align-self: flex-start;
-  min-height: var(--v2-line-body-box);
+  height: var(--v2-line-body-box);
   margin-top: var(--zen-settings-label-top, 0px);
 }
 /* A detail row's summary (§10.4): what its sheet holds, 13 at 69 % on the trailing side, before the chevron. */
