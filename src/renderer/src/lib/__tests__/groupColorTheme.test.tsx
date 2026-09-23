@@ -52,7 +52,9 @@ const RULES = [
  * selector matches – and with them its computed style – cached across an ANCESTOR's attribute
  * change, where a browser restyles (it drops them on the element's own attributes, a tree
  * mutation, a focus change), so the flip is followed by the drop a restyle stands for: the
- * document's cache cleared through happy-dom's own symbol. Nothing in the tree changes.
+ * document's cache cleared through happy-dom's own symbol, before anything reads a computed
+ * style (a read between the flip and the clear caches the stale match again, and that one the
+ * document's clear does not reach). Nothing in the tree changes.
  */
 function flipTheme(scheme: 'light' | 'dark'): void {
   document.documentElement.dataset.theme = scheme
