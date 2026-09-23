@@ -1,6 +1,6 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
-import { VenetianMask } from 'lucide-react'
+import type { JSX, ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ChevronDown, VenetianMask } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -10,6 +10,7 @@ import { groupsOf } from '@renderer/lib/groups'
 import { isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { SlideMotion } from '@renderer/lib/motion/slide'
+import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import {
   activeSpace,
@@ -19,13 +20,19 @@ import {
   rowKey,
   stripRows
 } from '@renderer/lib/selectors'
+import { toggleTabSearch } from '@renderer/lib/tabSearch'
 import {
   STRIP_BAND,
+  STRIP_DRAG_SPRING,
   STRIP_FADE,
+  STRIP_HOLD_MS,
   STRIP_MAC_INSET,
   STRIP_TAB_MAX,
   hasStateGlyph,
+  heldTabWidth,
   stripSlot,
+  stripTabRoom,
+  stripTabWidth,
   type StripSlot
 } from '@renderer/lib/tabStripLayout'
 import { uiStore } from '@renderer/lib/ui'
@@ -33,15 +40,29 @@ import { cn } from '@renderer/lib/utils'
 import { ListMotionContext } from '../sidebar/listMotion'
 import { FolderRow, NewTabButton, StripRowItem } from '../sidebar/SpacePanel'
 import { StripAxisContext } from '../sidebar/stripAxis'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
 
 /** More rows than this arriving in one commit is a restore, placed without motion. */
 const ENTER_BATCH = 6
 
+/** The CSS property every regular tab in the strip draws its width from (main.css). */
+const WIDTH_PROPERTY = '--zen-strip-tab-width'
+
+/** The rows the regular region lays out at the shared width: a tab's own row, or a split row. */
+const ROWS = '.zen-tab:not([data-tab-folder], .zen-split-seg), .zen-split-row'
+
 interface Props {
   state: UIState
   /** Controls at the trailing end, ahead of the window controls (the fullscreen way out). */
   trailing?: ReactNode
+}
+
+interface Layout {
+  /** The width every regular tab draws at. */
+  width: number
+  /** The tabs at the floor no longer fit: the region scrolls and the All tabs button is up. */
+  overflow: boolean
 }
 
 /**
@@ -50,18 +71,24 @@ interface Props {
  * its own, no hairline under it – in the 38 band (6 inset + the 32 row), and every tab is the
  * sidebar's `.zen-tab` with its axis turned (`StripAxisContext`): 32 tall at radius 8, the
  * favicon, the title, the one trailing slot. Pinned tabs are 32 × 32 favicon-only ahead of the
- * space's tabs; the regular region scrolls once it overflows (24 px edge fades, no arrows); the
- * + is a 28 toolbar button 4 after the last tab; a drag spring of at least 24 keeps it off the
- * window controls, which sit inline at the trailing end (Linux's three §9.3 boxes inset 8;
- * Windows' caption buttons drawn over the band, the strip keeping their footprint clear; the
- * macOS lights leading, the strip inset 84). The strip is the tab strip pane of the F6 rotation
- * (`data-pane="tabs"`); the rail beside the frame is the same pane's other root.
+ * space's tabs; the regular tabs share one width – 240 at the most, shrinking evenly to the
+ * 120 floor as they come and holding there, past which the region scrolls (24 px edge fades, no
+ * arrows, the active tab brought into view on activation) and an All tabs button opens tab
+ * search at the trailing end; the + is a 28 toolbar button 4 after the last tab; a drag spring
+ * of at least 24 keeps it off the window controls, which sit inline at the trailing end
+ * (Linux's three §9.3 boxes inset 8; Windows' caption buttons drawn over the band, the strip
+ * keeping their footprint clear; the macOS lights leading, the strip inset 84). After a close
+ * the widths hold while the pointer stays in the band and re-lay out 120 ms after it leaves;
+ * a width change runs on `SPRING_SNAPPY` (§11.4's FLIP set), reorders on the rows' slide. The
+ * strip is the tab strip pane of the F6 rotation (`data-pane="tabs"`); the rail beside the
+ * frame is the same pane's other root.
  */
 export function TabStrip({ state, trailing }: Props): JSX.Element {
   const space = activeSpace(state)
   const drag = uiStore.use((s) => s.drag)
   const dropKey = dropStore.use((s) => s.key)
   const zones = dropStore.use((s) => s.zones)
+  const searchUp = uiStore.use((s) => s.tabSearch?.from === 'strip')
   const pinned = pinnedOf(state, space)
   const regular = regularOf(state, space)
   // The rows are the space panel's (SpacePanel.tsx): a regular surface lists no private group
@@ -82,8 +109,129 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
   const isPrivate = isPrivateWindow(state)
   const overlay = useCaptionOverlay()
 
-  // Every regular tab's width, and from it each tab's trailing slot (`lib/tabStripLayout.ts`).
-  const width = STRIP_TAB_MAX
+  // ---- the widths (lib/tabStripLayout.ts) ----
+  // The room the regular tabs have is what the region shows plus whatever the drag spring holds
+  // beyond its 24 (the region is content-sized until the tabs fill it) plus the All tabs slot,
+  // so the button's coming and going never changes the room it is judged against. Measured on
+  // every commit that changes the rows and on every resize of the region or the spring.
+  const scrollerEl = useRef<HTMLDivElement | null>(null)
+  const listEl = useRef<HTMLDivElement | null>(null)
+  const springEl = useRef<HTMLDivElement>(null)
+  const allTabsEl = useRef<HTMLDivElement>(null)
+  const [layout, setLayout] = useState<Layout>({ width: STRIP_TAB_MAX, overflow: false })
+  /** The width the rows draw at now (the spring's, mid-flight). */
+  const drawnWidth = useRef(STRIP_TAB_MAX)
+  /** The width held after a close while the pointer stays in the band; null once released. */
+  const held = useRef<number | null>(null)
+  const pointerInBand = useRef(false)
+  const holdTimer = useRef<number | null>(null)
+  /** The first measurement draws its width outright; every later change runs on the spring. */
+  const measured = useRef(false)
+  const relayout = useCallback((): void => {
+    const scroller = scrollerEl.current
+    const list = listEl.current
+    const spring = springEl.current
+    if (!scroller || !list || !spring) return
+    const chips = list.querySelectorAll<HTMLElement>('[data-strip-group]')
+    let fixed = 0
+    chips.forEach((chip) => {
+      fixed += chip.offsetWidth
+    })
+    const count = list.querySelectorAll(ROWS).length
+    const room =
+      scroller.clientWidth +
+      Math.max(0, spring.offsetWidth - STRIP_DRAG_SPRING) +
+      (allTabsEl.current?.offsetWidth ?? 0)
+    const natural = stripTabWidth(stripTabRoom(room, fixed, chips.length, count), count)
+    const width = heldTabWidth(held.current, pointerInBand.current, natural.width)
+    if (held.current !== null && pointerInBand.current) list.dataset.widthHeld = 'true'
+    else delete list.dataset.widthHeld
+    setLayout((prev) =>
+      prev.width === width && prev.overflow === natural.overflow
+        ? prev
+        : { width, overflow: natural.overflow }
+    )
+  }, [])
+  const release = useCallback((): void => {
+    holdTimer.current = null
+    held.current = null
+    relayout()
+  }, [relayout])
+  const onBandEnter = useCallback((): void => {
+    pointerInBand.current = true
+    if (holdTimer.current !== null) {
+      window.clearTimeout(holdTimer.current)
+      holdTimer.current = null
+    }
+  }, [])
+  const onBandLeave = useCallback((): void => {
+    pointerInBand.current = false
+    if (held.current === null) return
+    if (holdTimer.current !== null) window.clearTimeout(holdTimer.current)
+    holdTimer.current = window.setTimeout(release, STRIP_HOLD_MS)
+  }, [release])
+  useEffect(
+    () => () => {
+      if (holdTimer.current !== null) window.clearTimeout(holdTimer.current)
+    },
+    []
+  )
+
+  // The active tab comes into view on activation and once a width change has settled, clear of
+  // the edge fades.
+  const activeRef = useRef(activeTabId)
+  useLayoutEffect(() => {
+    activeRef.current = activeTabId
+  }, [activeTabId])
+  const scrollActiveIntoView = useCallback((): void => {
+    const el = scrollerEl.current
+    const id = activeRef.current
+    if (!el || !id) return
+    const row = el.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)
+    if (!row) return
+    const box = el.getBoundingClientRect()
+    const r = row.getBoundingClientRect()
+    const start = box.left + (el.scrollLeft > 0 ? STRIP_FADE : 0)
+    const end = box.right - STRIP_FADE
+    if (r.left < start) el.scrollBy({ left: r.left - start, behavior: 'smooth' })
+    else if (r.right > end) el.scrollBy({ left: r.right - end, behavior: 'smooth' })
+  }, [])
+  useLayoutEffect(scrollActiveIntoView, [scrollActiveIntoView, activeTabId])
+
+  // A width change is §11.4's FLIP on the snappy spring: the shared width runs from where it
+  // was to where it goes, every row and the + following in layout. The first measurement after
+  // the strip comes up draws its width outright.
+  const widthSpring = useRef<SpringAnimation | null>(null)
+  useLayoutEffect(() => {
+    const list = listEl.current
+    if (!list) return
+    const to = layout.width
+    if (drawnWidth.current === to) return
+    const draw = (x: number): void => {
+      drawnWidth.current = x
+      list.style.setProperty(WIDTH_PROPERTY, `${x}px`)
+    }
+    if (!measured.current) {
+      measured.current = true
+      draw(to)
+      return
+    }
+    const spring = (widthSpring.current ??= new SpringAnimation(SPRING_SNAPPY, draw, (x) => {
+      draw(x)
+      scrollActiveIntoView()
+    }))
+    const from = spring.running ? spring.stop() : { x: drawnWidth.current, v: 0 }
+    spring.start(from.x, from.v, to)
+  }, [layout.width, scrollActiveIntoView])
+  useEffect(
+    () => () => {
+      widthSpring.current?.stop()
+    },
+    []
+  )
+
+  // Every regular tab's trailing slot follows the shared width (`lib/tabStripLayout.ts`).
+  const width = layout.width
   const slot = useCallback(
     (tab: Tab, active: boolean): StripSlot => stripSlot(width, active, hasStateGlyph(tab)),
     [width]
@@ -103,16 +251,22 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'x', size: STRIP_FADE })
   const scroller = useCallback(
     (el: HTMLDivElement | null) => {
+      scrollerEl.current = el
       const teardown = fade(el)
       motion.setScroller(el)
       if (el) listMotions.set(el, motion)
       return () => {
         if (typeof teardown === 'function') teardown()
         motion.setScroller(null)
+        scrollerEl.current = null
       }
     },
     [fade, motion]
   )
+  const list = useCallback((el: HTMLDivElement | null) => {
+    listEl.current = el
+    if (el) el.style.setProperty(WIDTH_PROPERTY, `${drawnWidth.current}px`)
+  }, [])
   const pinnedScroller = useCallback(
     (el: HTMLDivElement | null) => {
       pinnedMotion.setScroller(el)
@@ -126,11 +280,45 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
     ...folders.map((f) => `${f.id}${f.collapsed ? '-' : '+'}`),
     ...regular.map((t) => `${t.id}${t.folderId ?? ''}`)
   ].join('|')
+  // A close with the pointer in the band holds the widths the tabs had (Chrome's rule, so the
+  // next × lands under the pointer); a tab arriving, or the pointer leaving, releases them. The
+  // space's tab count decides it, not the rows drawn: a group's fold takes rows away and closes
+  // nothing, so its members' width goes to the others on the spring at once.
+  const tabCount = regular.length
+  const lastTabCount = useRef(tabCount)
+  useLayoutEffect(() => {
+    if (tabCount < lastTabCount.current && pointerInBand.current && held.current === null) {
+      held.current = drawnWidth.current
+    } else if (tabCount > lastTabCount.current) {
+      held.current = null
+    }
+    lastTabCount.current = tabCount
+  }, [tabCount])
   useLayoutEffect(() => {
     const lifted = uiStore.get().drag?.tabId ?? null
     pinnedMotion.flip(lifted, true)
     motion.flip(lifted, true)
-  }, [pinnedMotion, motion, orderKey, zones])
+    relayout()
+  }, [pinnedMotion, motion, relayout, orderKey, zones])
+  // The region, its list and the spring change size with the window, the rows' fold and slide
+  // and the rows a group's fold takes away after its spring (no commit of the strip's own).
+  useEffect(() => {
+    if (typeof ResizeObserver !== 'function') return
+    const observer = new ResizeObserver(() => relayout())
+    if (scrollerEl.current) observer.observe(scrollerEl.current)
+    if (listEl.current) observer.observe(listEl.current)
+    if (springEl.current) observer.observe(springEl.current)
+    return () => observer.disconnect()
+  }, [relayout])
+
+  // The wheel over the region scrolls it along the strip (Chrome's, Firefox's): a vertical
+  // wheel is the tab strip's horizontal scroll; a trackpad's sideways swipe scrolls natively.
+  const onWheel = (e: React.WheelEvent<HTMLDivElement>): void => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+    const el = e.currentTarget
+    if (el.scrollWidth <= el.clientWidth) return
+    el.scrollLeft += e.deltaY
+  }
 
   // The strip's own menu on its empty room (the sidebar scroller's rule): a row that opened its
   // own menu has claimed the event by now.
@@ -149,7 +337,10 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
         data-surface="window"
         data-pane="tabs"
         data-strip-axis="x"
+        data-overflow={layout.overflow || undefined}
         data-testid="tab-strip"
+        onPointerEnter={onBandEnter}
+        onPointerLeave={onBandLeave}
       >
         {isPrivate && (
           <VenetianMask
@@ -192,15 +383,16 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
                 data-strip-scroller
                 data-tab-scroller
                 data-active="true"
+                onWheel={onWheel}
                 onContextMenu={onEmptyContextMenu}
               >
                 <div
+                  ref={list}
                   className="flex h-full items-end gap-1"
                   role="tablist"
                   aria-orientation="horizontal"
                   aria-label={`${space.name} tabs`}
                   data-tab-list="regular"
-                  style={{ '--zen-strip-tab-width': `${width}px` } as CSSProperties}
                 >
                   {folders.map((folder) => (
                     <FolderRow
@@ -240,7 +432,28 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
           </div>
         </nav>
         {/* The drag spring: at least 24 of caption between the + and the window controls. */}
-        <div className="zen-drag" style={{ flex: '1 0 24px' }} data-strip-spring />
+        <div
+          ref={springEl}
+          className="zen-drag"
+          style={{ flex: `1 0 ${STRIP_DRAG_SPRING}px` }}
+          data-strip-spring
+        />
+        {layout.overflow && (
+          <div ref={allTabsEl} className="zen-no-drag flex shrink-0 items-end pb-[2px] pr-1">
+            <button
+              type="button"
+              className="zen-toolbar-button shrink-0"
+              title="All tabs"
+              aria-label="All tabs"
+              aria-haspopup="dialog"
+              aria-expanded={searchUp}
+              data-strip-all-tabs
+              onClick={() => toggleTabSearch('strip')}
+            >
+              <ChevronDown className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+            </button>
+          </div>
+        )}
         <div
           className={cn('zen-no-drag flex shrink-0 items-end gap-1 pb-[2px]')}
           style={{ paddingRight: overlay.width > 0 ? overlay.width : 8 }}

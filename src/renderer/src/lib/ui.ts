@@ -464,9 +464,11 @@ export interface UiState {
    * a chrome control had the focus when it opened, so the page does not take it back on close.
    * A request only, as `translateSelection`: the popover holds the capture and the keyboard
    * itself (`useFloatingChrome`). With `pick` it is the empty pane's picker instead
-   * (`TabPickRequest`), hanging from the pane's button and holding no capture.
+   * (`TabPickRequest`), hanging from the pane's button and holding no capture. With `from`
+   * `'strip'` it was the horizontal strip's All tabs button (§9.37) that opened it, and the
+   * popover hangs from that button, end-aligned under the band.
    */
-  tabSearch: { keyboard: boolean; pick?: TabPickRequest } | null
+  tabSearch: { keyboard: boolean; pick?: TabPickRequest; from?: 'strip' } | null
   /**
    * The group editor bubble (tabs-13) is up beside a folder's header row in the sidebar.
    * `keyboard`: the header had the focus when it opened (Space or Enter, the folder menu from
