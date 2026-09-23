@@ -10,18 +10,29 @@ import type { Tab } from '@shared/types'
  * twice). The strip and the sidebar share the row, so they share this.
  */
 
+/** The alert's word in the row's description, the tooltip's noun (tabs-43). */
+const ALERT_STATE: Record<TabAlert, string> = {
+  recording: 'recording',
+  capturing: 'sharing',
+  bluetooth: 'Bluetooth device',
+  usb: 'USB device',
+  hid: 'HID device',
+  serial: 'serial port',
+  pip: 'picture in picture',
+  vr: 'VR headset'
+}
+
 /**
  * The states a row announces, one short word each, what the user cannot otherwise see first:
- * an alert (recording, sharing, picture-in-picture), the audio (muted, else playing), the
- * page's sleep (sleeping, else the governor's frozen or throttled), and last that it is pinned.
- * A row under the private lock announces nothing of the page (`masked`).
+ * an alert (recording, sharing, a device session – Bluetooth device, USB device, HID device,
+ * serial port – picture-in-picture, VR headset), the audio (muted, else playing), the page's
+ * sleep (sleeping, else the governor's frozen or throttled), and last that it is pinned. A row
+ * under the private lock announces nothing of the page (`masked`).
  */
 export function tabRowStates(tab: Tab, alert: TabAlert | null, masked = false): string[] {
   if (masked) return []
   const states: string[] = []
-  if (alert === 'recording') states.push('recording')
-  else if (alert === 'capturing') states.push('sharing')
-  else if (alert === 'pip') states.push('picture in picture')
+  if (alert) states.push(ALERT_STATE[alert])
   if (tab.muted) states.push('muted')
   else if (tab.audible) states.push('playing')
   if (tab.discarded) states.push('sleeping')

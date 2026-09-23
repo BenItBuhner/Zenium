@@ -1,5 +1,5 @@
 import { useViewport } from '@renderer/lib/formFactor'
-import type { JSX } from 'react'
+import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FolderInput, VenetianMask } from 'lucide-react'
 import type { UIState } from '@shared/types'
@@ -23,6 +23,7 @@ import { PrivatePanel } from './PrivatePanel'
 import { SidebarBottom } from './SidebarBottom'
 import { SidebarTop } from './SidebarTop'
 import { SpacePanel } from './SpacePanel'
+import { RailFlyoutContext, useRailFlyout } from './useRailFlyout'
 
 interface Props {
   state: UIState
@@ -102,6 +103,47 @@ export function Sidebar({
     []
   )
 
+  // The rail's FLYOUT (tabs-03, `useRailFlyout`; v2 §9.20's sidebar anchor and cascade): under
+  // the Collapsed sidebar layout with "Expand on hover" on, a pointer resting on the docked rail
+  // flies a second surface out BESIDE the rail to the expanded sidebar's width over the page –
+  // the rail and the frame staying put. The `<aside>` keeps the rail's 56 in the window's row
+  // throughout; what it holds sits in a box of its own (`flyoutRef`) that the spring widens from
+  // the rail's 56 to the rail plus the panel, its surface drawn from the rail's edge (main.css:
+  // the frame's shadow rule, its edge in the rail's last column – the cascade's 1 px overlap –
+  // its own ring clipped off that edge so the shared pixel keeps the frame's one hairline),
+  // so the flyout's rows are the rail's rows – the same elements, the same y, each running across
+  // the seam with its glyph in the rail's tile and its title in the panel. A touch screen has no
+  // pointer to rest and no flyout; the compact-mode reveal (`floating`) is its own surface.
+  const flyoutRef = useRef<HTMLDivElement>(null)
+  const flyoutOffered =
+    !rail &&
+    !floating &&
+    compact &&
+    !coarse &&
+    state.settings.toolbarLayout === 'collapsed' &&
+    state.settings.sidebarExpandOnHover
+  const flyoutOut = useRailFlyout(asideRef, flyoutRef, {
+    enabled: flyoutOffered,
+    rest: COLLAPSED_WIDTH,
+    extent: state.settings.sidebarWidth,
+    activeTabId: tab?.id ?? null
+  })
+  // The tab rows, the folders and the New Tab row take their expanded form while the flyout is
+  // out. The rail's head and foot keep the rail's – the navigation column and the Essentials
+  // tiles as one column, the spaces' glyphs below, boxed at the rail's width against the rail's
+  // edge – because the rail is the cascade's parent and stays as it is beside the flyout, and
+  // because a head laid out for the expanded sidebar (one toolbar row with the pill, the tiles
+  // in a grid) stands a different height, and every row beneath it would move under the pointer
+  // that opened it.
+  const rowsCompact = compact && !flyoutOut
+  const railBox: CSSProperties | undefined =
+    rowsCompact !== compact
+      ? { width, alignSelf: side === 'right' ? 'flex-end' : 'flex-start' }
+      : undefined
+  // The box keeps the flyout's positioning until a fold has rested: the offer withdrawn while
+  // out (the setting off, the layout changed) folds it first.
+  const flyoutBox = flyoutOffered || flyoutOut
+
   if (rail) {
     // Docked, the rail is a stretched item of the columns row with the window's 8 gutter above
     // and below it: it starts level with the frame at 82 and ends level with the frame's bottom,
@@ -154,63 +196,97 @@ export function Sidebar({
       // the single-toolbar layout, is the toolbar pane.
       data-pane="tabs"
       data-pose={pose}
+      data-flyout-offered={flyoutOffered || undefined}
       aria-label="Sidebar"
     >
-      <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
-      <PaneSlot
-        pane={pose}
-        root={asideRef}
-        onLeave={leavePose}
-        switching={stills.length > 0}
-        className="zen-sidebar-pose relative flex min-h-0 flex-1 flex-col"
+      {/* The flyout's box (`useRailFlyout`): the aside's whole box at rest, and – out – the rail
+          plus the panel beside it over the frame, the panel's surface drawn from the rail's edge
+          (`--zen-rail-rest`) on the window's own background (fixed, so the gradient is the
+          window's under it) with the frame's shadow rule at both its edges. `data-flyout-rows`
+          keys main.css's flyout rules – the surface, the rows across the seam – and is set in
+          the commit that lays the rows out in their expanded form, so the rules and the rows'
+          form switch together: never a compact row under the flyout's glyph lead. */}
+      <div
+        ref={flyoutRef}
+        className={cn(
+          'zen-rail-flyout flex h-full flex-col',
+          flyoutBox && 'absolute inset-y-0 w-full',
+          flyoutBox && (side === 'left' ? 'left-0' : 'right-0')
+        )}
+        style={
+          flyoutBox ? ({ '--zen-rail-rest': `${COLLAPSED_WIDTH}px` } as CSSProperties) : undefined
+        }
+        data-rail-flyout={flyoutBox || undefined}
+        data-flyout-rows={flyoutOut || undefined}
+        data-side={side}
       >
-        {/* The tab strip is the window's navigation landmark (a11y-02): the Essentials tablist and
-            the spaces' tablists – or, in the private pose, the private tabs' – one region a reader
-            jumps to by landmark, whichever pose the sidebar is in. */}
-        <nav aria-label="Tabs" className="flex min-h-0 flex-1 flex-col">
-          {pose === 'private' ? (
-            <PrivatePanel state={state} compact={compact} />
-          ) : (
-            <>
-              {local ? (
-                <LocalWindowHeader state={state} compact={compact} />
+        {flyoutBox && <div className="zen-texture" aria-hidden />}
+        <div className="shrink-0" style={railBox} data-rail-box>
+          <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
+        </div>
+        <PaneSlot
+          pane={pose}
+          root={asideRef}
+          onLeave={leavePose}
+          switching={stills.length > 0}
+          className="zen-sidebar-pose relative flex min-h-0 flex-1 flex-col"
+        >
+          <RailFlyoutContext.Provider value={flyoutOut}>
+            {/* The tab strip is the window's navigation landmark (a11y-02): the Essentials
+                tablist and the spaces' tablists – or, in the private pose, the private tabs' –
+                one region a reader jumps to by landmark, whichever pose the sidebar is in. */}
+            <nav aria-label="Tabs" className="flex min-h-0 flex-1 flex-col">
+              {pose === 'private' ? (
+                <PrivatePanel state={state} compact={rowsCompact} />
               ) : (
-                <Essentials
-                  essentials={essentials}
-                  activeTabId={space.activeTabId}
-                  compact={compact}
-                />
-              )}
-              <div className="relative min-h-0 flex-1 overflow-hidden">
-                <div
-                  className="zen-space-strip h-full"
-                  style={{
-                    transform: `translateX(-${activeIndex * 100}%)`,
-                    width: `${state.spaces.length * 100}%`
-                  }}
-                >
-                  {state.spaces.map((s) => (
-                    <div
-                      key={s.id}
-                      className="h-full"
-                      style={{ width: `${100 / state.spaces.length}%` }}
-                    >
-                      <SpacePanel
-                        state={state}
-                        space={s}
-                        isActive={s.id === state.activeSpaceId}
+                <>
+                  {local ? (
+                    <div className="shrink-0" style={railBox} data-rail-box>
+                      <LocalWindowHeader state={state} compact={compact} />
+                    </div>
+                  ) : (
+                    <div className="shrink-0" style={railBox} data-rail-box>
+                      <Essentials
+                        essentials={essentials}
+                        activeTabId={space.activeTabId}
                         compact={compact}
                       />
                     </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-        </nav>
-        <SidebarBottom state={state} compact={compact} isDark={isDark} pose={pose} />
-      </PaneSlot>
-      <PaneStills stills={stills} onDone={stillDone} />
+                  )}
+                  <div className="relative min-h-0 flex-1 overflow-hidden">
+                    <div
+                      className="zen-space-strip h-full"
+                      style={{
+                        transform: `translateX(-${activeIndex * 100}%)`,
+                        width: `${state.spaces.length * 100}%`
+                      }}
+                    >
+                      {state.spaces.map((s) => (
+                        <div
+                          key={s.id}
+                          className="h-full"
+                          style={{ width: `${100 / state.spaces.length}%` }}
+                        >
+                          <SpacePanel
+                            state={state}
+                            space={s}
+                            isActive={s.id === state.activeSpaceId}
+                            compact={rowsCompact}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </nav>
+            <div className="shrink-0" style={railBox} data-rail-box>
+              <SidebarBottom state={state} compact={compact} isDark={isDark} pose={pose} />
+            </div>
+          </RailFlyoutContext.Provider>
+        </PaneSlot>
+        <PaneStills stills={stills} onDone={stillDone} />
+      </div>
       {!compact && !floating && !coarse && <Resizer state={state} />}
     </aside>
   )

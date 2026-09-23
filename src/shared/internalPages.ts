@@ -32,12 +32,14 @@ export const INTERNAL_ALIAS_SCHEME = 'zenium'
 
 /**
  * The pages registered today: Settings, History, Bookmarks and Downloads (chrome pages the
- * desktop and tablet layouts hold in a tab, the phone in its panels and sheets), the print
- * preview (`zen://print`, a chrome page that is the desktop's print dialog) and the PDF viewer
- * (`zen://pdf?id=…`, a document page on hosts whose engine cannot draw a PDF). Widened as pages
- * move onto the mechanism.
+ * desktop and tablet layouts hold in a tab, the phone in its panels and sheets), the Licences
+ * page (`zen://licences`, chrome://credits: a chrome page tab on every layout with page tabs,
+ * with no panel form), the print preview (`zen://print`, a chrome page that is the desktop's
+ * print dialog) and the PDF viewer (`zen://pdf?id=…`, a document page on hosts whose engine
+ * cannot draw a PDF). Widened as pages move onto the mechanism.
  */
-export type InternalPageId = 'settings' | 'history' | 'bookmarks' | 'downloads' | 'print' | 'pdf'
+export type InternalPageId =
+  'settings' | 'history' | 'bookmarks' | 'downloads' | 'licences' | 'print' | 'pdf'
 
 /**
  * How a page's tab holds its page.
@@ -58,9 +60,9 @@ export type InternalPageRender = 'chrome' | 'document'
 /**
  * The glyph a page tab shows in its favicon slot – the pill, the sidebar row, the tab strip, the
  * overview card – named for the renderer to draw (Lucide's `settings`, `history`, `star`,
- * `download`); a page tab never fetches a favicon.
+ * `download`, `scale` for the Licences page); a page tab never fetches a favicon.
  */
-export type InternalPageGlyph = 'settings' | 'history' | 'star' | 'download'
+export type InternalPageGlyph = 'settings' | 'history' | 'star' | 'download' | 'scale'
 
 /** One section of an internal page: `zen://<page>/<id>`. */
 export interface InternalPageSection {
@@ -473,6 +475,21 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     splittable: false,
     overlay: 'downloads',
     layouts: TAB_LAYOUTS,
+    sections: []
+  },
+  /**
+   * Licences (`zen://licences`, chrome://credits, settings-73): the open-source software the
+   * build carries, from Settings › About. A chrome page tab on every layout with page tabs (the
+   * phone has no panel form of it – the list is read, not swiped), one scroll, no sections.
+   */
+  licences: {
+    id: 'licences',
+    title: 'Licences',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'scale',
+    pill: { showStar: false },
+    splittable: false,
     sections: []
   },
   /**

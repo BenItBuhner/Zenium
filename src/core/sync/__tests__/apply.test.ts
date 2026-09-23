@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs } from '../../../shared/types'
 import { DEFAULT_NEW_TAB_SETTINGS } from '../../../shared/newTab'
+import { matchKeywordWord } from '../../../shared/search'
 import { Browser } from '../../../core/browser'
 import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../../../core/platform'
 import { applyRemote } from '../apply'
@@ -167,6 +168,39 @@ describe('applyRemote: the settings record and the new tab page', () => {
     expect(data).not.toHaveProperty('newTabDevice')
     expect(JSON.stringify(data)).not.toContain('mine.example')
     expect(JSON.stringify(data)).not.toContain('gone.example')
+  })
+
+  it("a peer's record making a deactivated engine the default lands with the default active, the other flags kept (A7)", () => {
+    const b = browser()
+    applyRemote(b, [
+      settingsRecord({
+        ...b.state.settings,
+        searchEngineId: 'custom:mine',
+        searchEngines: [
+          {
+            id: 'custom:mine',
+            name: 'Mine',
+            searchUrl: 'https://mine.example/?q=%s',
+            keyword: '@mine',
+            active: false
+          },
+          {
+            id: 'custom:other',
+            name: 'Other',
+            searchUrl: 'https://other.example/?q=%s',
+            keyword: '@other',
+            active: false
+          }
+        ]
+      })
+    ])
+    expect(b.state.settings.searchEngineId).toBe('custom:mine')
+    const [mine, other] = b.state.settings.searchEngines ?? []
+    expect(mine).toMatchObject({ id: 'custom:mine', keyword: '@mine' })
+    expect('active' in mine).toBe(false)
+    expect(other).toMatchObject({ id: 'custom:other', active: false })
+    expect(matchKeywordWord('@mine', b.state.searchEngines)).toMatchObject({ kind: 'engine' })
+    expect(matchKeywordWord('@other', b.state.searchEngines)).toBeNull()
   })
 
   it('takes a synced site-data record whole through the service, ignoring a stray id or a tombstone', () => {
