@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX, KeyboardEvent, ReactNode } from 'react'
-import { useContext, useEffect, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, CircleAlert, Copy, Globe } from 'lucide-react'
 import type {
@@ -673,8 +673,11 @@ function searchShortcutProblem(shortcut: string): string | null {
  * core's `search.addEngine` takes none yet, so a word the form insisted on would be typed to be
  * dropped; a typed word is checked whichever the form is. Editing, the engine's own word stands
  * in the field and an empty one is refused – an engine never holds one (#409's edit path, where
- * the word is kept). The caller adds or saves, and the sheet closes; what it refuses shows as
- * the form's validation line.
+ * the word is kept): "Give the engine a shortcut" once the field is left or the form is
+ * submitted, and on submit the focus goes to the field (§9.12's line on submit – a held button
+ * that answers Enter with nothing is the failure the section names; the #419 lead check's
+ * ruling 1). The caller adds or saves, and the sheet closes; what it refuses shows as the
+ * form's validation line.
  */
 export function SearchEngineForm({
   initial,
@@ -703,15 +706,18 @@ export function SearchEngineForm({
   // (§9.12 – a field is checked once it is left, not as the next one is typed); Enter sets both.
   const [touchedShortcut, setTouchedShortcut] = useState(false)
   const [touchedUrl, setTouchedUrl] = useState(false)
+  const shortcutInput = useRef<HTMLInputElement>(null)
   const shortcutProblem = searchShortcutProblem(shortcut) ?? problem?.(shortcut.trim()) ?? null
   const urlProblem = searchTemplateProblem(url)
   // Adding, an empty shortcut is the engine's to derive; editing, the engine's word stays a word.
-  const shortcutIn = Boolean(shortcut.trim()) || initial === undefined
-  const ready = Boolean(name.trim()) && shortcutIn && !shortcutProblem && !urlProblem
+  const shortcutMissing = initial !== undefined && !shortcut.trim()
+  const ready = Boolean(name.trim()) && !shortcutMissing && !shortcutProblem && !urlProblem
   const submit = (): void => {
     if (!ready) {
       setTouchedShortcut(true)
       setTouchedUrl(true)
+      // The emptied shortcut of an edit speaks on submit and takes the focus (§9.12; ruling 1).
+      if (shortcutMissing) shortcutInput.current?.focus()
       return
     }
     void Promise.resolve(
@@ -725,7 +731,14 @@ export function SearchEngineForm({
   const onEnter = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') submit()
   }
-  const shownShortcut = touchedShortcut && shortcut.trim() ? shortcutProblem : null
+  // The shortcut's line once the field is left or the form submitted: the word's problem while
+  // there is a word; editing, "Give the engine a shortcut" for none – the one empty that speaks.
+  const shortcutLine = shortcutMissing
+    ? 'Give the engine a shortcut'
+    : shortcut.trim()
+      ? shortcutProblem
+      : null
+  const shownShortcut = touchedShortcut ? shortcutLine : null
   const shownUrl = error ?? (touchedUrl && url.trim() ? urlProblem : null)
   return (
     <div className="zen-settings-form" data-testid="search-engine-form">
@@ -749,10 +762,13 @@ export function SearchEngineForm({
         id="search-engine-shortcut"
         label="Shortcut"
         description={
-          shownShortcut ? undefined : 'Type it in the address bar, then a space, to search here.'
+          shownShortcut
+            ? undefined
+            : 'Type it in the address bar, then a space, to search with this engine.'
         }
       >
         <input
+          ref={shortcutInput}
           id="search-engine-shortcut"
           className="zen-settings-input zen-v2-field"
           placeholder="@wikipedia"

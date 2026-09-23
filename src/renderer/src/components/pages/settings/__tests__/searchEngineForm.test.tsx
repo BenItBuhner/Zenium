@@ -12,8 +12,10 @@ import { SearchEngineForm } from '../blocks'
  * not one of Zenium's own scopes – in §9.12's validation form, each field once it is left (its
  * own leaving, not the other field's) or on Enter, the line named as the field's description;
  * the button is held until the name and the template are in – and, editing, the shortcut too:
- * an engine never holds an empty word, where adding leaves it the engine's to derive (the core's
- * `search.addEngine` takes none yet) – and submit hands the caller the three values.
+ * an engine never holds an empty word, so an emptied one says "Give the engine a shortcut" once
+ * left or on Enter, the focus moved to it on Enter (§9.12's line on submit, the #419 lead check's
+ * ruling 1), where adding leaves it the engine's to derive (the core's `search.addEngine` takes
+ * none yet) – and submit hands the caller the three values.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -96,6 +98,11 @@ describe('the search-engine form: Add and Edit from one component', () => {
     expect(input(el, 'search-engine-shortcut').value).toBe('')
     expect(input(el, 'search-engine-url').value).toBe('')
     expect(el.querySelector('label[for="search-engine-shortcut"]')?.textContent).toBe('Shortcut')
+    // The Shortcut's description names its object (the #419 lead check, Q5a).
+    expect(
+      fieldBlock(el, 'search-engine-shortcut').querySelector('.zen-settings-description')
+        ?.textContent
+    ).toBe('Type it in the address bar, then a space, to search with this engine.')
     expect(button(el, 'Add').disabled).toBe(true)
     expect(el.querySelector('button[aria-busy]')).toBeNull()
   })
@@ -293,16 +300,53 @@ describe('the Shortcut field’s validation (the engine’s keyword rules)', () 
     expect(button(el, 'Save').disabled).toBe(false)
   })
 
-  it('editing, an emptied shortcut is refused – an engine never holds an empty word: the button is held, with no message shouted', () => {
+  it('editing, an emptied shortcut is refused – an engine never holds an empty word: the button held and nothing said while typing; left, "Give the engine a shortcut" under the field', () => {
     const el = form()
     const shortcut = input(el, 'search-engine-shortcut')
+    const block = fieldBlock(el, 'search-engine-shortcut')
     type(shortcut, '')
-    blur(shortcut)
     expect(button(el, 'Save').disabled).toBe(true)
     expect(shortcut.getAttribute('aria-invalid')).toBeNull()
-    expect(
-      fieldBlock(el, 'search-engine-shortcut').querySelector('.zen-settings-validation')
-    ).toBeNull()
+    expect(block.querySelector('.zen-settings-validation')).toBeNull()
+    blur(shortcut)
+    const message = block.querySelector('.zen-settings-validation')
+    expect(message?.textContent).toContain('Give the engine a shortcut')
+    expect(shortcut.getAttribute('aria-invalid')).toBe('true')
+    expect(shortcut.getAttribute('aria-describedby')).toBe(message?.id)
+    expect(button(el, 'Save').disabled).toBe(true)
+    // (Adding, the same empty field left says nothing – pinned above, "Add: the shortcut may be
+    // left empty".)
+  })
+
+  it('editing, Enter with the shortcut emptied (§9.12’s line on submit, the lead check’s ruling 1): the line under the field, aria-invalid, the focus moved to it, nothing submitted – a word typed and Enter again submits', async () => {
+    const onSubmit = vi.fn()
+    const close = vi.fn()
+    const el = render(
+      <SearchEngineForm initial={WIKI} action="Save" onSubmit={onSubmit} close={close} />
+    )
+    const name = input(el, 'search-engine-name')
+    const shortcut = input(el, 'search-engine-shortcut')
+    const block = fieldBlock(el, 'search-engine-shortcut')
+    type(shortcut, '')
+    // Enter from another field: the held form answers at the shortcut, and takes the focus there.
+    enter(name)
+    expect(onSubmit).not.toHaveBeenCalled()
+    const message = block.querySelector('.zen-settings-validation')
+    expect(message?.textContent).toContain('Give the engine a shortcut')
+    expect(message?.getAttribute('role')).toBe('alert')
+    expect(shortcut.getAttribute('aria-invalid')).toBe('true')
+    expect(shortcut.getAttribute('aria-describedby')).toBe(message?.id)
+    expect(block.querySelector('.zen-settings-description')).toBeNull()
+    expect(document.activeElement).toBe(shortcut)
+    expect(button(el, 'Save').disabled).toBe(true)
+    // A word typed: the line goes as it is typed; Enter again submits it.
+    type(shortcut, '@w')
+    expect(block.querySelector('.zen-settings-validation')).toBeNull()
+    expect(shortcut.getAttribute('aria-invalid')).toBeNull()
+    enter(shortcut)
+    await settle()
+    expect(onSubmit).toHaveBeenCalledWith({ ...WIKI, shortcut: '@w' })
+    expect(close).toHaveBeenCalledTimes(1)
   })
 
   it('the engine’s cap: more than 64 characters after the @ is too long', () => {
