@@ -5,6 +5,7 @@ import type {
   CommandResult,
   EventName,
   Events,
+  Tab,
   UIState
 } from '@shared/types'
 import { cssColorToHex, resolveTheme, rgbToHex } from '@shared/theme'
@@ -45,6 +46,7 @@ import {
 import { applyTextScale } from '@renderer/lib/textScale'
 import { pushToast } from '@renderer/lib/ui'
 import { Bridge, getNativeBridge } from './bridge'
+import { captureUpdates, type CapturesHeld } from './captureRelay'
 import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
@@ -161,6 +163,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncPullToRefresh(bridge, platform)
   syncBarHide(bridge, boot)
   syncHistoryNavBubble(bridge)
+  syncCaptureState(bridge, browser)
   // The chrome's text at the system font size (A11Y-05): the host drew it at `textZoom` already;
   // the line boxes follow from here. Changes arrive with the `environment` event (platform.ts).
   applyTextScale(boot.environment)
@@ -261,6 +264,23 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
     if (frame !== null) cancelAnimationFrame(frame)
     frame = null
     send(current())
+  })
+}
+
+/**
+ * The tabs' capture to the host (NOT-13): the core folds every frame's `capture-state` report
+ * into `tab.capture` (`TabManager.refreshAlert`) and commits; the host hears each change once –
+ * the kinds, the site, the privacy – and an all-clear for a tab whose capture ended or which
+ * closed (`captureUpdates`), and keeps its "is using your microphone" card and the foreground
+ * service that holds the capture open in the background by them (`CaptureNotifications.kt`).
+ */
+function syncCaptureState(bridge: Bridge, browser: Browser): void {
+  const held: CapturesHeld = new Map()
+  const isPrivate = (tab: Tab): boolean => browser.tabs.isPrivate(tab)
+  browser.state.subscribe(() => {
+    const tabs = Object.values(browser.state.model.tabs)
+    for (const update of captureUpdates(held, tabs, isPrivate))
+      bridge.send('capture.update', update)
   })
 }
 

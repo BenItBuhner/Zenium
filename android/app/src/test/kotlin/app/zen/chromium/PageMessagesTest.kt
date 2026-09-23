@@ -69,6 +69,15 @@ class PageMessagesTest {
         val fullscreen = routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to 1280, "videoHeight" to 720), token)
         assertTrue(fullscreen.heardFrom(isMainFrame = false))
         assertTrue(fullscreen.heardFrom(isMainFrame = true))
+        // A frame's capture report is heard (NOT-13): an embedded meeting holds the microphone as
+        // much as the top document does, and the core folds the frames' reports by their ids.
+        val capture = routePageMessage(
+            message("type" to "capture-state", "capture" to json("id" to "f1", "microphone" to true)),
+            token
+        )
+        assertTrue(capture is PageMessageRoute.Forward)
+        assertTrue(capture.heardFrom(isMainFrame = false))
+        assertTrue(capture.heardFrom(isMainFrame = true))
         // Everything else a frame says – its hello (the reply channel is the main document's), its
         // DOMContentLoaded, its forwarded messages – is not the page's.
         for (type in listOf("hello", "domReady", "media", "evalResult")) {

@@ -100,15 +100,29 @@ class Permissions(private val host: PageHost) {
         if (wanted.size == 1 && wanted[0] == PermissionRequest.RESOURCE_VIDEO_CAPTURE) permissionName = "camera"
         if (wanted.size == 1 && wanted[0] == PermissionRequest.RESOURCE_AUDIO_CAPTURE) permissionName = "microphone"
         val url = request.origin.toString().ifEmpty { view.url ?: "" }
+        val capture = captureUseOf(wanted)
         ask(permissionName, url, view.tabId, if (permissionName == "mediaKeySystem") emptyList() else mediaTypes) { allow ->
             if (!allow) {
                 request.deny()
                 return@ask
             }
             ensureRuntime(runtime) { granted ->
-                if (granted) request.grant(wanted.toTypedArray()) else request.deny()
+                if (!granted) {
+                    request.deny()
+                    return@ensureRuntime
+                }
+                request.grant(wanted.toTypedArray())
+                // The page may capture now: the "<site> is using your microphone" card and the
+                // service that keeps the capture alive behind other apps start here, while the
+                // app is in front (NOT-13; the page's own report confirms or ends it).
+                if (capture.any) host.capture?.granted(view.tabId, view.url ?: url, capture, Profiles.isPrivate(view.containerId))
             }
         }
+    }
+
+    /** The page took a capture request back before it was answered: an arm it had is dropped. */
+    fun onPermissionRequestCanceled(view: TabWebView, request: PermissionRequest) {
+        if (captureUseOf(request.resources?.toList() ?: emptyList()).any) host.capture?.cancelled(view.tabId)
     }
 
     fun onGeolocation(view: TabWebView, origin: String, callback: GeolocationPermissions.Callback) {
@@ -122,6 +136,11 @@ class Permissions(private val host: PageHost) {
             }
         }
     }
+
+    private fun captureUseOf(resources: List<String>): CaptureUse = CaptureUse(
+        camera = PermissionRequest.RESOURCE_VIDEO_CAPTURE in resources,
+        microphone = PermissionRequest.RESOURCE_AUDIO_CAPTURE in resources
+    )
 
     private fun ensureRuntime(permissions: List<String>, then: (Boolean) -> Unit) {
         val missing = permissions.filter {

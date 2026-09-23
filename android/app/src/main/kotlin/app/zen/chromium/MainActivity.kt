@@ -308,6 +308,8 @@ class MainActivity : BrowserActivity() {
             MediaSessions.ACTION_OPEN -> host.media.onOpenIntent(intent)
             // A tap on a page's notification: its tab comes forward (WebNotifications.kt).
             WebNotifications.ACTION_OPENED -> host.webNotifications.onOpenIntent(intent)
+            // A tap on a capture's card ("<site> is using your microphone"): its tab (CaptureNotifications.kt).
+            CaptureNotifications.ACTION_OPEN -> host.capture.onOpenIntent(intent)
         }
         // Consume so a configuration change does not re-open it.
         intent.action = null

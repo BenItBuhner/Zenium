@@ -76,6 +76,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val privacy = Privacy.shared(activity)
     override val keys = Keys()
     override val permissions = Permissions(this)
+    /** "<site> is using your microphone" while a page captures, on a camera / microphone service (`capture.*`, NOT-13). */
+    override val capture = CaptureNotifications(this)
     override val security = Security(this)
     override val downloads = Downloads(activity, this)
     /**
@@ -1069,6 +1071,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "notification.close" -> { webNotifications.close(args.str("id")); reply(null) }
             "notification.forgetOrigin" -> { webNotifications.forgetOrigin(args.str("origin")); reply(null) }
             "notification.ensureAllowed" -> webNotifications.ensureAllowed(reply)
+            // A tab's capture as the core folds it from the page's reports (NOT-13): the card
+            // and the service follow it; a tab gone reports nothing held.
+            "capture.update" -> { capture.reported(args); reply(null) }
             "private.setOpenTabs" -> {
                 val count = args.num("count").toInt()
                 privateSession.setOpenTabs(count)
@@ -2213,6 +2218,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         media.destroy()
         webNotifications.destroy()
         privateSession.destroy()
+        capture.destroy()
         voice.destroy()
         qrScan.destroy()
         readAloud.destroy()
