@@ -4,7 +4,10 @@
   - text: Name
   - textbox "Name":
     - /placeholder: Wikipedia
-  - text: URL with %s in place of query
+  - text: Shortcut
+  - textbox "Shortcut":
+    - /placeholder: "@wikipedia"
+  - text: Type it in the address bar, then a space, to search here. URL with %s in place of query
   - textbox "URL with %s in place of query":
     - /placeholder: https://example.com/search?q=%s
   - text: "Example: https://en.wikipedia.org/w/index.php?search=%s"

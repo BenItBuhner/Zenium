@@ -3917,12 +3917,15 @@ async function scenarioWalkthrough() {
       await page.first().waitFor({ state: 'visible', timeout: 10000 })
       await s.settle()
       await s.chrome.locator('.zen-settings-nav-item', { hasText: 'Search' }).first().click()
-      // An engine to open a dialog on: the "Add search engine" form dialog adds one.
+      // An engine to open a dialog on: the "Add search engine" form dialog adds one – its three
+      // fields, the shortcut between the name and the URL (W4-10), the button held until all
+      // three are in.
       await s.chrome.locator('[data-row="add-search-engine"] button').first().click()
       const form = s.chrome.locator('[data-dialog="form:add-search-engine"]')
       await form.waitFor({ state: 'visible', timeout: 5000 })
       const name = 'Smoke Search'
       await form.locator('#search-engine-name').fill(name)
+      await form.locator('#search-engine-shortcut').fill('@smoke')
       await form.locator('#search-engine-url').fill('https://example.com/search?q=%s')
       await form.getByRole('button', { name: 'Add', exact: true }).click()
       await form.waitFor({ state: 'hidden', timeout: 5000 })
