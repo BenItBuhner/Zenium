@@ -132,7 +132,8 @@ import {
   buildSearchUrl,
   isPickableSearchEngine,
   matchKeyword,
-  sanitizeSearchEngines
+  sanitizeSearchEngines,
+  withDefaultSearchEngineActive
 } from '../shared/search'
 import { SearchEngineService } from './searchEngines'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
@@ -3485,8 +3486,16 @@ export class Browser {
       'webapp.uninstall': ({ appId }) => this.webApps.uninstall(appId),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
-        if (isPickableSearchEngine(state.searchEngines, searchEngineId))
+        if (isPickableSearchEngine(state.searchEngines, searchEngineId)) {
           state.settings.searchEngineId = searchEngineId
+          // The default active (settings-43), as in `updateSettings`: a synced list can carry
+          // the flag on the engine the first run picks.
+          if (state.settings.searchEngines)
+            state.settings.searchEngines = withDefaultSearchEngineActive(
+              state.settings.searchEngines,
+              searchEngineId
+            )
+        }
         state.settings.colorScheme = colorScheme
         this.setThemeSource(colorScheme)
         state.settings.onboardingDone = true
@@ -3656,6 +3665,12 @@ export class Browser {
     // `is_default`, as in Chrome), falls back to the shipped default; suggestions keep working.
     if (!isPickableSearchEngine(this.state.searchEngines, s.searchEngineId))
       s.searchEngineId = DEFAULT_SETTINGS.searchEngineId
+    // An engine made the default while deactivated (the phone's sheet offers Make default on
+    // every engine; a peer's list can carry the flag) comes back to the omnibox as it takes the
+    // default, as Chrome activates an engine made default (settings-43): the default's shortcut
+    // answers, and `setActive` keeps it from being deactivated again while it is the default.
+    if (s.searchEngines)
+      s.searchEngines = withDefaultSearchEngineActive(s.searchEngines, s.searchEngineId)
     if (
       before.glance !== s.glanceEnabled ||
       before.trigger !== s.glanceTrigger ||

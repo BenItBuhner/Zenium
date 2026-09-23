@@ -44,7 +44,7 @@ import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { defaultShortcuts } from '@shared/shortcuts'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
-import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
+import { DEFAULT_SEARCH_ENGINES, withDefaultSearchEngineActive } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
@@ -3218,6 +3218,46 @@ describe('what a row does', () => {
         if (picker.kind !== 'value') throw new Error('not a value row')
         expect(picker.options.map((o) => o.value)).not.toContain(forum.id)
       }
+    })
+
+    it('a deactivated engine made the default (the core activates it as it takes the default) leaves the Inactive group and stands under Added as the default, in the picker and the keywords row (A7)', () => {
+      // The list as the core writes it back: the flag deleted on the engine the id names.
+      const user = withDefaultSearchEngineActive([mine, wiki, forum], forum.id)
+      expect('active' in user[2]).toBe(false)
+      const s = state({ searchEngines: [...DEFAULT_SEARCH_ENGINES, ...user] } as Partial<UIState>, {
+        searchEngines: user,
+        searchEngineId: forum.id
+      })
+      const model = buildSection(def, { ...context(s).ctx, formFactor: 'desktop' })
+      expect(model.groups.some((g) => g.id === 'inactive-search-engines')).toBe(false)
+      expect(ids(model, 'search-engines')).toEqual([
+        'search-engine:custom:mine',
+        'search-engine:custom:wiki',
+        'search-engine:discovered:forum.example'
+      ])
+      // The default's row, as any default's: its standing and its shortcut, the host left off.
+      expect(row(model, 'search-engine:discovered:forum.example')).toMatchObject({
+        kind: 'item',
+        description: 'Default search engine · @forum'
+      })
+      // The default's sheet: Make default held, Deactivate held with its reason – the refusal.
+      expect(sheetIds(model, 'search-engine:discovered:forum.example')).toEqual([
+        'search-engine:discovered:forum.example:default',
+        'search-engine:discovered:forum.example:edit',
+        'search-engine:discovered:forum.example:deactivate',
+        'search-engine:discovered:forum.example:remove'
+      ])
+      const held = row(model, 'search-engine:discovered:forum.example:deactivate')
+      if (held.kind !== 'action') throw new Error('not an action')
+      expect(held.disabled).toBe(true)
+      expect(held.description).toBe('The default search engine stays active.')
+      const picker = row(model, 'search-engine')
+      if (picker.kind !== 'value') throw new Error('not a value row')
+      expect(picker.value).toBe(forum.id)
+      expect(picker.options.map((o) => o.value)).toContain(forum.id)
+      const keywords = row(model, 'search-keywords')
+      if (keywords.kind !== 'info') throw new Error('not an info row')
+      expect(keywords.description).toContain('@forum')
     })
   })
 

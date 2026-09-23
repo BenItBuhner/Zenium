@@ -19,6 +19,7 @@ import {
   parseSuggestResponse,
   sanitizeSearchEngines,
   searchTermsFromUrl,
+  withDefaultSearchEngineActive,
   withSearchEngineActive
 } from '../search'
 import { searchCommands } from '../commands'
@@ -300,6 +301,24 @@ describe('search engines: the shortcut and the active flag (omnibox-09, settings
       kind: 'engine',
       keyword: '@marginalia'
     })
+  })
+
+  it('an engine made the default while deactivated comes back active, the flag deleted; the other engines keep theirs; nothing to do leaves the same list (A7)', () => {
+    const other = { ...own, id: 'custom:other', name: 'Other', keyword: '@other', active: false }
+    const list = [{ ...own, active: false }, other]
+    const made = withDefaultSearchEngineActive(list, own.id)
+    expect(made).not.toBe(list)
+    expect('active' in made[0]).toBe(false)
+    expect(isActiveSearchEngine(made[0])).toBe(true)
+    expect(made[1]).toEqual(other)
+    // Its shortcut answers again.
+    expect(matchKeywordWord('@marginalia', [...DEFAULT_SEARCH_ENGINES, ...made])).toMatchObject({
+      kind: 'engine',
+      keyword: '@marginalia'
+    })
+    // The default active already, or a shipped engine (not one of the user's): the same list.
+    expect(withDefaultSearchEngineActive(made, own.id)).toBe(made)
+    expect(withDefaultSearchEngineActive(list, 'google')).toBe(list)
   })
 
   it('the sanitiser keeps `active: false` and drops any other value of the flag', () => {

@@ -317,6 +317,24 @@ export function withSearchEngineActive(
   })
 }
 
+/**
+ * The user's list with the engine that is the default, `defaultId`, active (settings-43): an
+ * engine made the default while deactivated – the phone's sheet offers Make default on every
+ * engine, and a list a peer wrote can carry the flag – comes back to the omnibox as it takes
+ * the default, as Chrome activates an engine made default; a default whose shortcut answered
+ * to nothing would be one the omnibox could not name. The flag goes the way it always goes,
+ * deleted (`withSearchEngineActive`). The same list when there is nothing to do: the default
+ * active already, or not one of the user's.
+ */
+export function withDefaultSearchEngineActive(
+  user: SearchEngine[],
+  defaultId: string
+): SearchEngine[] {
+  return user.some((e) => e.id === defaultId && !isActiveSearchEngine(e))
+    ? withSearchEngineActive(user, defaultId, true)
+    : user
+}
+
 /** Stands in for `%s` while a template is read as a URL; nothing a user types looks like it. */
 const TERMS_MARKER = 'zen-search-terms-marker'
 

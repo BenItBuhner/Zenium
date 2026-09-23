@@ -8,6 +8,7 @@ import {
   isActiveSearchEngine,
   matchEngineKeyword,
   matchEngineWord,
+  matchKeywordWord,
   sanitizeSearchEngines
 } from '../../shared/search'
 import { Browser } from '../browser'
@@ -500,6 +501,95 @@ describe('Settings > Search engines', () => {
     // A shipped engine is not the user's to deactivate: nothing happens.
     browser.handleCommand(win, 'search.setEngineActive', { id: 'google', active: false })
     expect(engines().find((e) => e.id === 'google')!.active).toBeUndefined()
+  })
+
+  it('an engine made the default while deactivated comes back to the omnibox as it takes the default; deactivating the default is still refused (A7)', () => {
+    const { browser, win } = setup()
+    const id = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Mine',
+      url: 'https://mine.example/?q=%s'
+    })
+    const engines = (): ReturnType<typeof browser.state.searchEngines.filter> =>
+      browser.state.searchEngines
+    browser.handleCommand(win, 'search.setEngineActive', { id, active: false })
+    expect(engines().find((e) => e.id === id)!.active).toBe(false)
+    expect(matchKeywordWord('@mine', engines())).toBeNull()
+
+    // Made the default (the phone's sheet offers Make default on every engine): active, the
+    // flag deleted rather than written `true`, its shortcut and host answering again.
+    browser.handleCommand(win, 'settings.update', { searchEngineId: id })
+    expect(browser.state.settings.searchEngineId).toBe(id)
+    const made = browser.state.settings.searchEngines!.find((e) => e.id === id)!
+    expect('active' in made).toBe(false)
+    expect(isActiveSearchEngine(made)).toBe(true)
+    expect(matchKeywordWord('@mine', engines())).toMatchObject({
+      kind: 'engine',
+      keyword: '@mine'
+    })
+    expect(matchEngineKeyword('@mine x', engines())?.engine.id).toBe(id)
+    expect(matchEngineWord('mine.example', engines())?.id).toBe(id)
+    // The refusal stands: the default stays active.
+    expect(() =>
+      browser.handleCommand(win, 'search.setEngineActive', { id, active: false })
+    ).toThrow('The default search engine stays active')
+    expect(engines().find((e) => e.id === id)!.active).toBeUndefined()
+
+    // The id and the list in one patch, the list carrying the flag on the engine the id names
+    // (a Settings row writing both): the same way.
+    browser.handleCommand(win, 'settings.update', { searchEngineId: 'google' })
+    browser.handleCommand(win, 'search.setEngineActive', { id, active: false })
+    browser.handleCommand(win, 'settings.update', {
+      searchEngineId: id,
+      searchEngines: browser.state.settings.searchEngines
+    })
+    expect('active' in browser.state.settings.searchEngines!.find((e) => e.id === id)!).toBe(false)
+    // Another engine's flag is not touched by the default changing hands.
+    const otherId = browser.handleCommand(win, 'search.addEngine', {
+      name: 'Other',
+      url: 'https://other.example/?q=%s'
+    })
+    browser.handleCommand(win, 'search.setEngineActive', { id: otherId, active: false })
+    browser.handleCommand(win, 'settings.update', { searchEngineId: 'google' })
+    expect(engines().find((e) => e.id === otherId)!.active).toBe(false)
+    expect(engines().find((e) => e.id === id)!.active).toBeUndefined()
+  })
+
+  it('a persisted profile whose default carries the flag (a peer’s build wrote it) loads with the default active (A7)', () => {
+    const io = memoryIo({
+      'state.json': JSON.stringify({
+        version: 2,
+        tabs: [],
+        spaces: [],
+        settings: {
+          searchEngineId: 'custom:mine',
+          searchEngines: [
+            {
+              id: 'custom:mine',
+              name: 'Mine',
+              searchUrl: 'https://mine.example/?q=%s',
+              keyword: '@mine',
+              active: false
+            },
+            {
+              id: 'custom:other',
+              name: 'Other',
+              searchUrl: 'https://other.example/?q=%s',
+              keyword: '@other',
+              active: false
+            }
+          ]
+        }
+      })
+    })
+    const state = new BrowserState(io, 'linux', {} as HostCapabilities, '0.0')
+    state.load()
+    expect(state.settings.searchEngineId).toBe('custom:mine')
+    const [mine, other] = state.settings.searchEngines ?? []
+    expect(mine).toMatchObject({ id: 'custom:mine' })
+    expect('active' in mine).toBe(false)
+    expect(other).toMatchObject({ id: 'custom:other', active: false })
+    expect(matchKeywordWord('@mine', state.searchEngines)).toMatchObject({ kind: 'engine' })
+    expect(matchKeywordWord('@other', state.searchEngines)).toBeNull()
   })
 
   it('keeps a deactivated flag and an edited engine through the sanitiser and a site’s later visit', () => {
