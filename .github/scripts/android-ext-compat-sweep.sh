@@ -95,7 +95,8 @@ adb shell settings put global hide_error_dialogs 1 || true
 sleep 2
 adb shell am force-stop com.google.android.apps.nexuslauncher || true
 sleep 3
-adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
+# Exclusive within the navbar category (android-gesture-demo.sh says why a plain enable left the gestural insets).
+adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton || true
 adb shell settings put system screen_off_timeout 2147483647 || true
 adb shell svc power stayon true || true
 adb shell input keyevent KEYCODE_WAKEUP || true

@@ -504,6 +504,17 @@ class ChromeA11yDemo : DemoHarness(
     private fun overviewScene() {
         if (!openOverview()) return
         val count = coreState().getJSONObject("tabs").length()
+        // The overview opens scrolled to the current card (Example Domain, tab 4 of 6), the
+        // Research group's header – the grid's first row – above the fold, and the walk lists
+        // only what is visible: the nightly's run found "no control 'Research, tab group, 3
+        // tabs'" with the label intact (GroupCard.tsx). The grid is scrolled the least it has
+        // to for the header, through the DOM as [revealCardClose] does, and the tree given its
+        // moment to list it, before the walk; the current card's row stays on screen below it.
+        val header = groupCard("Research")
+        chromeJs("(function(){var h=document.querySelector(${JSONObject.quote(header.selector)});if(h)h.scrollIntoView({block:'nearest',behavior:'instant'});return !!h})()")
+        val headerUp = awaitChrome(6_000) { findNodeWhere { it.isVisibleToUser && header(label(it)) } != null }
+        finding("  [overview] the group's header scrolled into view: ${verdict(headerUp)}")
+        SystemClock.sleep(800)
         audit(
             "overview",
             listOf(
@@ -518,11 +529,29 @@ class ChromeA11yDemo : DemoHarness(
                 Want("Alpha, tab ", "Button", prefix = true),
                 Want("Close Alpha", "Button"),
                 Want("Example Domain, tab ", "Button", prefix = true),
-                Want("Close Example Domain", "Button"),
+                Want("Close Example Domain", "Button")
+            )
+        )
+        val isCard = { stop: Stop -> stop.control && Regex(", tab \\d+ of \\d+").containsMatchIn(stop.label) }
+        val cardsAtTop = walk().filter(isCard)
+        // The walk lists what is on the screen, and with the group unfolded the grid is taller
+        // than the phone: the header's row and the last row (Delta, New Tab) are never up
+        // together. TalkBack scrolls as it walks, so does this: the grid to its end through the
+        // document (the New Tab cell, `.zen-overview-new`), the tree given its moment, and the
+        // cards pooled across the two positions by their names.
+        chromeJs("(function(){var n=document.querySelector('.zen-overview-new');if(n)n.scrollIntoView({block:'end',behavior:'instant'});return !!n})()")
+        val endUp = awaitChrome(6_000) { findNodeWhere { it.isVisibleToUser && label(it) == "New Tab" } != null }
+        finding("  [overview] the grid scrolled to its end (New Tab in view): ${verdict(endUp)}")
+        SystemClock.sleep(800)
+        audit(
+            "overview-end",
+            listOf(
+                Want("Delta, tab ", "Button", prefix = true),
+                Want("Close Delta", "Button"),
                 Want("New Tab", "Button")
             )
         )
-        val cards = walk().filter { it.control && Regex(", tab \\d+ of \\d+").containsMatchIn(it.label) }
+        val cards = (cardsAtTop + walk().filter(isCard)).distinctBy { it.label }
         expect("every card says its place over $count tabs: ${cards.map { it.label }}", cards.size == count && cards.all { it.label.contains(" of $count") })
         expect("the current tab's card says so", cards.any { it.label.startsWith("Example Domain, tab ") && it.label.endsWith(", current") })
         // The header menu.
@@ -659,10 +688,16 @@ class ChromeA11yDemo : DemoHarness(
         expect("Settings opens as a tab", awaitChrome(10_000) { settingsTabActive() })
     }
 
-    /** Settings: the landing, a section, a picker sheet. */
+    /**
+     * Settings: the landing, a section, a picker sheet. The navigation is read off the document
+     * (the Settings toolkit: the section, the sheet) and the audits off the tree, which is the
+     * TalkBack claim: each audit waits the tree's window ([awaitSettingsRowInTree]) for the
+     * scene's first row, since on the emulator the tree trails a section change by seconds.
+     */
     private fun settingsScene() {
         if (!settingsTabActive() && !openSettingsTab()) return
-        awaitNode(10_000) { it == "Look and Feel" }
+        awaitSettingsSection(SETTINGS_LANDING, treeSign = LOOK_AND_FEEL_LABEL)
+        awaitSettingsRowInTree(LOOK_AND_FEEL_LABEL)
         SystemClock.sleep(1_200)
         audit(
             "settings",
@@ -676,7 +711,31 @@ class ChromeA11yDemo : DemoHarness(
         )
         val heading = walk().firstOrNull { !it.control && it.label == "Settings" && it.states.contains("heading") }
         expect("the landing's title is a heading", heading != null)
-        if (!touchTapLabelExpecting("Look and Feel", "the section is up", took = { findNode { it == "Back to Settings" } != null })) return
+        // The section under a finger, proven by the document (the shared Settings toolkit: the
+        // tree listed Back to Settings seconds after the page had it, twice in the repairs' proof
+        // runs); the tree's own listing waited for after, within the TalkBack window, since the
+        // audit below reads it.
+        if (!openSettingsSection(LOOK_SECTION)) {
+            fail("a touch on Look and Feel did not open the section (the page is at '${settingsSection()}')")
+            return
+        }
+        if (awaitSettingsRowInTree("Back to Settings") == null) {
+            // The window passed on a section the tree never listed (the repairs' third proof
+            // run: the landing's rows gone under the drill-in, the drill-in's own not come in
+            // 15 s and two re-serialisations, the other thirteen Settings drivers' sections
+            // listed within the same window). The section left and opened again is the demo's
+            // own gesture once more and a whole scene change for the tree to serialise, where
+            // the nudge only marks the subtree; the tree gets the window once more on it.
+            finding("  [settings-look] the tree had no Back to Settings ${TREE_WINDOW_MS / 1000} s after the section came up: leaving it and opening it again")
+            back()
+            awaitSettingsSection(SETTINGS_LANDING, treeSign = LOOK_AND_FEEL_LABEL)
+            SystemClock.sleep(1_000)
+            if (!openSettingsSection(LOOK_SECTION)) {
+                fail("a touch on Look and Feel did not open the section again (the page is at '${settingsSection()}')")
+                return
+            }
+            if (awaitSettingsRowInTree("Back to Settings") == null) finding("  [settings-look] the tree had no Back to Settings ${TREE_WINDOW_MS / 1000} s after the section came up again")
+        }
         SystemClock.sleep(1_200)
         audit(
             "settings-look",

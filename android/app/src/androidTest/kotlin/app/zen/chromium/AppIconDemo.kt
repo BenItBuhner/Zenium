@@ -51,20 +51,19 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         val launcherIcon = LauncherIcon(app)
         Log.i(tag, "launcher icon at start: ${launcherIcon.current()}")
 
-        // 1. Settings, from the menu sheet (the row is near its end: scroll it into view first).
-        val menu = findByLabel(MENU_LABEL) ?: error("no menu button")
-        f.tap(menu.exactCenterX(), menu.exactCenterY())
-        SystemClock.sleep(2_500)
-        reveal("Settings")
-        // A finger on the row (the rule: one injected touch per sheet flow, its result asserted):
-        // Settings opens on its first section. The tree's click gets there when the row is not
-        // on screen to touch.
-        if (!touchTapLabelExpecting("Settings", "the Settings tab is up on Look and Feel") { findByLabel("Look and Feel") != null } &&
-            findByLabel("Look and Feel") == null && !clickByLabel("Settings")
-        ) error("no Settings row in the menu")
+        // 1. Settings, from the menu sheet, on its landing (since #134 the phone's Settings opens
+        //    on its categories, not on Look and Feel: the nightly's run took the landing's Look
+        //    and Feel row for the section and found no swatch), then the Look and Feel section
+        //    from the landing's row – the harness's shared flow, each step proven by the chrome's
+        //    document (the tree trails the screen here by seconds).
+        if (!openSettingsSection(LOOK_SECTION)) error("the Look and Feel section never came up")
         SystemClock.sleep(3_000)
 
-        // 2. Look and Feel is the first section; the App icon group sits under Appearance.
+        // 2. The App icon group sits under Appearance: the Indigo swatch (its accessible name
+        //    `<name> app icon`, blocks.tsx) scrolled into view through the document, the tree's
+        //    node awaited for the click below.
+        scrollSwatchIntoView("Indigo")
+        if (awaitNode(10_000) { it == swatch("Indigo") } == null) Log.w(tag, "the tree lists no ${swatch("Indigo")} yet")
         reveal(swatch("Indigo"))
         SystemClock.sleep(1_200)
         shot("settings-indigo")
@@ -73,7 +72,12 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         //    and the browser stays where it is (the system removes tasks rooted at a disabled
         //    alias; ours is rooted at MainActivity, see LauncherIconActivity).
         val task = activity.taskId
-        if (!clickByLabel(swatch("Sunset"))) error("no Sunset swatch")
+        if (awaitNode(10_000) { it == swatch("Sunset") } == null || !clickByLabel(swatch("Sunset"))) {
+            // The tree without the swatch (it trails the document here): the document's own click
+            // on the radio is the way to the state; the claim is the alias flip below.
+            Log.w(tag, "the tree has no ${swatch("Sunset")} to click; the document's swatch instead")
+            if (chromeJs("(function(){var s=document.querySelector('[aria-label=\"${swatch("Sunset")}\"]');if(!s)return false;s.click();return true})()") != "true") error("no Sunset swatch")
+        }
         SystemClock.sleep(3_000)
         shot("settings-sunset")
         Log.i(tag, "launcher icon after the pick: ${launcherIcon.current()}")
@@ -211,13 +215,19 @@ class AppIconDemo : DemoHarness("appicon-demo-state.json", "appicon-$THEME", "ap
         return FileInputStream(fd.fileDescriptor).bufferedReader().use { it.readText() }.also { fd.close() }
     }
 
+    /** Scroll the swatch named `name` to the middle of the Settings page through the chrome's document. */
+    private fun scrollSwatchIntoView(name: String) {
+        val found = chromeJs("(function(){var s=document.querySelector('[aria-label=\"${swatch(name)}\"]');if(!s)return false;s.scrollIntoView({block:'center',behavior:'instant'});return true})()")
+        if (found != "true") Log.w(tag, "the document has no ${swatch(name)} to scroll to")
+        SystemClock.sleep(800)
+    }
+
     companion object {
-        private const val MENU_LABEL = "Menu"
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
         }
 
-        /** The swatch buttons' accessible names (`AppIconPicker.tsx`). */
+        /** The swatch buttons' accessible names (`AppIconGrid`, blocks.tsx: `<name> app icon`). */
         private fun swatch(name: String) = "$name app icon"
     }
 }
