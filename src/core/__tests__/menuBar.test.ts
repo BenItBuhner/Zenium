@@ -238,6 +238,85 @@ describe('the macOS menu bar', () => {
     }
   })
 
+  describe('the Zenium menu is Chrome’s application menu (shortcuts-menus-153)', () => {
+    const labels = (items: MenuItemTemplate[]): string[] =>
+      items.map((i) => (i.type === 'separator' ? '-' : (i.label ?? '')))
+
+    it('runs About; Settings, Delete Browsing Data, Import; Services; the hide trio; Warn Before Quitting; Quit', () => {
+      const h = harness()
+      expect(labels(submenu(last(h), 'Zenium'))).toEqual([
+        'About Zenium',
+        '-',
+        'Settings…',
+        'Delete Browsing Data…',
+        'Import Bookmarks and Settings…',
+        '-',
+        'Services',
+        '-',
+        'Hide Zenium',
+        'Hide Others',
+        'Show All',
+        '-',
+        'Warn Before Quitting (⌘Q)',
+        '-',
+        'Quit Zenium'
+      ])
+    })
+
+    it('Delete Browsing Data… carries Cmd+Shift+Delete and asks the front window’s chrome for the dialog – a fresh window’s with every window closed', () => {
+      const h = harness()
+      const row = item(submenu(last(h), 'Zenium'), 'Delete Browsing Data…')
+      expect(row.accelerator).toBe('Cmd+Shift+Delete')
+      h.sent.length = 0
+      row.click?.()
+      expect(h.sent.map((s) => s.name)).toContain('clearBrowsingData.open')
+      h.win.onClosing()
+      h.win.onClosed()
+      expect(h.browser.allWindows()).toHaveLength(0)
+      h.sent.length = 0
+      row.click?.()
+      expect(h.browser.allWindows()).toHaveLength(1)
+      expect(h.sent.map((s) => s.name)).toContain('clearBrowsingData.open')
+    })
+
+    it('Import Bookmarks and Settings… opens the import dialog, as the Bookmarks menu’s row does', () => {
+      const h = harness()
+      h.sent.length = 0
+      item(submenu(last(h), 'Zenium'), 'Import Bookmarks and Settings…').click?.()
+      expect(h.sent.map((s) => s.name)).toEqual(['import.open'])
+      h.sent.length = 0
+      item(submenu(last(h), 'Bookmarks'), 'Import Bookmarks and Settings…').click?.()
+      expect(h.sent.map((s) => s.name)).toEqual(['import.open'])
+    })
+
+    it('Warn Before Quitting is a checkbox on the quit warning’s setting: on by default, flipped by a pick, the bar redrawn to match', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        const row = (): MenuItemTemplate =>
+          item(submenu(last(h), 'Zenium'), 'Warn Before Quitting (⌘Q)')
+        expect(row().type).toBe('checkbox')
+        expect(row().checked).toBe(true)
+        expect(h.browser.state.settings.warnOnCloseWindow).toBe(true)
+        row().click?.()
+        expect(h.browser.state.settings.warnOnCloseWindow).toBe(false)
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(row().checked).toBe(false)
+        // Back on from the redrawn bar; a pick with every window closed still flips it.
+        h.win.onClosing()
+        h.win.onClosed()
+        row().click?.()
+        expect(h.browser.state.settings.warnOnCloseWindow).toBe(true)
+        expect(h.browser.allWindows()).toHaveLength(0)
+        // Settings' own switch and the bar agree: the one setting.
+        vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+        expect(row().checked).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
   it('opens Help › Keyboard Shortcuts through the Settings page’s one route: the overlay on this host, at its Shortcuts section', () => {
     const h = harness()
     h.sent.length = 0

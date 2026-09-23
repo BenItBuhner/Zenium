@@ -82,7 +82,9 @@ const OPENS_WINDOW: ReadonlySet<ShortcutAction> = new Set<ShortcutAction>([
   'addons.open',
   'bookmark.sidebar',
   'bookmark.library',
-  'space.new'
+  'space.new',
+  // The dialog is a window's chrome's: Chrome opens a window for it too.
+  'privacy.clearBrowsingData'
 ])
 
 /** The window the user is in, without opening one (unlike `Browser.focusedWindow`). */
@@ -129,18 +131,37 @@ export function applicationMenu(browser: Browser): Template {
   const settings = (section: string): (() => void) =>
     withWindow((w) => void browser.pages.open('settings', section, w), true)
 
+  // Chrome's application menu (`main_menu_builder.mm`): About; Settings, Delete Browsing Data,
+  // Import; Services; the hide trio; Warn Before Quitting; Quit.
+  const warnBeforeQuitting = state.settings.warnOnCloseWindow
   const zenium: MenuItemTemplate = {
     label: 'Zenium',
     submenu: [
       { label: 'About Zenium', role: 'about' },
       { type: 'separator' },
       { label: 'Settings…', action: 'settings.open' },
+      { label: 'Delete Browsing Data…', action: 'privacy.clearBrowsingData' },
+      // The Bookmarks menu's row again, where Chrome's application menu also keeps it.
+      {
+        label: 'Import Bookmarks and Settings…',
+        click: withWindow((w) => browser.openImportDialog(w), true)
+      },
       { type: 'separator' },
       { label: 'Services', role: 'services', submenu: [] },
       { type: 'separator' },
       { label: 'Hide Zenium', role: 'hide' },
       { label: 'Hide Others', role: 'hideOthers' },
       { label: 'Show All', role: 'unhide' },
+      { type: 'separator' },
+      // Chrome's checkbox, arming the one quit warning Zenium has: `requestQuit` asks "Quit
+      // Zenium?" while it is set (the same setting warns before a window with several tabs
+      // closes). The chord in the label is Chrome's wording; the role below owns the key.
+      {
+        label: 'Warn Before Quitting (⌘Q)',
+        type: 'checkbox',
+        checked: warnBeforeQuitting,
+        click: () => browser.setWarnBeforeQuitting(!browser.state.settings.warnOnCloseWindow)
+      },
       { type: 'separator' },
       // The role's chord stays registered: it is what quits with every window closed.
       { label: 'Quit Zenium', role: 'quit' }

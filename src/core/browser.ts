@@ -1528,6 +1528,18 @@ export class Browser {
     this.emit('import.open', undefined, win)
   }
 
+  /**
+   * The macOS menu bar's "Warn Before Quitting (⌘Q)" (Chrome's checkbox): the one setting behind
+   * Zenium's quit warning – `requestQuit` asks "Quit Zenium?" while it is set, and a window with
+   * several tabs asks before it closes on the same setting. Set with no window needed: the menu
+   * bar stands with every window closed.
+   */
+  setWarnBeforeQuitting(on: boolean): void {
+    if (this.state.settings.warnOnCloseWindow === on) return
+    this.state.settings.warnOnCloseWindow = on
+    this.state.commit()
+  }
+
   async importBookmarks(win: ZenWindow): Promise<BookmarkImportResult | null> {
     const files = await this.platform.dialogs.pickTextFiles(
       { title: 'Import bookmarks', extensions: ['html', 'htm'] },
