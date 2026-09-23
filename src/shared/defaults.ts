@@ -232,6 +232,8 @@ export const DEFAULT_SETTINGS: Settings = {
   unloadEnabled: true,
   unloadTimeoutMinutes: 20,
   unloadExcludedDomains: [],
+  inactiveTabsArchiveDays: 21,
+  inactiveTabsAutoClose: true,
   mutedHosts: [],
   searchEngineId: 'google',
   searchEngines: [],

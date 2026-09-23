@@ -91,6 +91,7 @@ const ANDROID: HostCapabilities = {
   pageControls: true,
   darkenSites: true,
   privateTabs: true,
+  inactiveTabs: true,
   secureDns: false,
   quitsThroughCore: false,
   newTabPage: false,

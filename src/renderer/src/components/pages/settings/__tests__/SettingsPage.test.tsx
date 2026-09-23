@@ -70,6 +70,7 @@ const DESKTOP: HostCapabilities = {
   pageControls: false,
   darkenSites: true,
   privateTabs: false,
+  inactiveTabs: false,
   secureDns: true,
   quitsThroughCore: true,
   newTabPage: true,
@@ -108,6 +109,7 @@ const ANDROID: HostCapabilities = {
   pullToRefresh: true,
   pageControls: true,
   privateTabs: true,
+  inactiveTabs: true,
   secureDns: false,
   quitsThroughCore: false,
   newTabPage: false
