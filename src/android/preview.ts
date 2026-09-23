@@ -863,6 +863,9 @@ export function createPreviewBridge(): NativeBridge {
       applyFrame(String(tabId))
     },
     'chrome.setPullToRefresh': () => undefined,
+    // The history navigation disc the host draws above the pages (Kotlin: `HistoryNavBubbleView`):
+    // the preview has no 3-button edge drag to start one, so nothing ever arrives here.
+    'chrome.historyNavBubble': () => undefined,
     // Chrome messages along the frame's edges: the page is clipped out of their strips, eased
     // the way Kotlin springs its clip; a clip-path keeps pointer events out of them too, so the
     // cards underneath can be tapped.

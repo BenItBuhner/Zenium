@@ -32,6 +32,7 @@ import {
 } from '@renderer/lib/barHide'
 import {
   dispatchHistoryNavEvent,
+  setHistoryNavHost,
   type HistoryNavEventPayload,
   type HistoryNavEventPhase
 } from '@renderer/lib/historyNav'
@@ -159,6 +160,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
   syncBarHide(bridge, boot)
+  syncHistoryNavBubble(bridge)
   // The chrome's text at the system font size (A11Y-05): the host drew it at `textZoom` already;
   // the line boxes follow from here. Changes arrive with the `environment` event (platform.ts).
   applyTextScale(boot.environment)
@@ -359,6 +361,19 @@ function syncBarHide(bridge: Bridge, boot: BootInfo): void {
     note: (reason) => console.debug(`bar hide: ${reason}`)
   })
   setBarHideTouchExploration(boot.touchExploration === true)
+}
+
+/**
+ * The history navigation bubble (`lib/historyNav.ts`, GN-04). The pages are layered above the
+ * chrome's WebView here, so a disc the chrome drew at a page's side would never show (only a
+ * band the host opens, as pull-to-refresh's, shows the chrome through); the host draws the disc
+ * itself (`HistoryNavBubbleView`, above the pages) where the chrome says, per frame over the
+ * one-way channel, in CSS px it scales by its density; `{ visible: false }` takes it down.
+ */
+function syncHistoryNavBubble(bridge: Bridge): void {
+  setHistoryNavHost({
+    apply: (frame) => bridge.post('chrome.historyNavBubble', frame ?? { visible: false })
+  })
 }
 
 /**

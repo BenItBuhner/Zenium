@@ -30,7 +30,8 @@ import { browserStore } from './ui'
  * below it shrinks the disc again. A release past the threshold goes back or forward while the
  * bubble shrinks away where it stands (Chrome's hiding animation); a release short of it springs
  * the bubble home. The bubble is drawn by `HistoryNavBubble` off {@link onHistoryNavFrame}, on
- * transform and opacity only.
+ * transform and opacity only – in the chrome's DOM where the chrome is on top, or by a host that
+ * draws the disc itself ({@link HistoryNavHost}) where the pages are layered above the chrome.
  */
 
 export type HistoryNavEdge = 'left' | 'right'
@@ -87,6 +88,33 @@ export const ARMED_GROWTH = 0.15
  * fractions of it covered.
  */
 const HIDE_RUN = 100
+/** The disc's diameter, CSS px: Chrome's `navigation_bubble_size`. */
+export const BUBBLE_SIZE = 44
+/** The bubble is fully opaque once its leading edge has come this far in from the side. */
+export const BUBBLE_FADE_IN = 16
+
+/** What the disc is drawn with for one frame, whoever draws it. */
+export interface BubbleVisuals {
+  /**
+   * The disc's shift along the drag from its rest, CSS px: at rest its far side sits on the
+   * page's side (a whole disc out, `-BUBBLE_SIZE`); its leading edge is `offset` in.
+   */
+  x: number
+  /** About the disc's centre: the armed growth, taken to nothing by the hide. */
+  scale: number
+  /** Up over the first {@link BUBBLE_FADE_IN} px of offset, taken to nothing by the hide. */
+  opacity: number
+}
+
+/** Transform and opacity for a frame of the machine – the one mapping the DOM disc and a host's share. */
+export function bubbleVisuals(frame: HistoryNavFrame): BubbleVisuals {
+  const shown = 1 - frame.hide
+  return {
+    x: frame.offset - BUBBLE_SIZE,
+    scale: (1 + ARMED_GROWTH * frame.grow) * shown,
+    opacity: Math.min(1, frame.offset / BUBBLE_FADE_IN) * shown
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The mapping – pure, so it can be tested and reasoned about
@@ -353,6 +381,78 @@ export function onHistoryNavFrame(listener: FrameListener): () => void {
   if (state.tabId) listener(lastPainted, state)
   return () => {
     frameListeners.delete(listener)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// A host that draws the disc
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the disc stands, for a host that draws it itself: on Android the page WebViews are
+ * layered above the chrome's (`cover.ts`, `ContentCover.kt`), so a disc the chrome painted at a
+ * page's side would never show – Chrome's own bubble is a view above the content
+ * (`HistoryNavigationCoordinator` adds its layout to the content's parent; `SideSlideLayout`
+ * holds the `NavigationBubble`). Everything here is in CSS px of the chrome's window, for the
+ * host to scale by its density; per frame only the box, its scale and its opacity change.
+ */
+export interface HistoryNavHostFrame {
+  edge: HistoryNavEdge
+  /** Window x of the disc's left side, and y of its top, at scale 1. */
+  left: number
+  top: number
+  /** The disc's diameter at scale 1 ({@link BUBBLE_SIZE}). */
+  size: number
+  /** About the disc's centre. */
+  scale: number
+  opacity: number
+  /** Letting go would navigate: the arrow's accent tint (the host's own 250 ms fade). */
+  armed: boolean
+  /** Motion is reduced: an opacity change fades over 120 ms; the box still follows the finger. */
+  reduced: boolean
+}
+
+/** The host that draws the disc (Android's bridge); hosts whose chrome is on top set none. */
+export interface HistoryNavHost {
+  /** Per frame while the bubble is up, and once with `null` when it has gone. */
+  apply(frame: HistoryNavHostFrame | null): void
+}
+
+let bubbleHost: HistoryNavHost | null = null
+
+export function setHistoryNavHost(next: HistoryNavHost | null): void {
+  bubbleHost = next
+}
+
+/** The host drawing the disc, if one is bound. */
+export function historyNavHost(): HistoryNavHost | null {
+  return bubbleHost
+}
+
+/** What the disc is laid against: the page frame's side the drag began at, and its vertical centre (window CSS px). */
+export interface BubbleAnchor {
+  x: number
+  centerY: number
+}
+
+/** The host's frame for the machine's: the disc's box against `anchor`, the visuals as the DOM disc draws them. */
+export function bubbleHostFrame(
+  frame: HistoryNavFrame,
+  state: HistoryNavState,
+  anchor: BubbleAnchor,
+  reduced: boolean
+): HistoryNavHostFrame {
+  const { x, scale, opacity } = bubbleVisuals(frame)
+  return {
+    edge: state.edge,
+    // The DOM disc sits with its far side on the anchor and shifts by `x` into the page.
+    left: state.edge === 'left' ? anchor.x + x : anchor.x - x - BUBBLE_SIZE,
+    top: anchor.centerY - BUBBLE_SIZE / 2,
+    size: BUBBLE_SIZE,
+    scale,
+    opacity,
+    armed: state.armed,
+    reduced
   }
 }
 

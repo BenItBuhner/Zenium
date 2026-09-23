@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.view.View
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -27,6 +28,8 @@ import java.io.File
  * - GN-04: in 3-button navigation mode a drag in from the page's left edge pulls Chrome's arrow
  *   bubble out (`SideSlideLayout.java`); the disc rides the finger, arms past the threshold, and
  *   a release past it goes back; a release short of it springs the disc away and navigates nothing.
+ *   The disc is the host's view above the pages (`HistoryNavBubbleView`; the chrome's DOM lies
+ *   under them), read off the view; the drag's state is the chrome root's `data-*`.
  * - GN-19: in the switcher a horizontal drag over the pane carries the segment's line with the
  *   finger and fades the pane in step; a release past a third of the width (or a fling) picks the
  *   neighbouring segment, a short one settles back (`HubPaneSwipeGestureHandler.java`).
@@ -193,10 +196,13 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         }
         val phase = bubblePhase()
         val armed = bubbleArmed()
-        val disc = js("(function(){var e=document.querySelector('[data-testid=\"history-nav-bubble\"]');return e?e.style.transform+' / opacity '+e.style.opacity:''})()")
+        val disc = nativeDisc()
         claim("the bubble is up and dragging with the finger held (phase '$phase')", phase == "dragging")
-        claim("the bubble is armed past the threshold (disc: $disc)", armed)
-        claim("the bubble's disc rides its own transform (no layout write)", disc.startsWith("translate3d("))
+        claim("the bubble is armed past the threshold (root data-armed; disc: $disc)", armed)
+        // The chrome's DOM lies under the pages, so the disc is the host's view above them
+        // (HistoryNavBubbleView), moved on translation, scale and alpha alone: it is visible,
+        // opaque, its leading edge past the threshold, and grown by the armed 15 %.
+        claim("the native disc is up above the pages, riding its translation, grown as armed", disc.up && disc.leadingEdgeDp > NAV_THRESHOLD_DP && disc.scale > 1.1f)
         noteScene(scene)
         shot("03-edge-drag-armed")
         f.up()
@@ -219,13 +225,16 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         f.hold(350)
         val phase = bubblePhase()
         val armed = bubbleArmed()
+        val disc = nativeDisc()
         claim("the short drag has the bubble dragging (phase '$phase')", phase == "dragging")
         claim("the short drag is not armed", !armed)
+        claim("the native disc is up short of the threshold at its own size (disc: $disc)", disc.up && disc.leadingEdgeDp in 1f..NAV_THRESHOLD_DP && disc.scale < 1.01f)
         shot("05-edge-drag-short")
         f.up()
         SystemClock.sleep(1_500)
         claim("the short release navigated nothing (still at ${activeUrl()})", activeUrl() == before)
         claim("the bubble sprang away after the short release", awaitTrue(4_000) { bubblePhase() == "" })
+        claim("the native disc went with it (disc: ${nativeDisc()})", !nativeDisc().up)
     }
 
     // --- GN-19: the switcher's pane swipe -------------------------------------------------------
@@ -379,7 +388,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
             f.moveBy(LONG_DRAG_DP * density, 0f, 1_000)
             var seen = false
             for (i in 0 until 3) {
-                if (bubblePhase().isNotEmpty()) seen = true
+                if (bubblePhase().isNotEmpty() || nativeDisc().up) seen = true
                 SystemClock.sleep(120)
             }
             shot("11-gestural-edge")
@@ -450,8 +459,25 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
     private fun bubblePhase(): String =
         js("(function(){var e=document.querySelector('[data-testid=\"history-nav\"]');return e?e.getAttribute('data-phase')||'':''})()")
 
+    /** The root carries the drag's state (`data-armed`); the disc itself is the host's view on Android. */
     private fun bubbleArmed(): Boolean =
-        js("(function(){var e=document.querySelector('[data-testid=\"history-nav-bubble\"]');return e&&e.hasAttribute('data-armed')?'armed':''})()") == "armed"
+        js("(function(){var e=document.querySelector('[data-testid=\"history-nav\"]');return e&&e.hasAttribute('data-armed')?'armed':''})()") == "armed"
+
+    /** What the host's disc (HistoryNavBubbleView) shows: up at all, how far its leading edge stands in, its scale. */
+    private class NativeDisc(val up: Boolean, val leadingEdgeDp: Float, val scale: Float, val alpha: Float) {
+        override fun toString(): String = "up=$up leadingEdge=${"%.1f".format(leadingEdgeDp)}dp scale=${"%.3f".format(scale)} alpha=${"%.2f".format(alpha)}"
+    }
+
+    private fun nativeDisc(): NativeDisc = onMain {
+        val view = host.historyNavBubble
+        NativeDisc(
+            view.visibility == View.VISIBLE && view.alpha > 0.01f,
+            // A left-edge drag: the disc's right side, from the window's left, in dp.
+            (view.translationX + view.width) / density,
+            view.scaleX,
+            view.alpha
+        )
+    }
 
     private fun popupRows(): Int =
         js("(function(){return String(document.querySelectorAll('[data-testid=\"back-history-entry\"]').length)})()").toIntOrNull() ?: 0
@@ -585,6 +611,8 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         const val CLIP_TEXT = "quiet mornings and long walks"
         /** Where a history drag begins: inside Chrome's 24 dp edge window. */
         const val EDGE_X_DP = 8f
+        /** Chrome's threshold: three drag distances of 32 dp (`lib/historyNav.ts` `NAV_THRESHOLD`). */
+        const val NAV_THRESHOLD_DP = 96f
         /** Well past the 96 dp threshold (the excess rubber-bands). */
         const val LONG_DRAG_DP = 200f
         /** Short of the threshold: the disc follows and springs back. */

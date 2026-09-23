@@ -100,6 +100,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     override val tabs = TabHost(root, this)
     /**
+     * The history navigation bubble (GN-04), drawn natively above the pages – the chrome's disc
+     * could not show through them – where the chrome's machine puts it each frame
+     * (`chrome.historyNavBubble`); the activity lays it over [root].
+     */
+    val historyNavBubble = HistoryNavBubbleView(activity)
+    /**
      * Page-to-chrome Tab traversal for a hardware keyboard (A11Y-09): the chrome's WebView and
      * every page's are wired into it ([TabHost.create]); a Tab run off one document lands in
      * the other, [onFocusLanding].
@@ -856,6 +862,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             // The bar that hides on scroll says where it is (per frame while it moves) or that it
             // may not hide: every page's edge on the bar's side follows (see `TabHost.place`).
             "chrome.setBarHide" -> { tabs.setBarHide(BarHideFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
+            "chrome.historyNavBubble" -> { historyNavBubble.apply(HistoryNavBubbleFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "window.setSecure" -> { setPrivateSurface(args.bool("secure")); reply(null) }
@@ -1501,6 +1508,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // the chrome's own, or the draft's defaults for the scheme when it sent none.
         themeAccent = if (accent.isNotEmpty()) parseColor(accent) else ContextCompat.getColor(activity, if (dark) R.color.v2_accent_dark else R.color.v2_accent_light)
         themeOnAccent = if (onAccent.isNotEmpty()) parseColor(onAccent) else ContextCompat.getColor(activity, if (dark) R.color.v2_on_accent_dark else R.color.v2_on_accent_light)
+        historyNavBubble.retint(V2Ink(activity, dark, themeAccent, themeOnAccent))
         val color = parseColor(background.ifEmpty { if (dark) "#16161b" else "#f2f1f5" })
         root.setBackgroundColor(color)
         activity.window.decorView.setBackgroundColor(color)

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ARMED_GROWTH,
+  BUBBLE_FADE_IN,
+  BUBBLE_SIZE,
+  bubbleHostFrame,
   bubbleOffset,
+  bubbleVisuals,
   HistoryNavMachine,
   NAV_BAND_EXTENT,
   NAV_DRAG_DISTANCE,
@@ -64,6 +68,83 @@ describe('history navigation mapping (Chrome SideSlideLayout; v2 §11.3 input ru
     expect(releaseNavigates(NAV_THRESHOLD)).toBe(false)
     expect(releaseNavigates(NAV_THRESHOLD + 0.01)).toBe(true)
     expect(releaseNavigates(0)).toBe(false)
+  })
+})
+
+describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => {
+  it("pins Chrome's 44 disc and the 16 px fade-in", () => {
+    expect(BUBBLE_SIZE).toBe(44)
+    expect(BUBBLE_FADE_IN).toBe(16)
+  })
+
+  it('shifts the disc by its offset from a whole disc out, fading up over the first 16 px', () => {
+    expect(bubbleVisuals({ offset: 0, hide: 0, grow: 0 })).toEqual({ x: -44, scale: 1, opacity: 0 })
+    expect(bubbleVisuals({ offset: 8, hide: 0, grow: 0 })).toEqual({
+      x: -36,
+      scale: 1,
+      opacity: 0.5
+    })
+    expect(bubbleVisuals({ offset: 96, hide: 0, grow: 0 })).toEqual({ x: 52, scale: 1, opacity: 1 })
+  })
+
+  it('grows by the armed growth and is taken to nothing by the hide', () => {
+    expect(bubbleVisuals({ offset: 96, hide: 0, grow: 1 }).scale).toBeCloseTo(1 + ARMED_GROWTH, 9)
+    const half = bubbleVisuals({ offset: 96, hide: 0.5, grow: 1 })
+    expect(half.scale).toBeCloseTo((1 + ARMED_GROWTH) / 2, 9)
+    expect(half.opacity).toBe(0.5)
+    expect(bubbleVisuals({ offset: 96, hide: 1, grow: 1 })).toEqual({ x: 52, scale: 0, opacity: 0 })
+  })
+
+  it("lays a host's disc against the page's side: a whole disc out at rest, its leading edge `offset` in", () => {
+    const anchorLeft = { x: 0, centerY: 400 }
+    const state = (edge: HistoryNavEdge, armed = false): HistoryNavState => ({
+      tabId: 't1',
+      edge,
+      phase: 'dragging',
+      armed
+    })
+    const rest = bubbleHostFrame({ offset: 0, hide: 0, grow: 0 }, state('left'), anchorLeft, false)
+    expect(rest).toEqual({
+      edge: 'left',
+      left: -44,
+      top: 378,
+      size: 44,
+      scale: 1,
+      opacity: 0,
+      armed: false,
+      reduced: false
+    })
+    const armed = bubbleHostFrame(
+      { offset: 96, hide: 0, grow: 1 },
+      state('left', true),
+      anchorLeft,
+      true
+    )
+    // The leading (right) edge stands 96 in: left + size = 96.
+    expect(armed.left + armed.size).toBe(96)
+    expect(armed.scale).toBeCloseTo(1 + ARMED_GROWTH, 9)
+    expect(armed.opacity).toBe(1)
+    expect(armed.armed).toBe(true)
+    expect(armed.reduced).toBe(true)
+
+    const anchorRight = { x: 360, centerY: 400 }
+    const rightRest = bubbleHostFrame(
+      { offset: 0, hide: 0, grow: 0 },
+      state('right'),
+      anchorRight,
+      false
+    )
+    // At rest the disc's left side is on the page's right side: the whole disc out.
+    expect(rightRest.left).toBe(360)
+    const rightIn = bubbleHostFrame(
+      { offset: 96, hide: 0, grow: 0 },
+      state('right'),
+      anchorRight,
+      false
+    )
+    // The leading (left) edge stands 96 in from the right side.
+    expect(rightIn.left).toBe(360 - 96)
+    expect(rightIn.edge).toBe('right')
   })
 })
 

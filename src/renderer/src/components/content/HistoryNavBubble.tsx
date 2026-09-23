@@ -1,13 +1,26 @@
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
-import { ARMED_GROWTH, historyNavStore, onHistoryNavFrame } from '@renderer/lib/historyNav'
+import {
+  BUBBLE_SIZE,
+  bubbleHostFrame,
+  bubbleVisuals,
+  historyNavHost,
+  historyNavStore,
+  onHistoryNavFrame,
+  type BubbleAnchor,
+  type HistoryNavEdge
+} from '@renderer/lib/historyNav'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 
-/** The disc's diameter, CSS px: Chrome's `navigation_bubble_size`. */
-const BUBBLE = 44
-/** The bubble is fully opaque once its leading edge has come this far in from the side. */
-const FADE_IN = 16
+/**
+ * The page frame's side the drag began at and its vertical centre, off the root: it is laid
+ * along that side of the content frame with no width of its own, so its box is the side.
+ */
+function measureAnchor(root: HTMLElement, edge: HistoryNavEdge): BubbleAnchor {
+  const rect = root.getBoundingClientRect()
+  return { x: edge === 'left' ? rect.left : rect.right, centerY: (rect.top + rect.bottom) / 2 }
+}
 
 /**
  * Chrome's history navigation bubble (GN-04): a disc with an arrow that a drag in from a page's
@@ -17,60 +30,86 @@ const FADE_IN = 16
  * hide; everything per frame goes straight to the DOM through refs – transform and opacity, and
  * the `data-armed` flag the accent arrow's 250 ms tint reads – so a drag re-renders nothing.
  * Idle it draws nothing at all, so hosts without the gesture pay nothing for it.
+ *
+ * Where the pages are layered above the chrome (Android), nothing drawn here at a page's side
+ * could show: with a host bound (`setHistoryNavHost`) the disc is the host's, fed the same
+ * frames as the disc's box in window px, and the root stays as the drag's state on the DOM
+ * (`data-phase`, `data-edge`, `data-armed`) for whoever reads it.
  */
 export function HistoryNavBubble(): JSX.Element | null {
   const phase = historyNavStore.use((s) => s.phase)
   const edge = historyNavStore.use((s) => s.edge)
+  const rootRef = useRef<HTMLDivElement>(null)
   const discRef = useRef<HTMLDivElement>(null)
   const active = phase !== 'idle'
+  const hosted = historyNavHost() !== null
 
   useEffect(() => {
     if (!active) return
-    return onHistoryNavFrame(({ offset, hide, grow }, state) => {
+    const host = historyNavHost()
+    // Measured once per drag: the content frame does not move under a history drag (the one
+    // finger down is the drag's), and a read per frame would be a layout read per frame.
+    let anchor: BubbleAnchor | null = null
+    const unsubscribe = onHistoryNavFrame((frame, state) => {
+      const root = rootRef.current
+      if (!root) return
+      if (state.armed) root.dataset.armed = ''
+      else delete root.dataset.armed
+      if (host) {
+        anchor ??= measureAnchor(root, state.edge)
+        host.apply(bubbleHostFrame(frame, state, anchor, reducedMotion()))
+        return
+      }
       const disc = discRef.current
       if (!disc) return
-      // The disc's far side sits on the page's edge at rest: its leading edge is `offset` in.
-      const x = offset - BUBBLE
-      const shown = 1 - hide
-      const scale = (1 + ARMED_GROWTH * grow) * shown
+      const { x, scale, opacity } = bubbleVisuals(frame)
       disc.style.transform = `translate3d(${state.edge === 'left' ? x : -x}px, -50%, 0) scale(${scale})`
-      disc.style.opacity = String(Math.min(1, offset / FADE_IN) * shown)
+      disc.style.opacity = String(opacity)
       if (state.armed) disc.dataset.armed = ''
       else delete disc.dataset.armed
     })
+    return () => {
+      unsubscribe()
+      // The bubble is down (idle) or this frame is gone: the host's disc goes with it.
+      host?.apply(null)
+    }
   }, [active])
 
   if (!active) return null
   const Arrow = edge === 'left' ? ArrowLeft : ArrowRight
   return (
     <div
+      ref={rootRef}
       className="zen-histnav pointer-events-none absolute inset-y-0 z-[5]"
       style={edge === 'left' ? { left: 0 } : { right: 0 }}
       data-edge={edge}
       data-phase={phase}
       data-reduced={reducedMotion() || undefined}
+      data-hosted={hosted || undefined}
       data-testid="history-nav"
       aria-hidden
     >
-      <div
-        ref={discRef}
-        className="zen-histnav-disc absolute top-1/2"
-        data-testid="history-nav-bubble"
-        style={{
-          width: BUBBLE,
-          height: BUBBLE,
-          ...(edge === 'left' ? { left: 0 } : { right: 0 }),
-          transform: `translate3d(${edge === 'left' ? -BUBBLE : BUBBLE}px, -50%, 0)`,
-          opacity: 0
-        }}
-      >
-        <span className="zen-histnav-glyph zen-histnav-ink">
-          <Arrow />
-        </span>
-        <span className="zen-histnav-glyph zen-histnav-accent">
-          <Arrow />
-        </span>
-      </div>
+      {!hosted && (
+        <div
+          ref={discRef}
+          className="zen-histnav-disc absolute top-1/2"
+          data-testid="history-nav-bubble"
+          style={{
+            width: BUBBLE_SIZE,
+            height: BUBBLE_SIZE,
+            ...(edge === 'left' ? { left: 0 } : { right: 0 }),
+            transform: `translate3d(${edge === 'left' ? -BUBBLE_SIZE : BUBBLE_SIZE}px, -50%, 0)`,
+            opacity: 0
+          }}
+        >
+          <span className="zen-histnav-glyph zen-histnav-ink">
+            <Arrow />
+          </span>
+          <span className="zen-histnav-glyph zen-histnav-accent">
+            <Arrow />
+          </span>
+        </div>
+      )}
     </div>
   )
 }
