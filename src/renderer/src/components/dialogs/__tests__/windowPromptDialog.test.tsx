@@ -147,8 +147,9 @@ describe('the window prompt', () => {
     expect(body.children).toHaveLength(2)
     const row = body.firstElementChild!
     expect(row.classList.contains('zen-confirm-dialog-check')).toBe(true)
+    // Zen's own string, the same words as the Settings row that governs the warning.
     expect(row.querySelector('.zen-v2-label')!.textContent).toBe(
-      'Warn before closing a window with multiple tabs'
+      'Confirm before closing multiple tabs'
     )
     expect(row.querySelector<HTMLInputElement>('input')!.checked).toBe(true)
     const [cancel, verb] = buttons(d)

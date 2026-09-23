@@ -181,7 +181,7 @@ describe('the confirmation prompt', () => {
     render(
       <Prompt
         checkbox={{
-          label: 'Warn before closing a window with multiple tabs',
+          label: 'Confirm before closing multiple tabs',
           checked: true,
           onChange
         }}
@@ -202,7 +202,7 @@ describe('the confirmation prompt', () => {
     expect(box.classList.contains('zen-v2-checkbox')).toBe(true)
     expect(box.checked).toBe(true)
     expect(row.querySelector('.zen-v2-label')!.textContent).toBe(
-      'Warn before closing a window with multiple tabs'
+      'Confirm before closing multiple tabs'
     )
     expect(row.querySelector('.zen-v2-description')).toBeNull()
     act(() => {

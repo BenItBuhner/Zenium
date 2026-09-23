@@ -29,10 +29,13 @@ const SNAPSHOT_WAIT_MS = 250
  * and, when downloads are in progress too, their sentence after it in the same paragraph (the
  * two facts are peers; the body is for copy that introduces other content, and the checkbox is
  * the tabs warning's, not the sentence's) – then the checkbox that turns the tabs warning off
- * for good (Firefox's) as the body's one element, Cancel and the primary verb. Alone, the
+ * for good (Firefox's) as the body's one element, under Zen's own name for the setting –
+ * "Confirm before closing multiple tabs", one line at 400 and the same words as the Settings
+ * row that governs it (`warnOnCloseWindow`) – then Cancel and the primary verb. Alone, the
  * download sentence is the description and the checkbox stays away (nothing about the tabs is
  * asked). The keyboard is the primitive's (§9.22): the container holds the focus, Enter
- * answers with the verb, Escape and the scrim with Cancel.
+ * answers with the verb (the prompt is not destructive, so the primary is its default), Escape
+ * and the scrim with Cancel.
  *
  * The way back: the page had the keyboard when the chord or the window's close button asked,
  * so the page takes it back as the prompt goes (`returnFocusToPage`) – unless a control of the
@@ -93,7 +96,7 @@ function WindowPromptView({
       checkbox={
         text.tabsWarning
           ? {
-              label: 'Warn before closing a window with multiple tabs',
+              label: 'Confirm before closing multiple tabs',
               checked: keepWarning,
               onChange: setKeepWarning
             }
