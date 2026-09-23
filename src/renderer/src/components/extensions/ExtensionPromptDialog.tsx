@@ -5,7 +5,7 @@ import type { ExtensionPromptRequest } from '@shared/types'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { answerExtensionPrompt } from '@renderer/lib/extensions/popup'
-import { fromSource } from '@renderer/lib/extensions/storeInput'
+import { noWarningsLine, promptCopy } from '@renderer/lib/extensions/promptCopy'
 import { useViewport } from '@renderer/lib/formFactor'
 import { useFrameDialog } from '@renderer/lib/portals'
 import { uiStore } from '@renderer/lib/ui'
@@ -39,42 +39,6 @@ export function ExtensionPromptDialog(): JSX.Element | null {
   return <PanelPrompt key={prompt.requestId} prompt={prompt} />
 }
 
-interface Copy {
-  title: string
-  subtitle: string | null
-  accept: string
-}
-
-/** The same words as the store service's native fallback prompt, per kind. */
-function copyFor(prompt: ExtensionPromptRequest): Copy {
-  switch (prompt.kind) {
-    case 'request':
-      return {
-        title: `"${prompt.name}" wants additional permissions`,
-        subtitle: null,
-        accept: 'Allow'
-      }
-    case 'permissions':
-      return {
-        title: `"${prompt.name}" needs new permissions`,
-        subtitle: 'It was updated and stays off until you allow them',
-        accept: 'Allow'
-      }
-    case 'update':
-      return {
-        title: `Update "${prompt.name}"?`,
-        subtitle: prompt.source ? fromSource(prompt.source) : null,
-        accept: 'Update extension'
-      }
-    default:
-      return {
-        title: `Add "${prompt.name}"?`,
-        subtitle: prompt.source ? fromSource(prompt.source) : null,
-        accept: 'Add extension'
-      }
-  }
-}
-
 /** What the extension will be able to do: a row with a glyph per warning kind, or the one line saying there is nothing to warn of. */
 function PromptRows({
   prompt,
@@ -92,13 +56,7 @@ function PromptRows({
       <div className="zen-v2-rows">
         {prompt.warnings.length === 0 ? (
           <V2Row
-            label={
-              <span className="zen-v2-deemphasized">
-                {prompt.kind === 'permissions' || prompt.kind === 'request'
-                  ? 'No new permissions are needed'
-                  : 'This extension requires no special permissions'}
-              </span>
-            }
+            label={<span className="zen-v2-deemphasized">{noWarningsLine(prompt.kind)}</span>}
           />
         ) : (
           prompt.warnings.map((warning) => <WarningRow key={warning} warning={warning} />)
@@ -120,7 +78,7 @@ function PromptButtons({
     <>
       <V2Button onClick={() => onAnswer(false)}>Cancel</V2Button>
       <V2Button variant="primary" data-accept onClick={() => onAnswer(true)}>
-        {copyFor(prompt).accept}
+        {promptCopy(prompt).accept}
       </V2Button>
     </>
   )
@@ -165,7 +123,7 @@ function PanelPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
     initial: (root) => root.querySelector<HTMLElement>('[data-accept]'),
     returnTo: null
   })
-  const copy = copyFor(prompt)
+  const copy = promptCopy(prompt)
   return (
     <div
       ref={ref}
@@ -205,7 +163,7 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
   }
   // Escape answers no – and, over another sheet, closes this one only (§9.24).
   useEscape(() => answer(false))
-  const copy = copyFor(prompt)
+  const copy = promptCopy(prompt)
   // The phone's glyph size (§9.23: 20 on a phone, 16 on desktop).
   const glyph = <ExtensionIcon icon={prompt.icon} size={20} box={20} />
   return (
