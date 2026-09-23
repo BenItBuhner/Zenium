@@ -252,6 +252,51 @@ describe('the phone slider row’s ± form (§10.4)', () => {
     expect(ends[1].disabled).toBe(false)
   })
 
+  it('a finger’s press steps on the pointer’s down and the click the tap sends after it – late on Android – is not a second step; a hold repeats the step until the finger lifts; the keyboard’s click is one step', () => {
+    vi.useFakeTimers()
+    try {
+      const onChange = vi.fn()
+      const el = render(<RowView row={size(7, onChange)} ctx={ctx} />)
+      const plus = [...rowOf(el, 'fonts-size').querySelectorAll<HTMLButtonElement>('button')][1]
+      const pointer = (type: string): void => {
+        plus.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0 }))
+      }
+      // A tap: down, up 60 ms later, the gesture detector's click a frame or more after that.
+      act(() => pointer('pointerdown'))
+      expect(onChange).toHaveBeenCalledTimes(1)
+      expect(onChange).toHaveBeenLastCalledWith(8)
+      act(() => {
+        vi.advanceTimersByTime(60)
+        pointer('pointerup')
+        vi.advanceTimersByTime(300)
+        plus.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+      })
+      expect(onChange).toHaveBeenCalledTimes(1)
+      // The keyboard: a click with no pointer before it (detail 0), one step.
+      act(() => plus.click())
+      expect(onChange).toHaveBeenCalledTimes(2)
+      // A hold: the step at once, then again every 100 ms once 400 ms have passed, until the lift.
+      act(() => pointer('pointerdown'))
+      expect(onChange).toHaveBeenCalledTimes(3)
+      act(() => {
+        vi.advanceTimersByTime(399)
+      })
+      expect(onChange).toHaveBeenCalledTimes(3)
+      act(() => {
+        vi.advanceTimersByTime(201)
+      })
+      expect(onChange).toHaveBeenCalledTimes(5)
+      act(() => {
+        pointer('pointerup')
+        vi.advanceTimersByTime(1000)
+        plus.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+      })
+      expect(onChange).toHaveBeenCalledTimes(5)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a dependent row disables the whole control with the row', () => {
     const el = render(<RowView row={{ ...size(7), disabled: true }} ctx={ctx} />)
     const row = rowOf(el, 'fonts-size')

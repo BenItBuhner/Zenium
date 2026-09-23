@@ -504,7 +504,12 @@ function SliderControl({
  * for what it does to the row ("Decrease Font size"), disabled at the ladder's end with the
  * row's own .4 rule keeping one opacity. A press steps once and commits at once, as the zoom
  * block's buttons do; a hold repeats the step (`HOLD_REPEAT_*`) until the finger lifts or
- * leaves. The keyboard's press (Enter, Space) is the click with no pointer before it: one step.
+ * leaves. The pointer's press is the step, so the `click` a pointer sends after it – `detail`
+ * 1, its tap or click count – is not one: on Android a tap's click is the gesture detector's
+ * own event, arriving after `pointerup` by as much as the WebView's frame allows, so nothing
+ * that keys off time may stand between them (emulator run 35815936330 read three taps of seven
+ * twice). The keyboard's press (Enter, Space) and an assistive technology's activation are the
+ * click with no pointer before it – `detail` 0 – and step once.
  */
 function StepButton({
   row,
@@ -525,8 +530,6 @@ function StepButton({
     latest.current = step
   })
   const timer = useRef<{ kind: 'delay' | 'repeat'; id: number } | null>(null)
-  // The pointer took this press: the click that follows it has stepped already.
-  const pressed = useRef(false)
   const stop = (): void => {
     const t = timer.current
     if (t) {
@@ -534,10 +537,6 @@ function StepButton({
       else window.clearInterval(t.id)
       timer.current = null
     }
-    // The click of this press, if one comes, is dispatched before the next task runs.
-    window.setTimeout(() => {
-      pressed.current = false
-    }, 0)
   }
   useEffect(() => stop, [])
   const atEnd = direction < 0 ? value <= row.min : value >= row.max
@@ -550,7 +549,6 @@ function StepButton({
       disabled={disabled}
       onPointerDown={(e) => {
         if (e.button !== 0 || disabled) return
-        pressed.current = true
         latest.current()
         timer.current = {
           kind: 'delay',
@@ -565,12 +563,8 @@ function StepButton({
       onPointerUp={stop}
       onPointerCancel={stop}
       onPointerLeave={stop}
-      onClick={() => {
-        if (pressed.current) {
-          pressed.current = false
-          return
-        }
-        latest.current()
+      onClick={(e) => {
+        if (e.detail === 0) latest.current()
       }}
     />
   )
