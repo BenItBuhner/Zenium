@@ -196,7 +196,7 @@ jobs:
     # and icon the deb put down and, after `dpkg -r`, everything gone again. ci.yml's Linux job
     # stays the per-commit boot of the unpacked build; this one runs where the other installer-level
     # smokes (the Windows NSIS install) run, on the packaging inputs' path filter above.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       SMOKE_OUT: ${{ github.workspace }}/smoke-out
@@ -254,7 +254,7 @@ jobs:
         # The desktop entry (/usr/share/applications/zenium.desktop: LINUX_DESKTOP_ID in
         # src/main/platform/defaultBrowser.ts; Exec, MimeType with x-scheme-handler/http and
         # https, Actions, Icon), the hicolor icon, /usr/bin/zenium through update-alternatives,
-        # mimeinfo.cache. The runner image is no desktop: ubuntu-latest carries neither libnotify4
+        # mimeinfo.cache. The runner image is no desktop: ubuntu-24.04 carries neither libnotify4
         # nor libsecret-1-0, so dpkg -i unpacks and stops ("dependency problems - leaving
         # unconfigured", exit 1) and apt-get install -f completes the configuration from the
         # package's own Depends (the apt-get update above makes the lists current). Expected,

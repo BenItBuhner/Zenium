@@ -2515,8 +2515,8 @@ async function scenarioBoot() {
       // FIRST_LAUNCH_RENDER_BUDGET_MS) to be on screen, which is two things: in the DOM
       // (`visible`: laid out, nothing hiding it – a wait Playwright polls on timers) and painted
       // (the page runs animation frames, which the compositor's frames drive). The clicks then
-      // get the same budget. Kept apart because they come apart: on 2026-09-22 (#327's merge
-      // ref, ubuntu-latest) the onboarding was in the DOM 2 s after a cold launch that took 4 s
+      // get the same budget. Kept apart because they come apart: on 2026-09-22 (#327's merge ref,
+      // the Ubuntu 24.04 image) the onboarding was in the DOM 2 s after a cold launch that took 4 s
       // to its chrome, and the window stayed blank for the 25 s after it – no frame, because
       // the GPU process was still probing GL through Mesa (some 190 MB of libgallium/libLLVM
       // paged in from a cold disk, under an Xvfb that has no GPU to find) before settling on
