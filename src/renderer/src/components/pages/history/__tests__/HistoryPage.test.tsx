@@ -727,6 +727,44 @@ describe('the History page tab (§10.1)', () => {
     expect(calls('history.grouped').at(-1)).toEqual({ query: { text: 'example', limit: 600 } })
   })
 
+  it('marks a term where it starts a word – in the title and the host – never inside one', async () => {
+    groups = [
+      {
+        dayKey: TODAY,
+        visits: [
+          GROUPS[0]!.visits[0]!,
+          {
+            // Found through its path ("/example-page"); the title holds the term inside a word.
+            id: 'v6',
+            url: 'https://docs.zenium.app/example-page',
+            title: 'Counterexample',
+            favicon: null,
+            visitTime: NOW - 90_000,
+            transition: 'link'
+          },
+          {
+            // The host's "example" after the dot, and an upper-case one in the title.
+            id: 'v7',
+            url: 'https://news.example.org/',
+            title: 'EXAMPLE news · an example',
+            favicon: null,
+            visitTime: NOW - 100_000,
+            transition: 'link'
+          }
+        ]
+      }
+    ]
+    const el = await mountPage(tab('zen://history?q=example'))
+    const marks = (id: string, part: string): string[] =>
+      [...el.querySelectorAll(`[data-visit-id="${id}"] ${part} mark`)].map((m) => text(m))
+    expect(marks('v1', '.zen-page-row-label')).toEqual(['Example'])
+    expect(marks('v1', '.zen-page-row-desc')).toEqual(['example'])
+    expect(marks('v6', '.zen-page-row-label')).toEqual([])
+    expect(marks('v6', '.zen-page-row-desc')).toEqual([])
+    expect(marks('v7', '.zen-page-row-label')).toEqual(['EXAMPLE', 'example'])
+    expect(marks('v7', '.zen-page-row-desc')).toEqual(['example'])
+  })
+
   it('says so when there is nothing, and when nothing matches', async () => {
     groups = []
     closed = []

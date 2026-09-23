@@ -791,14 +791,18 @@ function FaviconImage({ src, url }: { src: string | null; url?: string | null })
   return <Globe className="zen-page-row-favicon zen-page-row-favicon-fallback" aria-hidden />
 }
 
-/** Wrap every occurrence of a search term in `<mark>`. */
+/**
+ * Wrap every occurrence of a search term that starts a word in `<mark>` – the occurrences the
+ * matcher counted (`wordMatch.ts`), so "docs" lights up in "Team docs" and never inside
+ * "Googledocs", as Chrome marks its query parser's word-start positions. A row found through
+ * its address alone shows no mark: the row carries the host, not the path.
+ */
 function highlight(text: string, terms: string[]): ReactNode {
   if (terms.length === 0 || !text) return text
-  const pattern = new RegExp(`(${terms.map(escapeRegExp).join('|')})`, 'gi')
-  const probe = new RegExp(`^(?:${terms.map(escapeRegExp).join('|')})$`, 'i')
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])(${terms.map(escapeRegExp).join('|')})`, 'giu')
   const parts = text.split(pattern)
   if (parts.length === 1) return text
-  return parts.map((part, i) => (probe.test(part) ? <mark key={i}>{part}</mark> : part))
+  return parts.map((part, i) => (i % 2 === 1 ? <mark key={i}>{part}</mark> : part))
 }
 
 function escapeRegExp(s: string): string {
