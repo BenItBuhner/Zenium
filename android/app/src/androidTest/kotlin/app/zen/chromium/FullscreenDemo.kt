@@ -222,8 +222,8 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
             note("  L1: the hint's card: left ${hint.optDouble("left")}, right ${vw - hint.optDouble("left") - hint.optDouble("width")}, bottom $restBottom" +
                 (if (travel != 0.0) " (read ${viewport - bottom} under translateY(${travel}px))" else "") +
                 ", height ${hint.optDouble("height")}, width ${hint.optDouble("width")} of $vw")
-            check("L1: the hint's card is 8 px inside the viewport's sides and bottom, one 44 px row",
-                near(hint.optDouble("left"), TOAST_INSET) && near(vw - hint.optDouble("left") - hint.optDouble("width"), TOAST_INSET) &&
+            check("L1: the hint's card is 8 px inside the viewport's sides and bottom – 560 wide and centred where the viewport is wider (§9.33) – one 44 px row",
+                cardSpansItsFrame(hint.optDouble("left"), hint.optDouble("width"), vw, TOAST_INSET) &&
                     near(restBottom, TOAST_INSET) && near(hint.optDouble("height"), TOAST_ROW))
         }
         val turned = poll(10_000) { landscape() }
@@ -1209,7 +1209,17 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
     }
 
     private fun cardInsetsAre(card: JSONObject, inset: Double, row: Double): Boolean =
-        near(card.optDouble("left"), inset) && near(card.optDouble("right"), inset) && near(card.optDouble("bottom"), inset) && near(card.optDouble("height"), row)
+        cardSpansItsFrame(card.optDouble("left"), card.optDouble("width"), card.optDouble("frameWidth"), inset) &&
+            near(card.optDouble("bottom"), inset) && near(card.optDouble("height"), row)
+
+    /**
+     * §9.33's width: the card is `inset` inside both sides of its frame, or – where the frame is
+     * wider than the cap and its two insets (a phone in landscape) – the cap wide and centred
+     * (`TOAST_MAX_WIDTH`, `@shared/toastCard`), the chrome's card and the hint's twin alike.
+     */
+    private fun cardSpansItsFrame(left: Double, width: Double, frameWidth: Double, inset: Double): Boolean =
+        if (frameWidth - 2 * inset <= TOAST_MAX_WIDTH) near(left, inset) && near(frameWidth - left - width, inset)
+        else near(width, TOAST_MAX_WIDTH) && near(left, (frameWidth - TOAST_MAX_WIDTH) / 2)
 
     /** Within a CSS pixel: the emulator's density (1.75) rounds a device pixel into fractions. */
     private fun near(a: Double, b: Double): Boolean = kotlin.math.abs(a - b) <= 1.0
@@ -1418,6 +1428,8 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         /** The toast card's inset from its frame's edges and its row (§9.33, `@shared/toastCard`): what the hint's twin is held to (L1). */
         private const val TOAST_INSET = 8.0
         private const val TOAST_ROW = 44.0
+        /** The most a card spans; wider frames centre it (§9.33, `TOAST_CARD.maxWidthPx`). */
+        private const val TOAST_MAX_WIDTH = 560.0
         /** How long the return fade waits on the landing at most (`LANDING_TIMEOUT_MS`, lib/fullscreenLanding.ts), and a timer's tolerance against the sampler's clock. */
         private const val LANDING_TIMEOUT_MS = 2_500
         private const val CLOCK_TOLERANCE_MS = 60

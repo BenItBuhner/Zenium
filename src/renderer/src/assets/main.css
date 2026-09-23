@@ -6957,10 +6957,13 @@
  * The phone's message layer is the content frame's box and clips to it: cards arrive from and
  * leave by its edges. Banners hang from the top edge, each on its slot by transform, touching
  * (§9.21); the toast sits at the bottom edge, a leaving one and its successor in the same cell.
- * The inset is from a card to the frame's edge; `messages/stack.ts` mirrors it.
+ * The inset is from a card to the frame's edge; `messages/stack.ts` mirrors it. A card spans the
+ * frame up to its cap and centres where the frame is wider (§9.33; `@shared/toastCard` carries
+ * both numbers for the page-drawn twin).
  */
 :root {
   --zen-message-inset: 8px;
+  --zen-message-max-width: 560px;
 }
 .zen-message-layer {
   position: absolute;
@@ -6974,6 +6977,8 @@
   top: var(--zen-message-inset);
   left: var(--zen-message-inset);
   right: var(--zen-message-inset);
+  max-width: var(--zen-message-max-width);
+  margin: 0 auto;
 }
 .zen-message-stack > .zen-message {
   position: absolute;
@@ -6987,6 +6992,8 @@
   bottom: var(--zen-message-inset);
   left: var(--zen-message-inset);
   right: var(--zen-message-inset);
+  max-width: var(--zen-message-max-width);
+  margin: 0 auto;
   display: grid;
 }
 .zen-message-toasts > * {

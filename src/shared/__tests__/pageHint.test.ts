@@ -12,6 +12,7 @@ import {
   renderHint,
   springTo,
   TOAST_INSET_PX,
+  TOAST_MAX_WIDTH_PX,
   TOAST_REDUCED_FADE_MS,
   toastPresence
 } from '../pageHint'
@@ -98,6 +99,11 @@ describe('the phone toast as a page hint', () => {
     expect(el.style.bottom).toContain('safe-area-inset-bottom')
     expect(el.style.left).toBe(`${TOAST_INSET_PX}px`)
     expect(el.style.right).toBe(`${TOAST_INSET_PX}px`)
+    // Where the frame is wider than the card's cap (a phone in landscape) the card caps and
+    // centres between its insets (§9.33): the same number as the chrome's cards.
+    expect(el.style.maxWidth).toBe(`${TOAST_MAX_WIDTH_PX}px`)
+    expect(TOAST_MAX_WIDTH_PX).toBe(560)
+    expect(el.style.margin).toBe('0px auto')
     expect(el.style.pointerEvents).toBe('none')
     expect(el.style.opacity).toBe('0')
     // The bubble keeps its place at the top and its fade.

@@ -37,9 +37,10 @@ import { REDUCED_FADE_MS, TOAST_CARD } from './toastCard'
 const HOST_TAG = 'zenium-fullscreen-hint'
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif'
 
-/** The toast's inset from the frame's edges (§9.33) and its row height: the chrome's card's. */
+/** The toast's inset from the frame's edges (§9.33), its row height and its cap: the chrome's card's. */
 export const TOAST_INSET_PX = TOAST_CARD.insetPx
 export const TOAST_ROW_PX = TOAST_CARD.rowPx
+export const TOAST_MAX_WIDTH_PX = TOAST_CARD.maxWidthPx
 /** The fade an appearance or departure becomes under reduced motion (§11.3): the chrome's. */
 export const TOAST_REDUCED_FADE_MS = REDUCED_FADE_MS
 
@@ -76,7 +77,8 @@ export function renderHint(hint: PageHint): HTMLElement {
     right: toast ? `${TOAST_INSET_PX}px` : '0',
     margin: '0 auto',
     width: toast ? 'auto' : 'fit-content',
-    maxWidth: toast ? 'none' : 'calc(100vw - 48px)',
+    // The toast spans the frame inside its insets up to the card's cap, centred past it (§9.33).
+    maxWidth: toast ? `${TOAST_CARD.maxWidthPx}px` : 'calc(100vw - 48px)',
     height: 'auto',
     padding: '0',
     border: '0',
