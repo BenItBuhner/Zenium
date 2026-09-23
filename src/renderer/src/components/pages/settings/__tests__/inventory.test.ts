@@ -279,6 +279,7 @@ function desktopState(): UIState {
     permissionPrompts: [],
     securityPrompts: [],
     pageDialogs: [],
+    closingTabIds: [],
     screenCaptureRequests: [],
     shareRequests: [],
     crashRestore: null,
