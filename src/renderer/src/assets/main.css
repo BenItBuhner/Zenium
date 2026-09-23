@@ -6119,6 +6119,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /*
+   * The stage passes the pointer through; the toast's one action takes it back – the action
+   * alone, so the toast's words never stand between a drag and the page under them.
+   */
+  .zen-capture-toast .zen-message-button {
+    pointer-events: auto;
+  }
   @media (prefers-reduced-motion: reduce) {
     .zen-capture-toast {
       animation: zen-fade 120ms var(--zen-ease) !important;
