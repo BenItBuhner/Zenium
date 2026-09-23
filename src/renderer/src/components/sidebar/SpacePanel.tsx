@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX } from 'react'
+import type { CSSProperties, FocusEvent as ReactFocusEvent, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus, VenetianMask } from 'lucide-react'
 import type { Folder, SavedGroupTab, Space, Tab, UIState } from '@shared/types'
@@ -907,6 +907,25 @@ function GroupRowGlyph({ folder, saved }: { folder: Folder; saved: boolean }): J
   )
 }
 
+/**
+ * A blur the host caused, not the user: the chrome document itself lost the focus (the host moved
+ * the Android focus to the page's view, a desktop click landed in a page view or another window),
+ * so the focus went to no control of the chrome's. Blink dispatches it with no `relatedTarget` and
+ * `document.hasFocus()` already false; a blur onto another chrome control names the control, and
+ * a tap on the chrome's own background leaves the document focused.
+ */
+function hostCausedBlur(e: ReactFocusEvent): boolean {
+  return e.relatedTarget === null && !document.hasFocus()
+}
+
+/**
+ * The group's inline rename. The field stays until Enter (commit), Escape (cancel) or the focus
+ * moving to another chrome control: a blur the host caused (`hostCausedBlur`) does not commit it –
+ * the tablet's rename pick used to lose the field to the host's focus move landing on the page a
+ * frame after the mount (nightly `tablet-groups` §6); the pick no longer asks for that move
+ * (`pickMenuItem`, `keepsKeyboard`), and should the focus leave the document all the same, the
+ * field keeps its text and takes the keyboard back when the chrome is focused again.
+ */
 function FolderRename({ folder }: { folder: Folder }): JSX.Element {
   const [value, setValue] = useState(folder.name)
   const ref = useRef<HTMLInputElement>(null)
@@ -924,7 +943,9 @@ function FolderRename({ folder }: { folder: Folder }): JSX.Element {
       ref={ref}
       value={value}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={() => commit(true)}
+      onBlur={(e) => {
+        if (!hostCausedBlur(e)) commit(true)
+      }}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         if (e.key === 'Enter') commit(true)

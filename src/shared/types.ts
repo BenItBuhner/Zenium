@@ -3554,6 +3554,12 @@ export interface MenuItemDescriptor {
    * Drawn in the deemphasised ink on a row that is neither focused nor picked.
    */
   note?: boolean
+  /**
+   * The item's action mounts a chrome field (Rename Group…): its pick keeps the keyboard in the
+   * chrome rather than returning the focus to the page, so the field it mounts is not blurred
+   * away by the host's focus move.
+   */
+  keepsKeyboard?: boolean
 }
 
 /**
