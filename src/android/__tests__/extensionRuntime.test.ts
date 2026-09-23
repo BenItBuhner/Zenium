@@ -2368,6 +2368,145 @@ describe('AndroidExtensionRuntime: chrome.action badge colours', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.action state is last-wins (what the host coalesces)', () => {
+  // Kotlin's BridgeForward collapses setIcon / setBadgeText / setBadgeBackgroundColor /
+  // setBadgeTextColor / setTitle / setPopup of one endpoint, method and tab to the last value
+  // within a frame before the call crosses to the core (the Clear Cache flood of round 11: 2480
+  // oversized setIcon calls in a run). That loses nothing observable only because the core's
+  // action state is last-wins per key; these tests hold the core to that.
+  type Setter = [method: string, details: Record<string, unknown>]
+
+  async function apply(setters: Setter[]): Promise<{
+    global: Record<string, unknown>
+    tab: Record<string, unknown>
+    toolbar: Record<string, unknown> | null
+    replies: Record<string, unknown>[]
+  }> {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const chromeTab = h.runtime.api.tabs.chromeIdFor('t1')
+    const replies: Record<string, unknown>[] = []
+    for (const [method, details] of setters) {
+      const withTab = 'tabId' in details ? { ...details, tabId: chromeTab } : details
+      const reply = await call(h, 'bg1', 'action', method, [withTab])
+      replies.push(reply)
+    }
+    return {
+      global: { ...h.runtime.api.actionFor(ID) },
+      tab: { ...h.runtime.api.actionStateFor(ID, chromeTab) },
+      toolbar: h.runtime.api.toolbarAction(ID) as Record<string, unknown> | null,
+      replies
+    }
+  }
+
+  /** The last setter of each (method, tab-or-global) key, in the order the last ones came. */
+  function lastOfEachKey(setters: Setter[]): Setter[] {
+    const last = new Map<string, Setter>()
+    for (const setter of setters) {
+      const key = `${setter[0]}:${'tabId' in setter[1] ? 'tab' : 'global'}`
+      last.delete(key)
+      last.set(key, setter)
+    }
+    return [...last.values()]
+  }
+
+  it('a run of setters for the same keys and only the last setter of each key leave the same state, and every setter answers the reply the guard synthesizes for a superseded one', async () => {
+    const run: Setter[] = [
+      ['setBadgeText', { text: '1', tabId: 0 }],
+      ['setBadgeText', { text: 'a' }],
+      ['setTitle', { title: 'first' }],
+      ['setBadgeBackgroundColor', { color: 'red', tabId: 0 }],
+      ['setBadgeText', { text: '2', tabId: 0 }],
+      ['setPopup', { popup: 'one.html' }],
+      ['setBadgeTextColor', { color: 'white' }],
+      ['setTitle', { title: 'second' }],
+      ['setBadgeText', { text: 'b' }],
+      ['setBadgeBackgroundColor', { color: 'blue', tabId: 0 }],
+      ['setTitle', { title: 'third' }],
+      ['setBadgeText', { text: '3', tabId: 0 }],
+      ['setPopup', { popup: 'two.html' }],
+      ['setBadgeTextColor', { color: 'black' }],
+      ['setBadgeText', { text: 'c' }]
+    ]
+    const full = await apply(run)
+    const coalesced = await apply(lastOfEachKey(run))
+    // The state a tab and the toolbar read is the last value per key either way.
+    expect(coalesced.global).toEqual(full.global)
+    expect(coalesced.tab).toEqual(full.tab)
+    expect(coalesced.toolbar).toEqual(full.toolbar)
+    expect(full.tab).toMatchObject({
+      badgeText: '3',
+      badgeBackgroundColor: 'rgba(0, 0, 255, 1.000)',
+      badgeTextColor: 'rgba(0, 0, 0, 1.000)',
+      title: 'third',
+      popup: 'two.html'
+    })
+    expect(full.global).toMatchObject({ badgeText: 'c', title: 'third', popup: 'two.html' })
+    // Every one of these setters is answered `{ok: true, result: null}` by the core; the guard
+    // answers a superseded one the same way (BridgeForward.replyOk), so a page that awaits each
+    // call sees no difference between a forwarded and a coalesced setter.
+    for (const reply of full.replies) {
+      expect(reply).toEqual({ t: 'reply', id: reply.id, ok: true, result: null, ep: 'bg1' })
+    }
+    // 15 setters, 6 keys: the coalesced run is what the core saw of Clear Cache's flood.
+    expect(lastOfEachKey(run)).toHaveLength(6)
+  })
+
+  it('takes a setIcon the host rewrote (imageData downsampled to a path data URL under the "32" slot, the tab id kept) and answers it like any setter', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const chromeTab = h.runtime.api.tabs.chromeIdFor('t1')
+    const before = { ...h.runtime.api.actionStateFor(ID, chromeTab) }
+    // ActionCalls.rewriteIcon's output: the pixels gone, one PNG data URL in their place.
+    const rewritten = await call(h, 'bg1', 'action', 'setIcon', [
+      { tabId: chromeTab, path: { '32': 'data:image/png;base64,QUJD' } }
+    ])
+    expect(rewritten).toEqual({ t: 'reply', id: rewritten.id, ok: true, result: null, ep: 'bg1' })
+    // And the same call the way the shim serializes it when nothing rewrites it.
+    const pixels = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [String(i), i & 255]))
+    const raw = await call(h, 'bg1', 'action', 'setIcon', [
+      { tabId: chromeTab, imageData: { width: 4, height: 4, data: pixels } }
+    ])
+    expect(raw.ok).toBe(true)
+    // Icons are not part of the action state the toolbar reads yet: nothing else moved.
+    expect({ ...h.runtime.api.actionStateFor(ID, chromeTab) }).toEqual(before)
+    expect(h.runtime.api.toolbarAction(ID)?.icon).toBeNull()
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.browsingData', () => {
+  it("routes to the browsing-data module for an extension with the permission and answers Chrome's error without it", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['browsingData', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    const settings = await call(h, 'bg1', 'browsingData', 'settings', [])
+    expect(settings.ok).toBe(true)
+    expect(settings.result).toMatchObject({
+      options: { since: 0, originTypes: { unprotectedWeb: true } },
+      dataRemovalPermitted: { cache: true, passwords: false }
+    })
+    // An `originTypes` without the open web clears nothing and succeeds (nothing of the
+    // browser's is touched; the harness has no engine clearing to reach).
+    const noop = await call(h, 'bg1', 'browsingData', 'remove', [
+      { originTypes: { unprotectedWeb: false } },
+      { cache: true }
+    ])
+    expect(noop).toMatchObject({ ok: true, result: null })
+    const bad = await call(h, 'bg1', 'browsingData', 'remove', [{}, { cache: 'yes' }])
+    expect(bad.ok).toBe(false)
+    expect(bad.error).toBe('Invalid data type set')
+
+    const without = harness()
+    await without.runtime.attach(record(without, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(without, 'bg1')
+    const refused = await call(without, 'bg1', 'browsingData', 'removeCache', [{}])
+    expect(refused.ok).toBe(false)
+    expect(refused.error).toBe("The extension does not have the 'browsingData' permission.")
+  })
+})
+
 describe('AndroidExtensionRuntime: chrome.system.storage', () => {
   it('answers Chrome\u2019s shape over no devices for an extension declaring the permission', async () => {
     const h = harness()

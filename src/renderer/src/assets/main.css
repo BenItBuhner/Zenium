@@ -523,6 +523,44 @@
   background: var(--v2-control-fill-hover);
 }
 /*
+ * The confirmation prompt (components/dialogs/ConfirmDialog.tsx; §9.23, §9.20, §9.11, §9.22):
+ * a notice at 320 on the frame's dialog host – the `.zen-v2-dialog` chrome and the shared title
+ * block (16, the title's 22, 4, 20 a description line, 16 to the body) – then its body: the
+ * check row, when the prompt has one, as the body's only element, running edge to edge like a
+ * form's rows (§9.25: the row's own 16 is the prompt's one gutter, so its box sits where the
+ * title's text starts), and the footer – Cancel and the verb at the button's 96, 8 apart,
+ * hugging the right (§9.11) – 16 under whatever stands above it and 16 to the bottom edge. No
+ * hairline anywhere and no margin of the footer's own: a one-line notice measures
+ * 1 + 16 + 22 + 4 + 20 + 16 + 32 + 16 + 1 = 128 and a two-line one 148 (pr-360 §D: the
+ * `.zen-bm-*` chrome gave 153 – a transparent hairline under the title block and a 4 the footer
+ * carried). Unlayered, beside the button, and the check row's reach past the gutter carries the
+ * body's specificity: the row primitive's own unlayered `width: 100%` (`.zen-v2-row`, later in
+ * this file, one class) beat a one-class rule here by order while the negative margin still
+ * applied – the row ran from the left border to 32 short of the right (pr-392 A1). The prompt's
+ * ring rules are the chassis's: none on the container that holds the focus
+ * (`[role='alertdialog'][tabindex='-1']` above), the shared v2 ring on its controls.
+ */
+.zen-confirm-dialog {
+  display: flex;
+  max-width: calc(100% - 24px);
+  flex-direction: column;
+}
+.zen-confirm-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--v2-card-padding);
+  padding: 0 var(--v2-card-padding) var(--v2-card-padding);
+}
+.zen-confirm-dialog-body > .zen-confirm-dialog-check {
+  width: calc(100% + 2 * var(--v2-card-padding));
+  margin: 0 calc(-1 * var(--v2-card-padding));
+}
+.zen-confirm-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/*
  * The first run's own controls keep the ring under the coarse-pointer suppressor further down,
  * as every v2 control does (§9.6), in the window's accent; inside the row, since rows run edge to
  * edge.
@@ -4788,9 +4826,13 @@
   .zen-button:disabled {
     opacity: 0.4;
   }
+  /*
+   * The ring stands outside the fill at the shared offset (§4, pr-357 §D): on the primary's
+   * accent fill a ring at offset 0 is the accent on the accent, 1.00:1, no ring at all.
+   */
   .zen-button:focus-visible {
     outline: 2px solid var(--v2-accent);
-    outline-offset: 0;
+    outline-offset: var(--v2-ring-offset);
   }
   .zen-button[data-variant='primary'] {
     background: var(--v2-accent);
@@ -9813,14 +9855,47 @@
   stroke-width: var(--v2-icon-stroke);
 }
 /*
- * Three text lines (§9.18): the control leaves the row's centre for the label's line. The row
- * measures where that line starts in its text block (`rows.tsx`); the control's box is then the
- * label's line box, so its content centres on it – (line − control) / 2 without stating either.
+ * Three text lines (§9.18): the control leaves the row's centre for the label. The row measures
+ * where the label starts in its text block (`lineCount.ts`) and the trailing box sits there,
+ * the label's box tall (`--zen-settings-label-box`), the control centred in it. A control
+ * never leaves its row's box (the lead's #391 ruling 4: §5 measures box to box, and a control
+ * 2 px into the row above sits under that row's hover fill), so the box is not always the
+ * line: a control taller than the line – the desktop's 32 menulist, button, field or slider
+ * in a control row, an item row's 28 ⋯ – keeps §9.21's 4 above, and the label's line box
+ * grows to the control's box with the label centred in it (Firefox's `align="center"` of
+ * label and control), the description following the control's box – 4 + 32 + 20 + 20 + 4 = 80
+ * on the desktop, the next row's control 8 below the box as on every control row. A control
+ * that fits the line – the phone's 20 switch, a 16 glyph – grows nothing: the box is the line
+ * and the phone's row stays 84. Which box a row's control is, the row says by its class
+ * (`--zen-settings-control-box`, set with the desktop rows below): a stylesheet cannot measure
+ * a sibling's height, and a measured px would restate the token the row renders its control at.
  */
+.zen-settings-row[data-lines='3'] {
+  --zen-settings-label-box: var(--zen-settings-control-box, var(--v2-line-body-box));
+}
 .zen-settings-row[data-lines='3'] > .zen-settings-trailing {
   align-self: flex-start;
-  min-height: var(--v2-line-body-box);
+  height: var(--zen-settings-label-box);
   margin-top: var(--zen-settings-label-top, 0px);
+}
+/* The label grown to its box, its line centred – padding `lineCount.ts` discounts when it counts again. */
+.zen-settings-row[data-lines='3'] > .zen-settings-row-text > .zen-settings-label {
+  padding-block: calc((var(--zen-settings-label-box) - var(--v2-line-body-box)) / 2);
+}
+/*
+ * The one trailing content taller than its control: an inline field with the message of a
+ * commit the row refused (`rows.tsx`'s `InlineField` – the field and its `role="alert"` line in
+ * one column). Centred as a pair in the box, the 32 field and its two-line message would start
+ * 18 over the row above and put the message beside the description (#391's independent pass
+ * found the pair centred). The column starts at the box's top instead: the box is the field's
+ * own (the control row's `--zen-settings-control-box`), so the field sits on the control's
+ * line and the message follows under it (§9.12: validation text below the field), inside the
+ * row's 80 for two lines of message.
+ */
+.zen-settings-row[data-lines='3']
+  > .zen-settings-trailing
+  > .zen-settings-inline-field:has(.zen-settings-inline-error) {
+  align-self: flex-start;
 }
 /* A detail row's summary (§10.4): what its sheet holds, 13 at 69 % on the trailing side, before the chevron. */
 .zen-settings-summary {
@@ -10335,6 +10410,27 @@
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* The find field's padding above and below its control (`.zen-settings-find` reads these): the
+     column's top for anything scrolled into view is the field's bottom edge – its whole box,
+     16 + the control + 8 – so a landed group's heading shows under the field, and the two
+     rules cannot drift apart. */
+  --zen-settings-find-pad-top: 16px;
+  --zen-settings-find-pad-bottom: 8px;
+  scroll-padding-top: calc(
+    var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom)
+  );
+}
+/*
+ * A landing (`?row=` / `?site=`, `SettingsPage`'s `landingPad`): the column pads its end by what
+ * the landed group lacks to reach the top – a group near a section's end otherwise stops where
+ * the content under it runs out (the desktop's #356: Sync's Open tabs group mid-page at a 1000 px
+ * window) – as Chrome's settings pages pad the page for a deep link. The page measures the pad
+ * and carries `data-landing` only while a landing is asked, so an ordinary section keeps its
+ * end: the phone's 24 under the rows, the pane's 40.
+ */
+.zen-settings-page[data-landing] .zen-settings-scroll > .zen-settings-body,
+.zen-settings-page[data-landing] .zen-settings-pane > .zen-settings-body {
+  padding-bottom: var(--zen-settings-landing-pad, 0px);
 }
 /*
  * "Find in Settings" (§10.5, §9.12): the column opens with the shared field – 32 tall on the
@@ -10347,7 +10443,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 16px 16px 8px;
+  padding: var(--zen-settings-find-pad-top) 16px var(--zen-settings-find-pad-bottom);
   background: var(--v2-page);
 }
 .zen-settings-find > .zen-settings-search {
@@ -10402,25 +10498,33 @@
 /*
  * Sub-headings in a pane (§9.27): the 15/600 heading's box ends 8 above the first row's box
  * (14 to its text through the row's 6 padding, Zen's Vertical Tabs group); one that carries a
- * description keeps the phone's 4 to the description and the description's 8 to the row.
+ * description keeps the phone's 4 to the description and the description's 8 to the row. A
+ * desktop dialog's body is the same desktop surface (the lead's #314 ruling: the 8 below, not
+ * the primitive's phone 4), so its headings take the one rule – the phone sheet's keep the 4.
  */
-.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
+.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)),
+.zen-settings-dialog-body .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
   margin-bottom: 8px;
 }
 /*
  * Desktop rows (§10.5, `rows.tsx`'s desktop variant), every one the shared `.zen-v2-row`:
  * - a control row (§9.21) is static text trailing its 32 px control, the row grown to the
  *   control plus 8 – the 4 above and below its own padding – so rows still touch; with a
- *   description it is the two-line row's 52;
+ *   description it is the two-line row's 52; the row names its control's box for the
+ *   three-line seat (§9.18 above), as the item row trailing its 28 ⋯ names that;
  * - a check row is Zen's 16 px checkbox left of its label, the box on the first text line (§9.2),
  *   the whole row its label;
  * - an inline field (§9.12) is the one short field the desktop keeps beside its label: 96 for a
  *   number, 160 at most for text; its validation message takes the line under the field.
  */
 .zen-settings-control-row {
+  --zen-settings-control-box: var(--v2-control);
   min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
   padding-top: 4px;
   padding-bottom: 4px;
+}
+.zen-settings-menu-row {
+  --zen-settings-control-box: var(--v2-icon-button);
 }
 .zen-settings-control-row:has(.zen-settings-description) {
   min-height: max(var(--v2-row-two-line), calc(var(--v2-control) + 8px));

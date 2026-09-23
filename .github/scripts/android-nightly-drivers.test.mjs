@@ -39,7 +39,8 @@ const temp = () => {
   return dir
 }
 afterEach(() => {
-  for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const dir of temps.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 describe('the manifest against the sources', () => {

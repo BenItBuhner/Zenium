@@ -193,7 +193,13 @@ describe('parseAxeAllowlist', () => {
 
 describe('the checked-in baselines (.github/smoke/aria)', () => {
   it('has one baseline per state, normalised, and each names the roles its state is about', () => {
-    expect(ARIA_STATES).toEqual(['resting-window', 'app-menu', 'urlbar', 'hosted-dialog'])
+    expect(ARIA_STATES).toEqual([
+      'resting-window',
+      'app-menu',
+      'urlbar',
+      'hosted-dialog',
+      'web-capture'
+    ])
     const files = readdirSync(ariaDir)
       .filter((f) => f.endsWith('.aria.yaml'))
       .sort()
@@ -234,6 +240,15 @@ describe('the checked-in baselines (.github/smoke/aria)', () => {
     expect(dialog).toMatch(/- heading "Add search engine"/)
     expect(dialog).toMatch(/- textbox "Name"/)
     expect(dialog).toMatch(/- button "Add"/)
+    // The Web capture overlay: the modal dialog with its toolbar – the hint that the page's
+    // geometry is known, the two whole-page captures and Cancel (capture-01, capture-16).
+    const capture = readFileSync(join(ariaDir, ariaBaselineName('web-capture')), 'utf8')
+    expect(capture).toMatch(/^- dialog "Web capture"/)
+    expect(capture).toMatch(/- toolbar "Capture":/)
+    expect(capture).toMatch(/Drag to select an area/)
+    expect(capture).toMatch(/- button "Visible area"/)
+    expect(capture).toMatch(/- button "Full page"/)
+    expect(capture).toMatch(/- button "Cancel capture"/)
   })
 
   it('has an axe allowlist that parses, every entry on a surface the chrome does not own', () => {

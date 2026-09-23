@@ -28,6 +28,7 @@
  */
 import { ENGINE_NOOPS, ENGINE_STUB_RESULTS, engineApiSpec, namespaceGranted } from './engineSpec'
 import { getMessage, normalizeSubstitutions, predefinedMessages, type LocaleMessages } from './i18n'
+import { captureIconWireEnv, compactIconDetails, type IconWireEnv } from './iconWire'
 import { redirectUrl } from './identity'
 import {
   installExtensionApi,
@@ -94,6 +95,11 @@ export interface EngineOptions {
    * scope object, so the page never sees `chrome`.
    */
   root?: object
+  /**
+   * The drawing surfaces `action.setIcon`'s pixels are compacted with before they are posted
+   * (`iconWire.ts`); the realm's own, captured at creation, by default. Tests hand in theirs.
+   */
+  iconWire?: IconWireEnv
 }
 
 /**
@@ -299,6 +305,19 @@ export function createEmulatedEngine(
       pending.set(id, { resolve, reject })
       post({ t: 'call', id, ns, method, args })
     })
+
+  /**
+   * `action.setIcon`'s `imageData` compacted for the text bridge before the call is posted:
+   * the shim hands over the `ImageData`'s bytes as they are, which `stringify` would write
+   * member by member (0.3 M chars for a 96 px icon, sixty times a second from an extension
+   * that animates its icon – the host's heap, compat round 11b). `iconWire.ts` scales them to
+   * the slot the chrome draws and writes them as base64; the host reads that form.
+   */
+  const iconWire = options.iconWire ?? captureIconWireEnv()
+  const forWire = (ns: string, method: string, args: unknown[]): unknown[] => {
+    if (ns !== 'action' || method !== 'setIcon' || args.length === 0) return args
+    return [compactIconDetails(args[0], iconWire), ...args.slice(1)]
+  }
 
   // --- events ------------------------------------------------------------------------------------
 
@@ -737,7 +756,7 @@ export function createEmulatedEngine(
         const stub = ENGINE_STUB_RESULTS[key]
         return Promise.resolve({ ok: true, value: primordials.parse(primordials.stringify(stub)) })
       }
-      return call(ns, method, args).then(
+      return call(ns, method, forWire(ns, method, args)).then(
         (value) => ({ ok: true, value }) as InvokeResult,
         (error: unknown) => ({ ok: false, error: errorMessage(error) }) as InvokeResult
       )

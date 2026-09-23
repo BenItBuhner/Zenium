@@ -252,6 +252,45 @@ describe('a desktop item dialog and its rows (§9.24)', () => {
     // The primitive's 20 above stays for every heading after the first.
     expect(css).toContain('.zen-v2-heading { margin: 20px 0 4px;')
   })
+
+  it('a dialog body’s headings end 8 above the first row’s box, the desktop’s number (§9.27; the lead’s #314 ruling), the phone sheet’s keep the primitive’s 4', () => {
+    const row = itemRow(
+      () => undefined,
+      () => undefined
+    )
+    const groups: RowGroup[] = [{ id: 'sync-devices', heading: 'Other devices', rows: [row] }]
+    const h = render(
+      <FrameDialogHost>
+        <DialogStack
+          requests={[{ kind: 'item', rowId: row.id }]}
+          groups={groups}
+          ctx={ctx}
+          closeTop={() => undefined}
+        />
+      </FrameDialogHost>
+    )
+    // The heading is in the dialog's body with the first row right after it (no description
+    // between), the shape the pane's rule keys on with `:not(:has(+ description))`.
+    const body = h.querySelector('.zen-settings-dialog-body')!
+    const heading = body.querySelector('.zen-settings-heading')!
+    expect(heading.textContent).toBe('Work laptop')
+    expect(heading.nextElementSibling?.classList.contains('zen-settings-group-description')).toBe(
+      false
+    )
+    expect(heading.nextElementSibling?.classList.contains('zen-settings-row')).toBe(true)
+    const css = readFileSync(resolve(__dirname, '../../../../assets/main.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\s+/g, ' ')
+    // One rule, the pane's and the dialog body's: the desktop surface's 8 below.
+    expect(css).toContain(
+      '.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)), ' +
+        '.zen-settings-dialog-body .zen-settings-heading:not(:has(+ .zen-settings-group-description)) { margin-bottom: 8px; }'
+    )
+    // The phone sheet's body has no such rule: its headings keep the primitive's 4 (§10.3).
+    expect(css).not.toMatch(
+      /\.zen-settings-sheet-body[^{]*\.zen-settings-heading[^{]*\{[^}]*margin-bottom/
+    )
+  })
 })
 
 // ---------------------------------------------------------------------------
