@@ -25,7 +25,12 @@ under `--no-sandbox`, and a check on it that passes there checks the wrong thing
 `--no-sandbox`; the layer must be present) and under `--no-sandbox` (the negative: the layer must
 be absent). Where the kernel denies unprivileged user namespaces (ubuntu-24.04's AppArmor
 default) the sandboxed launch needs the build's `chrome-sandbox` helper setuid root, as the
-installers leave it:
+installers leave it. The leg's arguments are what the app gets: Playwright 1.63's Electron
+launcher would add `--no-sandbox` on Linux by itself, so the smoke launches with
+`chromiumSandbox: true` and the `--no-sandbox` legs pass the switch themselves; and since
+Electron takes `ELECTRON_DISABLE_SANDBOX` in the environment as the same switch, a `--sandbox`
+leg drops it from the launch's environment (the result's `sandbox` facts say whether the run's
+environment carried it, `envDisableSandbox` / `envDisableSandboxDropped`):
 
 ```sh
 sudo chown root:root dist/linux-unpacked/chrome-sandbox && sudo chmod 4755 dist/linux-unpacked/chrome-sandbox

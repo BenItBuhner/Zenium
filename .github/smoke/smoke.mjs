@@ -6,10 +6,12 @@
 //        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
-//                                 --no-sandbox in --extra-args is refused; on Linux the build's
-//                                 chrome-sandbox helper has to be setuid root where the kernel
-//                                 denies unprivileged user namespaces – ci.yml's step does that
-//                                 to the unpacked build. What the leg is for: Electron runs
+//                                 --no-sandbox in --extra-args is refused and ELECTRON_DISABLE_SANDBOX
+//                                 – Electron's --no-sandbox from the environment – is kept out
+//                                 of the launch; on Linux the build's chrome-sandbox helper has
+//                                 to be setuid root where the kernel denies unprivileged user
+//                                 namespaces – ci.yml's step does that to the unpacked build.
+//                                 What the leg is for: Electron runs
 //                                 service-worker preload scripts in sandboxed renderers only, so
 //                                 a --no-sandbox leg cannot observe Zenium's chrome.* layer in an
 //                                 MV3 worker; the mv3-worker scenario expects it present here and
@@ -262,9 +264,21 @@ const context = { platform: process.platform, arch: process.arch, label: opts.la
  * default) is that helper, root-owned and setuid (mode 4755); electron-builder's installers
  * leave it so, an unpacked build does not. A sandboxed leg without it is left to the launch:
  * Chromium refuses to start and says why, which the launch step reports.
+ *
+ * Two more ways --no-sandbox reaches the app without the leg passing it. Playwright's Electron
+ * launcher adds it on Linux unless asked not to (1.63; the launch asks, `chromiumSandbox`). And
+ * Electron reads ELECTRON_DISABLE_SANDBOX in the environment as the switch, whatever the command
+ * line says (Electron 44.4.5, measured), so a sandboxed leg drops it from the launch's
+ * environment (Session.launchEnv) and says here whether the run's environment carried it.
  */
 function sandboxFacts() {
-  const facts = { sandboxed: !NO_SANDBOX_ARG, requested: SANDBOX }
+  const envDisable = process.env.ELECTRON_DISABLE_SANDBOX
+  const facts = {
+    sandboxed: !NO_SANDBOX_ARG && (SANDBOX || envDisable === undefined),
+    requested: SANDBOX,
+    envDisableSandbox: envDisable ?? null,
+    envDisableSandboxDropped: SANDBOX && envDisable !== undefined
+  }
   if (!IS_LINUX) return facts
   const helper = path.join(path.dirname(path.resolve(opts.exe)), 'chrome-sandbox')
   try {
@@ -955,7 +969,11 @@ class Session {
   }
 
   launchEnv() {
-    return { ...process.env, ELECTRON_ENABLE_LOGGING: '1', ...isolationEnv, ...this.extraEnv }
+    const env = { ...process.env, ELECTRON_ENABLE_LOGGING: '1', ...isolationEnv, ...this.extraEnv }
+    // Electron's --no-sandbox from the environment: a sandboxed leg launches without it (the
+    // result's `sandbox` facts say whether the run's environment carried it).
+    if (SANDBOX) delete env.ELECTRON_DISABLE_SANDBOX
+    return env
   }
 
   async launch() {
@@ -969,6 +987,11 @@ class Session {
       executablePath: opts.exe,
       args: this.launchArgs(),
       env: this.launchEnv(),
+      // Playwright 1.63's Electron launcher puts --no-sandbox in front of the arguments on Linux
+      // unless told not to (up to 1.62 it did so only for root). The leg's own arguments decide
+      // here: ci.yml's --no-sandbox legs pass the switch themselves, a --sandbox leg passes none
+      // (run 35851382792's sandboxed leg saw the switch it never passed).
+      chromiumSandbox: true,
       // Playwright would otherwise emulate prefers-color-scheme: light on every page it attaches
       // to; null means the pages follow the OS / nativeTheme like they do for a user.
       colorScheme: null,
