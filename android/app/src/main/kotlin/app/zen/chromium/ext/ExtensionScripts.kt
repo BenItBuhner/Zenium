@@ -323,11 +323,16 @@ object ExtensionScripts {
      * text also runs where the brackets were never installed. The TypeScript twin is
      * `wrapModuleText`; `extensionModuleChrome.test.ts` and `ExtensionScriptsTest` pin the shape.
      */
-    fun moduleChromeWrap(text: String, extensionId: String): String {
-        val id = JSONObject.quote(extensionId)
-        return "globalThis.__zenExtModule&&globalThis.__zenExtModule($id);" + text +
-            "\n;globalThis.__zenExtModuleEnd&&globalThis.__zenExtModuleEnd($id);"
-    }
+    fun moduleChromeWrap(text: String, extensionId: String): String =
+        moduleChromeOpen(extensionId) + text + moduleChromeClose(extensionId)
+
+    /** The bracket ahead of a served module's text; ASCII, so it prefixes the file's UTF-8 bytes as it is. */
+    fun moduleChromeOpen(extensionId: String): String =
+        "globalThis.__zenExtModule&&globalThis.__zenExtModule(${JSONObject.quote(extensionId)});"
+
+    /** The bracket after a served module's text, on a line of its own. */
+    fun moduleChromeClose(extensionId: String): String =
+        "\n;globalThis.__zenExtModuleEnd&&globalThis.__zenExtModuleEnd(${JSONObject.quote(extensionId)});"
 
     /** `Content-Type` for a file inside the extension directory, by extension. */
     fun mimeType(path: String): String {

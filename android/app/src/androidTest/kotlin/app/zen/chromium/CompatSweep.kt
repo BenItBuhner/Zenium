@@ -183,6 +183,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val entry = JSONObject().put("id", row.id).put("name", row.name).put("feasible", row.feasible)
             rows.put(entry)
             val started = SystemClock.uptimeMillis()
+            val refusedBefore = host.chrome.bridge.refused.get()
             try {
                 // A row's core check is read off a page on screen: the browser back in front first.
                 onScreen("before ${row.name}")
@@ -195,11 +196,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 entry.put("ms", SystemClock.uptimeMillis() - started)
                 entry.put("pssKbAfter", Debug.getPss())
                 entry.put("heapAfterKb", heapKb())
+                // Calls the chrome's bridge refused at its queue limit during the row (`JsBridge`): 0 unless
+                // an extension's message storm outran the main thread.
+                entry.put("bridgeRefused", host.chrome.bridge.refused.get() - refusedBefore)
                 entry.put("grade", listOf("background", "popup", "options", "core").joinToString("/") { entry.optJSONObject(it)?.optString("verdict") ?: "?" })
                 Log.i(
                     TAG,
                     "ROW ${row.name}: install=${entry.optJSONObject("install")?.optString("verdict")} ${entry.optString("grade")}; " +
-                        "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB"
+                        "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB, " +
+                        "bridge refused ${entry.optInt("bridgeRefused")}"
                 )
                 write()
             }
@@ -574,6 +579,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                             detail
                         )
                     } else stage(entry, "popup", "PARTIAL", "the sheet came up but its document stayed empty after ${POPUP_TIMEOUT_MS / 1000} s: ${dom.toString().take(200)}; console: ${detail.optJSONArray("console")?.toString()?.take(200)}", detail)
+                } else if (answered.any { extensionPage(it, row.id) }) {
+                    // The popup opened, opened a page of the extension's own in a tab and closed
+                    // itself (Keplr's `register.html` for an empty wallet, as a fresh Chrome
+                    // profile shows it): the page is the popup's answer.
+                    val page = answered.first { extensionPage(it, row.id) }
+                    entry.put("popupOpened", JSONArray(answered))
+                    stage(entry, "popup", "P", "the popup opened ${page.take(160)} in a tab and closed itself (no sheet left within ${POPUP_TIMEOUT_MS / 1000} s)", detail)
                 } else {
                     stage(entry, "popup", "F", "no popup sheet within ${POPUP_TIMEOUT_MS / 1000} s (runtime popup=${runtimePopup ?: "null"}, declared=$declared, tabs opened=${opened.size})", detail)
                 }
@@ -3671,6 +3683,594 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return Grade(grade.verdict, "${grade.note}; $relay", extra)
     }
 
+    // --- the core checks of compat round 9 (ranks 181-210 by installs; round 8's runtime rows) ---
+
+    /**
+     * A popup control found by [FIND_LABEL] (`words`, a JS regex literal over the visible
+     * labels) and tapped for a trusted gesture; what was found goes on `steps`. False when the
+     * popup is gone or has no such label.
+     */
+    private fun tapLabel(words: String, factor: Double, steps: JSONArray, name: String): Boolean {
+        val live = popupView()?.takeIf { it.context == "popup" }
+        if (live == null) {
+            steps.put("$name: no popup up")
+            return false
+        }
+        val hit = json(tabEval(live, FIND_LABEL.replace("__RE__", words)))
+        steps.put("$name $words: ${hit.toString().take(140)}")
+        if (!hit.optBoolean("clicked")) return false
+        screenPoint(live, hit)?.let { tap(it.first, it.second) }
+        SystemClock.sleep(scaled(1_500, factor))
+        return true
+    }
+
+    /**
+     * The row's popup over a settled fixture, its controls tapped in order (`clicks`: a label
+     * regex each, the flow stops at the first one missing), then `expr` (a `JSON.stringify` of
+     * `{pass, ...}`) polled on the fixture page, or in the popup when `onPage` is false (a label
+     * prefixed `?` is optional: SEOquake's consent when it shows); a new
+     * tab whose URL matches `opens` is the pass too (PrintFriendly's own page). Eye Dropper's
+     * "Pick color from web page" and the picker it injects, Shimeji's ON and its mascot, Web
+     * Developer's CSS > Disable All Styles and the fixture's stylesheet off, User-Agent
+     * Switcher's pick and the header echo the fixture shows after its reload, SEOquake's
+     * consent and the fixture's title read in the popup.
+     */
+    private fun popupFlow(
+        label: String,
+        page: String,
+        clicks: List<String>,
+        expr: String,
+        onPage: Boolean = true,
+        settleMs: Long = 25_000,
+        opens: Regex? = null,
+        prepare: ((WebView) -> Unit)? = null
+    ): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture(page, factor, 2_000)
+        prepare?.invoke(view)
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        val popup = openPopup(row, factor)
+        val steps = JSONArray()
+        var landed = 0
+        if (popup != null) {
+            SystemClock.sleep(scaled(2_500, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(240))
+            for ((i, words) in clicks.withIndex()) {
+                val optional = words.startsWith("?")
+                if (!tapLabel(words.removePrefix("?"), factor, steps, "click ${i + 1}") && !optional) break
+                landed++
+            }
+            popupView()?.takeIf { it.context == "popup" }?.let { extra.put("popupAfter", json(tabEval(it, DEEP_TEXT)).optString("text").take(240)) }
+        }
+        extra.put("steps", steps).put("clicksLanded", landed).put("clicksAsked", clicks.size)
+        var found = JSONObject()
+        var opened: Map.Entry<String, String>? = null
+        if (onPage) {
+            poll(scaled(settleMs, factor), 700) {
+                opened = opens?.let { re -> tabUrls().entries.firstOrNull { it.key !in before && re.containsMatchIn(it.value) } }
+                if (opened != null) return@poll true
+                found = runCatching { json(tabEval(waitForView(tab), expr)) }.getOrElse { JSONObject().put("error", it.message ?: "eval failed") }
+                if (found.optBoolean("pass")) true else null
+            }
+            runCatching { extra.put("console", JSONArray(consoleOf(waitForView(tab)).takeLast(10))) }
+            if (worlds) runCatching { worldEval(waitForView(tab), row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) } }
+        } else {
+            popupView()?.takeIf { it.context == "popup" }?.let {
+                found = pollExpr(it, expr, scaled(settleMs, factor))
+                found.put("console", JSONArray(consoleOf(it).takeLast(10)))
+            }
+        }
+        opened?.let { o ->
+            extra.put("opened", o.value.take(200))
+            runCatching { waitForView(o.key) }.getOrNull()?.let { v ->
+                showTab(o.key)
+                extra.put("openedPage", pollExpr(v, DOM_REPORT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:document.body&&document.body.querySelectorAll('*').length>3,text:"), scaled(20_000, factor)))
+            }
+        }
+        extra.put("page", found).put("tabUrl", tabUrls()[tab] ?: "")
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        val pass = found.optBoolean("pass") || opened != null
+        Grade(
+            if (pass) "P" else "F",
+            "$label: " + when {
+                opened != null -> "the click opened ${extensionPath(opened!!.value).take(80)}"
+                popup == null -> "popup did not render in the core check"
+                landed < clicks.size -> "control ${landed + 1} of ${clicks.size} not reached in the popup (${steps.toString().take(160)}); page ${found.toString().take(160)}"
+                else -> "after the popup's ${clicks.size} tap(s) ${found.toString().take(240)}"
+            },
+            extra
+        )
+    }
+
+    /**
+     * Mobile simulator (a desktop concept: a device frame around the page): the action click
+     * on a settled fixture runs its `js/simulator.js` in the tab, which rebuilds the document
+     * around a device frame with the page itself in an `<iframe>` (the fixture tab's URL stays;
+     * round 9's final run showed the frame while the driver looked for a page of the
+     * extension's own), or sends the tab to a page of the extension's; either is read for the
+     * frame. What it does on the phone is graded as it is.
+     */
+    private fun mobileSimulator(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, fixtureView) = fixture("page-a.html?sim", factor, 2_000)
+        val before = tabUrls()
+        val since = StepEvidence(row)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val frameReport =
+            """(function(){var f=document.querySelector('iframe');var r=f?f.getBoundingClientRect():{width:0,height:0};var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();return JSON.stringify({pass:!!f&&r.width>100&&r.height>150,frame:f?(f.src||'').slice(0,120):null,w:Math.round(r.width),h:Math.round(r.height),devices:(t.match(/iPhone|Galaxy|Pixel|iPad/g)||[]).length,text:t.slice(0,120)})})()"""
+        // Either the extension's own page in a tab, or the fixture tab rebuilt around the frame.
+        var landed: Map.Entry<String, String>? = null
+        var inPage: JSONObject? = null
+        poll(scaled(30_000, factor), 700) {
+            landed = tabUrls().entries.firstOrNull { (it.key !in before || before[it.key] != it.value) && extensionPage(it.value, row.id) }
+            if (landed == null) {
+                inPage = runCatching { json(tabEval(fixtureView, frameReport)) }.getOrNull()?.takeIf { it.optBoolean("pass") }
+            }
+            if (landed != null || inPage != null) true else null
+        }
+        var found = JSONObject()
+        val where: String
+        if (landed != null) {
+            val view = waitForView(landed!!.key)
+            showTab(landed!!.key)
+            found = pollExpr(view, frameReport, scaled(30_000, factor))
+            found.put("url", landed!!.value.take(160)).put("console", JSONArray(consoleOf(view).takeLast(10)))
+            where = extensionPath(landed!!.value).take(60)
+        } else if (inPage != null) {
+            found = inPage!!
+            found.put("url", (tabUrls()[tab] ?: "").take(160)).put("console", JSONArray(consoleOf(fixtureView).takeLast(10)))
+            where = "the frame in the fixture tab"
+        } else {
+            extra.put("tabs", JSONArray(tabUrls().values.toList()))
+            runCatching { extra.put("fixturePage", json(tabEval(fixtureView, frameReport))) }
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+            where = ""
+        }
+        extra.put("page", found).put("fixtureTab", tabUrls()[tab] ?: "")
+        since.record(extra, "atEnd")
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(
+            if (found.optBoolean("pass")) "P" else "F",
+            "Mobile simulator: ${if (where.isEmpty()) "the action click opened no simulator page and put no frame in the fixture tab within ${scaled(30_000, factor) / 1000} s" else "$where: ${found.toString().take(220)}"}",
+            extra
+        )
+    }
+
+    /**
+     * Stream Recorder over `hls.html` (its playlist fetched): the action click opens the
+     * recorder page for the tab (`hlsloader.com/record.html`, a page of the vendor's site the
+     * worker opens with the stream it saw), which lists the fixture's stream. The desktop's
+     * round 7 read it that way after its fix B.
+     */
+    private fun streamRecorder(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("hls.html?rec", factor, 3_000)
+        runCatching { tabEval(view, "(function(){var v=document.querySelector('video');if(v){v.muted=true;v.play().catch(function(){})}return 'played'})()") }
+        SystemClock.sleep(scaled(4_000, factor))
+        extra.put("fixture", json(tabEval(view, DOM_REPORT)).optString("text").take(160))
+        showTab(tab)
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val opened = poll(scaled(30_000, factor), 700) {
+            tabUrls().entries.firstOrNull { it.key !in before && Regex("record\\.html|hlsloader\\.com", RegexOption.IGNORE_CASE).containsMatchIn(it.value) }
+        }
+        var found = JSONObject()
+        if (opened != null) {
+            val page = waitForView(opened.key)
+            showTab(opened.key)
+            // The WebView's own error page ("Webpage not available ... could not be loaded
+            // because: net::ERR_...") quotes the URL, `record.html` in it: the pass reads the
+            // recorder's words alone, and the error page is the F with its `net::` code.
+            val report = """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();var err=/could not be loaded because|Webpage not available|net::ERR_/i.test(t);return JSON.stringify({pass:!err&&/m3u8|stream recorder|completed|segment|capture|index file/i.test(t)&&t.length>40,errorPage:err,text:t.slice(0,240),els:document.body?document.body.querySelectorAll('*').length:0})})()"""
+            var last = JSONObject()
+            poll(scaled(45_000, factor), 700) {
+                last = json(tabEval(page, report))
+                if (last.optBoolean("pass") || last.optBoolean("errorPage")) true else null
+            }
+            found = last
+            found.put("url", opened.value.take(200)).put("console", JSONArray(consoleOf(page).takeLast(10)))
+        } else {
+            extra.put("tabs", JSONArray(tabUrls().values.toList()))
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        }
+        extra.put("page", found)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(10))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(800)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        // The recorder listens to `webRequest.onHeadersReceived` on every URL, so a document
+        // reaches its tab through the phone's header relay: the fixture's gzip-encoded page
+        // says whether the relay's body decodes (its own `__encoding` read, or the WebView's
+        // error page), the instrument for the live page's `ERR_CONTENT_DECODING_FAILED`.
+        val (gzTab, gzView) = fixture("echo-headers?gzip=1&rec", factor, 1_500)
+        val gz = pollExpr(
+            gzView,
+            """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();var err=/could not be loaded because|Webpage not available|net::ERR_/i.test(t);return JSON.stringify({pass:!!window.__encoding,errorPage:err,encoding:window.__encoding||null,text:t.slice(0,160)})})()""",
+            scaled(15_000, factor)
+        )
+        extra.put("gzipFixture", gz)
+        runCatching { closeTab(gzTab) }
+        val gzNote = when {
+            gz.optBoolean("errorPage") -> "; the fixture's gzip-encoded page through the relay: the WebView's error page (${gz.optString("text").take(120)})"
+            gz.optBoolean("pass") -> "; the fixture's gzip-encoded page through the relay rendered (sent ${gz.optString("encoding")})"
+            else -> "; the fixture's gzip-encoded page through the relay: no reading (${gz.toString().take(120)})"
+        }
+        return Grade(
+            if (found.optBoolean("pass")) "P" else "F",
+            "Stream Recorder: ${if (opened == null) "the action click opened no recorder page within ${scaled(30_000, factor) / 1000} s" else "${opened.value.take(70)}: ${found.toString().take(220)}"}$gzNote",
+            extra
+        )
+    }
+
+    /**
+     * A row whose whole reachable surface is a live site's page the runner is not served
+     * (AIPRM's content script is declared for `chat.openai.com`, which redirects to
+     * `chatgpt.com` and serves its sign-in or a challenge): the site is opened, its landing
+     * recorded, `injects` looked for; found is P, the redirect or gate is `n/m` with the landing.
+     */
+    private fun siteGate(label: String, url: String, injects: String, declared: Regex, gate: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val tab = createTab(url)
+        val view = waitForView(tab)
+        poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(6_000, factor))
+        val landed = json(tabEval(view, DOM_REPORT))
+        val landedUrl = tabUrls()[tab] ?: ""
+        val injected = pollExpr(view, INJECTED_UI.replace("__SELECTOR__", JSONObject.quote(injects)), scaled(20_000, factor))
+        extra.put("site", landed).put("landedUrl", landedUrl.take(160)).put("injected", injected).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        val text = landed.optString("text")
+        when {
+            injected.optBoolean("pass") -> Grade("P", "$label: its UI is on ${landedUrl.take(60)}: ${injected.toString().take(200)}", extra)
+            !declared.containsMatchIn(landedUrl) -> Grade("n/m", "$label: ${url.take(50)} landed on ${landedUrl.take(60)}, outside its declared match (${declared.pattern}), so its script does not run there, in Chrome either; $gate (not measurable here)", extra)
+            CHALLENGE_WORDS.containsMatchIn(text) || LOGIN_WORDS.containsMatchIn(text) || text.isEmpty() ->
+                Grade("n/m", "$label: ${landedUrl.take(60)} served \"${text.take(80)}\" to the runner; $gate (not measurable here)", extra)
+            else -> Grade("F", "$label: on ${landedUrl.take(60)} (\"${text.take(60)}\") nothing injected: ${injected.toString().take(160)}", extra)
+        }
+    }
+
+    /**
+     * `chrome.system.cpu.getInfo` / `system.memory.getInfo` from the row's worker (OKX Wallet
+     * declares `system.cpu`): Chrome's shape (`numOfProcessors`, `archName`, `modelName`,
+     * `features`, `processors[].usage`; `capacity`, `availableCapacity`) or the error.
+     */
+    private fun systemInfoProbe(bg: WebView, factor: Double): JSONObject = probe(bg, SYSTEM_INFO_PROBE, "__zenSystemInfo", scaled(10_000, factor))
+
+    /**
+     * OKX Wallet: its provider in the page world (`window.okxwallet`, the EIP-6963 announce),
+     * with the `system.cpu` shape its worker gets beside it (round 8's open item c; Speechify's
+     * worker logged the missing `system.cpu.getInfo`).
+     */
+    private fun okxWallet(row: Row, entry: JSONObject): Grade {
+        val grade = domMarker(
+            "OKX Wallet's provider injected into the page world",
+            "wallet.html?okx",
+            "JSON.stringify({pass:!!window.okxwallet,okx:typeof window.okxwallet,isOkx:!!(window.okxwallet&&(window.okxwallet.isOkxWallet||window.okxwallet.isOKExWallet)),ethereum:typeof window.ethereum,announced:(window.__eip6963||[]).slice(0,4)})",
+            settleMs = 25_000
+        )(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val bg = backgroundView(row.id)
+        val system = bg?.let { systemInfoProbe(it, speedFactor(entry)) } ?: JSONObject().put("error", "no background view")
+        extra.put("system", system)
+        val cpu = system.optJSONObject("cpu")
+        val cpuNote = when {
+            cpu != null && cpu.has("numOfProcessors") -> "system.cpu.getInfo answers ${cpu.optInt("numOfProcessors")} processor(s), ${cpu.optString("archName")}, ${cpu.optJSONArray("processors")?.length() ?: 0} usage rows"
+            else -> "system.cpu.getInfo: ${system.optString("cpuError").ifEmpty { system.toString() }.take(120)}"
+        }
+        val memory = system.optJSONObject("memory")
+        val memoryNote = if (memory != null && memory.has("capacity")) "system.memory ${memory.optLong("capacity") / (1024 * 1024)} MB, ${memory.optLong("availableCapacity") / (1024 * 1024)} MB free" else "system.memory: ${system.optString("memoryError").take(80)}"
+        return Grade(grade.verdict, "${grade.note}; $cpuNote; $memoryNote", extra)
+    }
+
+    /**
+     * Easy Auto Refresh over `page-a.html`: its popup's interval field set to 5 s and Start
+     * tapped; the fixture reloads on the interval (the desktop's reading).
+     */
+    private fun easyAutoRefresh(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("page-a.html?easyrefresh", factor, 2_000)
+        val origin = tabEval(view, "String(performance.timeOrigin)")
+        val popup = openPopup(row, factor)
+        val steps = JSONArray()
+        var started = false
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            val live = popupView()?.takeIf { it.context == "popup" }
+            if (live != null) {
+                extra.put("popupText", json(tabEval(live, DEEP_TEXT)).optString("text").take(240))
+                val set = tabEval(live, """(function(){var i=document.getElementById('interval')||document.querySelector('input[type=text], input[type=number]');if(!i)return 'no field';i.focus();i.value='5';i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));return 'set '+i.value})()""")
+                steps.put("interval: $set")
+                started = tapLabel("/^start$/i", factor, steps, "start")
+                popupView()?.takeIf { it.context == "popup" }?.let { extra.put("popupAfterStart", json(tabEval(it, DEEP_TEXT)).optString("text").take(200)) }
+            }
+        }
+        extra.put("steps", steps)
+        snap("${entry.optString("slug")}-refresh-popup")
+        val reloaded = poll(scaled(30_000, factor), 1_000) {
+            val now = runCatching { tabEval(view, "String(performance.timeOrigin)") }.getOrDefault("")
+            now.takeIf { it.isNotEmpty() && it != "null" && it != origin }
+        }
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        extra.put("timeOrigin", JSONObject().put("before", origin).put("after", reloaded ?: tabEval(view, "String(performance.timeOrigin)"))).put("tabUrl", tabUrls()[tab] ?: "")
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        val note = "steps ${steps.toString().take(220)}"
+        return when {
+            reloaded != null -> Grade("P", "Easy Auto Refresh: the fixture reloaded on the 5 s interval after Start (time origin $origin -> $reloaded): $note", extra)
+            popup == null -> Grade("F", "Easy Auto Refresh: popup did not render in the core check: $note", extra)
+            !started -> Grade("F", "Easy Auto Refresh: no Start control reached in the popup: $note", extra)
+            else -> Grade("F", "Easy Auto Refresh: Start pressed and the fixture did not reload within ${scaled(30_000, factor) / 1000} s: $note", extra)
+        }
+    }
+
+    /**
+     * MyBib over `page-a.html`: its popup cites the page (through `wss://ws.mybib.com`, which
+     * answered 502 to the desktop's runner: `n/m` on the service when the popup says so).
+     */
+    private fun myBib(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?cite", factor, 2_000)
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        if (popup != null) {
+            found = pollExpr(
+                popup,
+                """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();return JSON.stringify({pass:/Probe Page A|10\.0\.2\.2|Retrieved|Accessed|\(n\.d\.\)|\bAPA\b|\bMLA\b|Harvard/i.test(t)&&!/oh snap|something went wrong|sign in|log in/i.test(t),text:t.slice(0,240),snap:/oh snap|something went wrong/i.test(t),els:document.body?document.body.querySelectorAll('*').length:0})})()""",
+                scaled(30_000, factor)
+            )
+            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+        }
+        extra.put("popup", found)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-core")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        val text = found.optString("text")
+        return when {
+            found.optBoolean("pass") -> Grade("P", "MyBib: the popup cites the fixture: \"${text.take(160)}\"", extra)
+            popup == null -> Grade("F", "MyBib: popup did not render in the core check", extra)
+            found.optBoolean("snap") || LOGIN_WORDS.containsMatchIn(text) -> Grade("n/m", "MyBib: its popup says \"${text.take(100)}\" (its citation service, wss://ws.mybib.com, answered the desktop's runner 502 the same way); the citation is the service's (not measurable here)", extra)
+            else -> Grade("F", "MyBib: the popup shows no citation of the fixture within ${scaled(30_000, factor) / 1000} s: ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Video Downloader PLUS (njgeh...) over `video.html` (its clip playing): the popup's consent
+     * agreed, the popup reopened, the clip listed with a download control (the desktop's round
+     * 7 reading).
+     */
+    private fun videoDownloaderPLUS(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, view) = fixture("video.html?vdplus2", factor, 2_500)
+        runCatching { tabEval(view, "(function(){var v=document.querySelector('video');if(v){v.muted=true;v.play().catch(function(){})}return 'played'})()") }
+        SystemClock.sleep(scaled(4_000, factor))
+        showTab(tab)
+        val steps = JSONArray()
+        var popup = openPopup(row, factor)
+        var dom = JSONObject()
+        val listExpr = """(function(){var t=(document.body?document.body.innerText:'').replace(/\s+/g,' ').trim();var dl=document.querySelectorAll('a[download], [class*="download"], [id*="download"], button, a[href*="clip"]').length;return JSON.stringify({pass:/clip|mp4|webm/i.test(t)&&dl>0&&!/no (video|media)/i.test(t.slice(0,60)),text:t.slice(0,200),controls:dl,consent:/agree|accept|terms|privacy/i.test(t)})})()"""
+        if (popup != null) {
+            SystemClock.sleep(scaled(2_500, factor))
+            extra.put("popupFirst", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            if (tapLabel("/^(i agree|agree|accept|accept all|continue|ok|got it)$/i", factor, steps, "consent")) {
+                SystemClock.sleep(scaled(1_500, factor))
+                runCatching { coreInvoke("extension.closePopup", "null") }
+                SystemClock.sleep(scaled(1_000, factor))
+                showTab(tab)
+                popup = openPopup(row, factor)
+            }
+            popupView()?.takeIf { it.context == "popup" }?.let {
+                dom = pollExpr(it, listExpr, scaled(25_000, factor))
+                dom.put("console", JSONArray(consoleOf(it).takeLast(10)))
+            }
+        }
+        extra.put("steps", steps).put("popup", dom)
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-media-popup")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return when {
+            dom.optBoolean("pass") -> Grade("P", "Video Downloader PLUS: popup over the playing clip ${dom.toString().take(220)}", extra)
+            popup == null -> Grade("F", "Video Downloader PLUS: popup did not render in the core check (steps ${steps.toString().take(120)})", extra)
+            else -> Grade("F", "Video Downloader PLUS: popup over the playing clip lists no clip: ${dom.toString().take(220)} (steps ${steps.toString().take(120)})", extra)
+        }
+    }
+
+    /**
+     * `runtime.getContexts` asked for the extension's offscreen document by `documentUrls` in
+     * both spellings from its worker (round 8's open item a, OneNote Web Clipper and Google
+     * Scholar PDF Reader filter by `runtime.getURL('offscreen.html')`): the document is created
+     * when none is up (the extension's own `offscreen.html`), both filters must find it, and it
+     * is closed again when this probe opened it.
+     */
+    private fun getContextsProbe(bg: WebView, factor: Double): JSONObject = probe(bg, GET_CONTEXTS_PROBE, "__zenGetContexts", scaled(15_000, factor))
+
+    /** OneNote Web Clipper: round 8's account gate, with the `getContexts` filter probe beside it (its clipper lists its offscreen parser that way). */
+    private fun oneNoteWebClipper(row: Row, entry: JSONObject): Grade {
+        val grade = accountGate("OneNote Web Clipper", Regex("onenote|live\\.com|microsoftonline|login\\.microsoft|renderer\\.html", RegexOption.IGNORE_CASE), injects = "iframe[src*='gojbdfnpnhogfdgjbigejoaolejmgdhk'], [id*='oneNoteWebClipper'], [class*='oneNoteWebClipper'], [id*='onenote'], [class*='onenote']", gate = "a Microsoft account (its clipper asks for one)")(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val factor = speedFactor(entry)
+        val bg = awakeBackground(row.id, factor)
+        val contexts = bg?.let { getContextsProbe(it, factor) } ?: JSONObject().put("error", "no background view")
+        extra.put("getContexts", contexts)
+        bg?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        val servedHits = contexts.optInt("byGetURL", -1)
+        val chromeHits = contexts.optInt("byChromeSpelling", -1)
+        val filterNote = "getContexts documentUrls filter: by runtime.getURL $servedHits, by chrome-extension:// $chromeHits, unfiltered ${contexts.optInt("all", -1)} (${contexts.optString("documentUrl").take(90)})"
+        return when {
+            grade.verdict == "F" -> Grade("F", "${grade.note}; $filterNote", extra)
+            contexts.has("error") -> Grade("F", "${grade.note}; $filterNote: ${contexts.optString("error").take(120)}", extra)
+            servedHits < 1 || chromeHits < 1 -> Grade("F", "${grade.note}; $filterNote: the filter misses the document in one spelling (Chrome finds it by either)", extra)
+            else -> Grade(grade.verdict, "${grade.note}; $filterNote", extra)
+        }
+    }
+
+    /**
+     * Keplr: its provider in the page world (round 8's P), and beside it round 8's open item a:
+     * its router admits a message when `new URL(sender.url).origin` equals the sender's
+     * `location.origin`; on a WebView `chrome-extension://…` parses to an opaque origin
+     * (`"null"`), so its popup's messages read `Invalid origin`. The popup is opened over the
+     * fixture (its messages go through the router) and the worker's console read for the line;
+     * the URL parse is probed in the worker too.
+     */
+    private fun keplr(row: Row, entry: JSONObject): Grade {
+        val grade = domMarker("Keplr's provider injected into the page world", "wallet.html?keplr", "JSON.stringify({pass:!!(window.keplr&&typeof window.keplr.getOfflineSigner==='function'),keplr:typeof window.keplr,version:window.keplr?String(window.keplr.version||''):null,getOfflineSigner:typeof (window.keplr&&window.keplr.getOfflineSigner),getKeplr:typeof window.getOfflineSigner})", settleMs = 25_000)(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val factor = speedFactor(entry)
+        val bg = awakeBackground(row.id, factor)
+        val origins = bg?.let { probe(it, URL_ORIGIN_PROBE, "__zenUrlOrigin", scaled(8_000, factor)) } ?: JSONObject().put("error", "no background view")
+        extra.put("urlOrigin", origins)
+        val popup = openPopup(row, factor)
+        if (popup != null) {
+            SystemClock.sleep(scaled(6_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(10)))
+        }
+        snap("${entry.optString("slug")}-popup-core")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        val workerLines = bg?.let { consoleOf(it) } ?: emptyList()
+        val invalid = workerLines.count { it.contains("Invalid origin") } + (extra.optJSONArray("popupConsole")?.let { a -> (0 until a.length()).count { a.optString(it).contains("Invalid origin") } } ?: 0)
+        extra.put("workerConsole", JSONArray(workerLines.takeLast(10))).put("invalidOriginLines", invalid)
+        val parse = "new URL(chrome-extension URL).origin reads ${origins.optString("chromeSpelledOrigin").take(60)} against location.origin ${origins.optString("locationOrigin").take(60)}"
+        return when {
+            grade.verdict != "P" -> Grade(grade.verdict, "${grade.note}; $parse; Invalid origin lines $invalid", extra)
+            invalid > 0 || (origins.has("chromeSpelledOrigin") && origins.optString("chromeSpelledOrigin") != origins.optString("locationOrigin")) ->
+                Grade("F", "${grade.note}; its router refuses its own pages' messages: $parse ($invalid Invalid origin line(s) with the popup open)", extra)
+            else -> Grade("P", "${grade.note}; $parse; no Invalid origin line with the popup open", extra)
+        }
+    }
+
+    /**
+     * A message from one of the extension's own pages to its worker and the `sender` the worker's
+     * listener read: `sender.origin` against the literal `chrome-extension://<id>` (Scholar's
+     * compare) and against the worker's own `location.origin` (Tampermonkey's), `sender.url`
+     * beside them. The listener goes into the worker first; `page` is opened as a tab of the
+     * extension's own and sends the probe message; the tab is closed again.
+     */
+    private fun senderOriginProbe(bg: WebView, row: Row, page: String, factor: Double): JSONObject {
+        tabEval(bg, SENDER_ORIGIN_LISTEN)
+        val tab = createTab("chrome-extension://${row.id}/$page")
+        val view = waitForView(tab)
+        poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(1_000, factor))
+        val sent = tabEval(view, "(function(){try{chrome.runtime.sendMessage({zenSenderProbe:true},function(){void chrome.runtime.lastError});return JSON.stringify({sent:true,getURL:chrome.runtime.getURL(" + JSONObject.quote(page) + "),locationOrigin:location.origin,href:location.href})}catch(e){return JSON.stringify({sent:false,error:String(e&&e.message||e)})}})()")
+        val answer = poll(scaled(10_000, factor), 250) { tabEval(bg, "window.__zenSenderOrigin && window.__zenSenderOrigin.done ? JSON.stringify(window.__zenSenderOrigin) : null").takeIf { it != "null" } }?.let(::json)
+            ?: JSONObject().put("error", "the worker's listener saw no message within ${scaled(10_000, factor) / 1000} s")
+        answer.put("page", json(sent))
+        runCatching { closeTab(tab) }
+        return answer
+    }
+
+    /**
+     * Google Scholar PDF Reader (round 8's row): the PDF reading of [scholarPdfReader], and the
+     * two compares its worker makes in Chrome's spelling beside it: `sender.origin` against the
+     * literal `chrome-extension://<id>` (its reader's port is admitted by that), and the
+     * `getContexts` filter by `runtime.getURL('offscreen.html')`.
+     */
+    private fun scholarPdfReaderRound9(row: Row, entry: JSONObject): Grade {
+        val grade = scholarPdfReader(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val factor = speedFactor(entry)
+        val bg = awakeBackground(row.id, factor)
+        val contexts = bg?.let { getContextsProbe(it, factor) } ?: JSONObject().put("error", "no background view")
+        val sender = bg?.let { senderOriginProbe(it, row, "reader.html", factor) } ?: JSONObject().put("error", "no background view")
+        extra.put("getContexts", contexts).put("senderOrigin", sender)
+        val note = "getContexts by getURL ${contexts.optInt("byGetURL", -1)} / by chrome-extension:// ${contexts.optInt("byChromeSpelling", -1)}; a message from its own reader.html reads sender.origin ${sender.optString("origin").take(60)} (= its literal ${sender.optString("literal").take(50)}: ${sender.optBoolean("matchesLiteral")}; = the worker's location.origin: ${sender.optBoolean("matchesLocation")}) and sender.url ${sender.optString("url").take(70)}"
+        return Grade(grade.verdict, "${grade.note}; $note", extra)
+    }
+
+    /**
+     * Steam Inventory Helper (round 8's row): its markers on the market listing, and beside
+     * them the CSS its content scripts inject: Chrome substitutes `__MSG_@@extension_id__` in a
+     * content script's CSS (its `@font-face` sources are spelled that way); a rule still carrying
+     * `__MSG_` is the runtime's miss (round 8's open item b).
+     */
+    private fun steamInventoryHelper(row: Row, entry: JSONObject): Grade {
+        val grade = liveMarker("Steam Inventory Helper", "https://steamcommunity.com/market/listings/730/AK-47%20%7C%20Redline%20%28Field-Tested%29", injectedAny("(^|\\s)sih[-_]|sih-features|sih_"))(row, entry)
+        val extra = grade.extra ?: JSONObject()
+        val tab = extra.optString("tab").takeIf { it.isNotEmpty() } ?: tabUrls().entries.lastOrNull { it.value.contains("steamcommunity.com") }?.key
+        val css = tab?.let { id -> runCatching { json(tabEval(waitForView(id), CSS_MESSAGE_SCAN)) }.getOrNull() } ?: JSONObject().put("error", "no tab")
+        val console = extra.optJSONArray("console")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+        val fontErrors = console.count { it.contains("__MSG_") || (it.contains("font", ignoreCase = true) && (it.contains("Failed") || it.contains("404"))) }
+        css.put("fontErrors", fontErrors)
+        extra.put("css", css)
+        val unsubstituted = css.optInt("unsubstituted", -1) + css.optInt("inlineUnsubstituted", 0).coerceAtLeast(0)
+        val fonts = css.optInt("extensionFonts", -1)
+        val note = "injected CSS: ${css.optInt("rules", -1)} rules in ${css.optInt("sheets", -1)} sheet(s), $unsubstituted with __MSG_ left in, $fonts @font-face source(s) on the extension's origin; font errors in the console $fontErrors"
+        return when {
+            grade.verdict == "P" && unsubstituted > 0 -> Grade("F", "${grade.note}; $note (Chrome substitutes @@extension_id)", extra)
+            else -> Grade(grade.verdict, "${grade.note}; $note", extra)
+        }
+    }
+
+    /**
+     * Language Reactor (round 8's row, its 113 `DOMException`): the tablet-width reading, then
+     * the `window.postMessage` its `runtime.onMessage` listener makes, probed in the
+     * extension's content scope of the watch page (the `with` scope without worlds, the isolated
+     * world with them) in four spellings – `window.postMessage`, a bare `postMessage`,
+     * `self.postMessage`, and the page world's own for the control – each with a parsed object
+     * and `"*"`; the console lines of the runtime's `listener threw` are collected too.
+     */
+    private fun languageReactor(row: Row, entry: JSONObject): Grade {
+        val grade = youtubeTablet(row, entry, injectedAny("lln|language-reactor|languagereactor|lr-"), "Language Reactor's controls on a watch page")
+        val extra = grade.extra ?: JSONObject()
+        val tab = extra.optJSONObject("youtube")?.optString("tab")?.takeIf { it.isNotEmpty() } ?: tabUrls().entries.lastOrNull { it.value.contains("youtube.com") }?.key
+        val view = tab?.let { runCatching { waitForView(it) }.getOrNull() }
+        if (view != null) {
+            val scoped = scopeEval(view, row.id, POST_MESSAGE_PROBE)
+            extra.put("postMessageInScope", scoped?.let { json(it) } ?: JSONObject.NULL)
+            extra.put("postMessageInPage", json(tabEval(view, "(function(){try{window.postMessage({topic:'LR_PS_probe',loggedIn:false},'*');return JSON.stringify({ok:true})}catch(e){return JSON.stringify({ok:false,error:String(e&&e.name)+': '+String(e&&e.message)})}})()")))
+            val lines = consoleOf(view)
+            extra.put("listenerThrew", JSONArray(lines.filter { it.contains("listener threw") || it.contains("DOMException") }.takeLast(8)))
+            // Blink prints the unsanitized line (the frame origin the access was blocked against) to the console.
+            extra.put("blockedFrameLines", JSONArray(lines.filter { it.contains("Blocked a frame") || it.contains("SecurityError") }.takeLast(6)))
+        }
+        val scoped = extra.optJSONObject("postMessageInScope")
+        val threw = extra.optJSONArray("listenerThrew")?.length() ?: 0
+        val probeNote = when {
+            scoped == null -> "postMessage in the content scope: not probed (${if (view == null) "no watch tab" else "no scope answered"})"
+            scoped.has("e") -> "postMessage in the content scope threw ${scoped.optString("e").take(120)}"
+            else -> "postMessage in the content scope: ${scoped.optJSONObject("v")?.toString()?.take(220) ?: scoped.toString().take(220)}"
+        }
+        return Grade(grade.verdict, "${grade.note}; $probeNote; $threw listener-threw line(s) in the page console", extra)
+    }
+
+    /**
+     * Instrumentation only: `script` in `ext`'s content scope on `view`'s main frame the way
+     * `scripting.executeScript` runs it – the isolated world where the WebView has one, else
+     * the `with` scope proxy through the bootstrap – as the guarded JSON (`{"v": …}` or
+     * `{"e": …}`), or null when nothing answered.
+     */
+    private fun scopeEval(view: WebView, ext: String, script: String, timeoutSeconds: Long = 15): String? {
+        val latch = CountDownLatch(1)
+        var value: String? = null
+        instrumentation.runOnMainSync {
+            host.extensions.evalInScope(view, ext, script) { raw ->
+                value = raw
+                latch.countDown()
+            }
+        }
+        latch.await(timeoutSeconds, TimeUnit.SECONDS)
+        return value
+    }
+
     // --- the table -------------------------------------------------------------------------------
 
     /** The desktop sweep's thirty, the twenty-seven the feasibility table calls feasible first, the three it does not last. */
@@ -3858,7 +4458,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("cndibmoanboadcifjkjbdpjgfedanolh", "BetterCampus (prev. BetterCanvas)", "bettercampus", core = accountGate("BetterCampus", Regex("bettercampus|bettercanvas", RegexOption.IGNORE_CASE), gate = "a Canvas LMS session (its welcome page asks for the school's LMS address)")),
         // Round 8 reads Language Reactor and YouTube Summary at tablet width (their scripts drew
         // nothing on the phone's one-column watch page in round 7).
-        Row("hoombieeljmmljlkjmnheibnpciblicm", "Language Reactor", "language-reactor", core = { row, entry -> youtubeTablet(row, entry, injectedAny("lln|language-reactor|languagereactor|lr-"), "Language Reactor's controls on a watch page") }),
+        Row("hoombieeljmmljlkjmnheibnpciblicm", "Language Reactor", "language-reactor", core = ::languageReactor),
         Row("jplgfhpmjnbigmhklmmbgecoobifkmpa", "Proton VPN: Fast & Secure", "proton-vpn", core = vpn("Proton VPN")),
         Row("nmmicjeknamkfloonkhhcjmomieiodli", "YouTube Summary with ChatGPT & Claude", "youtube-summary", core = { row, entry -> youtubeTablet(row, entry, injectedAny("yt_ai_summary|ytsummary"), "the summary box on a watch page") }),
         Row("cnpniohnfphhjihaiiggeabnkjhpaldj", "Image Downloader", "image-downloader", core = imageList("Image Downloader")),
@@ -3866,7 +4466,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("dmghijelimhndkbmpgbldicpogfkceaj", "Dark Mode", "dark-mode", core = ::darkMode),
         Row("bfgdeiadkckfbkeigkoncpdieiiefpig", "Bitmoji", "bitmoji", account = true, core = popupLogin("Bitmoji")),
         Row("hniebljpgcogalllopnjokppmgbhaden", "Screen Recorder", "screen-recorder", core = ::desktopCaptureLimit),
-        Row("dahenjhkoodjbpjheillcadbppiidmhp", "Google Scholar PDF Reader", "scholar-pdf-reader", core = ::scholarPdfReader),
+        Row("dahenjhkoodjbpjheillcadbppiidmhp", "Google Scholar PDF Reader", "scholar-pdf-reader", core = ::scholarPdfReaderRound9),
         Row("bkbeeeffjjeopflfhgeknacdieedcoml", "Microsoft Defender Browser Protection", "defender-browser-protection", core = warningPage("Microsoft Defender Browser Protection", "https://demo.smartscreen.msft.net/phishingdemo.html", Regex("BrowserProtectionWarning", RegexOption.IGNORE_CASE))),
         // Compat round 8: the desktop's round-6 list (ranks 151-180 by installs,
         // `.github/scripts/ext-compat/next30-round6.json`), graded as the desktop graded them
@@ -3882,7 +4482,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("oijdcdmnjjgnnhgljmhkjlablaejfeeb", "The QR Code Generator", "qr-code-generator", core = popupMarker("The QR Code Generator", "(function(){var best=null,bw=0;var all=document.querySelectorAll('svg, canvas, img');for(var i=0;i<all.length;i++){var b=all[i].getBoundingClientRect();if(b.width*b.height>bw){bw=b.width*b.height;best=all[i]}}var r=best?best.getBoundingClientRect():{width:0,height:0};var paths=best&&best.tagName.toLowerCase()==='svg'?best.querySelectorAll('path, rect').length:-1;return JSON.stringify({pass:r.width>60&&r.height>60&&(paths<0||paths>4),via:best?best.tagName.toLowerCase():'none',w:Math.round(r.width),h:Math.round(r.height),paths:paths,text:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().slice(0,80)})})()")),
         Row("hlkenndednhfkekhgcdicdfddnkalmdm", "Cookie-Editor", "cookie-editor", core = ::cookieEditor),
         Row("imdndkajeppdomiimjkcbhkafeeooghd", "Browsing Protection by WithSecure", "withsecure-browsing-protection", core = serviceBacked("Browsing Protection by WithSecure", "its site verdicts come from the WithSecure security application (app.withsecure_chrome_https, a desktop companion) over native messaging; without it the action opens its \"Security application not found\" page, as Chrome shows it", native = true)),
-        Row("gojbdfnpnhogfdgjbigejoaolejmgdhk", "OneNote Web Clipper", "onenote-web-clipper", core = accountGate("OneNote Web Clipper", Regex("onenote|live\\.com|microsoftonline|login\\.microsoft|renderer\\.html", RegexOption.IGNORE_CASE), injects = "iframe[src*='gojbdfnpnhogfdgjbigejoaolejmgdhk'], [id*='oneNoteWebClipper'], [class*='oneNoteWebClipper'], [id*='onenote'], [class*='onenote']", gate = "a Microsoft account (its clipper asks for one)")),
+        Row("gojbdfnpnhogfdgjbigejoaolejmgdhk", "OneNote Web Clipper", "onenote-web-clipper", core = ::oneNoteWebClipper),
         Row("hfapbcheiepjppjbnkphkmegjlipojba", "Klarna", "klarna", core = accountGate("Klarna", Regex("klarna", RegexOption.IGNORE_CASE), injects = "iframe[src*='hfapbcheiepjppjbnkphkmegjlipojba'], iframe[src*='klapp'], [id*='klarna'], [class*='klarna']", gate = "a Klarna account (its drawer opens at \"Sign in\")", site = "https://www.hm.com/")),
         Row("ghgabhipcejejjmhhchfonmamedcbeod", "Click&Clean", "click-and-clean", core = ::clickAndClean),
         Row("oofgbpoabipfcfjapgnbbjjaenockbdp", "SetupVPN", "setupvpn", core = vpn("SetupVPN", connectWords = "/^(start connection|connect|start)$/i")),
@@ -3898,17 +4498,64 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("lneaocagcijjdpkcabeanfpdbmapcjjg", "VPNLY", "vpnly", core = vpn("VPNLY", consent = true, tapConsent = true)),
         Row("jaoafpkngncfpfggjefnekilbkcpjdgp", "uVPN", "uvpn", core = vpn("uVPN", connectSelector = "div.btn, .btn")),
         Row("fdjamakpfbbddfjaooikfcpapjohcfmg", "Dashlane", "dashlane", account = true, core = popupLogin("Dashlane")),
-        Row("cmeakgjggjdlcpncigglobpjbkabhmjl", "Steam Inventory Helper", "steam-inventory-helper", core = liveMarker("Steam Inventory Helper", "https://steamcommunity.com/market/listings/730/AK-47%20%7C%20Redline%20%28Field-Tested%29", injectedAny("(^|\\\\s)sih[-_]|sih-features|sih_"))),
+        Row("cmeakgjggjdlcpncigglobpjbkabhmjl", "Steam Inventory Helper", "steam-inventory-helper", core = ::steamInventoryHelper),
         Row("lphicbbhfmllgmomkkhjfkpbdlncafbn", "LetyShops", "letyshops", account = true, core = popupLogin("LetyShops")),
         Row("oeopbcgkkoapgobdbedcemjljbihmemj", "Checker Plus for Gmail", "checker-plus-gmail", account = true, core = ::checkerPlus),
         Row("ijejnggjjphlenbhmjhhgcdpehhacaal", "Scrnli", "scrnli", core = popupCapture("Scrnli", "/visible page|visible part|capture visible|visible/i")),
-        Row("dmkamcknogkgcdfhhbddcghachkejeap", "Keplr", "keplr", core = domMarker("Keplr's provider injected into the page world", "wallet.html?keplr", "JSON.stringify({pass:!!(window.keplr&&typeof window.keplr.getOfflineSigner==='function'),keplr:typeof window.keplr,version:window.keplr?String(window.keplr.version||''):null,getOfflineSigner:typeof (window.keplr&&window.keplr.getOfflineSigner),getKeplr:typeof window.getOfflineSigner})", settleMs = 25_000)),
+        Row("dmkamcknogkgcdfhhbddcghachkejeap", "Keplr", "keplr", core = ::keplr),
         Row("iginnfkhmmfhlkagcmpgofnjhanpmklb", "Boxel Rebound", "boxel-rebound", core = popupMarker("Boxel Rebound", "(function(){var c=document.querySelector('canvas');var r=c?c.getBoundingClientRect():{width:0,height:0};return JSON.stringify({pass:!!c&&c.width>100&&c.height>100&&r.width>60,w:c?c.width:0,h:c?c.height:0,shown:Math.round(r.width)+'x'+Math.round(r.height),canvases:document.querySelectorAll('canvas').length})})()")),
         Row("mhkhmbddkmdggbhaaaodilponhnccicb", "TubeBuddy", "tubebuddy", core = ::tubeBuddy),
         Row("oiiaigjnkhngdbnoookogelabohpglmd", "HubSpot Sales", "hubspot-sales", account = true, core = popupLogin("HubSpot Sales")),
         Row("ofaokhiedipichpaobibbnahnkdoiiah", "Instant Data Scraper", "instant-data-scraper", core = actionPage("Instant Data Scraper", Regex("popup\\.html", RegexOption.IGNORE_CASE), "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var hits=['Aster lamp','Birch shelf','Lighting','Storage'].filter(function(w){return t.indexOf(w)>=0}).length;return JSON.stringify({pass:hits>=2,hits:hits,cells:document.querySelectorAll('td').length,text:t.slice(0,200)})})()", listOf("table.html?scrape"))),
         Row("ghmbeldphafepmbegfdlkpapadhbakde", "Proton Pass", "proton-pass", account = true, core = popupLogin("Proton Pass")),
-        Row("hbapdpeemoojbophdfndmlgdhppljgmp", "Keywords Everywhere", "keywords-everywhere", core = accountGate("Keywords Everywhere", Regex("keywordseverywhere", RegexOption.IGNORE_CASE), gate = "an API key and a Google results page to draw its widgets on (Google serves its robot check to the runner, as it did the desktop)"))
+        Row("hbapdpeemoojbophdfndmlgdhppljgmp", "Keywords Everywhere", "keywords-everywhere", core = accountGate("Keywords Everywhere", Regex("keywordseverywhere", RegexOption.IGNORE_CASE), gate = "an API key and a Google results page to draw its widgets on (Google serves its robot check to the runner, as it did the desktop)")),
+        // Compat round 9: the desktop's round-7 list (ranks 181-210 by installs,
+        // `.github/scripts/ext-compat/next30-round7.json`), graded as the desktop graded them
+        // (desktop-compat-sweep-7.md) with the phone's feasibility classes: an account, a live
+        // call or a vendor's service is `n/m` with its gate surface rendered (Tactiq, Wordtune,
+        // Apollo.io, NaturalReader, Google Meet Enhanced Experience, MyBib's citation service);
+        // the `chrome.proxy` VPNs are measured against what ProxyController applies (Surfshark,
+        // ExpressVPN, whose native host is a desktop app); Mobile simulator is a desktop concept
+        // graded as it behaves; PrintFriendly and Eye Dropper, F on the desktop's `activeTab`
+        // limit, are graded on what the phone's action-click grant gives; a live site the phone
+        // has no fixture for (Flipkart's product page, old.reddit.com, a YouTube watch page,
+        // chatgpt.com) is read on the site. Round 8's runtime-owned open rows (OneNote Web
+        // Clipper, Keplr, Google Scholar PDF Reader, Steam Inventory Helper, Language Reactor) are
+        // the rows above, re-pointed at this round's readings of the spelling, CSS placeholder
+        // and postMessage items.
+        Row("ohlencieiipommannpdfcmfdpjjmeolj", "PrintFriendly: Print, PDF Editor & Full Page Screenshot", "printfriendly", core = popupFlow("PrintFriendly", "page-a.html?pf", listOf("/printfriendly view/i"), injectedAny("(^|\\s)pf-|printfriendly"), opens = Regex("printfriendly\\.com", RegexOption.IGNORE_CASE))),
+        Row("ojplmecpdpgccookcobabopnaifgidhf", "Buyhatke: Price History & Tracker, Spend Lens", "buyhatke", core = liveMarker("Buyhatke", "https://www.flipkart.com/apple-iphone-15-black-128-gb/p/itm6ac6485515ae4", injectedAny("bh-crx-root|buyhatke"), settleMs = 60_000)),
+        Row("ckejmhbmlajgoklhgbapkiccekfoccmk", "Mobile simulator - responsive testing tool", "mobile-simulator", core = ::mobileSimulator),
+        Row("edlifbnjlicfpckhgjhflgkeeibhhcii", "Screenshot Tool - Screen Capture & Editor", "screenshot-tool", core = popupCapture("Screenshot Tool", "/capture visible area|visible area/i")),
+        Row("khncfooichmfjbepaaaebmommgaepoid", "Unhook - Remove YouTube Recommended & Shorts", "unhook", core = { row, entry -> youtube(row, entry, "(function(){var h=document.documentElement;var attrs=[];for(var i=0;i<h.attributes.length;i++){var n=h.attributes[i].name;if(/^hide_|unhook/i.test(n))attrs.push(n)}var related=document.querySelectorAll('ytd-compact-video-renderer, ytm-compact-video-renderer, ytm-video-with-context-renderer');var shown=0;for(var j=0;j<related.length;j++){var r=related[j].getBoundingClientRect();if(r.width>0&&r.height>0)shown++}return JSON.stringify({pass:attrs.length>0,attrs:attrs.slice(0,8),n:attrs.length,related:related.length,relatedShown:shown})})()", "Unhook's hide attributes on a watch page") }),
+        Row("fggkaccpbmombhnjkjokndojfgagejfb", "Tactiq: AI note taker for Google Meet, Zoom and MS Teams", "tactiq", core = accountGate("Tactiq", Regex("tactiq|accounts\\.google", RegexOption.IGNORE_CASE), gate = "a live Google Meet call and a Tactiq account (its popup: key features are missing without them)")),
+        Row("kbmfpngjjgdllneeigpgjifpgocmfgmb", "Reddit Enhancement Suite", "reddit-enhancement-suite", core = liveMarker("Reddit Enhancement Suite", "https://old.reddit.com/r/programming/", injectedAny("RESNotifications|RESConsole|(^|\\s)res-[a-z]"), settleMs = 60_000)),
+        Row("dpacanjfikmhoddligfbehkpomnbgblf", "AHA Music - Song Finder for Browser", "aha-music", core = captureLimit("AHA Music", "/identif|listening|no sound|song|find|record/i")),
+        Row("ailoabdmgclmfmhdagmlohpjlbpffblp", "Surfshark Chrome VPN extension", "surfshark", core = vpn("Surfshark", connectWords = "/^(connect|quick[- ]connect|it's time to connect!?)$/i")),
+        Row("ojnbohmppadfgpejeebfnmnknjdlckgj", "AIPRM for ChatGPT", "aiprm", core = siteGate("AIPRM for ChatGPT", "https://chat.openai.com/", "[id*='AIPRM'], [class*='AIPRM'], [id*='aiprm'], [class*='aiprm']", Regex("^https://chat\\.openai\\.com/", RegexOption.IGNORE_CASE), gate = "ChatGPT's page served to a signed-in user (OpenAI served its robot check to the desktop's runner)")),
+        Row("hmdcmlfkchdmnmnmheododdhjedfccka", "Eye Dropper", "eye-dropper", core = popupFlow("Eye Dropper", "styled-light.html?eyedropper", listOf("/pick a color from (this web|active tab)|pick color/i"), injectedAny("eye-dropper-overlay|color-toolbox|color-tooltip|edropper"))),
+        Row("mcohilncbfahbmgdjkbpemcciiolgcge", "OKX Wallet", "okx-wallet", core = ::okxWallet),
+        Row("fgddmllnllkalaagkghckoinaemmogpe", "ExpressVPN: VPN & proxy browser extension", "expressvpn", core = vpn("ExpressVPN", consent = true, tapConsent = true, connectWords = "/^(use proxy mode|connect|connect now)$/i")),
+        Row("iogidnfllpdhagebkblkgbfijkbkjdmm", "Stream Recorder - HLS & m3u8 Video Downloader", "stream-recorder", core = ::streamRecorder),
+        Row("bfbameneiokkgbdmiekhjnmfkcnldhhm", "Web Developer", "web-developer", core = popupFlow("Web Developer", "styled-light.html?webdev", listOf("/^css$/i", "/^disable all styles$/i"), "(function(){var sheets=document.styleSheets;var disabled=0,total=0;for(var i=0;i<sheets.length;i++){total++;if(sheets[i].disabled)disabled++}var links=document.querySelectorAll('link[rel~=stylesheet]');var linksOff=0;for(var j=0;j<links.length;j++){if(links[j].disabled)linksOff++}var bg=getComputedStyle(document.body).backgroundColor;return JSON.stringify({pass:(disabled>0&&disabled===total)||linksOff===links.length&&links.length>0||(bg==='rgba(0, 0, 0, 0)'||bg==='rgb(255, 255, 255)'),disabled:disabled,total:total,links:links.length,linksOff:linksOff,background:bg})})()")),
+        Row("oemmndcbldboiebfnladdacbdfmadadm", "PDF Viewer", "pdf-viewer", core = pdfTool("PDF Viewer", Regex("viewer\\.html|content/web|pdf\\.?js|oemmndcbldboiebfnladdacbdfmadadm", RegexOption.IGNORE_CASE), missing = "F")),
+        Row("gohjpllcolmccldfdggmamodembldgpc", "Shimeji Browser Extension", "shimeji", core = popupFlow("Shimeji", "page-a.html?shimeji", listOf("/^(on|off)$/i"), injectedAny("shimeji"), settleMs = 30_000)),
+        Row("djflhoibgkdhkhhcedjiklpkjnoahfmg", "User-Agent Switcher for Chrome", "user-agent-switcher", core = popupFlow("User-Agent Switcher", "echo-headers?ua", listOf("/^internet explorer$/i", "/^internet explorer 10$/i"), "(function(){var ua=(window.__headers&&(window.__headers['User-Agent']||window.__headers['user-agent']))||(document.getElementById('ua')||{}).textContent||'';return JSON.stringify({pass:/MSIE 10\\.0/.test(ua),ua:ua.slice(0,120),navigator:navigator.userAgent.slice(0,80)})})()", settleMs = 30_000)),
+        Row("akdgnmcogleenhbclghghlkkdndkjdjc", "SEOquake: On-Page SEO Checker", "seoquake", core = popupFlow("SEOquake", "page-a.html?seoquake", listOf("?/^(i agree|agree|accept|accept all|allow|got it|continue|ok)$/i"), "(function(){var parts=[];var walk=function(root){var it=document.createNodeIterator(root,NodeFilter.SHOW_TEXT);var n;while((n=it.nextNode())){var p=n.parentNode;if(p&&/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(p.nodeName))continue;var t=n.textContent.replace(/\\s+/g,' ').trim();if(t)parts.push(t)}var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++)if(all[i].shadowRoot)walk(all[i].shadowRoot)};if(document.body)walk(document.body);var t=parts.join(' ');return JSON.stringify({pass:/Probe Page A/i.test(t)&&/title|description|keyword|links|density|meta/i.test(t),text:t.slice(0,240),els:document.body?document.body.querySelectorAll('*').length:0})})()", onPage = false, settleMs = 30_000)),
+        Row("eedlgdlajadkbbjoobobefphmfkcchfk", "Ecosia - The search engine that plants trees", "ecosia", core = searchOverride("Ecosia", Regex("ecosia\\.org", RegexOption.IGNORE_CASE), Regex("ecosia", RegexOption.IGNORE_CASE))),
+        Row("kohfgcgbkjodfcfkcackpagifgbcmimk", "NaturalReader - AI Text to Speech", "naturalreader", core = accountGate("NaturalReader", Regex("naturalreaders?\\.com|sidepanel\\.html", RegexOption.IGNORE_CASE), injects = "#nr-ext-capsule, [id*='nr-ext'], [class*='nr-ext'], iframe[src*='kohfgcgbkjodfcfkcackpagifgbcmimk']", gate = "a NaturalReader account (reading with its voices is its service's)")),
+        Row("nllcnknpjnininklegdoijpljgdjkijc", "Wordtune: AI Paraphrasing and Grammar Tool", "wordtune", core = accountGate("Wordtune", Regex("wordtune", RegexOption.IGNORE_CASE), injects = "iframe[src*='nllcnknpjnininklegdoijpljgdjkijc'], [id*='wordtune'], [class*='wordtune']", gate = "a Wordtune account (its popup signs in)")),
+        Row("epcnnfbjfcgphgdmggkamkmgojdagdnn", "uBlock", "ublock", core = ::adBlocker),
+        Row("alhgpfoeiimagjlnfekdhkjlkiomcapa", "Apollo.io: Free B2B Phone Number & Email Finder", "apollo-io", core = accountGate("Apollo.io", Regex("apollo\\.io|sidepanel|side-panel", RegexOption.IGNORE_CASE), injects = "iframe[src*='alhgpfoeiimagjlnfekdhkjlkiomcapa'], [id*='apollo'], [class*='apollo']", gate = "an Apollo account (the action opens its side panel; finding contacts is its service's)")),
+        Row("hodiladlefdpcbemnbbcpclbmknkiaem", "Google Meet Enhanced Experience", "meet-enhanced", core = accountGate("Google Meet Enhanced Experience", Regex("meet\\.google|accounts\\.google", RegexOption.IGNORE_CASE), gate = "a live Google Meet call (its features act inside one; its settings popup renders)")),
+        Row("aabcgdmkeabbnleenpncegpcngjpnjkc", "Easy Auto Refresh", "easy-auto-refresh", core = ::easyAutoRefresh),
+        Row("phidhnmbkbkbkbknhldmpmnacgicphkf", "MyBib: Free Citation Generator", "mybib", core = ::myBib),
+        // Its content scripts match `https://*/*`, `http://localhost/*` and `http://127.0.0.1/*` (its host
+        // permissions say the same), so the fixture server's `http://10.0.2.2:8765` is outside them, in
+        // Chrome too (round 9's final run: 0 groups applied on `wallet.html`); the provider is read on a live https page.
+        Row("egjidjbpglichdcondbcbdnbeeppgdph", "Trust Wallet", "trust-wallet", core = liveMarker("Trust Wallet's provider injected into the page world", "https://example.com/?trust", "(function(){if(!window.__eip6963){window.__eip6963=[];window.addEventListener('eip6963:announceProvider',function(e){try{var i=e.detail&&e.detail.info;window.__eip6963.push({name:i&&i.name,rdns:i&&i.rdns})}catch(_){}});window.dispatchEvent(new Event('eip6963:requestProvider'))}var announced=window.__eip6963.slice(0,4);var eth=window.ethereum;var pass=!!(window.trustwallet||(eth&&eth.isTrust)||announced.some(function(a){return /trust/i.test(String((a&&(a.name||a.rdns))||''))}));return JSON.stringify({pass:pass,trustwallet:typeof window.trustwallet,isTrust:!!(eth&&eth.isTrust),ethereum:typeof eth,announced:announced})})()", settleMs = 30_000)),
+        Row("njgehaondchbmjmajphnhlojfnbfokng", "Video Downloader PLUS", "video-downloader-plus-njg", core = ::videoDownloaderPLUS),
+        Row("fllaojicojecljbmefodhfapmkghcbnh", "Google Analytics Opt-out Add-on (by Google)", "ga-opt-out", core = domMarker("Google Analytics Opt-out Add-on's page signal", "gtag.html?gaoptout", "JSON.stringify({pass:!!(window._gaUserPrefs&&typeof window._gaUserPrefs.ioo==='function'&&window._gaUserPrefs.ioo()===true),prefs:typeof window._gaUserPrefs,attribute:document.documentElement.hasAttribute('data-google-analytics-opt-out'),signalScript:!!document.querySelector('script[src*=\"gaoptout_signal\"]')})", settleMs = 20_000))
     )
 
     // --- stages and evidence ---------------------------------------------------------------------
@@ -5224,5 +5871,62 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val YT_LAYOUT =
             "(function(){var flexy=document.querySelector('ytd-watch-flexy');var attrs=flexy?Array.prototype.map.call(flexy.attributes,function(a){return a.name}).filter(function(n){return /column|theater|fullscreen|flexy/.test(n)}).join(' '):'';var secondary=document.querySelector('#secondary, #secondary-inner');var sr=secondary?secondary.getBoundingClientRect():{width:0,height:0};" +
                 "var two=(flexy&&flexy.hasAttribute('is-two-columns_'))||sr.width>200&&sr.height>200;return JSON.stringify({twoColumns:!!two,innerWidth:innerWidth,innerHeight:innerHeight,dpr:devicePixelRatio,docWidth:document.documentElement.clientWidth,flexy:attrs.slice(0,120),secondary:Math.round(sr.width)+'x'+Math.round(sr.height),host:location.host,mobile:!!document.querySelector('ytm-app, ytm-watch')})})()"
+        // --- compat round 9 ---------------------------------------------------------------------
+        /**
+         * `system.cpu.getInfo` and `system.memory.getInfo` from a worker (OKX Wallet declares
+         * `system.cpu`): Chrome's shapes, or the errors, on `window.__zenSystemInfo`.
+         */
+        private const val SYSTEM_INFO_PROBE =
+            "(function(){var r={done:false};window.__zenSystemInfo=r;var pending=2;var finish=function(){if(--pending<=0){r.done=true}};" +
+                "try{if(chrome.system&&chrome.system.cpu&&chrome.system.cpu.getInfo){chrome.system.cpu.getInfo(function(info){var e=chrome.runtime.lastError;if(e){r.cpuError=e.message}else if(!info){r.cpuError='no info'}else{r.cpu={numOfProcessors:info.numOfProcessors,archName:info.archName,modelName:info.modelName,features:info.features,processors:(info.processors||[]).map(function(p){return p.usage}),temperatures:info.temperatures}}finish()})}else{r.cpuError='chrome.system.cpu is '+(chrome.system?typeof chrome.system.cpu:'absent (no chrome.system)');finish()}}catch(e){r.cpuError=String(e&&e.message||e);finish()}" +
+                "try{if(chrome.system&&chrome.system.memory&&chrome.system.memory.getInfo){chrome.system.memory.getInfo(function(info){var e=chrome.runtime.lastError;if(e){r.memoryError=e.message}else{r.memory=info}finish()})}else{r.memoryError='chrome.system.memory is '+(chrome.system?typeof chrome.system.memory:'absent (no chrome.system)');finish()}}catch(e){r.memoryError=String(e&&e.message||e);finish()}" +
+                "return 'asked'})()"
+        /**
+         * `runtime.getContexts` for the extension's offscreen document, filtered by
+         * `documentUrls` in both spellings and by `documentOrigins` (OneNote Web Clipper's and
+         * Scholar PDF Reader's `offscreen.html` lookups by `runtime.getURL`); the document is
+         * created for the probe when none is up and closed again after.
+         */
+        private const val GET_CONTEXTS_PROBE =
+            "(function(){var r={done:false};window.__zenGetContexts=r;var path='offscreen.html';var served=chrome.runtime.getURL(path);var chromeSpelled='chrome-extension://'+chrome.runtime.id+'/'+path;r.getURL=served;r.chromeSpelled=chromeSpelled;var finish=function(){r.done=true};" +
+                "var gc=function(f){return chrome.runtime.getContexts(f)};" +
+                "var query=function(created){return Promise.all([gc({contextTypes:['OFFSCREEN_DOCUMENT'],documentUrls:[served]}),gc({contextTypes:['OFFSCREEN_DOCUMENT'],documentUrls:[chromeSpelled]}),gc({contextTypes:['OFFSCREEN_DOCUMENT']}),gc({contextTypes:['OFFSCREEN_DOCUMENT'],documentOrigins:[new URL(served).origin]}),gc({contextTypes:['OFFSCREEN_DOCUMENT'],documentOrigins:['chrome-extension://'+chrome.runtime.id]})]).then(function(res){r.byGetURL=res[0].length;r.byChromeSpelling=res[1].length;r.all=res[2].length;r.byServedOrigin=res[3].length;r.byChromeOrigin=res[4].length;r.documentUrl=res[2][0]?res[2][0].documentUrl:null;r.documentOrigin=res[2][0]?res[2][0].documentOrigin:null;r.created=created;if(created&&chrome.offscreen&&chrome.offscreen.closeDocument){return chrome.offscreen.closeDocument().catch(function(){})}}).then(finish,function(e){r.error=String(e&&e.message||e);finish()})};" +
+                "try{if(!chrome.runtime.getContexts){r.error='runtime.getContexts missing';finish();return 'x'}" +
+                "gc({contextTypes:['OFFSCREEN_DOCUMENT']}).then(function(list){if(list.length>0)return query(false);if(!chrome.offscreen||!chrome.offscreen.createDocument){r.error='no offscreen document up and chrome.offscreen missing';finish();return}return chrome.offscreen.createDocument({url:path,reasons:['DOM_PARSER'],justification:'compat probe'}).then(function(){return new Promise(function(res){setTimeout(res,1500)})}).then(function(){return query(true)})}).catch(function(e){r.error=String(e&&e.message||e);finish()})}catch(e){r.error=String(e&&e.message||e);finish()}" +
+                "return 'asked'})()"
+        /** `new URL('chrome-extension://<id>/popup.html').origin` in a worker against its `location.origin` (Keplr's router compares the two). */
+        private const val URL_ORIGIN_PROBE =
+            "(function(){var r={done:false};window.__zenUrlOrigin=r;try{var id=chrome.runtime.id;var chromeUrl='chrome-extension://'+id+'/popup.html';var u=new URL(chromeUrl);r.chromeSpelledOrigin=u.origin;r.chromeSpelledHost=u.host;r.chromeSpelledPath=u.pathname;r.getURLOrigin=new URL(chrome.runtime.getURL('popup.html')).origin;r.locationOrigin=location.origin;r.selfOrigin=typeof self.origin==='string'?self.origin:null;r.match=r.chromeSpelledOrigin===r.locationOrigin}catch(e){r.error=String(e&&e.message||e)}r.done=true;return 'asked'})()"
+        /** A worker listener that records the `sender` of a probe message from one of the extension's own pages; the literal Scholar compares it with. */
+        private const val SENDER_ORIGIN_LISTEN =
+            "(function(){var r={done:false,literal:'chrome-extension://'+chrome.runtime.id};window.__zenSenderOrigin=r;try{chrome.runtime.onMessage.addListener(function(m,s){if(m&&m.zenSenderProbe){r.origin=s.origin;r.url=s.url;r.id=s.id;r.matchesLiteral=s.origin===r.literal;r.matchesLocation=s.origin===location.origin;r.done=true}})}catch(e){r.error=String(e&&e.message||e);r.done=true}return 'listening'})()"
+        /**
+         * The stylesheets a page holds after a content script's CSS went in: rules still
+         * carrying `__MSG_` (Chrome substitutes `@@extension_id` in content-script CSS) and the
+         * `@font-face` sources on the extension's own origin.
+         */
+        private const val CSS_MESSAGE_SCAN =
+            "(function(){var sheets=0,rules=0,bad=0,fonts=0,adopted=0;var ext=/ext\\.zenium\\.invalid|chrome-extension:\\/\\//;var all=[];for(var i=0;i<document.styleSheets.length;i++)all.push(document.styleSheets[i]);var ad=document.adoptedStyleSheets||[];for(var a=0;a<ad.length;a++){all.push(ad[a]);adopted++}for(var i=0;i<all.length;i++){var s=all[i];var list=null;try{list=s.cssRules}catch(e){}if(!list)continue;sheets++;for(var j=0;j<list.length;j++){var t=list[j].cssText||'';rules++;if(t.indexOf('__MSG_')>=0)bad++;if(list[j].type===5&&ext.test(t))fonts++}}" +
+                "var styles=document.querySelectorAll('style');var inline=0;for(var k=0;k<styles.length;k++){if((styles[k].textContent||'').indexOf('__MSG_')>=0)inline++}return JSON.stringify({sheets:sheets,adopted:adopted,rules:rules,unsubstituted:bad,inlineUnsubstituted:inline,extensionFonts:fonts})})()"
+        /**
+         * `window.postMessage` from a content script's scope in four spellings (Language
+         * Reactor's `runtime.onMessage` listener posts the message it got to its page script
+         * with `window.postMessage(message, "*")`; on 113 it threw a `DOMException`, round 8):
+         * each attempt's outcome, and what `window` and `postMessage` are in that scope.
+         */
+        private const val POST_MESSAGE_PROBE =
+            "(function(){var out={};var msg={topic:'LR_PS_probe',loggedIn:false};function attempt(name,fn){try{fn();out[name]='ok'}catch(e){out[name]=String(e&&e.name)+': '+String(e&&e.message)}}" +
+                "attempt('windowPostMessage',function(){window.postMessage(msg,'*')});attempt('barePostMessage',function(){postMessage(msg,'*')});attempt('selfPostMessage',function(){self.postMessage(msg,'*')});" +
+                "attempt('windowPostMessageParsed',function(){window.postMessage(JSON.parse('{\"topic\":\"LR_PS_probe\",\"loggedIn\":false}'),'*')});attempt('windowPostMessageString',function(){window.postMessage('LR_PS_probe','*')});attempt('topPostMessage',function(){window.top.postMessage(msg,'*')});" +
+                "out.windowTag=(function(){try{return Object.prototype.toString.call(window)+' self='+(window===self)+' top='+(window===window.top)}catch(e){return String(e)}})();" +
+                "out.postMessageFn=(function(){try{var f=window.postMessage;return typeof f+' '+String(f.name)+'/'+f.length+' native='+/\\[native code\\]/.test(Function.prototype.toString.call(f))}catch(e){return String(e)+(e&&e.stack?' @ '+String(e.stack).split('\\n').slice(0,3).join(' | ').slice(0,300):'')}})();" +
+                // The step that throws, named against the real window: its `postMessage` descriptor, a
+                // direct read, the native `bind` and a bare `call` on it, and whether `bind` is native.
+                "out.real=(function(){var o={};try{var real=Function('return this')();o.realIsScopeWindow=(real===window);var d=Object.getOwnPropertyDescriptor(real,'postMessage');o.desc=d?(('get' in d)?'accessor':'data '+typeof d.value+' '+/\\[native code\\]/.test(Function.prototype.toString.call(d.value))):'none';" +
+                "var f;try{f=Reflect.get(real,'postMessage');o.get='ok '+typeof f}catch(e){o.get=String(e)}" +
+                "try{var b=Function.prototype.bind.call(f,real);o.bind='ok '+String(b.name)}catch(e){o.bind=String(e)}" +
+                "try{Function.prototype.call.call(f,real,msg,'*');o.call='ok'}catch(e){o.call=String(e)}" +
+                "o.bindNative=/\\[native code\\]/.test(Function.prototype.toString.call(Function.prototype.bind));o.href=String(real.location&&real.location.href).slice(0,80)}catch(e){o.error=String(e)}return o})();" +
+                "return JSON.stringify(out)})()"
     }
 }

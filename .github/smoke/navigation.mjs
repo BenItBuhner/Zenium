@@ -37,10 +37,13 @@ export function isNewTabUrl(url) {
  *
  * A bar that is up is used, never closed with Escape first: Escape closes the bar only from its
  * own field (the chrome's document-level Escape stands back while the bar is open), and the
- * field can have lost the keyboard while the bar stayed up – the chrome blurs its focused
- * control when a page's view takes the keyboard (`focus.page`), which the new tab page adopted
- * at the onboarding's end does a moment after the new-tab bar focused its field. One Escape and
- * a 5 s wait for the bar to hide then ran out (main red on 9bdc1c30, 630b7dd7 and 7669e6b4).
+ * field could have lost the keyboard while the bar stayed up – the chrome used to blur its
+ * focused control whenever a page's view took the keyboard (`focus.page`), which the new tab
+ * page adopted at the onboarding's end does a moment after the new-tab bar focused its field.
+ * One Escape and a 5 s wait for the bar to hide then ran out (main red on 9bdc1c30, 630b7dd7
+ * and 7669e6b4). The chrome now keeps the bar's field through that event and takes the keyboard
+ * back (lib/panes.ts pageTookKeyboard); the harness still uses the bar as it finds it, and reads
+ * the caret before it touches the field (`caretVerdict`).
  */
 export function newTabPlan({ barVisible, submitTabUrl }) {
   if (!barVisible) return { way: 'new', rowsAfter: 'one-more' }
@@ -49,6 +52,34 @@ export function newTabPlan({ barVisible, submitTabUrl }) {
   }
   if (isNewTabUrl(submitTabUrl)) return { way: 'use', rowsAfter: 'same' }
   return { way: 'close-then-new', rowsAfter: 'one-more' }
+}
+
+/**
+ * The keyboard owner (smoke.mjs Session.keyboardOwner) that is the URL bar's field with its
+ * caret: the chrome page holds the keyboard – not a page's view – and the field is the
+ * document's active element. Either alone is a bar the user cannot type into.
+ */
+export const URLBAR_FIELD_OWNER = 'chrome:urlbar-input'
+
+/**
+ * A step's detail as it is, or the step's failure when a URL bar the step typed into had no
+ * caret: `carets` are the readings `openUrlInNewTab` took before the harness focused the field
+ * (`{ focused, owner, ms, bar }`; by default the one at `detail.caret`), and the error carries
+ * the detail so the step keeps what it gathered. Thrown once the step's work is done – the page
+ * loaded and on screen all the same, through the harness's focus-first way into the field
+ * (#342) – so the scenarios that build on the step go on and a regression is one failure, named
+ * where it is: the new tab's URL bar up with no caret, the state main's boot smoke was in three
+ * times on 2026-09-22 before lib/panes.ts pageTookKeyboard kept the field from the page's view.
+ */
+export function caretVerdict(detail, carets = [detail.caret]) {
+  const missing = carets.find((caret) => caret && !caret.focused)
+  if (!missing) return detail
+  const bar = missing.bar === 'accel-t' ? 'brought up with Accel+T' : 'found up'
+  const error = new Error(
+    `the URL bar ${bar} had no caret: the keyboard was ${missing.owner} for the ${missing.ms} ms before the harness focused the field`
+  )
+  error.detail = detail
+  throw error
 }
 
 /** The sidebar rows a plan ends with: `rowsBefore` when the blank tab took the URL, one more otherwise. */

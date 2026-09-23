@@ -235,6 +235,15 @@ describe('tabs.sendMessage', () => {
       documentId: 'options',
       documentLifecycle: 'active'
     })
+    // The two compares a background makes of `sender.origin` cannot both hold on one string on
+    // the phone: Tampermonkey's `sender.origin === location.origin` (its own page's, the served
+    // one, unforgeable) holds; Google Scholar PDF Reader's `sender.origin === 'chrome-extension://'
+    // + chrome.runtime.id` does not (the one-realm limit, rounds 2 and 9). A prefix compare on
+    // `sender.url` reads Chrome's spelling.
+    const sender = deliver.sender as { url: string; origin: string }
+    expect(sender.origin).toBe(new URL(pageUrl).origin)
+    expect(sender.origin).not.toBe(`chrome-extension://${EXT}`)
+    expect(sender.url.startsWith(`chrome-extension://${EXT}/`)).toBe(true)
     // The page's own iframe carries its frame id; the popup has no tab and no frame.
     router.handle('frame', { t: 'msg', id: 2, target: {}, data: 'sub' })
     expect((take('bg')[0].sender as Record<string, unknown>).frameId).toBe(3)

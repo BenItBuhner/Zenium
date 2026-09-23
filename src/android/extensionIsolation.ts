@@ -16,6 +16,34 @@
  */
 export type Any = Record<PropertyKey, unknown>
 
+type AnyFunction = (...args: unknown[]) => unknown
+
+/**
+ * The natives this module binds with, taken when it evaluates (the bootstrap runs at document
+ * start, ahead of every page script): a page that later replaces `Function.prototype.bind` or
+ * `Reflect.apply` does not get between a content script's `window.postMessage(...)` and the
+ * window.
+ */
+const nativeBind = Function.prototype.bind
+const nativeApply = Reflect.apply
+
+/**
+ * `fn` bound to `receiver`: the native `bind` (a bound function stringifies as native code, as
+ * the method itself does, which is what an extension's tamper check reads); when binding throws
+ * – `bind` reads the function's `length` and `name`, and a page's wrapper (a Proxy over the
+ * method, or an accessor that refuses a reader) can throw from either read – a plain closure
+ * that forwards the call to the method with `receiver` as `this` and reads nothing of it.
+ */
+export function bindToReceiver(fn: AnyFunction, receiver: object): AnyFunction {
+  try {
+    return nativeApply(nativeBind, fn, [receiver]) as AnyFunction
+  } catch {
+    return function bound(...args: unknown[]): unknown {
+      return nativeApply(fn, receiver, args)
+    }
+  }
+}
+
 /**
  * The global's own keys and its prototype chain's at document start: everything the browser
  * defines. A key the page adds later is a page global, which an isolated world would not see.
@@ -112,7 +140,7 @@ export function createScopeProxy(
         if (operations.has(key) || (!('prototype' in fn) && key[0] === key[0].toLowerCase())) {
           let b = bound.get(key)
           if (!b || b.of !== value) {
-            b = { of: value, fn: (value as (...a: unknown[]) => unknown).bind(realWindow) }
+            b = { of: value, fn: bindToReceiver(value as AnyFunction, realWindow) }
             bound.set(key, b)
           }
           return b.fn

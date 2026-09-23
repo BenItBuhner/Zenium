@@ -8,6 +8,15 @@ export { SPRING_GENTLE, SPRING_SNAPPY, isAtRest, stepSpring } from '@shared/spri
 export type { SpringConfig, SpringState } from '@shared/spring'
 
 /**
+ * The longest step one frame may advance a spring by (ms): a stalled tab must not turn into one
+ * huge step. Under a frame rate this slow (a frame every 64 ms is 15 a second) the motion runs
+ * in the spring's own time no longer, but in the frames': the harness reconstructs the spring's
+ * own time from its frames with this same figure (`MotionPerfDemo.kt`'s `SPRING_STEP_CLAMP_MS`,
+ * pinned equal to this one by `spring.test.ts`), and the emulator's cadence is read against it.
+ */
+export const SPRING_STEP_CLAMP_MS = 64
+
+/**
  * Runs a spring on the animation frame. `stop()` hands the live `{ x, v }` back so a new drag can
  * start from exactly where the motion was – the basis of interruptible transitions.
  */
@@ -72,7 +81,7 @@ export class SpringAnimation {
   private readonly tick = (now: number): void => {
     this.frame = null
     // A stalled tab must not turn into one huge step.
-    const dt = Math.min(0.064, Math.max(0.001, (now - this.last) / 1000))
+    const dt = Math.min(SPRING_STEP_CLAMP_MS / 1000, Math.max(0.001, (now - this.last) / 1000))
     this.last = now
     this.state = stepSpring(this.state, this.target, dt, this.config)
     this.onFrame(this.state.x, this.state.v)

@@ -103,6 +103,15 @@ export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; h
   { key: 'boosts', label: 'Boosts' }
 ]
 
+/**
+ * The Settings row id of a data type's switch in What you sync (`sync.tsx`'s scope group): what
+ * `zen://settings/sync?row=<id>` brings on screen – the History page's "Open sync settings"
+ * row lands on the Open tabs switch this way.
+ */
+export function syncScopeRowId(key: keyof SyncScope): string {
+  return `sync-scope:${key}`
+}
+
 /** The one-line status of a connected device: syncing, the last sync's age, or the wait for the first. */
 export function syncStatusLine(sync: SyncStatus, now = Date.now()): string {
   if (sync.syncing) return SYNC_COPY.syncing

@@ -8,8 +8,14 @@
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
-//        [--force-urlbar-blur]   (the URL bar's field let go of the keyboard before the harness
-//                                 acts on the bar: the state main's boot smoke failed in)
+//        [--force-urlbar-blur]   (the URL bar's field let go of the keyboard and the chrome told
+//                                 the new tab's view took it, before the harness acts on the bar:
+//                                 the slow runner's order, which left main's boot smoke a bar with
+//                                 no caret; the caret check has to come out green through it)
+//        [--update-aria]         (write the walkthrough's aria snapshots over the baselines in
+//                                 .github/smoke/aria/ instead of comparing against them: the way
+//                                 to take a deliberate change of the chrome's tree; review the
+//                                 diff before committing it)
 //
 // Scenarios (each one launch of the executable, on profiles under one temporary root; the pages
 // they load come from boot-fixture.mjs's server on 127.0.0.1, started once per run, so a run
@@ -24,7 +30,12 @@
 //                "Restore pages?" bar (skipped, like `crash`, when boot's launch or onboarding
 //                failed: that profile is not past onboarding; scenario-deps.mjs)
 //   walkthrough  the Chrome-preset shortcuts (#126) on a fresh profile past onboarding: Ctrl+T,
-//                Ctrl+F (the field takes the keyboard, Escape closes the bar and hands it back to
+//                the accessibility tree of the resting window, the open app menu, the open URL
+//                bar and a hosted Settings dialog against the aria snapshots checked in under
+//                .github/smoke/aria/ with axe-core's verdict on each (no serious or critical
+//                violation; .github/smoke/aria/axe-known.json names the tolerated ones on
+//                surfaces the chrome does not own), Ctrl+F (the field takes the keyboard,
+//                Escape closes the bar and hands it back to
 //                the page), Ctrl+plus/minus/0 with the zoom bubble, F11, Ctrl+N, Ctrl+Shift+N,
 //                Ctrl+H, Ctrl+Shift+O, Settings from the toolbar menu, the page context menu, a
 //                second instance handing its URL over, Ctrl+Shift+W's "Close N tabs?" cancelled,
@@ -65,9 +76,21 @@
 import { _electron as electron } from 'playwright'
 import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  ARIA_STATES,
+  ariaBaselineName,
+  ariaDiff,
+  axeVerdict,
+  flattenAxe,
+  formatAriaDiff,
+  formatAxeViolation,
+  normalizeAriaSnapshot,
+  parseAxeAllowlist
+} from './aria.mjs'
 import { FIND_MATCHES, FIND_WORD, isWebPage, startBootFixture } from './boot-fixture.mjs'
 import { classifyFailures, formatFailure, loadKnownFailures } from './known-failures.mjs'
 import {
@@ -76,7 +99,14 @@ import {
   buttonScreenPoint,
   startPopupFixture
 } from './popup-fixture.mjs'
-import { newTabPlan, retryDetail, rowsExpected, waitForTabWithRetry } from './navigation.mjs'
+import {
+  URLBAR_FIELD_OWNER,
+  caretVerdict,
+  newTabPlan,
+  retryDetail,
+  rowsExpected,
+  waitForTabWithRetry
+} from './navigation.mjs'
 import { exitWithin, mainProcessState, unlessTargetClosed } from './quit.mjs'
 import { skipReason, skippedEntries } from './scenario-deps.mjs'
 import {
@@ -135,11 +165,21 @@ const EVALUATE_TIMEOUT_MS = Number(opts['evaluate-timeout-ms'] ?? 30000)
 const FIRST_PAINT_CLICK_MS = Number(opts['first-paint-click-ms'] ?? 15000)
 const WATCHDOG_MS = Number(opts['watchdog-min'] ?? 15) * 60 * 1000
 // The forced failure path of the URL bar steps: before the harness acts on a bar that is up, the
-// chrome's focused control is blurred, as the chrome itself does when a page's view takes the
-// keyboard (`focus.page` → releaseChromeFocus). Main's boot smoke was in that state three times
-// on 2026-09-22 (see Session.closeUrlbar); the steps have to get through it.
+// chrome's focused control is blurred – as the chrome itself did on `focus.page` (a page's view
+// took the keyboard) until lib/panes.ts pageTookKeyboard – and the chrome is then told the page's
+// view took the keyboard, the event the new tab's own view sends as it is shown: on a slow
+// machine after the bar has focused its field. Main's boot smoke was in the state that left three
+// times on 2026-09-22 (see Session.closeUrlbar). The steps have to get through it, and the caret
+// check in openUrlInNewTab has to read the field focused: the bar's answer to the event.
 const FORCE_URLBAR_BLUR = opts['force-urlbar-blur'] === true
+// The walkthrough's aria snapshots are written over their baselines instead of compared.
+const UPDATE_ARIA = opts['update-aria'] === true
 const allowlistFile = path.resolve(opts.allowlist ?? path.join(here, 'known-failures.json'))
+// The aria baselines and the axe allowlist of the walkthrough's accessibility step (ci-13).
+const ariaDir = path.join(here, 'aria')
+const axeKnownFile = path.join(ariaDir, 'axe-known.json')
+// axe-core's bundle, read from the dev dependency and evaluated in the chrome page.
+const AXE_SOURCE = createRequire(import.meta.url).resolve('axe-core/axe.min.js')
 
 // Every scenario gets a profile under one temporary root; nothing touches the runner's real
 // profile. Linux additionally isolates the XDG directories Electron derives appData from.
@@ -434,6 +474,28 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
     wc.on('unresponsive', () =>
       emit({ type: 'unresponsive', wc: wc.id, url: safe(() => wc.getURL(), '') })
     )
+    // The keyboard's every move between the window's documents, as the main process sees it: a
+    // webContents taking (`took`) or losing it, whether it is the chrome's, and for a page view
+    // whether the view was on screen at that moment. What a URL bar with no caret is read
+    // against (Session.urlbarCaret's `facts`): the chrome hears a page taking the keyboard only
+    // when its view is shown or the core asked for it (platform/views.ts).
+    const viewOf = () =>
+      BrowserWindow.getAllWindows()
+        .flatMap((w) => safe(() => w.contentView.children, []))
+        .find((v) => safe(() => v.webContents && v.webContents.id === wc.id, false))
+    const keyboard = (took) => {
+      const view = viewOf()
+      emit({
+        type: 'keyboard',
+        wc: wc.id,
+        chrome: isChrome(wc),
+        took,
+        visible: view ? safe(() => view.getVisible(), null) : null,
+        url: safe(() => wc.getURL(), '').slice(0, 120)
+      })
+    }
+    wc.on('focus', () => keyboard(true))
+    wc.on('blur', () => keyboard(false))
     wc.on('did-fail-load', (_e, code, desc, url, isMain) =>
       emit({ type: 'did-fail-load', wc: wc.id, code, desc, url, isMain })
     )
@@ -796,6 +858,7 @@ class Session {
       timeout: RENDER_WAIT_MS
     })
     this.timings.chromeRenderedMs = Date.now() - t0
+    await this.traceFocus()
     this.mainWindowId = await this.app.evaluate(({ BrowserWindow }) => {
       const wins = BrowserWindow.getAllWindows().sort((a, b) => a.id - b.id)
       return wins.length ? wins[0].id : null
@@ -1052,14 +1115,6 @@ class Session {
     return shot(`${this.scenario}-${name}`, this)
   }
 
-  /** The webContents holding the keyboard, as the main process sees it (null: none). */
-  focusedWebContentsId() {
-    return this.app.evaluate(({ webContents }) => {
-      const wc = webContents.getFocusedWebContents()
-      return wc && !wc.isDestroyed() ? wc.id : null
-    })
-  }
-
   /** The main window's chrome webContents id (the page the sidebar, URL bar and dialogs live in). */
   chromeWebContentsId(windowId = this.mainWindowId) {
     return this.app.evaluate(({ BrowserWindow }, wid) => {
@@ -1070,15 +1125,37 @@ class Session {
 
   /**
    * Where the keyboard is, for the steps that assert it: `chrome` (the window's chrome page, with
-   * the focused element's test id when it has one), `tab:<id>` (a page) or `none`.
+   * the focused element's test id when it has one), `tab:<id>` (a page, by its webContents id)
+   * or `none`. Asked of the main window's own documents – its chrome, then the views in its
+   * content view – and not of `webContents.getFocusedWebContents()`: on macOS a WebContentsView
+   * that is in no window (the new tab page the core preloads off the window, core/newtab.ts)
+   * reports itself focused once its document commits and goes on saying so, and Electron's
+   * answer was that view while the window's keyboard was the chrome's – the URL bar's field with
+   * its caret read as `tab:<preload>` on both macOS runners (PR #347, 2026-09-22; `facts` in
+   * the step's detail: the chrome focused, its document with the focus and the field active,
+   * the one view in the window hidden and not focused). The keyboard is the window's: a view
+   * has it only in a window, and the chrome lets go of it (a `blur`) when a view in its window
+   * takes it, so the chrome's own word comes first.
    */
-  async keyboardOwner() {
-    const [focused, chrome] = await Promise.all([
-      this.focusedWebContentsId(),
-      this.chromeWebContentsId()
-    ])
-    if (focused === null) return 'none'
-    if (focused !== chrome) return `tab:${focused}`
+  async keyboardOwner(windowId = this.mainWindowId) {
+    const owner = await this.app.evaluate(({ BrowserWindow }, wid) => {
+      const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
+      if (!w || w.isDestroyed()) return null
+      if (w.webContents.isFocused()) return 'chrome'
+      const focusedView = (view) => {
+        for (const v of view.children || []) {
+          const wc = v.webContents
+          if (wc && !wc.isDestroyed() && wc.isFocused()) return wc.id
+          const inner = focusedView(v)
+          if (inner !== null) return inner
+        }
+        return null
+      }
+      const id = focusedView(w.contentView)
+      return id === null ? null : `tab:${id}`
+    }, windowId)
+    if (owner === null) return 'none'
+    if (owner !== 'chrome') return owner
     const active = await this.chrome
       .evaluate(() => {
         const el = document.activeElement
@@ -1120,14 +1197,194 @@ class Session {
   }
 
   /**
-   * The chrome's focused control let go, as the chrome does on `focus.page` (lib/panes.ts
-   * releaseChromeFocus): --force-urlbar-blur's way into the state main's boot smoke failed in.
+   * The chrome's focused control let go, as the chrome did on `focus.page` until lib/panes.ts
+   * pageTookKeyboard kept the URL bar's field (releaseChromeFocus, still the answer for any other
+   * control): --force-urlbar-blur's way into the state main's boot smoke failed in.
    */
   blurChromeFocus(page = this.chrome) {
     return page.evaluate(() => {
       const el = document.activeElement
       if (el && el !== document.body) el.blur()
     })
+  }
+
+  /**
+   * The chrome told that tab `tabId`'s page view took the keyboard: the `focus.page` event as
+   * the main process sends it (`zen:event`, platform/window.ts), which the new tab's own view
+   * sends as it is shown – on a slow machine after the new-tab bar has focused its field.
+   * --force-urlbar-blur's second half (openUrlInNewTab): blurChromeFocus is the chrome's old
+   * answer to that event, this the event itself, so what the chrome does with it now – the bar
+   * keeps its field and takes the keyboard back (lib/panes.ts pageTookKeyboard) – is what the
+   * caret check reads. The view cannot be made to send it from here: under the bar it is hidden,
+   * and a hidden view's focus is one the host takes straight back, unreported (platform/views.ts).
+   */
+  pageTookKeyboard(tabId, windowId = this.mainWindowId) {
+    return this.app.evaluate(
+      ({ BrowserWindow }, { wid, tabId }) => {
+        const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
+        if (!w || w.isDestroyed()) return false
+        w.webContents.send('zen:event', 'focus.page', { tabId })
+        return true
+      },
+      { wid: windowId, tabId }
+    )
+  }
+
+  /** The active tab's id in the app state as the chrome in `page` reads it (null: none). */
+  activeTabId(page = this.chrome) {
+    return page
+      .evaluate(async () => {
+        const state = await window.zen.invoke('app.getState')
+        return state?.spaces?.find((sp) => sp.id === state.activeSpaceId)?.activeTabId ?? null
+      })
+      .catch(() => null)
+  }
+
+  /**
+   * The chrome page in `page` keeps a trace of what moves its keyboard, for a URL bar found with
+   * no caret (urlbarCaret's `facts.chrome`): the core's events about the keyboard and the bar
+   * (`focus.page`, `newtab.opened`, `urlbar.toggle`, `layout.applied`), the document gaining and
+   * losing the window's keyboard (`window.focus` / `window.blur`), and its focused element
+   * changing (`focusin` / `focusout`, the element by test id or tag). Installed once per page,
+   * at launch; the last 500 entries are kept.
+   */
+  traceFocus(page = this.chrome) {
+    return page
+      .evaluate(() => {
+        if (window.__zenSmokeFocus) return false
+        const trace = []
+        const name = (el) => {
+          if (!(el instanceof Element)) return null
+          if (el === document.body) return 'body'
+          return el.getAttribute('data-testid') || el.tagName
+        }
+        const push = (ev, extra) => {
+          if (trace.length >= 500) trace.shift()
+          trace.push({ at: Date.now(), ev, ...extra })
+        }
+        window.zen.on('focus.page', (p) =>
+          push('focus.page', { tabId: p?.tabId ?? null, active: name(document.activeElement) })
+        )
+        window.zen.on('newtab.opened', (p) => push('newtab.opened', { tabId: p?.tabId ?? null }))
+        window.zen.on('urlbar.toggle', (p) => push('urlbar.toggle', { mode: p?.mode ?? null }))
+        window.zen.on('layout.applied', (p) =>
+          push('layout.applied', {
+            contentHidden: p?.contentHidden ?? null,
+            hid: p?.hid?.length ?? 0,
+            shown: p?.shown?.length ?? 0
+          })
+        )
+        window.addEventListener('focus', () =>
+          push('window.focus', { active: name(document.activeElement) })
+        )
+        window.addEventListener('blur', () =>
+          push('window.blur', { active: name(document.activeElement) })
+        )
+        document.addEventListener('focusin', (e) => push('focusin', { el: name(e.target) }), true)
+        document.addEventListener(
+          'focusout',
+          (e) => push('focusout', { el: name(e.target), to: name(e.relatedTarget) }),
+          true
+        )
+        window.__zenSmokeFocus = trace
+        return true
+      })
+      .catch(() => false)
+  }
+
+  /**
+   * Where the keyboard is as the main process sees it, for a URL bar found with no caret
+   * (urlbarCaret's `facts.main`): whether the window has the system's focus, Electron's focused
+   * webContents and every webContents that says it is focused (`claimants`, each with whether
+   * it is in a window – a view off the window says so on macOS, keyboardOwner), the chrome's,
+   * and each view in the window's content view – its webContents, whether it is shown, whether
+   * it holds the keyboard, its address and bounds.
+   */
+  keyboardFacts(windowId = this.mainWindowId) {
+    return this.app.evaluate(({ BrowserWindow, webContents }, wid) => {
+      const w = (wid && BrowserWindow.fromId(wid)) || BrowserWindow.getAllWindows()[0]
+      if (!w || w.isDestroyed()) return null
+      const focused = webContents.getFocusedWebContents()
+      const inWindow = new Set()
+      const collect = (view) => {
+        for (const v of view.children || []) {
+          if (v.webContents) inWindow.add(v.webContents.id)
+          collect(v)
+        }
+      }
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed()) continue
+        inWindow.add(win.webContents.id)
+        collect(win.contentView)
+      }
+      const claimants = webContents
+        .getAllWebContents()
+        .filter((wc) => !wc.isDestroyed() && wc.isFocused())
+        .map((wc) => ({ wc: wc.id, inWindow: inWindow.has(wc.id), url: wc.getURL().slice(0, 120) }))
+      const views = w.contentView.children.map((v) => {
+        const wc = v.webContents
+        if (!wc) return { view: 'no-webContents' }
+        const gone = wc.isDestroyed()
+        return {
+          wc: wc.id,
+          visible: typeof v.getVisible === 'function' ? v.getVisible() : null,
+          focused: !gone && wc.isFocused(),
+          url: gone ? null : wc.getURL().slice(0, 120),
+          bounds: typeof v.getBounds === 'function' ? v.getBounds() : null
+        }
+      })
+      return {
+        windowFocused: w.isFocused(),
+        focused: focused && !focused.isDestroyed() ? focused.id : null,
+        claimants,
+        chrome: w.webContents.id,
+        chromeFocused: w.webContents.isFocused(),
+        views
+      }
+    }, windowId)
+  }
+
+  /**
+   * The caret of the URL bar that is up: whether its field holds the keyboard – the chrome page
+   * has it, not a page's view, and the field is the document's active element (keyboardOwner
+   * `chrome:urlbar-input`) – waited for up to `timeoutMs`, because the bar taking the keyboard
+   * back from the new tab's view (lib/panes.ts pageTookKeyboard → focus.chrome) is an IPC round
+   * trip away. `{ focused, owner, ms, bar }` for the step's detail, `owner` the last reading and
+   * `bar` how the bar came to be up (`found-up`, `accel-t`); navigation.mjs caretVerdict judges it.
+   * A caret that does not come carries the case for the verdict: `owners`, every reading the
+   * owner changed with, and `facts` – the main process's view of the keyboard (keyboardFacts),
+   * its keyboard moves of the last ten seconds (hookMain's `keyboard` events) and the chrome's
+   * own trace of them (traceFocus).
+   */
+  async urlbarCaret(bar, timeoutMs = 3000) {
+    const t0 = Date.now()
+    const owners = []
+    for (;;) {
+      const owner = await this.keyboardOwner()
+      const ms = Date.now() - t0
+      if (!owners.length || owners[owners.length - 1].owner !== owner) owners.push({ ms, owner })
+      if (owner === URLBAR_FIELD_OWNER) return { focused: true, owner, ms, bar }
+      if (ms >= timeoutMs) {
+        const since = t0 - 10000
+        const main = await this.keyboardFacts().catch((e) => ({ error: String(e.message || e) }))
+        const chrome = await this.chrome
+          .evaluate((since) => {
+            const el = document.activeElement
+            return {
+              hasFocus: document.hasFocus(),
+              active:
+                el && el !== document.body ? el.getAttribute('data-testid') || el.tagName : null,
+              trace: (window.__zenSmokeFocus || []).filter((e) => e.at >= since).slice(-200)
+            }
+          }, since)
+          .catch((e) => ({ error: String(e.message || e) }))
+        const keyboard = this.readEvents()
+          .filter((e) => e.type === 'keyboard' && e.t >= since)
+          .map(({ t, wc, chrome, took, visible, url }) => ({ t, wc, chrome, took, visible, url }))
+        return { focused: false, owner, ms, bar, owners, facts: { main, chrome, keyboard } }
+      }
+      await delay(100)
+    }
   }
 
   /**
@@ -1163,13 +1420,15 @@ class Session {
    * Escape puts the rows away). Resolves `{ closed, tries }`, `closed: false` once `timeoutMs`
    * is spent.
    *
-   * Field first because the field can have lost the keyboard while the bar stayed up: the chrome
-   * blurs its focused control when a page's view takes the keyboard (`focus.page` →
-   * releaseChromeFocus), and the new tab page the onboarding's end adopts does that a moment
-   * after the new-tab bar focused its field – on the runner, after; on a fast machine, before,
-   * where the field's later focus() wins. Main's boot smoke had the bar up with no caret in
-   * `02-after-onboarding.png` three times on 2026-09-22 (9bdc1c30, 630b7dd7, 7669e6b4); one
-   * Escape then did nothing and the 5 s wait for the bar to hide ran out.
+   * Field first because the field could have lost the keyboard while the bar stayed up: the
+   * chrome used to blur its focused control whenever a page's view took the keyboard
+   * (`focus.page` → releaseChromeFocus), and the new tab page the onboarding's end adopts does
+   * that a moment after the new-tab bar focused its field – on the runner, after; on a fast
+   * machine, before, where the field's later focus() wins. Main's boot smoke had the bar up with
+   * no caret in `02-after-onboarding.png` three times on 2026-09-22 (9bdc1c30, 630b7dd7,
+   * 7669e6b4); one Escape then did nothing and the 5 s wait for the bar to hide ran out. The
+   * chrome now keeps the bar's field through that event (lib/panes.ts pageTookKeyboard); the
+   * harness still asks nothing of the caret here (openUrlInNewTab reads it, where it matters).
    */
   async closeUrlbar({ page = this.chrome, windowId = this.mainWindowId, timeoutMs = 8000 } = {}) {
     const input = this.urlbarInput(page)
@@ -1652,18 +1911,20 @@ async function runScenario(name, userData, sessionOptions, body) {
  * page).
  *
  * A bar that is already up is used, not closed first. After the onboarding the core opens a new
- * tab with its bar up in new-tab mode, and that bar's field can have let go of the keyboard by
+ * tab with its bar up in new-tab mode, and that bar's field could have let go of the keyboard by
  * the time this runs (Session.closeUrlbar says how); the one Escape this used to send then
  * closed nothing and its 5 s wait for the bar to hide ran out (main red on 9bdc1c30, 630b7dd7
  * and 7669e6b4). Focusing the field and typing into it needs no key the field must already own.
+ *
+ * The caret is read before the harness touches the field (`caret` in the result: the bar up –
+ * found up after the tour, or brought up with Accel+T – with its field holding the keyboard, or
+ * the user's typing would go nowhere), and left to the step to judge once its work is done
+ * (navigation.mjs caretVerdict): the focus-first way in is kept whatever the caret said, so the
+ * page loads, the run goes on and a regression is one failure, named.
  */
 async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
   const input = s.urlbarInput()
   await s.settle()
-  if (FORCE_URLBAR_BLUR) {
-    await s.blurChromeFocus()
-    log(`${url}: --force-urlbar-blur let the chrome's focused control go`)
-  }
   const shown = await s.urlbarState()
   const plan = newTabPlan(shown)
   const rowsBefore = await s.sidebarTabCount()
@@ -1682,6 +1943,28 @@ async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
     await s.press(`${ACCEL}+t`)
     await input.waitFor({ state: 'visible', timeout: 8000 })
   }
+  if (FORCE_URLBAR_BLUR) {
+    // The slow runner's order, forced on the bar that is up: the field had the keyboard and let
+    // go of it – the chrome's old answer to the page's view taking the keyboard – and then the
+    // event itself reaches the chrome: the new tab's own view took the keyboard. The chrome's
+    // answer now is what the caret check reads.
+    const tabId = (await s.urlbarState()).submitTabId ?? (await s.activeTabId())
+    await s.blurChromeFocus()
+    await s.pageTookKeyboard(tabId)
+    log(
+      `${url}: --force-urlbar-blur let the chrome's focused control go, then told the chrome tab ${tabId}'s view took the keyboard`
+    )
+  }
+  const caret = await s.urlbarCaret(plan.way === 'use' ? 'found-up' : 'accel-t')
+  log(
+    `${url}: the URL bar ${caret.bar === 'found-up' ? 'found up' : 'brought up with Accel+T'} ${
+      caret.focused
+        ? `has its caret (${caret.ms} ms)`
+        : `has NO caret: the keyboard is ${caret.owner} after ${caret.ms} ms; the case: ${JSON.stringify(
+            { owners: caret.owners, ...caret.facts }
+          ).slice(0, 6000)}`
+    }`
+  )
   await s.submitUrl(url)
   // One network hiccup on the runner (a TLS reset, `ERR_CONNECTION_RESET`) lands the tab on the
   // error page; the step retries the navigation once in that tab (Accel+L, the address again)
@@ -1715,7 +1998,167 @@ async function openUrlInNewTab(s, url, { landsOn = url } = {}) {
     tab,
     sidebarTabs: rows,
     way: plan.way,
+    caret,
     retried: retried ? retryDetail(retried) : null
+  }
+}
+
+/**
+ * The walkthrough's accessibility audit (parity row ci-13): for each state of the chrome the
+ * step brings up, the aria snapshot of the surface that state is about – Playwright's
+ * `locator.ariaSnapshot()`, the tree as a screen reader gets it, roles, names and states –
+ * against the baseline checked in under .github/smoke/aria/ (`--update-aria` writes the
+ * baselines instead), and axe-core over the whole chrome document as it stands then. The
+ * snapshot read is written beside the results (`aria/<state>.aria.yaml` in the artifact) either
+ * way, so a failed comparison can be reviewed – and, once agreed, copied over the baseline.
+ *
+ * A serious or critical axe violation fails the step unless `aria/axe-known.json` names it (an
+ * entry is for a surface another program owns – services, extensions – never the chrome's own);
+ * moderate and minor ones are reported in the step's detail and tolerated. The four states are
+ * the resting window, the open app menu, the open URL bar and a hosted Settings dialog.
+ */
+class AriaAudit {
+  constructor(session, { origin }) {
+    this.s = session
+    this.origin = origin
+    this.states = {}
+    this.allowlist = fs.existsSync(axeKnownFile)
+      ? parseAxeAllowlist(JSON.parse(fs.readFileSync(axeKnownFile, 'utf8')))
+      : []
+    this.outDir = path.join(outDir, 'aria')
+    fs.mkdirSync(this.outDir, { recursive: true })
+    this.axeLoaded = new WeakSet()
+  }
+
+  /** axe evaluated once per chrome page (a `Runtime.evaluate` is not subject to the page's CSP). */
+  async loadAxe(page) {
+    if (this.axeLoaded.has(page)) return
+    const present = await page.evaluate(() => typeof globalThis.axe !== 'undefined')
+    if (!present) await page.evaluate(fs.readFileSync(AXE_SOURCE, 'utf8'))
+    this.axeLoaded.add(page)
+  }
+
+  /** axe over the document; the violations flattened, one record per node. */
+  async runAxe(page) {
+    await this.loadAxe(page)
+    const results = await withTimeout(
+      page.evaluate(() =>
+        globalThis.axe.run(document, {
+          resultTypes: ['violations'],
+          elementRef: false,
+          // The chrome is a document of one application; the rules on a web page's outline
+          // (one h1, no skipped levels, a region round every word) do not describe it.
+          rules: {
+            'page-has-heading-one': { enabled: false },
+            'heading-order': { enabled: false },
+            region: { enabled: false }
+          }
+        })
+      ),
+      EVALUATE_TIMEOUT_MS,
+      'axe.run'
+    )
+    return flattenAxe(results)
+  }
+
+  /**
+   * The page with whatever just opened at rest: the way in of a dialog (its 180 ms pop), a menu
+   * or the URL bar's rows ends before the state is read. axe reads a panel mid-pop at the
+   * opacity of that frame – the description's ink thinned over the scrim under it – and finds a
+   * contrast the settled panel does not have (2.6:1 for 6.4:1 on 2026-09-23). Finite animations
+   * and transitions only: a spinner never ends. Then the harness's two frames.
+   */
+  async settled(page) {
+    await withTimeout(
+      page.evaluate(() =>
+        Promise.all(
+          document
+            .getAnimations()
+            .filter(
+              (a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity
+            )
+            .map((a) =>
+              a.finished.then(
+                () => undefined,
+                () => undefined
+              )
+            )
+        )
+      ),
+      3000,
+      'the way in'
+    ).catch(() => undefined)
+    await this.s.settle(page)
+  }
+
+  /**
+   * One state: `locator` is the surface whose tree is snapshotted (the chrome root at rest, the
+   * menu, the omnibox, the dialog); axe runs over the page the locator is on. Throws on a
+   * snapshot that differs from its baseline or a gating axe violation, after both were read.
+   */
+  async state(name, locator) {
+    if (!ARIA_STATES.includes(name)) throw new Error(`unknown aria state ${name}`)
+    const page = locator.page()
+    await this.settled(page)
+    const raw = await withTimeout(locator.ariaSnapshot(), EVALUATE_TIMEOUT_MS, `aria ${name}`)
+    const actual = normalizeAriaSnapshot(raw, { origin: this.origin })
+    const file = ariaBaselineName(name)
+    fs.writeFileSync(path.join(this.outDir, file), actual)
+    const baselineFile = path.join(ariaDir, file)
+    const entry = { snapshotLines: actual.split('\n').length - 1, axe: null }
+    this.states[name] = entry
+    const problems = []
+    if (UPDATE_ARIA) {
+      fs.mkdirSync(ariaDir, { recursive: true })
+      fs.writeFileSync(baselineFile, actual)
+      entry.snapshot = 'written'
+      log(`aria ${name}: baseline written (${entry.snapshotLines} lines)`)
+    } else if (!fs.existsSync(baselineFile)) {
+      entry.snapshot = 'no-baseline'
+      problems.push(
+        `aria snapshot "${name}" has no baseline at ${baselineFile} (run with --update-aria)`
+      )
+    } else {
+      const expected = normalizeAriaSnapshot(fs.readFileSync(baselineFile, 'utf8'))
+      const diff = ariaDiff(expected, actual)
+      entry.snapshot = diff ? 'differs' : 'matches'
+      if (diff) {
+        entry.diff = diff
+        problems.push(formatAriaDiff(name, diff))
+      }
+      log(`aria ${name}: ${entry.snapshot} (${entry.snapshotLines} lines)`)
+    }
+    const violations = await this.runAxe(page)
+    const verdict = axeVerdict(name, violations, this.allowlist)
+    entry.axe = {
+      violations: violations.length,
+      failing: verdict.failing,
+      tolerated: verdict.tolerated,
+      other: verdict.other
+    }
+    log(
+      `axe ${name}: ${violations.length} violation(s): ${verdict.failing.length} failing, ${verdict.tolerated.length} known, ${verdict.other.length} below the gate`
+    )
+    for (const v of [...verdict.failing, ...verdict.tolerated, ...verdict.other]) {
+      log(`  ${formatAxeViolation(v)}`)
+    }
+    if (verdict.failing.length) {
+      problems.push(
+        `axe on "${name}": ${verdict.failing.length} serious/critical violation(s):\n` +
+          verdict.failing.map((v) => `  ${formatAxeViolation(v)}`).join('\n')
+      )
+    }
+    if (problems.length) {
+      const err = new Error(problems.join('\n'))
+      err.detail = { states: this.states }
+      throw err
+    }
+  }
+
+  /** The step's detail: per state, the snapshot's verdict and axe's counts. */
+  summary() {
+    const missing = ARIA_STATES.filter((name) => !this.states[name])
+    return { states: this.states, missing, baselines: path.relative(process.cwd(), ariaDir) }
   }
 }
 
@@ -2127,18 +2570,23 @@ async function scenarioBoot() {
 
     await s.step('new-tab-fixture', async () => {
       // The onboarding's end opened a new tab with its URL bar up in new-tab mode: that bar
-      // takes the fixture's address and the tab loads it in place (one sidebar row).
-      const { tab, sidebarTabs, way, retried } = await openUrlInNewTab(s, page.url)
+      // takes the fixture's address and the tab loads it in place (one sidebar row). Its field
+      // has to hold the keyboard as the harness finds it (`caret`): the new tab's own view takes
+      // the keyboard as it is shown, and the chrome used to let the field go for it – after the
+      // field's focus on the runner, so the bar stood with no caret (2026-09-22, three times).
+      // Judged once the page is on screen, so a regression is this one step.
+      const { tab, sidebarTabs, way, caret, retried } = await openUrlInNewTab(s, page.url)
       await s.sidebarTab(page.title).first().waitFor({ state: 'visible', timeout: 15000 })
       out.fixtureTab = tab
       await s.shot('03-fixture-page')
-      return {
+      return caretVerdict({
         url: tab.url,
         title: tab.title,
         sidebarTabs,
         way,
+        caret,
         ...(retried ? { retried } : {})
-      }
+      })
     })
 
     await s.step('quit', async () => {
@@ -2221,9 +2669,112 @@ async function scenarioWalkthrough() {
         url: r.tab.url,
         title: r.tab.title,
         sidebarTabs: r.sidebarTabs,
-        way: r.way
+        way: r.way,
+        caret: r.caret
       })
-      return { first: detail(first), second: detail(second) }
+      // Each Ctrl+T's bar with its caret as the harness found it – the user's Ctrl+T is the
+      // other shape of the new tab's race (the boot scenario has the tour's).
+      return caretVerdict({ first: detail(first), second: detail(second) }, [
+        first.caret,
+        second.caret
+      ])
+    })
+
+    await s.step('accessibility', async () => {
+      // The chrome's accessibility tree and axe's verdict in four states (ci-13; the roles of
+      // a11y-02): what a screen reader gets of the window at rest – the sidebar's landmarks, the
+      // toolbar, the tablists with the two fixture tabs, the active one selected – of the app
+      // menu, of the URL bar over the active tab, and of a hosted dialog with the chrome inert
+      // around it. Each snapshot is compared with its baseline under .github/smoke/aria/
+      // (`AriaAudit`); every state also runs axe over the whole document.
+      await s.reset()
+      const audit = new AriaAudit(s, { origin: bootSite.origin })
+      const rowsBefore = await s.sidebarTabCount()
+      const button = s.chrome.locator('[data-zen-app-menu-button]').first()
+      const menu = s.chrome.locator('.zen-v2-menu[role="menu"]').first()
+      const page = s.chrome.locator('[data-testid="settings-page"]').first()
+      const form = s.chrome.locator('[data-dialog="form:add-search-engine"]').first()
+      try {
+        await audit.state('resting-window', s.chrome.locator('[data-testid="chrome-root"]'))
+
+        // The app menu from its "⋯": the shared `.zen-v2-menu` under the button (§9.20).
+        await button.click({ timeout: 5000 })
+        await menu.waitFor({ state: 'visible', timeout: 5000 })
+        await audit.state('app-menu', menu)
+        await s.press('Escape')
+        await menu.waitFor({ state: 'hidden', timeout: 5000 })
+
+        // The URL bar over the active tab (Accel+L): the combobox with the address selected,
+        // the listbox of rows under it – read once the rows are there (they come from the core).
+        await s.press(`${ACCEL}+l`)
+        const input = s.urlbarInput()
+        await input.waitFor({ state: 'visible', timeout: 8000 })
+        await waitFor(
+          async () => (await s.keyboardOwner()) === URLBAR_FIELD_OWNER || null,
+          5000,
+          'the keyboard in the URL bar'
+        )
+        const omnibox = s.chrome.locator('.zen-omnibox').first()
+        await omnibox
+          .locator('[role="option"]')
+          .first()
+          .waitFor({ state: 'visible', timeout: 8000 })
+        await audit.state('urlbar', omnibox)
+        const bar = await s.closeUrlbar()
+        if (!bar.closed) throw new Error(`the URL bar stayed up through ${bar.tries} Escapes`)
+
+        // A hosted dialog: Settings › Search › Add search engine, the form dialog the stacked-
+        // dialogs step also opens; cancelled, and the Settings tab closed, once read.
+        if (IS_MAC) {
+          await s.press('Meta+,')
+        } else {
+          await button.click({ timeout: 5000 })
+          await menu.waitFor({ state: 'visible', timeout: 5000 })
+          await menu
+            .getByRole('menuitem', { name: 'Settings', exact: true })
+            .click({ timeout: 5000 })
+          await menu.waitFor({ state: 'hidden', timeout: 5000 })
+        }
+        await page.waitFor({ state: 'visible', timeout: 10000 })
+        await s.settle()
+        await s.chrome.locator('.zen-settings-nav-item', { hasText: 'Search' }).first().click()
+        await s.chrome.locator('[data-row="add-search-engine"] button').first().click()
+        await form.waitFor({ state: 'visible', timeout: 5000 })
+        await audit.state('hosted-dialog', form)
+        await s.press('Escape')
+        await form.waitFor({ state: 'hidden', timeout: 5000 })
+        await s.press(`${ACCEL}+w`)
+        await page.waitFor({ state: 'hidden', timeout: 8000 })
+        await waitFor(
+          async () => (await s.sidebarTabCount()) === rowsBefore,
+          8000,
+          `the Settings row gone (${rowsBefore} rows before)`
+        )
+      } catch (e) {
+        // The failure keeps what was read up to it (a state's verdict is its own detail).
+        if (e && typeof e === 'object' && !e.detail) e.detail = audit.summary()
+        throw e
+      } finally {
+        // Whatever failed, the window is left as the step found it, so the steps after start
+        // from the same window: the dialog cancelled, the menu or bar closed, the Settings tab
+        // gone (a reset closes no tab).
+        if (await form.isVisible().catch(() => false)) {
+          await s.press('Escape')
+          await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
+        }
+        await s.reset().catch(() => undefined)
+        if (await page.isVisible().catch(() => false)) {
+          await s.press(`${ACCEL}+w`)
+          await waitFor(
+            async () => (await s.sidebarTabCount()) === rowsBefore,
+            8000,
+            `the Settings row gone (${rowsBefore} rows before)`
+          ).catch(() => undefined)
+        }
+      }
+      const summary = audit.summary()
+      if (summary.missing.length) throw new Error(`states not audited: ${summary.missing}`)
+      return summary
     })
 
     await s.step('find-bar', async () => {

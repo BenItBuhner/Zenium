@@ -469,9 +469,10 @@ class HeaderStageTest {
 
     @Test
     fun aHeaderConditionedAllowAloneDoesNotAskForTheRelay() {
-        // A header-conditioned allow yields at the header stage in any case (no header edits to
-        // cap here), so on its own it does not mark the document `needsHeaders`: no relay is paid
-        // for an outcome the request stage already has. Recorded deviation from the desktop engine.
+        // A header-conditioned allow yields at the header stage in any case and can only cap a
+        // request-stage header edit weaker than itself, so without one to cap it does not mark
+        // the document `needsHeaders`: no relay is paid for an outcome the request stage already
+        // has. Recorded deviation from the desktop engine (`Resolution.relayWorthIt`).
         val allowOnly = set(
             "ext:a:_dynamic", 2999,
             """[{"id":3,"priority":5,"action":{"type":"allow"},"condition":{"urlFilter":"||fixture.example^","resourceTypes":["main_frame"],"responseHeaders":[{"header":"content-type","values":["text/*"]}]}}]"""
@@ -489,5 +490,394 @@ class HeaderStageTest {
         assertTrue(stylusAndAllow.decide(usercss).needsHeaders)
         val late = stylusAndAllow.decide(usercss, headers("Content-Type" to "text/css"))
         assertEquals(Decision.Action.ALLOW, late.action)
+        // With a request-stage header edit weaker than the allow, the relay is owed: the allow
+        // caps the edit once the response is a text type (the desktop's cap 2), and lets it
+        // stand otherwise.
+        val weakEdit = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":2,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-A","operation":"set","value":"1"}]},"condition":{"urlFilter":"||fixture.example^"}}]""")
+        val capped = EngineSnapshot(listOf(allowOnly, weakEdit), null)
+        val early = capped.decide(usercss)
+        assertEquals(Decision.Action.MODIFY_HEADERS, early.action)
+        assertTrue(early.needsHeaders)
+        assertEquals(Decision.Action.ALLOW, capped.decide(usercss, headers("Content-Type" to "text/css")).action)
+        assertEquals(Decision.Action.MODIFY_HEADERS, capped.decide(usercss, headers("Content-Type" to "image/png")).action)
+        // An edit the allow could not cap (equal or higher priority): no relay owed, the edit stands either way.
+        val strongEdit = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":5,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-A","operation":"set","value":"1"}]},"condition":{"urlFilter":"||fixture.example^"}}]""")
+        val uncapped = EngineSnapshot(listOf(allowOnly, strongEdit), null)
+        assertFalse(uncapped.decide(usercss).needsHeaders)
+        assertEquals(Decision.Action.MODIFY_HEADERS, uncapped.decide(usercss, headers("Content-Type" to "text/css")).action)
+    }
+
+    // --- modifyHeaders: the resolution (the twin of `engine.test.ts`'s header cases) ------------
+
+    /** User-Agent Switcher's shape: one `modifyHeaders` rule on documents, `set` of the UA. */
+    private val uaRule = """{"id":1,"priority":1,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"User-Agent","operation":"set","value":"Zenium-UA-Test/1.0"}]},"condition":{"resourceTypes":["main_frame","sub_frame"]}}"""
+    private val uaSwitcher = set("ext:bhchdcejhohfmigjafbampogmaanbfkg:_dynamic", 2999, "[$uaRule]")
+
+    private fun op(header: String, operation: String, value: String? = null) = HeaderOp(header, HeaderOp.Operation.fromDnrName(operation)!!, value)
+
+    @Test
+    fun modifyHeadersRidesOnTheAllowThatStands() {
+        val snap = EngineSnapshot(listOf(uaSwitcher), null)
+        assertEquals(1, snap.ruleCount)
+        assertEquals(1, snap.modifyHeadersRuleCount)
+        assertEquals(0, snap.headerRuleCount)
+        val doc = snap.decide(navigation("https://whatsmyua.example/"))
+        assertEquals(Decision.Action.MODIFY_HEADERS, doc.action)
+        assertEquals(listOf(op("User-Agent", "set", "Zenium-UA-Test/1.0")), doc.requestHeaderEdits)
+        assertTrue(doc.responseHeaderEdits.isEmpty())
+        assertEquals("ext:bhchdcejhohfmigjafbampogmaanbfkg:_dynamic", doc.matchedSet)
+        assertEquals(1, doc.matchedRule)
+        assertFalse(doc.needsHeaders)
+        assertTrue(doc.letsThrough)
+        assertTrue(doc.editsHeaders)
+        // A type the rule does not select: the plain allow.
+        val script = snap.decide(Request("https://whatsmyua.example/a.js", ResourceType.SCRIPT, "https://whatsmyua.example/", partition = "default"))
+        assertEquals(Decision.Action.ALLOW, script.action)
+        assertTrue(script.requestHeaderEdits.isEmpty())
+        // The linear reference agrees, edit for edit.
+        val linear = snap.decideLinear(navigation("https://whatsmyua.example/"))
+        assertEquals(doc.requestHeaderEdits, linear.requestHeaderEdits)
+        assertEquals(doc.matchedRule, linear.matchedRule)
+    }
+
+    @Test
+    fun modifyHeadersNeverWinsTheRequestStageAndYieldsToAnAllowOfEqualOrHigherPriority() {
+        val req = navigation("https://whatsmyua.example/")
+        // A block of any priority stands: nothing to edit.
+        val block = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||whatsmyua.example^"}}]""")
+        val blocked = EngineSnapshot(listOf(uaSwitcher, block), null).decide(req)
+        assertEquals(Decision.Action.BLOCK, blocked.action)
+        assertTrue(blocked.requestHeaderEdits.isEmpty())
+        // So does a redirect.
+        val redirect = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":1,"action":{"type":"redirect","redirect":{"url":"https://safe.example/"}},"condition":{"urlFilter":"||whatsmyua.example^"}}]""")
+        assertEquals(Decision.Action.REDIRECT, EngineSnapshot(listOf(uaSwitcher, redirect), null).decide(req).action)
+        // An allow of equal priority caps the edit (rule 4 of the contract: equal or higher).
+        val allowEqual = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":1,"action":{"type":"allow"},"condition":{"urlFilter":"||whatsmyua.example^"}}]""")
+        val capped = EngineSnapshot(listOf(uaSwitcher, allowEqual), null).decide(req)
+        assertEquals(Decision.Action.ALLOW, capped.action)
+        assertEquals("ext:b:_dynamic", capped.matchedSet)
+        assertTrue(capped.requestHeaderEdits.isEmpty())
+        // An allow of lower priority (a lower band here: the user's set) does not.
+        val allowLower = set("user", 10, """[{"id":1,"priority":9,"action":{"type":"allow"},"condition":{"urlFilter":"||whatsmyua.example^"}}]""", source = "user")
+        val edited = EngineSnapshot(listOf(uaSwitcher, allowLower), null).decide(req)
+        assertEquals(Decision.Action.MODIFY_HEADERS, edited.action)
+        assertEquals(1, edited.requestHeaderEdits.size)
+        // Zenium's own bands sit below the `dnr` band (contract 1.3): a site exception or the
+        // switch being off does not cap an extension's edit; a newer extension's allow (the
+        // higher slot of the band) does.
+        val exception = set("builtin:site-exceptions", 900, """[{"id":1,"action":{"type":"allowAllRequests"},"condition":{"urlFilter":"|https://whatsmyua.example/","resourceTypes":["main_frame","sub_frame"]}}]""", source = "builtin")
+        assertEquals(Decision.Action.MODIFY_HEADERS, EngineSnapshot(listOf(uaSwitcher, exception), null).decide(req).action)
+        val off = set("builtin:global-off", 1000, """[{"id":1,"action":{"type":"allow"},"condition":{}}]""", source = "builtin")
+        assertEquals(Decision.Action.MODIFY_HEADERS, EngineSnapshot(listOf(uaSwitcher, off), null).decide(req).action)
+        val newer = set("ext:c:_dynamic", 2999, """[{"id":1,"priority":1,"action":{"type":"allow"},"condition":{"urlFilter":"||whatsmyua.example^"}}]""")
+        val older = set("ext:bhchdcejhohfmigjafbampogmaanbfkg:_dynamic", 2998, "[$uaRule]")
+        assertEquals(Decision.Action.ALLOW, EngineSnapshot(listOf(older, newer), null).decide(req).action)
+        // The filter lists' `$document` block stands whatever an extension edits (the lists are
+        // weighed against the request stage's best, which a `modifyHeaders` rule never is).
+        val lists = TextEngine.parse(listOf("||whatsmyua.example^\$document"))
+        assertEquals(Decision.Action.BLOCK, EngineSnapshot(listOf(uaSwitcher), lists).decide(req).action)
+    }
+
+    @Test
+    fun editsStackHighestPriorityFirstThenInScanOrder() {
+        // Two extensions and two rules each; a header-conditioned rule adds its response edit at
+        // the header stage and its request edit is dropped (the request is out).
+        val a = set(
+            "ext:a:_dynamic", 2999,
+            """[{"id":1,"priority":1,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-1","operation":"set","value":"a1"}],"responseHeaders":[{"header":"X-R","operation":"append","value":"a1"}]},"condition":{"urlFilter":"||hdr.example^"}},
+                {"id":2,"priority":3,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-2","operation":"set","value":"a2"}]},"condition":{"requestDomains":["hdr.example"]}},
+                {"id":3,"priority":2,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-3","operation":"set","value":"late"}],"responseHeaders":[{"header":"X-Frame-Options","operation":"remove"}]},"condition":{"urlFilter":"||hdr.example^","responseHeaders":[{"header":"x-frame-options"}]}}]"""
+        )
+        val b = set(
+            "ext:b:_dynamic", 2999,
+            """[{"id":1,"priority":3,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-1","operation":"set","value":"b1"}]},"condition":{"regexFilter":"^https://hdr\\.example/"}},
+                {"id":2,"priority":1,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"X-R","operation":"append","value":"b2"}]},"condition":{"urlFilter":"/index"}}]"""
+        )
+        val snap = EngineSnapshot(listOf(a, b), null)
+        val req = navigation("https://hdr.example/index.html")
+        val early = snap.decide(req)
+        assertEquals(Decision.Action.MODIFY_HEADERS, early.action)
+        // Priority 3 first (set a before set b by id at equal priority), then 1: a's rule 2, b's rule 1, a's rule 1, b's rule 2.
+        assertEquals(listOf(op("X-2", "set", "a2"), op("X-1", "set", "b1"), op("X-1", "set", "a1")), early.requestHeaderEdits)
+        assertEquals(listOf(op("X-R", "append", "a1"), op("X-R", "append", "b2")), early.responseHeaderEdits)
+        assertEquals("ext:a:_dynamic", early.matchedSet)
+        assertEquals(2, early.matchedRule)
+        // The header-conditioned edit asks for the relay; its response edit joins in its place
+        // (priority 2, between the 3s and the 1s) once the condition holds, its request edit dropped.
+        assertTrue(early.needsHeaders)
+        val late = snap.decide(req, headers("X-Frame-Options" to "DENY", "Content-Type" to "text/html"))
+        assertEquals(Decision.Action.MODIFY_HEADERS, late.action)
+        assertEquals(early.requestHeaderEdits, late.requestHeaderEdits)
+        assertEquals(listOf(op("X-Frame-Options", "remove"), op("X-R", "append", "a1"), op("X-R", "append", "b2")), late.responseHeaderEdits)
+        assertEquals(2, late.matchedRule)
+        assertFalse(late.needsHeaders)
+        // Without the header, the request stage's edits alone.
+        assertEquals(early.responseHeaderEdits, snap.decide(req, headers("Content-Type" to "text/html")).responseHeaderEdits)
+        // The linear reference agrees at both stages.
+        for (h in listOf(null, headers("X-Frame-Options" to "DENY"), headers())) {
+            val indexed = snap.decide(req, h)
+            val linear = snap.decideLinear(req, h)
+            assertEquals(linear.requestHeaderEdits, indexed.requestHeaderEdits)
+            assertEquals(linear.responseHeaderEdits, indexed.responseHeaderEdits)
+            assertEquals(linear.matchedRule, indexed.matchedRule)
+            assertEquals(linear.needsHeaders, indexed.needsHeaders)
+        }
+    }
+
+    @Test
+    fun theHeaderStageCapsAndOverturnsEditsAsChromeDoes() {
+        val edits = set(
+            "ext:a:_dynamic", 2999,
+            """[{"id":1,"priority":2,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-Strong","operation":"set","value":"1"}]},"condition":{"urlFilter":"||hdr.example^"}},
+                {"id":2,"priority":1,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-Weak","operation":"set","value":"1"}]},"condition":{"urlFilter":"||hdr.example^"}},
+                {"id":3,"priority":2,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"X-Late-Equal","operation":"set","value":"1"}]},"condition":{"urlFilter":"||hdr.example^","responseHeaders":[{"header":"x-mark"}]}},
+                {"id":4,"priority":3,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"X-Late-Above","operation":"set","value":"1"}]},"condition":{"urlFilter":"||hdr.example^","responseHeaders":[{"header":"x-mark"}]}}]"""
+        )
+        val req = navigation("https://hdr.example/")
+        // A header-stage allow of priority 2: request-stage edits of equal or higher priority
+        // survive (cap 2, `>=`), header-stage edits need strictly more (cap 3, `>`).
+        val lateAllow = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":2,"action":{"type":"allow"},"condition":{"urlFilter":"||hdr.example^","responseHeaders":[{"header":"x-mark"}]}}]""")
+        val snap = EngineSnapshot(listOf(edits, lateAllow), null)
+        val early = snap.decide(req)
+        assertEquals(listOf(op("X-Strong", "set", "1"), op("X-Weak", "set", "1")), early.requestHeaderEdits)
+        assertTrue(early.needsHeaders)
+        val late = snap.decide(req, headers("X-Mark" to "1"))
+        assertEquals(Decision.Action.MODIFY_HEADERS, late.action)
+        assertEquals(listOf(op("X-Strong", "set", "1")), late.requestHeaderEdits)
+        assertEquals(listOf(op("X-Late-Above", "set", "1")), late.responseHeaderEdits)
+        // The strongest applicable rule is the match: the header-stage rule 4 at priority 3.
+        assertEquals(4, late.matchedRule)
+        // Without the marker, the header stage adds nothing and the request stage's edits stand whole.
+        val plain = snap.decide(req, headers("Content-Type" to "text/html"))
+        assertEquals(early.requestHeaderEdits, plain.requestHeaderEdits)
+        assertTrue(plain.responseHeaderEdits.isEmpty())
+        assertEquals(1, plain.matchedRule)
+        // A header-stage block above the request stage's allow wins over the edits of either stage.
+        val lateBlock = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||hdr.example^","responseHeaders":[{"header":"x-mark"}]}}]""")
+        val blocked = EngineSnapshot(listOf(edits, lateBlock), null).decide(req, headers("x-mark" to "1"))
+        assertEquals(Decision.Action.BLOCK, blocked.action)
+        assertTrue(blocked.requestHeaderEdits.isEmpty())
+        // A request-stage allow caps both stages: a header-stage edit of equal priority yields (cap 1, `<=`).
+        val allowEqual = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":3,"action":{"type":"allow"},"condition":{"urlFilter":"||hdr.example^"}}]""")
+        val capped = EngineSnapshot(listOf(edits, allowEqual), null)
+        assertFalse(capped.decide(req).needsHeaders)
+        assertEquals(Decision.Action.ALLOW, capped.decide(req, headers("x-mark" to "1")).action)
+        val allowBelow = set("ext:b:_dynamic", 2999, """[{"id":1,"priority":2,"action":{"type":"allow"},"condition":{"urlFilter":"||hdr.example^"}}]""")
+        val partly = EngineSnapshot(listOf(edits, allowBelow), null)
+        val partlyEarly = partly.decide(req)
+        assertEquals(Decision.Action.ALLOW, partlyEarly.action)
+        assertTrue("the header-stage edit above the allow asks for the relay", partlyEarly.needsHeaders)
+        val partlyLate = partly.decide(req, headers("x-mark" to "1"))
+        assertEquals(Decision.Action.MODIFY_HEADERS, partlyLate.action)
+        assertTrue(partlyLate.requestHeaderEdits.isEmpty())
+        assertEquals(listOf(op("X-Late-Above", "set", "1")), partlyLate.responseHeaderEdits)
+    }
+
+    // --- modifyHeaders: Blocking.evaluate and the relay's edits ----------------------------------
+
+    @Test
+    fun evaluateRelaysAModifyHeadersDocumentAndLetsASubresourceGo() {
+        val snap = EngineSnapshot(listOf(uaSwitcher), null)
+        val tab = FakeTab()
+        val heard = ArrayList<Decision>()
+        val observer = DecisionObserver { _, _, decision, _, _ -> heard.add(decision) }
+        val document = Blocking.evaluate(snap, tab, "https://whatsmyua.example/", true, "text/html", "GET", observer = observer)
+        assertTrue(document is Verdict.HeaderStage)
+        assertEquals(Decision.Action.MODIFY_HEADERS, (document as Verdict.HeaderStage).decision.action)
+        assertTrue(document.withCookies)
+        // The request stage's decision is reported once, as the desktop reports it.
+        assertEquals(listOf(Decision.Action.MODIFY_HEADERS), heard.map { it.action })
+        val frame = Blocking.evaluate(snap, FakeTab(), "https://ads.example/frame", false, "text/html", "GET")
+        assertTrue(frame is Verdict.HeaderStage)
+        // The recorded limit: a subresource the rule selects goes out unchanged.
+        val wide = set("ext:x:_dynamic", 2999, """[{"id":1,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-A","operation":"set","value":"1"}]},"condition":{"urlFilter":"||whatsmyua.example^"}}]""")
+        assertSame(Verdict.Pass, Blocking.evaluate(EngineSnapshot(listOf(wide), null), tab, "https://whatsmyua.example/a.js", false, "*/*", "GET"))
+        // Listeners see a relayed document as a request that goes out.
+        assertTrue(Blocking.evaluate(snap, WebRequestListeners(), tab, "https://whatsmyua.example/", true, mapOf("Accept" to "text/html"), "GET") is Verdict.HeaderStage)
+    }
+
+    @Test
+    fun theRelaySendsTheRequestHeadersARuleSets() {
+        val snap = EngineSnapshot(listOf(uaSwitcher), null)
+        val cookies = FakeCookies().apply { jar = "session=abc" }
+        val fetcher = FakeFetcher(response(200, "Content-Type" to "text/html; charset=utf-8", body = "<p>ua</p>"))
+        val tab = FakeTab()
+        val req = navigation("https://whatsmyua.example/")
+        val early = snap.decide(req)
+        val heard = ArrayList<Decision>()
+        val webViewHeaders = mapOf("User-Agent" to "Mozilla/5.0 (Linux; Android 13) Chrome/113.0.0.0 Mobile Safari/537.36", "Accept" to "text/html", "Accept-Encoding" to "gzip, deflate, br", "X-Requested-With" to "app.zen.chromium")
+        val answer = HeaderStage(cookies, fetcher).relay(snap, tab, req, webViewHeaders, { _, _, decision, _, _ -> heard.add(decision) }, early)
+        assertNotNull(answer)
+        assertEquals(200, answer!!.status)
+        assertEquals("<p>ua</p>", answer.data.bufferedReader().readText())
+        // The rule's UA went out in place of WebView's; the rest of the request rode along, the jar too.
+        assertEquals("Zenium-UA-Test/1.0", fetcher.headers!!["User-Agent"])
+        assertEquals(1, fetcher.headers!!.keys.count { it.equals("User-Agent", ignoreCase = true) })
+        assertEquals("text/html", fetcher.headers!!["Accept"])
+        assertEquals("app.zen.chromium", fetcher.headers!!["X-Requested-With"])
+        assertEquals("session=abc", fetcher.headers!!["Cookie"])
+        assertFalse(fetcher.headers!!.containsKey("Accept-Encoding"))
+        // The header stage's decision names the same rule: nothing reported twice (contract 5.5).
+        assertTrue(heard.isEmpty())
+    }
+
+    @Test
+    fun theRelayAppliesEveryKindOfRequestEditAndKeepsTheConnectionsHeaders() {
+        val edits = set(
+            "ext:a:_dynamic", 2999,
+            """[{"id":1,"action":{"type":"modifyHeaders","requestHeaders":[
+                    {"header":"user-agent","operation":"set","value":"Zenium-UA-Test/1.0"},
+                    {"header":"Accept-Language","operation":"append","value":"fr"},
+                    {"header":"X-Requested-With","operation":"remove"},
+                    {"header":"X-Client","operation":"append","value":"zenium"},
+                    {"header":"Accept-Encoding","operation":"set","value":"br"},
+                    {"header":"Host","operation":"set","value":"evil.example"},
+                    {"header":"Cookie","operation":"set","value":"forged=1"}]},
+                "condition":{"resourceTypes":["main_frame"]}}]"""
+        )
+        val snap = EngineSnapshot(listOf(edits), null)
+        val req = navigation("https://whatsmyua.example/")
+        val early = snap.decide(req)
+        assertEquals(7, early.requestHeaderEdits.size)
+        val webViewHeaders = mapOf("User-Agent" to "WebView", "Accept-Language" to "en-US,en", "X-Requested-With" to "app.zen.chromium", "Accept-Encoding" to "gzip")
+        // With cookies: the jar is attached first, so the rule's `set` of Cookie replaces it (the
+        // desktop's onBeforeSendHeaders sees the cookies Chromium attached); the connection's
+        // framing headers stay the connection's whatever a rule wrote.
+        val fetcher = FakeFetcher(response(200, "Content-Type" to "text/html"))
+        assertNotNull(HeaderStage(FakeCookies().apply { jar = "session=abc" }, fetcher).relay(snap, FakeTab(), req, webViewHeaders, null, early))
+        val sent = fetcher.headers!!
+        assertEquals("Zenium-UA-Test/1.0", sent["user-agent"])
+        assertFalse(sent.containsKey("User-Agent"))
+        assertEquals("en-US,en, fr", sent["Accept-Language"])
+        assertFalse(sent.containsKey("X-Requested-With"))
+        assertEquals("zenium", sent["X-Client"])
+        assertEquals("forged=1", sent["Cookie"])
+        assertFalse(sent.keys.any { it.equals("Accept-Encoding", ignoreCase = true) })
+        assertFalse(sent.keys.any { it.equals("Host", ignoreCase = true) })
+        // Cookies withheld by the cookie policy: the policy's strip stays above the rules.
+        val withheld = FakeFetcher(response(200, "Content-Type" to "text/html"))
+        assertNotNull(HeaderStage(FakeCookies().apply { jar = "session=abc" }, withheld).relay(snap, FakeTab(), req, webViewHeaders, null, early, withCookies = false))
+        assertFalse(withheld.headers!!.keys.any { it.equals("Cookie", ignoreCase = true) })
+        assertEquals("Zenium-UA-Test/1.0", withheld.headers!!["user-agent"])
+        // A cross-site frame goes without the jar; a rule's Cookie is its own doing, as on the desktop.
+        val frame = Request("https://whatsmyua.example/frame", ResourceType.SUB_FRAME, "https://news.example/", thirdParty = true, partition = "default")
+        val frameSnap = EngineSnapshot(listOf(set("ext:a:_dynamic", 2999, """[{"id":1,"action":{"type":"modifyHeaders","requestHeaders":[{"header":"X-Frame-Mark","operation":"set","value":"1"}]},"condition":{"resourceTypes":["sub_frame"]}}]""")), null)
+        val frameFetcher = FakeFetcher(response(200, "Content-Type" to "text/html"))
+        assertNotNull(HeaderStage(FakeCookies().apply { jar = "session=abc" }, frameFetcher).relay(frameSnap, FakeTab(), frame, emptyMap(), null, frameSnap.decide(frame)))
+        assertEquals("1", frameFetcher.headers!!["X-Frame-Mark"])
+        assertFalse(frameFetcher.headers!!.containsKey("Cookie"))
+    }
+
+    @Test
+    fun theRelayAppliesTheResponseEditsBeforeServing() {
+        // A frame-busting document made embeddable, a header set and one appended; the request
+        // stage's response edits and a header-conditioned rule's stack together at the header stage.
+        val edits = set(
+            "ext:a:_dynamic", 2999,
+            """[{"id":1,"priority":2,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"X-Frame-Options","operation":"remove"},{"header":"X-Edited","operation":"set","value":"yes"}]},"condition":{"urlFilter":"||embed.example^","resourceTypes":["main_frame","sub_frame"]}},
+                {"id":2,"priority":1,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"Content-Security-Policy","operation":"append","value":"frame-ancestors *"}]},"condition":{"urlFilter":"||embed.example^","responseHeaders":[{"header":"content-security-policy"}]}}]"""
+        )
+        val snap = EngineSnapshot(listOf(edits), null)
+        val req = navigation("https://embed.example/")
+        val early = snap.decide(req)
+        assertEquals(Decision.Action.MODIFY_HEADERS, early.action)
+        assertTrue(early.needsHeaders)
+        val fetcher = FakeFetcher(response(200, "Content-Type" to "text/html; charset=utf-8", "X-Frame-Options" to "DENY", "Content-Security-Policy" to "default-src 'self'", "X-Kept" to "1", body = "<p>framed</p>"))
+        val heard = ArrayList<Decision>()
+        val answer = HeaderStage(FakeCookies(), fetcher).relay(snap, FakeTab(), req, emptyMap(), { _, _, decision, _, _ -> heard.add(decision) }, early)!!
+        assertEquals(200, answer.status)
+        assertEquals("text/html", answer.mime)
+        assertFalse(answer.headers.keys.any { it.equals("X-Frame-Options", ignoreCase = true) })
+        assertEquals("yes", answer.headers["X-Edited"])
+        assertEquals("default-src 'self', frame-ancestors *", answer.headers["Content-Security-Policy"])
+        assertEquals("1", answer.headers["X-Kept"])
+        assertEquals("<p>framed</p>", answer.data.bufferedReader().readText())
+        // The header-conditioned rule stacked behind the request stage's match: the same match, not reported again.
+        assertTrue(heard.isEmpty())
+        // A `Content-Type` a rule sets is what the served response is typed as.
+        val retyped = set("ext:a:_dynamic", 2999, """[{"id":1,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"Content-Type","operation":"set","value":"text/plain; charset=iso-8859-1"}]},"condition":{"resourceTypes":["main_frame"]}}]""")
+        val retypedSnap = EngineSnapshot(listOf(retyped), null)
+        val plain = HeaderStage(FakeCookies(), FakeFetcher(response(200, "Content-Type" to "text/html"))).relay(retypedSnap, FakeTab(), req, emptyMap(), null, retypedSnap.decide(req))!!
+        assertEquals("text/plain", plain.mime)
+        assertEquals("iso-8859-1", plain.encoding)
+    }
+
+    @Test
+    fun theRelayStoresTheCookiesTheRulesLeaveAndNoneWhenWithheld() {
+        val edits = set(
+            "ext:a:_dynamic", 2999,
+            """[{"id":1,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"Set-Cookie","operation":"append","value":"added=1; Path=/"},{"header":"X-Frame-Options","operation":"remove"}]},"condition":{"resourceTypes":["main_frame"]}}]"""
+        )
+        val snap = EngineSnapshot(listOf(edits), null)
+        val req = navigation("https://embed.example/")
+        val early = snap.decide(req)
+        // First party with cookies: the response's cookies as the rules left them reach the jar
+        // (the desktop's Chromium reads the edited Set-Cookie); none is served (WebView drops them).
+        val store = FakeCookies().apply { jar = "session=abc" }
+        val answer = HeaderStage(store, FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "seen=1; Path=/", "X-Frame-Options" to "DENY"))).relay(snap, FakeTab(), req, emptyMap(), null, early)!!
+        assertEquals(listOf(Triple("default", req.url, listOf("seen=1; Path=/", "added=1; Path=/"))), store.stored)
+        assertFalse(answer.headers.keys.any { it.equals("Set-Cookie", ignoreCase = true) })
+        // A rule that removes Set-Cookie: nothing stored.
+        val stripping = set("ext:a:_dynamic", 2999, """[{"id":1,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"set-cookie","operation":"remove"}]},"condition":{"resourceTypes":["main_frame"]}}]""")
+        val strippingSnap = EngineSnapshot(listOf(stripping), null)
+        val stripped = FakeCookies()
+        assertNotNull(HeaderStage(stripped, FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "seen=1"))).relay(strippingSnap, FakeTab(), req, emptyMap(), null, strippingSnap.decide(req)))
+        assertTrue(stripped.stored.isEmpty())
+        // Cookies withheld: the policy's strip stays above the rules – a cookie a rule adds is not stored either.
+        val withheld = FakeCookies()
+        assertNotNull(HeaderStage(withheld, FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "seen=1"))).relay(snap, FakeTab(), req, emptyMap(), null, early, withCookies = false))
+        assertTrue(withheld.stored.isEmpty())
+    }
+
+    @Test
+    fun theRelayReportsAModifyHeadersDecisionAsTheDesktopDoes() {
+        // A request-stage allow the header stage turns into edits: another match, reported once;
+        // a header-conditioned block above the edits: reported as the block.
+        val rules = set(
+            "ext:a:_dynamic", 2999,
+            """[{"id":1,"priority":1,"action":{"type":"allow"},"condition":{"urlFilter":"||hdr.example^"}},
+                {"id":2,"priority":2,"action":{"type":"modifyHeaders","responseHeaders":[{"header":"X-Frame-Options","operation":"remove"}]},"condition":{"urlFilter":"||hdr.example^","responseHeaders":[{"header":"x-frame-options"}]}},
+                {"id":3,"priority":3,"action":{"type":"block"},"condition":{"urlFilter":"||hdr.example^","responseHeaders":[{"header":"x-ads"}]}}]"""
+        )
+        val snap = EngineSnapshot(listOf(rules), null)
+        val req = navigation("https://hdr.example/")
+        val early = snap.decide(req)
+        assertEquals(Decision.Action.ALLOW, early.action)
+        assertEquals(1, early.matchedRule)
+        assertTrue(early.needsHeaders)
+        val heard = ArrayList<Decision>()
+        val observer = DecisionObserver { _, _, decision, _, _ -> heard.add(decision) }
+        val edited = HeaderStage(FakeCookies(), FakeFetcher(response(200, "Content-Type" to "text/html", "X-Frame-Options" to "SAMEORIGIN"))).relay(snap, FakeTab(), req, emptyMap(), observer, early)!!
+        assertEquals(200, edited.status)
+        assertFalse(edited.headers.containsKey("X-Frame-Options"))
+        assertEquals(listOf(Decision.Action.MODIFY_HEADERS), heard.map { it.action })
+        assertEquals(2, heard[0].matchedRule)
+        heard.clear()
+        val tab = FakeTab()
+        assertEquals(204, HeaderStage(FakeCookies(), FakeFetcher(response(200, "Content-Type" to "text/html", "X-Frame-Options" to "DENY", "X-Ads" to "1"))).relay(snap, tab, req, emptyMap(), observer, early)!!.status)
+        assertEquals(listOf(Decision.Action.BLOCK), heard.map { it.action })
+        assertEquals(listOf("https://hdr.example/"), tab.documentsBlocked)
+        // A response without either header: the request stage's allow again, nothing reported.
+        heard.clear()
+        assertNotNull(HeaderStage(FakeCookies(), FakeFetcher(response(200, "Content-Type" to "text/html"))).relay(snap, FakeTab(), req, emptyMap(), observer, early))
+        assertTrue(heard.isEmpty())
+    }
+
+    @Test
+    fun theRelayDeclinesWhatItCannotCarryEditsIncluded() {
+        val snap = EngineSnapshot(listOf(uaSwitcher), null)
+        val tab = FakeTab()
+        val post = Request("https://whatsmyua.example/", ResourceType.MAIN_FRAME, null, "POST", tabId = "tab-1", partition = "default")
+        val early = snap.decide(post)
+        assertEquals(Decision.Action.MODIFY_HEADERS, early.action)
+        // A POSTed document is not relayed: WebView loads it, the edits unapplied (recorded limit).
+        assertNull(HeaderStage(FakeCookies(), FakeFetcher(response(200))).relay(snap, tab, post, emptyMap(), null, early))
+        // A fetch that fails hands the request back, edits unapplied.
+        assertNull(HeaderStage(FakeCookies(), FakeFetcher(null)).relay(snap, tab, navigation("https://whatsmyua.example/"), emptyMap(), null, snap.decide(navigation("https://whatsmyua.example/"))))
+        // The origin's redirect is mirrored as for any relayed document; the hop's edits are decided afresh.
+        val moved = HeaderStage(FakeCookies(), FakeFetcher(response(302, "Location" to "https://whatsmyua.example/home")))
+        val tab2 = FakeTab()
+        assertEquals(204, moved.relay(snap, tab2, navigation("https://whatsmyua.example/"), emptyMap(), null, snap.decide(navigation("https://whatsmyua.example/")))!!.status)
+        assertEquals(listOf("https://whatsmyua.example/home"), tab2.redirects)
     }
 }

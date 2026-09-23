@@ -760,3 +760,36 @@ describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () =
     scrolled.mockRestore()
   })
 })
+
+describe('a section asked for one of its rows (zen://settings/<section>?row=<id>)', () => {
+  /** A phone that syncs (`ANDROID` has no sync engine; the row asked for is Sync's). */
+  const SYNCING_PHONE: HostCapabilities = { ...ANDROID, sync: true }
+
+  it("opens Sync with the row's group on screen: the History page's Open sync settings row lands on the Open tabs switch", () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    const el = mountPage(
+      state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=sync-scope%3AopenTabs')
+    )
+    const row = el.querySelector('[data-row="sync-scope:openTabs"]')!
+    expect(row.textContent).toContain('Open tabs')
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    const target = scrolled.mock.instances[0] as Element
+    expect(target).toBe(row.closest('[data-group]'))
+    expect(target.getAttribute('data-group')).toBe('sync-scope')
+    expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
+    scrolled.mockRestore()
+  })
+
+  it('a row the section does not have, or an id that is not one, opens the section at the top', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    mountPage(state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=no-such-row'))
+    expect(scrolled).not.toHaveBeenCalled()
+    act(() => root!.unmount())
+    root = null
+    mountPage(state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=%22%5D%2C%20*'))
+    expect(scrolled).not.toHaveBeenCalled()
+    scrolled.mockRestore()
+  })
+})

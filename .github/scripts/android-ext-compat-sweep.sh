@@ -82,8 +82,10 @@ monitor_pid=$!
 ) &
 memory_pid=$!
 
-# The fixture pages, served from the runner; the emulator's host loopback is 10.0.2.2.
-python3 -m http.server 8765 --bind 0.0.0.0 --directory "$pages" > "$out/http-server.txt" 2>&1 &
+# The fixture pages, served from the runner; the emulator's host loopback is 10.0.2.2. The
+# server is http.server plus `/echo-headers` (the request headers as the server received them)
+# and the HLS media types (ext-fixture-server.py).
+python3 .github/scripts/ext-fixture-server.py 8765 "$pages" > "$out/http-server.txt" 2>&1 &
 http_pid=$!
 
 # The same 411 CSS px wide layout a Pixel 6 gets, at fewer pixels.

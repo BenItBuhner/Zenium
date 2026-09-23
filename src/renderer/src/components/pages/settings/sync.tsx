@@ -9,7 +9,13 @@ import {
   remoteTabsSummary,
   remoteTabsWanted
 } from '@renderer/lib/remoteTabs'
-import { SYNC_COPY, SYNC_SCOPES, syncSetupStore, syncStatusLine } from '@renderer/lib/syncSetup'
+import {
+  SYNC_COPY,
+  SYNC_SCOPES,
+  syncScopeRowId,
+  syncSetupStore,
+  syncStatusLine
+} from '@renderer/lib/syncSetup'
 import { relativeTime } from '@renderer/lib/utils'
 import { FaviconGlyph } from './blocks'
 import type { RowGroup, SettingsRow } from './model'
@@ -343,7 +349,7 @@ function scopeGroup(sync: SyncStatus): RowGroup {
     heading: SYNC_COPY.scope,
     rows: SYNC_SCOPES.map(({ key, label, hint }) => ({
       kind: 'switch',
-      id: `sync-scope:${key}`,
+      id: syncScopeRowId(key),
       label,
       description: hint,
       keywords: ['sync', 'data type'],

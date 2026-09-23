@@ -1,0 +1,69 @@
+name: Android declarativeNetRequest modifyHeaders demo
+
+# Proves `declarativeNetRequest` `modifyHeaders` rules on the phone (ModifyHeadersDemo): a
+# fixture rule set shaped like User-Agent Switcher's session rule is seeded into the profile, a
+# loopback fixture server records what every request carried, and the driver shows a document
+# navigation going out with the User-Agent the rule sets (the header-stage relay's edit), an allow
+# of higher priority capping the edits, a response's content-type set by a rule, and the recorded
+# limits (a subresource is not edited; navigator.userAgent is unchanged). Two jobs, as the
+# extension compatibility sweep has: the API 34 image's own System WebView (Chromium 113) and a
+# Chromium snapshot WebView swapped onto an AOSP image. Dispatch-only, like the other demos: it
+# takes about ten minutes per job and says nothing about a change being correct. The build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the
+# driver and the images it runs on.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-dnr-modify-headers-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  system-webview:
+    name: System WebView (API 34 image, Chromium 113)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ModifyHeadersDemo
+        DEMO_DIR=modify-headers-demo
+        DEMO_OUT=artifacts/android-dnr-modify-headers-demo
+        DEMO_VIDEO=services-dnr-modify-headers-android-demo.mp4
+      artifact-name: android-dnr-modify-headers-demo
+      artifact-path: artifacts/android-dnr-modify-headers-demo/
+
+  # The same proof on a Chromium snapshot SystemWebView.apk swapped onto an AOSP image (see
+  # android-webview-swap.sh), the sweep's second job: the WebView the compat rows' "156" names.
+  modern-webview:
+    name: Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ModifyHeadersDemo
+        DEMO_DIR=modify-headers-demo
+        DEMO_OUT=artifacts/android-dnr-modify-headers-demo
+        DEMO_VIDEO=services-dnr-modify-headers-android-demo-modern-webview.mp4
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      artifact-name: android-dnr-modify-headers-demo-modern-webview
+      artifact-path: artifacts/android-dnr-modify-headers-demo/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview

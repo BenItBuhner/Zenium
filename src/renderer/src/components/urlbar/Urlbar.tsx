@@ -39,7 +39,11 @@ import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorp
 import { focusBackPulled, focusTakesCommit } from '@renderer/lib/omniboxFocus'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
-import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
+import {
+  URLBAR_KEYBOARD_EVENT,
+  URLBAR_LEAVE_EVENT,
+  toolbarControlBesideAddress
+} from '@renderer/lib/panes'
 import { startQrScan } from '@renderer/lib/qrScan'
 import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
@@ -549,6 +553,24 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     document.addEventListener('pointerdown', onPress, true)
     return () => document.removeEventListener('pointerdown', onPress, true)
   }, [urlbar.pane, close])
+
+  // A page's view took the keyboard while the bar is up (lib/panes.ts `pageTookKeyboard`): the
+  // new tab's own page as it is shown, racing the bar's mount – on a slow machine after the
+  // field's focus, which left the bar with no caret. The chrome's keyboard is asked back and
+  // the field focused, so the caret is there whichever came first; the keyboard already on
+  // another control of the bar (a row's X, reached with Tab) is left there. The phone's host
+  // never reports a page taking the keyboard (its page view is the system's).
+  useEffect(() => {
+    const onKeyboard = (): void => {
+      run('focus.chrome', undefined)
+      const el = inputRef.current
+      const active = document.activeElement
+      if (!el || (active !== document.body && panelRef.current?.contains(active))) return
+      el.focus()
+    }
+    window.addEventListener(URLBAR_KEYBOARD_EVENT, onKeyboard)
+    return () => window.removeEventListener(URLBAR_KEYBOARD_EVENT, onKeyboard)
+  }, [])
   const sheetRef = useRef<HTMLDivElement>(null)
   const fieldRef = useRef<HTMLDivElement>(null)
   useBackDismissal('urlbar', {
@@ -1373,8 +1395,15 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           className="zen-omnibox-input-row flex shrink-0 items-center"
           data-drop-into={dropInto || undefined}
         >
-          {/* The engine's glyph replaces the default's in keyword mode (omnibox-08). */}
-          <span className="zen-omnibox-engine" title={`Search engine: ${engine.name}`}>
+          {/* The engine's glyph replaces the default's in keyword mode (omnibox-08). The letter
+            is a mark for the engine, not a word: an image named for it (a11y-02), as the phone
+            field's tile is (EngineFieldGlyph). */}
+          <span
+            className="zen-omnibox-engine"
+            role="img"
+            aria-label={`Search engine: ${engine.name}`}
+            title={`Search engine: ${engine.name}`}
+          >
             {engine.glyph}
           </span>
           {chipLabel &&

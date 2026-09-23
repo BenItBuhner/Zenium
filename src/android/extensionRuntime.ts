@@ -7,7 +7,11 @@ import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import type { EngineContextKind } from '@core/extensions/api/engine'
 import type { EventDelivery } from '@core/extensions/api/shim'
-import { localeCandidates, type LocaleMessages } from '@core/extensions/api/i18n'
+import {
+  cssSubstitutionMap,
+  localeCandidates,
+  type LocaleMessages
+} from '@core/extensions/api/i18n'
 import {
   matchesAnyUrlFilter,
   normalizeEventFilters,
@@ -100,6 +104,7 @@ import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { webViewProxyOverride } from './extensionProxy'
+import type { RawCpuReading, RawMemoryReading } from '@core/extensions/api/systemInfo'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
 import type { ViewEventPayloads } from './views'
 
@@ -146,6 +151,12 @@ import type { ViewEventPayloads } from './views'
 export interface RuntimeBridge {
   call<T = void>(method: string, args?: unknown): Promise<T>
   send(method: string, args?: unknown): void
+  /**
+   * One way, nothing answered (`Bridge.post`): for what the runtime sends often and never waits
+   * for. A `send` is a call whose answer is one more `evaluateJavascript` on the chrome per
+   * message; a bridge without `post` gets a `send`.
+   */
+  post?(method: string, args?: unknown): void
 }
 
 interface RuntimeEnv {
@@ -237,7 +248,14 @@ interface RequestDetails {
 /** The single window of the phone, as `tabs`/`windows` number it. */
 const WINDOW_ID = 1
 
-const ENGINE_ACTIONS: readonly EngineDecisionAction[] = ['allow', 'block', 'redirect', 'upgrade']
+/** The Kotlin engine's decision actions (`Decision.Action` in `Rules.kt`, as `Extensions.onDecision` names them). */
+const ENGINE_ACTIONS: readonly EngineDecisionAction[] = [
+  'allow',
+  'block',
+  'redirect',
+  'upgrade',
+  'modifyHeaders'
+]
 
 /** Runtime state that outlives the session (`extensions-runtime.json`). */
 interface RuntimeData {
@@ -949,7 +967,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         groups: unit.groups,
         css: unit.css
       })),
-      served: { ...units.served, late: JSON.stringify(late) },
+      served: {
+        ...units.served,
+        late: JSON.stringify(late),
+        // Kotlin localizes what it serves as `text/css` from this map, as Chrome's renderer does
+        // for every `chrome-extension://` stylesheet response (a `<link>`, an `@import`, a
+        // fetch): `url(chrome-extension://__MSG_@@extension_id__/...)` in a sheet an extension
+        // page or a content script links, not only in a CSS content script.
+        cssMessages: cssSubstitutionMap(id, env.uiLanguage, ext.messages)
+      },
       debug: this.debug
     })
     ext.units = units
@@ -1254,6 +1280,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       return bytes === null ? null : new TextDecoder().decode(bytes)
     }
     return this.bridge.call<string | null>('ext.readFile', { id, path: relative })
+  }
+
+  cpu(): Promise<RawCpuReading> {
+    return this.bridge.call<RawCpuReading>('ext.system.cpu')
+  }
+
+  memory(): Promise<RawMemoryReading> {
+    return this.bridge.call<RawMemoryReading>('ext.system.memory')
   }
 
   async detectTextLanguage(text: string): Promise<DetectedLanguage> {
@@ -1617,15 +1651,20 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    * message carries the endpoint id; the bootstrap routes on it.
    */
   private sendTo(endpointId: string, message: Record<string, unknown>): void {
-    this.bridge.send('ext.send', {
-      ep: endpointId,
-      message: JSON.stringify({ ...message, ep: endpointId })
-    })
+    const args = { ep: endpointId, message: JSON.stringify({ ...message, ep: endpointId }) }
+    // Kotlin answers `ext.send` with nothing (a dead frame comes back as `ext.gone`): one way,
+    // so a port's state broadcast at several messages a second costs the chrome no `resolve`
+    // task per message.
+    if (this.bridge.post) this.bridge.post('ext.send', args)
+    else this.bridge.send('ext.send', args)
   }
 
   /** A bridge message from a content-script frame or an extension page. */
   onMessage(event: ExtMessageEvent): void {
     const { message, ep } = event
+    // Kotlin forwards the frame's text as written, the bridge token still in it; nothing past
+    // this point is to see the token.
+    delete message.token
     const type = String(message.t)
     if (type === 'hello') {
       this.onHello(event)
