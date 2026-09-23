@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ARMED_GROWTH,
   bubbleOffset,
   HistoryNavMachine,
-  NAV_BUBBLE_EXTENT,
+  NAV_BAND_EXTENT,
   NAV_DRAG_DISTANCE,
   NAV_STEP_CLAMP,
   NAV_THRESHOLD,
@@ -12,26 +13,32 @@ import {
   type HistoryNavFrame,
   type HistoryNavState
 } from '../historyNav'
+import { rubberBand } from '../gestures/swipe'
 
-describe('history navigation mapping (Chrome SideSlideLayout)', () => {
-  it("pins Chrome's figures: 32 dp drag distance, three of them to navigate, two for the bubble", () => {
+describe('history navigation mapping (Chrome SideSlideLayout; v2 §11.3 input rule)', () => {
+  it("pins Chrome's figures: 32 dp drag distance, three of them to navigate, a third per sample", () => {
     expect(NAV_DRAG_DISTANCE).toBe(32)
     expect(NAV_THRESHOLD).toBe(96)
-    expect(NAV_BUBBLE_EXTENT).toBe(64)
+    expect(NAV_BAND_EXTENT).toBe(32)
     expect(NAV_STEP_CLAMP).toBeCloseTo(32 / 3, 9)
+    expect(ARMED_GROWTH).toBe(0.15)
   })
 
-  it('follows the finger one to one for the first drag distance, then with tension to the extent', () => {
+  it('rides the finger one to one up to the threshold, then rubber-bands the excess', () => {
     expect(bubbleOffset(0)).toBe(0)
     expect(bubbleOffset(-20)).toBe(0)
     expect(bubbleOffset(16)).toBe(16)
     expect(bubbleOffset(NAV_DRAG_DISTANCE)).toBe(NAV_DRAG_DISTANCE)
-    // Chrome's slingshot: 64 dp of motion put the bubble at 32 + 32 × 0.375 × 2 = 56.
-    expect(bubbleOffset(64)).toBeCloseTo(56, 9)
-    // …and the threshold is exactly where it comes to rest at the extent.
-    expect(bubbleOffset(NAV_THRESHOLD)).toBeCloseTo(NAV_BUBBLE_EXTENT, 9)
-    expect(bubbleOffset(NAV_THRESHOLD * 3)).toBeCloseTo(NAV_BUBBLE_EXTENT, 9)
-    for (let m = 0; m < NAV_THRESHOLD; m += 4)
+    expect(bubbleOffset(64)).toBe(64)
+    expect(bubbleOffset(NAV_THRESHOLD)).toBe(NAV_THRESHOLD)
+    // Past it: the app's shared band over one drag distance, never a drag distance further in.
+    expect(bubbleOffset(NAV_THRESHOLD + 24)).toBeCloseTo(
+      NAV_THRESHOLD + rubberBand(24, NAV_BAND_EXTENT),
+      9
+    )
+    expect(bubbleOffset(NAV_THRESHOLD + 24)).toBeLessThan(NAV_THRESHOLD + 24)
+    expect(bubbleOffset(NAV_THRESHOLD * 30)).toBeLessThan(NAV_THRESHOLD + NAV_BAND_EXTENT)
+    for (let m = 0; m < NAV_THRESHOLD * 2; m += 4)
       expect(bubbleOffset(m + 4)).toBeGreaterThan(bubbleOffset(m))
   })
 
@@ -127,18 +134,20 @@ describe('HistoryNavMachine', () => {
     vi.useRealTimers()
   })
 
-  it('paints the bubble along the slingshot while the finger is down and arms past the threshold', () => {
+  it('paints the bubble under the finger while it is down and arms past the threshold', () => {
     const h = harness()
     h.machine.dispatch('t1', 'start', { edge: 'left' })
     expect(h.machine.state).toEqual({ tabId: 't1', edge: 'left', phase: 'dragging', armed: false })
-    expect(h.frames).toEqual([{ offset: 0, hide: 0 }])
+    expect(h.frames).toEqual([{ offset: 0, hide: 0, grow: 0 }])
     now += 16
     h.machine.dispatch('t1', 'move', { travel: 10, time: now })
     expect(h.machine.current.offset).toBe(10)
     expect(h.machine.state.armed).toBe(false)
+    // Nothing is on a spring while the finger rides short of the threshold.
+    expect(queued).toHaveLength(0)
     drag(h, 120, 12)
     // 120 px over 12 samples of 10 px: every step under the clamp, the motion is the travel.
-    expect(h.machine.current.offset).toBeCloseTo(NAV_BUBBLE_EXTENT, 9)
+    expect(h.machine.current.offset).toBeCloseTo(bubbleOffset(120), 9)
     expect(h.machine.state.armed).toBe(true)
     // Arming is a state change (the chrome ticks on it) – reported exactly once on the way out.
     expect(h.states.filter((s) => s.armed)).toHaveLength(1)
@@ -149,6 +158,32 @@ describe('HistoryNavMachine', () => {
     }
     expect(h.machine.current.offset).toBeCloseTo(bubbleOffset(90), 9)
     expect(h.machine.state.armed).toBe(false)
+  })
+
+  it('arming grows the disc on the spring and disarming shrinks it back; the ride stays input', () => {
+    const h = harness()
+    drag(h, 100, 10)
+    expect(h.machine.state.armed).toBe(true)
+    expect(h.machine.current.grow).toBe(0)
+    expect(queued).toHaveLength(1)
+    // The finger holds still: the growth runs to 1 on its own frames, monotonically.
+    settle()
+    const growing = h.frames.filter((f) => f.grow > 0)
+    expect(growing.length).toBeGreaterThan(3)
+    for (let i = 1; i < growing.length; i++)
+      expect(growing[i].grow).toBeGreaterThanOrEqual(growing[i - 1].grow - 1e-9)
+    expect(h.machine.current.grow).toBeCloseTo(1, 2)
+    // The offset never moved with the growth: the ride is the finger's alone.
+    for (const f of growing) expect(f.offset).toBeCloseTo(bubbleOffset(100), 9)
+    // Back under the threshold: the disc shrinks again, from where the growth was.
+    for (const travel of [90, 80]) {
+      now += 16
+      h.machine.dispatch('t1', 'move', { travel, time: now })
+    }
+    expect(h.machine.state.armed).toBe(false)
+    settle()
+    expect(h.machine.current.grow).toBeCloseTo(0, 2)
+    expect(h.machine.state.phase).toBe('dragging')
   })
 
   it('a fast swipe needs several samples before it arms', () => {
@@ -169,7 +204,7 @@ describe('HistoryNavMachine', () => {
     settle()
     expect(h.navigated).toEqual([])
     expect(h.machine.state).toEqual({ tabId: null, edge: 'left', phase: 'idle', armed: false })
-    expect(h.frames[h.frames.length - 1]).toEqual({ offset: 0, hide: 0 })
+    expect(h.frames[h.frames.length - 1]).toEqual({ offset: 0, hide: 0, grow: 0 })
     // The return never overshoots out past the side, and never hides the disc on the way.
     for (const f of h.frames) {
       expect(f.offset).toBeGreaterThanOrEqual(0)
@@ -181,18 +216,36 @@ describe('HistoryNavMachine', () => {
     const h = harness()
     drag(h, 120)
     expect(h.machine.state.armed).toBe(true)
+    settle()
+    expect(h.machine.current.grow).toBeCloseTo(1, 2)
     h.machine.dispatch('t1', 'release', { time: now })
     expect(h.navigated).toEqual([['t1', 'left']])
     expect(h.machine.state.phase).toBe('navigating')
     const standing = h.machine.current.offset
     settle()
     expect(h.machine.state.phase).toBe('idle')
-    // The disc stayed where the finger left it while `hide` ran to 1.
+    // The disc stayed where the finger left it, grown, while `hide` ran to 1.
     const hiding = h.frames.filter((f) => f.hide > 0 && f.hide < 1)
     expect(hiding.length).toBeGreaterThan(2)
-    for (const f of hiding) expect(f.offset).toBeCloseTo(standing, 9)
+    for (const f of hiding) {
+      expect(f.offset).toBeCloseTo(standing, 9)
+      expect(f.grow).toBeCloseTo(1, 2)
+    }
     for (let i = 1; i < hiding.length; i++)
       expect(hiding[i].hide).toBeGreaterThanOrEqual(hiding[i - 1].hide)
+  })
+
+  it('a cancel while armed runs the growth back with the return', () => {
+    const h = harness()
+    drag(h, 120)
+    settle()
+    expect(h.machine.current.grow).toBeCloseTo(1, 2)
+    h.machine.dispatch('t1', 'cancel', { time: now })
+    expect(h.machine.state.armed).toBe(false)
+    settle()
+    expect(h.navigated).toEqual([])
+    expect(h.machine.state.phase).toBe('idle')
+    expect(h.frames[h.frames.length - 1]).toEqual({ offset: 0, hide: 0, grow: 0 })
   })
 
   it('a drag from the right edge goes forward', () => {
@@ -228,22 +281,27 @@ describe('HistoryNavMachine', () => {
 
   it('abort takes the bubble down at once', () => {
     const h = harness()
-    drag(h, 60)
+    drag(h, 120)
+    expect(queued).toHaveLength(1)
     h.machine.abort()
     expect(h.machine.state).toEqual({ tabId: null, edge: 'left', phase: 'idle', armed: false })
-    expect(h.frames[h.frames.length - 1]).toEqual({ offset: 0, hide: 0 })
+    expect(h.frames[h.frames.length - 1]).toEqual({ offset: 0, hide: 0, grow: 0 })
     expect(queued).toHaveLength(0)
   })
 
-  it('under reduced motion the drag still tracks and the bubble leaves on a 120 ms fade', () => {
+  it('under reduced motion the drag still tracks, the growth jumps and the bubble leaves on a 120 ms fade', () => {
     const h = harness()
     h.reduced = true
     drag(h, 120)
-    expect(h.machine.current.offset).toBeCloseTo(NAV_BUBBLE_EXTENT, 9)
+    const standing = bubbleOffset(120)
+    expect(h.machine.current.offset).toBeCloseTo(standing, 9)
+    // The growth is a spring, so it jumps: no frame was asked for.
+    expect(h.machine.current.grow).toBe(1)
+    expect(queued).toHaveLength(0)
     h.machine.dispatch('t1', 'release', { time: now })
     expect(h.navigated).toEqual([['t1', 'left']])
     // One frame with the disc where it stands and `hide` at 1: the CSS fade does the rest.
-    expect(h.frames[h.frames.length - 1]).toEqual({ offset: NAV_BUBBLE_EXTENT, hide: 1 })
+    expect(h.frames[h.frames.length - 1]).toEqual({ offset: standing, hide: 1, grow: 1 })
     expect(h.machine.state.phase).toBe('navigating')
     expect(queued).toHaveLength(0)
     vi.advanceTimersByTime(119)
@@ -255,7 +313,7 @@ describe('HistoryNavMachine', () => {
     short.reduced = true
     drag(short, 30)
     short.machine.dispatch('t1', 'release', { time: now })
-    expect(short.frames[short.frames.length - 1]).toEqual({ offset: 30, hide: 1 })
+    expect(short.frames[short.frames.length - 1]).toEqual({ offset: 30, hide: 1, grow: 0 })
     vi.advanceTimersByTime(120)
     expect(short.machine.state.phase).toBe('idle')
     expect(short.navigated).toEqual([])

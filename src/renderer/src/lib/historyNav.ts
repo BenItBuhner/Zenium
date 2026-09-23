@@ -1,4 +1,5 @@
 import { run } from './api'
+import { rubberBand } from './gestures/swipe'
 import {
   reducedMotion,
   SPRING_GENTLE,
@@ -17,13 +18,19 @@ import { browserStore } from './ui'
  * The host owns the page WebView and its touches; in 3-button mode it recognises a drag in from
  * a side of a page that cannot scroll further that way (see `HistoryNavClassifier.kt`) and
  * streams it here as `start` (with the edge), `move` (with the finger's raw travel in CSS px,
- * positive into the page), then `release` or `cancel`. This module turns that travel into the
- * arrow bubble's position the way Chrome's `SideSlideLayout` does – the finger's motion taken
- * in steps of at most a third of the 32 dp drag distance, one to one for the first 32 dp, then a
- * slingshot that stops at 64 dp – arms at 96 dp of motion (Chrome's `THRESHOLD_MULTIPLIER` of 3)
- * with one haptic tick, and on a release past that goes back or forward while the bubble
- * shrinks away; a release short of it springs the bubble home. The bubble is drawn by
- * `HistoryNavBubble` off {@link onHistoryNavFrame}, on transform and opacity only.
+ * positive into the page), then `release` or `cancel`. While the finger is down the bubble is
+ * input, not animation (v2 §11.3): its leading edge rides the finger one to one up to the
+ * threshold – 96 dp of motion, Chrome's `THRESHOLD_MULTIPLIER` of 3 drag distances of 32 dp
+ * (`SideSlideLayout.java`), the motion taken in steps of at most a third of a drag distance as
+ * Chrome's `MIN_PULLS_TO_ACTIVATE` guards a fast fling from navigating by accident – and past
+ * the threshold the finger's excess is rubber-banded with the app's shared band, so a long pull
+ * never carries the disc into the page. Crossing the threshold is the landmark: one haptic tick
+ * (Chrome's `KEYBOARD_TAP`), the arrow's tint to the accent (Chrome's 250 ms), and the disc grows
+ * by {@link ARMED_GROWTH} on `SPRING_SNAPPY` – the one part of the drag on a spring; easing back
+ * below it shrinks the disc again. A release past the threshold goes back or forward while the
+ * bubble shrinks away where it stands (Chrome's hiding animation); a release short of it springs
+ * the bubble home. The bubble is drawn by `HistoryNavBubble` off {@link onHistoryNavFrame}, on
+ * transform and opacity only.
  */
 
 export type HistoryNavEdge = 'left' | 'right'
@@ -57,19 +64,27 @@ export interface HistoryNavFrame {
   offset: number
   /** 0 while the bubble is up; runs to 1 as it shrinks away after a navigation. */
   hide: number
+  /** The armed growth's progress, 0 (the disc at its size) to 1 (grown by {@link ARMED_GROWTH}). */
+  grow: number
 }
 
-/** Chrome's `RAW_SWIPE_LIMIT_DP`: the finger motion the bubble follows one to one, CSS px. */
+/** Chrome's `RAW_SWIPE_LIMIT_DP`: one drag distance, CSS px. */
 export const NAV_DRAG_DISTANCE = 32
 /** Chrome's `THRESHOLD_MULTIPLIER` of 3: the motion at which a release navigates. */
 export const NAV_THRESHOLD = NAV_DRAG_DISTANCE * 3
-/** The bubble's furthest reach in from the side: the slingshot ends here, at the threshold. */
-export const NAV_BUBBLE_EXTENT = NAV_DRAG_DISTANCE * 2
 /** Chrome's `MIN_PULLS_TO_ACTIVATE` of 3: no single touch sample moves the motion by more than this. */
 export const NAV_STEP_CLAMP = NAV_DRAG_DISTANCE / 3
 /**
- * The hide runs on the spring as a distance of this many px (the spring's rest thresholds are
- * in px, and a 0…1 value would rest at once); `hide` is the fraction of it covered.
+ * Past the threshold the finger's excess is rubber-banded over one drag distance: the disc's
+ * leading edge never comes further in than the threshold plus this.
+ */
+export const NAV_BAND_EXTENT = NAV_DRAG_DISTANCE
+/** How much the disc grows once letting go would navigate: `scale(1 + ARMED_GROWTH)`. */
+export const ARMED_GROWTH = 0.15
+/**
+ * The hide and the growth run on their springs as distances of this many px (the spring's rest
+ * thresholds are in px, and a 0…1 value would rest at once); `hide` and `grow` are the
+ * fractions of it covered.
  */
 const HIDE_RUN = 100
 
@@ -88,17 +103,14 @@ export function navMotion(motion: number, travel: number, lastTravel: number): n
 }
 
 /**
- * Where the bubble's leading edge stands for `motion` px of finger, Chrome's slingshot: one to
- * one up to {@link NAV_DRAG_DISTANCE}, then with tension over the next two drag distances to
- * come to rest at {@link NAV_BUBBLE_EXTENT} exactly where the motion reaches the threshold.
+ * Where the bubble's leading edge stands for `motion` px of finger: one to one up to
+ * {@link NAV_THRESHOLD} (input, v2 §11.3), then the excess rubber-banded over
+ * {@link NAV_BAND_EXTENT} so the disc slows and stops short of a drag distance past it.
  */
 export function bubbleOffset(motion: number): number {
   const overscroll = Math.max(0, motion)
-  const dragPercent = Math.min(1, overscroll / NAV_DRAG_DISTANCE)
-  const extra =
-    Math.max(0, Math.min(overscroll - NAV_DRAG_DISTANCE, NAV_DRAG_DISTANCE * 2)) / NAV_DRAG_DISTANCE
-  const tension = (extra / 4 - (extra / 4) ** 2) * 2
-  return NAV_DRAG_DISTANCE * dragPercent + NAV_DRAG_DISTANCE * tension * 2
+  if (overscroll <= NAV_THRESHOLD) return overscroll
+  return NAV_THRESHOLD + rubberBand(overscroll - NAV_THRESHOLD, NAV_BAND_EXTENT)
 }
 
 /** Whether letting go with `motion` px of finger navigates: Chrome's `willNavigate()`. */
@@ -130,7 +142,11 @@ export class HistoryNavMachine {
   private lastTravel = 0
   private offset = 0
   private hide = 0
+  private grow = 0
+  /** The release's motion: the return home, or the hide after a navigation. */
   private readonly spring: SpringAnimation
+  /** The armed growth, the one spring that runs while the finger is down. */
+  private readonly growth: SpringAnimation
   private timer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly options: HistoryNavMachineOptions) {
@@ -138,6 +154,12 @@ export class HistoryNavMachine {
       SPRING_GENTLE,
       (x) => this.step(x),
       (x) => this.rested(x)
+    )
+    this.growth = new SpringAnimation(
+      SPRING_SNAPPY,
+      (x) => this.grown(x),
+      // At rest the spring stands a hair off its target: land exactly on 0 or 1.
+      () => this.grown(this.growth.destination)
     )
   }
 
@@ -147,7 +169,7 @@ export class HistoryNavMachine {
 
   /** Where the bubble is right now. */
   get current(): HistoryNavFrame {
-    return { offset: this.offset, hide: this.hide }
+    return { offset: this.offset, hide: this.hide, grow: this.grow }
   }
 
   /** Host → machine. */
@@ -179,10 +201,12 @@ export class HistoryNavMachine {
   abort(): void {
     if (this.phase === 'idle') return
     this.spring.stop()
+    this.growth.stop()
     this.clearTimer()
     const tabId = this.tabId
     this.offset = 0
     this.hide = 0
+    this.grow = 0
     this.motion = 0
     if (tabId) this.options.paint(tabId, this.current)
     this.setPhase('idle', false)
@@ -199,6 +223,7 @@ export class HistoryNavMachine {
     this.lastTravel = 0
     this.offset = 0
     this.hide = 0
+    this.grow = 0
     this.setPhase('dragging', false)
     this.options.paint(tabId, this.current)
   }
@@ -207,8 +232,12 @@ export class HistoryNavMachine {
     this.motion = navMotion(this.motion, travel, this.lastTravel)
     this.lastTravel = travel
     this.offset = bubbleOffset(this.motion)
-    this.setPhase('dragging', releaseNavigates(this.motion))
+    const armed = releaseNavigates(this.motion)
+    const wasArmed = this.armed
+    this.setPhase('dragging', armed)
     if (this.tabId) this.options.paint(this.tabId, this.current)
+    // Crossing the threshold either way: the disc grows, or shrinks back, on its spring.
+    if (armed !== wasArmed) this.growTo(armed ? 1 : 0)
   }
 
   private release(): void {
@@ -221,14 +250,35 @@ export class HistoryNavMachine {
     if (!tabId) return
     this.setPhase('navigating', true)
     this.options.navigate(tabId, this.edge)
+    // The growth holds where it got to: the hide shrinks the disc from that size.
+    this.growth.stop()
     // Chrome hides the bubble where it stands, scale and alpha to nothing.
     this.animate(0, HIDE_RUN, SPRING_SNAPPY)
   }
 
   private retract(): void {
     this.setPhase('settling', false)
+    // A cancel can land while armed: the growth runs back with the return.
+    if (this.grow !== 0 || this.growth.running) this.growTo(0)
     // Chrome's return: the bubble runs back out over the side it came from.
     this.animate(this.offset, 0, SPRING_GENTLE)
+  }
+
+  /** Run the growth to 0 or 1 on `SPRING_SNAPPY` from wherever it is; under reduced motion it jumps. */
+  private growTo(target: number): void {
+    if (this.options.reduced?.() ?? reducedMotion()) {
+      this.growth.stop()
+      this.grown(target * HIDE_RUN)
+      return
+    }
+    const wasRunning = this.growth.running
+    const { v } = this.growth.stop()
+    this.growth.start(this.grow * HIDE_RUN, wasRunning ? v : 0, target * HIDE_RUN)
+  }
+
+  private grown(x: number): void {
+    this.grow = Math.min(1, Math.max(0, x / HIDE_RUN))
+    if (this.tabId) this.options.paint(this.tabId, this.current)
   }
 
   /** Run the phase's value from `from` to `to`: on the spring, or under reduced motion as a 120 ms fade. */
@@ -256,9 +306,12 @@ export class HistoryNavMachine {
   private rested(x: number): void {
     this.step(x)
     if (this.phase === 'settling' || this.phase === 'navigating') {
+      this.growth.stop()
       this.offset = 0
       this.hide = 0
+      this.grow = 0
       this.motion = 0
+      if (this.tabId) this.options.paint(this.tabId, this.current)
       this.setPhase('idle', false)
       this.tabId = null
     }
@@ -288,7 +341,7 @@ export const historyNavStore = createStore<HistoryNavState>(
 
 type FrameListener = (frame: HistoryNavFrame, state: HistoryNavState) => void
 const frameListeners = new Set<FrameListener>()
-let lastPainted: HistoryNavFrame = { offset: 0, hide: 0 }
+let lastPainted: HistoryNavFrame = { offset: 0, hide: 0, grow: 0 }
 
 /**
  * Per-frame value for the bubble (write DOM styles through refs; this runs every frame while

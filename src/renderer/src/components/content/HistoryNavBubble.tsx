@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
-import { historyNavStore, onHistoryNavFrame } from '@renderer/lib/historyNav'
+import { ARMED_GROWTH, historyNavStore, onHistoryNavFrame } from '@renderer/lib/historyNav'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 
 /** The disc's diameter, CSS px: Chrome's `navigation_bubble_size`. */
@@ -13,10 +13,10 @@ const FADE_IN = 16
  * Chrome's history navigation bubble (GN-04): a disc with an arrow that a drag in from a page's
  * side pulls out from beyond that side, vertically centred on the content frame as Chrome's
  * `SideSlideLayout` lays it. The host recognises the drag in 3-button navigation mode and the
- * machine in `lib/historyNav.ts` turns it into the bubble's offset; everything per frame goes
- * straight to the DOM through refs – transform and opacity, and the `data-armed` flag the
- * accent arrow's 250 ms tint reads – so a drag re-renders nothing. Idle it draws nothing at all,
- * so hosts without the gesture pay nothing for it.
+ * machine in `lib/historyNav.ts` turns it into the bubble's offset, its armed growth and its
+ * hide; everything per frame goes straight to the DOM through refs – transform and opacity, and
+ * the `data-armed` flag the accent arrow's 250 ms tint reads – so a drag re-renders nothing.
+ * Idle it draws nothing at all, so hosts without the gesture pay nothing for it.
  */
 export function HistoryNavBubble(): JSX.Element | null {
   const phase = historyNavStore.use((s) => s.phase)
@@ -26,13 +26,14 @@ export function HistoryNavBubble(): JSX.Element | null {
 
   useEffect(() => {
     if (!active) return
-    return onHistoryNavFrame(({ offset, hide }, state) => {
+    return onHistoryNavFrame(({ offset, hide, grow }, state) => {
       const disc = discRef.current
       if (!disc) return
       // The disc's far side sits on the page's edge at rest: its leading edge is `offset` in.
       const x = offset - BUBBLE
       const shown = 1 - hide
-      disc.style.transform = `translate3d(${state.edge === 'left' ? x : -x}px, -50%, 0) scale(${shown})`
+      const scale = (1 + ARMED_GROWTH * grow) * shown
+      disc.style.transform = `translate3d(${state.edge === 'left' ? x : -x}px, -50%, 0) scale(${scale})`
       disc.style.opacity = String(Math.min(1, offset / FADE_IN) * shown)
       if (state.armed) disc.dataset.armed = ''
       else delete disc.dataset.armed
