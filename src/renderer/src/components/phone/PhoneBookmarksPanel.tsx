@@ -191,7 +191,7 @@ export function PhoneBookmarksPanel({ state }: { state: UIState }): JSX.Element 
         ? 'Folder deleted'
         : 'Bookmark deleted'
       : `${doomed.length} deleted`
-    removeWithUndo(doomed, message, () => run('bookmark.remove', { ids: doomed }))
+    removeWithUndo(doomed, message, () => run('bookmark.remove', { ids: doomed, quiet: true }))
     exitSelection()
   }
 

@@ -186,6 +186,9 @@ if (process.isMainFrame) {
         listener({ type: 'webapp', action: message.action, outcome: message.outcome })
       ),
     installInstallPromptShim: (events) => inMainWorld(installInstallPromptShim, [events]),
+    // A page's OpenSearch description (`<link rel="search">`) makes it a "Recently visited"
+    // engine in Settings > Search (settings-42), as the Android host's pages do.
+    discoverSearchEngines: true,
     // Read aloud (CT-12 / CT-13): the extraction request and the highlight, in every document
     // (the `zen://reader` page included, which the same code paints).
     onReadAloud: (listener) => onHost('readAloud', listener)

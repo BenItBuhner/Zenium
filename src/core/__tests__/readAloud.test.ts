@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   EXTRACT_TIMEOUT_MS,
+  LATE_VOICES_RETRY_MS,
   READ_ALOUD_SOURCE_ACTIONS,
   READ_ALOUD_SOURCE_ID,
   ReadAloudService,
@@ -443,7 +444,9 @@ describe('ReadAloudService', () => {
         voiceId: null
       })
       expect(h.host.spoken).toHaveLength(0)
-      h.host.changeVoices([{ id: 'Late', name: 'Late', lang: 'en', local: true }])
+      // A voice installed without a word from the host (a `voicesChanged` would restart the
+      // session on its own, below): the picker's choice speaks with it.
+      h.host.voiceList = [{ id: 'Late', name: 'Late', lang: 'en', local: true }]
       h.service.setVoice({ voiceId: 'Late' })
       expect(h.service.uiState()).toMatchObject({
         status: 'playing',
@@ -561,6 +564,157 @@ describe('ReadAloudService', () => {
       expect(h.host.current).toMatchObject({
         text: 'Hello.',
         options: { voiceId: 'en-us-x-local' }
+      })
+    })
+
+    describe('a speech engine that binds late (the nightly’s cold bind, #344)', () => {
+      const ENGINE = [
+        { id: 'en-us-x-local', name: 'English (United States)', lang: 'en-US', local: true }
+      ]
+
+      /**
+       * Start on a two-sentence page with a host that lists nothing yet; the text is in, the voice
+       * awaited. The pending `start` comes back wrapped (an async function would await it).
+       */
+      async function startWithoutVoices(): Promise<{ started: Promise<void> }> {
+        h.host.voiceList = []
+        h.addTab('t1', PAGE)
+        const started = h.service.start({ tabId: 't1' })
+        await flush()
+        h.answer('t1', [{ text: 'Hello.' }, { text: 'World.' }])
+        await flush()
+        expect(h.service.uiState()).toMatchObject({ status: 'loading', sentenceCount: 2 })
+        return { started }
+      }
+
+      it('speaks when the engine binds 4.1 s after the ask: the cold bind the 4 s grace missed', async () => {
+        // `bar-star-listen-on` §B on the nightly's boot: `ReadAloud.kt` binds the engine on first
+        // use, `speech engine ready … 421 voices` came 4.1 s after the ask, and the 4 s grace had
+        // just failed the session `no-voice`. The grace covers a cold bind now.
+        vi.useFakeTimers()
+        const { started } = await startWithoutVoices()
+        await vi.advanceTimersByTimeAsync(4100)
+        expect(h.service.uiState()).toMatchObject({ status: 'loading', voiceId: null })
+        h.host.changeVoices(ENGINE)
+        await started
+        expect(h.service.uiState()).toMatchObject({
+          status: 'playing',
+          voiceId: 'en-us-x-local',
+          sentenceIndex: 0
+        })
+        expect(h.service.uiState()).not.toHaveProperty('error')
+        expect(h.host.current.text).toBe('Hello.')
+      })
+
+      it('restarts on its own when the voices come after the grace ran out: no-voice gives way to loading, then playing from where it stood', async () => {
+        vi.useFakeTimers()
+        let asks = 0
+        h.host.voices = () => {
+          asks++
+          return Promise.resolve(h.host.voiceList)
+        }
+        const { started } = await startWithoutVoices()
+        await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
+        await started
+        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice', voiceId: null })
+        expect(h.host.spoken).toHaveLength(0)
+        const asksBefore = asks
+
+        // The engine binds 12 s after the ask (inside the failure's window): the error line gives way to busy at once…
+        await vi.advanceTimersByTimeAsync(12_000 - VOICES_GRACE_MS)
+        h.host.changeVoices(ENGINE)
+        expect(h.service.uiState()).toMatchObject({ status: 'loading', voiceId: null })
+        expect(h.service.uiState()).not.toHaveProperty('error')
+        // …and to playing, with the voice that came, from the sentence it stood at (the top: it never spoke).
+        await flush()
+        expect(h.service.uiState()).toMatchObject({
+          status: 'playing',
+          voiceId: 'en-us-x-local',
+          sentenceIndex: 0,
+          sentenceCount: 2
+        })
+        expect(h.host.spoken).toHaveLength(1)
+        expect(h.host.current).toMatchObject({ text: 'Hello.', options: { voiceId: 'en-us-x-local' } })
+        // One fresh ask of the host for the list it announced; no waiting on a deadline.
+        expect(asks).toBe(asksBefore + 1)
+        // The player joins the OS controls with the first sentence spoken, as for any start.
+        expect(h.sources).toHaveLength(1)
+        expect(h.sources[0].state.playing).toBe(true)
+        // Nothing armed stays behind.
+        expect(vi.getTimerCount()).toBe(0)
+      })
+
+      it('lets the window close: a voicesChanged 31 s after the no-voice does nothing, and Play still tries', async () => {
+        vi.useFakeTimers()
+        const { started } = await startWithoutVoices()
+        await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
+        await started
+        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice' })
+
+        await vi.advanceTimersByTimeAsync(LATE_VOICES_RETRY_MS + 1000)
+        h.host.changeVoices(ENGINE)
+        await flush()
+        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice', voiceId: null })
+        expect(h.host.spoken).toHaveLength(0)
+        expect(vi.getTimerCount()).toBe(0)
+
+        // The user's Play (#337) is the way on: the voices are there, it speaks.
+        h.service.resume()
+        await flush()
+        expect(h.service.uiState()).toMatchObject({ status: 'playing', voiceId: 'en-us-x-local', sentenceIndex: 0 })
+        expect(h.host.current.text).toBe('Hello.')
+      })
+
+      it('a Stop inside the window cancels the automatic retry: the voices coming later start nothing', async () => {
+        vi.useFakeTimers()
+        const { started } = await startWithoutVoices()
+        await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
+        await started
+        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice' })
+
+        await vi.advanceTimersByTimeAsync(2000)
+        h.service.stop()
+        expect(h.service.uiState()).toBeNull()
+        // The window went with the session: nothing is armed any more.
+        expect(vi.getTimerCount()).toBe(0)
+
+        await vi.advanceTimersByTimeAsync(3000)
+        h.host.changeVoices(ENGINE)
+        await flush()
+        expect(h.service.uiState()).toBeNull()
+        expect(h.host.spoken).toHaveLength(0)
+      })
+
+      it('a second no-voice after the automatic retry stays no-voice: an engine that announced itself with nothing installed does not keep the player cycling', async () => {
+        vi.useFakeTimers()
+        const { started } = await startWithoutVoices()
+        await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
+        await started
+        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice' })
+
+        // The engine binds with every voice still `notInstalled` (an empty list): the retry runs its grace…
+        await vi.advanceTimersByTimeAsync(2000)
+        h.host.changeVoices([])
+        expect(h.service.uiState()).toMatchObject({ status: 'loading' })
+        await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
+        // …and says no-voice again; nothing is armed for another round.
+        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice', voiceId: null })
+        expect(vi.getTimerCount()).toBe(0)
+
+        // Another empty announcement leaves it there: no busy state, no third grace.
+        await vi.advanceTimersByTimeAsync(2000)
+        h.host.changeVoices([])
+        await flush()
+        expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice' })
+        expect(vi.getTimerCount()).toBe(0)
+        expect(h.host.spoken).toHaveLength(0)
+
+        // Play once the pack has landed: the user's retry stands (#337), and it arms a window of its own.
+        h.host.voiceList = ENGINE
+        h.service.resume()
+        await flush()
+        expect(h.service.uiState()).toMatchObject({ status: 'playing', voiceId: 'en-us-x-local', sentenceIndex: 0 })
+        expect(h.host.current.text).toBe('Hello.')
       })
     })
 

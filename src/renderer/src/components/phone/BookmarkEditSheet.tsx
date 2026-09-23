@@ -126,7 +126,7 @@ function EditorForm({
     const id = node.id
     dismiss(() =>
       removeWithUndo([id], folder ? 'Folder deleted' : 'Bookmark deleted', () =>
-        run('bookmark.remove', { ids: [id] })
+        run('bookmark.remove', { ids: [id], quiet: true })
       )
     )
   }
