@@ -5,6 +5,8 @@ vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () =
 
 import { run } from '../api'
 import {
+  KEEPS_KEYBOARD_ATTR,
+  KEYBOARD_FOCUS_ATTR,
   PANE_ORDER,
   URLBAR_KEYBOARD_EVENT,
   URLBAR_LEAVE_EVENT,
@@ -19,6 +21,7 @@ import {
   releaseChromeFocus,
   shownPanes
 } from '../panes'
+import { holdChromeInert } from '../portals'
 import { uiStore } from '../ui'
 
 /*
@@ -206,6 +209,27 @@ describe('the document side', () => {
     expect(focusPane({ move: 'next', from: 'chrome' })).toBe('tabs')
   })
 
+  it('moves nowhere while a dialog holds the chrome inert: the dialog keeps the keyboard (a11y-32)', () => {
+    mount(
+      CHROME +
+        '<div class="zen-frame-dialogs"><div role="dialog"><button id="ok">OK</button></div></div>'
+    )
+    byId('ok').focus()
+    const release = holdChromeInert()
+    // F6 either way, and the named panes: nothing moves, the core is asked for no focus – a
+    // page focus asked for now would land as the dialog closes and take the keyboard off
+    // wherever the dialog returned it.
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBeNull()
+    expect(focusPane({ move: 'prev', from: 'chrome' })).toBeNull()
+    expect(focusPane({ move: 'next', from: 'page' })).toBeNull()
+    expect(focusPane({ pane: 'toolbar' })).toBeNull()
+    expect(focusPane({ pane: 'bookmarks' })).toBeNull()
+    expect(document.activeElement?.id).toBe('ok')
+    expect(run).not.toHaveBeenCalled()
+    release()
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBe('tabs')
+  })
+
   it('Shift+F6 from the page goes to the last chrome pane on screen', () => {
     mount(CHROME)
     expect(focusPane({ move: 'prev', from: 'page' })).toBe('sidepanel')
@@ -264,6 +288,22 @@ describe('the document side', () => {
       expect(pageTookKeyboard('t2')).toBe('kept')
       expect(document.activeElement?.id).toBe('omnibox')
       expect(keyboardAsked).toEqual(['omnibox', 'omnibox'])
+    })
+
+    it('never blurs a field marked as keeping the keyboard – the tab rename field in its first moments – and asks the chrome’s keyboard back for it', () => {
+      mount(CHROME + `<input id="rename" ${KEEPS_KEYBOARD_ATTR} />`)
+      byId('rename').focus()
+      // The opening pair's first click activated the row: the page's view took the keyboard.
+      expect(pageTookKeyboard('t1')).toBe('kept')
+      expect(document.activeElement?.id).toBe('rename')
+      expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+      expect(keyboardAsked).toEqual([])
+      // The mark gone – the field's first moments over – the same taking lets the field go.
+      vi.mocked(run).mockClear()
+      byId('rename').removeAttribute(KEEPS_KEYBOARD_ATTR)
+      expect(pageTookKeyboard('t1')).toBe('released')
+      expect(document.activeElement).toBe(document.body)
+      expect(run).not.toHaveBeenCalled()
     })
 
     it("the empty split pane's bar keeps its field from its own blank page and lets it go to a sibling pane's", () => {
@@ -329,6 +369,29 @@ describe('the document side', () => {
     mount(CHROME)
     expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
     expect(document.activeElement?.id).toBe('reload')
+  })
+
+  it('marks the landing as the keyboard’s before the focus arrives, and the mark goes with the blur', () => {
+    // The chord never reaches the document (the main process consumes it), so Chromium's
+    // `:focus-visible` would read a landing after mouse use as the mouse's: no ring, no tooltip.
+    // The mark is on the control when its focusin fires (the tooltip host reads it there).
+    mount(CHROME)
+    const reload = byId('reload')
+    const seen: (string | null)[] = []
+    reload.addEventListener('focusin', () => seen.push(reload.getAttribute(KEYBOARD_FOCUS_ATTR)))
+    expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
+    expect(seen).toEqual([''])
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(true)
+    // F6 on: the tab row takes the mark, Reload's goes with its blur.
+    expect(focusPane({ move: 'prev', from: 'chrome' })).toBe('tabs')
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(false)
+    expect(document.activeElement?.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(true)
+    // Into the page nothing of the chrome keeps a mark.
+    expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBe('bookmarks')
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBe('sidepanel')
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBe('page')
+    expect(document.querySelectorAll(`[${KEYBOARD_FOCUS_ATTR}]`)).toHaveLength(0)
   })
 })
 

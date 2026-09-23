@@ -50,7 +50,12 @@ const SLOP = 6
 export const SHEET_EDGE_PAD = 8
 
 export interface BottomSheetHandle {
-  /** Slide the sheet off the screen; `then` runs once it is gone, right before `onDismissed`. */
+  /**
+   * Slide the sheet off the screen; `then` runs once it is gone, right before `onDismissed`.
+   * Only a function is kept: a consumer that binds the dismiss straight to a button
+   * (`onClick={close}`) hands it the click's event, and the landing must still report the sheet
+   * gone rather than throw on it (#145, the nightly's `site-controls` failure).
+   */
   dismiss(then?: () => void): void
   /** Predictive back: pull the sheet down by `progress` (0 = resting, 1 = as far as the preview goes). */
   backProgress(progress: number): void
@@ -280,7 +285,10 @@ export function BottomSheet({
   const insetTop = useRef(0)
   /** The gesture bar, or the keyboard while it is up: the detents are measured above it. */
   const insetBottom = useRef(0)
-  /** Runs once a dismissal has finished (a picked row's action). A catch drops it. */
+  /**
+   * Runs once a dismissal has finished (a picked row's action). A catch drops it. Written only
+   * through `keepAfter`, so nothing but a function is ever in it.
+   */
   const afterDismiss = useRef<(() => void) | null>(null)
   /** The window changed size while the page stood receded behind the sheet. */
   const resizedWhileUp = useRef(false)
@@ -752,6 +760,16 @@ export function BottomSheet({
   )
 
   /**
+   * `dismiss`'s `then`, kept for the landing when it is one: the handle's type says a function,
+   * but a `close` bound straight to a button's `onClick` arrives here as the click's event
+   * (#145), and the landing must report the sheet gone rather than throw calling it. The
+   * settings hosts take the same guard on their own dismiss (`settings/dialogs.tsx`).
+   */
+  const keepAfter = (then: unknown): void => {
+    if (typeof then === 'function') afterDismiss.current = then as () => void
+  }
+
+  /**
    * Dismissed while still waiting for the page to be covered: nothing is on screen to slide
    * away, so the sheet is simply gone (and the cover it took is let go of at once). True when
    * that was the case.
@@ -761,7 +779,7 @@ export function BottomSheet({
     presented.current = true
     cover.current?.release()
     cover.current = null
-    if (then) afterDismiss.current = then
+    keepAfter(then)
     landed()
     return true
   }
@@ -779,7 +797,7 @@ export function BottomSheet({
     if (dropCover(then)) return
     const m = motion()
     if (!m.isOpen) return
-    if (then) afterDismiss.current = then
+    keepAfter(then)
     if (fade.current !== null) return
     if (reducedMotion() && sheetRef.current && scrimRef.current) {
       sheetRef.current.style.opacity = '0'

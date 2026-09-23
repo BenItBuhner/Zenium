@@ -162,6 +162,11 @@ export class TabManager {
    */
   private readonly closingFolders = new Set<string>()
   /**
+   * Where the next close's "Recently closed" entry goes instead of the session's list: set for
+   * the span of `archiveTab`, whose close files the entry in the inactive-tabs archive (TAB-20).
+   */
+  private divertClosed: ((entry: ClosedTabEntry) => void) | null = null
+  /**
    * Every frame's live capture report per tab, by the frame's reporter id (tabs-43): the tab's
    * `alert` is the highest any frame asks for, so a call in an iframe lights the row and a
    * frame that stops leaves the others' state standing.
@@ -1831,7 +1836,10 @@ export class TabManager {
     this.browser.print.onTabRemoved(tabId)
     this.browser.pdf.onTabRemoved(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
-    if (closed) this.browser.session.pushTab(closed)
+    if (closed) {
+      if (this.divertClosed) this.divertClosed(closed)
+      else this.browser.session.pushTab(closed)
+    }
     for (const { w, s, next } of reselect) {
       w.select(s, next)
       if (w.activeSpaceId === s.id && next) this.activateTab(next, w, w === source ? opts : {})
@@ -1847,6 +1855,26 @@ export class TabManager {
     this.browser.updateMedia()
     if (this.isPrivate(tab)) this.browser.onPrivateTabClosed()
     this.browser.state.commit()
+  }
+
+  /**
+   * Close `tabId` the way the inactive-tabs pass does (TAB-20): the tab leaves the grid exactly
+   * as a close does – document gone, navigation stack kept – but its entry comes back to the
+   * caller for the archive instead of joining "Recently closed". Null when the close produced no
+   * entry (a never-visited blank tab, a private tab, a pinned tab held by `pinnedCloseBehavior`),
+   * in which case the tab is simply closed or left as it was.
+   */
+  archiveTab(tabId: string, win?: ZenWindow): ClosedTabEntry | null {
+    let entry: ClosedTabEntry | null = null
+    this.divertClosed = (closed) => {
+      entry = closed
+    }
+    try {
+      this.closeTab(tabId, false, win)
+    } finally {
+      this.divertClosed = null
+    }
+    return entry
   }
 
   /**

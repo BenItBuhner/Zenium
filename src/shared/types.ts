@@ -169,6 +169,12 @@ export interface HostCapabilities {
    * windows. Desktop hosts offer private windows instead (`windows`).
    */
   privateTabs: boolean
+  /**
+   * Chrome for Android's Inactive tabs (TAB-20): idle tabs leave the grid for the archive the
+   * overview lists, and the Tabs settings screen carries the threshold. Off, no pass runs and
+   * nothing is archived (the desktop, whose Chrome has no archive).
+   */
+  inactiveTabs: boolean
   /** The host can point the resolver at DNS-over-HTTPS servers (desktop); Android uses the system's Private DNS. */
   secureDns: boolean
   /**
@@ -2318,6 +2324,21 @@ export interface Settings {
   unloadTimeoutMinutes: number
   unloadExcludedDomains: string[]
   /**
+   * Inactive tabs (TAB-20, SET-34; Chrome's archive): a tab nobody has looked at for this many
+   * days leaves the grid for the Inactive tabs list, its page kept as a recently-closed entry
+   * keeps one (`InactiveTabsService`). Chrome's ladder: 0 (Never), 7, 14 or 21, 21 by default
+   * (`TabArchiveSettings.DEFAULT_ARCHIVE_TIME_HOURS`). Distinct from the sleeping-tabs timeout
+   * above, which only unloads a page and leaves its card where it is. Absent in profiles from
+   * before it existed (read as the default).
+   */
+  inactiveTabsArchiveDays: InactiveTabsArchiveDays
+  /**
+   * Inactive tabs the user never came back for are closed for good after `INACTIVE_TAB_AUTO_CLOSE_DAYS`
+   * (Chrome's `DEFAULT_AUTODELETE_TIME_HOURS`, worded as months). Absent in older profiles
+   * (read as on: Chrome's steady state once its promo has been answered).
+   */
+  inactiveTabsAutoClose: boolean
+  /**
    * @deprecated Where "Mute Site" kept its hosts (lower-case hostnames without `www.`) before
    * the `sound` content setting became the one source of a site's mute. Migrated into `sound`
    * blocks on load (`TabManager.migrateMutedHosts`) and empty from then on; kept so an older
@@ -3436,6 +3457,11 @@ export interface UIState {
   recentlyClosedCount: number
   /** Newest first, at most 10 – enough for menus to render without a round trip. */
   recentlyClosed: ClosedEntrySummary[]
+  /**
+   * How many tabs the Inactive tabs archive holds (TAB-20): the count on the overview's entry
+   * row. The rows themselves come through `inactiveTabs.list`, read again on `inactiveTabs.changed`.
+   */
+  archivedTabCount: number
   media: MediaState[]
   findResult: FindResult | null
   /** Tab id whose devtools are open (for the toolbar indicator). */
@@ -3665,6 +3691,12 @@ export interface MenuItemDescriptor {
    * Drawn in the deemphasised ink on a row that is neither focused nor picked.
    */
   note?: boolean
+  /**
+   * The item's action mounts a chrome field (Rename Group…): its pick keeps the keyboard in the
+   * chrome rather than returning the focus to the page, so the field it mounts is not blurred
+   * away by the host's focus move.
+   */
+  keepsKeyboard?: boolean
 }
 
 /**
@@ -4347,6 +4379,39 @@ export interface Commands {
    * line; the lead's #326 ruling): Open All in Tabs and Hide Device.
    */
   'history.deviceMenu': { args: { deviceId: string } & MenuAnchor; result: void }
+
+  /**
+   * The Inactive tabs archive (TAB-20): the archived tabs, the newest archived first – what the
+   * overview's Inactive tabs sheet lists. Every window hears `inactiveTabs.changed` when the
+   * list changes.
+   */
+  'inactiveTabs.list': { args: void; result: ArchivedTabSummary[] }
+  /**
+   * Bring an archived tab back into its space – at the start of its regular tabs, as Chrome
+   * restores one ("Restore tab at the 'start' of the list") – to the front, its last use read
+   * as now.
+   */
+  'inactiveTabs.restore': { args: { id: string }; result: void }
+  /** Every archived tab back into its space, the first of them to the front. */
+  'inactiveTabs.restoreAll': { args: void; result: void }
+  /** Close one archived tab: it goes to the recently closed list, where History finds it. */
+  'inactiveTabs.close': { args: { id: string }; result: void }
+  /**
+   * The sheet's "Close all" (behind its confirmation): every archived tab closed for good, as
+   * Chrome's. None goes to the recently closed list – a bulk close would flush that 25-entry undo
+   * list – and History keeps their pages, which is what the prompt promises.
+   */
+  'inactiveTabs.closeAll': { args: void; result: void }
+  /**
+   * Run the archive pass and the auto-close sweep now, as if the clock read `now` (the default is
+   * the real clock). The passes run on their own after the chrome has started and on their
+   * cadence; this is the instrumentation drivers' hook, so a threshold of days is crossed
+   * without a wait. Resolves with what the passes did.
+   */
+  'inactiveTabs.runPasses': {
+    args: { now?: number }
+    result: { archived: number; closed: number }
+  }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
   /**
@@ -5485,6 +5550,8 @@ export interface Events {
   /** The History page's hidden devices changed (`history.hideDevice`, `history.showHiddenDevices`): the ids now hidden. */
   'history.hiddenDevicesChanged': string[]
   'session.recentlyClosedChanged': void
+  /** The Inactive tabs archive changed (a pass, a restore, a close): read `inactiveTabs.list` again. */
+  'inactiveTabs.changed': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –
    * from the Android host – whether the system bars are still on their way back from a page's
@@ -5644,6 +5711,31 @@ export interface ClosedTabEntry {
   windowId: string | null
   navigation: NavigationSnapshot | null
 }
+
+/**
+ * A tab in the Inactive tabs archive (TAB-20): what a recently-closed entry keeps of a tab –
+ * the record, its place and its back/forward stack – with the moment it left the grid, so the
+ * auto-close sweep counts from the archiving and not from the last use (Chrome's `archivedTimeMs`).
+ * `closedAt` is that same moment; an archived tab the user closes moves to the recently closed
+ * list as a plain entry stamped with the close.
+ */
+export interface ArchivedTabEntry extends ClosedTabEntry {
+  archivedAt: number
+}
+
+/** An archived tab as the Inactive tabs sheet lists it. */
+export interface ArchivedTabSummary {
+  id: string
+  title: string
+  url: string
+  favicon: string | null
+  /** When the tab was last in view, as ms since the epoch: the row's "last used". */
+  lastActiveAt: number
+  archivedAt: number
+}
+
+/** The archive threshold's ladder, in days; 0 is Never (Chrome's `ARCHIVE_TIME_DELTA_DAYS_OPTS`). */
+export type InactiveTabsArchiveDays = 0 | 7 | 14 | 21
 
 export interface ClosedWindowEntry {
   kind: 'window'

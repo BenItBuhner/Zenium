@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, useEffect, useRef, type JSX, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Rect } from '@shared/types'
+import { ConfirmDialog } from '../../components/dialogs/ConfirmDialog'
 import { dispatchBackEvent, topBackSurface } from '../back'
 import { viewportStore } from '../formFactor'
 import { registerRecedeLayer } from '../motion/recede'
@@ -21,6 +22,7 @@ import {
   chromeLayer,
   closeAllPopovers,
   holdChromeInert,
+  holdFrameInert,
   intrinsicSize,
   openPopoverCount,
   placePopover,
@@ -1590,6 +1592,199 @@ describe('chrome inertness while a frame dialog is open (§9.5)', () => {
     second()
     expect(inert(chrome('sidebar'))).toBe(false)
     expect(chromeInertHeld()).toBe(false)
+  })
+})
+
+/**
+ * The content frame as App.tsx lays it out: the content area (a find bar, a page's picture)
+ * beside the frame's dialog host in one `<main>`.
+ */
+function Frame({
+  children,
+  content = true,
+  sibling
+}: {
+  children?: React.ReactNode
+  content?: boolean
+  sibling?: React.ReactNode
+}): JSX.Element {
+  return (
+    <Chrome>
+      {content && (
+        <div data-surface="page" data-content>
+          <button type="button" data-find-next>
+            Next match
+          </button>
+        </div>
+      )}
+      {sibling}
+      {children}
+    </Chrome>
+  )
+}
+const content = (): HTMLElement => mount!.querySelector<HTMLElement>('[data-content]')!
+
+describe('the frame behind the host is inert with the chrome (a11y-32)', () => {
+  it('covers the host’s siblings for the dialog’s lifetime and its way out, and never the host', () => {
+    render(
+      <Frame>
+        <FrameDialogHost />
+      </Frame>
+    )
+    expect(inert(content())).toBe(false)
+    rerender(
+      <Frame>
+        <FrameDialogHost>
+          <Dialog name="prompt" />
+        </FrameDialogHost>
+      </Frame>
+    )
+    expect(inert(content())).toBe(true)
+    expect(inert(chrome('sidebar'))).toBe(true)
+    // The find bar's button is behind the cover: no Tab, press or focus reaches it; the dialog
+    // holds the keyboard.
+    expect(mount!.querySelector('[data-find-next]')!.closest('[inert]')).toBe(content())
+    expect(host().closest('[inert]')).toBeNull()
+    expect(inert(host())).toBe(false)
+    rerender(
+      <Frame>
+        <FrameDialogHost />
+      </Frame>
+    )
+    // The cover stands through the panel's way out, with the chrome's, and lifts with it.
+    expect(inert(content())).toBe(true)
+    endExit()
+    expect(inert(content())).toBe(false)
+    expect(inert(chrome('sidebar'))).toBe(false)
+  })
+
+  it('covers a sibling mounted while the hold lasts, leaves alone one inert already, and never another host', async () => {
+    render(
+      <Frame sibling={<div data-already inert />}>
+        <FrameDialogHost>
+          <Dialog name="prompt" />
+        </FrameDialogHost>
+        <FrameDialogHost />
+      </Frame>
+    )
+    const hosts = mount!.querySelectorAll('.zen-frame-dialogs')
+    expect(hosts).toHaveLength(2)
+    expect(inert(hosts[1]!)).toBe(false)
+    const late = document.createElement('div')
+    late.setAttribute('data-late', '')
+    content().parentElement!.appendChild(late)
+    await tick()
+    expect(inert(late)).toBe(true)
+    rerender(
+      <Frame sibling={<div data-already inert />}>
+        <FrameDialogHost />
+        <FrameDialogHost />
+      </Frame>
+    )
+    endExit()
+    expect(inert(late)).toBe(false)
+    expect(inert(content())).toBe(false)
+    expect(inert(mount!.querySelector('[data-already]')!)).toBe(true)
+  })
+
+  it('two hosts covering the same frame: it comes back with the last release', () => {
+    render(
+      <Frame>
+        <FrameDialogHost>
+          <Dialog name="edit" />
+        </FrameDialogHost>
+        <FrameDialogHost>
+          <Dialog name="manager-edit" />
+        </FrameDialogHost>
+      </Frame>
+    )
+    expect(inert(content())).toBe(true)
+    rerender(
+      <Frame>
+        <FrameDialogHost />
+        <FrameDialogHost>
+          <Dialog name="manager-edit" />
+        </FrameDialogHost>
+      </Frame>
+    )
+    endExit()
+    expect(inert(content())).toBe(true)
+    rerender(
+      <Frame>
+        <FrameDialogHost />
+        <FrameDialogHost />
+      </Frame>
+    )
+    endExit()
+    expect(inert(content())).toBe(false)
+  })
+
+  it('W4-1’s confirmation prompt under the cover: opened from a control in the frame, it holds the keyboard while the frame is inert, and its one-hop return (returnFocusTo) waits for the frame’s cover to lift', async () => {
+    const settle = (): Promise<void> =>
+      act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    const prompt = (open: boolean): ReactElement => (
+      <Frame>
+        <FrameDialogHost frame>
+          {open && (
+            <ConfirmDialog
+              name="quit"
+              title="Quit Zenium?"
+              action="Quit"
+              onCancel={() => undefined}
+              onConfirm={() => undefined}
+            />
+          )}
+        </FrameDialogHost>
+      </Frame>
+    )
+    render(prompt(false))
+    // The find bar's Next, a control of the frame the host covers; it refuses the focus while
+    // it stands under an `inert`, as a browser's does.
+    const opener = mount!.querySelector<HTMLButtonElement>('[data-find-next]')!
+    const focus = opener.focus.bind(opener)
+    opener.focus = (options) => {
+      if (!opener.closest('[inert]')) focus(options)
+    }
+    opener.focus()
+    expect(document.activeElement).toBe(opener)
+    rerender(prompt(true))
+    await settle()
+    const dialog = mount!.querySelector<HTMLElement>('[role="alertdialog"]')!
+    expect(document.activeElement).toBe(dialog)
+    expect(opener.closest('[inert]')).toBe(content())
+    expect(inert(chrome('toolbar'))).toBe(true)
+    rerender(prompt(false))
+    await settle()
+    // The prompt has left; the frame is held for its panel's way out, so the control refuses
+    // the focus – and the prompt's return leaves it on nothing else, not `body`'s.
+    expect(mount!.querySelector('[role="alertdialog"]:not([data-leaving])')).toBeNull()
+    expect(inert(content())).toBe(true)
+    expect(document.activeElement).not.toBe(opener)
+    endExit()
+    await settle()
+    expect(inert(content())).toBe(false)
+    expect(inert(chrome('toolbar'))).toBe(false)
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('holdFrameInert on its own covers the siblings and releases once', () => {
+    render(
+      <Frame>
+        <div className="zen-frame-dialogs" data-host />
+      </Frame>
+    )
+    const release = holdFrameInert(mount!.querySelector<HTMLElement>('[data-host]')!)
+    expect(inert(content())).toBe(true)
+    expect(inert(mount!.querySelector('[data-host]')!)).toBe(false)
+    release()
+    release()
+    expect(inert(content())).toBe(false)
+    // A host with no parent has nothing to cover.
+    expect(() => holdFrameInert(document.createElement('div'))()).not.toThrow()
   })
 })
 
