@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused; on Linux the build's
@@ -80,10 +80,20 @@
 //                sandboxed leg necessary. The run has to say which it is (--sandbox, or
 //                --no-sandbox among the extra args); a worker console error from an extension
 //                is a failure (Linux job: one leg each way)
+//   pip          picture-in-picture (pip-02): a profile past onboarding (sidebar at 320, where
+//                the media hub's toolbar button stands in the row) opens video-fixture.mjs's
+//                page, whose `<video>` plays its own canvas with a tone – the views' autoplay
+//                policy refuses the page's gesture-less play(), one real click plays it – and
+//                the hub's popover lists the tab's player as playing with the Picture in picture
+//                button. That button puts the video in its small window
+//                (`document.pictureInPictureElement` set; on Linux the X server shows exactly
+//                one "Picture in picture" window with a size); the page.pip chord
+//                (Ctrl+Shift+]) brings it back (the element cleared, `leavepictureinpicture`
+//                seen, the window gone, the video still playing) (Linux job)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore); the walkthrough, the crash pair, clear-on-exit and the two mv3-worker legs run on
-// Linux under Xvfb only.
+// restore); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs and pip run
+// on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -138,6 +148,7 @@ import {
   sessionClearsSince,
   withOwedClear
 } from './site-data.mjs'
+import { startVideoFixture } from './video-fixture.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const IS_WIN = process.platform === 'win32'
@@ -4579,6 +4590,227 @@ async function scenarioMv3Worker() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// pip: the media hub's Picture in picture button puts the page's video into its small window,
+// the page.pip chord brings it back (pip-02).
+// ---------------------------------------------------------------------------------------------
+
+// The title Chromium gives a video's picture-in-picture window (its own top-level X11 window
+// under Xvfb, not a BrowserWindow: read off the X server, `xwininfo -root -tree`).
+const PIP_WINDOW_TITLE = 'Picture in picture'
+// The page.pip toggle's chord in both presets (shared/shortcuts.ts key_togglePictureInPicture).
+const PIP_COMBO = `${ACCEL}+Shift+]`
+
+/**
+ * The picture-in-picture windows on the X display right now – the ones on screen (`IsViewable`;
+ * Chromium keeps the window's X handle around unmapped once the video has left it) – each with
+ * its geometry in device pixels: `xwininfo -root -tree` lists every top-level window with its
+ * title and `WxH+X+Y`, `xwininfo -id` says whether it is mapped. Linux only; null elsewhere,
+ * where the run has no X server to ask.
+ */
+function pipWindows() {
+  if (!IS_LINUX) return null
+  const r = sh('xwininfo', ['-root', '-tree'], 15000)
+  if (r.status !== 0) throw new Error(`xwininfo failed: ${r.error || r.stderr || r.stdout}`)
+  const out = []
+  for (const line of r.stdout.split('\n')) {
+    if (!line.includes(`"${PIP_WINDOW_TITLE}"`)) continue
+    const id = line.trim().split(' ')[0]
+    const state = /Map State:\s+(\S+)/.exec(sh('xwininfo', ['-id', id], 15000).stdout)
+    if (!state || state[1] !== 'IsViewable') continue
+    const m = /(\d+)x(\d+)\+(-?\d+)\+(-?\d+)\s+\+(-?\d+)\+(-?\d+)\s*$/.exec(line)
+    out.push({
+      id,
+      width: m ? Number(m[1]) : null,
+      height: m ? Number(m[2]) : null,
+      x: m ? Number(m[5]) : null,
+      y: m ? Number(m[6]) : null
+    })
+  }
+  return out
+}
+
+/** What the fixture's page says about its video (video-fixture.mjs `window.__smoke`, plus the element). */
+const VIDEO_PROBE = `(() => {
+  const v = document.getElementById('video')
+  return {
+    ...window.__smoke,
+    readyState: v ? v.readyState : -1,
+    paused: v ? v.paused : null,
+    videoWidth: v ? v.videoWidth : 0,
+    videoHeight: v ? v.videoHeight : 0,
+    currentTime: v ? v.currentTime : null,
+    inPip: document.pictureInPictureElement === v && v !== null
+  }
+})()`
+
+async function scenarioPip() {
+  // The hub's toolbar button needs the row's width: at the default 240 sidebar it folds into the
+  // app menu's "Now Playing…" row (SidebarTop.tsx hubUp); at 320 it stands in the row.
+  const userData = freshProfile('profile-pip', {
+    onboardingDone: true,
+    settings: { sidebarWidth: 320 }
+  })
+  return runScenario('pip', userData, {}, async (s, out) => {
+    const fixture = await startVideoFixture()
+    out.fixture = { origin: fixture.origin, url: fixture.url }
+    let tab = null
+    try {
+      await s.step('video-playing', async () => {
+        ;({ tab } = await openUrlInNewTab(s, fixture.url))
+        const probe = () => s.tabEval(tab.id, VIDEO_PROBE).catch(() => null)
+        const isPlaying = (st) =>
+          st && st.played && !st.paused && st.readyState > 0 && st.videoWidth > 0
+        // The page's own play() on load answers first: the views' autoplay policy refuses it
+        // (document-user-activation-required; the detail keeps the refusal), so the page gets
+        // one real click – its handler calls play() again with the gesture – and plays.
+        const first = await waitFor(
+          async () => {
+            const st = await probe()
+            return st && (st.played || st.playError) ? st : null
+          },
+          15000,
+          "the fixture page's first play() answered",
+          200
+        )
+        let clicked = false
+        if (!isPlaying(first)) {
+          const view = await s.tabViewScreenRect(tab.id)
+          if (!view) throw new Error('no screen rect for the video tab to click into')
+          await s.bringToFront()
+          xdotoolClick(
+            Math.round((view.x + view.width / 2) * view.scale),
+            Math.round((view.y + 40) * view.scale)
+          )
+          clicked = true
+        }
+        const playing = await waitFor(
+          async () => {
+            const st = await probe()
+            return isPlaying(st) ? st : null
+          },
+          15000,
+          "the fixture's canvas video playing (played, frames, a width)",
+          250
+        )
+        return {
+          ...playing,
+          autoplayRefused: first.firstPlayError,
+          clickedToPlay: clicked,
+          tab: tab.id
+        }
+      })
+      await s.step('hub-card', async () => {
+        // The page's media report reaches the chrome: the hub's toolbar button comes up, its
+        // popover lists the tab's player as playing, video, with the Picture in picture button.
+        const button = s.chrome.locator('[data-zen-media-hub-button]')
+        await button.waitFor({ state: 'visible', timeout: 15000 })
+        await button.click({ timeout: 5000 })
+        const card = s.chrome.locator('[data-media-player]').first()
+        await card.waitFor({ state: 'visible', timeout: 8000 })
+        const pip = s.chrome.locator('[data-media-pip]').first()
+        await pip.waitFor({ state: 'visible', timeout: 5000 })
+        await s.settle()
+        await s.shot('01-pip-hub')
+        const detail = {
+          players: await s.chrome.locator('[data-media-player]').count(),
+          playing: (await card.getAttribute('data-playing')) !== null,
+          title: await card.getAttribute('aria-label')
+        }
+        // Playing on the card is the engine's audibility (isCurrentlyAudible), measured on the
+        // rendered tone: a card in its paused form means the page's audio never rendered.
+        if (!detail.playing) {
+          throw new Error(`the hub's card is in its paused form: ${JSON.stringify(detail)}`)
+        }
+        if (detail.title !== fixture.title) {
+          throw new Error(`the hub's card is not the fixture tab's: ${JSON.stringify(detail)}`)
+        }
+        return detail
+      })
+      await s.step('pip-enter', async () => {
+        const before = pipWindows()
+        if (before && before.length) {
+          throw new Error(
+            `a ${PIP_WINDOW_TITLE} window is up before the click: ${JSON.stringify(before)}`
+          )
+        }
+        await s.chrome.locator('[data-media-pip]').first().click({ timeout: 5000 })
+        const t0 = Date.now()
+        const st = await waitFor(
+          async () => {
+            const p = await s.tabEval(tab.id, VIDEO_PROBE).catch(() => null)
+            return p && p.inPip ? p : null
+          },
+          10000,
+          'document.pictureInPictureElement set to the video',
+          200
+        )
+        const inPipMs = Date.now() - t0
+        // The small window itself, on the X server: one, with a size (Linux; elsewhere the
+        // element's state is all the run can read).
+        const windows = IS_LINUX
+          ? await waitFor(
+              () => {
+                const w = pipWindows()
+                return w && w.length ? w : null
+              },
+              10000,
+              `the ${PIP_WINDOW_TITLE} X11 window`,
+              250
+            )
+          : null
+        if (windows && windows.length !== 1) {
+          throw new Error(
+            `${windows.length} ${PIP_WINDOW_TITLE} windows: ${JSON.stringify(windows)}`
+          )
+        }
+        if (windows && !(windows[0].width > 0 && windows[0].height > 0)) {
+          throw new Error(`the ${PIP_WINDOW_TITLE} window has no size: ${JSON.stringify(windows)}`)
+        }
+        // The hub closes with the click (the window shrinks to the video): the button is back to rest.
+        await s.chrome
+          .locator('[data-media-player]')
+          .first()
+          .waitFor({ state: 'hidden', timeout: 5000 })
+        await s.settle()
+        await s.shot('02-pip-window')
+        return { inPipMs, pipEvents: st.pipEvents, window: windows ? windows[0] : null }
+      })
+      await s.step('pip-exit', async () => {
+        // The toggle (page.pip's chord): a video in the small window leaves it.
+        await s.press(PIP_COMBO)
+        const t0 = Date.now()
+        const st = await waitFor(
+          async () => {
+            const p = await s.tabEval(tab.id, VIDEO_PROBE).catch(() => null)
+            return p && !p.inPip && p.pipEvents.includes('leave') ? p : null
+          },
+          10000,
+          'document.pictureInPictureElement cleared and leavepictureinpicture seen',
+          200
+        )
+        const gone = IS_LINUX
+          ? await waitFor(
+              () => {
+                const w = pipWindows()
+                return w && w.length === 0 ? true : null
+              },
+              10000,
+              `the ${PIP_WINDOW_TITLE} X11 window gone`,
+              250
+            )
+          : null
+        if (st.paused) throw new Error('the video paused on leaving picture-in-picture')
+        return { outMs: Date.now() - t0, pipEvents: st.pipEvents, windowGone: gone }
+      })
+      await s.step('quit', async () => s.quitGracefully())
+    } finally {
+      out.fixture.requests = fixture.requests
+      await fixture.close()
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
 
 function finish(exitCode) {
   const failures = []
@@ -4688,7 +4920,8 @@ async function main() {
       'clear-on-exit': scenarioClearOnExit,
       scale: scenarioScale,
       dark: scenarioDark,
-      'mv3-worker': scenarioMv3Worker
+      'mv3-worker': scenarioMv3Worker,
+      pip: scenarioPip
     }[name]
     if (!run) {
       result.scenarios[name] = { fatal: `unknown scenario ${name}` }
