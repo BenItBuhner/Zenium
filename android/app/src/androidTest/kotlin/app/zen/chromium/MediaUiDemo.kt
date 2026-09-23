@@ -271,13 +271,17 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
         tapPageButton("play", "Pause track", "the page pauses for the Settings part", 10_000) { field("state") == "paused" }
         val settingsTab = coreInvoke("page.open", """{"id":"settings","section":"privacy"}""")
         note("  page.open settings/privacy -> $settingsTab")
-        if (waitFor("Safety check", 20_000) == null) {
-            note("  the Privacy and Security category never showed")
+        // The section, its rows and its sheets are read from the chrome document first (the
+        // harness's Settings reads: on the emulator's software GPU the tree lists them seconds
+        // after they are on screen, and the nightly's run had the Notifications sheet up on the
+        // recording with its Default behaviour row "not taking" by the tree), the tree second.
+        if (!awaitSettingsSection(PRIVACY_SECTION, 20_000, treeSign = "Safety check")) {
+            note("  the Privacy and Security category never showed (section '${settingsSection()}')")
             touchFault("Settings > Privacy and Security did not open")
             return
         }
         SystemClock.sleep(2_000)
-        val row = awaitRow("Notifications", 10_000, show = true)
+        val row = if (awaitSettingsRow("Notifications", 10_000)) revealSettingsRow("Notifications") else awaitRow("Notifications", 10_000, show = true)
         note("  Notifications row: ${if (row != null) "\"${rowText("Notifications")}\" at $row" else "MISSING from the section"}")
         if (row == null) {
             touchFault("Settings > Privacy and Security lists no Notifications row on Android")
@@ -287,16 +291,16 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
         SystemClock.sleep(1_000)
         shot("14-settings-notifications-row")
         beat()
-        if (!touchRowExpecting("Notifications", "the Notifications sheet shows its Default behaviour row", 10_000) { rowNode("Default behaviour") != null }) return
+        if (!touchRowExpecting("Notifications", "the Notifications sheet shows its Default behaviour row", 10_000) { rowListed("Default behaviour") }) return
         SystemClock.sleep(1_500)
         note("  Notifications sheet: ${rowText("Default behaviour")}")
         shot("15-settings-notifications-sheet")
         beat()
-        if (touchRowExpecting("Default behaviour", "the picker shows the Block option", 8_000) { findByLabel("Block") != null }) {
+        if (touchRowExpecting("Default behaviour", "the picker shows the Block option", 8_000) { rowListed("Block") }) {
             SystemClock.sleep(1_500)
             shot("16-settings-notifications-picker")
             beat()
-            touchTapLabelExpecting("Block", "the core's default for notifications reads deny", timeoutMs = 8_000) { defaultFor("notifications") == "deny" }
+            touchRowExpecting("Block", "the core's default for notifications reads deny", 8_000) { defaultFor("notifications") == "deny" }
             note("  after Block: default=${defaultFor("notifications")}; row \"${rowText("Default behaviour")}\"")
             SystemClock.sleep(1_500)
             shot("17-settings-notifications-blocked")
@@ -314,13 +318,13 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
         // Ask put back through the same rows: Settings again, the Notifications row, its sheet's
         // Default behaviour, the picker's Ask under a finger; then the page reads default again.
         val again = coreInvoke("page.open", """{"id":"settings","section":"privacy"}""")
-        if (waitFor("Safety check", 20_000) != null &&
-            touchRowExpecting("Notifications", "the Notifications sheet is up again", 10_000) { rowNode("Default behaviour") != null }
+        if (awaitSettingsSection(PRIVACY_SECTION, 20_000, treeSign = "Safety check") &&
+            touchRowExpecting("Notifications", "the Notifications sheet is up again", 10_000) { rowListed("Default behaviour") }
         ) {
             SystemClock.sleep(1_500)
             // The Ask option carries its "Default" description, so its node reads "Ask Default"
             // to the tree (Block, with none, reads Block alone): the row shapes find and touch it.
-            if (touchRowExpecting("Default behaviour", "the picker shows the Ask option", 8_000) { rowNode("Ask") != null }) {
+            if (touchRowExpecting("Default behaviour", "the picker shows the Ask option", 8_000) { rowListed("Ask") }) {
                 touchRowExpecting("Ask", "the core's default for notifications reads ask again", 8_000) { defaultFor("notifications") == "ask" }
                 note("  after Ask: default=${defaultFor("notifications")}; row \"${rowText("Default behaviour")}\"")
             }
@@ -360,16 +364,21 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
         beat()
     }
 
-    /** Back out of the picker (when up) and the Notifications sheet, waiting for each to be gone. */
+    /**
+     * Back out of the picker (when up) and the Notifications sheet, waiting for each to be gone:
+     * the sheets by the document's word ([sheetPresented]: the picker is the sheet titled
+     * Default behaviour, the site setting's the one titled Notifications), the rows under them
+     * listed again once each has left.
+     */
     private fun leaveNotificationsSheets() {
-        if (findByLabel("Block") != null && rowNode("Ask") != null) {
+        if (sheetPresented(PICKER_TITLE) || (findByLabel("Block") != null && rowNode("Ask") != null)) {
             backUntil("the picker is gone and the Default behaviour row is back") {
-                findByLabel("Block") == null && rowNode("Default behaviour")?.isClickable == true
+                !sheetPresented(PICKER_TITLE) && rowListed("Default behaviour")
             }
         }
-        if (rowNode("Default behaviour") != null) {
+        if (sheetPresented(SHEET_TITLE) || rowNode("Default behaviour") != null) {
             backUntil("the Notifications sheet is gone and the catalogue's row is back") {
-                rowNode("Default behaviour") == null && rowNode("Notifications")?.isClickable == true
+                !sheetPresented(SHEET_TITLE) && rowListed("Notifications")
             }
         }
     }
@@ -441,8 +450,13 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
         return findNodeWhere { node -> node.isClickable && reads(node) } ?: findNodeWhere(reads)
     }
 
+    /** What the row reading `label` says: its label and description by the document first, the tree's text second. */
     private fun rowText(label: String): String =
-        rowNode(label)?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+        settingsRowValue(label)?.let { if (it.isEmpty()) label else "$label $it" }
+            ?: rowNode(label)?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+
+    /** Whether the row (or picker option) reading `label` is listed: the document first ([settingsRowListed]), the tree second. */
+    private fun rowListed(label: String): Boolean = settingsRowListed(label) || rowNode(label) != null
 
     private fun awaitRow(label: String, timeoutMs: Long, show: Boolean = false): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -460,16 +474,28 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
         return null
     }
 
-    /** A real touch on the row reading `label` (scrolled onto the screen first), then `took` within `timeoutMs`. */
+    /**
+     * A real touch on the row reading `label` (scrolled onto the screen first: where the
+     * document has it, [settingsRowRect], else the tree's node), then `took` within `timeoutMs`.
+     */
     private fun touchRowExpecting(label: String, effect: String, timeoutMs: Long, took: () -> Boolean): Boolean {
-        awaitRow(label, 8_000, show = true) ?: run {
-            note("  no row reads '$label'")
-            return false
-        }
-        val node = rowNode(label) ?: return false
-        if (!touchTap(node)) {
-            note("  the row '$label' is not inside the touchable window")
-            return false
+        val rect = settingsRowRect(label)
+        if (rect != null) {
+            val point = touchPoint(rect) ?: run {
+                note("  the row '$label' at $rect is not inside the touchable window")
+                return false
+            }
+            Finger().tap(point.x, point.y)
+        } else {
+            awaitRow(label, 8_000, show = true) ?: run {
+                note("  no row reads '$label'")
+                return false
+            }
+            val node = rowNode(label) ?: return false
+            if (!touchTap(node)) {
+                note("  the row '$label' is not inside the touchable window")
+                return false
+            }
         }
         if (poll(timeoutMs, took)) {
             note("  touch on '$label': $effect")
@@ -481,6 +507,9 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
     }
 
     companion object {
+        /** The Notifications site setting's sheet and its Default behaviour picker, by their titles (sheets.tsx: a sheet is named by its row's label). */
+        private const val SHEET_TITLE = "Notifications"
+        private const val PICKER_TITLE = "Default behaviour"
         private const val CHIP_PLAYING = "Now playing"
         private const val CHIP_PAUSED = "Media paused"
         /** The sheet's position slider in the chrome's document (`SeekRow`, `data-testid`). */

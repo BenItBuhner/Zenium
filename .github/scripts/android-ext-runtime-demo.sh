@@ -13,6 +13,9 @@
 #   3. ExtensionDemo – the demo extensions laid out as store installs, run on the runtime and
 #      recorded. The runner serves the local probe pages (reachable from the emulator as
 #      10.0.2.2) and the driver writes files/ext-demo/results.json plus screenshots.
+#   4. ExtensionSheetStills (android-ext-sheet-stills.sh, on the device as this script left it) –
+#      the extension sheet and the install prompt's fallback as stills in both schemes for the
+#      design gate, under ext-sheets/. Skipped with SKIP_STILLS=1.
 #
 # Handshake with the demo driver, through files in the app's private storage (via run-as):
 #   files/ext-demo/record     – written by the driver once the extensions are configured
@@ -24,7 +27,8 @@
 # Environment: EXT_DIR (the demo's unpacked extensions, default artifacts/ext), BUDGET_EXT_DIR
 # (the budget's extra ones, default artifacts/ext-budget; both go under files/zen/extensions/,
 # the extras are removed again before the demo), SKIP_BUDGET=1 / SKIP_DEMO=1 to run one driver
-# alone, JANK_GATE (soft, the default, or hard: the shared workflow's input), SOFT_FAIL=1 (below).
+# alone, SKIP_STILLS=1 to end with the demo, JANK_GATE (soft, the default, or hard: the shared
+# workflow's input), SOFT_FAIL=1 (below).
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
@@ -101,7 +105,8 @@ adb shell settings put global hide_error_dialogs 1 || true
 sleep 2
 adb shell am force-stop com.google.android.apps.nexuslauncher || true
 sleep 3
-adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
+# Exclusive within the navbar category (android-gesture-demo.sh says why a plain enable left the gestural insets).
+adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton || true
 adb shell settings put system screen_off_timeout 2147483647 || true
 adb shell svc power stayon true || true
 adb shell input keyevent KEYCODE_WAKEUP || true
@@ -299,7 +304,18 @@ for name in $(adb shell run-as "$app_id" ls files/ext-demo 2>/dev/null | tr -d '
   esac
 done
 
+# --- 5. The sheet stills ------------------------------------------------------------------------
+# The two native sheets for the design gate, on the device as the demo left it (prepared, the
+# APKs installed): the stills driver's own script, its output under ext-sheets/. A failure there
+# is reported with the demo's own below, never ahead of collecting the demo's evidence.
+stills_ok=1
+if [ -z "${SKIP_STILLS:-}" ]; then
+  DEVICE_PREPARED=1 SKIP_INSTALL=1 EXT_DIR="$ext_dir" STILLS_OUT="$out/ext-sheets" \
+    bash .github/scripts/android-ext-sheet-stills.sh || stills_ok=0
+fi
+
 cat "$out/instrument.txt"
 ls -la "$out"
 [ "$budget_ok" -eq 1 ] || fail "the frame budget driver did not finish cleanly (see instrument-budget.txt)"
 grep -q '^OK (' "$out/instrument.txt" || fail "the demo driver did not finish cleanly"
+[ "$stills_ok" -eq 1 ] || fail "the sheet stills driver did not finish cleanly (see ext-sheets/instrument.txt)"

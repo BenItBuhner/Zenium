@@ -20,7 +20,7 @@ env:
 jobs:
   record:
     name: Record on an API 34 emulator (${{ matrix.theme }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false

@@ -1274,6 +1274,7 @@ class Extensions(private val host: Host) {
             Decision.Action.BLOCK -> "block"
             Decision.Action.REDIRECT -> "redirect"
             Decision.Action.UPGRADE -> "upgrade"
+            Decision.Action.MODIFY_HEADERS -> "modifyHeaders"
         }
         val type = request.type.dnrName
         if (debug) synchronized(decisions) {

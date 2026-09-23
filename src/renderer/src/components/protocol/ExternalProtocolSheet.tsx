@@ -273,6 +273,8 @@ function ProtocolPanel({ request }: { request: ExternalProtocolRequest }): JSX.E
       <div className="zen-sheet-scrim absolute inset-0" onClick={() => answer(false)} />
       <div
         role="dialog"
+        // Modal: the scrim behind it takes every press, and Escape is its Cancel.
+        aria-modal="true"
         aria-label={titleOf(request)}
         className="zen-panel zen-animate-pop relative w-full max-w-[400px] px-3 pb-3 pt-2"
       >
