@@ -730,9 +730,10 @@ class Extensions(private val host: Host) {
             "msgReply" -> "handled=${message.opt("handled")} willRespond=${message.opt("willRespond")} listeners=${message.opt("listeners")}"
             "reply" -> if (message.optBoolean("ok", true)) "ok" else "error=${message.optString("error").take(80)}"
             "event" -> "${message.str("ns")}.${message.str("name")}"
-            // A page policy's refusal handed to the host: the extension file asked for, and the answer.
-            "mainScript", "extFetch" -> message.str("url").take(100)
-            "mainScriptDone", "extFetchDone" -> if (message.optBoolean("ok", true)) "ok" else "error=${message.optString("error").take(80)}"
+            // A page policy's refusal handed to the host (or a webpack chunk of a module graph for
+            // the content script's scope): the extension file asked for, and the answer.
+            "mainScript", "extFetch", "chunkScript" -> message.str("url").take(100)
+            "mainScriptDone", "extFetchDone", "chunkDone" -> if (message.optBoolean("ok", true)) "ok" else "error=${message.optString("error").take(80)}"
             else -> ""
         }
         synchronized(bridgeTrace) {
@@ -1112,6 +1113,10 @@ class Extensions(private val host: Host) {
                 mainWorldScript(view, proxy, isMainFrame, ep, message)
                 return
             }
+            "chunkScript" -> {
+                chunkScript(view, proxy, isMainFrame, ep, message)
+                return
+            }
             "extFetch" -> {
                 extensionFetch(proxy, ep, message)
                 return
@@ -1217,6 +1222,64 @@ class Extensions(private val host: Host) {
     }
 
     /**
+     * A content script's module graph on a WebView without isolated worlds asked for a webpack
+     * chunk and was served the stub (ExtensionScripts.chunkStub); the bootstrap now asks for the
+     * chunk to run as a block of the extension's `with` scope, where its bare identifiers resolve
+     * as the content script's own do. The file, when it is web-accessible, runs through
+     * `evaluateJavascript` (the main frame; a subframe's stub imports the chunk plain) as an exec
+     * of kind `chunk`, the same shape as a scoped `scripting.executeScript` file: the bootstrap
+     * runs it in the scope and settles the stub's wait itself. Whatever the host refuses – and a
+     * file `evaluateJavascript` could not run at all (a syntax error, no bootstrap in the
+     * document) – is answered with `chunkDone`, and the stub imports the chunk plain, bracketed,
+     * as it was served before the stub.
+     */
+    private fun chunkScript(view: WebView, proxy: JavaScriptReplyProxy, isMainFrame: Boolean, ep: String, message: JSONObject) {
+        val id = message.opt("id")
+        val url = message.str("url")
+        val extId = endpoints[ep]?.extensionId ?: message.str("ext")
+        fun refuse(error: String) {
+            val reply = json("t" to "chunkDone", "ep" to ep, "id" to id, "ok" to false, "error" to error).toString()
+            main.post {
+                if (debug) recordReply(ep, reply)
+                runCatching { proxy.postMessage(reply) }
+            }
+        }
+        val uri = Uri.parse(url)
+        val ext = served[extId]
+        val path = (uri.path ?: "/").trimStart('/')
+        when {
+            ext == null -> refuse("the extension is not attached")
+            uri.scheme != "https" || uri.host != "$extId$ORIGIN_SUFFIX" -> refuse("$url is not on the extension's origin")
+            !isMainFrame -> refuse("a chunk runs in the content script's scope of a main frame only")
+            !ext.webAccessible.any { it.matches(path) } -> refuse("$path is not a web-accessible resource")
+            else -> io.execute {
+                val file = fileIn(ext.dir, path)?.takeIf { it.isFile }
+                if (file == null) {
+                    refuse("$path was not found")
+                    return@execute
+                }
+                val payload = JSONObject().put("id", id).put("url", url)
+                val script = runCatching {
+                    ExtensionScripts.execScript(token, extId, "chunk", payload, null, listOf(file), null, null, null, false, true)
+                }.getOrElse { e ->
+                    refuse("Could not load file: ${e.message ?: e.javaClass.simpleName}.")
+                    return@execute
+                }
+                main.post {
+                    view.evaluateJavascript(script) { result ->
+                        val outcome = unwrap(result)
+                        // A text `evaluateJavascript` could not run at all (a syntax error in the
+                        // chunk) answers a bare null, which the guard never does: the stub imports
+                        // the chunk plain, and the error shows where the import's own would have.
+                        if (outcome is Host.Rejection) refuse(outcome.message)
+                        else if (result == null || result == "null") refuse("the chunk's text did not run in the document")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * A content script under the `with` fallback fetched a file of its extension
      * (`https://<id>.ext.zenium.invalid/locales/en.json`) and the page's Content-Security-Policy
      * refused the request (`connect-src`): in Chrome a content script's fetch of its extension's
@@ -1316,11 +1379,21 @@ class Extensions(private val host: Host) {
             // bracketed so the bootstrap's accessor answers the extension's `chrome` while it runs
             // (ExtensionScripts.moduleChromeWrap). A module request is a CORS one and carries the
             // page's `Origin`; a classic `<script src>` (no-cors, no `Origin`) runs as a page script
-            // in Chrome too and is served as it is. Extension pages have their own `chrome`.
-            val moduleGraph = tab != null && extensionPage == null && !ownPage && !isolatedWorlds &&
-                ExtensionScripts.isScriptPath(path) &&
-                request.requestHeaders?.keys?.any { it.equals("Origin", ignoreCase = true) } == true
-            return serve(ext, path, if (moduleGraph) id else null)
+            // in Chrome too and is served as it is. Extension pages have their own `chrome`. The
+            // graph is told by the document, not the Referer (ExtensionScripts.isPageModuleGraph:
+            // a dependency's referrer is the module that imports it). A webpack chunk of the graph
+            // is served as the stub that runs it in the content script's scope, unless this is the
+            // stub's own plain request for it (ExtensionScripts.chunkStub).
+            val moduleGraph = tab != null && extensionPage == null && ExtensionScripts.isPageModuleGraph(
+                path,
+                request.isForMainFrame,
+                tab.currentUrl,
+                origin,
+                request.requestHeaders?.keys?.any { it.equals("Origin", ignoreCase = true) } == true,
+                isolatedWorlds
+            )
+            val chunkStubUrl = if (moduleGraph && url.getQueryParameter(ExtensionScripts.PLAIN_QUERY) == null) url.toString() else null
+            return serve(ext, path, if (moduleGraph) id else null, chunkStubUrl)
         }
         // A fetch or XHR of an extension page to a host its permissions cover: Chrome skips CORS
         // there, the proxy stands in (CorsProxy). The request's `Origin` names the extension, so
@@ -1460,8 +1533,13 @@ class Extensions(private val host: Host) {
         }.getOrNull()
     }
 
-    /** A file of the extension; with `moduleChromeFor`, a script bracketed for that extension's module graph. */
-    private fun serve(ext: Served, path: String, moduleChromeFor: String? = null): WebResourceResponse {
+    /**
+     * A file of the extension; with `moduleChromeFor`, a script bracketed for that extension's
+     * module graph, and with `chunkStubUrl` (the request's URL) a webpack chunk of the graph is
+     * answered with the stub that runs the file in the content script's scope instead
+     * (ExtensionScripts.chunkStub; the stub's own plain request comes without it).
+     */
+    private fun serve(ext: Served, path: String, moduleChromeFor: String? = null, chunkStubUrl: String? = null): WebResourceResponse {
         if (path == GENERATED_BACKGROUND) {
             val html = ext.backgroundHtml ?: return notFound()
             return response("text/html", 200, "OK", html.toByteArray())
@@ -1469,6 +1547,9 @@ class Extensions(private val host: Host) {
         val file = fileIn(ext.dir, path) ?: return notFound()
         if (!file.isFile) return notFound()
         val mime = ExtensionScripts.mimeType(path)
+        if (moduleChromeFor != null && chunkStubUrl != null && ExtensionScripts.isWebpackChunk(ExtensionFiles.head(file, ExtensionScripts.WEBPACK_CHUNK_HEAD))) {
+            return response(mime, 200, "OK", ExtensionScripts.chunkStub(moduleChromeFor, chunkStubUrl).toByteArray())
+        }
         // A stylesheet is localized as Chrome's renderer localizes a `chrome-extension://` one
         // (`ExtensionLocalizationThrottle`): read whole, its placeholders substituted, whatever
         // linked it. Anything else streams from disk.
@@ -1727,7 +1808,7 @@ class Extensions(private val host: Host) {
     fun pageScript(ext: Served, context: String): String {
         val config = runCatching { JSONObject(ext.pageConfig) }.getOrDefault(JSONObject())
         config.put("context", context)
-        return ExtensionScripts.page(bootstrap, config.toString())
+        return ExtensionScripts.page(bootstrap, config.toString(), debug)
     }
 
     fun onBridgeMessageFromPage(view: WebView, data: String?, origin: Uri, isMainFrame: Boolean, proxy: JavaScriptReplyProxy) =

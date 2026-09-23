@@ -2,6 +2,7 @@ import { app, type Certificate, type WebContents } from 'electron'
 import { statSync } from 'node:fs'
 import type { Browser } from '../../core/browser'
 import type { PermissionRequestDetails } from '../../core/permissions'
+import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import type { CertificateDetails, ClientCertificateInfo } from '../../shared/types'
 import type { AuthChallengeAnswer, HostAuthChallenge } from './extensionApi/webRequest'
 import type { ElectronTabViewHost } from './views'
@@ -52,10 +53,13 @@ export function permissionName(permission: string, details: RequestDetails): str
 export function permissionRequestDetails(
   webContents: WebContents | null,
   details: RequestDetails,
-  tabId?: string
+  tabId?: string,
+  containerId?: string
 ): PermissionRequestDetails {
   const out: PermissionRequestDetails = {}
   if (tabId) out.tabId = tabId
+  // A private window's session: its answers stay with the session (Chrome's Incognito rule).
+  if (containerId === PRIVATE_CONTAINER_ID) out.privateContainerId = containerId
   const top = webContents && !webContents.isDestroyed() ? webContents.getURL() : ''
   if (!details.isMainFrame && top) out.embedderUrl = top
   if ('mediaTypes' in details && details.mediaTypes && details.mediaTypes.length > 0)

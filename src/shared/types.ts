@@ -2349,8 +2349,10 @@ export interface Settings {
    */
   inactiveTabsAutoClose: boolean
   /**
-   * Hosts the user chose "Mute Site" for (lower-case hostnames without `www.`): every tab on
-   * such a host is muted, new pages of the host start muted, and leaving the host lifts the mute.
+   * @deprecated Where "Mute Site" kept its hosts (lower-case hostnames without `www.`) before
+   * the `sound` content setting became the one source of a site's mute. Migrated into `sound`
+   * blocks on load (`TabManager.migrateMutedHosts`) and empty from then on; kept so an older
+   * profile or device still reads and syncs.
    */
   mutedHosts: string[]
   searchEngineId: string
@@ -3095,6 +3097,93 @@ export interface PermissionPrompt {
 }
 
 // ---------------------------------------------------------------------------
+// Device choosers: Web Bluetooth, WebUSB, Web Serial, WebHID
+// ---------------------------------------------------------------------------
+
+/** The device kinds a page may ask to connect to: the `bluetooth`, `usb`, `serial`, `hid` rows. */
+export type DeviceKind = 'bluetooth' | 'usb' | 'serial' | 'hid'
+
+/** One device the engine enumerated for a chooser. */
+export interface DeviceCandidate {
+  /**
+   * The engine's id for this request (`deviceId`, a serial `portId`, a Bluetooth address):
+   * opaque, and stable while the chooser is open.
+   */
+  id: string
+  /** The row's title: the engine's name for the device, else "Unknown device (vendor:product)". */
+  name: string
+  /** A second line where there is one (a serial number, a port's path); '' otherwise. */
+  detail: string
+}
+
+/**
+ * A page called `navigator.<kind>.requestDevice()` (`requestPort()` for serial): the chrome
+ * shows one modal list per request, as Chrome's chooser bubble does, and the list stays live –
+ * the host adds and removes candidates while the request is open. Answered by `devices.respond`
+ * with the picked candidate (Connect) or null (Cancel: the page's promise rejects with
+ * `NotFoundError`, as in Chrome). Withdrawn when the page navigates or the tab closes.
+ */
+export interface DeviceChooser {
+  id: string
+  /** Tab whose page asks; the chooser is tab-modal. Null when the host could not say. */
+  tabId: string | null
+  /** The requesting frame's site (`permissionSite`), shown through `displayOrigin`. */
+  origin: string
+  kind: DeviceKind
+  candidates: DeviceCandidate[]
+  /** Bluetooth: the adapter is still scanning and the list may still grow. */
+  scanning: boolean
+  /**
+   * What the empty state can say about the platform: nothing, or that Linux hands USB and HID
+   * devices to a browser only through a udev rule (Chrome's own empty state says the same).
+   */
+  hint: 'none' | 'linux-udev'
+  requestedAt: number
+}
+
+/**
+ * A device a site was connected to through a chooser: the DATA of its `usb` / `serial` / `hid`
+ * / `bluetooth` setting, never a plain allow – the setting stays `ask` (the chooser is the
+ * prompt) and `block` refuses the site every device without one. `deviceId` is the engine's id
+ * of the session the grant was made in; the identity fields find the device again in a later
+ * session, as Chrome persists only the devices it can recognise by serial number.
+ */
+export interface DeviceGrant {
+  origin: string
+  kind: DeviceKind
+  deviceId: string
+  name: string
+  vendorId: number | null
+  productId: number | null
+  serialNumber: string | null
+  /** Unix milliseconds. */
+  grantedAt: number
+}
+
+/**
+ * Bluetooth pairing while a site connects a device: the OS wants a confirmation, a PIN compared
+ * or a PIN typed. Shown by the chrome as a second dialog over the chooser's tab; answered by
+ * `devices.respondPairing`.
+ */
+export interface DevicePairingPrompt {
+  id: string
+  tabId: string | null
+  deviceId: string
+  /** The device's name where the chooser knew it; else its id. */
+  deviceName: string
+  kind: 'confirm' | 'confirmPin' | 'providePin'
+  /** `confirmPin`: the PIN the device shows, for the user to compare; '' otherwise. */
+  pin: string
+}
+
+/** The user's answer to a pairing prompt; cancelling sends null instead. */
+export interface DevicePairingResponse {
+  confirmed: boolean
+  /** `providePin`: what the user typed. */
+  pin?: string
+}
+
+// ---------------------------------------------------------------------------
 // Clear browsing data and Safety check
 // ---------------------------------------------------------------------------
 
@@ -3432,6 +3521,12 @@ export interface UIState {
   permissionPrompts: PermissionPrompt[]
   /** Pending HTTP authentication and client-certificate prompts, oldest first. */
   securityPrompts: SecurityPrompt[]
+  /** Open device choosers (a page's `requestDevice()`), oldest first; one shows per tab. */
+  deviceChoosers: DeviceChooser[]
+  /** Pending Bluetooth pairing prompts, oldest first. */
+  devicePairings: DevicePairingPrompt[]
+  /** Every device a site is connected to (Settings › Site settings and the site-information rows). */
+  deviceGrants: DeviceGrant[]
   /** Pending `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, oldest first. */
   pageDialogs: PageDialog[]
   /**
@@ -3803,7 +3898,7 @@ export interface Commands {
   'tab.reload': { args: { tabId: string; skipCache?: boolean }; result: void }
   'tab.stop': { args: { tabId: string }; result: void }
   'tab.toggleMute': { args: { tabId: string }; result: void }
-  /** "Mute Site" / "Unmute Site": every tab of the host, remembered in `settings.mutedHosts`. */
+  /** "Mute Site" / "Unmute Site": every tab of the site, remembered as its `sound` content setting. */
   'tab.toggleMuteSite': { args: { tabId: string }; result: void }
   'tab.togglePin': { args: { tabId: string }; result: void }
   'tab.toggleEssential': { args: { tabId: string }; result: void }
@@ -5110,6 +5205,21 @@ export interface Commands {
   /** Answer a pending HTTP authentication or client-certificate prompt (null cancels). */
   'security.respond': {
     args: { id: string; response: SecurityPromptResponse | null }
+    result: void
+  }
+  /** Answer a device chooser: the picked candidate's id (Connect), or null (Cancel). */
+  'devices.respond': { args: { id: string; deviceId: string | null }; result: void }
+  /** Answer a Bluetooth pairing prompt (null cancels the pairing). */
+  'devices.respondPairing': {
+    args: { id: string; response: DevicePairingResponse | null }
+    result: void
+  }
+  /**
+   * Take a site's connection to one device (or, without `deviceId`, to every device of the
+   * kind) away: the site must ask again through a chooser (Chrome's "Revoke").
+   */
+  'devices.forget': {
+    args: { origin: string; kind: DeviceKind; deviceId?: string }
     result: void
   }
   /** Answer a page's `alert` / `confirm` / `prompt` or "Leave site?" dialog. */
