@@ -2302,6 +2302,38 @@
     animation: zen-ptr-spin 900ms linear infinite;
   }
 
+  /*
+   * Overscroll history navigation (GN-04, v2 §11.9): Chrome's arrow bubble, drawn in from the
+   * side of the page a drag began at in 3-button navigation mode (see `lib/historyNav.ts`). The
+   * same v2 panel as the pull disc, a 44 disc (Chrome's `navigation_bubble_size`) round a 20
+   * arrow in the text ink; position, scale and opacity are written per frame – the disc grows
+   * from .6 to 1 on its spring as the drag approaches the threshold, and is full there. Under
+   * reduced motion the bubble still tracks the finger and leaves on a 120 ms fade (v2 §11.3).
+   */
+  .zen-histnav-disc {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--v2-panel);
+    border: 1px solid var(--v2-border);
+    border-radius: 999px;
+    box-shadow: var(--v2-shadow-panel);
+    will-change: transform, opacity;
+  }
+  .zen-histnav[data-reduced] .zen-histnav-disc {
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-histnav-glyph {
+    position: absolute;
+    display: flex;
+    color: var(--v2-text);
+  }
+  .zen-histnav-glyph svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.75;
+  }
+
   .zen-space-strip {
     display: flex;
     transition: transform 280ms var(--zen-ease);
@@ -4369,11 +4401,20 @@
   /*
    * Levels inside one sheet (site information): the panes slide past each other on a spring
    * while the sheet's own height follows its chassis; the one arriving is in flow and sizes the
-   * track, the one leaving is laid over it. Only transform and opacity move per frame.
+   * track, the one leaving is laid over it. Only transform and opacity move per frame. The
+   * deeper of the two (`data-over`) travels OVER the other, whole: it stands above in the
+   * stacking order whether it is the one in flow (a push) or the one laid over (a pop), and
+   * carries the sheet's own surface behind its rows for the frames it covers the other – the
+   * pane at rest has none, the sheet's showing through. A pane that is neither is `hidden`.
    */
   .zen-sheet-track {
     position: relative;
     overflow: hidden;
+  }
+  .zen-sheet-pane[data-over] {
+    position: relative;
+    z-index: 1;
+    background: var(--v2-panel);
   }
   .zen-sheet-pane[data-leaving] {
     position: absolute;
@@ -8505,11 +8546,28 @@
     font-weight: var(--v2-weight-body);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-quick-menu-item:active:not(:disabled) {
+  /*
+   * The pressed tone: a finger on the row, or the hold's finger standing over it (`data-hold-lit`,
+   * `useBarHold` – the touch is captured by the bar's button, so the row is never `:active`).
+   */
+  .zen-quick-menu-item:is(:active, [data-hold-lit]):not(:disabled) {
     background: var(--v2-fill);
   }
   .zen-quick-menu-item:disabled {
     opacity: 0.4;
+  }
+  /*
+   * The Back button's history popup (`BackHistoryMenu`, GN-08): the same menu surface at §9.20's
+   * list width, its rows leading with a 16 px favicon – the globe in the de-emphasised ink where
+   * the site has none, as Chrome's default favicon.
+   */
+  .zen-histmenu-favicon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .zen-histmenu-favicon-fallback {
+    color: var(--v2-text-deemphasized);
   }
 
   /*
@@ -9067,6 +9125,48 @@
  */
 @media (prefers-reduced-motion: reduce) {
   .zen-v2-segment > [role='tab']::after {
+    transition: opacity 120ms var(--zen-ease) !important;
+  }
+}
+/*
+ * The overview's pane swipe (GN-19, `components/phone/usePaneSwipe.ts`): the overview's
+ * modifier beside the segment primitive, never a copy of it. While a swipe is live the tablist
+ * carries `data-swipe`: the primitive's lines under the labels go out at once and one line of
+ * the same make – 2 px, the accent, the 1 px radius, laid out in the tablist's box – rides the
+ * finger from under the current label to under the neighbour's, on a transform per frame
+ * (`translate3d` and `scaleX` from its box under the current label: the two are input while the
+ * finger is down, v2 §11.3, and the spring's after). When the swipe is over the attribute goes:
+ * this line fades out over the primitive's 120 ms as the picked label's own line fades in over
+ * the same place, so the two read as one line. Nothing else moves; the labels' ink switches at
+ * the pick as it does on a tap.
+ */
+.zen-overview-segment {
+  position: relative;
+}
+.zen-overview-segment-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--v2-control-accent, var(--v2-accent));
+  opacity: 0;
+  transform-origin: left center;
+  transition: opacity 120ms var(--zen-ease);
+  pointer-events: none;
+}
+.zen-v2-segment[data-swipe] > .zen-overview-segment-line {
+  opacity: 1;
+  transition: none;
+  will-change: transform;
+}
+.zen-v2-segment[data-swipe] > [role='tab']::after {
+  opacity: 0;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .zen-overview-segment-line {
     transition: opacity 120ms var(--zen-ease) !important;
   }
 }
