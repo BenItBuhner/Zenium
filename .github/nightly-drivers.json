@@ -749,7 +749,8 @@
       "shard": "phone-d",
       "mirrors": "android-customtabs-demo.yml",
       "dir": "customtabs-demo",
-      "estimate": 2.5
+      "estimate": 3.5,
+      "note": "Twenty-two scenes since #423 (the caller's bottom toolbar and Minimize): 197 s measured on the demo's run 2 plus the stills' waits."
     },
     {
       "id": "voice",
