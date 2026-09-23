@@ -153,6 +153,18 @@ describe('permissionRequestDetails', () => {
     ).toEqual({ embedderUrl: 'https://top.example/page' })
   })
 
+  it('names the private container for a private window’s session, and no other', () => {
+    const request = { isMainFrame: true, requestingUrl: 'https://top.example' }
+    expect(permissionRequestDetails(page, request, 'tab_1', 'private')).toEqual({
+      tabId: 'tab_1',
+      privateContainerId: 'private'
+    })
+    expect(permissionRequestDetails(page, request, 'tab_1', 'default')).toEqual({ tabId: 'tab_1' })
+    expect(permissionRequestDetails(page, request, 'tab_1', 'container:work')).toEqual({
+      tabId: 'tab_1'
+    })
+  })
+
   it('passes the external URL and the file of a File System Access request through', () => {
     expect(
       permissionRequestDetails(page, {
