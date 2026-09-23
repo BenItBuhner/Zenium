@@ -175,7 +175,9 @@ const view = (): ReactElement => {
 }
 
 const q = <T extends HTMLElement>(selector: string): T | null => document.querySelector<T>(selector)
-const qa = <T extends HTMLElement>(selector: string): T[] => [...document.querySelectorAll<T>(selector)]
+const qa = <T extends HTMLElement>(selector: string): T[] => [
+  ...document.querySelectorAll<T>(selector)
+]
 const sheets = (): HTMLElement[] => qa('.zen-sheet[role="dialog"]')
 const click = (el: Element | null): void => {
   act(() => {
@@ -189,7 +191,8 @@ const type = (input: HTMLInputElement, value: string): void => {
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
-const saved = (): unknown[][] => run.mock.calls.filter(([name]) => name === 'bookmark.createFromTabs')
+const saved = (): unknown[][] =>
+  run.mock.calls.filter(([name]) => name === 'bookmark.createFromTabs')
 
 beforeEach(() => {
   run.mockClear()
@@ -234,7 +237,9 @@ describe('"Bookmark all tabs" on a phone (seed 48: the frame host’s dialogs ar
     // No floating card anywhere: the sheet is the panel, the host's slot holds it edge to edge.
     expect(q('.zen-bm-dialog')).toBeNull()
     expect(q('.zen-v2-dialog')).toBeNull()
-    expect(dialog.querySelector('.zen-sheet-handle, [class*="zen-sheet-grip"], .zen-sheet-header')).not.toBeNull()
+    expect(
+      dialog.querySelector('.zen-sheet-handle, [class*="zen-sheet-grip"], .zen-sheet-header')
+    ).not.toBeNull()
     // The grip's 48 header, the title centred in it, naming the dialog (§9.16); no title block.
     const title = dialog.querySelector<HTMLElement>('.zen-sheet-header h2.zen-sheet-title')!
     expect(title.textContent).toBe('Bookmark all tabs')
