@@ -367,9 +367,9 @@ describe('parsePageViewport', () => {
     delete old.rtl
     expect(parsePageViewport(old)).toEqual(plain)
     // Nothing usable – not laid out, past the visible area, not a number, not a boolean: the same.
-    expect(
-      parsePageViewport({ ...plain, clientWidth: 0, clientHeight: 800, rtl: 'rtl' })
-    ).toEqual(plain)
+    expect(parsePageViewport({ ...plain, clientWidth: 0, clientHeight: 800, rtl: 'rtl' })).toEqual(
+      plain
+    )
     expect(parsePageViewport({ ...plain, clientWidth: '1265', clientHeight: Number.NaN })).toEqual(
       plain
     )

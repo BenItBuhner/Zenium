@@ -1398,7 +1398,9 @@ describe('visibleAreaClip', () => {
       width: 1265,
       height: 705
     })
-    expect(visibleAreaClip({ ...page, devicePixelRatio: 1.5 }, { width: 1920, height: 1080 })).toEqual({
+    expect(
+      visibleAreaClip({ ...page, devicePixelRatio: 1.5 }, { width: 1920, height: 1080 })
+    ).toEqual({
       x: 0,
       y: 0,
       width: 1898,
@@ -1408,7 +1410,10 @@ describe('visibleAreaClip', () => {
 
   it('never reaches past the bitmap and is the whole bitmap where scrollbars overlay the page', () => {
     expect(
-      visibleAreaClip({ ...page, clientWidth: 1300, clientHeight: 800 }, { width: 1280, height: 720 })
+      visibleAreaClip(
+        { ...page, clientWidth: 1300, clientHeight: 800 },
+        { width: 1280, height: 720 }
+      )
     ).toEqual({ x: 0, y: 0, width: 1280, height: 720 })
     expect(
       visibleAreaClip(
