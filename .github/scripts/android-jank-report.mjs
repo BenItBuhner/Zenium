@@ -520,7 +520,7 @@ function latestScenes(repo, branch) {
         console.error(`${artifact.name} of run ${run.id}: ${String(error.message).split('\n')[0]}`)
         continue
       } finally {
-        rmSync(dir, { recursive: true, force: true })
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
       opened++
       for (const record of records) {
