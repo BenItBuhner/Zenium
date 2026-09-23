@@ -15,6 +15,9 @@ import type {
   Container,
   CrashRestoreOffer,
   DefaultBrowserStatus,
+  DeviceChooser,
+  DeviceGrant,
+  DevicePairingPrompt,
   DownloadItem,
   DownloadsProgress,
   ExtensionInfo,
@@ -266,6 +269,9 @@ export interface StateExtras {
   lastSafetyCheck: SafetyCheckResult | null
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
+  deviceChoosers: DeviceChooser[]
+  devicePairings: DevicePairingPrompt[]
+  deviceGrants: DeviceGrant[]
   pageDialogs: PageDialog[]
   /** Tabs whose `requestClose` is in flight, their pages asked "Leave site?" (`TabManager.closingTabIds`). */
   closingTabIds: string[]
@@ -419,6 +425,9 @@ export class BrowserState {
     lastSafetyCheck: null,
     permissionPrompts: [],
     securityPrompts: [],
+    deviceChoosers: [],
+    devicePairings: [],
+    deviceGrants: [],
     pageDialogs: [],
     closingTabIds: [],
     screenCaptureRequests: [],

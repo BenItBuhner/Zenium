@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Space } from '@shared/types'
+import { WARN_FLOW_DROPPED } from '@core/extensions/api/engine'
+import type { ExtensionErrorReport } from '@core/extensions/errorConsole'
 import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
 import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
@@ -2682,6 +2684,42 @@ describe('AndroidExtensionRuntime: chrome.tabCapture on a WebView that captures 
   })
 })
 
+describe("AndroidExtensionRuntime: chrome.downloads' shelf and bubble switches on a phone that has neither", () => {
+  it('finishes setUiOptions with nothing for an extension holding downloads.ui, and refuses it otherwise', async () => {
+    // Chrono Download Manager's worker startup: `chrome.downloads.setUiOptions({enabled: !a})`;
+    // the refusal was its uncaught rejection (compat round 12, row 31).
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['downloads', 'downloads.ui', 'storage'] }))
+    )
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'downloads', 'setUiOptions', [{ enabled: false }])).toMatchObject(
+      { ok: true }
+    )
+    expect(await call(h, 'bg1', 'downloads', 'setUiOptions', [{}])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Missing required property 'enabled'")
+    })
+    // The shelf's switch needs its own permission, which this extension did not declare.
+    expect(await call(h, 'bg1', 'downloads', 'setShelfEnabled', [false])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('chrome.downloads.setShelfEnabled is not implemented')
+    })
+  })
+
+  it('keeps refusing setUiOptions to an extension without downloads.ui', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['downloads', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'downloads', 'setUiOptions', [{ enabled: false }])).toMatchObject(
+      {
+        ok: false,
+        error: expect.stringContaining('chrome.downloads.setUiOptions is not implemented')
+      }
+    )
+  })
+})
+
 describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
   it('drops the bridge token Kotlin left in the frame text, and sends to endpoints one way', async () => {
     const h = harness()
@@ -3152,5 +3190,63 @@ describe("AndroidExtensionRuntime: an extension's files come through the store's
     expect(packageRelativePath('/')).toBeNull()
     expect(packageRelativePath('../x.css')).toBeNull()
     expect(packageRelativePath('css/../../x.css')).toBeNull()
+  })
+})
+
+describe("AndroidExtensionRuntime: a context's console line", () => {
+  it("puts a shim's `console` post on the extension's error console through the store, attributed to the context's kind", async () => {
+    const h = harness()
+    const lines: { id: string; report: ExtensionErrorReport }[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async () => ({ status: 'no_update' }),
+      consoleLine: (id, report) => void lines.push({ id, report })
+    }
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'cs1', 'content')
+    hello(h, 'pop1', 'popup', { url: `https://${ID}.ext.zenium.invalid/popup.html` })
+    message(h, 'bg1', { t: 'console', level: 'warning', message: WARN_FLOW_DROPPED })
+    message(h, 'cs1', { t: 'console', level: 'warning', message: WARN_FLOW_DROPPED })
+    message(h, 'pop1', { t: 'console', level: 'error', message: 'boom' })
+    expect(lines).toEqual([
+      {
+        id: ID,
+        report: {
+          level: 'warning',
+          source: 'worker',
+          message: WARN_FLOW_DROPPED,
+          url: `https://${ID}.ext.zenium.invalid/bg.html`,
+          context: 'background'
+        }
+      },
+      {
+        id: ID,
+        report: {
+          level: 'warning',
+          source: 'content',
+          message: WARN_FLOW_DROPPED,
+          url: 'https://example.com/',
+          context: 'content'
+        }
+      },
+      {
+        id: ID,
+        report: {
+          level: 'error',
+          source: 'page',
+          message: 'boom',
+          url: `https://${ID}.ext.zenium.invalid/popup.html`,
+          context: 'popup'
+        }
+      }
+    ])
+    // An empty line and a post from no endpoint put nothing on the console.
+    message(h, 'bg1', { t: 'console', level: 'warning', message: '' })
+    message(h, 'nobody', { t: 'console', level: 'warning', message: 'x' })
+    expect(lines).toHaveLength(3)
   })
 })

@@ -50,6 +50,7 @@ import {
   type StorageChanges,
   type StorageItems
 } from '@core/extensions/api/storage'
+import type { ExtensionErrorReport } from '@core/extensions/errorConsole'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import {
   BackgroundLifecycle,
@@ -341,6 +342,11 @@ export interface RuntimeStoreLink {
    * null when it is not there.
    */
   readInstalledFile?(dir: string, relative: string): Promise<Uint8Array | null>
+  /**
+   * A line for the extension's error console (`ExtensionInfo.errors`): what a context's shim
+   * reports over the bridge (a `console` post: messages dropped at the page under its flow bound).
+   */
+  consoleLine?(id: string, report: ExtensionErrorReport): void
 }
 
 /**
@@ -1815,9 +1821,37 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       case 'execSettled':
         this.onExecSettled(ep, message)
         return
+      case 'console':
+        this.onConsoleLine(endpoint, message)
+        return
       default:
         this.router.handle(ep, message)
     }
+  }
+
+  /**
+   * A context's shim reporting to the extension's error console (`ExtensionInfo.errors`): the
+   * one line its flow bound writes when it drops messages at the page. Attributed to the
+   * context's kind as the host's own console lines are (`ext/Extensions.kt`): the background's
+   * as the worker's, a content script's as `content`, any page of the extension's own as `page`.
+   */
+  private onConsoleLine(endpoint: Endpoint, message: Record<string, unknown>): void {
+    if (!this.store?.consoleLine) return
+    const text = typeof message.message === 'string' ? message.message : ''
+    if (!text) return
+    const source: ExtensionErrorReport['source'] =
+      endpoint.context === 'background' || endpoint.context === 'offscreen'
+        ? 'worker'
+        : endpoint.context === 'content' || endpoint.context === 'userScript'
+          ? 'content'
+          : 'page'
+    this.store.consoleLine(endpoint.extensionId, {
+      level: message.level === 'error' ? 'error' : 'warning',
+      source,
+      message: text,
+      url: endpoint.url || null,
+      context: endpoint.context
+    })
   }
 
   /**

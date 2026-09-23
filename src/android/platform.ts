@@ -1861,8 +1861,15 @@ export class AndroidPlatform implements Platform {
       }
       case 'permission.request': {
         const p = payload as HostEventPayloads['permission.request']
+        // A private tab's answers stay with the private session (Chrome's Incognito rule).
+        const asking = browser.tabs.tab(p.tabId)
         void browser.permissions
-          .decide(p.permission, p.url, { tabId: p.tabId, mediaTypes: p.mediaTypes })
+          .decide(p.permission, p.url, {
+            tabId: p.tabId,
+            mediaTypes: p.mediaTypes,
+            privateContainerId:
+              asking && browser.tabs.isPrivate(asking) ? PRIVATE_CONTAINER_ID : undefined
+          })
           .then((allow) =>
             this.bridge.send('permission.respond', { requestId: p.requestId, allow })
           )
