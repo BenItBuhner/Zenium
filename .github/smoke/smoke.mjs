@@ -3034,9 +3034,9 @@ async function scenarioWalkthrough() {
       // menu, of the URL bar over the active tab, of a hosted dialog with the chrome inert
       // around it, and of the Web capture overlay over the page; then (a11y pass 2, W4-6) the
       // cover behind that dialog, a toolbar control's tooltip on keyboard focus, the tab rows'
-      // places and states, and the find bar's status region. Each snapshot is compared with its
-      // baseline under .github/smoke/aria/ (`AriaAudit`); every state also runs axe over the
-      // whole document.
+      // places and states (and the rename field's focus, a fact only a real browser holds), and
+      // the find bar's status region. Each snapshot is compared with its baseline under
+      // .github/smoke/aria/ (`AriaAudit`); every state also runs axe over the whole document.
       await s.reset()
       const audit = new AriaAudit(s, { origin: bootSite.origin })
       const rowsBefore = await s.sidebarTabCount()
@@ -3047,6 +3047,7 @@ async function scenarioWalkthrough() {
       const capture = s.chrome.locator(CAPTURE_OVERLAY).first()
       const tooltip = s.chrome.locator('#zen-tooltip')
       const tablist = s.chrome.locator('[role="tablist"]').first()
+      const renameField = s.chrome.locator('.zen-tab-rename input').first()
       const findBar = s.chrome.locator('[data-testid="find-bar"]').first()
       let muted = false
       try {
@@ -3170,6 +3171,29 @@ async function scenarioWalkthrough() {
         muted = false
         await mutedRow.waitFor({ state: 'detached', timeout: 5000 })
 
+        // The row's rename field (a11y-31, axe nested-interactive) stands beside the row in the
+        // chrome layer and takes the keyboard as it opens – a second click on the active row
+        // within 400 ms opens it; Escape drops the edit and hands the keyboard back to the row.
+        // Its focus is a real-browser fact the unit tests cannot hold (jsdom grants focus under
+        // `visibility: hidden`; Chromium refuses it), which is why the smoke reads it.
+        const activeRow = tablist.locator('[role="tab"][aria-selected="true"]').first()
+        await activeRow.dblclick()
+        await renameField.waitFor({ state: 'visible', timeout: 5000 })
+        await waitFor(
+          async () =>
+            (await renameField.evaluate((el) => document.activeElement === el)) ? true : null,
+          3000,
+          'the keyboard in the rename field'
+        )
+        await s.press('Escape')
+        await renameField.waitFor({ state: 'detached', timeout: 5000 })
+        await waitFor(
+          async () =>
+            (await activeRow.evaluate((el) => document.activeElement === el)) ? true : null,
+          3000,
+          'the keyboard back on the row after Escape'
+        )
+
         // The find bar's count is its own live region (a11y-35): the fixture's word found, the
         // region reads "1 of 2 matches" in words, polite and atomic, the figures hidden from it.
         await s.press(`${ACCEL}+f`)
@@ -3209,7 +3233,8 @@ async function scenarioWalkthrough() {
       } finally {
         // Whatever failed, the window is left as the step found it, so the steps after start
         // from the same window: the dialog cancelled, the overlay down, the menu or bar closed,
-        // the Settings tab gone (a reset closes no tab), the find bar closed, the tab unmuted.
+        // the Settings tab gone (a reset closes no tab), the rename field dropped, the find bar
+        // closed, the tab unmuted.
         if (await form.isVisible().catch(() => false)) {
           await s.press('Escape')
           await form.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
@@ -3217,6 +3242,11 @@ async function scenarioWalkthrough() {
         if (await capture.isVisible().catch(() => false)) {
           await s.press('Escape')
           await capture.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => undefined)
+        }
+        if (await renameField.isVisible().catch(() => false)) {
+          await renameField.focus().catch(() => undefined)
+          await s.press('Escape')
+          await renameField.waitFor({ state: 'detached', timeout: 5000 }).catch(() => undefined)
         }
         if (await findBar.isVisible().catch(() => false)) {
           await s.chrome

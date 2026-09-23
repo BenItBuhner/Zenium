@@ -639,6 +639,24 @@ function AgentBadge({ agent, tabId }: { agent: AgentInfo; tabId: string }): JSX.
 /** The rename field's height: the row's 32 less the fill's 4 px inset each side. */
 const RENAME_FIELD_HEIGHT = 24
 
+type RenameBox = { left: number; top: number; width: number }
+
+/** The field's box: on the title's, the row's height centred; null before the row has a layout. */
+function renameBox(row: RefObject<HTMLDivElement | null>): RenameBox | null {
+  const title = row.current?.querySelector<HTMLElement>('.zen-tab-title')
+  const rowBox = row.current?.getBoundingClientRect()
+  if (!title || !rowBox) return null
+  const titleBox = title.getBoundingClientRect()
+  return {
+    left: Math.round(titleBox.left),
+    top: Math.round(rowBox.top + (rowBox.height - RENAME_FIELD_HEIGHT) / 2),
+    width: Math.max(40, Math.round(titleBox.width))
+  }
+}
+
+const sameBox = (a: RenameBox | null, b: RenameBox | null): boolean =>
+  a === b || (!!a && !!b && a.left === b.left && a.top === b.top && a.width === b.width)
+
 /**
  * The row's rename field (a11y-31). It draws over the row's title from the chrome layer,
  * beside the row in the tree rather than inside it: a `tab`'s children are presentational, so a
@@ -660,26 +678,25 @@ function RenameInput({
   row: RefObject<HTMLDivElement | null>
 }): JSX.Element {
   const [value, setValue] = useState(tabTitle(tab))
-  const [box, setBox] = useState<{ left: number; top: number; width: number } | null>(null)
+  // Measured before the first commit, so the field is visible when its focus effect runs: the
+  // browser refuses focus to an element under `visibility: hidden`, and the effect of the first
+  // commit runs before a layout effect's measurement can land (the a11y-2 drive's finding).
+  const [box, setBox] = useState<RenameBox | null>(() => renameBox(row))
   const ref = useRef<HTMLInputElement>(null)
   const done = useRef(false)
+  const took = useRef(false)
   useEffect(() => {
+    if (!box || took.current) return
+    took.current = true
     ref.current?.focus()
     ref.current?.select()
-  }, [])
+  }, [box])
   // The field sits on the title's box, the row's height centred; it follows the row through a
   // scroll or a resize (rare mid-rename – a press anywhere commits – but never wrong).
   useLayoutEffect(() => {
     const measure = (): void => {
-      const title = row.current?.querySelector<HTMLElement>('.zen-tab-title')
-      const rowBox = row.current?.getBoundingClientRect()
-      if (!title || !rowBox) return
-      const titleBox = title.getBoundingClientRect()
-      setBox({
-        left: Math.round(titleBox.left),
-        top: Math.round(rowBox.top + (rowBox.height - RENAME_FIELD_HEIGHT) / 2),
-        width: Math.max(40, Math.round(titleBox.width))
-      })
+      const next = renameBox(row)
+      setBox((old) => (!next || sameBox(old, next) ? old : next))
     }
     measure()
     document.addEventListener('scroll', measure, { capture: true, passive: true })

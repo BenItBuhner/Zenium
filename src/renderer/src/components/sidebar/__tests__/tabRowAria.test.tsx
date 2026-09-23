@@ -303,6 +303,25 @@ describe('the rename field (a11y-31, axe nested-interactive)', () => {
     expect(row('b').dataset.renaming).toBe('true')
   })
 
+  it('is visible at the moment it takes focus: the box is measured before the first commit (the browser refuses focus under visibility: hidden – the a11y-2 drive)', () => {
+    panel([tab('a'), tab('b')])
+    const seen: string[] = []
+    const focus = HTMLInputElement.prototype.focus
+    const spy = vi.spyOn(HTMLInputElement.prototype, 'focus').mockImplementation(function (
+      this: HTMLInputElement
+    ) {
+      seen.push(this.closest<HTMLElement>('.zen-tab-rename')?.style.visibility ?? '<no wrapper>')
+      focus.call(this)
+    })
+    try {
+      const field = startRename('b')
+      expect(document.activeElement).toBe(field)
+      expect(seen).toEqual(['visible'])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('commits on Enter and hands focus back to the row, which is the strip’s stop again', () => {
     panel([tab('a'), tab('b')])
     const field = startRename('b')
