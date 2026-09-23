@@ -21,11 +21,6 @@ on:
         options:
           - '34'
           - '35'
-  # TEMPORARY, for the PR's one run and one retry: removed before the branch's final head. Under
-  # it only a head commit that says `[gestures-run]` records, so a plain push spends nothing.
-  push:
-    branches:
-      - cursor/android-gestures-7a98
 
 permissions:
   contents: read
