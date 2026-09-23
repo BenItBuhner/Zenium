@@ -3,6 +3,8 @@ package app.zen.chromium
 import android.content.Intent
 import android.graphics.Rect
 import android.os.Debug
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Choreographer
@@ -60,6 +62,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val results = JSONObject()
     private val rows = JSONArray()
     private val memory = MemorySampler()
+    private val mainThread = MainThreadWatch()
     private var shots = 0
     private var fixtureTab = ""
     private var worlds = false
@@ -110,10 +113,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (!skipInstall) File(app.filesDir, "zen/extensions").deleteRecursively()
         else keptRegistry = File(app.filesDir, "zen/extensions.json").takeIf { it.isFile }?.readText()
         memory.start()
+        mainThread.start()
         try {
             runDemo()
         } finally {
+            mainThread.stop()
             memory.stop()
+            results.put("mainThreadWatch", mainThread.report())
             results.put("appProcessMemory", memory.report())
             results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
             results.put("screenRestored", screenRestored)
@@ -166,6 +172,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         results.put("order", JSONArray(list.map { it.id }))
         results.put("heapAtStartKb", heapKb())
         for ((index, row) in list.withIndex()) {
+            mainThread.row = "${index + 1} ${row.name}"
             if (!chromeAnswers()) {
                 // The chrome's JS is gone for good (a renderer wedged behind a dialog nothing
                 // could press, a heap with no room left): every row behind this one would spend
@@ -5570,6 +5577,97 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         shot("${shots.toString().padStart(3, '0')}-$name")
     }
 
+    /**
+     * The main thread answering: a runnable posted to it from a thread of this watch's own once
+     * the last one has run, and every thread's stack written to `hang-main-thread-N.txt` beside
+     * results.json when it has not run for [HANG_MAIN_THREAD_MS], again every
+     * [HANG_DUMP_AGAIN_MS] while the stall lasts. Run 35787391495's 113 job: Redux DevTools'
+     * package fetched and verified, its install prompt due, then the process wrote nothing for
+     * two hours – no frame, no line of the driver's, whose own timeouts never fired because its
+     * thread was inside a synchronous call to the main thread – until the system died under the
+     * step's cap, with no stack anywhere (`hide_error_dialogs` keeps the ANR dialog off, and the
+     * driver had injected no input for the input dispatcher to time out on). The sweep script
+     * pulls the file with the row's others and takes ART's own trace and the native backtrace
+     * on its side once the process has been silent in logcat for five minutes
+     * (android-ext-compat-sweep.sh).
+     */
+    private inner class MainThreadWatch {
+        private var thread: Thread? = null
+        @Volatile private var running = false
+        @Volatile private var lastAnswer = 0L
+        @Volatile private var pending = false
+        /** The row in flight, for the dump's first line. */
+        @Volatile var row = "before the first row"
+        private val handler = Handler(Looper.getMainLooper())
+        private var dumps = 0
+        private var longestStallMs = 0L
+        private var stalls = 0
+
+        fun start() {
+            running = true
+            lastAnswer = SystemClock.uptimeMillis()
+            thread = Thread {
+                var nextDumpAt = HANG_MAIN_THREAD_MS
+                var stalled = false
+                while (running) {
+                    if (!pending) {
+                        pending = true
+                        handler.post {
+                            lastAnswer = SystemClock.uptimeMillis()
+                            pending = false
+                        }
+                    }
+                    SystemClock.sleep(1_000)
+                    val stall = SystemClock.uptimeMillis() - lastAnswer
+                    if (stall > longestStallMs) longestStallMs = stall
+                    if (stall >= nextDumpAt) {
+                        if (!stalled) stalls++
+                        stalled = true
+                        dump(stall)
+                        nextDumpAt += HANG_DUMP_AGAIN_MS
+                    } else if (stall < 1_000 && stalled) {
+                        stalled = false
+                        nextDumpAt = HANG_MAIN_THREAD_MS
+                        Log.w(TAG, "HANG over: the main thread answers again ($row)")
+                    }
+                }
+            }.apply {
+                isDaemon = true
+                name = "CompatSweep main-thread watch"
+                start()
+            }
+        }
+
+        fun stop() {
+            running = false
+            thread?.join(2_000)
+        }
+
+        private fun dump(stallMs: Long) {
+            val main = Looper.getMainLooper().thread
+            val text = buildString {
+                appendLine("main thread not answering for $stallMs ms; row in flight: $row; uptime ${SystemClock.uptimeMillis()} ms")
+                appendLine("== main (${main.state})")
+                for (frame in main.stackTrace) appendLine("    at $frame")
+                for ((other, frames) in Thread.getAllStackTraces()) {
+                    if (other === main) continue
+                    appendLine("== ${other.name} (${other.state})")
+                    for (frame in frames) appendLine("    at $frame")
+                }
+            }
+            dumps++
+            val file = File(out, "hang-main-thread-$dumps.txt")
+            runCatching { file.writeText(text) }
+            // One line per dump; the sweep script's silence watch leaves `HANG` lines out of its count.
+            Log.e(TAG, "HANG: the main thread has not answered for $stallMs ms ($row); every thread's stack in ${file.name}")
+        }
+
+        fun report(): JSONObject = JSONObject()
+            .put("stalls", stalls)
+            .put("dumps", dumps)
+            .put("longestStallMs", longestStallMs)
+    }
+
     /** Peak PSS and Java heap of the app process, sampled twice a second while the sweep runs. */
     private class MemorySampler {
         private var thread: Thread? = null
@@ -5637,6 +5735,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val NOMINAL_FRAME_MS = 100L
         private const val FRAME_PROBE_FRAMES = 4
         private const val FRAME_PROBE_TIMEOUT_MS = 8_000L
+        /** The main thread not answering this long is a hang (the longest stalls the runs' `Davey!` frames show are two or three seconds): [MainThreadWatch]. */
+        private const val HANG_MAIN_THREAD_MS = 90_000L
+        /** A stall that lasts is dumped again this often (the sweep script's own silence watch fires at five minutes). */
+        private const val HANG_DUMP_AGAIN_MS = 300_000L
         /**
          * The Install control among the matches: the deepest of them. A manager's button may be
          * a `div` whose ancestors carry the same text and nothing else (OrangeMonkey's

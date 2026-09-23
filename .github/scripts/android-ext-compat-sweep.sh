@@ -180,6 +180,69 @@ note_emulator_death() {
   fi
 }
 
+# The app's process silent in logcat for HANG_SILENCE_S (default 300) while the driver runs and
+# its `done` file is not written: run 35787391495's 113 job, where Redux DevTools' package was
+# fetched and verified, its install prompt due, and then the process wrote nothing for two hours
+# (no frame, no GC, no line of the driver's, whose own timeouts never fired: its thread was in a
+# synchronous call to the main thread, an ANR without the dialog, `hide_error_dialogs` being set)
+# until the system died under the step's cap, with no stack anywhere. The silence is the gap
+# between the process's last line and the guest's last line (the guest keeps logging; the two
+# clocks need not agree with the host's), and the driver's longest legitimate silence is a core
+# wait of 45 s at the speed factor's cap of x4. Once it is reached, the stacks are taken before
+# the cap: SIGQUIT to the process (ART's signal catcher writes every thread's trace to
+# /data/anr/), adbd as root (the images are debug-keyed) to read that trace and debuggerd's
+# native backtrace, the driver's own dumps pulled (CompatSweep's MainThreadWatch writes
+# hang-main-thread-N.txt once the main thread has not answered it for 90 s), then the app is
+# stopped so the driver ends and the second boot grades the rows left, this row last:
+# `app-hung` in the artifact says what happened, and `emulator-died` is left as well, the marker
+# the shared workflow turns into the output the second boot keys on (the emulator itself is up).
+hang_silence_s=${HANG_SILENCE_S:-300}
+hung=0
+logcat_epoch() {
+  # "MM-DD hh:mm:ss.mmm" (logcat -v time) to seconds; the year is the host's.
+  date -d "$(date +%Y)-${1:0:5} ${1:6:12}" +%s 2> /dev/null || echo 0
+}
+app_silence() {
+  # The seconds between the app process's last logcat line (the driver's HANG lines left out:
+  # they are the watch's own) and the guest's last line; 0 when either is missing.
+  local pid=$1 last_app last_any
+  last_app=$(grep -E "\( *${pid}\)" "$out/logcat.txt" 2> /dev/null | grep -v 'CompatSweep.*HANG' | tail -n 1 | cut -c1-18)
+  last_any=$(tail -n 1 "$out/logcat.txt" 2> /dev/null | cut -c1-18)
+  if [ -z "$last_app" ] || [ -z "$last_any" ]; then echo 0; return; fi
+  echo $(( $(logcat_epoch "$last_any") - $(logcat_epoch "$last_app") ))
+}
+dump_hang() {
+  local pid=$1 silence=$2 inflight
+  hung=1
+  inflight=$(grep -E 'I/CompatSweep\( *[0-9]+\): (ROW|.* install [PF])' "$out/logcat.txt" | tail -n 1 | sed -E 's/^.*CompatSweep\( *[0-9]+\): //')
+  echo "::warning::the app's process $pid wrote nothing to logcat for ${silence}s under the driver (last: $inflight); taking its stacks"
+  {
+    echo "the app's process $pid silent in logcat for ${silence}s at $(date +%T) (the emulator up, the guest logging); the driver's last lines:"
+    grep -E 'I/CompatSweep' "$out/logcat.txt" | tail -n 6
+    echo "== SIGQUIT (ART writes every thread's trace to /data/anr/)"
+    timeout 30 adb shell run-as "$app_id" kill -3 "$pid" 2>&1 || echo "kill -3 failed"
+  } > "$out/app-hung"
+  sleep 6
+  pull_new
+  if timeout 60 adb root >> "$out/app-hung" 2>&1 && timeout 60 adb wait-for-device; then
+    sleep 3
+    # adbd's restart ended the logcat stream; a new one carries on into the same file from the last line seen.
+    last_seen=$(tail -n 1 "$out/logcat.txt" | cut -c1-18)
+    adb logcat -v time -T "$last_seen" >> "$out/logcat.txt" 2> /dev/null &
+    logcat_pid=$!
+    for trace in $(timeout 30 adb shell ls -t /data/anr 2> /dev/null | tr -d '\r' | head -n 3); do
+      timeout 60 adb exec-out cat "/data/anr/$trace" > "$out/hang-anr-$trace.txt" 2> /dev/null || rm -f "$out/hang-anr-$trace.txt"
+    done
+    timeout 120 adb shell debuggerd -b "$pid" > "$out/hang-debuggerd-$pid.txt" 2>&1 || echo "debuggerd -b failed" >> "$out/hang-debuggerd-$pid.txt"
+    echo "== traces pulled: $(ls "$out" | grep -E '^hang-' | tr '\n' ' ')" >> "$out/app-hung"
+  else
+    echo "== adb root refused; ART's trace stays in /data/anr on the device, the driver's own dump (hang-main-thread-*.txt) is what the artifact holds" >> "$out/app-hung"
+  fi
+  echo "== the app stopped so the driver ends and the second boot grades the rows left ($(date +%T))" >> "$out/app-hung"
+  timeout 30 adb shell am force-stop "$app_id" || true
+  echo "the app hung under the driver (the emulator itself up): see app-hung and hang-*.txt ($(date +%T))" > "$out/emulator-died"
+}
+
 # --- The sweep --------------------------------------------------------------------------------
 args=()
 if [ -n "${SWEEP_ONLY:-}" ]; then args+=(-e only "$SWEEP_ONLY"); fi
@@ -208,7 +271,7 @@ fi
 adb shell run-as "$app_id" touch files/ext-compat-sweep/recording
 
 # Progress in the job log while the driver runs: one line per graded row, and the driver's
-# files pulled as they land (pull_new).
+# files pulled as they land (pull_new); the app's silence watched (dump_hang).
 seen=0
 while kill -0 "$driver_pid" 2> /dev/null; do
   sleep 30
@@ -220,6 +283,13 @@ while kill -0 "$driver_pid" 2> /dev/null; do
     pull_new
   fi
   if timeout 60 adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
+  if [ "$hung" -eq 0 ]; then
+    app_pid=$(timeout 30 adb shell pidof "$app_id" 2> /dev/null | tr -d '\r' | awk '{print $1}')
+    if [ -n "$app_pid" ]; then
+      silence=$(app_silence "$app_pid")
+      if [ "${silence:-0}" -ge "$hang_silence_s" ]; then dump_hang "$app_pid" "$silence"; fi
+    fi
+  fi
 done
 wait "$driver_pid" || true
 sleep 2
