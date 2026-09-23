@@ -11,7 +11,9 @@ name: TEMPORARY - compat round 13 sweep and frame budget trigger
 #     timed out under WebView 156's saturated renderer in round 12);
 #   - `[budget]` in the commit message: the runtime demo's two jobs with the frame budget alone
 #     (ExtensionScrollBudget under SKIP_DEMO=1: the long fixture scrolled with 0, 2, 3 and 6
-#     extensions, the jank report in the job summary) and, ahead of it, EngineProbe.
+#     extensions, the jank report in the job summary) and, ahead of it, EngineProbe;
+#   - `[sweep-113-left]`: the system-WebView sweep alone, over the six rows the after run's two
+#     boots left unread (see the job).
 # A sweep whose emulator went away under the driver (the shared workflow's `emulator-died`: qemu
 # gone or the guest frozen, or the runner action's SDK download coming down broken) boots once more
 # and sweeps the rows the first boot did not grade (read off the results.json the sweep script pulls
@@ -69,6 +71,23 @@ jobs:
         curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
         unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
         ls -la artifacts/webview
+      timeout-minutes: 150
+
+  # `[sweep-113-left]` in the commit message: a third boot on the system WebView alone for the rows
+  # the after run's two boots (35931607144) left unread – the emulator went away in the Cuponomia
+  # row on both, once in its popup stage and once at its install-success tab, taking the rows after
+  # it – with Cuponomia last, so a third death loses nothing. No second boot is chained to it.
+  system-webview-left:
+    if: contains(github.event.head_commit.message, '[sweep-113-left]')
+    name: System WebView (API 34 image), third boot for the rows left
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-3
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=pjnefijmagpdjfhhkpljicbbpicelgko,mhnlakgilnojmhinhkckjpncpbhabphi,gekdekpbfehejjiecgonmgmepbdnaggp,bhhhlbepdkbapadjdnnojkbgioiodbic,kjchkpkjpiloipaonppkmepcbhcncedo,gidejehfgombmkfflghejpncblgfkagj
+        SWEEP_LAST=gidejehfgombmkfflghejpncblgfkagj
       timeout-minutes: 150
 
   # The rows a sweep whose emulator died did not grade, for its second boot: results.json's order
