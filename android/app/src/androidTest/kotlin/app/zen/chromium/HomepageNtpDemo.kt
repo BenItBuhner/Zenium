@@ -20,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.math.abs
 
 /**
  * The homepage and the new tab page's edits on a device (W4-8), each under a finger:
@@ -30,21 +31,33 @@ import java.io.File
  *     Use current page; a finger on Use current page writes the page Settings was opened from
  *     (the site the demo starts on); a finger on the Address row opens the §9.12 URL sheet,
  *     the address typed on the keyboard and a finger on Save writes it (`settings.homepage`).
- *  2. NTP-30's Home actions: the app menu's Home row and the bar's optional Home item each load
- *     the homepage on the active tab (`tab.home`); with the homepage Off the row and the item
- *     leave the menu and the bar, and come back with it.
+ *  2. NTP-30's Home actions: Home is a button wherever it lives (the #348 design gate) – the app
+ *     menu's icon-row glyph after Forward (§9.13) and the bar's optional Home item each load the
+ *     homepage on the active tab (`tab.home`); the menu carries no Home text row; with the
+ *     homepage Off the glyph and the item leave the menu and the bar, and come back with it.
  *  3. NTP-29 the new tab page for the bottom bar: with `phoneBarPosition` bottom (the default)
  *     the page from the bar's plus has its field low, within thumb reach, the shortcuts above it
  *     and the gear in the top corner; a finger on the field morphs it into the omnibox above the
  *     keyboard (#243's morph, its origin the relocated field); the dock flipped to top through
- *     the core lays the page out as it was (the field high, the gear low), and back.
- *  4. NTP-06 a tile's hold menu: a hold on a pinned tile lifts its menu with Edit Shortcut…, Unpin
- *     Shortcut and Remove; Edit opens the shortcut's form sheet (Name, URL, Save | Cancel), the
- *     name retyped and a finger on Save renames the tile; Remove on another pinned tile takes it
- *     off the page and the pinned list.
+ *     the core lays the page out as it was (the field high, the gear low), and back. The gate's
+ *     one geometry (§9.29) is measured at both docks in CSS px: the free height split 3:5 with
+ *     the block on the bar's side (the spacers' heights), 24 between the field and the tiles,
+ *     the gear 12 into the corner opposite the bar, and the field's centre the same distance
+ *     from the bar's edge at either dock (the design's 224 at a 920 frame; this frame's number
+ *     is on record).
+ *  4. NTP-06 a tile's hold menu: a hold on a pinned tile lifts its menu with Edit Shortcut…, Move
+ *     Left, Move Right (the drag's accessible path, the gate's addendum), Unpin Shortcut and
+ *     Remove; Edit opens the shortcut's form sheet on the Settings sheets' chassis (the 48
+ *     header naming it, Name and URL, Cancel | Save splitting the footer, the sheet itself
+ *     focused on open so the keyboard waits for the finger), the name retyped and a finger on
+ *     Save renames the tile; Remove on another pinned tile takes it off the page and the list.
  *  5. NTP-06 reorder by hold-and-drag: a pinned tile held (the lift), carried two slots along
  *     (the others gliding on one spring), and let go writes the order to the shared device list
- *     (`newtab.reorderShortcuts`); the drag is a measured scene (the jank budget, soft).
+ *     (`newtab.reorderShortcuts`); the drag is a measured scene (the jank budget, soft). A probe
+ *     in the chrome logs every pointer, touch and scroll event on the window while the drag runs
+ *     (type, target, cancelable, whether its default was prevented, whether a `pointercancel`
+ *     ended the hold) to `pointer-probe-tile-drag.json` next to the recording, so a drop that
+ *     writes nothing leaves the cause on record.
  *
  * The sites are five loopback hosts served from this process ([DemoServer], one per 127.0.0.n);
  * four of them are pinned in the warm-up through the core (`newtab.addShortcut`) and the fifth
@@ -280,19 +293,23 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
     // --- 2. Home from the menu and the bar (NTP-30) ----------------------------------------------
 
     private fun homeFromTheMenuAndTheBar() {
-        step("2. Home: the app menu's row and the bar's item load the homepage; both leave while the homepage is Off") {
+        step("2. Home: the app menu's icon-row glyph and the bar's item load the homepage; both leave while the homepage is Off") {
             ensureActive(demoTabId)
             expect("the demo tab is on the first site before Home (${describeActive()})", activeUrl() == sites[0].url, "home-start")
-            // The menu's Home row, under a finger. The row is aimed at through the DOM: the bar's
-            // Home item under the sheet carries the same name.
+            // The menu's Home glyph, under a finger. The glyph is aimed at through the DOM: the
+            // bar's Home item under the sheet carries the same accessible name.
             tapMenuButton()
             if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) error("the menu never opened")
             SystemClock.sleep(1_200)
-            val row = awaitChrome("!!(${menuItemJs("Home")})", 6_000)
-            expect("the app menu lists a Home row with a homepage set (menu rows: ${menuRows()})", row, "menu-home-row")
+            val glyph = awaitChrome("!!($MENU_HOME_JS)", 6_000)
+            val glyphs = menuGlyphs()
+            val textRow = chromeValue("String(!!(${menuItemJs("Home")}))") == "true"
+            finding("  the icon row's glyphs: [$glyphs]; menu rows: ${menuRows()}")
+            expect("the app menu's icon row carries the Home glyph after Forward with a homepage set (§9.13)", glyph && glyphs.startsWith("forward,home"), "menu-home-glyph")
+            expect("the menu has no Home text row: Home is a button wherever it lives", !textRow, "menu-home-no-row")
             still("menu-home")
-            val homed = touchDom("the menu's Home row", menuItemJs("Home")) && awaitLoaded(homepageSite.url, 10_000)
-            if (!homed && activeUrl() != homepageSite.url) touchFault("a finger on the menu's Home row did not load the homepage")
+            val homed = touchDom("the menu's Home glyph", MENU_HOME_JS) && awaitLoaded(homepageSite.url, 10_000)
+            if (!homed && activeUrl() != homepageSite.url) touchFault("a finger on the menu's Home glyph did not load the homepage")
             expect("a finger on the menu's Home loads the homepage (${describeActive()})", homed && activeUrl() == homepageSite.url, "menu-home")
             SystemClock.sleep(1_000)
             still("menu-home-loaded")
@@ -309,16 +326,16 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             SystemClock.sleep(800)
             still("bar-home-loaded")
 
-            // Off: the row and the item leave; the setting back, they return.
+            // Off: the glyph and the item leave; the setting back, they return.
             setHomepage("off", homepageSite.url)
             SystemClock.sleep(1_200)
             val itemGone = awaitChrome("!document.querySelector('$BAR_HOME')", 6_000)
             tapMenuButton()
             val menuUp = waitFor(MENU_HANDLE_LABEL, 6_000) != null
             SystemClock.sleep(1_200)
-            val rowGone = menuUp && chromeValue("String(!!(${menuItemJs("Home")}))") == "false"
-            finding("  homepage Off: the bar's Home item gone ${verdict(itemGone)}; the menu up $menuUp, its Home row gone ${verdict(rowGone)} (menu rows: ${menuRows()})")
-            expect("with the homepage Off the bar's Home item and the menu's Home row are gone", itemGone && rowGone, "home-off")
+            val glyphGone = menuUp && chromeValue("String(!!($MENU_HOME_JS))") == "false" && chromeValue("String(!!(${menuItemJs("Home")}))") == "false"
+            finding("  homepage Off: the bar's Home item gone ${verdict(itemGone)}; the menu up $menuUp, its Home glyph gone ${verdict(glyphGone)} (glyphs [${menuGlyphs()}]; menu rows: ${menuRows()})")
+            expect("with the homepage Off the bar's Home item and the menu's Home glyph are gone", itemGone && glyphGone, "home-off")
             if (menuUp) {
                 back()
                 awaitSurface(up = false, timeoutMs = 5_000)
@@ -350,6 +367,7 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             expect("the field rests low, within thumb reach (its top past 55% of the window: ${field?.top} of $height)", field != null && field.top > height * 0.55, "ntp-field-low")
             expect("the shortcuts stand above the field (grid bottom ${grid?.bottom} <= field top ${field?.top})", field != null && grid != null && grid.bottom <= field.top, "ntp-tiles-above-field")
             expect("the gear sits in the top corner (its centre ${gear?.exactCenterY()?.toInt()} in the top fifth)", gear != null && gear.exactCenterY() < height * 0.2, "ntp-gear-high")
+            val bottomGeometry = claimGeometry("bottom")
             still("ntp-bottom-rest")
 
             // The field into the omnibox: #243's morph from where the field rests.
@@ -383,6 +401,8 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             finding("  dock top: data-dock ${verdict(top)}; field $fieldTop, grid $gridTop, gear $gearTop")
             expect("at the top dock the field is high (its top before 45%: ${fieldTop?.top}) with the tiles under it (grid top ${gridTop?.top} >= field bottom ${fieldTop?.bottom})", fieldTop != null && gridTop != null && fieldTop.top < height * 0.45 && gridTop.top >= fieldTop.bottom, "ntp-top-layout")
             expect("at the top dock the gear sits low (its centre ${gearTop?.exactCenterY()?.toInt()} past 70%)", gearTop != null && gearTop.exactCenterY() > height * 0.7, "ntp-top-gear")
+            val topGeometry = claimGeometry("top")
+            claimOneGeometry(bottomGeometry, topGeometry)
             still("ntp-top-rest")
             setBarPosition("bottom")
             awaitChrome("(document.querySelector('.zen-ntp')||{dataset:{}}).dataset.dock==='bottom'", 6_000)
@@ -393,7 +413,7 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
     // --- 4. Edit and Remove on a tile's hold menu (NTP-06) ---------------------------------------
 
     private fun editAndRemoveAShortcut() {
-        step("4. A pinned tile's hold menu: Edit Shortcut… opens the form sheet and Save renames the tile; Remove takes another off the page") {
+        step("4. A pinned tile's hold menu: Edit Shortcut… opens the form sheet (the Settings sheets' chassis) and Save renames the tile; Remove takes another off the page") {
             ensureNewTabPage()
             val tides = awaitTile(homepageSite.caption, 6_000) ?: error("no tile for ${homepageSite.caption}")
             Finger().apply {
@@ -402,9 +422,9 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             }
             val menu = waitFor(EDIT_LABEL, 8_000) != null
             SystemClock.sleep(1_000)
-            val items = listOf("Open in New Tab", "Copy Link", EDIT_LABEL, "Unpin Shortcut", "Remove").filter { findByLabel(it) != null }
+            val items = TILE_MENU_ROWS.filter { findByLabel(it) != null }
             finding("  the hold menu ${if (menu) "opened" else "MISSING"}: ${items.joinToString(", ")}")
-            expect("a hold on a pinned tile opens its menu with Edit Shortcut…, Unpin Shortcut and Remove", menu && items.size == 5, "tile-menu")
+            expect("a hold on a pinned tile opens its menu with Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove", menu && items == TILE_MENU_ROWS, "tile-menu")
             still("tile-menu")
             val edit = touchTapLabelExpecting(EDIT_LABEL, "the shortcut's form sheet is up", timeoutMs = 8_000) {
                 chromeValue("String(!!document.querySelector('$EDIT_DIALOG'))") == "true"
@@ -414,6 +434,17 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             val fields = chromeValue("String(document.querySelectorAll('$EDIT_DIALOG input').length)")
             finding("  Edit Shortcut… touched: sheet ${verdict(edit)}; heading 'Edit shortcut' in the tree $heading; $fields fields; name '${chromeValue("(document.querySelector('$EDIT_NAME')||{}).value||''")}', url '${chromeValue("(document.querySelector('$EDIT_URL')||{}).value||''")}'")
             expect("a finger on Edit Shortcut… opens the form sheet (Name, URL) for the tile", edit && fields == "2", "tile-edit-sheet")
+            // The gate's chassis: the Settings sheet, its 48 header naming the form, Cancel | Save
+            // in the footer, the sheet itself focused on open (the keyboard waits for the finger).
+            val onChassis = chromeValue("String(!!document.querySelector('$EDIT_SHEET $EDIT_DIALOG'))") == "true"
+            val title = chromeValue("((document.querySelector('$EDIT_SHEET .zen-sheet-title')||{}).textContent||'').trim()")
+            val footer = chromeValue("Array.prototype.map.call(document.querySelectorAll('$EDIT_SHEET .zen-sheet-footer button'),function(b){return b.textContent.trim()}).join(',')")
+            val focused = chromeValue("String(document.activeElement===document.querySelector('$EDIT_SHEET'))") == "true"
+            val active = chromeValue(ACTIVE_ELEMENT_JS)
+            val keyboardWaits = !imeShown()
+            finding("  the sheet's chassis: on the Settings sheet $onChassis; title '$title'; footer [$footer]; the sheet focused $focused (active element $active); keyboard ${if (keyboardWaits) "down" else "UP"}")
+            expect("the form takes the Settings sheets' chassis: the header names it 'Edit shortcut', the footer splits Cancel | Save", onChassis && title == "Edit shortcut" && footer == "Cancel,Save", "tile-edit-chassis")
+            expect("the sheet itself holds the focus on open, the keyboard down until a finger lands on a field", focused && keyboardWaits, "tile-edit-focus")
             still("tile-edit-sheet")
             // The name retyped on the keyboard; the keyboard down so Save is in the finger's reach.
             val name = domBox("document.querySelector('$EDIT_NAME')") ?: error("the sheet's Name field has no box")
@@ -467,6 +498,7 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             finding("  pins before: $before; ${sites[0].caption} at ${orchard.exactCenterX().toInt()},${orchard.exactCenterY().toInt()}, ${sites[2].caption} at ${atlas.exactCenterX().toInt()},${atlas.exactCenterY().toInt()}")
             var lifted = false
             var draft = ""
+            installPointerProbe()
             measureFrames("ntp-tile-drag", JankBudget.Kind.GESTURE, trace = true) {
                 Finger().apply {
                     press(orchard.exactCenterX(), orchard.exactCenterY())
@@ -482,6 +514,7 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             val after = pinTitles()
             val drawn = chromeValue(TILE_ORDER_JS)
             finding("  held: the tile lifted ${verdict(lifted)}; the draft mid-drag [$draft]; pins after: $after; drawn [$drawn]")
+            readPointerProbe("tile-drag")
             expect("the hold lifts the tile (li[data-held])", lifted, "drag-lift")
             expect("the drag carries ${sites[0].caption} to the third slot and the drop writes the order", after == listOf(RENAMED, sites[2].caption, sites[0].caption), "drag-order")
             SystemClock.sleep(600)
@@ -690,12 +723,155 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
     private fun menuRows(): String =
         chromeValue("Array.prototype.map.call(document.querySelectorAll('.zen-sheet .zen-sheet-item'),function(e){return e.textContent.trim()}).join(' | ')")
 
+    /** The icon row's glyphs in order (`MenuSheet`'s `IconRowButton`, its `data-glyph`), for the order claim and a finding. */
+    private fun menuGlyphs(): String =
+        chromeValue("Array.prototype.map.call(document.querySelectorAll('$MENU_ICON_ROW button'),function(b){return b.getAttribute('data-glyph')||''}).join(',')")
+
+    // --- the page's geometry (§9.29, the #348 design gate's item 1) ------------------------------
+
+    /** A box in CSS px, as the chrome's `getBoundingClientRect` gives it ([NTP_GEOMETRY_JS]). */
+    private class CssBox(o: JSONObject) {
+        val top = o.getDouble("top")
+        val bottom = o.getDouble("bottom")
+        val left = o.getDouble("left")
+        val right = o.getDouble("right")
+        val height get() = bottom - top
+        val centreY get() = (top + bottom) / 2
+        override fun toString(): String = "[%.1f,%.1f - %.1f,%.1f]".format(left, top, right, bottom)
+    }
+
+    private fun JSONObject.box(key: String): CssBox? = optJSONObject(key)?.let { CssBox(it) }
+
+    /** What the cross-dock claim needs from one dock: the free height (the two spacers' sum) and the field's centre's distance from the bar's edge. */
+    private class DockGeometry(val free: Double, val fromBar: Double, val pageHeight: Double)
+
+    private fun fmt(value: Double): String = "%.1f".format(value)
+
+    /**
+     * The gate's claims on the page at `dock`, from one read of the DOM in CSS px
+     * ([NTP_GEOMETRY_JS]): the two spacers split the free height 3:5 with the 3 on the bar's
+     * side, 24 between the field and the tiles, the gear 12 into the corner opposite the bar,
+     * and the column measured from the bar's edge – the bar-side spacer plus half the field is
+     * the field's centre's distance from the bar, nothing between them. What the cross-dock
+     * claim needs comes back; null (its own failed claim) when the chrome gave no geometry.
+     */
+    private fun claimGeometry(dock: String): DockGeometry? {
+        val g = runCatching { JSONObject(chromeValue(NTP_GEOMETRY_JS)) }.getOrNull()
+        val page = g?.box("page")
+        val first = g?.box("first")
+        val last = g?.box("last")
+        val field = g?.box("field")
+        val grid = g?.box("grid")
+        val gear = g?.box("gear")
+        val bar = g?.box("bar")
+        if (g == null || page == null || first == null || last == null || field == null || grid == null || gear == null || bar == null) {
+            expect("the $dock dock's geometry could be read (page $page, spacers $first / $last, field $field, grid $grid, gear $gear, bar $bar)", false, "ntp-$dock-geometry")
+            return null
+        }
+        val bottom = dock == "bottom"
+        val free = first.height + last.height
+        val barSide = if (bottom) last else first
+        val farSide = if (bottom) first else last
+        val gap = if (bottom) field.top - grid.bottom else grid.top - field.bottom
+        val gearInset = if (bottom) gear.top - page.top else page.bottom - gear.bottom
+        val gearRight = page.right - gear.right
+        val fromBar = if (bottom) bar.top - field.centreY else field.centreY - bar.bottom
+        val fromPage = if (bottom) page.bottom - field.centreY else field.centreY - page.top
+        finding(
+            "  $dock dock geometry (CSS px; viewport ${g.optJSONObject("viewport")}): page $page (${fmt(page.height)} tall), bar $bar, " +
+                "spacers ${fmt(first.height)} / ${fmt(last.height)} (free ${fmt(free)}; the bar's side ${fmt(barSide.height)} = ${fmt(barSide.height / free * 8)}/8), " +
+                "field $field (${fmt(field.height)} tall), grid $grid, gear $gear; field to tiles ${fmt(gap)}; " +
+                "gear ${fmt(gearInset)} from the far edge, ${fmt(gearRight)} from the right; the field's centre ${fmt(fromBar)} from the bar's edge (${fmt(fromPage)} from the page's)"
+        )
+        expect(
+            "$dock dock: the free height splits 3:5 with the 3 on the bar's side (bar side ${fmt(barSide.height)} of ${fmt(free)}, expected ${fmt(free * 3 / 8)}; far side ${fmt(farSide.height)})",
+            abs(barSide.height - free * 3 / 8) <= 2 && abs(farSide.height - free * 5 / 8) <= 2,
+            "ntp-$dock-split"
+        )
+        expect("$dock dock: 24 between the field and the tiles (${fmt(gap)})", abs(gap - 24) <= 1, "ntp-$dock-gap")
+        expect(
+            "$dock dock: the gear sits 12 into the corner opposite the bar (${fmt(gearInset)} from that edge, ${fmt(gearRight)} from the right)",
+            abs(gearInset - 12) <= 1 && abs(gearRight - 12) <= 1,
+            "ntp-$dock-gear-corner"
+        )
+        expect(
+            "$dock dock: the column is measured from the bar's edge – the field's centre ${fmt(fromBar)} from the bar, the bar-side spacer plus half the field ${fmt(barSide.height + field.height / 2)}",
+            abs(fromBar - (barSide.height + field.height / 2)) <= 2,
+            "ntp-$dock-from-bar"
+        )
+        return DockGeometry(free, fromBar, page.height)
+    }
+
+    /**
+     * One geometry at both docks: the field's centre the same distance from the bar's edge
+     * whichever edge the bar takes, allowing 3/8 of any difference between the two docks' free
+     * heights (the system insets the frame gives each dock). The design's number is 224 at a
+     * 920 frame; this frame's is on record beside it.
+     */
+    private fun claimOneGeometry(bottom: DockGeometry?, top: DockGeometry?) {
+        if (bottom == null || top == null) {
+            expect("both docks gave a geometry for the one-geometry claim", false, "ntp-one-geometry")
+            return
+        }
+        val framesShift = (bottom.free - top.free) * 3 / 8
+        finding(
+            "  one geometry: the field's centre ${fmt(bottom.fromBar)} from the bar at the bottom dock, ${fmt(top.fromBar)} at the top " +
+                "(pages ${fmt(bottom.pageHeight)} / ${fmt(top.pageHeight)} tall, free ${fmt(bottom.free)} / ${fmt(top.free)}; the design's 224 at a 920 frame)"
+        )
+        expect(
+            "the field's centre is the same distance from the bar's edge at both docks (${fmt(bottom.fromBar)} vs ${fmt(top.fromBar)}; the frames' difference accounts for ${fmt(framesShift)})",
+            abs((bottom.fromBar - top.fromBar) - framesShift) <= 2,
+            "ntp-one-geometry"
+        )
+    }
+
+    // --- the pointer probe (scene 5) -------------------------------------------------------------
+
+    /** The probe onto the window before the drag: every pointer, touch, scroll and click event on record while it runs. */
+    private fun installPointerProbe() {
+        val answer = chromeValue(POINTER_PROBE_JS)
+        finding("  pointer probe ${if (answer == "installed") "installed" else "NOT installed ('${answer.take(80)}')"}: the window's pointer, touch and scroll events on record while the drag runs")
+    }
+
+    /**
+     * The probe's log, written next to the recording as `pointer-probe-<name>.json` and
+     * summarised in the findings: how many events of each type; whether a `pointercancel` or
+     * `touchcancel` ended the hold (the browser took the touch for a scroll); the first
+     * `touchmove` whose default the page prevented (the hold holding the touch); the first the
+     * browser sent uncancelable (a scroll already begun); the first scroll; the first event that
+     * saw the tile held; the pressed target's `touch-action`. The probe comes off the window.
+     */
+    private fun readPointerProbe(name: String) {
+        val raw = chromeValue("JSON.stringify(window.__zenPointerProbe||null)")
+        chromeJs("(function(){var p=window.__zenPointerProbe;if(p&&p.uninstall)p.uninstall();return 'off'})()")
+        val probe = runCatching { JSONObject(raw) }.getOrNull()
+        if (probe == null) {
+            finding("  pointer probe: no log came back ('${raw.take(80)}')")
+            return
+        }
+        File(out, "pointer-probe-$name.json").writeText(probe.toString(2))
+        val events = probe.optJSONArray("events") ?: JSONArray()
+        val list = (0 until events.length()).map { events.getJSONObject(it) }
+        val counts = probe.optJSONObject("counts")?.let { c -> c.keys().asSequence().joinToString(", ") { "$it ${c.optInt(it)}" } } ?: ""
+        val describe = { e: JSONObject? -> e?.let { "#${it.optInt("i")} at ${it.optDouble("t")} ms on ${it.optString("target")}" } ?: "none" }
+        val down = list.firstOrNull { it.optString("type") == "pointerdown" }
+        finding("  pointer probe: ${events.length()} events (${probe.optInt("dropped")} past the cap), pointer-probe-$name.json; $counts; cancelled ${probe.optBoolean("cancelled")}")
+        finding(
+            "    pointerdown ${describe(down)} (touch-action '${down?.optString("touchAction") ?: ""}'); " +
+                "cancel ${describe(list.firstOrNull { it.optString("type") == "pointercancel" || it.optString("type") == "touchcancel" })}; " +
+                "first touchmove the page prevented ${describe(list.firstOrNull { it.optString("type") == "touchmove" && it.optBoolean("prevented") })}; " +
+                "first uncancelable touchmove ${describe(list.firstOrNull { it.optString("type") == "touchmove" && !it.optBoolean("cancelable", true) })}; " +
+                "first scroll ${describe(list.firstOrNull { it.optString("type") == "scroll" })}; " +
+                "the tile first seen held ${describe(list.firstOrNull { it.optBoolean("held") })}"
+        )
+    }
+
     // --- the chrome ------------------------------------------------------------------------------
 
     /**
      * A real touch on the control the DOM gives for `domJs`, without the tree – for a control
      * whose accessible name another on screen shares (the Settings Address row and the bar's
-     * Address pill; the menu's Home row and the bar's Home item), where the tree's node of that
+     * Address pill; the menu's Home glyph and the bar's Home item), where the tree's node of that
      * name may be the other one. The aim is a [noteLine]; false, nothing injected, when the DOM
      * has no such element inside the touchable window.
      */
@@ -860,14 +1036,80 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
         private const val GEAR_JS = "document.querySelector('.zen-ntp [aria-label=\"Customise the new tab page\"]')"
         /** The morph's own surface while it runs (`FakeboxMorphLayer`'s `.zen-fakebox`), the field's box otherwise. */
         private const val MORPH_JS = "document.querySelector('.zen-fakebox-layer .zen-fakebox')||document.querySelector('.zen-ntp .zen-ntp-field')"
-        /** The bar's Home item (`BarButton`'s `data-bar-item`; the menu's row is found by its text, [menuItemJs]). */
+        /** The bar's Home item (`BarButton`'s `data-bar-item`; the menu's Home is the icon row's glyph, [MENU_HOME_JS]). */
         private const val BAR_HOME = ".zen-phone-bar-row [data-bar-item=\"home\"]"
-        /** The shortcut's form sheet (`NewTabShortcutDialog`), its two fields: the URL's carries `inputmode`. */
+        /** The app menu's icon row (`MenuSheet`: `ul.zen-menu-icon-row`, §9.13) and its Home glyph (`IconRowButton`'s `data-glyph`). */
+        private const val MENU_ICON_ROW = ".zen-sheet .zen-menu-icon-row"
+        private const val MENU_HOME_JS = "document.querySelector('$MENU_ICON_ROW button[data-glyph=\"home\"]')"
+
+        /**
+         * The new tab page's geometry in one read, CSS px (`getBoundingClientRect`): the page,
+         * its column and the column's first and last children (the two spacers), the field, the
+         * grid, the gear and the bar, each null when not there.
+         */
+        private const val NTP_GEOMETRY_JS =
+            "(function(){var q=function(s){return document.querySelector(s)};" +
+                "var r=function(e){if(!e)return null;var b=e.getBoundingClientRect();return {top:b.top,bottom:b.bottom,left:b.left,right:b.right}};" +
+                "var ntp=q('.zen-ntp'),scroll=q('.zen-ntp .zen-ntp-scroll');" +
+                "return {dock:ntp?(ntp.dataset.dock||''):'',viewport:{w:window.innerWidth,h:window.innerHeight}," +
+                "page:r(ntp),scroll:r(scroll),first:r(scroll&&scroll.firstElementChild),last:r(scroll&&scroll.lastElementChild)," +
+                "field:r(q('.zen-ntp .zen-ntp-field')),grid:r(q('.zen-ntp [aria-label=\"Most visited\"]'))," +
+                "gear:r(q('.zen-ntp [aria-label=\"Customise the new tab page\"]')),bar:r(q('nav.zen-phone-bar'))}})()"
+
+        /** A pinned tile's hold menu, its rows in order (`menus.ts` `showTopSiteContextMenu`). */
+        private val TILE_MENU_ROWS = listOf("Open in New Tab", "Copy Link", EDIT_LABEL, "Move Left", "Move Right", "Unpin Shortcut", "Remove")
+        /** The shortcut's form sheet (`NewTabShortcutDialog`'s `ShortcutSheet`) on the Settings sheets' chassis (`SettingsSheet`'s panel class), its two fields: the URL's carries `inputmode`. */
+        private const val EDIT_SHEET = ".zen-sheet.zen-settings-sheet"
+        /** The focused element, described (tag, its first classes, its role), for the focus claim's finding. */
+        private const val ACTIVE_ELEMENT_JS =
+            "(function(){var a=document.activeElement;if(!a)return 'none';var s=a.tagName.toLowerCase();" +
+                "var c=String(a.className||'').trim().split(/\\s+/).filter(Boolean).slice(0,2);if(c.length)s+='.'+c.join('.');" +
+                "var r=a.getAttribute('role');if(r)s+='[role='+r+']';return s})()"
         private const val EDIT_DIALOG = "[data-newtab-dialog=\"edit\"]"
         private const val EDIT_NAME = "$EDIT_DIALOG input:not([inputmode=\"url\"])"
         private const val EDIT_URL = "$EDIT_DIALOG input[inputmode=\"url\"]"
         /** A held tile's cell (`tileReorder.ts`: `data-held` while the finger has it). */
         private const val HELD_TILE = "li.zen-ntp-site[data-held]"
+
+        /**
+         * The pointer probe: passive capture-phase listeners on the window for every pointer,
+         * touch, scroll and click event, each a record in `window.__zenPointerProbe.events`
+         * (index, ms since install, type, target – tag, id, its `zen-` classes, the tile's
+         * caption and `[held]` when inside a cell – cancelable, whether its default was
+         * prevented by the time it reached the window's bubble phase (null if it never did),
+         * pointer id/type/point, touch count, whether a tile was held, the pressed target's
+         * `touch-action`, a scroll's `scrollTop`), counts by type, a `cancelled` flag on
+         * `pointercancel`/`touchcancel`, 400 records at most (the rest counted as dropped).
+         * Passive, so the probe itself changes nothing about how the touch is handled.
+         */
+        private const val POINTER_PROBE_JS = """(function(){
+var old=window.__zenPointerProbe;if(old&&old.uninstall)old.uninstall();
+var probe={started:performance.now(),events:[],counts:{},cancelled:false,dropped:0};
+var types=['pointerdown','pointermove','pointerup','pointercancel','touchstart','touchmove','touchend','touchcancel','contextmenu','scroll','click'];
+var last={};
+var describe=function(t){
+if(t===window)return 'window';if(t===document)return 'document';
+if(!(t instanceof Element))return String(t&&t.nodeName||t);
+var s=t.tagName.toLowerCase();if(t.id)s+='#'+t.id;
+var cls=(typeof t.className==='string'?t.className:'').split(/\s+/).filter(function(c){return c.indexOf('zen-')===0}).slice(0,3);
+if(cls.length)s+='.'+cls.join('.');
+var li=t.closest?t.closest('li.zen-ntp-site'):null;
+if(li){var cap=li.querySelector('.zen-ntp-caption');if(cap)s+='['+cap.textContent+']';if(li.hasAttribute('data-held'))s+='[held]'}
+return s};
+var capture=function(e){
+probe.counts[e.type]=(probe.counts[e.type]||0)+1;
+if(e.type==='pointercancel'||e.type==='touchcancel')probe.cancelled=true;
+if(probe.events.length>=400){probe.dropped++;last[e.type]=null;return}
+var r={i:probe.events.length,t:Math.round((performance.now()-probe.started)*10)/10,type:e.type,target:describe(e.target),cancelable:e.cancelable,prevented:null,held:!!document.querySelector('li.zen-ntp-site[data-held]')};
+if(e.pointerId!==undefined){r.pointerId=e.pointerId;r.pointerType=e.pointerType;r.x=Math.round(e.clientX);r.y=Math.round(e.clientY);r.primary=e.isPrimary}
+if(e.touches){r.touches=e.touches.length;if(e.touches[0]){r.x=Math.round(e.touches[0].clientX);r.y=Math.round(e.touches[0].clientY)}}
+if(e.type==='pointerdown'&&e.target instanceof Element)r.touchAction=getComputedStyle(e.target).touchAction;
+if(e.type==='scroll'&&e.target instanceof Element)r.scrollTop=e.target.scrollTop;
+probe.events.push(r);last[e.type]=r};
+var bubble=function(e){var r=last[e.type];if(r)r.prevented=e.defaultPrevented};
+types.forEach(function(t){window.addEventListener(t,capture,{capture:true,passive:true});window.addEventListener(t,bubble,{capture:false,passive:true})});
+probe.uninstall=function(){types.forEach(function(t){window.removeEventListener(t,capture,{capture:true});window.removeEventListener(t,bubble,{capture:false})});probe.uninstall=null};
+window.__zenPointerProbe=probe;return 'installed'})()"""
         /** The tiles' captions in drawing order. */
         private const val TILE_ORDER_JS =
             "Array.prototype.map.call(document.querySelectorAll('li.zen-ntp-site .zen-ntp-caption'),function(e){return e.textContent}).join(',')"
