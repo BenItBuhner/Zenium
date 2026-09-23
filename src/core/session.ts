@@ -1,4 +1,6 @@
 import type {
+  ArchivedTabEntry,
+  ArchivedTabSummary,
   ClosedEntry,
   ClosedEntrySummary,
   ClosedTabEntry,
@@ -148,6 +150,40 @@ export function sanitizeClosedEntries(raw: unknown): ClosedEntry[] {
     }
   }
   return out.slice(0, RECENTLY_CLOSED_MAX)
+}
+
+/**
+ * The Inactive tabs archive as stored (TAB-20): each entry a closed-tab entry with its
+ * `archivedAt`, read one at a time so the recently closed list's cap does not apply – the
+ * archive holds what the passes put there (`INACTIVE_TABS_MAX_PER_PASS` a pass). An entry
+ * without a usable `archivedAt` reads its `closedAt`, the same moment.
+ */
+export function sanitizeArchivedEntries(raw: unknown): ArchivedTabEntry[] {
+  if (!Array.isArray(raw)) return []
+  const out: ArchivedTabEntry[] = []
+  for (const item of raw) {
+    const [entry] = sanitizeClosedEntries([item])
+    if (!entry || entry.kind !== 'tab') continue
+    const archivedAt = (item as Partial<ArchivedTabEntry>).archivedAt
+    out.push({
+      ...entry,
+      archivedAt: typeof archivedAt === 'number' ? archivedAt : entry.closedAt
+    })
+  }
+  return out
+}
+
+/** An archived tab as its row reads it: title, address, favicon, last use and when it was archived. */
+export function summarizeArchived(entry: ArchivedTabEntry): ArchivedTabSummary {
+  const tab = entry.tab
+  return {
+    id: entry.id,
+    title: tab.customTitle ?? tab.title ?? displayUrl(tab.url),
+    url: tab.url,
+    favicon: tab.favicon,
+    lastActiveAt: tab.lastActiveAt,
+    archivedAt: entry.archivedAt
+  }
 }
 
 /** Chrome keeps 50 entries per tab; a stored stack is cut to the same. */
@@ -347,6 +383,21 @@ export class SessionService {
       front ??= tab
     }
     if (front) this.showRestored(front, win)
+  }
+
+  /**
+   * Put back an entry that is not on the recently closed list – an Inactive tabs archive entry
+   * (TAB-20, `InactiveTabsService`): the tab into its place as {@link restoreTab} puts a closed
+   * one, and to the front unless `background`. The caller owns the entry's list.
+   */
+  restoreEntry(
+    entry: ClosedTabEntry,
+    win: ZenWindow = this.browser.focusedWindow(),
+    background = false
+  ): Tab {
+    const tab = this.restoreTab(entry, win)
+    if (!background) this.showRestored(tab, win)
+    return tab
   }
 
   /**

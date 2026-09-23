@@ -1,12 +1,13 @@
 import { JsonStore } from './store/JsonStore'
 import type { PermissionPromptHost, StoreIO } from './platform'
-import type { PermissionPrompt, PermissionRule } from '../shared/types'
+import type { DeviceGrant, DeviceKind, PermissionPrompt, PermissionRule } from '../shared/types'
 import {
   FILE_SITE,
   MEDIA_ROWS,
   allowOnceFor,
   builtInDefault,
   contentSettingId,
+  isDeviceKind,
   promptLabelFor,
   type ContentDecision,
   type ContentDefault
@@ -19,6 +20,18 @@ type Decision = PermissionDecision
 interface Persisted {
   version: 1
   decisions: Record<string, PermissionDecision>
+  /** The devices sites are connected to (`DeviceGrant`); absent in files from before them. */
+  devices?: DeviceGrant[]
+}
+
+/** What the host knows of a device when it asks whether a site is connected to it, or connects it. */
+export interface DeviceIdentity {
+  /** The engine's id in this session (`deviceId`, a serial `portId`, a Bluetooth address). */
+  deviceId: string
+  name: string
+  vendorId?: number | null
+  productId?: number | null
+  serialNumber?: string | null
 }
 
 /** A decision changed: `origin` is null when it was a permission's default. */
@@ -112,6 +125,8 @@ const MAX_SHOWN = 80
  */
 export class PermissionService {
   private decisions: Record<string, PermissionDecision> = {}
+  /** The devices sites are connected to, in the order they were granted. */
+  private devices: DeviceGrant[] = []
   private readonly store: JsonStore<Persisted>
   private readonly pending = new Map<string, Promise<boolean>>()
   private readonly listeners = new Set<(change: PermissionChange) => void>()
@@ -133,12 +148,16 @@ export class PermissionService {
     this.store = new JsonStore<Persisted>(io, 'permissions.json', 500)
     const data = this.store.readSync()
     if (data?.version === 1 && data.decisions) this.decisions = data.decisions
+    if (data?.version === 1 && Array.isArray(data.devices))
+      this.devices = data.devices.filter(isDeviceGrant).map(sanitizeGrant)
   }
 
   /**
    * Synchronous check (`Notification.permission`, or the engine's own status question before it
-   * would prompt); never prompts, a question counts as no. File System Access is the one
-   * exception, see `checkFileSystem`.
+   * would prompt); never prompts, a question counts as no. Two exceptions: File System Access
+   * (`checkFileSystem`), and the device kinds, where the engine asks whether the site may open a
+   * chooser at all before it enumerates (`CanRequestDevicePermission`) – `ask` is that chooser,
+   * so only `deny` says no there; which device the site then gets is `hasDeviceGrant`'s.
    */
   check(permission: string, requestingOrigin: string, details?: PermissionRequestDetails): boolean {
     if (permission === 'fileSystem') return this.checkFileSystem(requestingOrigin, details ?? {})
@@ -146,7 +165,97 @@ export class PermissionService {
       return mediaRows(details).every(
         (row) => this.resolve(row, requestingOrigin, details) === 'allow'
       )
+    if (isDeviceKind(permission))
+      return this.resolve(permission, requestingOrigin, details) !== 'deny'
     return this.resolve(permission, requestingOrigin, details) === 'allow'
+  }
+
+  // ---------------------------------------------------------------------------
+  // Device grants: the data of the `usb` / `serial` / `hid` / `bluetooth` settings
+  // ---------------------------------------------------------------------------
+
+  /** Every device a site is connected to (Settings › Site settings). */
+  deviceGrants(): DeviceGrant[] {
+    return this.devices.map((grant) => ({ ...grant }))
+  }
+
+  /** The devices one site is connected to, of one kind or of every kind (the site-information rows). */
+  deviceGrantsFor(requestingOrigin: string, kind?: DeviceKind): DeviceGrant[] {
+    const origin = permissionSite(requestingOrigin)
+    if (!origin) return []
+    return this.devices
+      .filter((grant) => grant.origin === origin && (kind === undefined || grant.kind === kind))
+      .map((grant) => ({ ...grant }))
+  }
+
+  /**
+   * Whether the site is connected to this device: the engine's status question for a device it
+   * enumerated (`getDevices()`, `open()`), asked after `check()`. A site the setting refuses is
+   * connected to nothing. A grant from an earlier session names the device by identity; found
+   * again, it takes the device's id of this session so a later forget names the same thing.
+   */
+  hasDeviceGrant(kind: DeviceKind, requestingOrigin: string, device: DeviceIdentity): boolean {
+    if (this.resolve(kind, requestingOrigin) === 'deny') return false
+    const origin = permissionSite(requestingOrigin)
+    if (!origin) return false
+    const grant = this.devices.find(
+      (g) => g.origin === origin && g.kind === kind && sameDevice(g, device)
+    )
+    if (!grant) return false
+    if (grant.deviceId !== device.deviceId) {
+      grant.deviceId = device.deviceId
+      this.writeDevices({ permission: kind, origin })
+    }
+    return true
+  }
+
+  /** The user picked the device in a chooser: the site is connected to it from now on. */
+  grantDevice(kind: DeviceKind, requestingOrigin: string, device: DeviceIdentity): void {
+    const origin = permissionSite(requestingOrigin)
+    if (!origin) return
+    const grant: DeviceGrant = {
+      origin,
+      kind,
+      deviceId: device.deviceId,
+      name: device.name,
+      vendorId: device.vendorId ?? null,
+      productId: device.productId ?? null,
+      serialNumber: device.serialNumber ?? null,
+      grantedAt: this.now()
+    }
+    const i = this.devices.findIndex(
+      (g) => g.origin === origin && g.kind === kind && sameDevice(g, device)
+    )
+    if (i >= 0) this.devices[i] = { ...grant, grantedAt: this.devices[i].grantedAt }
+    else this.devices.push(grant)
+    this.writeDevices({ permission: kind, origin })
+  }
+
+  /**
+   * Take a site's connection to one device away (a page's `forget()`, the row's Revoke), or,
+   * without `device`, to every device of the kind.
+   */
+  forgetDevice(kind: DeviceKind, requestingOrigin: string, device?: DeviceIdentity): void {
+    const origin = permissionSite(requestingOrigin)
+    if (!origin) return
+    const before = this.devices.length
+    this.devices = this.devices.filter(
+      (g) =>
+        g.origin !== origin || g.kind !== kind || (device !== undefined && !sameDevice(g, device))
+    )
+    if (this.devices.length !== before) this.writeDevices({ permission: kind, origin })
+  }
+
+  private writeDevices(change: PermissionChange): void {
+    this.store.write(this.persisted())
+    this.notify(change)
+  }
+
+  /** The file's shape; a profile without device grants keeps the shape it had before them. */
+  private persisted(): Persisted {
+    return this.devices.length > 0
+      ? { version: 1, decisions: this.decisions, devices: this.devices }
+      : { version: 1, decisions: this.decisions }
   }
 
   /**
@@ -415,29 +524,42 @@ export class PermissionService {
 
   reset(): void {
     const keys = Object.keys(this.decisions)
+    const grants = this.devices
     this.decisions = {}
+    this.devices = []
     this.savedFiles.clear()
     this.sessionAllows.clear()
     this.dismissals.clear()
-    this.store.write({ version: 1, decisions: this.decisions })
+    this.store.write(this.persisted())
     for (const key of keys) this.notify(changeFor(key))
+    for (const grant of grants) this.notify({ permission: grant.kind, origin: grant.origin })
   }
 
   /**
-   * Clear browsing data's "Site settings": every per-site decision goes, the defaults the user
-   * chose in Settings stay (Chrome clears exceptions the same way).
+   * Clear browsing data's "Site settings": every per-site decision goes, and every device a
+   * site is connected to; the defaults the user chose in Settings stay (Chrome clears exceptions
+   * the same way).
    */
   resetSites(): void {
     const removed = Object.keys(this.decisions).filter(
       (key) => key.slice(0, key.lastIndexOf('|')) !== DEFAULT_ORIGIN
     )
-    if (removed.length === 0 && this.savedFiles.size === 0 && this.sessionAllows.size === 0) return
+    const grants = this.devices
+    if (
+      removed.length === 0 &&
+      grants.length === 0 &&
+      this.savedFiles.size === 0 &&
+      this.sessionAllows.size === 0
+    )
+      return
     for (const key of removed) delete this.decisions[key]
+    this.devices = []
     this.savedFiles.clear()
     this.sessionAllows.clear()
     this.dismissals.clear()
-    this.store.write({ version: 1, decisions: this.decisions })
+    this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))
+    for (const grant of grants) this.notify({ permission: grant.kind, origin: grant.origin })
   }
 
   // ---------------------------------------------------------------------------
@@ -540,7 +662,7 @@ export class PermissionService {
     if ((this.decisions[key] ?? null) === decision) return
     if (decision === null) delete this.decisions[key]
     else this.decisions[key] = decision
-    this.store.write({ version: 1, decisions: this.decisions })
+    this.store.write(this.persisted())
     this.notify(change)
   }
 
@@ -563,7 +685,10 @@ export class PermissionService {
     return out.sort((a, b) => a.permission.localeCompare(b.permission))
   }
 
-  /** Forget the decisions of an origin (one permission, or all of them): the site asks again. */
+  /**
+   * Forget the decisions of an origin (one permission, or all of them): the site asks again.
+   * The devices the site is connected to go with the decision of their kind.
+   */
   resetOrigin(requestingOrigin: string, permission?: string): void {
     const origin = permissionSite(requestingOrigin)
     if (!origin) return
@@ -586,9 +711,59 @@ export class PermissionService {
           grants.delete(key)
       }
     }
-    if (removed.length === 0) return
-    this.store.write({ version: 1, decisions: this.decisions })
+    const dropped = this.devices.filter(
+      (g) => g.origin === origin && (permission === undefined || g.kind === permission)
+    )
+    if (dropped.length > 0) this.devices = this.devices.filter((g) => !dropped.includes(g))
+    if (removed.length === 0 && dropped.length === 0) return
+    this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))
+    for (const grant of dropped)
+      if (!removed.includes(`${origin}|${grant.kind}`))
+        this.notify({ permission: grant.kind, origin })
+  }
+}
+
+/** The same device: the id of this session, else the identity Chrome persists a grant by. */
+function sameDevice(grant: DeviceGrant, device: DeviceIdentity): boolean {
+  if (grant.deviceId === device.deviceId) return true
+  const vendorId = device.vendorId ?? null
+  const productId = device.productId ?? null
+  const serialNumber = device.serialNumber ?? null
+  return (
+    vendorId !== null &&
+    productId !== null &&
+    serialNumber !== null &&
+    serialNumber !== '' &&
+    grant.vendorId === vendorId &&
+    grant.productId === productId &&
+    grant.serialNumber === serialNumber
+  )
+}
+
+function isDeviceGrant(value: unknown): value is DeviceGrant {
+  if (typeof value !== 'object' || value === null) return false
+  const g = value as Record<string, unknown>
+  return (
+    typeof g.origin === 'string' &&
+    typeof g.kind === 'string' &&
+    isDeviceKind(g.kind) &&
+    typeof g.deviceId === 'string' &&
+    typeof g.name === 'string'
+  )
+}
+
+/** A stored grant with every optional field in its proper shape (an edited or older file). */
+function sanitizeGrant(g: DeviceGrant): DeviceGrant {
+  return {
+    origin: g.origin,
+    kind: g.kind,
+    deviceId: g.deviceId,
+    name: g.name,
+    vendorId: typeof g.vendorId === 'number' ? g.vendorId : null,
+    productId: typeof g.productId === 'number' ? g.productId : null,
+    serialNumber: typeof g.serialNumber === 'string' ? g.serialNumber : null,
+    grantedAt: typeof g.grantedAt === 'number' ? g.grantedAt : 0
   }
 }
 

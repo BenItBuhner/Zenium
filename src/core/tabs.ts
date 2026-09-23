@@ -78,7 +78,7 @@ import { closedTabEntry, closedWindowEntry } from './session'
 import { newId } from '../shared/ids'
 import { clampZoom, stepZoom } from '../shared/pageControls'
 import { defer, type PageFlags, type TabView, type TabViewEvents } from './platform'
-import { safeOrigin } from './permissions'
+import { permissionSite, safeOrigin } from './permissions'
 import { certificateSiteOf } from './security'
 import { openedWindowKind, planWindowOpen } from './windowOpen'
 import { parseDropKey } from './tabDrag'
@@ -161,6 +161,11 @@ export class TabManager {
    * not narrow them to itself (the rule for members closed one by one, `closeTab`).
    */
   private readonly closingFolders = new Set<string>()
+  /**
+   * Where the next close's "Recently closed" entry goes instead of the session's list: set for
+   * the span of `archiveTab`, whose close files the entry in the inactive-tabs archive (TAB-20).
+   */
+  private divertClosed: ((entry: ClosedTabEntry) => void) | null = null
   /**
    * Every frame's live capture report per tab, by the frame's reporter id (tabs-43): the tab's
    * `alert` is the highest any frame asks for, so a call in an iframe lights the row and a
@@ -551,6 +556,7 @@ export class TabManager {
           }, true)
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
+          this.browser.devices.cancelForTab(tabId)
           this.browser.permissions.onTabNavigated(tabId, url)
           // Whatever the PDF viewer reported was about the document before this one.
           this.browser.pdf.onNavigated(tabId)
@@ -1202,6 +1208,7 @@ export class TabManager {
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
     this.browser.permissionPrompts.cancelForTab(tabId)
+    this.browser.devices.cancelForTab(tabId)
     this.browser.permissions.onTabGone(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.autofill.onTabGone(tabId)
@@ -1473,6 +1480,7 @@ export class TabManager {
     this.browser.externalProtocols.cancelForTab(tabId)
     this.browser.popups.onTabGone(tabId)
     this.browser.security.cancelForTab(tabId)
+    this.browser.devices.cancelForTab(tabId)
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
@@ -1828,7 +1836,10 @@ export class TabManager {
     this.browser.print.onTabRemoved(tabId)
     this.browser.pdf.onTabRemoved(tabId)
     this.browser.liveFolders.onTabLeftFolder(tabId, tab.folderId)
-    if (closed) this.browser.session.pushTab(closed)
+    if (closed) {
+      if (this.divertClosed) this.divertClosed(closed)
+      else this.browser.session.pushTab(closed)
+    }
     for (const { w, s, next } of reselect) {
       w.select(s, next)
       if (w.activeSpaceId === s.id && next) this.activateTab(next, w, w === source ? opts : {})
@@ -1844,6 +1855,26 @@ export class TabManager {
     this.browser.updateMedia()
     if (this.isPrivate(tab)) this.browser.onPrivateTabClosed()
     this.browser.state.commit()
+  }
+
+  /**
+   * Close `tabId` the way the inactive-tabs pass does (TAB-20): the tab leaves the grid exactly
+   * as a close does – document gone, navigation stack kept – but its entry comes back to the
+   * caller for the archive instead of joining "Recently closed". Null when the close produced no
+   * entry (a never-visited blank tab, a private tab, a pinned tab held by `pinnedCloseBehavior`),
+   * in which case the tab is simply closed or left as it was.
+   */
+  archiveTab(tabId: string, win?: ZenWindow): ClosedTabEntry | null {
+    let entry: ClosedTabEntry | null = null
+    this.divertClosed = (closed) => {
+      entry = closed
+    }
+    try {
+      this.closeTab(tabId, false, win)
+    } finally {
+      this.divertClosed = null
+    }
+    return entry
   }
 
   /**
@@ -2085,45 +2116,75 @@ export class TabManager {
     this.browser.state.commit()
   }
 
-  /** Whether the user chose "Mute Site" for the host of `url`. */
+  /**
+   * Whether the site of `url` is muted: its `sound` content setting resolves to block (the one
+   * source of "Mute Site", Settings › Site settings › Sound and the site-information row alike).
+   * Pages without a site (`zen://`, `about:blank`) are never muted by a setting, as Chrome's
+   * internal pages are allowed every content whatever the default.
+   */
   siteMuted(url: string): boolean {
-    const host = domainOf(url)
-    return host !== '' && this.settings.mutedHosts.includes(host)
+    return permissionSite(url) !== null && this.browser.permissions.resolve('sound', url) === 'deny'
   }
 
   /**
-   * Chrome's "Mute Site": every tab of the host goes quiet (and stays so on later visits) until
-   * the site is unmuted again. Tabs that leave the host regain their sound.
+   * Chrome's "Mute Site": every tab of the site goes quiet (and stays so on later visits) until
+   * the site is unmuted again. Tabs that leave the site regain their sound. Writes the site's
+   * `sound` setting – as Chrome, an exception equal to the default is cleared rather than kept –
+   * and `followSoundSetting` mutes the tabs when the change lands.
    */
   toggleMuteSite(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    const host = domainOf(tab.url)
-    if (!host) return
-    const muted = !this.settings.mutedHosts.includes(host)
-    this.settings.mutedHosts = muted
-      ? [...this.settings.mutedHosts, host]
-      : this.settings.mutedHosts.filter((h) => h !== host)
+    const site = permissionSite(tab.url)
+    if (!site) return
+    const wanted: 'allow' | 'deny' = this.siteMuted(tab.url) ? 'allow' : 'deny'
+    const permissions = this.browser.permissions
+    permissions.set('sound', site, wanted === permissions.effectiveDefault('sound') ? null : wanted)
+  }
+
+  /**
+   * A `sound` decision changed (Mute Site, a Settings row, a reset): every tab of the site – of
+   * every site, for the default – takes the setting's answer, as Chrome mutes and unmutes on the
+   * spot. Wired by the browser once the permission store exists.
+   */
+  followSoundSetting(origin: string | null): void {
+    let changed = false
     for (const t of Object.values(this.model.tabs)) {
-      if (domainOf(t.url) !== host || t.muted === muted) continue
+      if (origin !== null && permissionSite(t.url) !== origin) continue
+      const muted = this.siteMuted(t.url)
+      if (t.muted === muted) continue
       t.muted = muted
       this.view(t.id)?.setMuted(muted)
+      changed = true
     }
+    if (changed) this.browser.state.commit()
+  }
+
+  /**
+   * Before the `sound` setting was the source, "Mute Site" kept bare hosts (`www.` stripped) in
+   * `settings.mutedHosts`. Each host becomes a `sound` block for the origins the old rule
+   * covered (`soundSitesOfMutedHost`) and the list is emptied; a profile that carries hosts
+   * again later (an older device syncing them in) is migrated the same way.
+   */
+  migrateMutedHosts(): void {
+    const hosts = this.settings.mutedHosts
+    if (hosts.length === 0) return
+    for (const host of hosts)
+      for (const origin of soundSitesOfMutedHost(host))
+        this.browser.permissions.set('sound', origin, 'deny')
+    this.settings.mutedHosts = []
     this.browser.state.commit()
   }
 
-  /** A navigation crossed a site boundary: pick up or drop the host's mute with it. */
+  /** A navigation crossed a site boundary: pick up or drop the site's mute with it. */
   private followSiteMute(tab: Tab, view: TabView, fromUrl: string, toUrl: string): void {
-    const from = domainOf(fromUrl)
-    const to = domainOf(toUrl)
-    if (from === to) return
-    const muted = this.settings.mutedHosts
-    if (to && muted.includes(to)) {
+    if (permissionSite(fromUrl) === permissionSite(toUrl)) return
+    if (this.siteMuted(toUrl)) {
       if (!tab.muted) {
         tab.muted = true
         view.setMuted(true)
       }
-    } else if (from && muted.includes(from) && tab.muted) {
+    } else if (this.siteMuted(fromUrl) && tab.muted) {
       tab.muted = false
       view.setMuted(false)
     }
@@ -3655,4 +3716,17 @@ function domainOf(url: string): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * The origins a pre-migration "Mute Site" host stood for: the old rule matched the hostname with
+ * `www.` stripped, so a site name covers its https origin and its `www.` one; an address or a
+ * single-label name (`localhost`, a LAN box) has no `www.` and is as likely plain http.
+ */
+export function soundSitesOfMutedHost(host: string): string[] {
+  const name = host.trim().toLowerCase()
+  if (!name || /[\s/|]/.test(name)) return []
+  const address = /^[\d.]+$/.test(name) || name.includes(':') || !name.includes('.')
+  if (address) return [`https://${name}`, `http://${name}`]
+  return [`https://${name}`, `https://www.${name}`]
 }

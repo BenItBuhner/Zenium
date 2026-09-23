@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BASELINE_DISABLED_FEATURES,
   baselineDisabledFeatures,
+  baselineSwitches,
   deriveStartupProfile,
   profilesDiffer,
   sanitizeResourceSettings,
@@ -208,5 +209,25 @@ describe('startupSwitches', () => {
       baselineDisabledFeatures('linux')
     )
     expect(linux).toEqual([{ name: 'disable-features', value: 'FedCm,HardwareMediaKeyHandling' }])
+  })
+})
+
+describe('baselineSwitches', () => {
+  it('enables the Speech Dispatcher client on Linux only; other platforms have their own engines', () => {
+    expect(baselineSwitches('linux')).toEqual([{ name: 'enable-speech-dispatcher' }])
+    expect(baselineSwitches('win32')).toEqual([])
+    expect(baselineSwitches('darwin')).toEqual([])
+  })
+
+  it('hands out copies, so a caller cannot change the baseline', () => {
+    const first = baselineSwitches('linux')
+    first[0].name = 'changed'
+    expect(baselineSwitches('linux')).toEqual([{ name: 'enable-speech-dispatcher' }])
+  })
+
+  it('never puts an automation switch on the line', () => {
+    for (const os of ['linux', 'win32', 'darwin'])
+      for (const sw of baselineSwitches(os))
+        expect(sw.name).not.toMatch(/automation|headless|remote-debugging|test-type/)
   })
 })

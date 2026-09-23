@@ -33,6 +33,7 @@ import { BrowserState, type PersistedWindow } from './state'
 import { HistoryService } from './history'
 import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
+import { InactiveTabsService, sanitizeArchiveDays } from './inactiveTabs'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
 import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
@@ -44,6 +45,7 @@ import { PrivacyService } from './privacy'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
+import { DeviceChooserService } from './deviceChooser'
 import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
 import { TabManager, isTabSection } from './tabs'
@@ -245,6 +247,8 @@ export class Browser {
   readonly external: ExternalLaunches
   /** HTTP authentication and client-certificate prompts. */
   readonly security: SecurityPromptService
+  /** The device choosers of Web Bluetooth, WebUSB, Web Serial and WebHID, and Bluetooth pairing. */
+  readonly devices: DeviceChooserService
   /** `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, shown by the chrome. */
   readonly pageDialogs: PageDialogService
   /** Window-modal questions ("Close N tabs?", "Quit Zenium?"), shown by a window's chrome. */
@@ -256,6 +260,8 @@ export class Browser {
   readonly pages: PageService
   /** Recently closed tabs and windows (Ctrl+Shift+T, the app menu's submenu, the history page). */
   readonly session: SessionService
+  /** Inactive tabs (TAB-20): the archive tabs idle past the threshold move into, and its passes. */
+  readonly inactiveTabs: InactiveTabsService
   readonly actions: Actions
   readonly keys: KeyboardHandler
   readonly menus: Menus
@@ -426,14 +432,21 @@ export class Browser {
     this.popups = new PopupBlocker(this)
     this.external = new ExternalLaunches(this)
     this.security = new SecurityPromptService(this)
+    this.devices = new DeviceChooserService(this)
     this.pageDialogs = new PageDialogService(this)
     this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
     this.fullscreen = new FullscreenService(this)
     this.pages = new PageService(this)
     this.tabs = new TabManager(this)
+    // A site's mute is its `sound` setting: tabs follow every change of it, from wherever it came.
+    this.permissions.subscribe((change) => {
+      if (change.permission === 'sound') this.tabs.followSoundSetting(change.origin)
+    })
+    this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
+    this.inactiveTabs = new InactiveTabsService(this)
     this.history.onChange((kind) => {
       for (const w of this.allWindows()) w.send('history.changed', { kind })
     })
@@ -502,6 +515,9 @@ export class Browser {
       lastSafetyCheck: this.privacy.lastSafetyCheck(),
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
+      deviceChoosers: this.devices.list(),
+      devicePairings: this.devices.listPairings(),
+      deviceGrants: this.permissions.deviceGrants(),
       pageDialogs: this.pageDialogs.list(),
       closingTabIds: this.tabs.closingTabIds(),
       screenCaptureRequests: this.screenCapture.list(),
@@ -1145,6 +1161,8 @@ export class Browser {
     // a launcher alias flipped back by an update); the persisted choice wins.
     this.platform.app.setAppIcon?.(this.state.settings.appIcon)
     this.governor.start()
+    // The archive's first pass is armed for later, off the boot path (TAB-20).
+    this.inactiveTabs.start()
     this.liveFolders.start()
     void this.extensions.start()
     this.sync.start()
@@ -2097,6 +2115,7 @@ export class Browser {
     this.downloads.shutdown()
     this.protection.stop()
     this.blocking.stop()
+    this.inactiveTabs.stop()
     this.background.stop()
     this.translate.stop()
     this.passwords.shutdown()
@@ -2635,6 +2654,14 @@ export class Browser {
       'privacy.setThirdPartyCookiesPrivate': ({ mode }, win) =>
         this.protection.setThirdPartyCookiesPrivate(mode, win),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
+      'devices.respond': ({ id, deviceId }) => this.devices.respond(id, deviceId),
+      'devices.respondPairing': ({ id, response }) => this.devices.respondPairing(id, response),
+      'devices.forget': ({ origin, kind, deviceId }) =>
+        this.permissions.forgetDevice(
+          kind,
+          origin,
+          deviceId === undefined ? undefined : { deviceId, name: '' }
+        ),
       'pageDialog.respond': ({ id, response }) => this.pageDialogs.respond(id, response),
       'window.respondPrompt': ({ id, accepted }) => this.windowPrompts.respond(id, accepted),
       'session.crashRestore': ({ restore }) => this.session.crashRestore(restore),
@@ -3024,6 +3051,13 @@ export class Browser {
       'session.restoreClosed': ({ id, background }, win) =>
         void this.session.restoreClosed(id, win, Boolean(background)),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
+
+      'inactiveTabs.list': () => this.inactiveTabs.list(),
+      'inactiveTabs.restore': ({ id }, win) => void this.inactiveTabs.restore(id, win),
+      'inactiveTabs.restoreAll': (_args, win) => this.inactiveTabs.restoreAll(win),
+      'inactiveTabs.close': ({ id }) => this.inactiveTabs.close(id),
+      'inactiveTabs.closeAll': () => this.inactiveTabs.closeAll(),
+      'inactiveTabs.runPasses': ({ now }) => this.inactiveTabs.runPasses(now),
 
       'clipboard.writeText': ({ text, sensitive, confirmation }, win) => {
         if (sensitive)
@@ -3474,6 +3508,7 @@ export class Browser {
       windowSync: s.windowSync,
       resources: JSON.stringify(s.resources),
       unload: `${s.unloadEnabled}:${s.unloadTimeoutMinutes}:${s.unloadExcludedDomains.join(',')}`,
+      inactiveTabs: `${s.inactiveTabsArchiveDays}:${s.inactiveTabsAutoClose}`,
       agents: JSON.stringify(s.agents),
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
@@ -3589,6 +3624,8 @@ export class Browser {
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.splitEdgeZones = s.splitEdgeZones !== false
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
+    s.inactiveTabsArchiveDays = sanitizeArchiveDays(s.inactiveTabsArchiveDays)
+    s.inactiveTabsAutoClose = s.inactiveTabsAutoClose !== false
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     // A default the profile no longer has an engine for (removed, or named by a peer's build that
     // knows more engines), or an extension's engine (the default only through the extension's
@@ -3616,6 +3653,8 @@ export class Browser {
     ) {
       this.governor.onSettingsChanged()
     }
+    if (before.inactiveTabs !== `${s.inactiveTabsArchiveDays}:${s.inactiveTabsAutoClose}`)
+      this.inactiveTabs.onSettingsChanged()
     if (before.agents !== JSON.stringify(s.agents)) this.agents.onSettingsChanged()
     if (before.updates !== JSON.stringify(s.updates)) this.updates.onSettingsChanged()
     if (before.appIcon !== s.appIcon) this.platform.app.setAppIcon?.(s.appIcon)
