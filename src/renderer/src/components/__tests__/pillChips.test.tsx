@@ -410,7 +410,9 @@ describe('desktop pill (NavRow)', () => {
       expectChip(chip, 'This page is using your camera and microphone')
       expect(chip.getAttribute('data-capture-chip')).toBe('camera')
       // The chrome tooltip (a11y-26, §9.31) carries the name; never a native title.
-      expect(chip.getAttribute('data-tooltip')).toBe('This page is using your camera and microphone')
+      expect(chip.getAttribute('data-tooltip')).toBe(
+        'This page is using your camera and microphone'
+      )
       expect(chip.hasAttribute('title')).toBe(false)
       expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
       expect(chip.getAttribute('aria-expanded')).toBe('false')
