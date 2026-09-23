@@ -123,6 +123,18 @@ class RendererExits(private val clock: () -> Long) {
     /** The word for `tabId` from the exit just recorded, not consumed (a chrome that stood tells its page now). */
     fun peek(tabId: String): Report? = pending?.reports?.get(tabId)
 
+    /**
+     * Whether [take] would answer a report for `tabId` now – the page comes back as the crash
+     * page – under [take]'s own conditions (a record, in date, armed by the rebuild, with a word
+     * for this page), consuming nothing: the host reads it before the page's list is restored,
+     * to keep a load the crash page is about to supersede from starting under it.
+     */
+    fun willTake(tabId: String): Boolean {
+        val p = pending ?: return false
+        if (clock() - p.at > PENDING_TTL_MS) return false
+        return p.armed && p.reports.containsKey(tabId)
+    }
+
     /** The exit being handled right now, for the log. */
     val current: Exit? get() = pending?.exit
 

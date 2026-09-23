@@ -64,6 +64,7 @@ import {
 } from '@core/extensions/runtime/plan'
 import type { Endpoint, MessageRouter } from '@core/extensions/runtime/router'
 import { ActiveTabGrants } from './extensionActiveTab'
+import { AndroidBrowsingData, BROWSING_DATA_PERMISSION } from './extensionBrowsingData'
 import { AndroidContextMenus } from './extensionContextMenus'
 import { AndroidCookies, type JarReading } from './extensionCookies'
 import type { AndroidDeclarativeNetRequest } from './extensionDnr'
@@ -487,6 +488,7 @@ export class ExtensionApi {
   readonly sidePanel: AndroidSidePanel
   /** `chrome.proxy.settings` over the WebView's proxy override (`extensionProxy.ts`). */
   readonly proxy: AndroidProxy
+  readonly browsingData: AndroidBrowsingData
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
   readonly notifications: AndroidNotifications
@@ -541,6 +543,7 @@ export class ExtensionApi {
       emit: (id, ns, name, args) => host.emit(id, ns, name, args),
       warn: (message) => console.warn(`[zen] ${message}`)
     })
+    this.browsingData = new AndroidBrowsingData({ browser: host.browser })
     this.cookies = new AndroidCookies({
       read: (containerId, url) => host.readCookies(containerId, url),
       write: (containerId, url, setCookie) => host.writeCookie(containerId, url, setCookie),
@@ -864,6 +867,14 @@ export class ExtensionApi {
       case 'proxy':
         // `proxy.settings`, a ChromeSetting over the WebView's proxy override (`extensionProxy.ts`).
         return this.proxy.call(ext, method, args)
+      case 'browsingData':
+        // Site data and the cache through the engine's clearing, history and downloads through
+        // the models (`extensionBrowsingData.ts`); Chrome's error without the permission.
+        return this.browsingData.call(
+          this.holdsPermission(ext, BROWSING_DATA_PERMISSION),
+          method,
+          args
+        )
       case 'extension':
         // The store's record carries both toggles (the runtime scopes tabs, events and rules by them).
         if (method === 'isAllowedFileSchemeAccess') return ext.record.allowFileAccess === true

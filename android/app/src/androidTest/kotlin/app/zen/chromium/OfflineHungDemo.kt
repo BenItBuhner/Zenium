@@ -37,7 +37,12 @@ import java.io.File
  *     themes) after the platform's ~5 s; the page answering again takes the prompt down;
  *  8. a page that hangs for good: Wait keeps the page and the prompt returns after the policy's
  *     grace; Exit page ends the renderer and the page comes back as the crash page's `hung`
- *     variant.
+ *     variant;
+ *  9. the forced race (nightly run 35822500800's one rebuild in five): the page's saved list is
+ *     on disk and the debug hold keeps the crash page's document back, so the load the rebooted
+ *     core sets up ahead of it commits first for certain; the host withholds the list from a
+ *     page coming back as the crash page, the crash mark survives the commit ahead of the crash
+ *     page, and a finger on Show tabs opens the overview.
  *
  * Two acts, light and dark, chosen by the `theme` argument. Only asserts what it read; the
  * recording, the stills (`android-offline-hung-*.png`) and the findings file are the evidence.
@@ -112,6 +117,7 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         offlineScenes()
         crashScenes()
         hungScenes()
+        racedCrashScene()
         finding("done: ${failures.size} claim(s) failed")
     }
 
@@ -267,6 +273,116 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         shot("14-calm-again")
     }
 
+    // --- 9: the forced race ---------------------------------------------------------------------
+
+    /**
+     * The order the nightly caught one rebuild in five (run 35822500800, phone-d): a load the
+     * rebooted core set up before the host's word that the renderer went – the saved list's
+     * current entry, or the core's own load of the page for a list not restored – commits ahead
+     * of the crash page, and the crash page then committed with the crash mark cleared: Show
+     * tabs posted into a relay that refused it. Forced here rather than left to chance. The
+     * page's saved list is put on disk first (the core writes `navigation/<tabId>.json` 3 s
+     * after a navigation; a first crash and Reload are that navigation), then the debug hold
+     * ([Host.debugHoldLoadHtml]) keeps the crash page's document back so the load ahead of it
+     * commits first for certain. Read off the host: the list withheld from the page coming
+     * back as the crash page (`restoreNavigation` false, the `ZenHost` line), the view's list
+     * with the page's own entry under the crash page's (the forced order happened); off the
+     * tree and the chrome: the repeat variant, and a finger on Show tabs opening the overview.
+     */
+    private fun racedCrashScene() {
+        activate(TAB_CRASH, "/notes")
+        settleBeforeExit()
+        // A crash of this scene's own – either variant: scene 5's may or may not be within the
+        // minute – and Reload: the navigation the fresh saved list is written after.
+        endRenderer(RendererExits.Exit.CRASH)
+        val first = awaitCrashPage("crash", repeat = null, 40_000)
+        claim(first != null, "the forced race's first crash ends on the crash page (${first ?: pageState()})")
+        touchPageControl(RELOAD_LABEL)
+        claim(awaitPage("/notes", 20_000), "Reload brought the page back ahead of the forced race (${pageState()})")
+        val reloadedAt = System.currentTimeMillis()
+        val sidecar = awaitSidecar(TAB_CRASH, reloadedAt, 20_000)
+        val file = sidecarFile(TAB_CRASH)
+        claim(sidecar, "the page's saved list is on disk, written after the reload (${file.name}: ${if (file.isFile) "${file.length()} bytes, ${System.currentTimeMillis() - file.lastModified()} ms old" else "missing"})")
+        shot("15-raced-before")
+
+        // The hold, then the crash again within the minute: the load the core sets up commits,
+        // and the crash page's document only starts HOLD_MS later.
+        var held = false
+        instrumentation.runOnMainSync { held = host.debugHoldLoadHtml(TAB_CRASH, HOLD_MS) }
+        claim(held, "the debug hook holds the crash page's next document back by $HOLD_MS ms")
+        val refusalsBefore = restoreRefusals()
+        endRenderer(RendererExits.Exit.CRASH)
+        val again = awaitCrashPage("crash", repeat = true, 40_000)
+        claim(again != null, "the forced race ends on the repeat variant (${again ?: pageState()})")
+        val lastRestore = tabLastRestore(TAB_CRASH)
+        claim(lastRestore == false, "the host withheld the saved list from the page coming back as the crash page (restoreNavigation answered $lastRestore)")
+        val refusals = restoreRefusals()
+        claim(refusals > refusalsBefore, "the host logged the withheld list ('… $RESTORE_REFUSED' for $TAB_CRASH: $refusalsBefore line(s) before, $refusals after)")
+        val list = backForwardList(TAB_CRASH)
+        val raced = list.size >= 2 && list[list.size - 2].contains("/notes")
+        claim(raced, "the forced order happened: the page's own load committed ahead of the crash page (the view's list reads ${list.joinToString(" > ").ifEmpty { "(empty)" }})")
+        claim(waitFor(CRASH_AGAIN_TITLE, 8_000) != null, "the crash page after the forced race reads '$CRASH_AGAIN_TITLE'")
+        claim(findByLabel(SHOW_TABS_LABEL) != null, "the crash page after the forced race offers Show tabs")
+        SystemClock.sleep(800)
+        shot("16-raced-crash-page")
+        touchPageControl(SHOW_TABS_LABEL)
+        val overview = awaitSurface(true, 8_000)
+        claim(overview, "Show tabs after the forced race opened the tab overview (the chrome took the back)")
+        val drawn = overview && waitFor(OVERVIEW_SPACES_LABEL, 15_000) != null
+        claim(drawn, "the overview after the forced race is drawn (its Spaces control is in the tree)")
+        SystemClock.sleep(1_500)
+        shot("17-raced-show-tabs-overview")
+        if (overview) {
+            back()
+            claim(awaitSurface(false, 8_000), "back from the overview returns to the crash page after the forced race")
+            SystemClock.sleep(800)
+        }
+        touchPageControl(RELOAD_LABEL)
+        claim(awaitPage("/notes", 20_000), "Reload after the forced race brought the page back (${pageState()})")
+        SystemClock.sleep(800)
+        shot("18-raced-reloaded")
+    }
+
+    /** The core's saved list for `tabId` on disk: `navigation/<tabId>.json` under the host's storage (`Storage`, `files/zen`). */
+    private fun sidecarFile(tabId: String): File = File(app.filesDir, "zen/navigation/$tabId.json")
+
+    /**
+     * The saved list of `tabId` is on disk with a write after `sinceMs` (epoch), and the 3 s the
+     * core waits after a navigation before writing it (`NAVIGATION_STATE_WRITE_DELAY_MS`) have
+     * passed with a margin, so the write is the one for the list as it stands now.
+     */
+    private fun awaitSidecar(tabId: String, sinceMs: Long, timeoutMs: Long): Boolean {
+        val file = sidecarFile(tabId)
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val settled = System.currentTimeMillis() - sinceMs >= SIDECAR_SETTLE_MS
+            if (settled && file.isFile && file.length() > 0 && file.lastModified() >= sinceMs - 1_000) return true
+            SystemClock.sleep(250)
+        }
+        return false
+    }
+
+    /** How many `ZenHost` lines the logcat holds for a saved list withheld from [TAB_CRASH]. */
+    private fun restoreRefusals(): Int =
+        shell("logcat -d -s ZenHost:*").lines().count { it.contains("the list of $TAB_CRASH $RESTORE_REFUSED") }
+
+    /** What the last `restoreNavigation` of `tabId`'s view answered ([TabWebView.lastRestore]); null before one, or with no view. */
+    private fun tabLastRestore(tabId: String): Boolean? {
+        var answer: Boolean? = null
+        instrumentation.runOnMainSync { answer = host.tabs.get(tabId)?.lastRestore }
+        return answer
+    }
+
+    /** The URLs of `tabId`'s WebView list, oldest first (a `zen://` document's item may read as its `data:` placeholder). */
+    private fun backForwardList(tabId: String): List<String> {
+        var urls: List<String> = emptyList()
+        instrumentation.runOnMainSync {
+            val list = host.tabs.get(tabId)?.copyBackForwardList()
+            urls = if (list == null) emptyList() else (0 until list.size).map { list.getItemAtIndex(it)?.url ?: "" }
+        }
+        return urls
+    }
+
     // --- the renderer ---------------------------------------------------------------------------
 
     /** The debug hook ([Host.debugEndRenderer]) on the main thread; a release build would refuse, which is a failed claim. */
@@ -281,11 +397,11 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
 
     /**
      * The crash page for the page in front, `zen://error?code=-1` with `variant` and `repeat` as
-     * the rebooted core wrote them (`crashPageUrl`), painted; the URL, or null when it never
-     * came. A rebuild after a rapid one loads the fresh chrome late (HostLifecycle's backoff), so
-     * the wait is generous.
+     * the rebooted core wrote them (`crashPageUrl`; a null `repeat` takes either), painted; the
+     * URL, or null when it never came. A rebuild after a rapid one loads the fresh chrome late
+     * (HostLifecycle's backoff), so the wait is generous.
      */
-    private fun awaitCrashPage(variant: String, repeat: Boolean, timeoutMs: Long): String? {
+    private fun awaitCrashPage(variant: String, repeat: Boolean?, timeoutMs: Long): String? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             val (url, progress) = pageState()
@@ -294,7 +410,7 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
                 val code = uri.getQueryParameter("code")
                 val got = uri.getQueryParameter("variant") ?: "crash"
                 val gotRepeat = uri.getQueryParameter("repeat") == "1"
-                if (code == CRASH_CODE && got == variant && gotRepeat == repeat) {
+                if (code == CRASH_CODE && got == variant && (repeat == null || gotRepeat == repeat)) {
                     Log.i(tag, "crash page up: $url")
                     SystemClock.sleep(1_500)
                     return url
@@ -558,6 +674,15 @@ class OfflineHungDemo : DemoHarness("offline-hung-demo-state.json", "android-off
         private const val CRASH_TITLE = "This page crashed"
         private const val CRASH_AGAIN_TITLE = "This page crashed again"
         private const val MEMORY_TITLE = "This page was closed to free up memory"
+        /**
+         * The debug hold on the crash page's document (scene 9): long enough for the page's own
+         * load, on a renderer just spawned, to commit ahead of it for certain.
+         */
+        private const val HOLD_MS = 3_500L
+        /** `NAVIGATION_STATE_WRITE_DELAY_MS` (3 s, `src/core/navigationState.ts`) with a margin for the write itself. */
+        private const val SIDECAR_SETTLE_MS = 4_500L
+        /** The `ZenHost` line for a saved list withheld from a page coming back as the crash page (`Host.kt`, `view.restoreNavigation`). */
+        private const val RESTORE_REFUSED = "is not restored: its page comes back as the crash page"
         private const val BANNER_TITLE_JS =
             "Array.prototype.map.call(document.querySelectorAll('.zen-banner .zen-banner-title'),function(e){return e.textContent.trim()}).join('|')"
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
