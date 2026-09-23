@@ -4,7 +4,7 @@
 // running of axe are the harness's – unit-tested by aria.test.mjs.
 
 /** The states the walkthrough snapshots, in order; one baseline file per state under `aria/`. */
-export const ARIA_STATES = ['resting-window', 'app-menu', 'urlbar', 'hosted-dialog']
+export const ARIA_STATES = ['resting-window', 'app-menu', 'urlbar', 'hosted-dialog', 'web-capture']
 
 /** The impacts an axe violation fails the step at; anything milder is reported and tolerated. */
 export const AXE_GATE = ['serious', 'critical']

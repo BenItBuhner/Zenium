@@ -2,12 +2,11 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { UIState, WindowPrompt } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
+import { openedFromKeyboard } from '@renderer/lib/popover'
 import { activeTab } from '@renderer/lib/selectors'
 import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
 import { windowPromptText } from '@renderer/lib/windowPrompt'
-import { wrapTab } from '../bookmarks/popover'
-import { useEscapeTrap } from '../bookmarks/escape'
+import { ConfirmDialog } from './ConfirmDialog'
 
 /**
  * The questions the core asks about the window as a whole before it closes ("Close N tabs?")
@@ -26,14 +25,23 @@ export function WindowPromptDialog({ state }: { state: UIState }): JSX.Element |
 const SNAPSHOT_WAIT_MS = 250
 
 /**
- * A v2 dialog (draft §9.23): a title block – the title and ONE description, the tabs sentence
+ * The §9.23 confirmation (`ConfirmDialog`): the title and ONE description – the tabs sentence
  * and, when downloads are in progress too, their sentence after it in the same paragraph (the
  * two facts are peers; the body is for copy that introduces other content, and the checkbox is
  * the tabs warning's, not the sentence's) – then the checkbox that turns the tabs warning off
- * for good (Firefox's) as the body's one element, Cancel and one primary button. Alone, the
+ * for good (Firefox's) as the body's one element, under Zen's own name for the setting –
+ * "Confirm before closing multiple tabs", one line at 400 and the same words as the Settings
+ * row that governs it (`warnOnCloseWindow`) – then Cancel and the primary verb. Alone, the
  * download sentence is the description and the checkbox stays away (nothing about the tabs is
- * asked). Enter accepts, Escape and the scrim cancel, Tab wraps, focus starts on the primary
- * (the chassis's rule today; §9.22's container rule is the coordinator's chassis item, #340).
+ * asked). The keyboard is the primitive's (§9.22): the container holds the focus, Enter
+ * answers with the verb (the prompt is not destructive, so the primary is its default), Escape
+ * and the scrim with Cancel.
+ *
+ * The way back: the page had the keyboard when the chord or the window's close button asked,
+ * so the page takes it back as the prompt goes (`returnFocusToPage`) – unless a control of the
+ * chrome had it, with its ring, as the prompt came (the quit chord from a focused toolbar
+ * button, the app menu's Quit by keyboard): then the prompt's own one-hop return to that
+ * control governs (§9.22) and the page is not asked to take the keyboard from it.
  */
 function WindowPromptView({
   prompt,
@@ -43,9 +51,13 @@ function WindowPromptView({
   tabId: string | null
 }): JSX.Element {
   const answered = useRef(false)
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const acceptRef = useRef<HTMLButtonElement>(null)
   const [keepWarning, setKeepWarning] = useState(true)
+  // Read as the view first renders, before the prompt's container takes the focus itself: a
+  // control with the ring showing, never `body` (which is what the chrome's document holds
+  // while the page has the keyboard).
+  const [fromChrome] = useState(
+    () => document.activeElement !== document.body && openedFromKeyboard()
+  )
 
   useEffect(() => {
     let gone = false
@@ -56,15 +68,14 @@ function WindowPromptView({
       if (gone) return
       run('focus.chrome', undefined)
       uiStore.set({ windowPromptOpen: true })
-      acceptRef.current?.focus()
     })
     return () => {
       gone = true
       if (uiStore.get().windowPromptOpen) uiStore.set({ windowPromptOpen: false })
       invalidateSnapshot()
-      returnFocusToPage()
+      if (!fromChrome) returnFocusToPage()
     }
-  }, [tabId])
+  }, [tabId, fromChrome])
 
   const respond = (accepted: boolean): void => {
     if (answered.current) return
@@ -74,62 +85,27 @@ function WindowPromptView({
     if (accepted && !keepWarning) run('settings.update', { warnOnCloseWindow: false })
     run('window.respondPrompt', { id: prompt.id, accepted })
   }
-  const cancel = (): void => respond(false)
-  useEscapeTrap(true, cancel)
-  useFrameDialog({ onScrimPress: cancel })
 
   const text = windowPromptText(prompt)
-  const titleId = `zen-window-prompt-title-${prompt.id}`
-  const descId = `zen-window-prompt-desc-${prompt.id}`
   return (
-    <div
-      ref={dialogRef}
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      aria-describedby={descId}
-      data-window-prompt={prompt.kind}
-      data-downloads={prompt.downloads?.count}
-      className="zen-animate-pop zen-bm-dialog flex max-w-[calc(100%-24px)] flex-col"
-      style={{ width: POPOVER_WIDTH.form }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onKeyDown={(e) => wrapTab(e, dialogRef.current)}
-    >
-      <div className="zen-bm-title-block">
-        <h2 id={titleId} className="zen-bm-title">
-          {text.title}
-        </h2>
-        <p id={descId} className="zen-bm-title-desc">
-          {text.description}
-        </p>
-      </div>
-      <form
-        className="zen-bm-form"
-        onSubmit={(e) => {
-          e.preventDefault()
-          respond(true)
-        }}
-      >
-        {text.tabsWarning && (
-          <label className="flex items-center gap-2 text-[13px]">
-            <input
-              type="checkbox"
-              className="h-4 w-4 accent-[var(--v2-accent)]"
-              checked={keepWarning}
-              onChange={(e) => setKeepWarning(e.target.checked)}
-            />
-            Warn before closing a window with multiple tabs
-          </label>
-        )}
-        <div className="zen-bm-footer justify-end">
-          <button type="button" className="zen-button" onClick={cancel}>
-            Cancel
-          </button>
-          <button ref={acceptRef} type="submit" className="zen-button" data-variant="primary">
-            {text.verb}
-          </button>
-        </div>
-      </form>
-    </div>
+    <ConfirmDialog
+      name="window-prompt"
+      title={text.title}
+      description={text.description || undefined}
+      action={text.verb}
+      checkbox={
+        text.tabsWarning
+          ? {
+              label: 'Confirm before closing multiple tabs',
+              checked: keepWarning,
+              onChange: setKeepWarning
+            }
+          : undefined
+      }
+      onCancel={() => respond(false)}
+      onConfirm={() => respond(true)}
+      returnFocus={fromChrome ? undefined : false}
+      data={{ 'data-window-prompt': prompt.kind, 'data-downloads': prompt.downloads?.count }}
+    />
   )
 }
