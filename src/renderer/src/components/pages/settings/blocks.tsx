@@ -374,7 +374,7 @@ export function SheetActions({
 }): JSX.Element {
   return (
     <div className="zen-settings-sheet-actions" data-busy={busy || undefined}>
-      <button type="button" className="zen-v2-button" onClick={busy ? undefined : onCancel}>
+      <button type="button" className="zen-v2-button" onClick={busy ? undefined : () => onCancel()}>
         {cancel ?? 'Cancel'}
       </button>
       <button

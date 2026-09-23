@@ -208,6 +208,14 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'bookmark.toggleBar'
   },
   { id: 'history', label: 'Show History', keywords: ['history', 'recent'], action: 'history.open' },
+  // Chrome's "Delete browsing data" action chip (its Ctrl+Shift+Delete dialog).
+  {
+    id: 'clear-browsing-data',
+    label: 'Delete Browsing Data',
+    keywords: ['delete', 'clear', 'browsing data', 'history', 'cookies', 'cache'],
+    action: 'privacy.clearBrowsingData',
+    layouts: SIDEBAR_LAYOUTS
+  },
   {
     id: 'downloads',
     label: 'Show Downloads',
@@ -280,6 +288,14 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     keywords: ['window', 'private', 'incognito'],
     action: 'window.newPrivate',
     requires: 'windows'
+  },
+  // Chrome's More tools › Name window…: the desktop's, whose title bar reads the name.
+  {
+    id: 'name-window',
+    label: 'Name Window',
+    keywords: ['window', 'name', 'rename', 'title'],
+    action: 'window.name',
+    layouts: DESKTOP_LAYOUT
   },
   {
     id: 'addons',

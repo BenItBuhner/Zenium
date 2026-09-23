@@ -130,8 +130,11 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
           data-active={isActive}
           className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-2 pb-1"
           onDoubleClick={(e) => {
-            // Zen: double-clicking empty sidebar space opens a new tab.
-            if (e.target === e.currentTarget) window.dispatchEvent(new CustomEvent('zen-new-tab'))
+            // Chrome's title-bar double-click on the strip's empty room (tabs-47,
+            // shortcuts-menus-94): maximise / restore, or the Mac's own choice. The list's
+            // padding is the scroller's own; a row's double-click (a pinned tab's rename) is
+            // the row's.
+            if (e.target === e.currentTarget) run('window.captionDoubleClick', undefined)
           }}
           onContextMenu={(e) => {
             // The strip's own menu on its empty space (tabs-35, BUG-049): the room below the
@@ -247,7 +250,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
           <div
             className="relative min-h-6 flex-1"
             data-strip-empty
-            onDoubleClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
+            onDoubleClick={() => run('window.captionDoubleClick', undefined)}
           >
             {drag && <DropZone dropKey={`section:regular:${space.id}`} activeKey={dropKey} tall />}
           </div>
