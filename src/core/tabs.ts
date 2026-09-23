@@ -3506,6 +3506,13 @@ export class TabManager {
         removeTabFromLists(m, id)
         delete m.tabs[id]
       }
+      // A folder in the window's own space – moved here with its tabs (`moveFolderToNewWindow`)
+      // – is no window's once this one closes: it goes with the space, its saved pages with it.
+      for (const folder of Object.values(m.folders))
+        if (folder.spaceId === win.localSpace.id) {
+          this.browser.liveFolders.onFolderDeleted(folder.id)
+          delete m.folders[folder.id]
+        }
       delete m.localSpaces[win.localSpace.id]
     } else if (!quitting) {
       for (const tab of Object.values(m.tabs)) {

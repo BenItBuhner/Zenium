@@ -561,25 +561,51 @@ describe('a folder moved to a new window', () => {
     expect(f.browser.allWindows()).toHaveLength(2)
   })
 
-  it("the new window closed, the folder is no window's: the source lists neither it nor its tabs", () => {
+  it("the new window closed, the folder is no window's: the model and the source lose it and its tabs together", () => {
     const f = fixture()
     const win = f.browser.focusedWindow()
     const space = win.activeSpace()
     const kept = f.openPage(win, 'https://kept.test/')
     const { folder, tabs } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
+    const other = f.browser.createFolder(space.id, 'Stays', '📁', win, { rename: false })
     const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
     if (!moved) throw new Error('no new window')
     expect(f.browser.state.snapshot(moved).folders[folder.id]).toBe(folder)
+    const localSpaceId = moved.localSpace?.id
     moved.host.close()
     const m = f.browser.state.model
-    // The window's tabs and space go with it; its folder's space is no space now, so the
-    // source's chrome lists no folder for the space it left (load drops such a folder).
+    // The window's tabs and space go with it, and the folder with the space (the teardown's
+    // own doing, not the next load's): nothing in the model names the space that is gone, so
+    // the source's chrome lists no folder for it and persistence writes none.
     expect(tabs.map((t) => m.tabs[t.id])).toEqual([undefined, undefined])
-    expect(m.spaces.some((s) => s.id === folder.spaceId)).toBe(false)
+    expect(m.localSpaces[localSpaceId!]).toBeUndefined()
+    expect(m.folders[folder.id]).toBeUndefined()
+    expect(Object.values(m.folders).some((x) => x.spaceId === localSpaceId)).toBe(false)
+    expect(m.folders[other.id]).toBe(other)
     const snap = f.browser.state.snapshot(win)
     expect(snap.folders[folder.id]).toBeUndefined()
     expect(Object.keys(snap.tabs)).toEqual([kept.id])
     expect(space.tabIds).toEqual([kept.id])
+  })
+
+  it('a saved folder in the closing window goes with its space, its pages with it', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.openPage(win, 'https://kept.test/')
+    const { folder } = grouped(f, win, ['https://a.test/', 'https://b.test/'])
+    const moved = f.browser.tabs.moveFolderToNewWindow(folder.id, win)
+    if (!moved) throw new Error('no new window')
+    // Closed in its new window, the folder is SAVED there with its two pages; a tab keeps the
+    // window open while it is.
+    f.openPage(moved, 'https://loose.test/')
+    f.browser.closeFolder(folder.id, moved)
+    expect(folder.savedTabs?.map((p) => p.url)).toEqual(['https://a.test/', 'https://b.test/'])
+    expect(folder.spaceId).toBe(moved.localSpace?.id)
+    moved.host.close()
+    const m = f.browser.state.model
+    expect(m.folders[folder.id]).toBeUndefined()
+    expect(m.localSpaces[moved.localSpace!.id]).toBeUndefined()
+    expect(f.browser.state.snapshot(win).folders[folder.id]).toBeUndefined()
   })
 
   it('opens a saved folder first – its pages back as its tabs – and moves it whole', () => {
