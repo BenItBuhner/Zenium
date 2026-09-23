@@ -3381,7 +3381,9 @@ describe('the History submenu’s Tabs from Other Devices', () => {
       'Work laptop > -',
       'Work laptop > Open All in Tabs'
     ])
-    expect(item(menu, 'Tabs from Other Devices')).toMatchObject({ enabled: false })
+    // The header is a heading, not a greyed command: a note kind, which the chrome writes in the
+    // deemphasised ink on a row that takes no focus, and a native menu shows disabled.
+    expect(item(menu, 'Tabs from Other Devices')).toMatchObject({ enabled: false, note: true })
     expect(item(menu, 'Tabs from Other Devices').click).toBeUndefined()
     const phone = item(menu, 'Pixel 9').submenu!
     expect(phone[0]).toMatchObject({ label: 'B', icon: 'data:image/png;base64,p2' })

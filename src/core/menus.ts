@@ -2457,8 +2457,12 @@ export class Menus {
    * off, or Open tabs out of what syncs, or nothing published by any device, there is no block
    * at all (the lead's #326 amendment to §10.1 – a sentence with no way out would be a permanent
    * line of nothing for the single-device user; the page one row up, Show Full History, carries
-   * the settings doors). `open` is how a row opens its tabs, since the mac bar stands with no
-   * window of its own (`applicationMenu`'s `withWindow` finds or opens one).
+   * the settings doors). The header is a note kind (`note`): the chrome's menu writes it in the
+   * deemphasised ink on a row that takes no focus and answers no click – a heading, not a
+   * command greyed out at .4 (the #396 review's A7; #299 B2's complaint) – while a native menu,
+   * which has no such row, shows the disabled item, Chrome's own form of the header. `open` is
+   * how a row opens its tabs, since the mac bar stands with no window of its own
+   * (`applicationMenu`'s `withWindow` finds or opens one).
    */
   tabsFromDevicesItems(open: (tabs: readonly SyncRemoteTab[]) => void): Template {
     const { sync, pages } = this.browser
@@ -2469,7 +2473,11 @@ export class Menus {
     const shown = lists.filter((device) => !hidden.has(device.deviceId))
     const hiddenCount = lists.length - shown.length
     if (shown.length === 0 && hiddenCount === 0) return []
-    const header: MenuItemTemplate = { label: 'Tabs from Other Devices', enabled: false }
+    const header: MenuItemTemplate = {
+      label: 'Tabs from Other Devices',
+      enabled: false,
+      note: true
+    }
     const devices: Template = shown.map((device) => {
       const tabs = [...device.tabs].sort((a, b) => b.lastActive - a.lastActive)
       const rows: Template = tabs.slice(0, REMOTE_TABS_MENU_MAX).map((tab) => ({
