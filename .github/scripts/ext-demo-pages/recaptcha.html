@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>reCAPTCHA fixture</title>
+    <style>
+      body {
+        font: 18px system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      form {
+        margin-top: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>reCAPTCHA fixture</h1>
+    <p>
+      A form guarded by Google's reCAPTCHA v2 checkbox on the test site key Google publishes for
+      development. The widget renders two frames of <code>www.google.com/recaptcha/api2/</code>:
+      the <code>anchor</code> (the checkbox) and the <code>bframe</code> (the challenge, hidden
+      until one is asked). A solver extension's content script attaches to the challenge frame.
+    </p>
+    <form id="form" action="#" onsubmit="return false">
+      <div class="g-recaptcha" data-sitekey="6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI" data-callback="onSolved"></div>
+      <p>Widget: <span id="state">loading</span></p>
+    </form>
+    <script>
+      window.__recaptcha = { loaded: false, solved: false, frames: [] }
+      window.onSolved = function () {
+        window.__recaptcha.solved = true
+        document.getElementById('state').textContent = 'solved'
+      }
+      function frames() {
+        var list = Array.prototype.slice.call(document.querySelectorAll('iframe')).map(function (f) {
+          var r = f.getBoundingClientRect()
+          return { src: (f.src || '').slice(0, 90), w: Math.round(r.width), h: Math.round(r.height) }
+        })
+        window.__recaptcha.frames = list
+        if (list.some(function (f) { return /recaptcha/.test(f.src) })) {
+          window.__recaptcha.loaded = true
+          document.getElementById('state').textContent = list.length + ' frame(s): ' + list.map(function (f) { return f.src.replace(/^https:\/\/www\.google\.com\/recaptcha\/api2\//, '').split('?')[0] }).join(', ')
+        }
+        return list
+      }
+      setInterval(frames, 1000)
+    </script>
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+  </body>
+</html>

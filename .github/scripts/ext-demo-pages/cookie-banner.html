@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cookie banner fixture</title>
+    <style>
+      body {
+        font: 18px system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      .banner {
+        position: fixed;
+        left: 0;
+        right: 0;
+        padding: 14px 18px;
+        background: #1d2b3a;
+        color: #fff;
+        z-index: 9000;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .banner button,
+      .banner a.cc-btn {
+        font: inherit;
+        padding: 8px 14px;
+        border: 0;
+        border-radius: 6px;
+        background: #f4b942;
+        color: #111;
+        text-decoration: none;
+      }
+      #cookie-notice {
+        bottom: 0;
+      }
+      #cookieConsent {
+        top: 0;
+        background: #3a1d2b;
+      }
+      #cookieConsentBar {
+        bottom: 72px;
+        background: #2b3a1d;
+      }
+      #onetrust-consent-sdk {
+        position: fixed;
+        inset: auto 0 144px 0;
+        z-index: 9001;
+      }
+      #onetrust-banner-sdk {
+        padding: 14px 18px;
+        background: #1d3a3a;
+        color: #fff;
+        display: flex;
+        gap: 12px;
+        justify-content: space-between;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Cookie banner fixture</h1>
+    <p>
+      Four consent banners in the shapes cookie-consent blockers know: a WordPress "Cookie Notice"
+      bar, a generic <code>#cookieConsent</code> box, a <code>#cookieConsentBar</code>, and a
+      OneTrust SDK container. A blocker hides them by stylesheet or dismisses them by script; the
+      page reports each banner's computed display and box on <code>window.__banners()</code>.
+    </p>
+    <p id="clicks">Accepted: none</p>
+    <div id="cookie-notice" class="banner cookie-notice-container cn-bottom" role="dialog" aria-label="Cookie Notice">
+      <span class="cn-text-container">We use cookies to ensure that we give you the best experience on our website.</span>
+      <button id="cn-accept-cookie" class="cn-set-cookie cn-button" data-cookie-set="accept">Ok</button>
+    </div>
+    <div id="cookieConsent" class="banner" role="dialog">
+      <span>This website uses cookies. By continuing you agree to their use.</span>
+      <button class="cookieConsentOK" id="cookieConsentOK">I agree</button>
+    </div>
+    <div id="cookieConsentBar" class="banner">
+      <span>Cookies help us deliver our services. By using them, you agree to our use of cookies.</span>
+      <a class="cc-btn cc-dismiss" href="#" role="button">Got it</a>
+    </div>
+    <div id="onetrust-consent-sdk">
+      <div id="onetrust-banner-sdk" class="otFlat bottom" role="dialog" aria-label="Cookie banner">
+        <div id="onetrust-policy">
+          <p id="onetrust-policy-text">By clicking "Accept All Cookies", you agree to the storing of cookies on your device.</p>
+        </div>
+        <div id="onetrust-button-group">
+          <button id="onetrust-accept-btn-handler">Accept All Cookies</button>
+          <button id="onetrust-reject-all-handler">Reject All</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      var accepted = []
+      function note(which) {
+        accepted.push(which)
+        document.getElementById('clicks').textContent = 'Accepted: ' + accepted.join(', ')
+      }
+      ;['cn-accept-cookie', 'cookieConsentOK', 'onetrust-accept-btn-handler', 'onetrust-reject-all-handler'].forEach(function (id) {
+        document.getElementById(id).addEventListener('click', function () {
+          note(id)
+          var banner = document.getElementById(id).closest('.banner, #onetrust-consent-sdk')
+          if (banner) banner.style.display = 'none'
+        })
+      })
+      document.querySelector('#cookieConsentBar .cc-dismiss').addEventListener('click', function (e) {
+        e.preventDefault()
+        note('cc-dismiss')
+        document.getElementById('cookieConsentBar').style.display = 'none'
+      })
+      window.__banners = function () {
+        var out = {}
+        ;['cookie-notice', 'cookieConsent', 'cookieConsentBar', 'onetrust-consent-sdk'].forEach(function (id) {
+          var el = document.getElementById(id)
+          if (!el) {
+            out[id] = { present: false, hidden: true, how: 'removed' }
+            return
+          }
+          var cs = getComputedStyle(el)
+          var r = el.getBoundingClientRect()
+          var hidden = cs.display === 'none' || cs.visibility === 'hidden' || r.height === 0 || r.width === 0
+          out[id] = {
+            present: true,
+            hidden: hidden,
+            how: cs.display === 'none' ? 'display:none' : cs.visibility === 'hidden' ? 'visibility:hidden' : r.height === 0 ? 'height 0' : 'shown',
+            h: Math.round(r.height),
+            inline: el.getAttribute('style') || ''
+          }
+        })
+        out.accepted = accepted.slice()
+        return out
+      }
+    </script>
+  </body>
+</html>

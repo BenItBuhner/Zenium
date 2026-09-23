@@ -16,9 +16,11 @@
       <li>isMetaMask: <span id="is-metamask">pending</span></li>
       <li>eth_chainId: <span id="chain">pending</span></li>
       <li>eip6963 announcements: <span id="eip6963">0</span></li>
+      <li>Wallet Standard registrations: <span id="standard">0</span></li>
+      <li>window.solana / window.solflare / window.suiWallet: <span id="others">pending</span></li>
     </ul>
     <script>
-      window.__wallet = { provider: false, isMetaMask: false, chainId: null, announced: [] }
+      window.__wallet = { provider: false, isMetaMask: false, chainId: null, announced: [], standard: [], others: {} }
       function set(id, text) {
         document.getElementById(id).textContent = text
       }
@@ -28,6 +30,43 @@
         set('eip6963', window.__wallet.announced.join(', '))
       })
       window.dispatchEvent(new Event('eip6963:requestProvider'))
+      // The Wallet Standard (Solana's and Sui's wallets: Solflare, Slush): a wallet registers
+      // itself through the app's `register` – either on the app's `app-ready` event, whose
+      // `detail` is the app's API, or by dispatching `register-wallet` with a callback that
+      // takes that API. Both ways land the wallet's name on `window.__wallet.standard`.
+      var standardApi = {
+        register: function () {
+          for (var i = 0; i < arguments.length; i++) {
+            var w = arguments[i]
+            var name = (w && w.name) || 'unnamed'
+            var chains = (w && w.chains && Array.prototype.slice.call(w.chains, 0, 3).join(' ')) || ''
+            window.__wallet.standard.push(name + (chains ? ' [' + chains + ']' : ''))
+          }
+          set('standard', window.__wallet.standard.join(', '))
+          return function () {}
+        }
+      }
+      window.addEventListener('wallet-standard:register-wallet', function (event) {
+        try {
+          if (typeof event.detail === 'function') event.detail(standardApi)
+        } catch (e) {
+          window.__wallet.standardError = String((e && e.message) || e)
+        }
+      })
+      window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: standardApi }))
+      function others() {
+        var o = {
+          solana: typeof window.solana,
+          isSolflare: !!(window.solana && window.solana.isSolflare),
+          solflare: typeof window.solflare,
+          suiWallet: typeof window.suiWallet,
+          slush: typeof window.slush
+        }
+        window.__wallet.others = o
+        set('others', o.solana + (o.isSolflare ? ' (isSolflare)' : '') + ' / ' + o.solflare + ' / ' + o.suiWallet)
+      }
+      others()
+      setInterval(others, 1000)
       function probe() {
         var eth = window.ethereum
         if (!eth) return false

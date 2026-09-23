@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Media and XHR fixture</title>
+    <style>
+      body {
+        font: 18px system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      video {
+        display: block;
+        width: 100%;
+        max-width: 640px;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Media and XHR fixture</h1>
+    <p>
+      One clip served by the fixture server (not a data URL), which answers <code>Range</code>
+      requests with <code>206</code>: the browser asks for it in pieces, the way a media
+      element loads a file, and the page seeks once so a second range goes out. Beside it,
+      one <code>XMLHttpRequest</code> and one <code>fetch</code> of the server's JSON, so a
+      request observer sees the <code>media</code> and the <code>xmlhttprequest</code> kinds
+      from one page.
+    </p>
+    <video id="clip" src="/clip.mp4" muted autoplay loop playsinline preload="auto"></video>
+    <p>Clip: <span id="state">loading</span></p>
+    <p>XHR: <span id="xhr">pending</span>, fetch: <span id="fetch">pending</span></p>
+    <script>
+      var v = document.getElementById('clip')
+      var state = document.getElementById('state')
+      window.__media = { playing: false, seeked: 0, duration: null, xhr: null, fetch: null, error: null, events: [] }
+      function report() {
+        state.textContent = (v.paused ? 'paused' : 'playing') + ' at ' + v.currentTime.toFixed(1) + ' s' + (window.__media.seeked ? ', seeked ' + window.__media.seeked + 'x' : '')
+      }
+      v.addEventListener('loadedmetadata', function () {
+        window.__media.duration = v.duration
+        window.__media.events.push('loadedmetadata')
+        // One seek towards the end of the clip: a second range request for the tail.
+        if (isFinite(v.duration) && v.duration > 1) {
+          setTimeout(function () {
+            v.currentTime = Math.max(0, v.duration - 0.5)
+          }, 1500)
+        }
+      })
+      v.addEventListener('playing', function () {
+        window.__media.playing = true
+        window.__media.events.push('playing')
+        report()
+      })
+      v.addEventListener('seeked', function () {
+        window.__media.seeked++
+        window.__media.events.push('seeked')
+        report()
+      })
+      v.addEventListener('error', function () {
+        window.__media.error = v.error ? v.error.code + ' ' + (v.error.message || '') : 'error'
+        state.textContent = 'error: ' + window.__media.error
+      })
+      setInterval(report, 1000)
+      v.play().catch(function (e) {
+        state.textContent = 'play refused: ' + e.message
+      })
+
+      var xhr = new XMLHttpRequest()
+      xhr.open('GET', '/data.json?xhr=1')
+      xhr.onload = function () {
+        window.__media.xhr = xhr.status
+        document.getElementById('xhr').textContent = 'status ' + xhr.status
+      }
+      xhr.onerror = function () {
+        window.__media.xhr = 'error'
+        document.getElementById('xhr').textContent = 'error'
+      }
+      xhr.send()
+
+      fetch('/data.json?fetch=1', { cache: 'no-store' })
+        .then(function (r) {
+          window.__media.fetch = r.status
+          document.getElementById('fetch').textContent = 'status ' + r.status
+        })
+        .catch(function (e) {
+          window.__media.fetch = 'error'
+          document.getElementById('fetch').textContent = 'error: ' + e.message
+        })
+    </script>
+  </body>
+</html>
