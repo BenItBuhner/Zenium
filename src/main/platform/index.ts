@@ -91,6 +91,7 @@ import { ElectronShortcuts } from './shortcuts'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
 import { createPasswordsHost } from './passwords'
 import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webauthn'
+import { attachBluetoothChoosers, attachDeviceHandlers } from './devices'
 import {
   attachSecurityHandlers,
   permissionCheckDetails,
@@ -626,6 +627,8 @@ export class ElectronPlatform implements Platform {
       // `getDisplayMedia` goes to the core's picker instead of Electron's flat refusal.
       this.screenCapture.attach(ses)
       attachWebAuthnHandlers(browser, this.views, ses)
+      // WebUSB / Web Serial / WebHID choosers and per-device grants (Web Bluetooth's is per view).
+      attachDeviceHandlers(browser, this.views, ses)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)
       )
@@ -639,6 +642,7 @@ export class ElectronPlatform implements Platform {
     this.attachChromePermissions()
     this.registerIpc(browser)
     attachSecurityHandlers(browser, this.views, extensionApi.webRequest)
+    attachBluetoothChoosers(browser, this.views)
     configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
     browser.start(options)
     // The engine has its persisted rule sets now: the ones of extensions removed or disabled
