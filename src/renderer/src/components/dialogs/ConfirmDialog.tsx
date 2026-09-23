@@ -123,7 +123,21 @@ export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
   )
 }
 
-/** A prompt's one field (§9.12): its name, its value, and whether the value is selected on open. */
+/**
+ * A prompt's one field (§9.12): its name, its value, whether the value is selected on open, and
+ * – for a field that asks for one kind of value – the input's own options: what keyboard a
+ * touch host raises (`inputMode`), what the value must match (`pattern`), what the host may
+ * fill in (`autoComplete`), and a class of the consumer's on the `<input>` itself
+ * (`className`) for what the field's look needs that the shared `.zen-v2-field` does not draw.
+ * The case that asked for them (#418's Bluetooth `providePin` prompt): six digits typed into
+ * the field – `inputMode: 'numeric'` so a phone or a tablet raises the digit keyboard,
+ * `pattern: '[0-9]*'`, and a class carrying `font-variant-numeric: tabular-nums` and the
+ * letter-spacing that sets digits apart, which until these options existed had to reach into
+ * the primitive from outside (`.zen-confirm-dialog[data-pairing-kind='providePin']
+ * .zen-v2-field[aria-label='PIN']`). The field stays `type="text"` whatever the options say: a
+ * number field's spinner and a `tel` field's semantics are not a prompt's (§9.12), and the
+ * keyboard on a touch host is `inputMode`'s to choose.
+ */
 export interface PromptField {
   /**
    * The field's name, its `aria-label` – a one-field prompt whose title names what is asked
@@ -136,6 +150,31 @@ export interface PromptField {
   maxLength?: number
   /** Select the value as the prompt opens, so typing replaces it (a rename, a window's name). */
   autoSelect?: boolean
+  /**
+   * The keyboard a touch host raises for the field (the `inputmode` attribute): `numeric` for
+   * a PIN or a count, `decimal` for a measure, `tel`, `email`, `url` for those; `text` – the
+   * default, drawn as no attribute – for words. A mouse host ignores it.
+   */
+  inputMode?: 'text' | 'numeric' | 'decimal' | 'tel' | 'email' | 'url'
+  /**
+   * What the value must match, as the `pattern` attribute (`[0-9]*` for digits): the host's
+   * own constraint, read by ATs and by a touch keyboard beside `inputMode`; the consumer keeps
+   * the value clean in `onChange` all the same (a PIN's `sanitizePin`), since a pattern does
+   * not stop a paste.
+   */
+  pattern?: string
+  /**
+   * The `autocomplete` attribute: `off` – the default – for a value the host must not fill in
+   * (a name, a PIN: `one-time-code` is a code sent to the user, which a pairing PIN is not);
+   * a consumer that wants the host's help names the token (`username`, `url`).
+   */
+  autoComplete?: string
+  /**
+   * A class of the consumer's on the `<input>`, beside the shared `.zen-v2-field`: the PIN's
+   * `tabular-nums` and letter-spacing, a monospace value – the look of the value, never the
+   * field's box, which is the chassis's.
+   */
+  className?: string
 }
 
 export type PromptDialogProps = Omit<ConfirmDialogProps, 'checkbox' | 'destructive'> & {
@@ -344,13 +383,16 @@ function ConfirmPanel({
           <input
             ref={fieldRef}
             type="text"
-            className="zen-v2-field"
+            className={cn('zen-v2-field', field.className)}
             aria-label={field.label}
             value={field.value}
             onChange={(e) => field.onChange(e.target.value)}
             maxLength={field.maxLength}
+            // `text` is the attribute's default: drawn as none, so a words field stays as it was.
+            inputMode={field.inputMode === 'text' ? undefined : field.inputMode}
+            pattern={field.pattern}
             spellCheck={false}
-            autoComplete="off"
+            autoComplete={field.autoComplete ?? 'off'}
           />
         )}
         {hasBody && <div className="zen-confirm-dialog-slot">{body}</div>}

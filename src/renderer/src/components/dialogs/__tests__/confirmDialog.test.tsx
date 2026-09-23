@@ -446,6 +446,62 @@ describe('the one-field prompt (PromptDialog, §9.12 on the primitive)', () => {
     expect(d.querySelector('[data-danger]')).toBeNull()
     expect(d.hasAttribute('data-destructive')).toBe(false)
     expect(body.lastElementChild!.classList.contains('zen-confirm-dialog-footer')).toBe(true)
+    // With none of the input options the field is as it was: no inputmode, no pattern, no
+    // class beside the shared one.
+    expect(f.hasAttribute('inputmode')).toBe(false)
+    expect(f.hasAttribute('pattern')).toBe(false)
+    expect(f.className).toBe('zen-v2-field')
+  })
+
+  it('takes the input options for a field that asks for one kind of value (#418’s PIN): inputMode as the touch keyboard, pattern, autoComplete and the consumer’s class on the input beside .zen-v2-field – the field staying type=text', async () => {
+    render(
+      <Field
+        field={{
+          label: 'PIN',
+          value: '',
+          onChange: () => undefined,
+          maxLength: 6,
+          inputMode: 'numeric',
+          pattern: '[0-9]*',
+          className: 'zen-device-pairing-pin-field'
+        }}
+      />
+    )
+    await settle()
+    const f = input()
+    expect(f.type).toBe('text')
+    expect(f.getAttribute('inputmode')).toBe('numeric')
+    expect(f.inputMode).toBe('numeric')
+    expect(f.getAttribute('pattern')).toBe('[0-9]*')
+    expect(f.classList.contains('zen-v2-field')).toBe(true)
+    expect(f.classList.contains('zen-device-pairing-pin-field')).toBe(true)
+    expect(f.className).toBe('zen-v2-field zen-device-pairing-pin-field')
+    // autoComplete stays `off` unless the consumer names a token.
+    expect(f.getAttribute('autocomplete')).toBe('off')
+    expect(f.getAttribute('aria-label')).toBe('PIN')
+    expect(f.maxLength).toBe(6)
+    expect(document.activeElement).toBe(f)
+
+    // Each keyboard the attribute names is drawn as itself; `text` is the default, drawn as none.
+    for (const mode of ['decimal', 'tel', 'email', 'url'] as const) {
+      render(<Field field={{ ...fieldBase.field, inputMode: mode }} />)
+      await settle()
+      expect(input().getAttribute('inputmode'), mode).toBe(mode)
+    }
+    render(<Field field={{ ...fieldBase.field, inputMode: 'text' }} />)
+    await settle()
+    expect(input().hasAttribute('inputmode')).toBe(false)
+
+    // A consumer that wants the host's help names the autocomplete token.
+    render(<Field field={{ ...fieldBase.field, autoComplete: 'username' }} />)
+    await settle()
+    expect(input().getAttribute('autocomplete')).toBe('username')
+
+    // The options are the field's alone: the prompt's chassis, keyboard and footer are unmoved.
+    const d = prompt()!
+    expect(d.getAttribute('role')).toBe('dialog')
+    expect(d.style.width).toBe('400px')
+    expect(buttons(d).map((b) => b.textContent)).toEqual(['Cancel', 'Save'])
   })
 
   it('focuses the field as it opens – a form, not §9.22’s held container – selecting the value when asked, and answers its change', async () => {
