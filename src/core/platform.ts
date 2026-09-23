@@ -208,7 +208,14 @@ export interface PageMessage {
     | 'capture-state'
     /** The page script answers a `textFragment` / `generate` request with the selection's directive (`shared/textFragmentScript`). */
     | 'textFragment'
+    /**
+     * A frame that holds the keyboard says whether it is on a text field (`shared/editingFocus`;
+     * the Electron preload alone): the caret's ⌘← / ⌘→ stay the field's (`KeyboardHandler`).
+     */
+    | 'editing'
   url?: string
+  /** `editing`: whether a text field of the reporting frame has the keyboard. */
+  editing?: boolean
   /** `textFragment`: the request's id, and the encoded `text=` directive – null when the selection cannot be linked to. */
   id?: string
   directive?: string | null

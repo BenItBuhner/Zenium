@@ -2527,6 +2527,10 @@ export class Browser {
       this.revealTab(tabId)
       return
     }
+    if (message.type === 'editing') {
+      this.keys.setEditing(tabId, message.editing === true)
+      return
+    }
     if (message.type === 'pdf') {
       if (message.pdf && typeof message.pdf === 'object')
         this.pdf.onReport(tabId, message.pdf, message.pdfToken)

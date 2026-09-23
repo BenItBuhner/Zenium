@@ -343,11 +343,14 @@ media elements).
 | Close all unpinned tabs                            | Ctrl+Shift+K                         |
 | Reader View                                        | Ctrl+Alt+R                           |
 | Add-ons and Themes                                 | Ctrl+Shift+A                         |
+| Back / Forward                                     | Alt+← / Alt+→ (macOS: ⌘[ / ⌘])       |
 | Glance a link                                      | Alt+click                            |
 | Split a tab with the active one                    | Alt+click the tab                    |
 | Save page                                          | Ctrl+Alt+Shift+S                     |
 
-Everything is editable in Settings → Keyboard Shortcuts.
+Everything is editable in Settings → Keyboard Shortcuts. The Chrome preset (the default) uses
+Chrome's chords instead; on macOS it also takes ⌘← / ⌘→ for Back / Forward, except in a text
+field, where they stay the caret's line-start / line-end keys as in Chrome.
 
 ## Releasing
 
