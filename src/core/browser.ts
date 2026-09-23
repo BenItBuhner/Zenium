@@ -2810,7 +2810,7 @@ export class Browser {
       'screenshot.discardLong': ({ id }) => this.platform.screenshots?.discardLong(id),
       'media.action': ({ tabId, action, seekTime, seekOffset }) =>
         this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
-      'media.pictureInPicture': ({ tabId }) => this.mediaSession.enterPictureInPicture(tabId),
+      'media.pictureInPicture': ({ tabId }, win) => this.mediaSession.pictureInPicture(tabId, win),
 
       'split.create': ({ tabIds, layout }, win) => tabs.createSplit(tabIds, layout, win),
       'split.toggleLayout': ({ layout }, win) => tabs.toggleSplitLayout(layout, win),
