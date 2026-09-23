@@ -14,6 +14,11 @@
          (MediaPlaybackService.kt) holds the process up as one of the mediaPlayback kind. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- A page capturing the camera or the microphone keeps capturing behind other apps: the
+         "<site> is using your microphone" notification's service (CaptureService.kt) holds the
+         process up as one of the camera / microphone kinds; Android 14 names each kind's permission. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- The chrome's gesture haptics (a tab card picked up in the overview). -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- In-app updates: hand a downloaded release APK to the package installer. -->
