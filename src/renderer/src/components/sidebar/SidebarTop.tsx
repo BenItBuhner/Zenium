@@ -30,6 +30,8 @@ import { siteBlockingState } from '@renderer/lib/blockingUi'
 import { chromeDropStore } from '@renderer/lib/dnd'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { dropStore } from '@renderer/lib/drag'
+import { PRIVATE_TAB_PLACEHOLDER, unlockPrivateTabs, useTabMasked } from '@renderer/lib/privateLock'
+import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
@@ -119,11 +121,18 @@ export function NavRow({
   /** Controls ahead of Back (the tablet toolbar's sidebar toggle); nothing on the desktop. */
   leading?: ReactNode
 }): JSX.Element {
-  const url = tab ? displayUrl(tab.url) : ''
+  // A private tab under #250's lock (INC-05, the phone pill's rule): the pill says nothing of
+  // the page – no address, no site icon, no chip, no menu – only that it is a private tab,
+  // behind the mask; a click asks for the screen lock, as the cover's Unlock does. The tablet
+  // keeps private browsing in tabs, so this pill meets one in a regular window; the desktop's
+  // private window is never locked.
+  const masked = useTabMasked(tab ?? { containerId: '' })
+  const url = tab && !masked ? displayUrl(tab.url) : ''
   // The address at rest elides the scheme and `www.` (Chrome); the full URL shows while the
   // pointer or the keyboard is on the address, or always with the "Always show full URLs" setting.
   const [revealed, setRevealed] = useState(false)
-  const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
+  const shown =
+    tab && !masked ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
   // An internal page's address that the pill cannot fit gives way to the page's title, as the
   // phone pill names Zenium's own pages (v2 §10.1); a site's address never does – it truncates
   // from the end at any width, as Zen's and Firefox's sidebar bars do (§9.29; no browser's
@@ -134,22 +143,26 @@ export function NavRow({
   const field = useRef<HTMLSpanElement>(null)
   const probe = useRef<HTMLSpanElement>(null)
   const addressFits = useAddressFits(pill, field, probe, !compact)
-  const text = tab ? pillText(tab.url, shown, addressFits) : ''
+  const text = tab && !masked ? pillText(tab.url, shown, addressFits) : ''
   // A title is one run of full ink; only an address dims what follows its site.
   const address = text === shown ? addressParts(text) : { site: text, rest: '' }
   // What the site icon says (derived in the core's site-information module, drawn here).
   const indicator = securityIndicator(
-    tab?.url ?? '',
+    masked ? '' : (tab?.url ?? ''),
     tab?.errorCode ?? null,
     tab?.certificateError ?? null
   )
-  const isPrivate = isPrivateWindow(state)
+  // The mask in the leading slot: the desktop's private window's pill, and a private tab's on
+  // a host that keeps private browsing in tabs (the tablet), where the theme re-inks with the
+  // tab (v2 §9.19: the mask is the private tab's identity, on the phone pill as here).
+  const isPrivate = isPrivateWindow(state) || Boolean(tab && isPrivateTab(tab))
   // A page of the web gets the site chips; an extension page is not one, whatever origin the
   // Android runtime serves it from (v2 §10.1 applied to extension pages): its icon takes the
   // site icon's place, titled for what it is, and no lock, shield, reader or translation chip.
-  const isWebPage = Boolean(tab && isWebPageUrl(tab.url))
-  const extension = tab ? extensionPageChrome(tab.url, state.extensions) : null
-  const isReader = Boolean(tab?.url.startsWith('zen://reader'))
+  // A masked page is no page at all to the pill: no chip speaks of it.
+  const isWebPage = Boolean(tab && !masked && isWebPageUrl(tab.url))
+  const extension = tab && !masked ? extensionPageChrome(tab.url, state.extensions) : null
+  const isReader = Boolean(tab && !masked && tab.url.startsWith('zen://reader'))
   const boosted = Boolean(
     tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
   )
@@ -177,6 +190,11 @@ export function NavRow({
   const dropInvalid = chromeDropStore.use((s) => readOnly && s.kind !== null)
   const openField = (): void => {
     if (readOnly) return
+    if (masked) {
+      // The URL bar would show the page's address: the click asks for the screen lock instead.
+      void unlockPrivateTabs()
+      return
+    }
     void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
       attached: state.settings.urlbarBehavior !== 'always-float'
     })
@@ -184,7 +202,7 @@ export function NavRow({
   const tree = useBookmarkTree(state)
   // The star stays on a site and on an internal page whose registry entry keeps it (Chrome shows
   // it on chrome://settings; the new tab page hides it) – `pill.showStar`, v2 §10.1.
-  const starred = Boolean(tab && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
+  const starred = Boolean(tab && !masked && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
   const bookmarked = Boolean(tab && starred && tree.hasUrl(tab.url))
   const menuButton = useRef<HTMLButtonElement>(null)
   // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
@@ -227,7 +245,7 @@ export function NavRow({
     window.addEventListener(APP_MENU_EVENT, fromKeyboard)
     return () => window.removeEventListener(APP_MENU_EVENT, fromKeyboard)
   }, [])
-  const blocked = blockedPopupsOf(state, tab?.id)
+  const blocked = masked ? [] : blockedPopupsOf(state, tab?.id)
   // Translation: the glyph stays once the page has been offered or translated (in the accent
   // while the translation shows), and comes up on hover for every other web page.
   const translation = tab && isWebPage ? translateStateOf(state, tab.id) : null
@@ -257,6 +275,7 @@ export function NavRow({
   const savePrompt = tab && isWebPage ? chipPrompt(state) : null
   const zoomed = Boolean(
     tab &&
+    !masked &&
     !state.capabilities.pageControls &&
     isZoomed(tab, state.settings.pageControls, state.pageEnvironment)
   )
@@ -283,7 +302,7 @@ export function NavRow({
   if (tab && starred) chipsPresent.push({ id: 'star', tier: 'star', width: CHIP_WIDTH.star })
   if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
   if (translation) chipsPresent.push({ id: 'translate', tier: 'info', width: CHIP_WIDTH.small })
-  if (tab && !extension && (tab.readerable || isReader)) {
+  if (tab && !masked && !extension && (tab.readerable || isReader)) {
     chipsPresent.push({ id: 'reader', tier: isReader ? 'state' : 'info', width: CHIP_WIDTH.small })
   }
   if (tab && isReader) {
@@ -369,10 +388,15 @@ export function NavRow({
           // The tooltip carries the whole address – the user-facing `zenium://` form for an
           // internal page (§10.1: `zen://` never shows), the address behind a title, and for an
           // error or Reader View page the page it stands in for (`fullUrl`), never the `zen://`
-          // document. An empty tab offers the search prompt, as the field does.
-          title={(tab && fullUrl(tab.url)) || 'Search or enter address'}
-          data-zen-menu="urlpill"
-          data-zen-menu-tab={tab?.id}
+          // document. An empty tab offers the search prompt, as the field does. A masked private
+          // tab offers its placeholder, and no menu: every item of the pill's would tell of the page.
+          title={
+            masked
+              ? PRIVATE_TAB_PLACEHOLDER
+              : (tab && fullUrl(tab.url)) || 'Search or enter address'
+          }
+          data-zen-menu={masked ? undefined : 'urlpill'}
+          data-zen-menu-tab={masked ? undefined : tab?.id}
           data-readonly={readOnly || undefined}
           data-address-pill
           data-drop-into={dropInto || undefined}
@@ -385,6 +409,7 @@ export function NavRow({
               'flex h-full min-w-0 flex-1 items-center text-left',
               readOnly && 'cursor-default'
             )}
+            aria-label={masked ? 'Private tab locked, unlock' : undefined}
             aria-readonly={readOnly || undefined}
             onMouseEnter={() => setRevealed(true)}
             onMouseLeave={() => setRevealed(false)}
@@ -402,15 +427,18 @@ export function NavRow({
               ref={field}
               className={cn(
                 'min-w-0 flex-1 truncate text-[12.5px]',
-                !url && 'text-[var(--v2-control-text-deemphasized)]'
+                !url && !masked && 'text-[var(--v2-control-text-deemphasized)]'
               )}
               data-reads={url ? (text === shown ? 'address' : 'title') : undefined}
+              data-private-locked={masked || undefined}
             >
               {url ? (
                 <>
                   {address.site}
                   {address.rest && <span className="opacity-70">{address.rest}</span>}
                 </>
+              ) : masked ? (
+                PRIVATE_TAB_PLACEHOLDER
               ) : (
                 'Search or enter address'
               )}
@@ -458,7 +486,11 @@ export function NavRow({
           */}
           <span className="contents group/chips">
             {isPrivate ? (
-              <VenetianMask className="order-first h-3.5 w-3.5 shrink-0 opacity-70" />
+              <VenetianMask
+                className="order-first h-3.5 w-3.5 shrink-0 opacity-70"
+                data-private-mark=""
+                aria-hidden="true"
+              />
             ) : url && tab ? (
               // The site icon: connection state at a glance, site information on click.
               <PillChip
@@ -499,26 +531,29 @@ export function NavRow({
                 collapsed={!fits.has('shield')}
               />
             )}
-            {tab && !extension && (isReader || (tab.readerable && fits.has('reader'))) && (
-              <PillChip
-                label="Reader View"
-                title={hint(
-                  isReader ? 'Exit Reader View' : 'Enter Reader View',
-                  state,
-                  'page.readerMode'
-                )}
-                pressed={isReader}
-                className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
-                  // The lit exit on the reader tab is never hidden (§9.29; the tier comment
-                  // above); unlit it is a tool and goes with the rest under a 130 px pill.
-                  isReader ? 'text-[var(--v2-control-accent)] opacity-100' : 'zen-pill-chip'
-                )}
-                onActivate={() => run('reader.toggle', { tabId: tab.id })}
-              >
-                <BookOpenText className="h-3.5 w-3.5" />
-              </PillChip>
-            )}
+            {tab &&
+              !masked &&
+              !extension &&
+              (isReader || (tab.readerable && fits.has('reader'))) && (
+                <PillChip
+                  label="Reader View"
+                  title={hint(
+                    isReader ? 'Exit Reader View' : 'Enter Reader View',
+                    state,
+                    'page.readerMode'
+                  )}
+                  pressed={isReader}
+                  className={cn(
+                    'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
+                    // The lit exit on the reader tab is never hidden (§9.29; the tier comment
+                    // above); unlit it is a tool and goes with the rest under a 130 px pill.
+                    isReader ? 'text-[var(--v2-control-accent)] opacity-100' : 'zen-pill-chip'
+                  )}
+                  onActivate={() => run('reader.toggle', { tabId: tab.id })}
+                >
+                  <BookOpenText className="h-3.5 w-3.5" />
+                </PillChip>
+              )}
             {tab && isReader && (
               // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
               // View's while an article is open, whose popup is the preferences popover;
@@ -639,7 +674,7 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
-            {tab && <ZoomChip state={state} tab={tab} collapsed={!fits.has('zoom')} />}
+            {tab && !masked && <ZoomChip state={state} tab={tab} collapsed={!fits.has('zoom')} />}
             {tab && isWebPage && <AutofillChip state={state} tab={tab} />}
             {tab && starred && (
               <StarChip

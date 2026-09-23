@@ -73,12 +73,16 @@ describe('AndroidTabView.executeJavaScript', () => {
   it('asks Kotlin for the page’s geometry and takes only a full answer', async () => {
     const { bridge, calls } = fakeBridge()
     const view = new AndroidTabView('tab_1', bridge)
-    // Kotlin's `CapturePlan.viewportJson`: the visual viewport of a phone page, pinch-panned.
+    // Kotlin's `CapturePlan.viewportJson`: the visual viewport of a phone page, pinch-panned; a
+    // WebView's scrollbars overlay the page, so the area minus the gutters is the visible area.
     const answer = {
       scrollX: 20,
       scrollY: 1230,
       width: 411,
       height: 700,
+      clientWidth: 411,
+      clientHeight: 700,
+      rtl: false,
       zoom: 1.0011,
       devicePixelRatio: 2.6277,
       documentWidth: 411,
@@ -92,6 +96,13 @@ describe('AndroidTabView.executeJavaScript', () => {
     })
     await expect(view.viewport()).resolves.toEqual(answer)
     expect(calls[0]).toEqual({ method: 'view.viewport', args: { tabId: 'tab_1' } })
+    // An answer from a host before the fields existed: the visible area stands in for them.
+    const older: Record<string, unknown> = { ...answer }
+    delete older.clientWidth
+    delete older.clientHeight
+    delete older.rtl
+    Object.assign(bridge, { call: async () => older })
+    await expect(view.viewport()).resolves.toEqual(answer)
     // No document to read: null, never a made-up geometry.
     Object.assign(bridge, { call: async () => null })
     await expect(view.viewport()).resolves.toBeNull()
