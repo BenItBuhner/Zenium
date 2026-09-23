@@ -17,8 +17,6 @@ name: Android bar star, Listen reads on, fullscreen gone-tab demo
 # android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/services-read-aloud-late-bind-24d1]
 
 permissions:
   contents: read
