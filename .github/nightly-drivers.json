@@ -243,6 +243,17 @@
       "estimate": 2.5
     },
     {
+      "id": "relaunch-race",
+      "class": "RelaunchDemo",
+      "shard": "phone-a",
+      "mirrors": "android-relaunch-demo.yml",
+      "dir": "media-demo",
+      "env": {
+        "DEMO_ARGS": "-e assert true"
+      },
+      "estimate": 5
+    },
+    {
       "id": "site-data-ui",
       "classes": ["SiteDataUiDemo", "SiteDataRestoreDemo"],
       "shard": "phone-a",
