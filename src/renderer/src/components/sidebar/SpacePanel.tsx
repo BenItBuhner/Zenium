@@ -135,20 +135,22 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
             run('newtab.contextMenu', contextMenuAnchor(e))
           }}
         >
-          {/* The tab list (a11y-07, a11y-31): the pinned header and rows, folder headers and
-              rows, loose rows – one tablist per space, vertical; the New Tab button is the
-              strip's next control after it. */}
-          <div
-            className="flex flex-col"
-            role="tablist"
-            aria-orientation="vertical"
-            aria-label={`${space.name} tabs`}
-          >
+          {/* The space's lists (a11y-07, a11y-31, a11y-02): the pinned header and its rows, the
+              folder headers and their rows, the loose rows. Each run of rows is a vertical
+              tablist of its own – a tablist holds tabs alone (ARIA), so the headers, which are
+              buttons, stand between the lists rather than in one – and the strip's keyboard
+              (lib/tabStrip.ts) walks them all as one; the New Tab button is the strip's next
+              control after them. */}
+          <div className="flex flex-col">
             {pinned.length > 0 && (
               <>
                 <SpaceHeader space={space} compact={compact} fallback={activePinnedHidden} />
                 {!space.pinnedCollapsed && (
-                  <div className="relative flex flex-col gap-0.5" data-tab-list="pinned">
+                  <div
+                    className="relative flex flex-col gap-0.5"
+                    data-tab-list="pinned"
+                    {...tablistProps(`${space.name} pinned tabs`)}
+                  >
                     {stripRows(pinned, state.splitGroups).map((row) => (
                       <StripRowItem
                         key={rowKey(row)}
@@ -190,7 +192,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                 )}
               </div>
             )}
-            <div className="flex flex-col gap-0.5" data-tab-list="regular">
+            <div className="flex flex-col gap-0.5">
               {folders.map((folder) => (
                 <FolderRow
                   key={folder.id}
@@ -205,14 +207,25 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                   splitGroups={state.splitGroups}
                 />
               ))}
-              {stripRows(loose, state.splitGroups).map((row) => (
-                <StripRowItem
-                  key={rowKey(row)}
-                  row={row}
-                  activeTabId={activeTabId}
-                  compact={compact}
-                />
-              ))}
+              {/* The loose rows' list is the drag's "regular" list (lib/drag.ts): the rows are
+                  its children, and the empty space under the panel is its tail. With no rows
+                  there is no list (an empty one would take the column's gap). */}
+              {loose.length > 0 && (
+                <div
+                  className="flex flex-col gap-0.5"
+                  data-tab-list="regular"
+                  {...tablistProps(`${space.name} tabs`)}
+                >
+                  {stripRows(loose, state.splitGroups).map((row) => (
+                    <StripRowItem
+                      key={rowKey(row)}
+                      row={row}
+                      activeTabId={activeTabId}
+                      compact={compact}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <NewTabButton
@@ -232,6 +245,16 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
     </ListMotionContext.Provider>
   )
 }
+
+/** The attributes of one run of rows as a tablist named `label` along `orientation`. */
+const tablistProps = (
+  label: string,
+  orientation: 'vertical' | 'horizontal' = 'vertical'
+): { role: 'tablist'; 'aria-orientation': 'vertical' | 'horizontal'; 'aria-label': string } => ({
+  role: 'tablist',
+  'aria-orientation': orientation,
+  'aria-label': label
+})
 
 /**
  * One row of a tab list: a tab's own row, or a split group's row (§9.35). The horizontal strip
@@ -665,17 +688,31 @@ export function FolderRow({
           </>
         )}
       </div>
-      {stripRows(drawn, splitGroups).map((row) => (
-        <StripRowItem
-          key={rowKey(row)}
-          row={row}
-          activeTabId={activeTabId}
-          compact={compact}
-          indent={!horizontal}
-          parent={key}
-          slot={slot}
-        />
-      ))}
+      {/* The folder's rows as their own tablist under the header (a11y-02) – along the strip
+          beside it (§9.37) – and the list a row of them is dragged in (lib/drag.ts: a row's list
+          is its parent). Folded, there is no list (an empty one would take the block's gap under
+          the header). */}
+      {drawn.length > 0 && (
+        <div
+          className={cn(
+            'zen-group-rows flex',
+            horizontal ? 'h-full items-end gap-1' : 'flex-col gap-0.5'
+          )}
+          {...tablistProps(`${folder.name} tabs`, horizontal ? 'horizontal' : 'vertical')}
+        >
+          {stripRows(drawn, splitGroups).map((row) => (
+            <StripRowItem
+              key={rowKey(row)}
+              row={row}
+              activeTabId={activeTabId}
+              compact={compact}
+              indent={!horizontal}
+              parent={key}
+              slot={slot}
+            />
+          ))}
+        </div>
+      )}
       {horizontal && (
         <span
           className="zen-strip-group-line"

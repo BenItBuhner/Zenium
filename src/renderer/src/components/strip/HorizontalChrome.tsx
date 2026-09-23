@@ -23,11 +23,13 @@ interface Props {
  * pill flex-1 with every §9.29 chip up at this width, the hub, downloads, the extension actions
  * and ⋯ (the sidebar's navigation row, `NavRow`, which is the toolbar pane of the F6 rotation)
  * – and the bookmarks bar when it is on. Both bands span the window over the rail; the frame
- * follows at 82 with the window's 8 of padding.
+ * follows at 82 with the window's 8 of padding. A `header` outside the rail and the page box:
+ * the window's banner landmark (a11y-02), as the multiple-toolbar layout's top toolbar is; the
+ * strip inside it is the Tabs navigation landmark.
  */
 export function HorizontalChrome({ state, tab, showBar, floating, trailing }: Props): JSX.Element {
   return (
-    <div
+    <header
       className={cn('flex shrink-0 flex-col gap-1', floating && 'zen-panel')}
       data-surface="window"
       data-horizontal-chrome
@@ -43,6 +45,6 @@ export function HorizontalChrome({ state, tab, showBar, floating, trailing }: Pr
         <NavRow state={state} tab={tab} compact={false} className="flex-1" />
       </div>
       {showBar && <BookmarksBar state={state} tab={tab} />}
-    </div>
+    </header>
   )
 }

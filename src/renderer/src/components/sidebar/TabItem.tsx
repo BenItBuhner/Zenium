@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Bot,
@@ -120,7 +120,7 @@ export function TabItem({
 
   const onPointerDown = (e: React.PointerEvent<HTMLElement>): void => {
     if (touch.onPointerDown(e)) return
-    if ((e.target as HTMLElement).closest('button')) return
+    if (onRowControl(e)) return
     if (e.button === 1) {
       e.preventDefault()
       return
@@ -134,7 +134,7 @@ export function TabItem({
   const lastClick = useRef(0)
   const onClick = (e: React.MouseEvent): void => {
     if (touch.swallowsClick()) return
-    if ((e.target as HTMLElement).closest('button')) return
+    if (onRowControl(e)) return
     if (dragging) return
     if (e.altKey) {
       // Zen 1.19: Alt+click splits the tab with the active one (again: separates it).
@@ -212,8 +212,8 @@ export function TabItem({
   }
 
   // Keyboard reach (§9.22, a11y-07): the strip is one tab stop; arrows, Home/End, Enter/Space,
-  // Delete and Escape are the strip's (lib/tabStrip.ts). The row's own buttons stay out of the
-  // tab order: Delete closes, the row's context menu has the rest.
+  // Delete and Escape are the strip's (lib/tabStrip.ts). The row's own controls take no focus
+  // (`RowControl`): Delete closes, the row's context menu has the rest.
   // In a split row a segment keeps what names the tab and what it must show – the favicon, the
   // title, the close, a live audio or alert state – and not the trailing slot's other buttons,
   // whose room a segment does not have (§9.35); their states stay in the row's fade, its tooltip
@@ -358,6 +358,59 @@ export function TabItem({
   )
 }
 
+/** The selector of a row's own controls, whose presses and clicks are theirs and not the row's. */
+const ROW_CONTROL = 'button, [role="button"]'
+
+/** Whether an event on the row came from one of the row's own controls (`RowControl`). */
+function onRowControl(e: {
+  target: EventTarget | null
+  currentTarget: EventTarget | null
+}): boolean {
+  const control = (e.target as HTMLElement | null)?.closest(ROW_CONTROL) ?? null
+  return (
+    control !== null &&
+    control !== e.currentTarget &&
+    e.currentTarget instanceof Node &&
+    e.currentTarget.contains(control)
+  )
+}
+
+/**
+ * A control in the row – close, mute, wake, reset, the agent badge: a button by role, named by
+ * its tooltip, that takes no focus. The children of a `tab` are presentational (ARIA), so a
+ * focusable element inside one is a control the keyboard cannot name (axe `nested-interactive`;
+ * a negative tabindex does not make it one it can): the row's own keys stand for these – Delete
+ * closes, Enter wakes, the context menu has the rest (§9.22) – and the pointer has the control
+ * itself. A press on it never lifts the row and its click never activates the tab.
+ */
+function RowControl({
+  onClick,
+  children,
+  ...rest
+}: {
+  onClick: () => void
+  children: ReactNode
+  className: string
+  title: string
+  style?: CSSProperties
+  'aria-label'?: string
+  'aria-pressed'?: boolean
+  'data-muted'?: true
+}): JSX.Element {
+  return (
+    <span
+      role="button"
+      {...rest}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+    >
+      {children}
+    </span>
+  )
+}
+
 /**
  * The strip's trailing end (design language v2 §9.37): the sidebar's 24 as one slot
  * (`.zen-tab-slot`). An inactive tab shows its one state glyph there at rest – the alert, the
@@ -402,115 +455,85 @@ function StripTrailing({
 /** The row's ×; `.zen-tab-close` shows it on hover (and always on the strip's active tab). */
 function CloseButton({ tab }: { tab: Tab }): JSX.Element {
   return (
-    <button
-      type="button"
-      tabIndex={-1}
+    <RowControl
       className="zen-tab-close zen-toolbar-button h-6 w-6 shrink-0"
       title={tab.pinned ? 'Close (keep pinned)' : 'Close tab'}
-      onClick={(e) => {
-        e.stopPropagation()
-        run('tab.close', { tabId: tab.id })
-      }}
+      onClick={() => run('tab.close', { tabId: tab.id })}
     >
       <X className={V2_TRAILING_GLYPH} />
-    </button>
+    </RowControl>
   )
 }
 
 /** A pinned tab that has left its pinned page: the arrow that takes it back, in the ×'s place. */
 function ResetPinnedButton({ tab }: { tab: Tab }): JSX.Element {
   return (
-    <button
-      type="button"
-      tabIndex={-1}
+    <RowControl
       className="zen-toolbar-button h-6 w-6 shrink-0"
       title="Reset pinned tab to its original URL"
-      onClick={(e) => {
-        e.stopPropagation()
-        run('tab.resetPinned', { tabId: tab.id })
-      }}
+      onClick={() => run('tab.resetPinned', { tabId: tab.id })}
     >
       <RotateCcw className={V2_TRAILING_GLYPH} />
-    </button>
+    </RowControl>
   )
 }
 
 /** A sleeping (discarded) page's moon; the click wakes it. */
 function SleepingButton({ tab }: { tab: Tab }): JSX.Element {
   return (
-    <button
-      type="button"
-      tabIndex={-1}
+    <RowControl
       className="zen-toolbar-button zen-tab-sleeping h-6 w-6 shrink-0"
       title={tabTooltip(tab)}
       aria-label="Sleeping – click to wake"
-      onClick={(e) => {
-        e.stopPropagation()
-        run('tab.activate', { tabId: tab.id })
-      }}
+      onClick={() => run('tab.activate', { tabId: tab.id })}
     >
       <Moon className={V2_TRAILING_GLYPH} />
-    </button>
+    </RowControl>
   )
 }
 
 /** A page the resource governor froze; the click wakes it. */
 function FrozenButton({ tab }: { tab: Tab }): JSX.Element {
   return (
-    <button
-      type="button"
-      tabIndex={-1}
+    <RowControl
       className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
       title="Frozen by the resource governor – click to wake"
-      onClick={(e) => {
-        e.stopPropagation()
-        run('tab.wake', { tabId: tab.id })
-      }}
+      onClick={() => run('tab.wake', { tabId: tab.id })}
     >
       <Snowflake className={V2_TRAILING_GLYPH} />
-    </button>
+    </RowControl>
   )
 }
 
 /** A page the resource governor throttles; the click lifts it. */
 function ThrottledButton({ tab }: { tab: Tab }): JSX.Element {
   return (
-    <button
-      type="button"
-      tabIndex={-1}
+    <RowControl
       className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
       title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
-      onClick={(e) => {
-        e.stopPropagation()
-        run('tab.wake', { tabId: tab.id })
-      }}
+      onClick={() => run('tab.wake', { tabId: tab.id })}
     >
       <Turtle className={V2_TRAILING_GLYPH} />
-    </button>
+    </RowControl>
   )
 }
 
 /** The tab's audio state as its mute toggle (`.zen-tab-audio`). */
 function AudioButton({ tab }: { tab: Tab }): JSX.Element {
   return (
-    <button
-      type="button"
-      tabIndex={-1}
+    <RowControl
       className="zen-toolbar-button zen-tab-audio h-6 w-6 shrink-0"
       data-muted={tab.muted || undefined}
       title={tab.muted ? 'Unmute tab' : 'Mute tab'}
       aria-pressed={tab.muted}
-      onClick={(e) => {
-        e.stopPropagation()
-        run('tab.toggleMute', { tabId: tab.id })
-      }}
+      onClick={() => run('tab.toggleMute', { tabId: tab.id })}
     >
       {tab.muted ? (
         <VolumeX className={V2_TRAILING_GLYPH} />
       ) : (
         <Volume2 className={V2_TRAILING_GLYPH} />
       )}
-    </button>
+    </RowControl>
   )
 }
 
@@ -548,19 +571,14 @@ function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
 /** Marks a tab an AI agent is driving; click to take the tab back. */
 function AgentBadge({ agent, tabId }: { agent: AgentInfo; tabId: string }): JSX.Element {
   return (
-    <button
-      type="button"
-      tabIndex={-1}
+    <RowControl
       className="zen-toolbar-button flex h-5 shrink-0 items-center gap-1 rounded-full px-1.5 text-white"
       style={{ background: agent.color }}
       title={`Driven by ${agent.name} (${agent.mode} mode) — click to take this tab back`}
-      onClick={(e) => {
-        e.stopPropagation()
-        run('agent.releaseTab', { tabId })
-      }}
+      onClick={() => run('agent.releaseTab', { tabId })}
     >
       <Bot className="h-3 w-3" />
-    </button>
+    </RowControl>
   )
 }
 

@@ -157,82 +157,88 @@ export function TabStrip({ state, trailing }: Props): JSX.Element {
             aria-label="Private window"
           />
         )}
-        {/* The tab list (a11y-07, a11y-31): the pinned rows, the group chips and their rows, the
-            loose rows – one tablist, horizontal; the + is the strip's next control after it. */}
-        <div
-          role="tablist"
-          aria-orientation="horizontal"
-          aria-label={`${space.name} tabs`}
-          className="zen-no-drag flex min-w-0 items-stretch gap-1"
-          style={{ flex: '0 1 auto' }}
-        >
-          {pinned.length > 0 && (
-            <ListMotionContext.Provider value={pinnedMotion}>
+        {/* The window's Tabs navigation landmark (a11y-02), the sidebar's: the tab lists and the
+            + after them. Each run of rows is its own horizontal tablist (a11y-07, a11y-31) – the
+            pinned rows, the loose rows, and under each chip the group's rows (FolderRow). */}
+        <nav aria-label="Tabs" className="flex min-w-0 items-stretch" style={{ flex: '0 1 auto' }}>
+          <div
+            className="zen-no-drag flex min-w-0 items-stretch gap-1"
+            style={{ flex: '0 1 auto' }}
+          >
+            {pinned.length > 0 && (
+              <ListMotionContext.Provider value={pinnedMotion}>
+                <div
+                  ref={pinnedScroller}
+                  className="flex h-full shrink-0 items-end gap-1"
+                  role="tablist"
+                  aria-orientation="horizontal"
+                  aria-label={`${space.name} pinned tabs`}
+                  data-strip-pinned
+                  data-tab-scroller
+                  data-active="true"
+                  data-tab-list="pinned"
+                >
+                  {stripRows(pinned, state.splitGroups).map((row) => (
+                    <StripRowItem key={rowKey(row)} row={row} activeTabId={activeTabId} compact />
+                  ))}
+                </div>
+              </ListMotionContext.Provider>
+            )}
+            <ListMotionContext.Provider value={motion}>
               <div
-                ref={pinnedScroller}
-                className="flex h-full shrink-0 items-end gap-1"
-                data-strip-pinned
+                ref={scroller}
+                className="zen-strip-scroller flex h-full min-w-0 items-end overflow-x-auto overflow-y-hidden"
+                style={{ flex: '0 1 auto' }}
+                data-strip-scroller
                 data-tab-scroller
                 data-active="true"
-                data-tab-list="pinned"
+                onContextMenu={onEmptyContextMenu}
               >
-                {stripRows(pinned, state.splitGroups).map((row) => (
-                  <StripRowItem key={rowKey(row)} row={row} activeTabId={activeTabId} compact />
-                ))}
+                <div
+                  className="flex h-full items-end gap-1"
+                  role="tablist"
+                  aria-orientation="horizontal"
+                  aria-label={`${space.name} tabs`}
+                  data-tab-list="regular"
+                  style={{ '--zen-strip-tab-width': `${width}px` } as CSSProperties}
+                >
+                  {folders.map((folder) => (
+                    <FolderRow
+                      key={folder.id}
+                      folder={folder}
+                      tabs={membersOf(folder.id)}
+                      activeTabId={activeTabId}
+                      compact={false}
+                      dropKey={dropKey}
+                      dragging={Boolean(drag)}
+                      live={Boolean(state.liveFolders[folder.id])}
+                      liveError={state.liveFolders[folder.id]?.lastError ?? null}
+                      splitGroups={state.splitGroups}
+                      slot={slot}
+                    />
+                  ))}
+                  {stripRows(loose, state.splitGroups).map((row) => (
+                    <StripRowItem
+                      key={rowKey(row)}
+                      row={row}
+                      activeTabId={activeTabId}
+                      compact={false}
+                      slot={slot}
+                    />
+                  ))}
+                </div>
               </div>
             </ListMotionContext.Provider>
-          )}
-          <ListMotionContext.Provider value={motion}>
-            <div
-              ref={scroller}
-              className="zen-strip-scroller flex h-full min-w-0 items-end overflow-x-auto overflow-y-hidden"
-              style={{ flex: '0 1 auto' }}
-              data-strip-scroller
-              data-tab-scroller
-              data-active="true"
-              onContextMenu={onEmptyContextMenu}
-            >
-              <div
-                className="flex h-full items-end gap-1"
-                data-tab-list="regular"
-                style={{ '--zen-strip-tab-width': `${width}px` } as CSSProperties}
-              >
-                {folders.map((folder) => (
-                  <FolderRow
-                    key={folder.id}
-                    folder={folder}
-                    tabs={membersOf(folder.id)}
-                    activeTabId={activeTabId}
-                    compact={false}
-                    dropKey={dropKey}
-                    dragging={Boolean(drag)}
-                    live={Boolean(state.liveFolders[folder.id])}
-                    liveError={state.liveFolders[folder.id]?.lastError ?? null}
-                    splitGroups={state.splitGroups}
-                    slot={slot}
-                  />
-                ))}
-                {stripRows(loose, state.splitGroups).map((row) => (
-                  <StripRowItem
-                    key={rowKey(row)}
-                    row={row}
-                    activeTabId={activeTabId}
-                    compact={false}
-                    slot={slot}
-                  />
-                ))}
-              </div>
-            </div>
-          </ListMotionContext.Provider>
-        </div>
-        <div className="zen-no-drag flex shrink-0 items-end pb-[2px] pl-1">
-          <NewTabButton
-            compact={false}
-            spaced={false}
-            dropInto={dropKey === `newtab:${space.id}`}
-            button
-          />
-        </div>
+          </div>
+          <div className="zen-no-drag flex shrink-0 items-end pb-[2px] pl-1">
+            <NewTabButton
+              compact={false}
+              spaced={false}
+              dropInto={dropKey === `newtab:${space.id}`}
+              button
+            />
+          </div>
+        </nav>
         {/* The drag spring: at least 24 of caption between the + and the window controls. */}
         <div className="zen-drag" style={{ flex: '1 0 24px' }} data-strip-spring />
         <div
