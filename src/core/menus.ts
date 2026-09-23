@@ -171,6 +171,13 @@ const SELECTION_LABEL_MAX = 50
 const SPELLING_SUGGESTIONS_MAX = 5
 /** The "Spell check" submenu lists the user's languages, not every dictionary there is. */
 const SPELLCHECK_MENU_LANGUAGES_MAX = 8
+/**
+ * A device's submenu under Tabs from Other Devices lists this many of its tabs, newest activity
+ * first, as Recently Closed lists ten; the rest read as a count, Open All in Tabs opens them all.
+ */
+const REMOTE_TABS_MENU_MAX = 10
+/** The name a device with none reads under; the engine fills one in, a seeded list may not. */
+const UNNAMED_DEVICE = 'Another device'
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -2420,6 +2427,63 @@ export class Menus {
     ]
   }
 
+  /**
+   * Chrome's "Tabs from other devices" block of the History submenu (shortcuts-menus-108) – and
+   * the macOS History menu's – from services' `open-tabs` records as the engine lists them
+   * (`sync.tabsFromDevices`, the read the History page's group makes, #326): a header, then one
+   * submenu per device, the most recently published first, of the device's tabs, newest activity
+   * first, each with its favicon; a row opens the tab through the held-tab rule (#314: a tab this
+   * browser already holds under the same id comes to the front instead), and the submenu ends
+   * with the page's device menu's Open All in Tabs. A device the page's heading menu hid (Hide
+   * Device, the core's set, `PageService.hideDevice`) is left out here too, as Chrome's "Hide for
+   * now" takes the device out of its menu; the page's way back, Show Hidden Devices, follows the
+   * devices while any is hidden, and stands under the header alone – over §9.17's sentence –
+   * when every one is. The block follows the page's rulings for when there is nothing: with sync
+   * off, or Open tabs out of what syncs, or nothing published by any device, there is no block
+   * at all (the lead's #326 amendment to §10.1 – a sentence with no way out would be a permanent
+   * line of nothing for the single-device user; the page one row up, Show Full History, carries
+   * the settings doors). `open` is how a row opens its tabs, since the mac bar stands with no
+   * window of its own (`applicationMenu`'s `withWindow` finds or opens one).
+   */
+  tabsFromDevicesItems(open: (tabs: readonly SyncRemoteTab[]) => void): Template {
+    const { sync, pages } = this.browser
+    const status = sync.status()
+    if (!status.enabled || !status.scope.openTabs) return []
+    const hidden = new Set(pages.hiddenDeviceIds())
+    const lists = sync.tabsFromDevices().filter((device) => device.tabs.length > 0)
+    const shown = lists.filter((device) => !hidden.has(device.deviceId))
+    const hiddenCount = lists.length - shown.length
+    if (shown.length === 0 && hiddenCount === 0) return []
+    const header: MenuItemTemplate = { label: 'Tabs from Other Devices', enabled: false }
+    const devices: Template = shown.map((device) => {
+      const tabs = [...device.tabs].sort((a, b) => b.lastActive - a.lastActive)
+      const rows: Template = tabs.slice(0, REMOTE_TABS_MENU_MAX).map((tab) => ({
+        label: clipLabel(tab.title.trim() || displayUrl(tab.url), 60),
+        icon: tab.favicon,
+        click: () => open([tab])
+      }))
+      if (tabs.length > REMOTE_TABS_MENU_MAX)
+        rows.push({ label: `${tabs.length - REMOTE_TABS_MENU_MAX} more…`, enabled: false })
+      return {
+        label: clipLabel(device.deviceName.trim() || UNNAMED_DEVICE, 40),
+        submenu: [
+          ...rows,
+          { type: 'separator' },
+          { label: 'Open All in Tabs', click: () => open(tabs) }
+        ]
+      }
+    })
+    const allHidden: Template =
+      shown.length === 0
+        ? [{ label: "You've hidden every device", enabled: false, note: true }]
+        : []
+    const showHidden: Template =
+      hiddenCount > 0
+        ? [{ label: 'Show Hidden Devices', click: () => pages.showHiddenDevices() }]
+        : []
+    return [header, ...devices, ...allHidden, ...showHidden]
+  }
+
   // ---------------------------------------------------------------------------
   // History page
   // ---------------------------------------------------------------------------
@@ -2674,9 +2738,10 @@ export class Menus {
    * tab's return to its own window, `Session.showRestored`); the other held tabs stay where they
    * are, and the tabs that do open all open behind – the first of them takes the front only when
    * no held tab did. A held tab no window can show now (a space of a window that is gone) is
-   * left as it is too: the user has it.
+   * left as it is too: the user has it. The History submenu's rows and the mac bar's take the
+   * same path with one tab (`tabsFromDevicesItems`), so a row for a held tab brings it forward.
    */
-  private openRemoteTabs(remote: readonly SyncRemoteTab[], win: ZenWindow): void {
+  openRemoteTabs(remote: readonly SyncRemoteTab[], win: ZenWindow): void {
     const { tabs } = this.browser
     let front = true
     for (const tab of remote) {
@@ -3160,11 +3225,18 @@ export class Menus {
         ...newPrivateWindow,
         separator,
         // The library. History is Chrome's submenu: the page first, then the recently closed
-        // list, which had a submenu of its own on the row before.
+        // list, which had a submenu of its own on the row before, then the other devices' tabs
+        // (their block stands only while sync lists some; `tabsFromDevicesItems`).
         bookmarks,
         {
           label: 'History',
-          submenu: [showHistory('Show Full History'), separator, ...this.recentlyClosedItems(win)]
+          submenu: tidySeparators([
+            showHistory('Show Full History'),
+            separator,
+            ...this.recentlyClosedItems(win),
+            separator,
+            ...this.tabsFromDevicesItems((tabs) => this.openRemoteTabs(tabs, win))
+          ])
         },
         downloads,
         ...passwords,

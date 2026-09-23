@@ -3193,6 +3193,172 @@ describe('the history device heading menu', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The History submenu's Tabs from Other Devices (shortcuts-menus-108; the #326 group's rulings)
+// ---------------------------------------------------------------------------
+
+describe('the History submenu’s Tabs from Other Devices', () => {
+  const remote = (tabId: string, url: string, lastActive = 1, title = url): SyncRemoteTab => ({
+    tabId,
+    url,
+    title,
+    favicon: `data:image/png;base64,${tabId}`,
+    lastActive,
+    windowId: null
+  })
+  const device = (
+    deviceId: string,
+    deviceName: string,
+    updatedAt: number,
+    tabs: SyncRemoteTab[]
+  ): SyncDeviceTabs => ({ deviceId, deviceName, updatedAt, tabs })
+  /** Sync on with the Open tabs scope as asked, the engine listing `lists` (newest publish first). */
+  const syncing = (h: Harness, lists: SyncDeviceTabs[], openTabs = true): void => {
+    const status = h.browser.sync.status()
+    vi.spyOn(h.browser.sync, 'status').mockReturnValue({
+      ...status,
+      enabled: true,
+      scope: { ...status.scope, openTabs }
+    })
+    vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue(lists)
+  }
+  const history = (h: Harness): MenuItemTemplate[] => {
+    h.browser.handleCommand(h.win, 'app.menu', {})
+    return item(h.shown(), 'History').submenu!
+  }
+  const openTabs = (h: Harness): string[] =>
+    Object.values(h.browser.state.model.tabs).map((t) => t.url)
+
+  it('lists the devices as submenus of their tabs after Recently Closed, the header first, newest publish and newest activity first, each tab with its favicon', () => {
+    const h = harness(DESKTOP)
+    syncing(h, [
+      device('phone', 'Pixel 9', 20, [
+        remote('p1', 'https://a.test/', 5, 'A'),
+        remote('p2', 'https://b.test/', 9, 'B')
+      ]),
+      device('laptop', 'Work laptop', 10, [remote('l1', 'https://c.test/', 1, '')])
+    ])
+    const menu = history(h)
+    expect(labels(menu)).toEqual([
+      'Show Full History',
+      '-',
+      'No recently closed tabs',
+      '-',
+      'Tabs from Other Devices',
+      'Pixel 9',
+      'Pixel 9 > B',
+      'Pixel 9 > A',
+      'Pixel 9 > -',
+      'Pixel 9 > Open All in Tabs',
+      'Work laptop',
+      'Work laptop > c.test',
+      'Work laptop > -',
+      'Work laptop > Open All in Tabs'
+    ])
+    expect(item(menu, 'Tabs from Other Devices')).toMatchObject({ enabled: false })
+    expect(item(menu, 'Tabs from Other Devices').click).toBeUndefined()
+    const phone = item(menu, 'Pixel 9').submenu!
+    expect(phone[0]).toMatchObject({ label: 'B', icon: 'data:image/png;base64,p2' })
+    expect(phone[1]).toMatchObject({ label: 'A', icon: 'data:image/png;base64,p1' })
+    // The app menu's shape holds: the block adds no top-level row and no separator up there.
+    expect(topLabels(h.shown())).toEqual(DESKTOP_APP_MENU_TOP)
+  })
+
+  it('a row opens its tab through the held-tab rule: a new tab in front for one this browser does not hold, the held one brought forward otherwise', () => {
+    const h = harness(DESKTOP)
+    const held = h.browser.tabs.createTab(
+      { id: 'p2', url: 'https://b.test/', active: false },
+      h.win
+    )
+    const mine = h.browser.tabs.createTab({ url: 'https://mine.test/', active: true }, h.win)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(mine.id)
+    syncing(h, [
+      device('phone', 'Pixel 9', 20, [
+        remote('p1', 'https://a.test/', 9, 'A'),
+        remote('p2', 'https://b.test/', 5, 'B')
+      ])
+    ])
+    const before = openTabs(h)
+    const phone = item(history(h), 'Pixel 9').submenu!
+    item(phone, 'A').click!()
+    expect(openTabs(h).filter((url) => !before.includes(url))).toEqual(['https://a.test/'])
+    expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://a.test/')
+    const after = openTabs(h)
+    item(phone, 'B').click!()
+    expect(openTabs(h)).toEqual(after)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(held.id)
+  })
+
+  it('a device’s submenu lists ten tabs, the rest as a count, and Open All in Tabs opens every one the device lists', () => {
+    const h = harness(DESKTOP)
+    const tabs = Array.from({ length: 12 }, (_, i) =>
+      remote(`p${i}`, `https://site${i}.test/`, 100 - i, `Tab ${i}`)
+    )
+    syncing(h, [device('phone', 'Pixel 9', 20, tabs)])
+    const phone = item(history(h), 'Pixel 9').submenu!
+    expect(phone.map((i) => i.label ?? '-')).toEqual([
+      ...tabs.slice(0, 10).map((t) => t.title),
+      '2 more…',
+      '-',
+      'Open All in Tabs'
+    ])
+    expect(item(phone, '2 more…')).toMatchObject({ enabled: false })
+    const before = openTabs(h)
+    item(phone, 'Open All in Tabs').click!()
+    expect(openTabs(h).filter((url) => !before.includes(url))).toEqual(tabs.map((t) => t.url))
+    expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://site0.test/')
+  })
+
+  it('leaves out a device hidden on the History page and offers Show Hidden Devices, which brings it back; a device with no tab is not listed', () => {
+    const h = harness(DESKTOP)
+    syncing(h, [
+      device('phone', 'Pixel 9', 20, [remote('p1', 'https://a.test/')]),
+      device('laptop', 'Work laptop', 10, [remote('l1', 'https://c.test/')]),
+      device('idle', 'Idle tablet', 5, [])
+    ])
+    h.browser.pages.hideDevice('laptop', true)
+    let menu = history(h)
+    expect(labels(menu).slice(4)).toEqual([
+      'Tabs from Other Devices',
+      'Pixel 9',
+      'Pixel 9 > https://a.test/',
+      'Pixel 9 > -',
+      'Pixel 9 > Open All in Tabs',
+      'Show Hidden Devices'
+    ])
+    // Every device hidden: §9.17's sentence under the header, and the way back.
+    h.browser.pages.hideDevice('phone', true)
+    menu = history(h)
+    expect(labels(menu).slice(4)).toEqual([
+      'Tabs from Other Devices',
+      "You've hidden every device",
+      'Show Hidden Devices'
+    ])
+    expect(item(menu, "You've hidden every device")).toMatchObject({ enabled: false, note: true })
+    item(menu, 'Show Hidden Devices').click!()
+    expect(h.browser.pages.hiddenDeviceIds()).toEqual([])
+    menu = history(h)
+    expect(labels(menu)).toContain('Work laptop')
+    expect(labels(menu)).not.toContain('Show Hidden Devices')
+    expect(labels(menu)).not.toContain('Idle tablet')
+  })
+
+  it('has no block with sync off, with Open tabs out of what syncs, or with nothing published – the History submenu keeps its two groups', () => {
+    const lists = [device('phone', 'Pixel 9', 20, [remote('p1', 'https://a.test/')])]
+    const twoGroups = ['Show Full History', '-', 'No recently closed tabs']
+    const off = harness(DESKTOP)
+    vi.spyOn(off.browser.sync, 'tabsFromDevices').mockReturnValue(lists)
+    expect(off.browser.sync.status().enabled).toBe(false)
+    expect(labels(history(off))).toEqual(twoGroups)
+    const scopeOff = harness(DESKTOP)
+    syncing(scopeOff, lists, false)
+    expect(labels(history(scopeOff))).toEqual(twoGroups)
+    const nothing = harness(DESKTOP)
+    syncing(nothing, [])
+    expect(labels(history(nothing))).toEqual(twoGroups)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Where a menu opens for the keyboard (Shift+F10, the Menu key; a11y-08)
 // ---------------------------------------------------------------------------
 

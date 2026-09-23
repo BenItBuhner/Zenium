@@ -6,6 +6,7 @@ import type {
   ShortcutAction,
   SplitGroup,
   SplitLayout,
+  SyncRemoteTab,
   Tab
 } from '../shared/types'
 import { BOOKMARKS_BAR_ID } from '../shared/bookmarks'
@@ -296,6 +297,7 @@ export function applicationMenu(browser: Browser): Template {
       { type: 'separator' },
       { label: 'Reopen Closed Tab', action: 'tab.reopenClosed' },
       recentlyClosed(browser),
+      ...tabsFromOtherDevices(browser),
       { type: 'separator' },
       { label: 'Show Full History', action: 'history.sidebar' }
     ]
@@ -386,6 +388,22 @@ function recentlyClosed(browser: Browser): MenuItemTemplate {
       click: restore(e.id)
     }))
   }
+}
+
+/**
+ * Chrome's "Tabs From Other Devices" block of the mac History menu, after Recently Closed and
+ * behind its own separator: the app menu's block (`Menus.tabsFromDevicesItems` – the header,
+ * the devices as submenus of their tabs, the hidden devices' way back) with a row opening its
+ * tab in the front window through the held-tab rule, or in a window opened for it when none is
+ * up (the bar stands without one). Nothing while sync lists no device, as in the app menu.
+ */
+function tabsFromOtherDevices(browser: Browser): Template {
+  const open = (tabs: readonly SyncRemoteTab[]): void => {
+    const win = frontWindow(browser) ?? browser.ensureWindow()
+    browser.menus.openRemoteTabs(tabs, win)
+  }
+  const items = browser.menus.tabsFromDevicesItems(open)
+  return items.length ? [{ type: 'separator' }, ...items] : []
 }
 
 /** The bookmarks bar's entries, folders as submenus, after a separator (Chrome lists them there). */

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import type {
+  HostCapabilities,
+  Platform as PlatformOs,
+  SyncDeviceTabs,
+  SyncRemoteTab
+} from '../../shared/types'
 import { Browser } from '../browser'
 import type {
   AppHost,
@@ -311,6 +316,119 @@ describe('the macOS menu bar', () => {
         // Settings' own switch and the bar agree: the one setting.
         vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
         expect(row().checked).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
+  describe('the History menu carries Tabs from Other Devices (shortcuts-menus-108)', () => {
+    const remote = (tabId: string, url: string, title: string): SyncRemoteTab => ({
+      tabId,
+      url,
+      title,
+      favicon: null,
+      lastActive: 1,
+      windowId: null
+    })
+    /** Sync on with Open tabs in scope, listing the phone; the bar redrawn to it. */
+    const syncing = (h: Harness, lists: SyncDeviceTabs[]): void => {
+      const status = h.browser.sync.status()
+      vi.spyOn(h.browser.sync, 'status').mockReturnValue({
+        ...status,
+        enabled: true,
+        scope: { ...status.scope, openTabs: true }
+      })
+      vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue(lists)
+      h.browser.state.commitVolatile()
+      vi.advanceTimersByTime(MENU_BAR_SETTLE_MS)
+    }
+    const labels = (items: MenuItemTemplate[]): string[] =>
+      items.map((i) => (i.type === 'separator' ? '-' : (i.label ?? '')))
+
+    it('lists the devices as submenus after Recently Closed, behind a separator, and not at all while sync lists none', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        expect(labels(submenu(last(h), 'History'))).toEqual([
+          'Home',
+          'Back',
+          'Forward',
+          '-',
+          'Reopen Closed Tab',
+          'Recently Closed',
+          '-',
+          'Show Full History'
+        ])
+        syncing(h, [
+          {
+            deviceId: 'phone',
+            deviceName: 'Pixel 9',
+            updatedAt: 20,
+            tabs: [remote('p1', 'https://a.test/', 'A'), remote('p2', 'https://b.test/', 'B')]
+          }
+        ])
+        const menu = submenu(last(h), 'History')
+        expect(labels(menu)).toEqual([
+          'Home',
+          'Back',
+          'Forward',
+          '-',
+          'Reopen Closed Tab',
+          'Recently Closed',
+          '-',
+          'Tabs from Other Devices',
+          'Pixel 9',
+          '-',
+          'Show Full History'
+        ])
+        expect(item(menu, 'Tabs from Other Devices').enabled).toBe(false)
+        expect(labels(item(menu, 'Pixel 9').submenu!)).toEqual(['A', 'B', '-', 'Open All in Tabs'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a tab’s row opens it in the front window through the held-tab rule, and in a window opened for it when every window is closed', () => {
+      vi.useFakeTimers()
+      try {
+        const h = harness()
+        const held = h.browser.tabs.createTab(
+          { id: 'p2', url: 'https://b.test/', active: false },
+          h.win
+        )
+        const mine = h.browser.tabs.createTab({ url: 'https://mine.test/', active: true }, h.win)
+        syncing(h, [
+          {
+            deviceId: 'phone',
+            deviceName: 'Pixel 9',
+            updatedAt: 20,
+            tabs: [remote('p1', 'https://a.test/', 'A'), remote('p2', 'https://b.test/', 'B')]
+          }
+        ])
+        const phone = (): MenuItemTemplate[] =>
+          item(submenu(last(h), 'History'), 'Pixel 9').submenu!
+        const urls = (): string[] => Object.values(h.browser.state.model.tabs).map((t) => t.url)
+        expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(mine.id)
+        // Held here under its own id: to the front, not opened again.
+        const before = urls()
+        item(phone(), 'B').click?.()
+        expect(urls()).toEqual(before)
+        expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(held.id)
+        // Not held: a new tab in front.
+        item(phone(), 'A').click?.()
+        expect(urls().filter((u) => !before.includes(u))).toEqual(['https://a.test/'])
+        expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://a.test/')
+        // The bar stands with every window closed: a row opens a window for its tab.
+        for (const w of h.browser.allWindows()) {
+          w.onClosing()
+          w.onClosed()
+        }
+        expect(h.browser.allWindows()).toHaveLength(0)
+        item(phone(), 'A').click?.()
+        expect(h.browser.allWindows()).toHaveLength(1)
+        const opened = h.browser.allWindows()[0]!
+        expect(h.browser.tabs.activeTabFor(opened)?.url).toBe('https://a.test/')
       } finally {
         vi.useRealTimers()
       }
