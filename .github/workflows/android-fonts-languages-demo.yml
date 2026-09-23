@@ -5,17 +5,19 @@ name: Android fonts / languages UI demo
 # preferences sheet), with the demo's own article open under them, served from the process:
 # Colour scheme's picker sheet (its description "Websites follow this too.") and Dark picked
 # under a finger with the open article's prefers-color-scheme following, the same document;
-# Customise fonts – the Font size and Minimum font size sliders dragged along their §9.21 track
-# (the value beside the label following the thumb, the size applied on the release, the open
-# article reflowed), the Standard font picker with each face drawn in itself, Reset once
-# anything stands off the defaults; Preferred languages – the §10.4 rows with their trailing ⋯
-# menu (Move Up under a finger), Add language's §9.13 picker sheet with its filter typed into;
-# Reader View's Text preferences – Translate into, Translate turning busy with the progress, the
-# article turning German in place, Show original. The driver writes `fonts-languages-findings.txt`
-# with a PASS or FAIL per check and fails when any did.
+# Customise fonts – the Font size and Minimum font size ± rows stepped under fingers (§10.4: the
+# value on the label's line, each press applied at once, the open article reflowed), the
+# Standard font picker with each face drawn in itself, Reset once anything stands off the
+# defaults; Preferred languages – the §10.4 item rows (German's row opening its item sheet, Move
+# Up under a finger with the sheet standing), Add language's find-and-pick page with its filter
+# typed into; Reader View's Text preferences – Translate as the head's one action row, its
+# target picker (expanded at the checked German) translating on the pick, the row busy with the
+# progress, the article turning German in place, Show original. The driver writes
+# `fonts-languages-findings.txt` with a PASS or FAIL per check and fails when any did.
 #
 # The frames (DemoHarness.traceFrames, PERF-3's harness): the app menu's open and close as the
-# point of reference, then every sheet and picker this PR adds, the two slider drags as gestures;
+# point of reference, then every sheet, page and picker this PR adds, the two runs of step
+# presses as gestures;
 # the core's startup sweeps held for the run (`holdBackgroundWork`) so no feed refresh lands in a
 # measured scene, the Settings tab paid for off camera in the warm-up. The table lands in the job
 # summary; the gate is soft unless dispatched hard. Dispatch-only, like the other demos: about ten

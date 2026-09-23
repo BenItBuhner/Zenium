@@ -21,8 +21,9 @@ import java.io.File
  * page is translated from the bar (model download, translating, translated), the original is
  * shown again, the bar's options sheet is opened and its Translate To list aimed at Basque, and
  * Settings > Languages is visited: the Settings tab's `languages` category (#134) with its rows
- * and the picker sheets its action rows open, Basque added to the languages read and the
- * Afrikaans to English model set downloading. What the state machine reported along the way goes
+ * and what its action rows open (the Add language page, the Download a model picker sheet),
+ * Basque added to the languages read and the Afrikaans to English model set downloading. What
+ * the state machine reported along the way goes
  * to `translate-results.json` next to the screenshots.
  *
  * Every control pressed inside a sheet takes a real finger whose result is asserted (the rule in
@@ -215,16 +216,18 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         // its download going – the core's downloading list, then the page's row saying so. A
         // sheet is up by the document (`[data-sheet-layer] [role=dialog]` named by its title,
         // [sheetPresented]), the tree's node second.
-        // Preferred languages' Add language row opens the §9.13 picker sheet with its filter field
-        // ("Find a language") pinned over the list – the field is what tells the sheet is up: the
-        // document's sheet ([sheetPresented]), or the tree's EditText named by its hint
-        // ([findField], never a label read). Its rows read the language's name and, under it, the
-        // native name (`Basque` / `euskara`): the document finds the row by its label, the tree by
-        // the prefix.
-        val addSheet = { sheetPresented("Add language", prefix = true) || findField("Find a language") != null }
-        val addOpened = touchSettingsRowExpecting("Add language", "the Add language picker sheet is up (its Find a language field)", timeoutMs = 8_000, took = addSheet) ||
-            addSheet() ||
-            standIn("Add language") { clickSettingsRow("Add language") && awaitTook(addSheet, 8_000) }
+        // Preferred languages' Add language row opens the section's find-and-pick PAGE
+        // (`zen://settings/languages/add`, #350's lead ruling 3: a set the user finds in, not a
+        // §9.13 picker) with its filter field ("Find a language") pinned over the list – the page
+        // is what tells the way in took: the document's `.zen-settings-add-language`, or the
+        // tree's EditText named by the field's hint ([findField], never a label read). Its rows
+        // read the language's name and, under it, the own name from the shipped table (`Basque` /
+        // `euskara`): the document finds the row by its label, the tree by the prefix. The pick
+        // adds the language and the page leaves as back would.
+        val addPage = { chromeHas(ADD_LANGUAGE_PAGE) || findField("Find a language") != null }
+        val addOpened = touchSettingsRowExpecting("Add language", "the Add language page is up (its Find a language field over the list)", timeoutMs = 8_000, took = addPage) ||
+            addPage() ||
+            standIn("Add language") { clickSettingsRow("Add language") && awaitTook(addPage, 8_000) }
         SystemClock.sleep(1_200)
         shot("13-settings-add-language")
         val readsBasque = { "eu" in preferred() }
@@ -236,18 +239,19 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
             took = readsBasque
         )
         if (!basqueRead && !readsBasque()) standIn("Basque") { (clickSettingsRow("Basque") || clickByLabel("Basque")) && awaitTook(readsBasque, 5_000) }
-        val addClosed = awaitSheetGone("Add language", 5_000, prefix = true) && awaitTook({ findField("Find a language") == null }, 3_000)
+        val addClosed = awaitTook({ !chromeHas(ADD_LANGUAGE_PAGE) && findField("Find a language") == null }, 8_000)
         val basqueRow = awaitSettingsRow("Basque", 8_000) || waitFor("Basque", 3_000) != null
         results.put(
-            "addLanguageSheet",
+            "addLanguagePage",
             JSONObject()
                 .put("opened", addOpened)
-                .put("sheet", addSheet() || addClosed)
+                .put("page", addPage() || addClosed)
+                .put("left", addClosed)
                 .put("basqueRead", basqueRead)
                 .put("preferred", JSONArray(preferred()))
                 .put("row", basqueRow)
         )
-        Log.i(tag, "add a language: ${results.getJSONObject("addLanguageSheet")}")
+        Log.i(tag, "add a language: ${results.getJSONObject("addLanguagePage")}")
         SystemClock.sleep(1_000)
         shot("14-settings-language-added")
 
@@ -335,6 +339,10 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
     }
 
     /** Poll `took` for up to `timeoutMs`. */
+    /** Whether the chrome's document has an element matching `selector` (the Add language page, a field). */
+    private fun chromeHas(selector: String): Boolean =
+        chromeJs("Boolean(document.querySelector(${JSONObject.quote(selector)}))").trim() == "true"
+
     private fun awaitTook(took: () -> Boolean, timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
@@ -494,5 +502,7 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
     private companion object {
         /** The pill's site icon: the button that opens the site-information sheet. */
         private const val SITE_ICON_LABEL = "Site information"
+        /** Settings > Languages > Add language, the section's find-and-pick page in the chrome's document (`AddLanguagePage.tsx`). */
+        private const val ADD_LANGUAGE_PAGE = ".zen-settings-add-language"
     }
 }

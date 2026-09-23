@@ -28,41 +28,53 @@ import java.io.File
  *     picker sheet's title block says "Websites follow this too." – and Dark picked with a
  *     finger: the row reads Dark, the chrome turns, and the SAME article document (its
  *     `performance.timeOrigin` unchanged) sees `prefers-color-scheme` flip, no reload.
- *  2. CT-25 Customise fonts, in dark: Font size dragged three stops along its §9.21 slider (the
- *     value beside the label following the thumb, the size applied when the finger lets go: the
- *     core's `settings.fonts.size` 20 and the open article's body text at 20 px), Minimum font
- *     size dragged to 12 (the article's 11 px small print lifted to 12), Standard font through
- *     its picker sheet (each face drawn in itself) to Cursive, the Reset row appearing once
- *     anything stands off the defaults, the preview row following – and the article reflowed
- *     when Settings closes, still the same document.
+ *  2. CT-25 Customise fonts, in dark: Font size and Minimum font size are §10.4's ± rows on the
+ *     phone (the value on the label's line, the 44 px Decrease / Increase buttons about the
+ *     track, no end labels – the lead check on #350, ruling 1); three fingers on Font size's +
+ *     step it to 20 (each press applied at once: the core's `settings.fonts.size` 20 and the
+ *     open article's body text at 20 px), seven on Minimum font size's + to 12 (the article's
+ *     11 px small print lifted to 12), Standard font through its picker sheet (each face drawn
+ *     in itself, the sheet open expanded at the checked face) to Cursive, the Reset row
+ *     appearing once anything stands off the defaults, the preview row following – and the
+ *     article reflowed when Settings closes, still the same document.
  *  3. CT-23 back to Light the same way, the article following again; Reset fonts under a finger
- *     puts the type back (16 px, no floor, the platform's face) on the open page.
- *  4. CT-41 Preferred languages: the list's §10.4 rows in order with their trailing ⋯ – German's
- *     menu (Move Up / Move Down / Remove, Move Down at .4 on the last row) under a finger, Move
- *     Up under a finger puts German first (`settings.languages`); Add language opens the §9.13
- *     picker sheet with its filter field, `basq` typed into it narrows the list to Basque, a
- *     finger on Basque adds it and closes the sheet; the phone copy says pages receive the
- *     system's languages.
- *  5. CT-36 Reader View's Text preferences: the sheet carries Translate into (a menulist reading
- *     German, the first preferred language after the move) and Translate under Listen; Translate
- *     under a finger turns the row busy with the progress as its second line (the model coming
- *     down, the blocks done), the article turns German in place, the row gives way to Show
- *     original whose second line names the source; Show original under a finger shows the
- *     English and again the German; the back closes the sheet on the translated document.
+ *     puts the type back (16 px, no floor, the platform's face) on the open page, no
+ *     confirmation asked (ruling 8).
+ *  4. CT-41 Preferred languages: the list's §10.4 item rows in order – a plain row, no ⋯ and no
+ *     chevron, the whole row opening its item sheet (ruling 2) – German's sheet (titled German:
+ *     Move Up / Move Down / Remove as action rows, Move Down at .4 on the last row, Remove in
+ *     the plain ink) under a finger, Move Up under a finger puts German first
+ *     (`settings.languages`) with the sheet standing, Move Up now at .4, and a back closing it;
+ *     Add language opens the section's find-and-pick PAGE (`zen://settings/languages/add`, a
+ *     drill-in with the filter field pinned over the list, ruling 3), `basq` typed into it
+ *     narrows the list to Basque, a finger on Basque adds it and the page leaves; the phone
+ *     copy says pages receive the system's languages.
+ *  5. CT-36 Reader View's Text preferences: Translate is the head's one action row after Listen
+ *     (both with their glyph, the setting rows with none: rulings 4 and 5), Text spacing whole
+ *     above the peek's fold; Translate under a finger opens the target picker sheet – expanded,
+ *     scrolled to the checked German (the first preferred language after the move), every
+ *     language named in itself under the English from the shipped table (ruling 7) – and
+ *     German under a finger translates on the pick: the row turns busy with the progress as its
+ *     second line (the model coming down, the blocks done), the article turns German in place,
+ *     the row gives way to the Show original switch whose second line names the target; Show
+ *     original under a finger shows the English and again the German; the back closes the
+ *     sheet on the translated document.
  *
  * The jank record ([traceFrames], `frames.jsonl`; Bennett's rule of 2026-09-20 and the Android
  * program's PERF-3 harness): the app menu opened under a finger and dismissed with a back first
  * (`menu-sheet-open` / `menu-sheet-close`, the table's point of reference), then this PR's
  * scenes – the colour scheme picker's open and the pick that closes it
- * (`colour-scheme-picker-open` / `-pick`), the two slider drags (`font-size-slider-drag`,
- * `minimum-font-size-slider-drag`, `gesture`: the finger down on the thumb, along the track and
- * up, the size applied on the release), the font picker's open and pick
- * (`font-family-picker-open` / `-pick`), the language row's ⋯ menu open and its Move Up
- * (`language-menu-open` / `-move-up`), Add language's picker open and the pick that closes it
- * (`add-language-picker-open` / `-pick`), the Text preferences sheet's open and its close on a
- * back (`reader-prefs-sheet-open` / `-close`), every sheet scene `open`. Each block is the
- * finger (or the back) and [MOTION_MS] for what it does, nothing else – the node found and the
- * point fixed BEFORE the block, the claim polled AFTER it ([scene]). Every scene carries the
+ * (`colour-scheme-picker-open` / `-pick`), the two runs of step presses
+ * (`font-size-step-presses`, `minimum-font-size-step-presses`, `gesture`: the fingers on the +
+ * in turn, each step applied as it lands), the font picker's open and pick
+ * (`font-family-picker-open` / `-pick`), the language row's item sheet open and its Move Up
+ * (`language-item-sheet-open` / `-move-up`), Add language's page open and the pick that leaves
+ * it (`add-language-page-open` / `-pick`), the Text preferences sheet's open and its close on a
+ * back (`reader-prefs-sheet-open` / `-close`), the reader's target picker open and the pick
+ * that translates (`reader-translate-picker-open` / `-pick`), every sheet and page scene
+ * `open`. Each block is the finger (or the back) and [MOTION_MS] for what it does, nothing
+ * else – the node found and the point fixed BEFORE the block, the claim polled AFTER it
+ * ([scene]). Every scene carries the
  * chrome WebView's trace; the gate (`jankGate`, soft unless the workflow says hard) reports or
  * fails them; the findings list the scenes one line each. The core's startup sweeps are held
  * for the run (`holdBackgroundWork`), so no feed refresh lands in a measured scene.
@@ -346,25 +358,41 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     }
 
     /**
-     * A sheet's option or item reading `text` – a picker's radio row, a menu sheet's item, the
-     * language picker's row – through [controlPoint], the document's element the open sheet's
-     * control whose label starts with `text` ([sheetControlJs]).
+     * A sheet's option or item reading `text` – a picker's radio row, an item sheet's action
+     * row, the Add language page's row – through [controlPoint], the document's element the
+     * topmost surface's control whose label starts with `text` ([sheetControlJs]).
      */
     private fun optionPoint(text: String, prefix: Boolean = false): PointF? = controlPoint(text, sheetControlJs(text), prefix = prefix)
 
     /**
-     * A script evaluating to the open sheet's control (a radio row, a menu item, an option, a
-     * button) whose label – its `.zen-settings-label`, else its own text – is `text` or starts
-     * with it before a space or a line; null without a sheet or such a control.
+     * A script evaluating to the topmost surface's control (a radio row, a menu item, an option,
+     * a button) whose label – its `.zen-settings-label`, the v2 row's `.zen-v2-label` or its
+     * `.truncate` line, else its own text – is `text` or starts with it before a space or a
+     * line; null without a surface or such a control. The surface is the LAST sheet in the
+     * document (a picker stacked over the Text preferences sheet is the one the finger is for),
+     * else the Add language page (no sheet: its list is the surface).
      */
     private fun sheetControlJs(text: String): String =
-        "(function(){var q=${JSONObject.quote(text)};var root=document.querySelector('.zen-sheet, [role=\"dialog\"]');if(!root)return null;" +
+        "(function(){var q=${JSONObject.quote(text)};var root=$LAST_SURFACE_JS;if(!root)return null;" +
             "var cs=Array.from(root.querySelectorAll('[role=\"radio\"], [role=\"menuitem\"], [role=\"option\"], button'));" +
-            "return cs.find(function(c){var l=c.querySelector('.zen-settings-label')||c;var t=(l.textContent||'').trim();" +
+            "return cs.find(function(c){var l=c.querySelector('.zen-settings-label, .zen-v2-label, .truncate')||c;var t=(l.textContent||'').trim();" +
             "return t===q||t.indexOf(q+' ')===0||t.indexOf(q+'\\n')===0})||null})()"
 
-    /** Whether a sheet (a picker, a menu sheet, the Text preferences) stands in the chrome's document. */
+    /** Whether a sheet (a picker, an item sheet, the Text preferences) stands in the chrome's document. */
     private fun sheetUp(): Boolean = chromeHas(".zen-sheet, [role=\"dialog\"]")
+
+    /** The topmost sheet's title (the dialog's `aria-labelledby` text, `h2.zen-sheet-title`), "" without a sheet. */
+    private fun sheetTitle(): String = chromeString(
+        "(function(){var ds=document.querySelectorAll('[role=\"dialog\"]');var d=ds[ds.length-1];if(!d)return '';" +
+            "var n=d.getAttribute('aria-label');if(n)return n;var id=d.getAttribute('aria-labelledby');var t=id&&document.getElementById(id);" +
+            "t=t||d.querySelector('.zen-sheet-title');return t?(t.textContent||'').trim():''})()"
+    )
+
+    /** Whether the Add language page stands in the chrome's document (`AddLanguagePage.tsx`). */
+    private fun addPageUp(): Boolean = chromeHas(ADD_PAGE_SELECTOR)
+
+    /** Whether the reader's target picker stands: its radiogroup named Translate into (`V2MenulistSheet`). */
+    private fun targetPickerUp(): Boolean = chromeHas("[role=\"radiogroup\"][aria-label=\"Translate into\"]")
 
     /** Whether the open sheet lists a control whose label starts with `text` (the document's word, past the tree's lag). */
     private fun sheetLists(text: String): Boolean = chromeJs("Boolean(${sheetControlJs(text)})").trim() == "true"
@@ -517,7 +545,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     // --- 2. CT-25: Customise fonts ----------------------------------------------------------------------
 
     private fun fontsSection(document: String?) {
-        finding("\nCT-25 Customise fonts (Settings > Look and Feel): the sliders applied on release, the family picker, Reset, the article reflowing")
+        finding("\nCT-25 Customise fonts (Settings > Look and Feel): the ± rows stepped under fingers, the family picker, Reset, the article reflowing")
         val before = articleMetrics()
         finding("  the article before: $before")
         if (!openSettings(LOOK_SECTION)) {
@@ -533,43 +561,51 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         val rows = groupRows("fonts")
         finding("  the group's rows: $rows")
         check(
-            "the phone's group is Font size, Minimum font size, Standard font, the preview (and Reset once off the defaults): no serif / sans-serif / fixed rows (genericFontFamilies false)",
-            rows.containsAll(listOf("fonts-size", "fonts-minimum-size", "fonts-standard-phone", "fonts-preview")) && rows.none { it in setOf("fonts-serif-phone", "fonts-sansSerif-phone", "fonts-fixed-phone", "fonts-reset") }
+            "the phone's group is Font size, Minimum font size, Standard font, the preview (and Reset once off the defaults): the phone's own level rows, no desktop menulist rows, no serif / sans-serif / fixed rows (genericFontFamilies false)",
+            rows.containsAll(listOf(FONT_SIZE_ROW_ID, MINIMUM_FONT_SIZE_ROW_ID, STANDARD_FONT_ROW_ID, "fonts-preview")) && rows.none { it in setOf("fonts-size", "fonts-minimum-size", "fonts-serif-phone", "fonts-sansSerif-phone", "fonts-fixed-phone", "fonts-reset") }
         )
-        check("the sliders carry Chrome's end labels (Very small … Very large; Tiny … Huge)", sliderEnds("fonts-size") == "Very small|Very large" && sliderEnds("fonts-minimum-size") == "Tiny|Huge")
-        finding("  at rest: Font size reads ${sliderValue("fonts-size")}, Minimum font size ${sliderValue("fonts-minimum-size")}, preview ${previewMetrics()}")
+        val sizeForm = sliderForm(FONT_SIZE_ROW_ID)
+        val minimumForm = sliderForm(MINIMUM_FONT_SIZE_ROW_ID)
+        finding("  the level rows' form: Font size $sizeForm; Minimum font size $minimumForm")
+        check(
+            "each level row is §10.4's ± row (ruling 1): the value on the label's line, the 44 px Decrease / Increase buttons named for the row about the track, no end labels",
+            stepRow(sizeForm, FONT_SIZE_ROW) && stepRow(minimumForm, MINIMUM_FONT_SIZE_ROW)
+        )
+        finding("  at rest: Font size reads ${sliderValue(FONT_SIZE_ROW_ID)}, Minimum font size ${sliderValue(MINIMUM_FONT_SIZE_ROW_ID)}, preview ${previewMetrics()}")
         snap("customise-fonts")
         beat()
 
-        // Font size: three stops along the slider (16 -> 20 px). The value beside the label
-        // follows the thumb; the size is applied when the finger lets go (§9.21, the brief's
-        // rule: no page layout per frame), and the open article's body text follows.
-        val sizeTook = dragSlider("fonts-size", FONT_SIZE_MAX_INDEX, FONT_SIZE_TARGET_INDEX, "font-size-slider-drag") {
+        // Font size: three presses on the row's + (16 -> 17 -> 18 -> 20 px). Each press steps
+        // the ladder once and is applied at once (§10.4: the zoom block's stepper rule), and the
+        // open article's body text follows.
+        val sizeTook = stepPresses(FONT_SIZE_ROW_ID, FONT_SIZE_ROW, FONT_SIZE_PRESSES, "font-size-step-presses") {
             fonts().optInt("size") == 20
         }
-        val sizeReads = sliderValue("fonts-size")
+        val sizeReads = sliderValue(FONT_SIZE_ROW_ID)
         // What the article behind Settings sees is noted here (the host hands every page its
         // WebSettings at once); the page's claim is made once it is back in front, below.
         val bodySize = poll(6_000) { articleValue(BODY_FONT_SIZE_JS) == "20px" }
-        finding("  after the drag: settings.fonts.size=${fonts().optInt("size")}, the row reads $sizeReads, the article's body font-size behind Settings ${articleValue(BODY_FONT_SIZE_JS)} (at 20 px: $bodySize; same document: ${articleValue("performance.timeOrigin") == document})")
-        check("Font size dragged three stops applies 20 px on release: the core's setting and the row's value", sizeTook && sizeReads == "20 px")
-        if (!sizeTook) touchFault("the Font size slider drag did not take: settings.fonts.size is ${fonts().optInt("size")}, not 20")
+        finding("  after the presses: settings.fonts.size=${fonts().optInt("size")}, the row reads $sizeReads, the article's body font-size behind Settings ${articleValue(BODY_FONT_SIZE_JS)} (at 20 px: $bodySize; same document: ${articleValue("performance.timeOrigin") == document})")
+        check("three presses on Font size's + apply 20 px: the core's setting and the row's value", sizeTook && sizeReads == "20 px")
+        if (!sizeTook) touchFault("the presses on Font size's + did not take: settings.fonts.size is ${fonts().optInt("size")}, not 20")
         SystemClock.sleep(600)
         snap("customise-fonts-size-20")
 
-        // Minimum font size: to 12 px. The article's 11 px small print is lifted to 12.
+        // Minimum font size: seven presses to 12 px (none, 6, 7 … 12). The article's 11 px small
+        // print is lifted to 12.
         awaitRow(MINIMUM_FONT_SIZE_ROW_ID, MINIMUM_FONT_SIZE_ROW)
         SystemClock.sleep(600)
-        val minimumTook = dragSlider("fonts-minimum-size", MINIMUM_FONT_SIZE_MAX_INDEX, MINIMUM_FONT_SIZE_TARGET_INDEX, "minimum-font-size-slider-drag") {
+        val minimumTook = stepPresses(MINIMUM_FONT_SIZE_ROW_ID, MINIMUM_FONT_SIZE_ROW, MINIMUM_FONT_SIZE_PRESSES, "minimum-font-size-step-presses") {
             fonts().optInt("minimumSize") == 12
         }
         val smallLifted = poll(6_000) { articleValue(SMALL_FONT_SIZE_JS) == "12px" }
-        finding("  after the drag: settings.fonts.minimumSize=${fonts().optInt("minimumSize")}, the row reads ${sliderValue("fonts-minimum-size")}, the article's 11 px small print behind Settings at ${articleValue(SMALL_FONT_SIZE_JS)} (lifted to 12: $smallLifted)")
-        check("Minimum font size dragged to 12 px on release: the core's setting and the row's value", minimumTook && sliderValue("fonts-minimum-size") == "12 px")
-        if (!minimumTook) touchFault("the Minimum font size slider drag did not take: settings.fonts.minimumSize is ${fonts().optInt("minimumSize")}, not 12")
+        finding("  after the presses: settings.fonts.minimumSize=${fonts().optInt("minimumSize")}, the row reads ${sliderValue(MINIMUM_FONT_SIZE_ROW_ID)}, the article's 11 px small print behind Settings at ${articleValue(SMALL_FONT_SIZE_JS)} (lifted to 12: $smallLifted)")
+        check("seven presses on Minimum font size's + apply 12 px: the core's setting and the row's value", minimumTook && sliderValue(MINIMUM_FONT_SIZE_ROW_ID) == "12 px")
+        if (!minimumTook) touchFault("the presses on Minimum font size's + did not take: settings.fonts.minimumSize is ${fonts().optInt("minimumSize")}, not 12")
 
         // Standard font: the action row opens the phone's picker sheet (each face drawn in
-        // itself), Cursive under a finger sets the family and closes the sheet.
+        // itself; its rows exceed the peek, so it opens expanded at the checked face), Cursive
+        // under a finger sets the family and closes the sheet.
         val familyRow = rowPoint(STANDARD_FONT_ROW_ID, STANDARD_FONT_ROW)
         SystemClock.sleep(600)
         if (familyRow != null) {
@@ -579,8 +615,10 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             if (opened) {
                 SystemClock.sleep(800)
                 val faces = pickerFaces()
-                finding("  the picker's rows and the face each is drawn in: $faces; the tree lists Cursive: ${findNode { it == "Cursive" } != null}")
+                val geometry = pickerGeometry()
+                finding("  the picker's rows and the face each is drawn in: $faces; the tree lists Cursive: ${findNode { it == "Cursive" } != null}; the sheet: $geometry")
                 check("each family row is drawn in its own face (RadioOption.font)", faces.count { it.second.contains("cursive") } >= 1 && faces.count { it.second.contains("monospace") } >= 1)
+                check("the picker opens with the checked face in view – at its peek when the rows fit it, expanded and scrolled to the checked row when they exceed it (ruling 3's addition to §9.13)", pickerOpenedAtChecked(geometry))
                 snap("standard-font-picker")
                 beat()
                 val cursive = optionPoint("Cursive")
@@ -624,39 +662,30 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     }
 
     /**
-     * A finger along the slider of the row `rowId`: down on its thumb, along the track to the
-     * stop `toIndex` of `maxIndex` (Radix reads the value off the pointer's place on the root's
-     * width, rounded to the step), up – the row's value follows the thumb while the finger is
-     * down and the setting is committed on the release. The `gesture` scene named `scene`; the
-     * thumb and the root are placed from the chrome's own document (the tree's range node, when
-     * it has one, is noted). `took` is the claim polled after the block.
+     * `presses` fingers in turn on the + of the ± row `rowId` (its label `label`; the button is
+     * named "Increase `label`", §10.4): each press steps the ladder once and is applied at once
+     * – the row's value and the core's setting follow each finger, no release to wait for. The
+     * `gesture` scene named `scene`, the fingers [STEP_PRESS_GAP_MS] apart (well under the hold
+     * that would start the button repeating); the button is placed before the clock starts
+     * ([controlPoint]: the tree's node named for it, else the document's box – the tree's range
+     * node for the track, when it has one, is noted). `took` is the claim polled after the block.
      */
-    private fun dragSlider(rowId: String, maxIndex: Int, toIndex: Int, scene: String, took: () -> Boolean): Boolean {
-        val root = chromeRect("[data-row=\"$rowId\"] .zen-settings-slider")
-        val thumb = chromeRect("[data-row=\"$rowId\"] [role=\"slider\"]")
-        val rangeNode = findNodeWhere { it.rangeInfo != null && ((it.contentDescription ?: it.text)?.toString()?.let { t -> t == FONT_SIZE_ROW || t == MINIMUM_FONT_SIZE_ROW } == true) }
-        finding("  slider $rowId: thumb $thumb on root $root; the tree's range node: ${rangeNode?.className ?: "none"}${rangeNode?.rangeInfo?.let { " at ${it.current} of ${it.max}" } ?: ""}")
-        if (root == null || thumb == null || root.width() <= 0) {
-            check("the $rowId slider is in the chrome's document to touch", false)
+    private fun stepPresses(rowId: String, label: String, presses: Int, scene: String, took: () -> Boolean): Boolean {
+        val name = "Increase $label"
+        val plus = controlPoint(name, "document.querySelector('[data-row=\"$rowId\"] button[aria-label=\"$name\"]')")
+        val rangeNode = findNodeWhere { it.rangeInfo != null && ((it.contentDescription ?: it.text)?.toString() == label) }
+        finding("  ± row $rowId: the + at ${plus?.let { "${it.x},${it.y}" } ?: "nowhere"}; the tree's range node for the track: ${rangeNode?.className ?: "none"}${rangeNode?.rangeInfo?.let { " at ${it.current} of ${it.max}" } ?: ""}")
+        if (plus == null) {
+            check("the $rowId row's + button is on screen to touch", false)
             return false
         }
-        val x0 = thumb.exactCenterX()
-        val y = thumb.exactCenterY()
-        val target = root.left + root.width() * toIndex / maxIndex.toFloat()
-        val point = touchPoint(Rect(x0.toInt() - 1, y.toInt() - 1, x0.toInt() + 1, y.toInt() + 1)) ?: run {
-            check("the $rowId slider's thumb is inside the touchable window", false)
-            return false
-        }
-        Log.i(tag, "slider $rowId: finger from ${point.x},${point.y} to ${target},${point.y} (stop $toIndex of $maxIndex)")
-        val held = scene(scene, JankBudget.Kind.GESTURE, timeoutMs = 8_000, took = took) {
-            Finger().apply {
-                down(point.x, point.y)
-                moveBy(target - point.x, 0f, 700)
-                hold(200)
-                up()
+        Log.i(tag, "± row $rowId: $presses fingers on '$name' at ${plus.x},${plus.y}")
+        return scene(scene, JankBudget.Kind.GESTURE, timeoutMs = 8_000, took = took) {
+            repeat(presses) { i ->
+                if (i > 0) SystemClock.sleep(STEP_PRESS_GAP_MS)
+                Finger().tap(plus)
             }
         }
-        return held
     }
 
     // --- 3. CT-23 back, and Reset fonts -----------------------------------------------------------------
@@ -669,18 +698,23 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         }
         val schemeBack = colourScheme(from, to, measured = false)
         if (schemeBack) finding("  with Settings over it the article sees ${articleValue(SCHEME_JS)}")
-        // Reset fonts: the action row under a finger; the open article back at 16 px, no floor,
-        // the platform's face – in place.
+        // Reset fonts: the action row under a finger – in the plain ink, no confirmation asked
+        // (ruling 8: a preference reset destroys no data of the user's); the open article back
+        // at 16 px, no floor, the platform's face – in place.
         var reset = false
         val resetRow = rowPoint(RESET_ROW_ID, RESET_ROW)
         if (resetRow != null) {
+            val ink = rowInk(RESET_ROW_ID)
+            finding("  the Reset fonts row's ink: $ink (the Standard font row's: ${rowInk(STANDARD_FONT_ROW_ID)})")
+            check("Reset fonts stands in the plain ink, not the danger ink (ruling 8)", ink.isNotEmpty() && ink == rowInk(STANDARD_FONT_ROW_ID))
             SystemClock.sleep(600)
             Finger().tap(resetRow)
             reset = poll(6_000) { fonts().let { it.optInt("size") == 16 && it.optInt("minimumSize") == 0 && it.isNull("standard") } }
             if (!reset) touchFault("a touch on '$RESET_ROW' did not take: settings.fonts not back at the defaults within 6000 ms (${fonts()})")
+            val asked = sheetUp()
             val behind = poll(6_000) { articleValue(BODY_FONT_SIZE_JS) == "16px" && articleValue(SMALL_FONT_SIZE_JS) == "11px" && articleValue(BODY_FONT_FAMILY_JS) != "cursive" }
-            finding("  after Reset fonts: fonts ${fonts()}; behind Settings the article's body ${articleValue(BODY_FONT_SIZE_JS)} ${articleValue(BODY_FONT_FAMILY_JS)}, small print ${articleValue(SMALL_FONT_SIZE_JS)} (back at the defaults: $behind); the Reset row listed: ${"fonts-reset" in groupRows("fonts")}")
-            check("Reset fonts puts settings.fonts back at the defaults and the row leaves the group", reset && "fonts-reset" !in groupRows("fonts"))
+            finding("  after Reset fonts: fonts ${fonts()}; a sheet up: $asked; behind Settings the article's body ${articleValue(BODY_FONT_SIZE_JS)} ${articleValue(BODY_FONT_FAMILY_JS)}, small print ${articleValue(SMALL_FONT_SIZE_JS)} (back at the defaults: $behind); the Reset row listed: ${"fonts-reset" in groupRows("fonts")}")
+            check("Reset fonts puts settings.fonts back at the defaults on the press, no confirmation asked, and the row leaves the group", reset && !asked && "fonts-reset" !in groupRows("fonts"))
             SystemClock.sleep(600)
             snap("customise-fonts-reset")
         } else {
@@ -706,7 +740,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     // --- 4. CT-41: Preferred languages --------------------------------------------------------------------
 
     private fun languagesSection() {
-        finding("\nCT-41 Preferred languages (Settings > Languages): the rows in order with their ⋯ menus, Move Up, Add language with its filter")
+        finding("\nCT-41 Preferred languages (Settings > Languages): §10.4's item rows, German's item sheet and Move Up, Add language's page with its filter")
         if (!openSettings(LANGUAGES_SECTION)) {
             check("the app menu's Settings opens Languages", false)
             return
@@ -720,65 +754,83 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         val rows = groupRows("preferred")
         val description = groupDescription("preferred")
         finding("  the group's rows: $rows; description: \"$description\"")
-        check("the list's rows are English (United States) then German, one per language in the list's order, then Add language", rows == listOf("languages-preferred:en-US", "languages-preferred:de", "languages-add"))
-        check("the phone copy says pages receive the system's languages, not this list (pageLanguages false)", description.contains("pages receive the system’s languages"))
-        val menus = menuButtons()
-        finding("  the rows' ⋯ buttons: $menus")
-        check("each language row carries a trailing ⋯ named for it (Options for English (United States), Options for German)", menus == listOf("Options for English (United States)", "Options for German"))
+        check("the list's rows are English (United States) then German, one per language in the list's order, then Add language", rows == listOf("languages-preferred:en-US", GERMAN_ROW_ID, ADD_LANGUAGE_ROW_ID))
+        check("the phone copy's two sentences say pages are translated into the first language and sites follow this device's languages, not this list (pageLanguages false; the review's nit 4)", description == "Pages are translated into the first language here. Sites that come in several languages follow this device’s languages, not this list.")
+        val forms = itemRowForms("preferred")
+        finding("  the language rows' form: $forms")
+        check("each language row is §10.4's item row (ruling 2): one plain row per language that opens its item sheet (a button, aria-haspopup dialog), no ⋯, no chevron, no inline control", forms.size == 2 && forms.all { it.endsWith(" item") })
         snap("languages")
         beat()
 
-        // German's ⋯: the menu sheet titled German – Move Up, Move Down (at .4, the last row),
-        // Remove – and Move Up under a finger puts German first.
-        val dots = controlPoint("Options for German", "document.querySelector('[data-row=\"languages-preferred:de\"] [aria-label=\"Options for German\"]')")
-        if (dots != null) {
-            val listed = { sheetLists("Move Up") && sheetLists("Remove") }
-            val opened = scene("language-menu-open", JankBudget.Kind.OPEN, took = listed) { Finger().tap(dots) }
-            check("a finger on German's ⋯ opens its menu sheet (Move Up / Move Down / Remove)", opened)
+        // German's row: the whole row opens its item sheet titled German – Move Up, Move Down
+        // (at .4, the last row), Remove in the plain ink – and Move Up under a finger puts German
+        // first with the sheet standing (the item's sheet, its rows the order's live state).
+        val german = rowPoint(GERMAN_ROW_ID, "German")
+        SystemClock.sleep(600)
+        if (german != null) {
+            val listed = { sheetTitle() == "German" && sheetLists("Move Up") && sheetLists("Remove") }
+            val opened = scene("language-item-sheet-open", JankBudget.Kind.OPEN, took = listed) { Finger().tap(german) }
+            check("a finger on German's row opens its item sheet titled German (Move Up / Move Down / Remove as action rows)", opened)
             if (opened) {
                 SystemClock.sleep(800)
                 val items = menuItems()
-                finding("  the menu's items: $items; the tree lists Move Up: ${findNode { it == "Move Up" } != null}")
+                val inks = sheetRowInks()
+                finding("  the sheet's rows: $items; their ink: $inks; the tree lists Move Up: ${findNode { it == "Move Up" } != null}")
                 check("Move Down is disabled on the last row, Move Up and Remove enabled (§9.30: listed at .4, never dropped)", items.any { it.startsWith("Move Down") && it.endsWith("disabled") } && items.any { it.startsWith("Move Up") && it.endsWith("enabled") } && items.any { it.startsWith("Remove") && it.endsWith("enabled") })
-                snap("language-menu")
+                check("Remove stands last in the plain ink – a preference removed is no loss of the user's data (§10.4, ruling 8)", items.lastOrNull()?.startsWith("Remove") == true && inks.optString("Remove").isNotEmpty() && inks.optString("Remove") == inks.optString("Move Up"))
+                snap("language-item-sheet")
                 beat()
                 val up = optionPoint("Move Up")
                 if (up != null) {
-                    val moved = { languages().let { it.size == 2 && it[0] == "de" } && !sheetUp() }
-                    val took = scene("language-menu-move-up", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = moved) { Finger().tap(up) }
-                    finding("  after Move Up: languages ${languages()}; rows ${groupRows("preferred")}")
-                    check("Move Up puts German first (settings.languages de, en-US) and the rows follow the order", took && groupRows("preferred").take(2) == listOf("languages-preferred:de", "languages-preferred:en-US"))
+                    val moved = { languages().let { it.size == 2 && it[0] == "de" } }
+                    val took = scene("language-item-sheet-move-up", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = moved) { Finger().tap(up) }
+                    SystemClock.sleep(600)
+                    val after = menuItems()
+                    finding("  after Move Up: languages ${languages()}; rows ${groupRows("preferred")}; the sheet ${if (sheetUp()) "stands" else "is gone"}, its rows now $after")
+                    check("Move Up puts German first (settings.languages de, en-US) and the rows follow the order", took && groupRows("preferred").take(2) == listOf(GERMAN_ROW_ID, "languages-preferred:en-US"))
+                    check("the item sheet stays up after Move Up, Move Up now at .4 on the first row and Move Down enabled (the sheet is the item's; only Remove closes it)", sheetUp() && after.any { it.startsWith("Move Up") && it.endsWith("disabled") } && after.any { it.startsWith("Move Down") && it.endsWith("enabled") })
                     if (!took) touchFault("a touch on Move Up did not take: languages are ${languages()}")
+                    snap("language-item-sheet-moved")
+                    back()
+                    val closed = poll(6_000) { !sheetUp() }
+                    check("a back closes the item sheet on the reordered list", closed && groupRows("preferred").take(2) == listOf(GERMAN_ROW_ID, "languages-preferred:en-US"))
                 } else {
-                    touchFault("the menu sheet listed no Move Up to touch")
+                    touchFault("the item sheet listed no Move Up to touch")
                     back()
                 }
             } else {
-                touchFault("a touch on German's ⋯ opened no menu sheet")
+                touchFault("a touch on German's row opened no item sheet")
             }
         } else {
-            check("German's ⋯ button is on screen to touch", false)
+            check("German's row is on screen to touch", false)
         }
         SystemClock.sleep(800)
         snap("languages-reordered")
         beat()
 
-        // Add language: the picker sheet with its filter field; `basq` typed narrows the list to
-        // Basque; Basque under a finger adds it and closes the sheet.
+        // Add language: the section's page (a drill-in, the filter field pinned over its own
+        // scroller); `basq` typed narrows the list to Basque; Basque under a finger adds it and
+        // the page leaves.
         val add = rowPoint(ADD_LANGUAGE_ROW_ID, ADD_LANGUAGE_ROW)
         SystemClock.sleep(600)
         if (add != null) {
-            // The sheet is up once the chrome's document has the filter field and the catalogue's
-            // first row (the field itself is an EditText named by its hint, which the label reads
-            // never see: [findField]); whether the tree lists the row is noted below.
-            val listed = { chromeHas(FILTER_SELECTOR) && sheetLists("Afrikaans") }
-            val opened = scene("add-language-picker-open", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = listed) { Finger().tap(add) }
-            check("a finger on Add language opens the picker sheet with the filter field pinned over the list", opened)
+            // The page is up once the chrome's document has it with the filter field and the
+            // catalogue's first row (the field itself is an EditText named by its hint, which the
+            // label reads never see: [findField]); whether the tree lists the row is noted below.
+            val listed = { addPageUp() && chromeHas(FILTER_SELECTOR) && pickerLabels().firstOrNull() == "Afrikaans" }
+            val opened = scene("add-language-page-open", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = listed) { Finger().tap(add) }
+            check("a finger on Add language opens the Add language page (ruling 3: zen://settings/languages/add, a drill-in with the filter field pinned over the list)", opened)
             if (opened) {
                 SystemClock.sleep(800)
                 val all = pickerCount()
-                finding("  the picker lists $all languages; the filter field reads \"${filterValue()}\"; the tree's field: ${describeNode(findField(FILTER_LABEL))}; the tree lists Afrikaans: ${findNode { it.startsWith("Afrikaans") } != null}")
-                snap("add-language-picker")
+                val page = addPageGeometry()
+                finding("  the page lists $all languages; $page; the filter field reads \"${filterValue()}\"; the tree's field: ${describeNode(findField(FILTER_LABEL))}; the tree lists Afrikaans: ${findNode { it.startsWith("Afrikaans") } != null}")
+                check(
+                    "the page is the drill-in titled Add language with Back to Languages, the field pinned at its head over the list's own scroller, the first row focused and no keyboard up (§9.22, §10.2)",
+                    page.optString("title") == "Add language" && page.optString("back") == "Back to Languages" && page.optBoolean("filterPinned") && page.optBoolean("listScrolls") && page.optString("focused").startsWith("Afrikaans") && !imeShown()
+                )
+                check("the rows name each language in itself under the English, from the shipped table (ruling 7: Basque / euskara)", page.optInt("ownNames") >= 100)
+                snap("add-language-page")
                 beat()
                 val field = fieldPoint(FILTER_LABEL, FILTER_SELECTOR)
                 if (field != null) {
@@ -798,17 +850,17 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
                         back()
                         awaitIme(shown = false, timeoutMs = 6_000)
                         SystemClock.sleep(800)
-                        check("the back with the keyboard up puts the keyboard away and leaves the sheet standing", !imeShown() && chromeHas(FILTER_SELECTOR) && filterValue() == "basq")
+                        check("the back with the keyboard up puts the keyboard away and leaves the page standing with its filter", !imeShown() && addPageUp() && filterValue() == "basq")
                     }
                     val basque = optionPoint("Basque", prefix = true)
                     if (basque != null) {
-                        val added = { languages().contains("eu") && !chromeHas(FILTER_SELECTOR) }
+                        val added = { languages().contains("eu") && !addPageUp() }
                         val took = scene("add-language-pick", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = added) { Finger().tap(basque) }
-                        finding("  after Basque: languages ${languages()}; rows ${groupRows("preferred")}")
-                        check("a finger on Basque adds it (settings.languages de, en-US, eu) and closes the picker (§9.13)", took && groupRows("preferred") == listOf("languages-preferred:de", "languages-preferred:en-US", "languages-preferred:eu", "languages-add"))
+                        finding("  after Basque: languages ${languages()}; the page ${if (addPageUp()) "stands" else "is gone"}; rows ${groupRows("preferred")}")
+                        check("a finger on Basque adds it (settings.languages de, en-US, eu) and the page leaves as back would, the list showing the new row", took && groupRows("preferred") == listOf(GERMAN_ROW_ID, "languages-preferred:en-US", "languages-preferred:eu", ADD_LANGUAGE_ROW_ID))
                         if (!took) touchFault("a touch on Basque did not take: languages are ${languages()}")
                     } else {
-                        touchFault("the filtered picker listed no Basque row to touch")
+                        touchFault("the filtered page listed no Basque row to touch")
                         back()
                     }
                 } else {
@@ -816,7 +868,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
                     back()
                 }
             } else {
-                touchFault("a touch on Add language opened no picker sheet")
+                touchFault("a touch on Add language opened no Add language page")
             }
         } else {
             check("the Add language row is on screen to touch", false)
@@ -832,7 +884,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     // --- 5. CT-36: Translate in Reader View's Text preferences -----------------------------------------
 
     private fun readerSection() {
-        finding("\nCT-36 Reader View > Text preferences: Translate into + Translate / Show original")
+        finding("\nCT-36 Reader View > Text preferences: Translate as the head's one action row, its target picker translating on the pick, then Show original")
         val opened = openMenuItem("Reader View")
         if (!opened) {
             check("the app menu lists Reader View for the article", false)
@@ -856,34 +908,66 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         // The Text preferences sheet from the app menu (the phone's way in), measured.
         if (!openPreferencesSheet()) return
         val rows = sheetRows()
-        finding("  the sheet's rows: $rows")
+        val head = readerHead()
+        finding("  the sheet's rows: $rows; the head: $head")
         check(
-            "Translate into and Translate stand in the group under Listen and before Text size (one place, CT-36)",
-            rows.indexOf("Translate into") >= 0 && rows.indexOf("Translate") == rows.indexOf("Translate into") + 1 && rows.indexOf("Translate") < rows.indexOf("Text size") && (rows.indexOf("Listen to this article") < 0 || rows.indexOf("Listen to this article") < rows.indexOf("Translate into"))
+            "Translate is the head's one action row, Listen's sibling after it and before Text size, no Translate into row (rulings 4 and 6, CT-36)",
+            rows.indexOf("Listen to this article") == 0 && rows.indexOf("Translate") == 1 && rows.indexOf("Text size") == 2 && "Translate into" !in rows
         )
-        val target = menulistValue("Translate into")
-        finding("  Translate into reads: $target (languages ${languages()})")
-        check("Translate into defaults to the first preferred language – German, after Move Up", target == "German")
+        check(
+            "both head action rows carry their glyph (Listen audio-lines, Translate languages) and the setting rows none (ruling 5); Translate opens a dialog (aria-haspopup)",
+            head.optJSONObject("listen")?.optString("glyph") == "lucide-audio-lines" && head.optJSONObject("translate")?.optString("glyph") == "lucide-languages" && head.optJSONObject("translate")?.optString("haspopup") == "dialog" && head.optInt("settingGlyphs", -1) == 0
+        )
+        check(
+            "Text spacing stands whole above the peek's fold with the one head row (#265's measure kept, the lead's re-measure ~877 of the 915 peek)",
+            head.optInt("spacingBottom", -1) > 0 && head.optInt("spacingBottom") <= head.optInt("scrollerBottom", -1)
+        )
         SystemClock.sleep(600)
         snap("reader-prefs-translate")
         beat()
 
-        // Translate under a finger: the row turns busy with the progress; the article turns German.
-        val translate = fingerOn("Translate")
+        // Translate under a finger: the target picker sheet comes up over the panel – expanded
+        // (58 rows exceed its peek), scrolled to the checked German – and German under a finger
+        // translates on the pick: the row turns busy with the progress; the article turns German.
+        val translate = controlPoint("Translate", "document.querySelector('[data-reader-pref=\"translate\"]')")
         if (translate == null) {
             check("the Translate row is on screen to touch", false)
             backFromSheet(measured = false)
             return
         }
+        val pickerUp = { targetPickerUp() && sheetLists("German") }
+        val pickerOpened = scene("reader-translate-picker-open", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = pickerUp) { Finger().tap(translate) }
+        check("a finger on Translate opens the target picker sheet titled Translate into over the panel", pickerOpened && sheetTitle() == "Translate into")
+        if (!pickerOpened) {
+            touchFault("a touch on Translate opened no target picker listing German")
+            backFromSheet(measured = false)
+            return
+        }
+        SystemClock.sleep(1_000)
+        val picker = pickerGeometry()
+        finding("  the target picker: $picker; the tree lists German: ${findNode { it == "German" || it.startsWith("German ") || it.startsWith("German\n") } != null}")
+        check(
+            "the picker opens expanded, scrolled to the checked target – German, the first preferred language after the move – in view, its rows naming each language in itself under the English from the shipped table (ruling 3's addition, ruling 7)",
+            picker.optString("checked") == "German" && picker.optBoolean("expanded") && picker.optBoolean("checkedInView") && picker.optInt("ownNames") >= 40
+        )
+        snap("reader-translate-picker")
+        beat()
+        val german = optionPoint("German", prefix = true)
+        if (german == null) {
+            check("the picker lists German to touch", false)
+            back()
+            backFromSheet(measured = false)
+            return
+        }
         val t0 = SystemClock.uptimeMillis()
-        Finger().tap(translate)
-        // The press reached the core once the tab has a reader translation state at all (the
-        // language told and the model fetched can be over before a poll sees them working).
-        val started = poll(10_000) { readerStatus().isNotEmpty() }
-        finding("  real touch on Translate: status ${readerStatus()} after ${SystemClock.uptimeMillis() - t0} ms")
-        if (!started) touchFault("a touch on Translate did not reach the core: the tab has no reader translation state")
+        // The pick closes the picker and reaches the core once the tab has a reader translation
+        // state at all (the language told and the model fetched can be over before a poll sees
+        // them working).
+        val started = scene("reader-translate-pick", JankBudget.Kind.OPEN, timeoutMs = 10_000, took = { !targetPickerUp() && readerStatus().isNotEmpty() }) { Finger().tap(german) }
+        finding("  real touch on German: the picker ${if (targetPickerUp()) "stands" else "is gone"}, status ${readerStatus()} after ${SystemClock.uptimeMillis() - t0} ms")
+        check("the pick closes the picker and sets the translation going (the tab has a reader translation state)", started)
+        if (!started) touchFault("a touch on German did not take: the picker stands or the tab has no reader translation state")
         var busyShot = false
-        var retried = false
         var seen = ""
         val deadline = SystemClock.uptimeMillis() + 300_000
         while (SystemClock.uptimeMillis() < deadline) {
@@ -898,24 +982,8 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
                 busyShot = true
                 SystemClock.sleep(500)
                 finding("  busy: the row reads \"${rowDescription("Translate")}\" (busy=${rowBusy("Translate")})")
-                check("while the core works the Translate row is busy with the progress as its second line (§9.30)", rowBusy("Translate") && rowDescription("Translate").isNotEmpty())
+                check("while the core works the Translate row is busy with the progress as its second line, in the same row (§9.30)", rowBusy("Translate") && rowDescription("Translate").isNotEmpty())
                 snap("reader-prefs-translating")
-            }
-            // The article already in the target (the languages step left English first): the
-            // row's second line says so in the danger ink, Translate into moves past the
-            // article's language now that it is known (`readerTranslateTarget`), and the press is
-            // the retry (§9.33) – taken once, so the section goes on to the translation.
-            if (status == "error" && !retried && state?.optString("error").orEmpty().contains("already in")) {
-                retried = true
-                val moved = poll(6_000) { menulistValue("Translate into").let { it.isNotEmpty() && it != target } }
-                finding("  the core answered \"${rowDescription("Translate")}\"; Translate into now reads ${menulistValue("Translate into")} (past the article's language: $moved)")
-                check("after \"already in\" the Translate into row skips the article's language and the Translate row keeps the press as its retry (§9.33)", moved && rowNode("Translate") != null)
-                snap("reader-prefs-translate-already")
-                val again = fingerWhere("Translate") { it == "Translate" || (it.startsWith("Translate ") && !it.startsWith("Translate into")) }
-                if (again == null) break
-                Finger().tap(again)
-                poll(10_000) { readerStatus() != "error" }
-                continue
             }
             if (status == "translated" || status == "error") break
             SystemClock.sleep(400)
@@ -935,8 +1003,8 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         finding("  the reader document (lang ${articleValue("document.documentElement.lang")}): \"${readerText().take(90)}…\"")
         check("the article shows the German in place (the document's lang de, its text changed)", translated)
         val showOriginal = poll(6_000) { rowNode("Show original") != null }
-        finding("  the rows now: ${sheetRows()}; Show original's second line: \"${rowDescription("Show original")}\"")
-        check("once translated the action row gives way to Show original, its second line naming the source (Translated from English)", showOriginal && rowDescription("Show original") == "Translated from English" && "Translate" !in sheetRows())
+        finding("  the rows now: ${sheetRows()}; Show original's second line: \"${rowDescription("Show original")}\"; a switch: ${chromeHas("[data-reader-pref=\"showOriginal\"][role=\"switch\"]")}")
+        check("once translated the action row gives way to the Show original switch row in its place, its second line naming the target (Translated into German)", showOriginal && rowDescription("Show original") == "Translated into German" && "Translate" !in sheetRows() && sheetRows().indexOf("Show original") == 1 && chromeHas("[data-reader-pref=\"showOriginal\"][role=\"switch\"]"))
         SystemClock.sleep(800)
         snap("reader-prefs-translated")
         beat()
@@ -968,7 +1036,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     /**
      * The app menu's Text Preferences… under a finger (the menu's own open and pull outside any
      * scene); the finger on the row and the sheet coming up is the `reader-prefs-sheet-open`
-     * scene. True once the sheet lists Translate into.
+     * scene. True once the sheet lists Translate and Text size.
      */
     private fun openPreferencesSheet(): Boolean {
         tapMenuButton()
@@ -995,8 +1063,8 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             back()
             return false
         }
-        val up = scene("reader-prefs-sheet-open", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = { rowNode("Translate into") != null && rowNode("Text size") != null }) { Finger().tap(item) }
-        if (!up) touchFault("a touch on $PREFERENCES_ITEM opened no sheet listing Translate into")
+        val up = scene("reader-prefs-sheet-open", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = { rowNode("Translate") != null && rowNode("Text size") != null }) { Finger().tap(item) }
+        if (!up) touchFault("a touch on $PREFERENCES_ITEM opened no sheet listing Translate")
         check("a real touch on $PREFERENCES_ITEM opens the Text preferences sheet", up)
         SystemClock.sleep(1_200)
         return up
@@ -1035,6 +1103,9 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     /** The string a script evaluates to in the chrome ("" when it did not answer or was not a string). */
     private fun chromeString(code: String): String = jsonString(chromeJs(code))
 
+    /** The object a script's JSON string evaluates to in the chrome (empty when it did not answer or was not an object). */
+    private fun chromeJson(code: String): JSONObject = runCatching { JSONObject(chromeString(code)) }.getOrDefault(JSONObject())
+
     /** Whether the chrome's document has an element matching `selector` (a sheet's field, a row). */
     private fun chromeHas(selector: String): Boolean =
         chromeJs("Boolean(document.querySelector(${JSONObject.quote(selector)}))").trim() == "true"
@@ -1061,16 +1132,120 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         "(function(){var r=document.querySelector('[data-row=\"$rowId\"]');return r?(r.textContent||'').trim().replace(/\\s+/g,' '):''})()"
     )
 
-    /** What the slider row's value reads ("20 px"). */
+    /** What the ± row's value reads ("20 px"): the `.zen-settings-slider-value` on the label's line. */
     private fun sliderValue(rowId: String): String = chromeString(
         "(function(){var v=document.querySelector('[data-row=\"$rowId\"] .zen-settings-slider-value');return v?(v.textContent||'').trim():''})()"
     )
 
-    /** The slider row's two end labels, `first|last`. */
-    private fun sliderEnds(rowId: String): String = chromeString(
-        "(function(){var e=document.querySelector('[data-row=\"$rowId\"] .zen-settings-slider-ends');if(!e)return '';" +
-            "return Array.from(e.children).map(function(c){return (c.textContent||'').trim()}).join('|')})()"
+    /**
+     * The form of the level row `rowId` as the chrome draws it (§10.4's ± row): its label and
+     * value and whether they share a line, the step buttons in order (name, CSS px size,
+     * disabled), whether a track stands between them, and whether end labels are drawn at all.
+     */
+    private fun sliderForm(rowId: String): JSONObject = chromeJson(
+        "(function(){var r=document.querySelector('[data-row=\"$rowId\"]');if(!r)return '{}';" +
+            "var l=r.querySelector('.zen-settings-slider-head .zen-settings-label'),v=r.querySelector('.zen-settings-slider-head .zen-settings-slider-value');" +
+            "var lr=l&&l.getBoundingClientRect(),vr=v&&v.getBoundingClientRect();" +
+            "var bs=Array.from(r.querySelectorAll('.zen-settings-slider-stepper button')).map(function(b){var br=b.getBoundingClientRect();" +
+            "return {name:b.getAttribute('aria-label')||'',w:Math.round(br.width),h:Math.round(br.height),disabled:b.disabled||b.getAttribute('aria-disabled')==='true'}});" +
+            "return JSON.stringify({label:l?(l.textContent||'').trim():'',value:v?(v.textContent||'').trim():'',sameLine:!!(lr&&vr&&Math.abs(lr.top-vr.top)<8&&vr.left>lr.right)," +
+            "buttons:bs,track:!!r.querySelector('.zen-settings-slider-stepper [role=\"slider\"]'),ends:!!r.querySelector('.zen-settings-slider-ends')})})()"
     )
+
+    /** Whether [sliderForm]'s reading is §10.4's ± row for `label`: value on the label's line, Decrease then Increase at 44, a track between, no end labels. */
+    private fun stepRow(form: JSONObject, label: String): Boolean {
+        val buttons = form.optJSONArray("buttons") ?: return false
+        if (buttons.length() != 2) return false
+        val minus = buttons.getJSONObject(0)
+        val plus = buttons.getJSONObject(1)
+        return form.optString("label") == label && form.optBoolean("sameLine") && form.optBoolean("track") && !form.optBoolean("ends") &&
+            minus.optString("name") == "Decrease $label" && plus.optString("name") == "Increase $label" &&
+            minus.optInt("w") >= 44 && minus.optInt("h") >= 44 && plus.optInt("w") >= 44 && plus.optInt("h") >= 44
+    }
+
+    /** The colour of the row's label (`.zen-settings-label`, else the row) as computed – the plain ink against the danger ink. */
+    private fun rowInk(rowId: String): String = chromeString(
+        "(function(){var r=document.querySelector('[data-row=\"$rowId\"]');if(!r)return '';var l=r.querySelector('.zen-settings-label')||r;return getComputedStyle(l).color})()"
+    )
+
+    /**
+     * The form of each language row in the Settings group `groupId`, one line per row: its id,
+     * element, `aria-haspopup`, and whether it carries a ⋯, a chevron or an inline control – the
+     * line ends in `item` when it is §10.4's item row (a button opening a dialog, none of those).
+     */
+    private fun itemRowForms(groupId: String): List<String> = jsonList(chromeString(
+        "(function(){var g=document.querySelector('[data-group=\"$groupId\"]');if(!g)return '[]';" +
+            "var rs=Array.from(g.querySelectorAll('[data-row^=\"languages-preferred:\"]'));" +
+            "return JSON.stringify(rs.map(function(r){var menu=!!r.querySelector('.zen-settings-row-menu, [aria-label^=\"Options for\"]');" +
+            "var chevron=!!r.querySelector('svg.lucide-chevron-right, .zen-settings-summary');var control=!!r.querySelector('.zen-settings-control, .zen-settings-trailing button, [role=\"switch\"], .zen-v2-menulist');" +
+            "var pop=r.getAttribute('aria-haspopup')||'';var item=r.tagName==='BUTTON'&&pop==='dialog'&&!menu&&!chevron&&!control;" +
+            "return r.getAttribute('data-row')+' '+r.tagName.toLowerCase()+' haspopup='+(pop||'none')+' menu='+menu+' chevron='+chevron+' control='+control+(item?' item':' not-item')}))})()"
+    ))
+
+    /**
+     * The Add language page as the chrome draws it: the drill-in's title and back button, the
+     * filter field's box and whether it is pinned over the list's own scroller, the rows, how
+     * many carry the language's own name under the English, and what has the focus.
+     */
+    private fun addPageGeometry(): JSONObject = chromeJson(
+        "(function(){var root=document.querySelector(${JSONObject.quote(ADD_PAGE_SELECTOR)});if(!root)return '{}';" +
+            "var drill=root.closest('.zen-settings-drill-in');var back=drill&&drill.querySelector('.zen-settings-back');var title=drill&&drill.querySelector('.zen-settings-bar-title');" +
+            "var filter=root.querySelector('.zen-settings-add-language-filter');var fr=filter&&filter.getBoundingClientRect();" +
+            "var list=root.querySelector('.zen-settings-add-language-list');var lr=list&&list.getBoundingClientRect();var lc=list&&getComputedStyle(list);" +
+            "var rows=Array.from(root.querySelectorAll('[role=\"group\"] > button'));" +
+            "var own=rows.filter(function(b){var d=b.querySelector('.zen-settings-description');return d&&(d.textContent||'').trim()}).length;" +
+            "var a=document.activeElement;var al=a&&(a.querySelector('.zen-settings-label')||a);" +
+            "return JSON.stringify({title:title?(title.textContent||'').trim():'',back:back?(back.getAttribute('aria-label')||''):'',list:root.getAttribute('data-list')||''," +
+            "filterY:fr?Math.round(fr.top):-1,filterH:fr?Math.round(fr.height):-1,filterPinned:!!(fr&&lr&&fr.bottom<=lr.top+1),listScrolls:!!(lc&&lc.overflowY!=='visible')," +
+            "listTop:lr?Math.round(lr.top):-1,listBottom:lr?Math.round(lr.bottom):-1,rows:rows.length,ownNames:own,focused:a?((a.getAttribute('aria-label')||(al&&al.textContent)||'').trim()):''})})()"
+    )
+
+    /**
+     * The Text preferences sheet's head as the chrome draws it: the Listen and Translate rows
+     * (top, height, the leading glyph's lucide class, `aria-haspopup`, busy), how many setting
+     * rows carry a leading glyph, and where Text spacing's bottom edge stands against the
+     * sheet's scroller at the peek.
+     */
+    private fun readerHead(): JSONObject = chromeJson(
+        "(function(){var root=document.querySelector('[data-reader-prefs-rows]');if(!root)return '{}';" +
+            "var sheet=root.closest('.zen-sheet');var scroller=sheet&&sheet.querySelector('.zen-sheet-scroll');var sr=scroller&&scroller.getBoundingClientRect();" +
+            "function glyph(r){var f=r.firstElementChild;if(!f||!f.hasAttribute('aria-hidden'))return '';var g=f.querySelector('svg');if(!g)return '';" +
+            "return Array.from(g.classList).filter(function(c){return c.indexOf('lucide-')===0}).join(' ')}" +
+            "function row(sel){var r=root.querySelector(sel);if(!r)return null;var b=r.getBoundingClientRect();" +
+            "return {y:Math.round(b.top),h:Math.round(b.height),glyph:glyph(r),haspopup:r.getAttribute('aria-haspopup')||'',busy:r.getAttribute('aria-busy')==='true'}}" +
+            "var rows=Array.from(root.querySelectorAll('.zen-v2-row'));function label(e){var l=e.querySelector('.truncate');return l?(l.textContent||'').trim():''}" +
+            "var spacing=rows.find(function(e){return label(e)==='Text spacing'});var spr=spacing&&spacing.getBoundingClientRect();" +
+            "var settings=rows.filter(function(e){var t=label(e);return t&&t!=='Listen to this article'&&t!=='Translate'&&t!=='Show original'});" +
+            "return JSON.stringify({listen:row('[data-reader-pref=\"listen\"]'),translate:row('[data-reader-pref=\"translate\"]'),viewport:window.innerHeight," +
+            "sheetTop:sheet?Math.round(sheet.getBoundingClientRect().top):-1,scrollerTop:sr?Math.round(sr.top):-1,scrollerBottom:sr?Math.round(sr.bottom):-1," +
+            "spacingTop:spr?Math.round(spr.top):-1,spacingBottom:spr?Math.round(spr.bottom):-1,settingRows:settings.length,settingGlyphs:settings.filter(function(e){return glyph(e)!==''}).length})})()"
+    )
+
+    /**
+     * The topmost picker sheet's detent and where its checked option sits (§9.13 with the lead
+     * check's addition): the sheet's box against the viewport (`expanded` when its top is in
+     * the viewport's upper reach), its scroller's scroll, the options, the checked one and
+     * whether it is inside the scroller, whether its rows fit the scroller (`fits`), how many
+     * rows carry a second line (the language's own name), and what has the focus.
+     */
+    private fun pickerGeometry(): JSONObject = chromeJson(
+        "(function(){var ss=document.querySelectorAll('.zen-sheet');var sheet=ss[ss.length-1];if(!sheet)return '{}';" +
+            "var sr=sheet.getBoundingClientRect();var scroller=sheet.querySelector('.zen-sheet-scroll');var scr=scroller&&scroller.getBoundingClientRect();" +
+            "var opts=Array.from(sheet.querySelectorAll('[role=\"radio\"], [role=\"option\"]'));" +
+            "var checked=sheet.querySelector('[role=\"radio\"][aria-checked=\"true\"], [role=\"option\"][aria-selected=\"true\"]');var cr=checked&&checked.getBoundingClientRect();" +
+            "function label(e){var l=e.querySelector('.zen-settings-label, .zen-v2-label, .truncate')||e;return (l.textContent||'').trim()}" +
+            "var own=opts.filter(function(o){var d=o.querySelector('.zen-settings-description, .zen-v2-description');return d&&(d.textContent||'').trim()}).length;" +
+            "var a=document.activeElement;" +
+            "return JSON.stringify({viewport:window.innerHeight,top:Math.round(sr.top),bottom:Math.round(sr.bottom),expanded:sr.top<window.innerHeight*0.15," +
+            "scrollerTop:scr?Math.round(scr.top):-1,scrollerBottom:scr?Math.round(scr.bottom):-1,scrollTop:scroller?Math.round(scroller.scrollTop):-1," +
+            "fits:!!(scroller&&scroller.scrollHeight<=scroller.clientHeight+1),options:opts.length,ownNames:own,checked:checked?label(checked):''," +
+            "checkedTop:cr?Math.round(cr.top):-1,checkedBottom:cr?Math.round(cr.bottom):-1,checkedInView:!!(cr&&scr&&cr.top>=scr.top-1&&cr.bottom<=scr.bottom+1)," +
+            "focused:a&&sheet.contains(a)?label(a):''})})()"
+    )
+
+    /** Whether a picker opened as §9.13 with the lead check's addition asks: the checked option in view – at the peek when the rows fit, expanded otherwise. */
+    private fun pickerOpenedAtChecked(geometry: JSONObject): Boolean =
+        geometry.optString("checked").isNotEmpty() && geometry.optBoolean("checkedInView") && (geometry.optBoolean("fits") || geometry.optBoolean("expanded"))
 
     /** The preview row's computed type: the standard paragraph's size and family, the fixed one's size. */
     private fun previewMetrics(): String = chromeString(
@@ -1092,18 +1267,19 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         }.getOrDefault(emptyList())
     }
 
-    /** The ⋯ buttons' names in the Preferred languages group, in order. */
-    private fun menuButtons(): List<String> = jsonList(chromeString(
-        "(function(){var g=document.querySelector('[data-group=\"preferred\"]');if(!g)return '[]';" +
-            "return JSON.stringify(Array.from(g.querySelectorAll('.zen-settings-row-menu, [aria-label^=\"Options for\"]')).map(function(b){return b.getAttribute('aria-label')||''}).filter(Boolean))})()"
-    ))
-
-    /** The open menu sheet's items with their state, `label enabled|disabled`. */
+    /** The topmost sheet's action rows (an item sheet's Move Up / Move Down / Remove) with their state, `label enabled|disabled`. */
     private fun menuItems(): List<String> = jsonList(chromeString(
-        "(function(){var d=document.querySelector('[role=\"dialog\"] [role=\"menu\"]')||document.querySelector('[role=\"dialog\"]');if(!d)return '[]';" +
-            "return JSON.stringify(Array.from(d.querySelectorAll('[role=\"menuitem\"], button')).map(function(b){var t=(b.textContent||'').trim();if(!t)return '';" +
+        "(function(){var ds=document.querySelectorAll('[role=\"dialog\"]');var d=ds[ds.length-1];if(!d)return '[]';d=d.querySelector('[role=\"menu\"]')||d;" +
+            "return JSON.stringify(Array.from(d.querySelectorAll('[role=\"menuitem\"], button[data-row], [role=\"menu\"] button')).map(function(b){var l=b.querySelector('.zen-settings-label')||b;var t=(l.textContent||'').trim();if(!t)return '';" +
             "return t+' '+((b.disabled||b.getAttribute('aria-disabled')==='true')?'disabled':'enabled')}).filter(Boolean))})()"
     ))
+
+    /** The topmost sheet's action rows' label inks, `{label: color}` as computed (the plain ink against the danger ink). */
+    private fun sheetRowInks(): JSONObject = chromeJson(
+        "(function(){var ds=document.querySelectorAll('[role=\"dialog\"]');var d=ds[ds.length-1];if(!d)return '{}';var out={};" +
+            "Array.from(d.querySelectorAll('button[data-row]')).forEach(function(b){var l=b.querySelector('.zen-settings-label')||b;var t=(l.textContent||'').trim();if(t)out[t]=getComputedStyle(l).color});" +
+            "return JSON.stringify(out)})()"
+    )
 
     /** How many languages the Add language picker lists now. */
     private fun pickerCount(): Int = chromeString(
@@ -1131,13 +1307,6 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         "(function(){var r=document.querySelector('[data-reader-prefs-rows]');if(!r)return '[]';" +
             "return JSON.stringify(Array.from(r.querySelectorAll('.zen-v2-row')).map(function(e){var l=e.querySelector('.truncate');return l?(l.textContent||'').trim():''}).filter(Boolean))})()"
     )).distinct()
-
-    /** What the menulist in the Text preferences row labelled `label` reads. */
-    private fun menulistValue(label: String): String = chromeString(
-        "(function(){var rows=Array.from(document.querySelectorAll('[data-reader-prefs-rows] .zen-v2-row'));" +
-            "var r=rows.find(function(e){var l=e.querySelector('.truncate');return l&&(l.textContent||'').trim()===${JSONObject.quote(label)}});" +
-            "var m=r&&r.querySelector('.zen-v2-menulist');return m?(m.textContent||'').trim():''})()"
-    )
 
     /** The second line of the Text preferences row labelled `label` ("" without one). */
     private fun rowDescription(label: String): String = chromeString(
@@ -1272,16 +1441,29 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         private const val STANDARD_FONT_ROW = "Standard font"
         private const val RESET_ROW = "Reset fonts"
         private const val ADD_LANGUAGE_ROW = "Add language"
-        /** The rows' `data-row` ids in the chrome's document (`sections.tsx`, `fonts.tsx`, `languages.tsx`), for [awaitRow]'s document path. */
+        /**
+         * The rows' `data-row` ids in the chrome's document (`sections.tsx`, `fonts.tsx`,
+         * `languages.tsx`), for [awaitRow]'s document path. The level rows are the phone's own
+         * (`fonts-size-phone`, the ± row; the desktop's `fonts-size` is its menulist of stops).
+         */
         private const val COLOR_SCHEME_ROW_ID = "color-scheme"
-        private const val FONT_SIZE_ROW_ID = "fonts-size"
-        private const val MINIMUM_FONT_SIZE_ROW_ID = "fonts-minimum-size"
+        private const val FONT_SIZE_ROW_ID = "fonts-size-phone"
+        private const val MINIMUM_FONT_SIZE_ROW_ID = "fonts-minimum-size-phone"
         private const val STANDARD_FONT_ROW_ID = "fonts-standard-phone"
         private const val RESET_ROW_ID = "fonts-reset"
+        private const val GERMAN_ROW_ID = "languages-preferred:de"
         private const val ADD_LANGUAGE_ROW_ID = "languages-add"
         private const val FILTER_LABEL = "Find a language"
-        /** The picker sheet's filter field in the chrome's document (`LanguagePickList.tsx`). */
-        private const val FILTER_SELECTOR = ".zen-settings-pick-filter input"
+        /** The Add language page in the chrome's document and its pinned filter field (`AddLanguagePage.tsx`). */
+        private const val ADD_PAGE_SELECTOR = ".zen-settings-add-language"
+        private const val FILTER_SELECTOR = ".zen-settings-add-language-filter input"
+        /**
+         * The surface a finger's option is looked for on ([sheetControlJs]): the LAST sheet in
+         * the document (a picker stacked over the Text preferences sheet), else the Add language
+         * page when no sheet is up.
+         */
+        private const val LAST_SURFACE_JS =
+            "(function(){var ss=document.querySelectorAll('.zen-sheet, [role=\"dialog\"]');return ss[ss.length-1]||document.querySelector('$ADD_PAGE_SELECTOR')})()"
         /**
          * How long the tree is given to list a Settings row after a section's drill-in before the
          * chrome's document stands in ([awaitRow]): a tree that has the row lists it within a
@@ -1293,11 +1475,15 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         private const val CONTROL_WAIT_MS = 4_000L
         /** The app menu's row that opens the sheet (`core/menus.ts`; U+2026). */
         private const val PREFERENCES_ITEM = "Text Preferences…"
-        /** `FONT_SIZE_STEPS` has 25 stops (index 7 is 16 px, index 10 is 20 px); `MINIMUM_FONT_SIZE_STEPS` 17 (index 7 is 12 px). */
-        private const val FONT_SIZE_MAX_INDEX = 24
-        private const val FONT_SIZE_TARGET_INDEX = 10
-        private const val MINIMUM_FONT_SIZE_MAX_INDEX = 16
-        private const val MINIMUM_FONT_SIZE_TARGET_INDEX = 7
+        /**
+         * `FONT_SIZE_STEPS` climbs 16, 17, 18, 20 (three presses on + from the default 16 reach
+         * 20 px); `MINIMUM_FONT_SIZE_STEPS` climbs none, 6, 7, 8, 9, 10, 11, 12 (seven presses
+         * from none reach 12 px).
+         */
+        private const val FONT_SIZE_PRESSES = 3
+        private const val MINIMUM_FONT_SIZE_PRESSES = 7
+        /** Between two fingers on a step button: past the row's ripple, well under the 400 ms hold that starts the button repeating. */
+        private const val STEP_PRESS_GAP_MS = 350L
         private val WORKING = setOf("detecting", "downloading", "translating")
         /** What a measured scene's block gives the motion after the finger (or the back). */
         private const val MOTION_MS = 3_000L
