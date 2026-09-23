@@ -19,6 +19,7 @@ import {
   releaseChromeFocus,
   shownPanes
 } from '../panes'
+import { holdChromeInert } from '../portals'
 import { uiStore } from '../ui'
 
 /*
@@ -203,6 +204,27 @@ describe('the document side', () => {
   it('F6 from chrome that is in no pane starts the rotation at the tab strip', () => {
     mount(CHROME)
     expect(document.activeElement).toBe(document.body)
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBe('tabs')
+  })
+
+  it('moves nowhere while a dialog holds the chrome inert: the dialog keeps the keyboard (a11y-32)', () => {
+    mount(
+      CHROME +
+        '<div class="zen-frame-dialogs"><div role="dialog"><button id="ok">OK</button></div></div>'
+    )
+    byId('ok').focus()
+    const release = holdChromeInert()
+    // F6 either way, and the named panes: nothing moves, the core is asked for no focus – a
+    // page focus asked for now would land as the dialog closes and take the keyboard off
+    // wherever the dialog returned it.
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBeNull()
+    expect(focusPane({ move: 'prev', from: 'chrome' })).toBeNull()
+    expect(focusPane({ move: 'next', from: 'page' })).toBeNull()
+    expect(focusPane({ pane: 'toolbar' })).toBeNull()
+    expect(focusPane({ pane: 'bookmarks' })).toBeNull()
+    expect(document.activeElement?.id).toBe('ok')
+    expect(run).not.toHaveBeenCalled()
+    release()
     expect(focusPane({ move: 'next', from: 'chrome' })).toBe('tabs')
   })
 

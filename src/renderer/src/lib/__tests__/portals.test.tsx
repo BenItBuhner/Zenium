@@ -21,6 +21,7 @@ import {
   chromeLayer,
   closeAllPopovers,
   holdChromeInert,
+  holdFrameInert,
   intrinsicSize,
   openPopoverCount,
   placePopover,
@@ -1590,6 +1591,147 @@ describe('chrome inertness while a frame dialog is open (§9.5)', () => {
     second()
     expect(inert(chrome('sidebar'))).toBe(false)
     expect(chromeInertHeld()).toBe(false)
+  })
+})
+
+/**
+ * The content frame as App.tsx lays it out: the content area (a find bar, a page's picture)
+ * beside the frame's dialog host in one `<main>`.
+ */
+function Frame({
+  children,
+  content = true,
+  sibling
+}: {
+  children?: React.ReactNode
+  content?: boolean
+  sibling?: React.ReactNode
+}): JSX.Element {
+  return (
+    <Chrome>
+      {content && (
+        <div data-surface="page" data-content>
+          <button type="button" data-find-next>
+            Next match
+          </button>
+        </div>
+      )}
+      {sibling}
+      {children}
+    </Chrome>
+  )
+}
+const content = (): HTMLElement => mount!.querySelector<HTMLElement>('[data-content]')!
+
+describe('the frame behind the host is inert with the chrome (a11y-32)', () => {
+  it('covers the host’s siblings for the dialog’s lifetime and its way out, and never the host', () => {
+    render(
+      <Frame>
+        <FrameDialogHost />
+      </Frame>
+    )
+    expect(inert(content())).toBe(false)
+    rerender(
+      <Frame>
+        <FrameDialogHost>
+          <Dialog name="prompt" />
+        </FrameDialogHost>
+      </Frame>
+    )
+    expect(inert(content())).toBe(true)
+    expect(inert(chrome('sidebar'))).toBe(true)
+    // The find bar's button is behind the cover: no Tab, press or focus reaches it; the dialog
+    // holds the keyboard.
+    expect(mount!.querySelector('[data-find-next]')!.closest('[inert]')).toBe(content())
+    expect(host().closest('[inert]')).toBeNull()
+    expect(inert(host())).toBe(false)
+    rerender(
+      <Frame>
+        <FrameDialogHost />
+      </Frame>
+    )
+    // The cover stands through the panel's way out, with the chrome's, and lifts with it.
+    expect(inert(content())).toBe(true)
+    endExit()
+    expect(inert(content())).toBe(false)
+    expect(inert(chrome('sidebar'))).toBe(false)
+  })
+
+  it('covers a sibling mounted while the hold lasts, leaves alone one inert already, and never another host', async () => {
+    render(
+      <Frame sibling={<div data-already inert />}>
+        <FrameDialogHost>
+          <Dialog name="prompt" />
+        </FrameDialogHost>
+        <FrameDialogHost />
+      </Frame>
+    )
+    const hosts = mount!.querySelectorAll('.zen-frame-dialogs')
+    expect(hosts).toHaveLength(2)
+    expect(inert(hosts[1]!)).toBe(false)
+    const late = document.createElement('div')
+    late.setAttribute('data-late', '')
+    content().parentElement!.appendChild(late)
+    await tick()
+    expect(inert(late)).toBe(true)
+    rerender(
+      <Frame sibling={<div data-already inert />}>
+        <FrameDialogHost />
+        <FrameDialogHost />
+      </Frame>
+    )
+    endExit()
+    expect(inert(late)).toBe(false)
+    expect(inert(content())).toBe(false)
+    expect(inert(mount!.querySelector('[data-already]')!)).toBe(true)
+  })
+
+  it('two hosts covering the same frame: it comes back with the last release', () => {
+    render(
+      <Frame>
+        <FrameDialogHost>
+          <Dialog name="edit" />
+        </FrameDialogHost>
+        <FrameDialogHost>
+          <Dialog name="manager-edit" />
+        </FrameDialogHost>
+      </Frame>
+    )
+    expect(inert(content())).toBe(true)
+    rerender(
+      <Frame>
+        <FrameDialogHost />
+        <FrameDialogHost>
+          <Dialog name="manager-edit" />
+        </FrameDialogHost>
+      </Frame>
+    )
+    endExit()
+    expect(inert(content())).toBe(true)
+    rerender(
+      <Frame>
+        <FrameDialogHost />
+        <FrameDialogHost />
+      </Frame>
+    )
+    endExit()
+    expect(inert(content())).toBe(false)
+  })
+
+  it('holdFrameInert on its own covers the siblings and releases once', () => {
+    render(
+      <Frame>
+        <div className="zen-frame-dialogs" data-host />
+      </Frame>
+    )
+    const release = holdFrameInert(mount!.querySelector<HTMLElement>('[data-host]')!)
+    expect(inert(content())).toBe(true)
+    expect(inert(mount!.querySelector('[data-host]')!)).toBe(false)
+    release()
+    release()
+    expect(inert(content())).toBe(false)
+    // A host with no parent has nothing to cover.
+    expect(() => holdFrameInert(document.createElement('div'))()).not.toThrow()
   })
 })
 

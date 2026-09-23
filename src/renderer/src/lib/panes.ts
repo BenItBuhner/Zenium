@@ -2,6 +2,7 @@ import type { FocusPaneRequest, PaneId } from '@shared/types'
 import { focusEdge } from '@shared/focusEdge'
 import { run } from './api'
 import { noteInput } from './lastInput'
+import { chromeInertHeld } from './portals'
 import { closeUrlbar, uiStore } from './ui'
 
 /**
@@ -244,8 +245,13 @@ export function paneFirstControl(pane: PaneId, doc: Document = document): HTMLEl
  * (`focus.chrome`) and the pane's target is focused; into the page: the active view takes it
  * (`focus.content`). Leaving the toolbar puts its URL bar away. A named pane that is not on
  * screen leaves the keyboard where it is (Chrome's Shift+Alt+B with the bar hidden does nothing).
+ * So does every move while a dialog or sheet holds the chrome inert (`chromeInertHeld`, §9.5,
+ * a11y-32): the panes are behind its cover, and the page with them – asking the core for the
+ * page's focus would only leave it pending, to land on the page as the dialog closes and take
+ * the keyboard off wherever the dialog returned it. The dialog holds the keyboard until it closes.
  */
 export function focusPane(request: FocusPaneRequest, doc: Document = document): PaneId | null {
+  if (chromeInertHeld()) return null
   const from = currentPane(doc, 'move' in request ? request.from : 'chrome')
   let to: PaneId
   let target: HTMLElement | null
