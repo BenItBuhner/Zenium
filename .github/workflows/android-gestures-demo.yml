@@ -1,0 +1,69 @@
+name: Android gestures demo
+
+# The device proof of the gesture cluster (GN-04, GN-08, GN-19, GN-10; W5-6). The driver
+# (GesturesDemo) holds the bar's Back for the tab's history popup and jumps by a row, drags in
+# from the page's left edge in 3-button navigation mode for Chrome's arrow bubble (past the
+# threshold: back; short of it: nothing), swipes the switcher's pane between the header's
+# segments, holds the pill for the clipboard row's Paste, and last switches the emulator to
+# gesture navigation to show the same edge drag brings no bubble there – restoring 3-button mode
+# after. Every gesture is a real touch; the two finger-driven scenes are measured under the
+# GESTURE budget. The findings (PASS / FAIL lines) fail the run. Dispatch-only, like the other
+# demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      api-level:
+        description: System image (34 is the phone shards' image, 35 is Android 15)
+        type: choice
+        default: '34'
+        options:
+          - '34'
+          - '35'
+  # TEMPORARY, for the PR's one run and one retry: removed before the branch's final head. Under
+  # it only a head commit that says `[gestures-run]` records, so a plain push spends nothing.
+  push:
+    branches:
+      - cursor/android-gestures-7a98
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-gestures-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Gestures demo
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[gestures-run]')
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      api-level: ${{ inputs.api-level || '34' }}
+      # The shared driver picks the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.GesturesDemo
+        DEMO_DIR=gestures-demo
+        DEMO_OUT=artifacts/android-gestures-demo
+        DEMO_VIDEO=android-gestures-demo.mp4
+      timeout-minutes: 45
+      artifact-name: android-gestures-demo
+      artifact-path: artifacts/android-gestures-demo/
+
+  # One more boot when the emulator itself went away under the driver, never when the driver failed.
+  record-again:
+    name: Gestures demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      api-level: ${{ inputs.api-level || '34' }}
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.GesturesDemo
+        DEMO_DIR=gestures-demo
+        DEMO_OUT=artifacts/android-gestures-demo
+        DEMO_VIDEO=android-gestures-demo.mp4
+      timeout-minutes: 45
+      artifact-name: android-gestures-demo-second-boot
+      artifact-path: artifacts/android-gestures-demo/
