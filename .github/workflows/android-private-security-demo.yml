@@ -24,11 +24,6 @@ name: Android private security demo
 # a change being correct. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml; this file picks the driver and the engine.
 on:
-  # TEMPORARY: one push-triggered run on W5-7's branch (the run budget is one run and one
-  # retry); removed in the next commit, dispatch-only again.
-  push:
-    branches:
-      - cursor/android-private-security-9921
   workflow_dispatch:
     inputs:
       theme:
