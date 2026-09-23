@@ -199,6 +199,43 @@ class RendererExitsTest {
         assertEquals("crashed", exits.take("tab_1")!!.reason)
     }
 
+    @Test
+    fun `willTake - the page's list is not restored exactly when take would answer, and asking consumes nothing`() {
+        assertFalse("nothing recorded", exits.willTake("tab_1"))
+        assertEquals(Exit.CRASH, exits.gone(didCrash = true, priorityAtExit = IMPORTANT, windowUp = true, visibleTabIds = front))
+        // The record stands but the chrome has not been rebuilt: a chrome that stood restores as ever.
+        assertFalse("not armed", exits.willTake("tab_1"))
+        assertNotNull("peek sees the word all the same", exits.peek("tab_1"))
+        exits.chromeRebuilt()
+        assertTrue(exits.willTake("tab_1"))
+        assertTrue("asking is not taking", exits.willTake("tab_1"))
+        assertFalse("another page comes back as itself", exits.willTake("tab_2"))
+        assertEquals("crashed", exits.take("tab_1")!!.reason)
+        assertFalse("taken", exits.willTake("tab_1"))
+    }
+
+    @Test
+    fun `willTake - a stale record answers no, and leaves the record to take to expire`() {
+        assertEquals(Exit.CRASH, crashAndRebuild())
+        now += RendererExits.PENDING_TTL_MS + 1
+        assertFalse(exits.willTake("tab_1"))
+        assertEquals("the exit still reads until take expires it", Exit.CRASH, exits.current)
+        assertNull(exits.take("tab_1"))
+        assertNull(exits.current)
+    }
+
+    @Test
+    fun `willTake - the host's own ending of the renderer counts once the chrome is rebuilt`() {
+        exits.ending(Exit.HUNG, listOf("tab_1", "tab_2"))
+        assertFalse(exits.willTake("tab_1"))
+        exits.chromeRebuilt()
+        assertTrue(exits.willTake("tab_1"))
+        assertTrue(exits.willTake("tab_2"))
+        exits.take("tab_1")
+        assertFalse(exits.willTake("tab_1"))
+        assertTrue("the other page's word is still to come", exits.willTake("tab_2"))
+    }
+
     private companion object {
         /** `WebView.RENDERER_PRIORITY_IMPORTANT`: the priority while a WebView of the renderer is visible. */
         const val IMPORTANT = 2

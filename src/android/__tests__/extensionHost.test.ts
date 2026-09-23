@@ -1700,6 +1700,50 @@ describe('minimum_chrome_version', () => {
       expect(h.ext.list()[0].errors).toEqual([])
     }
   })
+
+  it("puts a line the Android runtime writes (the `ext.console` host event: the flood guard's warning) on the extension's console, folded when repeated, and drops one for an extension not installed", async () => {
+    const h = harness({ engineChromiumVersion: '156.0.7300.0' })
+    await storeFront(h.kt, { cws: needs120 })
+    await h.ext.installFromStore(ID, null)
+    await settle()
+    expect(h.ext.list()[0].errors).toEqual([])
+    const line = {
+      level: 'warning' as const,
+      source: 'page' as const,
+      message:
+        'Action state updates (setIcon, setBadgeText, …) were dropped: too many were waiting for the browser. The page updates its action faster than the browser draws it.',
+      url: `chrome-extension://${ID}/popup.html`,
+      context: 'popup'
+    }
+    h.ext.consoleLine(ID, line)
+    h.ext.consoleLine(ID, line)
+    h.ext.consoleLine(ID, {
+      level: 'warning',
+      source: 'worker',
+      message:
+        'Bridge messages were dropped: too many were waiting for the browser. The page sends faster than the browser can take; batch or throttle its calls.',
+      url: `chrome-extension://${ID}/bg.js`,
+      context: 'background'
+    })
+    const errors = h.ext.list()[0].errors
+    expect(errors).toHaveLength(2)
+    expect(errors[0]).toMatchObject({
+      level: 'warning',
+      source: 'page',
+      message: line.message,
+      url: line.url,
+      context: 'popup',
+      count: 2
+    })
+    expect(errors[1]).toMatchObject({ source: 'worker', context: 'background', count: 1 })
+    // Cleared with the rest of the console.
+    h.ext.clearErrors(ID)
+    expect(h.ext.list()[0].errors).toEqual([])
+    // A line for an id that is not installed goes nowhere.
+    h.ext.consoleLine('a'.repeat(32), line)
+    expect(h.ext.list()).toHaveLength(1)
+    expect(h.ext.list()[0].errors).toEqual([])
+  })
 })
 
 describe('ids for records without one', () => {

@@ -191,6 +191,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             rows.put(entry)
             val started = SystemClock.uptimeMillis()
             val refusedBefore = host.chrome.bridge.refused.get()
+            val guardBefore = host.extensions.floodGuardCounts()
             try {
                 // A row's core check is read off a page on screen: the browser back in front first.
                 onScreen("before ${row.name}")
@@ -206,12 +207,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 // Calls the chrome's bridge refused at its queue limit during the row (`JsBridge`): 0 unless
                 // an extension's message storm outran the main thread.
                 entry.put("bridgeRefused", host.chrome.bridge.refused.get() - refusedBefore)
+                // The page-to-host flood guard (`ext/BridgeForward.kt`) during the row: messages it
+                // forwarded to the core, action updates folded into a newer one, action updates dropped
+                // and messages refused at its pending bound. All but the first are 0 unless the
+                // extension's pages sent faster than the browser draws.
+                val guard = host.extensions.floodGuardCounts()
+                entry.put(
+                    "floodGuard",
+                    JSONObject()
+                        .put("forwarded", guard[0] - guardBefore[0])
+                        .put("superseded", guard[1] - guardBefore[1])
+                        .put("dropped", guard[2] - guardBefore[2])
+                        .put("refused", guard[3] - guardBefore[3])
+                )
                 entry.put("grade", listOf("background", "popup", "options", "core").joinToString("/") { entry.optJSONObject(it)?.optString("verdict") ?: "?" })
                 Log.i(
                     TAG,
                     "ROW ${row.name}: install=${entry.optJSONObject("install")?.optString("verdict")} ${entry.optString("grade")}; " +
                         "heap enabled ${entry.optLong("heapEnabledKb", -1) / 1024} MB, after ${entry.optLong("heapAfterKb") / 1024} MB, " +
-                        "bridge refused ${entry.optInt("bridgeRefused")}"
+                        "bridge refused ${entry.optInt("bridgeRefused")}; flood guard ${entry.optJSONObject("floodGuard")}"
                 )
                 write()
             }
