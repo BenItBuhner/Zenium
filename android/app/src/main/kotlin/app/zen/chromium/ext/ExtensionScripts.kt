@@ -162,9 +162,13 @@ object ExtensionScripts {
     /** After the body and the mirror: the completion value returned. */
     private const val COMPLETION_RETURN = "\n;return $COMPLETION_PARAM"
 
-    /** The bootstrap for an extension page (background, popup, options): config only. */
-    fun page(bootstrap: String, configJson: String): String =
-        "(function(){var __zenExtBoot={config:$configJson,debug:false,css:{},sources:{}};\n$bootstrap\n})();"
+    /**
+     * The bootstrap for an extension page (background, popup, options): config only. While
+     * [debug], the page exposes its debug stats (`__zenExtStats`: its engine's flow counters)
+     * as a content world does; the compat sweep reads them off a background or a popup.
+     */
+    fun page(bootstrap: String, configJson: String, debug: Boolean = false): String =
+        "(function(){var __zenExtBoot={config:$configJson,debug:$debug,css:{},sources:{}};\n$bootstrap\n})();"
 
     /**
      * What the host evaluates in a tab for `scripting.executeScript` / `tabs.executeScript`: the
@@ -382,6 +386,57 @@ object ExtensionScripts {
     /** The bracket after a served module's text, on a line of its own. */
     fun moduleChromeClose(extensionId: String): String =
         "\n;globalThis.__zenExtModuleEnd&&globalThis.__zenExtModuleEnd(${JSONObject.quote(extensionId)});"
+
+    /**
+     * Whether a tab's request for one of an extension's files is a page's module graph, to be
+     * served bracketed ([moduleChromeWrap]) on a WebView without isolated worlds: a script, asked
+     * for by a module request (a CORS one, which carries the page's `Origin`; a classic
+     * `<script src>` carries none and runs as a page script in Chrome too), by a document that is
+     * not the extension's own (an options page opened in a tab, a navigation to the extension
+     * origin: `pageUrl` on the origin, or the request for that document itself). The request's
+     * `Referer` is deliberately not read: a module's static dependencies are fetched with the
+     * importing module's URL as their referrer, so by the Referer the dependencies of the entry
+     * a content script `import()`ed looked like an extension page's own requests and were served
+     * plain – and dependencies evaluate ahead of the entry's body, before any bracket is open, so
+     * webextension-polyfill's check in AITOPIA's graph read the page's `chrome` and threw, and
+     * Speechify's lazily bound `chrome` was undefined at its first `storage` read (compat round
+     * 12, rows 02 and 03 on WebView 113).
+     */
+    fun isPageModuleGraph(
+        path: String,
+        isForMainFrame: Boolean,
+        pageUrl: String?,
+        origin: String,
+        originHeader: Boolean,
+        isolatedWorlds: Boolean
+    ): Boolean =
+        !isolatedWorlds && !isForMainFrame && pageUrl?.startsWith(origin) != true && originHeader && isScriptPath(path)
+
+    /**
+     * The query a module graph's plain request carries: the file's own text, bracketed, where the
+     * stub a webpack chunk is served as ([chunkStub]) could not run it in the scope.
+     */
+    const val PLAIN_QUERY = "zenium-plain"
+
+    /**
+     * What a module graph's request for a webpack chunk ([isWebpackChunk]) is served as on a
+     * WebView without isolated worlds: a module that hands the chunk to the bootstrap, which asks
+     * the host for the file and runs it as a block of the content script's `with` scope
+     * (`__zenExtChunk`, `extensionModuleChrome.ts`; `chunkScript` over the bridge; the exec of
+     * kind `chunk`), and waits for that (a top-level `await`, so the `import()` resolves once the
+     * chunk registered). A webpack chunk is one `push` expression with no exports, so a block of
+     * the scope runs it as its module would have, and there its bare identifiers resolve as the
+     * content script's own do: Mote's runtime chunk wrote `HowlerGlobal` through webpack's
+     * `r.g` (the scope proxy) while its sidebar chunk, a module on the real global, read the bare
+     * name and found nothing (compat round 11, row 13). Where the bootstrap cannot run it (no
+     * scope for the extension in the document, a subframe, no brackets installed at all) the
+     * chunk is imported again as itself, under [PLAIN_QUERY].
+     */
+    fun chunkStub(extensionId: String, url: String): String {
+        val id = JSONObject.quote(extensionId)
+        val plain = JSONObject.quote(url + (if (url.contains('?')) "&" else "?") + "$PLAIN_QUERY=1")
+        return "if(!(globalThis.__zenExtChunk&&await globalThis.__zenExtChunk($id,${JSONObject.quote(url)})))await import($plain);\n"
+    }
 
     /** `Content-Type` for a file inside the extension directory, by extension. */
     fun mimeType(path: String): String {

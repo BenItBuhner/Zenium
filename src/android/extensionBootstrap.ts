@@ -16,6 +16,7 @@ import {
   createEmulatedEngine,
   type EmulatedEngine,
   type EngineContextKind,
+  type FlowStats,
   type Primordials
 } from '@core/extensions/api/engine'
 import { EXTENSION_ORIGIN_SUFFIX, extensionOrigin } from '@core/extensions/runtime/plan'
@@ -34,6 +35,7 @@ import {
   type ShieldResult
 } from './extensionIsolation'
 import { installModuleChrome } from './extensionModuleChrome'
+import { createChunkRelay, type ChunkRelay, type ChunkStats } from './extensionChunkRelay'
 import {
   createScriptRecovery,
   type ScriptRecovery,
@@ -194,6 +196,8 @@ declare const __zenExtBoot: Boot
   let scriptRecovery: ScriptRecovery | null = null
   /** Content mode: extension-origin fetches the page's CSP refused, and the stylesheet recovery's reads (see below). */
   let fetchRelay: FetchRelay | null = null
+  /** Content mode under the `with` fallback: webpack chunks of a module graph run in the content script's scope (see below). */
+  let chunkRelay: ChunkRelay | null = null
   transport.listen((event) => {
     bridgeTraffic.pageBound++
     let message: Record<string, unknown>
@@ -216,6 +220,13 @@ declare const __zenExtBoot: Boot
     }
     if (message.t === 'extFetchDone') {
       fetchRelay?.done(String(message.id), message)
+      return
+    }
+    if (message.t === 'chunkDone') {
+      chunkRelay?.done(
+        String(message.id),
+        message.ok === true ? null : String(message.error ?? 'the host refused')
+      )
       return
     }
     const engine = engines.get(ep)
@@ -355,7 +366,9 @@ declare const __zenExtBoot: Boot
     context: EngineContextKind,
     frame: FrameContext,
     root: object,
-    world: boolean
+    world: boolean,
+    /** The MV3 worker page's `self`: what its callbacks and listeners get as `this`, as in a worker of Chrome's. */
+    receiver?: object
   ): EmulatedEngine {
     const endpointId = endpointIdFor(ext.id, context)
     const engine = createEmulatedEngine(
@@ -382,7 +395,7 @@ declare const __zenExtBoot: Boot
       },
       engineTransport,
       primordials,
-      { root }
+      receiver ? { root, receiver } : { root }
     )
     engines.set(endpointId, engine)
     return engine
@@ -436,7 +449,21 @@ declare const __zenExtBoot: Boot
     const ext = boot.config.extension
     const context = boot.config.context
     const frame = frameContext()
-    const engine = makeEngine(ext, context, frame, realWindow, false)
+    const origin = extensionOrigin(ext.id)
+    // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
+    // MV2 backgrounds are pages in Chrome too and get none of it.
+    const background = ext.manifest.background as Record<string, unknown> | undefined
+    const workerScript =
+      background && typeof background.service_worker === 'string'
+        ? new URL('/' + background.service_worker.replace(/^\/+/, ''), origin + '/').href
+        : null
+    // On the worker page, `self` and `globalThis` answer as a worker's global does (`workerSelf`:
+    // no `window` or `document` until the script polyfills them, and its polyfills take); the
+    // page's own `self` is [Replaceable] and `globalThis` writable, so both can be redefined.
+    // Its callbacks and listeners are called with it as `this`, as Chrome calls a worker's.
+    const workerGlobal =
+      context === 'background' && workerScript ? workerSelf(realWindow) : undefined
+    const engine = makeEngine(ext, context, frame, realWindow, false, workerGlobal)
     // An extension page open as a tab shares its main world with every other document-start
     // copy of this script whose origin rule covers it – the units over `*` of this extension
     // (a `world: "MAIN"` group on a WebView with isolated worlds, every group without them) and
@@ -461,15 +488,24 @@ declare const __zenExtBoot: Boot
       })
     }
     const pageWindow = realWindow
-    const origin = extensionOrigin(ext.id)
     const endpointId = endpointIdFor(ext.id)
-    // The service-worker platform between an MV3 worker (a hidden page here) and its pages;
-    // MV2 backgrounds are pages in Chrome too and get none of it.
-    const background = ext.manifest.background as Record<string, unknown> | undefined
-    const workerScript =
-      background && typeof background.service_worker === 'string'
-        ? new URL('/' + background.service_worker.replace(/^\/+/, ''), origin + '/').href
-        : null
+    if (boot.debug) {
+      // The page's debug stats (`__zenExtStats`, as a content world has): its engine's flow
+      // counters, for the compat sweep's reading of what a popup's burst met at the page.
+      const flow: Record<string, FlowStats> = {}
+      for (const [ep, running] of engines) flow[ep] = running.flow
+      const pageStats: Pick<BootStats, 'frame' | 'world' | 'flow'> & { page: EngineContextKind } = {
+        frame: frame.url,
+        world: 'page',
+        page: context,
+        flow
+      }
+      Object.defineProperty(g, '__zenExtStats', {
+        value: pageStats,
+        enumerable: false,
+        configurable: true
+      })
+    }
     const swSend = (message: ServiceWorkerMessage): void => engine.post({ t: 'sw', ...message })
     let lifecycle: (() => Promise<void>) | null = null
 
@@ -501,11 +537,7 @@ declare const __zenExtBoot: Boot
         listen: (event) => engine.post({ t: 'listen', event: `speechSynthesis.${event}`, on: true })
       })
 
-    if (context === 'background' && workerScript) {
-      // `self` and `globalThis` answer as a worker's global does (`workerSelf`: no `window`
-      // or `document` until the script polyfills them, and its polyfills take); the page's own
-      // `self` is [Replaceable] and `globalThis` writable, so both can be redefined.
-      const workerGlobal = workerSelf(pageWindow)
+    if (context === 'background' && workerScript && workerGlobal) {
       for (const name of ['self', 'globalThis']) {
         Object.defineProperty(pageWindow, name, {
           value: workerGlobal,
@@ -740,6 +772,22 @@ declare const __zenExtBoot: Boot
       enumerable: false,
       configurable: true
     })
+    // The engines' flow counters, read when the stats are: engines come with the units.
+    Object.defineProperty(stats, 'flow', {
+      get: (): Record<string, FlowStats> => {
+        const flow: Record<string, FlowStats> = {}
+        for (const [ep, engine] of engines) flow[ep] = engine.flow
+        return flow
+      },
+      enumerable: true,
+      configurable: true
+    })
+    // The module graphs' webpack chunks: run in the content script's scope, imported plain, thrown.
+    Object.defineProperty(stats, 'chunks', {
+      get: (): ChunkStats | undefined => chunkRelay?.stats(),
+      enumerable: true,
+      configurable: true
+    })
     // The document's first uncaught errors, for the compat sweep: a console line gives an inline
     // script's error as `<document URL>:1`, which tells neither the code nor the caller; the
     // event still carries the stack, and the script element still runs while it is dispatched.
@@ -813,6 +861,27 @@ declare const __zenExtBoot: Boot
   }
   const scopes = new Map<string, Scope>()
 
+  // A webpack chunk of a content script's module graph under the `with` fallback runs as a block
+  // of the content script's scope, asked of the host by the stub the chunk was served as
+  // (`extensionChunkRelay.ts`): in a top frame only (`evaluateJavascript` takes no frame), and
+  // only where this copy made the extension's content scope, which is where the graph started.
+  chunkRelay = createChunkRelay({
+    canRun: (extId) => frame.isTopFrame && scopes.has(`${extId}/with/content`),
+    request: (id, extId, url) =>
+      post(
+        primordials.stringify({
+          t: 'chunkScript',
+          token: content.token,
+          ep: endpointIdFor(extId),
+          ext: extId,
+          id,
+          url
+        })
+      ),
+    warn: primordials.warn
+  })
+  const chunks = chunkRelay
+
   const mirrorOnto = (target: Any): ((name: string, value: unknown) => void) => {
     return (name, value) => {
       if (typeof name !== 'string' || builtins.has(name)) return
@@ -878,11 +947,13 @@ declare const __zenExtBoot: Boot
       // scope: the host brackets the served module text, and these accessors answer the
       // extension's `chrome` and, as `self`, its scope there while the module's body runs, so
       // a webpack chunk registers on the content script's own registry
-      // (extensionModuleChrome.ts).
+      // (extensionModuleChrome.ts); a webpack chunk served as the stub runs in the scope itself
+      // (`__zenExtChunk`, extensionChunkRelay.ts).
       installModuleChrome(
         realWindow,
         (id) => scopes.get(`${id}/with/content`)?.chrome,
-        (id) => scopes.get(`${id}/with/content`)?.window as object | undefined
+        (id) => scopes.get(`${id}/with/content`)?.window as object | undefined,
+        (id, url) => chunks.claim(id, url)
       )
     }
     // A user-script world without `configureWorld({ messaging: true })` has no `chrome` at all.
@@ -1008,6 +1079,19 @@ declare const __zenExtBoot: Boot
     }
     if (typeof fn !== 'function') throw new Error('no script')
     const w = scope.window
+    // A webpack chunk of the content script's module graph (`chunkScript`, the stub's ask): the
+    // block runs in the scope and the stub's wait is settled here, the chunk's throw as its
+    // rejection; the host hears nothing of it but the exec's own outcome.
+    if (kind === 'chunk') {
+      let error: string | null = null
+      try {
+        ;(fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
+      } catch (e) {
+        error = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+      }
+      chunks.ran(String(options.id ?? ''), error)
+      return null
+    }
     return settleLater(
       scope,
       (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)

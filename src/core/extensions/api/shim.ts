@@ -101,6 +101,13 @@ export interface ShimOptions {
    * emulated engine, no host to ask): a declared permission counts as granted.
    */
   granted?: string[]
+  /**
+   * The `this` an API callback or event listener is called with: undefined by default, as
+   * Chrome calls a frame's (`ScriptContext::SafeCallFunction` hands Blink an undefined
+   * receiver); a service worker's global for a worker, where Chrome calls with the context's
+   * global and a strict-mode listener reading `this` finds it (`EngineOptions.receiver`).
+   */
+  receiver?: object
 }
 
 /**
@@ -145,6 +152,8 @@ export function installExtensionApi(
   const g: Any = options?.root ?? globalThis
   /** The real global: the document's `location`, and the `window` other views get. */
   const real: Any = globalThis
+  /** What callbacks and listeners are called with as `this` ([ShimOptions.receiver]). */
+  const receiver: object | undefined = options?.receiver
   /** How long an event pushed before any listener exists waits for one (worker start-up). */
   const PENDING_TTL = 10_000
   const MARK = '__zeniumExtensionApi'
@@ -466,8 +475,7 @@ export function installExtensionApi(
     promise.then(
       (value) => {
         try {
-          if (value === undefined) callback()
-          else callback(value)
+          Reflect.apply(callback, receiver, value === undefined ? [] : [value])
         } catch (error) {
           setTimeout(() => {
             throw error
@@ -478,7 +486,7 @@ export function installExtensionApi(
         const message = error instanceof Error ? error.message : String(error)
         withLastError(qualified, message, () => {
           try {
-            callback()
+            Reflect.apply(callback, receiver, [])
           } catch (thrown) {
             setTimeout(() => {
               throw thrown
@@ -571,7 +579,7 @@ export function installExtensionApi(
         value = own ?? (inert.id === 'number' ? inertIds : String(inertIds))
       }
       if (inert.sync) {
-        if (callback) setTimeout(() => callback(), 0)
+        if (callback) setTimeout(() => Reflect.apply(callback, receiver, []), 0)
         return value
       }
       return settle(qualified, Promise.resolve(value), callback)
@@ -722,7 +730,7 @@ export function installExtensionApi(
 
   function callListener(fn: Listener, args: unknown[], results?: unknown[]): void {
     try {
-      const result = fn(...args)
+      const result: unknown = Reflect.apply(fn, receiver, args)
       if (results) results.push(result)
     } catch (error) {
       setTimeout(() => {
@@ -785,7 +793,7 @@ export function installExtensionApi(
       if (!map) return fn
       const proxy: Listener = (...args: unknown[]) => {
         const mapped = map(args)
-        return mapped ? fn(...mapped) : undefined
+        return mapped ? (Reflect.apply(fn, receiver, mapped) as unknown) : undefined
       }
       nativeProxies.set(fn, proxy)
       return proxy
@@ -858,11 +866,11 @@ export function installExtensionApi(
     define(object, 'addRules', () => undefined)
     define(object, 'getRules', (...raw: unknown[]) => {
       const cb = takeCallback(raw)
-      if (cb) cb([])
+      if (cb) Reflect.apply(cb, receiver, [[]])
     })
     define(object, 'removeRules', (...raw: unknown[]) => {
       const cb = takeCallback(raw)
-      if (cb) cb()
+      if (cb) Reflect.apply(cb, receiver, [])
     })
   }
 
@@ -1125,7 +1133,11 @@ export function installExtensionApi(
       return
     }
     try {
-      const result = registration.asyncBlocking ? fn(details, answer) : fn(details)
+      const result: unknown = Reflect.apply(
+        fn,
+        receiver,
+        registration.asyncBlocking ? [details, answer] : [details]
+      )
       if (isThenable(result)) {
         result.then(answer, (error: unknown) => {
           answer(undefined)

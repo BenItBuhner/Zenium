@@ -2986,6 +2986,15 @@ export class Menus {
       action: 'window.newPrivate',
       click: () => this.browser.openWindow('private', win)
     })
+    // A private window's menu closes the window group with Chrome's "Close Incognito windows"
+    // (profiles-25; design language v2 §6, §9.19): Firefox's counted verb – "Close Private
+    // Window" for one, "Close 2 Private Windows" for more – every private window, the private
+    // session ending with the last. A regular window's menu is as it was.
+    const count = this.browser.allWindows().filter((w) => w.isPrivate).length
+    const closePrivateWindows = when(win.isPrivate, {
+      label: count > 1 ? `Close ${count} Private Windows` : 'Close Private Window',
+      click: () => void this.browser.closePrivateWindows(win)
+    })
     const bookmarks: MenuItemTemplate = {
       label: 'Bookmarks',
       submenu: [
@@ -3320,6 +3329,7 @@ export class Menus {
         ...privateTabs,
         ...newWindow,
         ...newPrivateWindow,
+        ...closePrivateWindows,
         separator,
         // The library. History is Chrome's submenu: the page first, then the recently closed
         // list, which had a submenu of its own on the row before, then the other devices' tabs
