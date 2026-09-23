@@ -21,6 +21,7 @@ import type { Browser } from './browser'
 import type { PersistedWindow } from './state'
 import { getSpace, tabVisibleIn } from './model'
 import { formatWindowTitle, normalizeWindowName } from '../shared/windowTitle'
+import { captionDoubleClickEffect } from './captionDoubleClick'
 import {
   CHROME_MENU_TARGETS,
   type ChromeContextParams,
@@ -252,6 +253,28 @@ export class ZenWindow {
     this.name = next
     this.updateTitle()
     this.browser.state.commit()
+  }
+
+  /**
+   * The chrome's empty caption room was double-clicked (the sidebar's empty space, tabs-47,
+   * shortcuts-menus-94): the window does what a double-clicked title bar does on this OS
+   * (`captionDoubleClickEffect`) – maximise or restore, minimise, or nothing. Nothing in
+   * fullscreen either, where there is no title bar to double-click.
+   */
+  captionDoubleClick(): void {
+    if (!this.alive || this.host.isFullScreen()) return
+    const { info, app } = this.browser.platform
+    switch (captionDoubleClickEffect(info.os, app.titleBarDoubleClickAction?.() ?? null)) {
+      case 'toggleMaximize':
+        if (this.host.isMaximized()) this.host.unmaximize()
+        else this.host.maximize()
+        return
+      case 'minimize':
+        this.host.minimize()
+        return
+      case 'none':
+        return
+    }
   }
 
   /** Visible tabs whose live page is attached to another window right now. */

@@ -1572,7 +1572,17 @@ export interface AppHost {
    * only where the system has one (Windows, macOS).
    */
   showEmojiPanel?(): void
+  /**
+   * What the system does to a window whose title bar is double-clicked, read live from the
+   * user's setting: macOS's System Settings › Desktop & Dock › "Double-click a window's title bar
+   * to" (the `AppleActionOnDoubleClick` user default). Only the macOS host has it; the chrome's
+   * empty caption room follows it (`captionDoubleClickEffect`), and toggles maximise elsewhere.
+   */
+  titleBarDoubleClickAction?(): TitleBarDoubleClickAction
 }
+
+/** The three choices of macOS's title-bar double-click setting. */
+export type TitleBarDoubleClickAction = 'zoom' | 'minimize' | 'none'
 
 /**
  * The OS colour scheme as the engine sees it. Desktop hosts read it from the native theme so the

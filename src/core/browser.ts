@@ -3144,6 +3144,7 @@ export class Browser {
       'window.minimize': (_a, win) => win.host.minimize(),
       'window.toggleMaximize': (_a, win) =>
         win.host.isMaximized() ? win.host.unmaximize() : win.host.maximize(),
+      'window.captionDoubleClick': (_a, win) => win.captionDoubleClick(),
       'window.close': (_a, win) => void this.requestWindowClose(win),
       'window.toggleFullscreen': (_a, win) => this.toggleFullscreen(win),
       'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),

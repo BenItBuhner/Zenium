@@ -4488,6 +4488,13 @@ export interface Commands {
 
   'window.minimize': { args: void; result: void }
   'window.toggleMaximize': { args: void; result: void }
+  /**
+   * The chrome's empty caption room was double-clicked (the sidebar's empty space; the tab
+   * strip's blank band is a drag region the OS handles itself): the window does what a
+   * double-clicked title bar does on this OS – maximise / restore on Windows and Linux, the
+   * user's "Double-click a window's title bar to" choice on macOS (`ZenWindow.captionDoubleClick`).
+   */
+  'window.captionDoubleClick': { args: void; result: void }
   'window.close': { args: void; result: void }
   'window.toggleFullscreen': { args: void; result: void }
   /**

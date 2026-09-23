@@ -7,6 +7,7 @@ import {
   net,
   session,
   shell,
+  systemPreferences,
   type IpcMainEvent,
   type Session,
   type WebContents
@@ -29,6 +30,7 @@ import {
   type NotificationPermissionStatus
 } from '../../shared/notifications'
 import { Browser } from '../../core/browser'
+import { macTitleBarDoubleClickAction } from '../../core/captionDoubleClick'
 import { permissionSite } from '../../core/permissions'
 import type {
   AppHost,
@@ -453,7 +455,17 @@ export class ElectronPlatform implements Platform {
       isDefaultBrowser: () => this.defaultBrowser.isDefault(),
       requestDefaultBrowser: () => this.defaultBrowser.request(),
       // Windows and macOS have a system emoji picker; Linux has none (Chrome shows no item there).
-      ...(app.isEmojiPanelSupported() ? { showEmojiPanel: () => app.showEmojiPanel() } : {})
+      ...(app.isEmojiPanelSupported() ? { showEmojiPanel: () => app.showEmojiPanel() } : {}),
+      // macOS lets the user choose what a title bar's double-click does; read live, so a change
+      // in System Settings takes effect on the next double-click.
+      ...(process.platform === 'darwin'
+        ? {
+            titleBarDoubleClickAction: () =>
+              macTitleBarDoubleClickAction(
+                systemPreferences.getUserDefault('AppleActionOnDoubleClick', 'string')
+              )
+          }
+        : {})
     }
     this.theme = {
       systemDark: () => nativeTheme.shouldUseDarkColors,
