@@ -40,6 +40,7 @@ jobs:
         DEMO_DIR=read-aloud-demo
         DEMO_OUT=artifacts/android-read-aloud-demo
         DEMO_VIDEO=android-read-aloud-demo.mp4
+        DEMO_ARGS=-e loseSeededTab true
       artifact-name: android-read-aloud-demo
       artifact-path: artifacts/android-read-aloud-demo/
 
