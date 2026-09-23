@@ -440,7 +440,7 @@ function HistoryVisitRow({
       ariaLabel={`${row.title}, ${host}, ${time}`}
       trailing={
         <PhoneIconButton label="Remove from history" onClick={onDelete}>
-          <X className="h-5 w-5 opacity-60" strokeWidth={1.75} />
+          <X className="h-5 w-5" strokeWidth={1.75} />
         </PhoneIconButton>
       }
       selecting={selecting}

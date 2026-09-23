@@ -346,6 +346,49 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
     expect(img.className).not.toMatch(/standin|opacity/)
     expect(present.querySelector('[data-standin]')).toBeNull()
   })
+
+  it('draws a row’s trailing icon button in the row’s ink (§9.3): the stand-in alone is dimmed', () => {
+    // §9.3 puts an icon button in the ink of the row it sits in, at one stroke – the ⋮ that
+    // opens a bookmark's menu, the × that removes a history entry – so the shared button carries
+    // no opacity and no caller dims the glyph it hands it. The one dimmed glyph in these rows is
+    // §10.4's stand-in (the test above); a trailing button at .6 read as a second one.
+    const main_css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    const button = main_css.slice(main_css.indexOf('\n.zen-v2-icon-button {\n'))
+    expect(button.slice(0, button.indexOf('\n}'))).not.toMatch(/opacity/)
+    const phone = resolve(__dirname, '..')
+    // From `<PhoneIconButton` to the glyph tag closing right before `</PhoneIconButton>`, never
+    // across a second button (a self-closing one has no glyph to judge).
+    const glyphInButton =
+      /<PhoneIconButton\b(?:(?!<PhoneIconButton)[\s\S])*?<(\w+)([^<>]*)\/>\s*<\/PhoneIconButton>/g
+    let judged = 0
+    for (const file of ['PhoneBookmarksPanel.tsx', 'PhoneHistoryPanel.tsx', 'GroupsPane.tsx']) {
+      const source = readFileSync(resolve(phone, file), 'utf8')
+      for (const at of source.matchAll(glyphInButton)) {
+        judged++
+        const className = /className="([^"]*)"/.exec(at[2])?.[1] ?? ''
+        expect(className, `${file}: <${at[1]}> in an icon button`).not.toMatch(/opacity-/)
+      }
+    }
+    // The bookmarks panel's five buttons (the header's, the selection bar's, the row's ⋮), the
+    // history panel's three (the selection bar's two, the row's ×) and the groups pane's one.
+    expect(judged).toBeGreaterThanOrEqual(8)
+    const el = render(
+      <PhoneListRow
+        icon={<span />}
+        title="Hacker News"
+        trailing={
+          <PhoneIconButton label="More options for Hacker News" onClick={noop}>
+            <svg className="h-5 w-5" />
+          </PhoneIconButton>
+        }
+        onTap={noop}
+      />
+    )
+    const action = el.querySelector<HTMLButtonElement>('button.zen-v2-icon-button')!
+    expect(action.className).not.toMatch(/opacity/)
+    expect(action.style.opacity).toBe('')
+    expect(action.firstElementChild!.getAttribute('class')).not.toMatch(/opacity/)
+  })
 })
 
 describe('the selection header (§9.6)', () => {
