@@ -50,8 +50,8 @@ import java.util.concurrent.TimeUnit
  *     bottom (`SheetEdge`, `PromptSheetSpec.hairlinePx`).
  *
  * The footers' gaps are measured in the chrome's CSS px beside the inset the host reported
- * (`--zen-inset-bottom`, `windowInsets()`): the recipe's bar is an opaque 48 dp three-button bar,
- * so the formula's 16 + inset reads 64 there. The focus landings are the DOM's word; what the
+ * (`--zen-inset-bottom`, `windowInsets()`): the formula's 16 + inset reads 40 over the recipe's
+ * 24 dp bar, 64 over a 48 dp three-button bar. The focus landings are the DOM's word; what the
  * accessibility tree (TalkBack's reading) lists as the input-focused node is a finding beside
  * each, waited on as long as the tree takes here (the note in `PhoneFixesDemo`).
  *
@@ -207,8 +207,11 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
             if (!menu) error("the overview's More never opened its sheet")
             awaitSheetSettled(".zen-sheet .zen-sheet-item", 6_000)
             val rowLabel = chromeValue("(function(){var b=$RECENTLY_CLOSED_ROW_JS;return b?b.textContent.trim():''})()")
-            finding("  the menu's row reads '$rowLabel' (${CLOSED.size} tabs seeded)")
-            expect("the menu counts the seeded tabs ('Recently Closed (${CLOSED.size})')", rowLabel == "Recently Closed (${CLOSED.size})", "list-menu-count")
+            // The core's list: the twenty seeded and, filed on top of them, the Settings tab the
+            // warm-up closed (a tab closed in this session goes first, as it should).
+            val listed = runCatching { JSONArray(coreInvoke("session.recentlyClosed")).length() }.getOrDefault(-1)
+            finding("  the menu's row reads '$rowLabel'; the core's list holds $listed entries (${CLOSED.size} seeded, the warm-up's Settings tab filed on top)")
+            expect("the menu counts the list's entries ('Recently Closed ($listed)')", listed > 0 && rowLabel == "Recently Closed ($listed)", "list-menu-count")
             val up = touchControlExpecting("Recently Closed (", RECENTLY_CLOSED_ROW_JS, "the Recently closed sheet is up on its own", timeoutMs = 10_000, prefix = true) {
                 chromeValue("String(document.querySelectorAll('.zen-sheet').length===1&&!!document.querySelector('$CLOSED_ROW'))") == "true"
             }
@@ -506,7 +509,9 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
             if (awaitCustomTab(15_000) == null) error("no custom tab came up for the intent")
             if (waitFor(CLOSE_LABEL, 10_000) == null) error("the custom tab's toolbar never listed '$CLOSE_LABEL'")
             SystemClock.sleep(1_500)
-            if (!clickByLabel(MENU_LABEL)) error("the custom tab's '$MENU_LABEL' button is not in the tree")
+            // A finger on the toolbar's menu button (an accessibility click leaves touch mode, and
+            // the sheet's first row would then draw its focused fill for the still).
+            if (!touchTapLabel(MENU_LABEL) && !clickByLabel(MENU_LABEL)) error("the custom tab's '$MENU_LABEL' button is not in the tree")
             if (waitFor(OPEN_IN_ZENIUM_LABEL, 6_000) == null) error("the menu sheet never listed '$OPEN_IN_ZENIUM_LABEL'")
             SystemClock.sleep(1_500)
             val column = sheetColumn() ?: error("the menu sheet's column is not in the tree")
@@ -515,36 +520,50 @@ class PrimitivesPass4Demo : DemoHarness("pwa-demo-state.json", "android-primitiv
             try {
                 val hairline = PromptSheetSpec.hairlinePx(density)
                 val cx = column.centerX()
+                // The recipe's navigation bar is drawn over the sheet's foot with its glyphs at the
+                // centre and the quarters: the bottom rows read three eighths in, between two of them.
+                val bx = column.left + column.width() * 3 / 8
                 val panel = grey(bitmap, cx, column.top + hairline + dp(3))
                 val dark = panel < 128
                 val alpha = (if (dark) 0x1F else 0x26) / 255.0
-                val expected = panel * (1 - alpha) + (if (dark) 255 else 0) * alpha
+                // The edge over a surface: the border ink at its alpha over whatever lies inside it.
+                val blend = { under: Int -> under * (1 - alpha) + (if (dark) 255 else 0) * alpha }
                 finding(
                     "  the column at $column (${column.width()}x${column.height()} px), the hairline $hairline px (one dp at density $density); " +
-                        "the panel reads $panel (${if (dark) "dark" else "light"} scheme), the edge should read ${"%.1f".format(expected)} (the border ink at alpha ${"%.3f".format(alpha)} over it)"
+                        "the panel reads $panel (${if (dark) "dark" else "light"} scheme), the edge over it should read ${"%.1f".format(blend(panel))} (the border ink at alpha ${"%.3f".format(alpha)})"
                 )
                 val topRows = (0 until hairline).map { grey(bitmap, cx, column.top + it) }
                 val underTop = grey(bitmap, cx, column.top + hairline)
-                val ySide = column.top + dp(40)
+                // The sides in the band under the corner arcs (12 dp) and above the first row (20 dp,
+                // whose own fill – a focus, a press – is not the panel).
+                val ySide = column.top + dp(16)
                 val leftCols = (0 until hairline).map { grey(bitmap, column.left + it, ySide) }
                 val insideLeft = grey(bitmap, column.left + hairline, ySide)
                 val rightCols = (1..hairline).map { grey(bitmap, column.right - it, ySide) }
                 val insideRight = grey(bitmap, column.right - hairline - 1, ySide)
                 val navBar = windowInsets().bottom
                 val bottomVisible = column.bottom <= bitmap.height - navBar
-                val bottomRows = (1..hairline).map { grey(bitmap, cx, column.bottom - it) }
-                val aboveBar = grey(bitmap, cx, column.bottom - navBar - 1)
+                val bottomRows = (1..hairline).map { grey(bitmap, bx, column.bottom - it) }
+                val aboveBottom = grey(bitmap, bx, column.bottom - hairline - 3)
                 finding(
-                    "  top rows $topRows then $underTop under them; left columns $leftCols then $insideLeft inside; right columns $rightCols then $insideRight inside; " +
-                        "bottom rows $bottomRows${if (bottomVisible) "" else " (under the ${navBar} px navigation bar: not the sheet's own pixels; the row above the bar reads $aboveBar)"}"
+                    "  top rows $topRows then $underTop under them; at ${dp(16)} px down the left columns $leftCols then $insideLeft inside, the right columns $rightCols then $insideRight inside; " +
+                        "the bottom rows at x $bx $bottomRows with $aboveBottom above them${if (bottomVisible) "" else " (under the $navBar px navigation bar: not the sheet's own pixels)"}"
                 )
-                val tinted = { v: Int -> Math.abs(v - expected) <= 6 }
-                val plain = { v: Int -> Math.abs(v - panel) <= 3 }
-                expect("the top edge is one dp of the border ink ($hairline px) with the panel under it", topRows.all(tinted) && plain(underTop), "cct-hairline-top")
-                expect("the left edge is one dp of the border ink with the panel inside it", leftCols.all(tinted) && plain(insideLeft), "cct-hairline-left")
-                expect("the right edge is one dp of the border ink with the panel inside it", rightCols.all(tinted) && plain(insideRight), "cct-hairline-right")
-                if (bottomVisible) expect("no run along the bottom", bottomRows.all(plain), "cct-hairline-bottom")
-                else finding("  (the sheet runs edge to edge under the navigation bar: the bottom edge is not on screen to read; V2TokensPinTest pins the drawable's path to top and sides)")
+                val tinted = { v: Int, under: Int -> Math.abs(v - blend(under)) <= 6 }
+                val plain = { v: Int, under: Int -> Math.abs(v - under) <= 3 }
+                expect("the top edge is one dp of the border ink ($hairline px) over the panel", topRows.all { tinted(it, underTop) } && plain(underTop, panel), "cct-hairline-top")
+                expect("the left edge is one dp of the border ink over the surface inside it", leftCols.all { tinted(it, insideLeft) }, "cct-hairline-left")
+                expect("the right edge is one dp of the border ink over the surface inside it", rightCols.all { tinted(it, insideRight) }, "cct-hairline-right")
+                finding("  the surface inside the side edges is the panel: ${verdict(plain(insideLeft, panel) && plain(insideRight, panel))}")
+                if (bottomVisible) {
+                    expect(
+                        "no run along the bottom: its last rows read as the surface above them, not as the ink over it",
+                        bottomRows.all { plain(it, aboveBottom) } && !bottomRows.all { tinted(it, aboveBottom) },
+                        "cct-hairline-bottom"
+                    )
+                } else {
+                    finding("  (the sheet runs edge to edge under the navigation bar: the bottom edge is not on screen to read; V2TokensPinTest pins the drawable's path to top and sides)")
+                }
                 zoomCorner(bitmap, column)
             } finally {
                 bitmap.recycle()
