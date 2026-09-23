@@ -524,6 +524,7 @@ describe('the section model', () => {
       'version',
       'check-updates',
       'default-browser',
+      'open-by-default',
       'whats-new',
       'engine',
       'upstream'
@@ -553,6 +554,56 @@ describe('the section model', () => {
     // The landing's search finds them under About by their words.
     expect(searchRows([about], 'privacy notice').map((h) => h.row.id)).toEqual(['privacy-notice'])
     expect(searchRows([about], 'release notes').map((h) => h.row.id)).toEqual(['whats-new'])
+
+    // The version row copies its report on a hold on a touch layout (the toast's word with it);
+    // the desktop's is text to select.
+    const version = row(about, 'version')
+    expect(version).toMatchObject({
+      kind: 'info',
+      copy: {
+        text: expect.stringMatching(
+          /^Zenium 0\.3\.0-test( · Chromium [\d.]+)? · Android System WebView$/
+        ),
+        confirmation: 'Version copied'
+      }
+    })
+    const desktop = buildSection(
+      PAGE.sections.find((x) => x.id === 'about')!,
+      { ...context(state()).ctx, formFactor: 'desktop' }
+    )
+    expect(row(desktop, 'version')).not.toHaveProperty('copy')
+
+    // Open by default (DEF-06): the host's reading on the row, the tap leaving for the screen.
+    const openBy = row(about, 'open-by-default')
+    expect(openBy).toMatchObject({
+      kind: 'action',
+      label: 'Open by default',
+      description: 'Choose which links open in Zenium.',
+      leaves: 'external'
+    })
+    if (openBy.kind !== 'action') throw new Error('not an action row')
+    openBy.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('app.openAppLinkSettings', undefined)
+    const allowed = section(
+      'about',
+      state({ defaultBrowser: { isDefault: true, prompt: null, appLinks: 'allowed' } })
+    )
+    expect(row(allowed, 'open-by-default').description).toBe(
+      'Web links from other apps can open in Zenium.'
+    )
+    const disallowed = section(
+      'about',
+      state({ defaultBrowser: { isDefault: false, prompt: null, appLinks: 'disallowed' } })
+    )
+    expect(row(disallowed, 'open-by-default').description).toBe(
+      'Zenium is set not to open web links from other apps.'
+    )
+    // Without the screen (a desktop host) there is no row.
+    const noScreen = section(
+      'about',
+      state({ capabilities: { ...ANDROID, appLinkSettings: false } })
+    )
+    expect(findRow(noScreen.groups, 'open-by-default')).toBeNull()
 
     // A host without page tabs has nowhere to open a chrome page: the rows stay away.
     const noTabs = section('about', state({ capabilities: { ...ANDROID, pageTabs: false } }))

@@ -266,12 +266,24 @@ export interface RowMenu {
   items: readonly RowMenuItem[]
 }
 
+/**
+ * What a long-press on a row copies (SET-54; Chrome for Android's About copies the version on a
+ * hold): the text, and the toast's word for it ("Version copied"). A touch layout's gesture on
+ * a row whose text is the one thing to copy; the row stays static otherwise.
+ */
+export interface RowCopy {
+  text: string
+  confirmation: string
+}
+
 /** A fact: label and description, optionally a leading or trailing glyph or value; nothing to press. */
 export interface InfoRow extends RowBase {
   kind: 'info'
   /** A 20 px glyph on the label's line (§9.2): a status glyph in the §1 status ink. */
   leading?: ReactNode
   trailing?: ReactNode
+  /** A long-press copies this (the version row); the row is still not a target. */
+  copy?: RowCopy
   /** The label is a line of prose (an error message): two lines, then an ellipsis (§9.2). */
   clamp?: boolean
   /**
@@ -371,6 +383,8 @@ export interface CustomRow extends RowBase {
   render(): ReactNode
   /** The block is a row of its own (it draws `.zen-v2-row` itself): no block padding around it. */
   bare?: boolean
+  /** A long-press on the block copies this (a version block); the block's own controls are left out. */
+  copy?: RowCopy
 }
 
 export type SettingsRow =

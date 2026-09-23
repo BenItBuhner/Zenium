@@ -2619,7 +2619,16 @@ export interface DefaultBrowserStatus {
   /** Whether this app holds the browser role; null until the host answered (or when it cannot tell). */
   isDefault: boolean | null
   prompt: DefaultBrowserPrompt
+  /**
+   * Whether the system lets this app open web links from other apps (DEF-06, Android's "Open by
+   * default" screen): the link-handling switch on Android 12+, the default handler of a plain
+   * `http://` link before it. Absent until the host answered, and on hosts without the screen.
+   */
+  appLinks?: AppLinkState
 }
+
+/** `allowed`: the system hands web links to this app; `disallowed`: it is set not to; `unknown`: it could not say. */
+export type AppLinkState = 'allowed' | 'disallowed' | 'unknown'
 
 /** Where a request to become the default browser was made from. */
 export type DefaultBrowserRequestSource = 'onboarding' | 'sheet' | 'banner' | 'settings'

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Check, CreditCard, Fingerprint, MapPin } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
+  AppLinkState,
   BookmarksBarMode,
   ColorScheme,
   ContainerColor,
@@ -124,6 +125,7 @@ import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords
 import { openOverlay } from '@renderer/lib/ui'
 import { pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
+import { versionReport } from '@renderer/lib/versionReport'
 import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
 import {
@@ -4556,7 +4558,19 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
 // About
 // ---------------------------------------------------------------------------
 
-function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
+/** The Open by default row's second line: the state as the host read it, or the screen's promise. */
+function appLinksDescription(state: AppLinkState | undefined): string {
+  switch (state) {
+    case 'allowed':
+      return 'Web links from other apps can open in Zenium.'
+    case 'disallowed':
+      return 'Zenium is set not to open web links from other apps.'
+    default:
+      return 'Choose which links open in Zenium.'
+  }
+}
+
+function aboutSection({ state, navigate, formFactor }: SectionContext): RowGroup[] {
   const engineHost = state.platform === 'android' ? 'Android System WebView' : 'Electron'
   const update = state.updates
   const newer = update.phase === 'available' || update.phase === 'ready' ? update.release : null
@@ -4566,7 +4580,21 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
       id: 'version',
       label: 'Zenium',
       description: `Version ${state.version} · running on Chromium via ${engineHost}${newer ? ` · ${newer.version} is available` : ''}`,
-      keywords: ['version', state.version]
+      keywords: ['version', state.version],
+      // A touch layout copies the version line on a hold (SET-54; Chrome for Android's About);
+      // the desktop's row is text to select.
+      ...(formFactor !== 'desktop'
+        ? {
+            copy: {
+              text: versionReport(
+                state.version,
+                engineHost,
+                typeof navigator === 'undefined' ? '' : navigator.userAgent
+              ),
+              confirmation: 'Version copied'
+            }
+          }
+        : {})
     }
   ]
   if (state.capabilities.updates) {
@@ -4606,6 +4634,20 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
             onPress: () => run('defaultBrowser.request', { source: 'settings' })
           }
     )
+    // Open by default (DEF-06; Chrome's row of the same name): the system's screen for which
+    // links open in Zenium, its state as the host read it – the link-handling switch on Android
+    // 12+ – on the row; the tap leaves for the screen.
+    if (state.capabilities.appLinkSettings) {
+      rows.push({
+        kind: 'action',
+        id: 'open-by-default',
+        label: 'Open by default',
+        description: appLinksDescription(state.defaultBrowser.appLinks),
+        leaves: 'external',
+        keywords: ['open by default', 'links', 'supported links', 'app links'],
+        onPress: () => run('app.openAppLinkSettings', undefined)
+      })
+    }
   }
   // What's new (SET-54; Chrome's What's new): the running version's highlights, a chrome page
   // (`zen://whats-new`) on every layout with page tabs.

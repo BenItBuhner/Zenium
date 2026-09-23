@@ -49,6 +49,11 @@ const PDF_VIEWER_SCRIPT = '/pdfViewer.ts'
  * `sheet=promo` (previewStates.ts) puts the role up for grabs before it raises the campaign.
  */
 export const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
+/**
+ * The preview's "Open by default" state (DEF-06; outside the file store likewise): `allowed`
+ * unless a scene sets `disallowed` or `unknown` (`settings=about-links-off`, previewStates.ts).
+ */
+export const APP_LINKS_KEY = 'zen-preview-app-links'
 /** Where the stand-in downloader says files go (`BootInfo.downloadsDir`). */
 const DOWNLOADS_DIR = '/Downloads'
 /** Where the stand-in keeps the tab cards' pictures (Kotlin: `cacheDir/zen-thumbs/<tabId>.jpg`). */
@@ -1145,6 +1150,10 @@ export function createPreviewBridge(): NativeBridge {
       console.info('[zen preview] external protocol', requestId, allow ? 'allowed' : 'refused'),
     // The browser role, remembered per preview profile; the "role dialog" is a confirm().
     'app.isDefaultBrowser': () => localStorage.getItem(DEFAULT_BROWSER_KEY) === 'true',
+    'app.appLinkState': () => {
+      const held = localStorage.getItem(APP_LINKS_KEY)
+      return held === 'disallowed' || held === 'unknown' ? held : 'allowed'
+    },
     'app.requestDefaultBrowser': () => {
       const granted = window.confirm('Preview host: make Zenium the default browser?')
       localStorage.setItem(DEFAULT_BROWSER_KEY, granted ? 'true' : 'false')

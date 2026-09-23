@@ -2,12 +2,19 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Browser } from '../browser'
 import { DefaultBrowserService, PROMPT_SURFACES } from '../defaultBrowser'
 import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '../../shared/defaultBrowser'
-import type { DefaultBrowserPromoState, Platform } from '../../shared/types'
+import type { AppLinkState, DefaultBrowserPromoState, Platform } from '../../shared/types'
 
 interface Fake {
   browser: Browser
   settings: { onboardingDone: boolean; defaultBrowserPromo: DefaultBrowserPromoState }
-  host: { isDefault: boolean | null; requests: number; requestAnswer: boolean | null }
+  host: {
+    isDefault: boolean | null
+    requests: number
+    requestAnswer: boolean | null
+    /** The "Open by default" reading the host gives (DEF-06); `undefined` is a host without one. */
+    appLinks: AppLinkState | null | undefined
+    linkReads: number
+  }
   commit: ReturnType<typeof vi.fn>
 }
 
@@ -18,6 +25,7 @@ function fake(options: {
   onboardingDone?: boolean
   isDefault?: boolean | null
   requestAnswer?: boolean | null
+  appLinks?: AppLinkState | null
   promo?: Partial<DefaultBrowserPromoState>
 }): Fake {
   const settings = {
@@ -27,7 +35,9 @@ function fake(options: {
   const host = {
     isDefault: options.isDefault ?? false,
     requests: 0,
-    requestAnswer: options.requestAnswer ?? null
+    requestAnswer: options.requestAnswer ?? null,
+    appLinks: options.appLinks,
+    linkReads: 0
   }
   const commit = vi.fn()
   const browser = {
@@ -38,7 +48,16 @@ function fake(options: {
           host.requests++
           if (host.requestAnswer !== null) host.isDefault = host.requestAnswer
           return host.requestAnswer
-        }
+        },
+        ...(options.appLinks !== undefined
+          ? {
+              appLinkState: async () => {
+                host.linkReads++
+                if (host.appLinks === undefined) throw new Error('no reading')
+                return host.appLinks
+              }
+            }
+          : {})
       }
     },
     state: {
@@ -78,6 +97,39 @@ describe('DefaultBrowserService', () => {
     await settle()
     expect(settings.defaultBrowserPromo.sessions).toBe(1)
     expect(service.status()).toEqual({ isDefault: false, prompt: null })
+  })
+
+  it('reads the "Open by default" state with the role, on the same round, and keeps it on the status (DEF-06)', async () => {
+    const { browser, host } = fake({ isDefault: true, appLinks: 'allowed' })
+    const service = new DefaultBrowserService(browser)
+    service.start()
+    await settle()
+    expect(service.status()).toEqual({ isDefault: true, prompt: null, appLinks: 'allowed' })
+    expect(host.linkReads).toBe(1)
+    // The user flipped the switch in the system's screen: the return to the foreground reads it.
+    host.appLinks = 'disallowed'
+    service.onForeground()
+    await settle()
+    expect(service.status().appLinks).toBe('disallowed')
+    expect(host.linkReads).toBe(2)
+    // A host that cannot say this time keeps the last reading; one that throws likewise.
+    host.appLinks = null
+    service.onForeground()
+    await settle()
+    expect(service.status().appLinks).toBe('disallowed')
+    host.appLinks = undefined
+    service.onForeground()
+    await settle()
+    expect(service.status().appLinks).toBe('disallowed')
+  })
+
+  it('a host without the reading leaves the status without one', async () => {
+    const { browser } = fake({ isDefault: true })
+    const service = new DefaultBrowserService(browser)
+    service.start()
+    await settle()
+    expect(service.status()).toEqual({ isDefault: true, prompt: null })
+    expect(service.status()).not.toHaveProperty('appLinks')
   })
 
   it('does not count sessions before onboarding; finishing onboarding is the first one', async () => {

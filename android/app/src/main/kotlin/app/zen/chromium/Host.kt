@@ -947,6 +947,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.openKeyboardSettings" -> { openKeyboardSettings(); reply(null) }
             "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "app.isDefaultBrowser" -> reply(DefaultBrowser.isDefault(activity))
+            "app.appLinkState" -> reply(DefaultBrowser.appLinkState(activity))
             "app.requestDefaultBrowser" -> activity.requestDefaultBrowser(reply)
             "keys.setShortcuts" -> { keys.setShortcuts(args.arr("bindings")); reply(null) }
 

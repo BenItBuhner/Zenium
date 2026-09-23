@@ -4,6 +4,7 @@ import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.verify.domain.DomainVerificationManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -39,9 +40,54 @@ object DefaultBrowser {
         return if (settings.resolveActivity(context.packageManager) != null) settings else null
     }
 
+    /**
+     * What Android's "Open by default" screen is set to for this app (DEF-06; the About row's
+     * state): on Android 12+ the screen's link-handling switch, `DomainVerificationUserState
+     * .isLinkHandlingAllowed` – off, the system hands no web link to this app however the role
+     * stands; before it the screen is the app's details page, and the state is which app a plain
+     * `http://` link resolves to. `allowed`, `disallowed` or `unknown`, the words the chrome's
+     * `AppLinkState` reads.
+     */
+    fun appLinkState(context: Context): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val manager = context.getSystemService(DomainVerificationManager::class.java) ?: return legacyLinkState(context)
+            val state = try {
+                manager.getDomainVerificationUserState(context.packageName)
+            } catch (e: PackageManager.NameNotFoundException) {
+                null
+            } ?: return UNKNOWN
+            return if (state.isLinkHandlingAllowed) ALLOWED else DISALLOWED
+        }
+        return legacyLinkState(context)
+    }
+
+    /**
+     * The pre-12 reading, decided from the package a plain web link resolves to with
+     * `MATCH_DEFAULT_ONLY`: this app – the links are ours; another – they go there; none –
+     * the system asks each time, or nothing takes them, and the screen cannot be read.
+     */
+    fun linkStateOf(resolvedPackage: String?, self: String): String = when (resolvedPackage) {
+        null -> UNKNOWN
+        self -> ALLOWED
+        else -> DISALLOWED
+    }
+
+    const val ALLOWED = "allowed"
+    const val DISALLOWED = "disallowed"
+    const val UNKNOWN = "unknown"
+
     private fun legacyIsDefault(context: Context): Boolean {
+        return legacyHandler(context) == context.packageName
+    }
+
+    private fun legacyLinkState(context: Context): String = linkStateOf(legacyHandler(context), context.packageName)
+
+    /** The package a plain `http://` link goes to without asking, or null when the system would ask. */
+    private fun legacyHandler(context: Context): String? {
         val probe = Intent(Intent.ACTION_VIEW, Uri.parse("http://example.com"))
         val handler = context.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)
-        return handler?.activityInfo?.packageName == context.packageName
+        // The resolver's own activity answers a link with no default: not a browser's package.
+        val pkg = handler?.activityInfo?.packageName ?: return null
+        return if (pkg == "android") null else pkg
     }
 }

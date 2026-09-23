@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AppLinkState,
   AppWindowInfo,
   CertificateDetails,
   ClipboardPeekKind,
@@ -1622,6 +1623,14 @@ export interface AppHost {
    * null, meaning "not supported here".
    */
   isDefaultBrowser(): Promise<boolean | null>
+  /**
+   * What the OS screen for which links open in this app (`ShellHost.openAppLinkSettings`) is
+   * set to (DEF-06): whether the system hands web links from other apps to this app – Android
+   * 12+'s link-handling switch (`DomainVerificationManager`), the default handler of a plain
+   * `http://` link before it. Read with the role at start and on every return to the
+   * foreground; hosts without the screen leave it out.
+   */
+  appLinkState?(): Promise<AppLinkState | null>
   /**
    * Ask the system to make this app the default browser (`app.requestDefaultBrowser`): the role
    * dialog on Android 10+, which answers with the outcome; the default-apps settings screen on

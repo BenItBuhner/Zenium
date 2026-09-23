@@ -1,19 +1,24 @@
-import type { FocusEvent, JSX, ReactNode } from 'react'
+import type { FocusEvent, JSX, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
+import { run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
 import type { InternalPageQuery } from '@shared/internalPages'
 import { V2Button, V2IconButton } from '../../extensions/v2'
 import { V2Menulist } from '../../extensions/V2Menulist'
 import { LocalMenu } from '../../menus/LocalMenu'
+import { useLongPress, type LongPressHandlers } from '../../phone/useLongPress'
 import { Slider } from '../../ui/slider'
 import {
   currentOptionLabel,
   groupShows,
   itemMenuItems,
   type ActionRow,
+  type CustomRow,
   type FieldRow,
+  type InfoRow,
+  type RowCopy,
   type RowGroup,
   type RowMenu,
   type SettingsRow,
@@ -226,32 +231,7 @@ export function RowView({
         />
       )
     case 'info':
-      // Not a target (§9.34): the shared row for its geometry, `data-static` for no fill and no
-      // pointer cursor, no role – a div, since static text is not a button. A row whose label
-      // is the status takes the danger row class the destructive action has: its label rule
-      // puts the ink on the sentence, the description keeps its 69%.
-      return (
-        <div
-          ref={row.trailing ? attachLineCount : undefined}
-          data-row={row.id}
-          data-static=""
-          data-tone={row.tone}
-          className={cn(
-            'zen-settings-row zen-v2-row',
-            row.danger && 'zen-settings-row-danger',
-            row.disabled && 'zen-settings-row-disabled',
-            row.clamp && 'zen-settings-row-clamp'
-          )}
-        >
-          {row.leading && (
-            <span className="zen-settings-leading" aria-hidden="true">
-              {row.leading}
-            </span>
-          )}
-          <RowText label={row.label} description={row.description} caption={caption} />
-          {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
-        </div>
-      )
+      return <InfoRowView row={row} caption={caption} />
     case 'slider':
       // §10.4's slider row: the value on the label's line, the description, then the 44 px step
       // buttons with the track between them; the block is the row's, so it keeps its 16 px gutter.
@@ -268,20 +248,87 @@ export function RowView({
         </div>
       )
     case 'custom':
-      if (row.bare && !caption) return <>{row.render()}</>
-      return (
-        <div
-          className={cn(
-            row.bare ? 'zen-settings-custom-bare' : 'zen-settings-custom',
-            row.disabled && 'zen-settings-row-disabled'
-          )}
-          data-row={row.id}
-        >
-          {caption && <span className="zen-settings-caption">{caption}</span>}
-          {row.render()}
-        </div>
-      )
+      return <CustomRowView row={row} caption={caption} />
   }
+}
+
+/**
+ * A long-press on a row copies its text (`RowCopy`, SET-54): the hold's handlers for the row's
+ * element, or none when the row copies nothing – and the click the release raises, swallowed,
+ * so a row that is also a target does not fire on the lift. The copy is the core's
+ * (`clipboard.writeText`), whose toast – or Android 13's clipboard chip – says the word.
+ */
+function useCopyOnHold(copy: RowCopy | undefined): {
+  handlers: Partial<LongPressHandlers>
+  onClick?: (e: ReactMouseEvent<HTMLElement>) => void
+} {
+  const press = useLongPress(() => {
+    if (copy) run('clipboard.writeText', { text: copy.text, confirmation: copy.confirmation })
+  })
+  if (!copy) return { handlers: {} }
+  return {
+    handlers: press.handlers,
+    onClick: (e) => {
+      if (press.swallowsClick()) e.preventDefault()
+    }
+  }
+}
+
+/**
+ * The info row: not a target (§9.34) – the shared row for its geometry, `data-static` for no
+ * fill and no pointer cursor, no role – a div, since static text is not a button. A row whose
+ * label is the status takes the danger row class the destructive action has: its label rule
+ * puts the ink on the sentence, the description keeps its 69%. A row with a `copy` copies it
+ * on a long-press (`data-copies` for the style's touch-callout).
+ */
+function InfoRowView({ row, caption }: { row: InfoRow; caption?: string }): JSX.Element {
+  const hold = useCopyOnHold(row.copy)
+  return (
+    <div
+      ref={row.trailing ? attachLineCount : undefined}
+      data-row={row.id}
+      data-static=""
+      data-tone={row.tone}
+      data-copies={row.copy ? '' : undefined}
+      className={cn(
+        'zen-settings-row zen-v2-row',
+        row.danger && 'zen-settings-row-danger',
+        row.disabled && 'zen-settings-row-disabled',
+        row.clamp && 'zen-settings-row-clamp'
+      )}
+      {...hold.handlers}
+      onClick={hold.onClick}
+    >
+      {row.leading && (
+        <span className="zen-settings-leading" aria-hidden="true">
+          {row.leading}
+        </span>
+      )}
+      <RowText label={row.label} description={row.description} caption={caption} />
+      {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
+    </div>
+  )
+}
+
+/** A custom block, in its padding unless `bare`; with a `copy`, wrapped for the hold either way. */
+function CustomRowView({ row, caption }: { row: CustomRow; caption?: string }): JSX.Element {
+  const hold = useCopyOnHold(row.copy)
+  if (row.bare && !caption && !row.copy) return <>{row.render()}</>
+  return (
+    <div
+      className={cn(
+        row.bare ? 'zen-settings-custom-bare' : 'zen-settings-custom',
+        row.disabled && 'zen-settings-row-disabled'
+      )}
+      data-row={row.id}
+      data-copies={row.copy ? '' : undefined}
+      {...hold.handlers}
+      onClick={hold.onClick}
+    >
+      {caption && <span className="zen-settings-caption">{caption}</span>}
+      {row.render()}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
