@@ -39,12 +39,17 @@ import kotlin.math.abs
  *     the page from the bar's plus has its field low, within thumb reach, the shortcuts above it
  *     and the gear in the top corner; a finger on the field morphs it into the omnibox above the
  *     keyboard (#243's morph, its origin the relocated field); the dock flipped to top through
- *     the core lays the page out as it was (the field high, the gear low), and back. The gate's
- *     one geometry (§9.29) is measured at both docks in CSS px: the free height split 3:5 with
- *     the block on the bar's side (the spacers' heights), 24 between the field and the tiles,
- *     the gear 12 into the corner opposite the bar, and the field the same distance from the
- *     bar's edge at either dock (224 to its near edge at the design's 920 frame, its centre on
- *     the frame's third; this frame's numbers are on record).
+ *     the core lays the page out as it was (the field high, the gear low), the same finger on
+ *     the high field runs the same morph there, and the dock goes back. The gate's one geometry
+ *     (§9.29) is measured at both docks in CSS px: the free height split 3:5 with the block on
+ *     the bar's side (the spacers' heights), 24 between the field and the tiles, the gear 12
+ *     into the corner opposite the bar, and the field the same distance from the bar's edge at
+ *     either dock (224 to its near edge at the design's 920 frame, its centre on the frame's
+ *     third; this frame's numbers are on record). The two morphs are measured scenes: the top
+ *     dock's (`ntp-field-morph-top`) is the bottom dock's (`ntp-field-morph-bottom`) same-run
+ *     BASELINE – the one motion with only the dock changed, the harness's still and DOM read at
+ *     90 ms in both – so the bottom-dock number is read as a ratio against the top's on the same
+ *     emulator, not against the recipe (#348's first-line review, N4).
  *  4. NTP-06 a tile's hold menu: a hold on a pinned tile lifts its menu with Edit Shortcut…, Move
  *     Left, Move Right (the drag's accessible path, the gate's addendum), Unpin Shortcut and
  *     Remove; Edit opens the shortcut's form sheet on the Settings sheets' chassis (the 48
@@ -370,26 +375,9 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             val bottomGeometry = claimGeometry("bottom")
             still("ntp-bottom-rest")
 
-            // The field into the omnibox: #243's morph from where the field rests.
-            val at = field?.let { touchPoint(it) } ?: error("the field lies outside the touchable window ($field)")
-            var midMorph: Rect? = null
-            measureFrames("ntp-field-morph-bottom", JankBudget.Kind.OPEN, trace = true) {
-                Finger().tap(at.x, at.y)
-                SystemClock.sleep(90)
-                still("ntp-bottom-morph")
-                midMorph = domBox(MORPH_JS)
-                awaitIme(shown = true, timeoutMs = 8_000)
-                SystemClock.sleep(600)
-            }
-            val keyboard = imeShown()
-            val input = omniboxInput()
-            finding("  keyboard ${if (keyboard) "up (inset ${imeInset()} px)" else "DOWN"}; omnibox input ${input ?: "MISSING"}; the morph's surface mid-way $midMorph")
-            expect("a finger on the low field opens the omnibox above the keyboard", keyboard && input != null, "ntp-field-omnibox")
-            still("ntp-bottom-omnibox")
-            val close = closeUrlField()
-            finding("  ${close.describe()}")
-            expect("the omnibox closes back to the page (${describeActive()})", close.ok && activeUrl() == BLANK_URL, "ntp-omnibox-close")
-            SystemClock.sleep(800)
+            // The field into the omnibox: #243's morph from where the field rests. Its frames are
+            // read against the same morph at the top dock (measured below, the scene's baseline).
+            morphScene("bottom", field, baseline = MORPH_TOP_SCENE)
 
             // The top dock: the layout it was. Through the core (the row's own action).
             setBarPosition("top")
@@ -404,6 +392,9 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
             val topGeometry = claimGeometry("top")
             claimOneGeometry(bottomGeometry, topGeometry)
             still("ntp-top-rest")
+            // The same morph from the top dock's field: the bottom scene's baseline (its ratios
+            // settle at the end of the run, once this scene is on record).
+            morphScene("top", fieldTop)
             setBarPosition("bottom")
             awaitChrome("(document.querySelector('.zen-ntp')||{dataset:{}}).dataset.dock==='bottom'", 6_000)
             SystemClock.sleep(1_200)
@@ -557,6 +548,41 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
     private fun omniboxInput(): Rect? =
         findNodeWhere { it.isEditable && (it.contentDescription?.toString() == FIELD_LABEL || it.isFocused) }
             ?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
+    /**
+     * The field into the omnibox at one dock, measured: a finger on `field` (the page's field at
+     * rest), the harness's still and DOM read of the morph's surface at 90 ms, the keyboard
+     * awaited, then the claims (the omnibox up above the keyboard; the omnibox closed back to the
+     * page) and the stills (`ntp-<dock>-morph`, `ntp-<dock>-omnibox`). The two docks run this one
+     * block – the same shape, the same still and read inside it – so the scene's frames differ by
+     * the dock alone and the bottom scene's `baseline` names the top scene ([MORPH_TOP_SCENE]):
+     * its ratios cancel the recipe (the emulator, the trace's cost, the still's) and settle at the
+     * end of the run, whichever scene was measured first. The bottom dock's claim ids are run 5's
+     * (`ntp-field-omnibox`, `ntp-omnibox-close`); the top dock's carry `-top-`.
+     */
+    private fun morphScene(dock: String, field: Rect?, baseline: String? = null) {
+        val at = field?.let { touchPoint(it) } ?: error("the $dock dock's field lies outside the touchable window ($field)")
+        var midMorph: Rect? = null
+        measureFrames("ntp-field-morph-$dock", JankBudget.Kind.OPEN, baseline = baseline, trace = true) {
+            Finger().tap(at.x, at.y)
+            SystemClock.sleep(90)
+            still("ntp-$dock-morph")
+            midMorph = domBox(MORPH_JS)
+            awaitIme(shown = true, timeoutMs = 8_000)
+            SystemClock.sleep(600)
+        }
+        val keyboard = imeShown()
+        val input = omniboxInput()
+        finding("  $dock dock: keyboard ${if (keyboard) "up (inset ${imeInset()} px)" else "DOWN"}; omnibox input ${input ?: "MISSING"}; the morph's surface mid-way $midMorph")
+        val where = if (dock == "bottom") "low" else "high"
+        val suffix = if (dock == "bottom") "" else "-$dock"
+        expect("a finger on the $where field opens the omnibox above the keyboard", keyboard && input != null, "ntp$suffix-field-omnibox")
+        still("ntp-$dock-omnibox")
+        val close = closeUrlField()
+        finding("  ${close.describe()}")
+        expect("the omnibox closes back to the page (${describeActive()})", close.ok && activeUrl() == BLANK_URL, "ntp$suffix-omnibox-close")
+        SystemClock.sleep(800)
+    }
 
     // --- Settings --------------------------------------------------------------------------------
 
@@ -1042,6 +1068,8 @@ class HomepageNtpDemo : DemoHarness("newtab-demo-state.json", "android-homepage-
         private const val GEAR_JS = "document.querySelector('.zen-ntp [aria-label=\"Customise the new tab page\"]')"
         /** The morph's own surface while it runs (`FakeboxMorphLayer`'s `.zen-fakebox`), the field's box otherwise. */
         private const val MORPH_JS = "document.querySelector('.zen-fakebox-layer .zen-fakebox')||document.querySelector('.zen-ntp .zen-ntp-field')"
+        /** The top dock's morph scene: the bottom dock's same-run baseline (`measureFrames`' `baseline`; [morphScene]). */
+        private const val MORPH_TOP_SCENE = "ntp-field-morph-top"
         /** The bar's Home item (`BarButton`'s `data-bar-item`; the menu's Home is the icon row's glyph, [MENU_HOME_JS]). */
         private const val BAR_HOME = ".zen-phone-bar-row [data-bar-item=\"home\"]"
         /** The app menu's icon row (`MenuSheet`: `ul.zen-menu-icon-row`, §9.13) and its Home glyph (`IconRowButton`'s `data-glyph`). */

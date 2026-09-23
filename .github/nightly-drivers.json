@@ -777,7 +777,7 @@
       "mirrors": "android-homepage-ntp-demo.yml",
       "dir": "homepage-ntp-demo",
       "estimate": 4,
-      "note": "The homepage in Settings and its Home actions, the new tab page for the bottom bar, a tile's Edit / Remove and the drag reorder (W4-8); the morph and the drag are measured scenes."
+      "note": "The homepage in Settings and its Home actions, the new tab page for the bottom bar, a tile's Edit / Remove and the drag reorder (W4-8); the morph at both docks (the top dock's the bottom's same-run baseline) and the drag are measured scenes."
     },
     {
       "id": "page-dialogs",
