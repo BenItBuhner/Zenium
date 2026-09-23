@@ -7,8 +7,10 @@ name: Android gestures demo
 # segments, holds the pill for the clipboard row's Paste, and last switches the emulator to
 # gesture navigation to show the same edge drag brings no bubble there – restoring 3-button mode
 # after. Every gesture is a real touch; the two finger-driven scenes are measured under the
-# GESTURE budget. The findings (PASS / FAIL lines) fail the run. Dispatch-only, like the other
-# demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+# GESTURE budget with the chrome WebView's trace (the long tasks by CPU, RULING 5), the core's
+# startup sweeps held for the run (`holdBackgroundWork`) so no feed refresh lands in them. The
+# findings (PASS / FAIL lines) fail the run. Dispatch-only, like the other demos; the build, the
+# emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
     inputs:
@@ -46,6 +48,7 @@ jobs:
         DEMO_DIR=gestures-demo
         DEMO_OUT=artifacts/android-gestures-demo
         DEMO_VIDEO=android-gestures-demo.mp4
+        DEMO_ARGS=-e holdBackgroundWork true
       timeout-minutes: 45
       artifact-name: android-gestures-demo
       artifact-path: artifacts/android-gestures-demo/
@@ -64,6 +67,7 @@ jobs:
         DEMO_DIR=gestures-demo
         DEMO_OUT=artifacts/android-gestures-demo
         DEMO_VIDEO=android-gestures-demo.mp4
+        DEMO_ARGS=-e holdBackgroundWork true
       timeout-minutes: 45
       artifact-name: android-gestures-demo-second-boot
       artifact-path: artifacts/android-gestures-demo/

@@ -247,8 +247,11 @@
       "shard": "phone-a",
       "mirrors": "android-gestures-demo.yml",
       "dir": "gestures-demo",
+      "env": {
+        "DEMO_ARGS": "-e holdBackgroundWork true"
+      },
       "estimate": 5,
-      "note": "The gesture cluster (GN-04 edge-drag bubble, GN-08 Back hold's history popup, GN-19 pane swipe, GN-10 pill hold's Paste; W5-6) by real touch on loopback pages, the two finger-driven scenes measured. Its last scene switches the device to gesture navigation itself for the negative (no bubble where the system owns the edges) and puts 3-button mode back in its own finally; the runner's reset_device puts it back again after the driver whatever happened (no `needs`: the driver sets no back-animation flag and runs no script of its own)."
+      "note": "The gesture cluster (GN-04 edge-drag bubble, GN-08 Back hold's history popup, GN-19 pane swipe, GN-10 pill hold's Paste; W5-6) by real touch on loopback pages, the two finger-driven scenes measured with the chrome WebView's trace (the long tasks by CPU, RULING 5) and the core's startup sweeps held (the workflow's arguments). Its last scene switches the device to gesture navigation itself for the negative (no bubble where the system owns the edges) and puts 3-button mode back in its own finally; the runner's reset_device puts it back again after the driver whatever happened (no `needs`: the driver sets no back-animation flag and runs no script of its own)."
     },
     {
       "id": "site-data-ui",

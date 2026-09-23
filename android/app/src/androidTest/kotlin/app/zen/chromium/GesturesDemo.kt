@@ -42,7 +42,10 @@ import kotlin.math.abs
  * The last scene switches the emulator to gesture navigation and drags the same edge: the system
  * owns the edges there and the bubble must never appear (Chrome's `checkCanInterceptSwipe`); the
  * scene restores 3-button mode whatever happened. The two finger-driven scenes are measured
- * (`history-nav-drag`, `pane-swipe-overview`; GESTURE budget, `frames.txt`).
+ * with the chrome WebView's trace (`history-nav-drag`, `pane-swipe-overview`; GESTURE budget,
+ * `frames.txt`; the renderer main thread's long tasks by CPU with the wall count beside them,
+ * `trace-<scene>.json.gz`); the workflow holds the core's startup sweeps for the run
+ * (`holdBackgroundWork`) so no feed refresh lands in them.
  *
  * The pages are the loopback [DemoServer]'s (no network). The findings land in
  * `gestures-findings.txt` as PASS / FAIL lines; a FAIL fails the run after the stills are flushed.
@@ -191,7 +194,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         claim("3-button navigation is on for the edge drags", navMode() == THREE_BUTTON)
         val y = pageMidY()
         val f = Finger()
-        val scene = measureFrames("history-nav-drag", JankBudget.Kind.GESTURE) {
+        val scene = traceFrames("history-nav-drag", JankBudget.Kind.GESTURE) {
             f.down(EDGE_X_DP * density, y)
             f.moveBy(LONG_DRAG_DP * density, 0f, 1_000)
             f.hold(450)
@@ -222,14 +225,24 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         shot("04-after-edge-drag")
     }
 
-    /** A drag of 60 dp: the disc follows, never arms, and the release springs it away with nothing navigated. */
+    /**
+     * A drag of 60 dp in two halves, a still at each with the finger held: the disc rides the
+     * finger out from the frame's side, never arms, and the release springs it away with nothing
+     * navigated. Unmeasured, so the stills cost the frames nothing.
+     */
     private fun edgeDragShort() {
         section("GN-04: a short edge drag springs back")
         val before = activeUrl()
         val y = pageMidY()
         val f = Finger()
         f.down(EDGE_X_DP * density, y)
-        f.moveBy(SHORT_DRAG_DP * density, 0f, 500)
+        f.moveBy(SHORT_DRAG_DP / 2 * density, 0f, 250)
+        f.hold(300)
+        val riding = nativeDisc()
+        finding("(half way, ${SHORT_DRAG_DP / 2} dp of travel with the finger held: disc $riding; phase '${bubblePhase()}')")
+        claim("the native disc rides the finger out from the frame's side, un-armed (disc: $riding)", riding.up && riding.leadingEdgeDp in 1f..NAV_THRESHOLD_DP && riding.scale < 1.01f)
+        shot("05-edge-drag-riding")
+        f.moveBy(SHORT_DRAG_DP / 2 * density, 0f, 250)
         f.hold(350)
         val phase = bubblePhase()
         val armed = bubbleArmed()
@@ -237,6 +250,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         claim("the short drag has the bubble dragging (phase '$phase')", phase == "dragging")
         claim("the short drag is not armed", !armed)
         claim("the native disc is up short of the threshold at its own size (disc: $disc)", disc.up && disc.leadingEdgeDp in 1f..NAV_THRESHOLD_DP && disc.scale < 1.01f)
+        claim("the disc went further with the finger (${"%.1f".format(riding.leadingEdgeDp)} -> ${"%.1f".format(disc.leadingEdgeDp)} dp)", disc.leadingEdgeDp > riding.leadingEdgeDp)
         shot("05-edge-drag-short")
         f.up()
         SystemClock.sleep(1_500)
@@ -269,7 +283,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         val startX = width * 0.82f
         val travel = width * 0.5f
         val f = Finger()
-        val scene = measureFrames("pane-swipe-overview", JankBudget.Kind.GESTURE) {
+        val scene = traceFrames("pane-swipe-overview", JankBudget.Kind.GESTURE) {
             f.down(startX, y)
             f.moveBy(-travel, 0f, 900)
             f.hold(200)
@@ -619,6 +633,10 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
                 (summary?.let { "${it.frames} frames, ${it.janky} janky, p50 ${it.p50Ms} ms, p90 ${it.p90Ms} ms, p99 ${it.p99Ms} ms" } ?: "no summary") +
                 " (${scene.durationMs} ms; verdict ${scene.verdict})"
         )
+        // The renderer main thread's reading (the long tasks by CPU, the wall count beside them),
+        // or why the scene has none: the GESTURE budget's half the software GPU does not dominate.
+        val trace = scene.trace
+        finding("  ${scene.name} " + (trace?.describe() ?: "trace: none read (${scene.traceMissing ?: "no trace asked"})"))
     }
 
     private fun url(page: String): String = "http://127.0.0.1:$PORT/$page.html"
