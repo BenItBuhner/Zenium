@@ -219,6 +219,18 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         js("window.__zenHost&&__zenHost.hostEvent(${JSONObject.quote(name)},${JSONObject.quote(encodeResult(payload))})")
     }
 
+    /**
+     * [hostEvent] for a payload that is JSON text already, quoted into the script in one pass.
+     * The extension bridge's `ext.message` events carry a frame's message as it wrote it, up to
+     * hundreds of KB; through [hostEvent] such a payload was copied three more times (the
+     * `toString`, `JSONObject.quote`'s builder and its string) before the script was built and
+     * copied once again – the allocation that outran WebView 156's collector under a flood
+     * (`ext/BridgeForward.kt`).
+     */
+    fun hostEventJson(name: String, json: CharSequence) {
+        js(hostEventScript(name, json))
+    }
+
     /** Forward a physical key; the promise-free path relies on Kotlin having matched it already. */
     fun onKey(tabId: String?, input: JSONObject) {
         val tab = if (tabId == null) "null" else JSONObject.quote(tabId)
@@ -394,5 +406,17 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         const val PACKAGES_PATH = "/ext-packages/"
         /** Installed extension files, `<id>/<version>/<path>` (`extensionStoreIo.ts` FILES_PATH). */
         const val EXTENSION_FILES_PATH = "/ext-files/"
+
+        /**
+         * The script [hostEventJson] runs: `__zenHost.hostEvent(name, json)` with [json] as the
+         * body of one double-quoted literal (`Json.kt`'s `appendJsQuoted`), built in one pass
+         * into a builder sized for it. Pure, so `JsonTest` can read what reaches the WebView.
+         */
+        fun hostEventScript(name: String, json: CharSequence): String {
+            val script = StringBuilder(json.length + (json.length shr 3) + 96)
+            script.append("window.__zenHost&&__zenHost.hostEvent(").append(JSONObject.quote(name)).append(",\"")
+            script.appendJsQuoted(json)
+            return script.append("\")").toString()
+        }
     }
 }
