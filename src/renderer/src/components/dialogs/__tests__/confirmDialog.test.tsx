@@ -12,8 +12,9 @@ import { createRoot, type Root } from 'react-dom/client'
  * row for a body and the §9.11
  * footer; the container holding the focus as it opens with no ring (§9.22), Tab entering at the
  * first control and Shift+Tab at the verb with the keys wrapping at the ends, Enter from the
- * container or the check row activating the verb as the prompt's default button – a destructive
- * prompt's too, the coordinator's open question named in the component – Escape and the scrim
+ * container or the check row activating the verb as the prompt's default button – on a prompt
+ * whose verb is the primary; a destructive prompt has no default and swallows that Enter (§9.22
+ * as amended by the design lead on #392) – Escape and the scrim
  * as Cancel; the one-hop return (§9.5) waiting for an `inert` to lift, the window chrome's held
  * through the prompt's exit animation or a lower dialog's dropped a render later, and never
  * `body`; the motion the host's, a 120 ms fade under reduced motion (§11.3).
@@ -320,12 +321,46 @@ describe('the keyboard (§9.22)', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1)
   })
 
-  it('a destructive prompt answers Enter with its verb as well: one rule until the design language says otherwise (the named question)', async () => {
+  it('a destructive prompt has no default (§9.22 as amended): Enter from the held container, or its check row, is swallowed and confirms nothing; Tab reaches Cancel then the verb, whose own Enter is left to the button', async () => {
     const onConfirm = vi.fn()
-    render(<Prompt action="Delete" destructive onConfirm={onConfirm} />)
+    const onCancel = vi.fn()
+    render(
+      <Prompt
+        action="Delete"
+        destructive
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+        checkbox={{ label: 'Also forget its pages', checked: false, onChange: () => undefined }}
+      />
+    )
     await settle()
-    expect(press(dialog()!, 'Enter').defaultPrevented).toBe(true)
+    const d = dialog()!
+    expect(document.activeElement).toBe(d)
+    // The prompt takes the key so nothing beneath answers it, and does nothing with it.
+    expect(press(d, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(d)
+    const box = d.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    act(() => box.focus())
+    expect(press(box, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).not.toHaveBeenCalled()
+    // Tab enters at the row's box; the hops on to Cancel and the verb are the browser's own tab
+    // order (which happy-dom does not run – the drive walks them in the app). A focused button
+    // answers its own Enter and Space as any button – the prompt leaves those keys to it.
+    act(() => d.focus())
+    const [cancel, verb] = buttons(d)
+    expect(press(d, 'Tab').defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(box)
+    act(() => cancel.focus())
+    expect(press(cancel, 'Enter').defaultPrevented).toBe(false)
+    act(() => verb.focus())
+    expect(press(verb, 'Enter').defaultPrevented).toBe(false)
+    expect(press(verb, ' ').defaultPrevented).toBe(false)
+    expect(onConfirm).not.toHaveBeenCalled()
+    expect(onCancel).not.toHaveBeenCalled()
+    click(verb)
     expect(onConfirm).toHaveBeenCalledTimes(1)
+    expect(onCancel).not.toHaveBeenCalled()
   })
 
   it('Escape and a press on the scrim are Cancel; the buttons answer as themselves', async () => {
@@ -488,8 +523,11 @@ describe('the way back (§9.5, §9.22)', () => {
     expect(d.previousElementSibling).toBe(item)
     expect(d.style.width).toBe('320px')
     expect(d.querySelector('.zen-confirm-dialog-check')).not.toBeNull()
-    // The prompt answers and leaves; the item dialog is still covered as the cleanup runs.
-    press(d, 'Enter')
+    // The prompt answers through its verb (a destructive prompt has no default for Enter to
+    // reach) and leaves; the item dialog is still covered as the cleanup runs.
+    expect(press(d, 'Enter').defaultPrevented).toBe(true)
+    expect(dialog()).toBe(d)
+    click(buttons(d)[1])
     await settle()
     expect(dialog()).toBeNull()
     expect(item.hasAttribute('inert')).toBe(true)

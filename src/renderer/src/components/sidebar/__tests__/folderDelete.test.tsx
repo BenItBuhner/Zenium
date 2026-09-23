@@ -301,7 +301,7 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(uiStore.get().folderDeleteConfirm).toEqual({ folderId: 'g', keyboard: true })
   })
 
-  it('Enter from the container answers with Delete – the primitive’s default button, in the destructive form too (the named question) – and the page takes the keyboard back', async () => {
+  it('Enter from the container deletes nothing – a destructive prompt has no default (§9.22 as amended) – until Tab reaches Delete and its own Enter or Space answers; then the page takes the keyboard back', async () => {
     browserStore.set({ state: state([tab('home', null), tab('a', 'g')], [folder()]) })
     render(<Dialogs />)
     requestFolderDelete('g', true)
@@ -309,11 +309,27 @@ describe('the "Delete <folder>?" prompt', () => {
     const d = dialog()!
     expect(document.activeElement).toBe(d)
     run.mockClear()
-    act(() => {
-      d.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
-      )
-    })
+    const enter = (from: Element): KeyboardEvent => {
+      const e = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      act(() => {
+        from.dispatchEvent(e)
+      })
+      return e
+    }
+    // The double Return of a native menu path (Shift+F10, Up, Return, Return) lands here: the
+    // prompt swallows the key and the folder stands.
+    expect(enter(d).defaultPrevented).toBe(true)
+    expect(run).not.toHaveBeenCalledWith('folder.delete', expect.anything())
+    expect(uiStore.get().folderDeleteConfirm).toEqual({ folderId: 'g', keyboard: true })
+    expect(document.activeElement).toBe(d)
+    // Tab → Cancel → Delete; Enter on the focused Delete is the button's own (left to it, not
+    // prevented) – its click, which happy-dom does not synthesise from the key, is dispatched.
+    const [cancel, del] = buttons(d)
+    expect(pressTab(d).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(cancel)
+    act(() => del!.focus())
+    expect(enter(del!).defaultPrevented).toBe(false)
+    click(del!)
     expect(run).toHaveBeenCalledWith('folder.delete', { folderId: 'g', unpack: false })
     expect(uiStore.get().folderDeleteConfirm).toBeNull()
     // The header went with the folder: not the keyboard's way back, even from the keyboard.

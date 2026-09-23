@@ -31,7 +31,9 @@ export interface ConfirmDialogProps {
   action: string
   /**
    * A destructive confirmation has no primary (§6): its verb is a secondary in the danger ink
-   * beside Cancel. Otherwise the verb is the accent primary.
+   * beside Cancel, and it has no default key either (§9.22 as amended) – Enter from the held
+   * container does nothing; Delete answers only its own Enter or Space. Otherwise the verb is
+   * the accent primary and the prompt's default.
    */
   destructive?: boolean
   /**
@@ -43,7 +45,10 @@ export interface ConfirmDialogProps {
   checkbox?: { label: string; checked: boolean; onChange: (next: boolean) => void }
   /** Cancel: the button, Escape and a press on the scrim. */
   onCancel: () => void
-  /** The verb: its button, and Enter from the prompt's container or its check row. */
+  /**
+   * The verb: its button, and – on a prompt that is not `destructive` – Enter from the prompt's
+   * container or its check row.
+   */
   onConfirm: () => void
   returnFocus?: ConfirmReturnFocus
   /** A consumer's own `data-*` handles on the root (`data-window-prompt`, `data-folder-delete`). */
@@ -66,16 +71,21 @@ export interface ConfirmDialogProps {
  * the unreadable stack of §9"; §9.5: "never the 400 of the dialog it covers"). The place is read
  * once, as the prompt mounts, before its first paint.
  *
- * The keyboard (§9.22): the CONTAINER holds the focus as the prompt opens – its root is
- * `tabIndex -1`, the container the keyboard is sent to and cannot reach by Tab, so the chassis
- * draws no ring on it (`[role='alertdialog'][tabindex='-1']:focus-visible` in main.css) and no
- * verb is preselected. Tab enters at Cancel, Shift+Tab at the verb, and between them the keys
- * wrap at the ends (lib/popover.ts `wrapTab`). Enter from the container, or from the check row,
- * activates the verb as the prompt's default button – as Firefox's and Chrome's dialogs answer
- * Enter from the dialog itself – in the destructive form too (the coordinator's open question:
- * §6 gives a destructive prompt no primary, and this primitive keeps one rule until the design
- * language says otherwise); Enter on a button is that button's own. Escape and a press on the
- * scrim are Cancel.
+ * The keyboard (§9.22 as amended by the design lead on #392): the CONTAINER holds the focus as
+ * the prompt opens – its root is `tabIndex -1`, the container the keyboard is sent to and cannot
+ * reach by Tab, so the chassis draws no ring on it
+ * (`[role='alertdialog'][tabindex='-1']:focus-visible` in main.css) and no verb is preselected.
+ * Tab enters at Cancel, Shift+Tab at the verb, and between them the keys wrap at the ends
+ * (lib/popover.ts `wrapTab`). On a prompt whose verb is the primary (Quit), Enter from the
+ * container, or from the check row, activates the verb as the prompt's default button – as
+ * Firefox's and Chrome's dialogs answer Enter from the dialog itself, because they draw the verb
+ * as their primary. A DESTRUCTIVE prompt has no default: §6 draws it with no primary because
+ * the app recommends neither answer, and a default key is a recommendation as much as a fill –
+ * so Enter from its held container (or its check row) is inert, consumed and answering nothing;
+ * Tab reaches Cancel then the verb, and a focused button answers Enter and Space as any button
+ * does (a double Return through a native menu – Shift+F10, Up, Return, Return – lands on the
+ * container and deletes nothing). Enter on a button is that button's own in either form.
+ * Escape and a press on the scrim are Cancel.
  *
  * The return (§9.5, one hop down): as the prompt leaves, the keyboard goes back to where it
  * came from through `returnFocusTo`, which waits for an `inert` to lift – the window chrome's,
@@ -203,6 +213,9 @@ function ConfirmPanel({
         if (e.target instanceof Element && e.target.closest(OWN_ENTER)) return
         e.preventDefault()
         e.stopPropagation()
+        // No default on a destructive prompt (§9.22 as amended): the key is the prompt's to
+        // swallow – it reaches nothing beneath – and confirms nothing.
+        if (destructive) return
         confirm()
       }}
     >

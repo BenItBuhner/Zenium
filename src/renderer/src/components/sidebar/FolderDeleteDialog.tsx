@@ -16,9 +16,11 @@ import { ConfirmDialog } from '../dialogs/ConfirmDialog'
  * closes its tabs with it (each to Recently Closed); deleting a saved folder forgets the pages
  * it kept, which nothing brings back.
  *
- * The keyboard is the primitive's (§9.22 as the #340 verdict reads it): the prompt preselects
- * no verb and holds its container, Tab enters at Cancel, Shift+Tab at Delete, Enter answers
- * with the verb, Escape and the scrim are Cancel. A Cancel from the keyboard hands the keyboard
+ * The keyboard is the primitive's (§9.22 as the #340 verdict reads it, amended on #392): the
+ * prompt preselects no verb and holds its container, Tab enters at Cancel, Shift+Tab at Delete;
+ * a destructive prompt has no default, so Enter from the held container answers nothing – only
+ * a focused Delete's own Enter or Space deletes – and Escape and the scrim are Cancel. A Cancel
+ * from the keyboard hands the keyboard
  * back to the folder's header row (§9.5: one hop down) – which stands in the window chrome, kept
  * inert through the prompt's way out, so the primitive's return waits for that `inert` to lift;
  * a pointer's Cancel, and a Delete (whose header goes with the folder), give it to the page.
