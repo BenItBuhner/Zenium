@@ -82,6 +82,18 @@ function bubbleIsOpen(): boolean {
 }
 
 /**
+ * A modal surface the bubble must not sit over: a frame overlay (`overlay`), or the web
+ * capture's dimmed page (`capture` – its own §9.5 scrim holds the chrome inert, so a bubble over
+ * it could not be used; the save it makes is told on the capture's own toast, and the finished
+ * file waits on the button's badge). The bubble neither opens by itself over one nor stays up
+ * once one arrives.
+ */
+function modalUp(): boolean {
+  const ui = uiStore.get()
+  return ui.overlay !== 'none' || ui.capture !== null
+}
+
+/**
  * Open the bubble. The live page is captured first so its snapshot can stand in behind the
  * panel (hosts hide page views under chrome overlays). `takeFocus` is for opens the user asked
  * for; the auto-open leaves the keyboard where it was. The finished files are checked for
@@ -215,7 +227,7 @@ export function handleDownloadChange(change: DownloadChange, state: UIState): vo
   const settings = resolveDownloadSettings(state.settings)
   const desktop = !isPhone()
   const focused = state.window.focused
-  const clear = (): boolean => uiStore.get().overlay === 'none' && !bubbleIsOpen()
+  const clear = (): boolean => !modalUp() && !bubbleIsOpen()
   if (kind === 'started' || kind === 'done') downloadsUi.set({ sessionHadDownload: true })
   if (focused) {
     const words = downloadAnnouncement(item, kind)
@@ -280,7 +292,7 @@ function holdButton(until: number): void {
  */
 export function handleDownloadDanger(id: string, state: UIState): void {
   if (isPhone() || !state.window.focused) return
-  if (uiStore.get().overlay !== 'none') return
+  if (modalUp()) return
   if (bubbleIsOpen()) {
     downloadsUi.set({ highlightId: id, autoClose: false })
     return
@@ -315,7 +327,7 @@ export function bubbleItems(items: DownloadItem[], partial: string[] | null): Do
 
 /**
  * Wire the bubble to the engine's events and the rest of the chrome. Another surface (URL bar,
- * panel, drawer, menu, site info) replaces the bubble outright.
+ * panel, drawer, menu, site info, the web capture) replaces the bubble outright.
  */
 export function startDownloadsUi(): () => void {
   const withState = <T>(handler: (value: T, state: UIState) => void) => {
@@ -331,7 +343,12 @@ export function startDownloadsUi(): () => void {
     uiStore.subscribe(() => {
       const ui = uiStore.get()
       if (
-        (ui.urlbar.open || ui.overlay !== 'none' || ui.drawerOpen || ui.menu || ui.siteInfoOpen) &&
+        (ui.urlbar.open ||
+          ui.overlay !== 'none' ||
+          ui.capture !== null ||
+          ui.drawerOpen ||
+          ui.menu ||
+          ui.siteInfoOpen) &&
         downloadsUi.get().open
       )
         dismissDownloadBubble()

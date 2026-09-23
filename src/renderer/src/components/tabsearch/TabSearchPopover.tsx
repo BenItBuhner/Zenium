@@ -67,7 +67,9 @@ export function TabSearchLayer(): JSX.Element | null {
     if (!paneLive) closeTabSearch()
   }, [paneLive])
   if (!request || !state || !paneLive) return null
-  return <TabSearchPopover state={state} keyboard={request.keyboard} pick={pick} />
+  return (
+    <TabSearchPopover state={state} keyboard={request.keyboard} pick={pick} from={request.from} />
+  )
 }
 
 /**
@@ -98,15 +100,21 @@ export function TabSearchLayer(): JSX.Element | null {
  * that button (§9.20 below pose, 400 wide) and is placed inside the pane's box – the panes
  * beside it stay live, and a popover overhanging them would lie under their pages – so it
  * holds no picture of the page: the empty pane is the chrome's own surface.
+ *
+ * Opened from the horizontal strip's All tabs button (`from` `'strip'`, §9.37) it hangs from
+ * that button instead – end-aligned, since the button stands in the band's trailing half, its
+ * top flush with the band's bottom – and Escape hands the keyboard back to the button.
  */
 function TabSearchPopover({
   state,
   keyboard,
-  pick
+  pick,
+  from
 }: {
   state: UIState
   keyboard: boolean
   pick: TabPickRequest | undefined
+  from: 'strip' | undefined
 }): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -118,7 +126,7 @@ function TabSearchPopover({
   const [candidates, setCandidates] = useState<TabSearchCandidate[] | null>(null)
   /** The selected option, for the query it was picked under: a new query starts at the top. */
   const [selection, setSelection] = useState({ query: '', index: 0 })
-  const [box, setBox] = useState<PopoverBox>(() => measure(pick))
+  const [box, setBox] = useState<PopoverBox>(() => measure(pick, from))
   /** Where the keyboard goes when the popover leaves: the page, or nowhere (Escape, a chrome opener). */
   const focusOnClose = useRef<'page' | 'chrome'>(keyboard ? 'chrome' : 'page')
   /**
@@ -128,9 +136,11 @@ function TabSearchPopover({
   const [anchorControl] = useState<HTMLElement | null | undefined>(() =>
     pick
       ? pickButton(pick)
-      : keyboard
-        ? undefined
-        : document.querySelector<HTMLElement>(ANCHOR_CONTROL)
+      : from === 'strip'
+        ? allTabsButton()
+        : keyboard
+          ? undefined
+          : document.querySelector<HTMLElement>(ANCHOR_CONTROL)
   )
 
   // The page's view gives way to its picture while the popover overhangs it; the popover holds
@@ -170,11 +180,11 @@ function TabSearchPopover({
   // whose controls came or went (the pane's button, on a pane whose split was resized).
   useLayoutEffect(() => {
     const remeasure = (): void => {
-      const next = measure(pick)
+      const next = measure(pick, from)
       setBox((prev) => (sameBox(prev, next) ? prev : next))
     }
     remeasure()
-  }, [state, pick])
+  }, [state, pick, from])
 
   const group = pick ? state.splitGroups[pick.groupId] : undefined
   const rows = useMemo(
@@ -522,9 +532,31 @@ function pickButton(pick: TabPickRequest): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-pick-tab="${pick.paneTabId}"]`)
 }
 
-/** Where the popover goes now: from the pane's button in pick mode, else from the sidebar's row. */
-function measure(pick: TabPickRequest | undefined): PopoverBox {
-  return pick ? placeInPane(pick) : place(document.querySelector(NAV_ROW))
+/** The horizontal strip's All tabs button (§9.37), while the strip overflows. */
+function allTabsButton(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-strip-all-tabs]')
+}
+
+/**
+ * Where the popover goes now: from the pane's button in pick mode; from the strip's All tabs
+ * button when that opened it (the band is its bar: end-aligned under it); else from the
+ * sidebar's row.
+ */
+function measure(pick: TabPickRequest | undefined, from: 'strip' | undefined): PopoverBox {
+  if (pick) return placeInPane(pick)
+  if (from === 'strip') {
+    const button = allTabsButton()
+    const band = button?.closest('[data-tab-strip]') ?? null
+    if (button && band) {
+      return placePopover(
+        toRect(button.getBoundingClientRect()),
+        toRect(band.getBoundingClientRect()),
+        viewportSize(),
+        WIDTH
+      )
+    }
+  }
+  return place(document.querySelector(NAV_ROW))
 }
 
 /**

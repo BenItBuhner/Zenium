@@ -1,4 +1,5 @@
 import type {
+  FormFactor,
   KeyBinding,
   Platform,
   Shortcut,
@@ -315,6 +316,8 @@ interface Def {
   hidden?: boolean
   /** Closes or discards something the user cannot get back with one key. */
   destructive?: boolean
+  /** Listed on these chrome layouts alone (`Shortcut.layouts`). */
+  layouts?: FormFactor[]
   zen: Spec
   chrome: Spec
 }
@@ -937,12 +940,28 @@ const DEFS: Def[] = [
     label: 'Toggle Picture-in-Picture',
     ...both({ key: ']', mods: ACCEL_SHIFT })
   },
+  // Ctrl+Shift+S is Firefox's Take Screenshot and Edge's Web capture; Chrome has no chord for
+  // either. The Zen preset keeps Firefox's; the Chrome preset gives the chord to Web capture
+  // (Edge's, with its overlay) and leaves the one-key screenshot to the menus.
   {
     id: 'key_screenshot',
     action: 'page.screenshot',
     group: 'pageOperations',
     label: 'Take Screenshot',
-    ...both({ key: 's', mods: ACCEL_SHIFT })
+    zen: { key: 's', mods: ACCEL_SHIFT },
+    chrome: UNBOUND
+  },
+  {
+    id: 'key_webCapture',
+    action: 'capture.start',
+    group: 'pageOperations',
+    label: 'Web Capture',
+    // The desktop's overlay; the touch shells' Ctrl+Shift+S takes their screenshot instead
+    // (`capture.start` falls through to `page.screenshot` there), so their listings leave the
+    // row out rather than name a surface the chord does not open.
+    layouts: ['desktop'],
+    zen: UNBOUND,
+    chrome: { key: 's', mods: ACCEL_SHIFT }
   },
   {
     id: 'key_toggleMute',
@@ -1158,6 +1177,7 @@ export function defaultShortcuts(
     }
     if (def.unsupported) shortcut.unsupported = true
     if (def.hidden) shortcut.hidden = true
+    if (def.layouts) shortcut.layouts = [...def.layouts]
     return shortcut
   })
 }

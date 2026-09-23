@@ -1262,6 +1262,104 @@
   .zen-tab:hover .zen-tab-close {
     opacity: 1;
   }
+
+  /*
+   * The horizontal tab strip (design language v2 §9.37, `components/strip/TabStrip.tsx`): the
+   * sidebar's rows along the caption band. The band draws nothing of its own – no surface, no
+   * hairline – on the window family. A regular tab holds the strip's one width
+   * (`--zen-strip-tab-width`, 240 at rest, 120 at the floor, set on the regular list); a pinned
+   * tab is the 32 favicon-only square; a group's chip takes its own width up to a tab's. The
+   * regular region scrolls with no scrollbar (the edge fades say there is more).
+   */
+  .zen-tab-strip .zen-tab:not(.zen-split-seg) {
+    flex: none;
+  }
+  .zen-tab-strip [data-tab-list='regular'] .zen-tab:not([data-tab-folder], .zen-split-seg) {
+    width: var(--zen-strip-tab-width, 240px);
+  }
+  .zen-tab-strip .zen-tab[data-tab-folder] {
+    width: auto;
+    max-width: 240px;
+    gap: 8px;
+  }
+  .zen-tab-strip [data-strip-pinned] .zen-tab:not(.zen-split-seg) {
+    width: 32px;
+    justify-content: center;
+    padding: 0;
+  }
+  .zen-tab-strip .zen-split-row {
+    width: var(--zen-strip-tab-width, 240px);
+    flex: none;
+  }
+  .zen-strip-scroller {
+    scrollbar-width: none;
+  }
+  .zen-strip-scroller::-webkit-scrollbar {
+    display: none;
+  }
+  /*
+   * The trailing slot (§9.37): the sidebar's 24, one box. An inactive tab's state glyph sits in
+   * it at rest and the × takes its place while the pointer is on the tab – the glyph hidden, the
+   * × over it, nothing in the title moving. The active tab keeps its × always and carries its
+   * state glyph in flow ahead of the slot (`.zen-tab-state`), dropped under 160 where the ×
+   * alone fits (the tab is its own container). A tab whose slot went to its title
+   * (`data-slot="title"`) has no slot until the hover brings the × – Firefox's clip width.
+   */
+  .zen-tab-strip [data-tab-list='regular'] .zen-tab:not([data-tab-folder], .zen-split-seg) {
+    container-type: inline-size;
+  }
+  .zen-tab-slot {
+    position: relative;
+    display: block;
+    width: 24px;
+    height: 24px;
+    flex: none;
+  }
+  .zen-tab-slot > * {
+    position: absolute;
+    inset: 0;
+  }
+  .zen-tab-strip .zen-tab[data-active='true'] .zen-tab-close {
+    opacity: 1;
+  }
+  .zen-tab-strip .zen-tab:hover .zen-tab-slot > :not(.zen-tab-close) {
+    visibility: hidden;
+  }
+  .zen-tab-strip .zen-tab[data-slot='title']:not(:hover) .zen-tab-slot {
+    display: none;
+  }
+  .zen-tab-state {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+  }
+  @container (max-width: 159px) {
+    .zen-tab-state {
+      display: none;
+    }
+  }
+  /*
+   * A group in the strip: the shell spans the band's height so the group's colour can run as
+   * one continuous 2 px line in the band's top inset (y 2–4) from the chip's start to the last
+   * member's end, bridging the 4 px gaps – never a dash per pill; the fold runs the shell's
+   * width, clipped (`.zen-group-fold[data-folding]`). The shell's height and alignment are its
+   * utilities (`h-full items-end`): a components-layer rule would lose to them. The line wears
+   * the group's colour as the §9.14 pair (`data-group-rgb` with `groupColorVars` on itself, as
+   * the chip's glyph does), so the theme's pick recolours it with the dot.
+   */
+  .zen-strip-group-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 2px;
+    height: 2px;
+    border-radius: 1px;
+    background: rgb(var(--zen-group-rgb));
+    pointer-events: none;
+  }
   /* Zen 1.19: page-load progress runs along the bottom edge of the tab. */
   .zen-tab-progress {
     position: absolute;
@@ -5974,6 +6072,203 @@
 
 @layer components {
   /*
+   * Web capture (`capture/CaptureOverlay.tsx`, Edge's Web capture over services' capture
+   * engine). The overlay fills the frame dialog host's slot, so it is the content frame's box:
+   * the page's picture stands in under it (`CoverImage`), and the overlay draws the frame's
+   * one §9.5 dim itself (`--v2-scrim-modal`, the host's colour, the host asked to draw none:
+   * `ownScrim`) because the marquee is a hole in it – an even-odd `clip-path` polygon – through
+   * which the selected part of the page shows undimmed. The marquee's 2 px accent outline sits
+   * outside its box, on the dimmed part, so the hole is exactly what the engine gets; its size
+   * label is a 13 px pill (`--v2-panel`, the hairline, the control radius) at the marquee's
+   * bottom-right corner, placed by `labelPlacement`. A drag draws on the capturable field alone
+   * (`.zen-capture-field`, `clientFrame`: the frame less the classic scrollbar's gutters, from
+   * the frame's top-left corner in either text direction – the gutter is no page content and
+   * the engine never paints it), the box the cursor is a crosshair over; the gutter, dimmed
+   * under the scrim like the rest, keeps the default cursor and a press on it draws nothing.
+   * The toolbar is §9.20's floating toolbar: a panel of the page family
+   * at 6 padding – §9.16's control + 12, 44 tall – whose leading run is the 13/69 % hint (the
+   * state the page is in, `.zen-capture-hint`), then a 1 × 20 hairline at 8 / 8 (the 8 gap on
+   * both sides), the two §9.3 32 px action buttons with 16 glyphs (`.zen-capture-mode`,
+   * unlayered below) and the 28 icon close 8 after them; it hangs from the page's top edge at
+   * its centre, on whole pixels. A stage is
+   * the page's own box laid over the overlay for what centres on the page (the cards) or sits
+   * at its bottom edge (the toast): it takes no pointer of its own.
+   */
+  .zen-capture {
+    position: absolute;
+    inset: 0;
+    outline: none;
+    user-select: none;
+  }
+  .zen-capture-scrim {
+    position: absolute;
+    inset: 0;
+    background: var(--v2-scrim-modal);
+  }
+  /*
+   * Over the scrim, transparent, placed by the overlay (`left`/`top`/`width`/`height` inline):
+   * it takes the pointer so the crosshair is its own box's and the container above reads the
+   * drag off it; the marquee and its label, which take no pointer, sit over it.
+   */
+  .zen-capture-field {
+    position: absolute;
+    cursor: crosshair;
+  }
+  .zen-capture-marquee {
+    position: absolute;
+    /* Just outside the cut-out, over the dimmed part: the picture under the marquee is whole. */
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+    pointer-events: none;
+  }
+  .zen-capture-size {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 0 6px;
+    border-radius: var(--v2-radius-control);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  /*
+   * Placed by the overlay (`left`/`top` inline, §9.16): centred on the page's frame from its
+   * measured width and rounded to a whole window pixel, so the hairline and the separator each
+   * hold one column. Not a `translate: -50%` – from a width the font makes fractional it would
+   * rest the box on a fraction and smear both over two – and not `transform`, which the pop's
+   * keyframes own; the pop scales about the placed box and leaves it where it was.
+   */
+  .zen-capture-toolbar {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px;
+    cursor: default;
+  }
+  /*
+   * The hint (§9.20: a state the surface is in and cannot leave is told, never a pressed
+   * button): the small type at the deemphasised 69 %, its text 16 in from the panel's edge (the
+   * panel's 6 and its own 10), on one line; the hairline follows at the toolbar's 8.
+   */
+  .zen-capture-hint {
+    padding-left: 10px;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    white-space: nowrap;
+  }
+  .zen-capture-toolbar-sep {
+    flex: none;
+    width: 1px;
+    height: 20px;
+    background: var(--v2-border);
+  }
+  .zen-capture-stage {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  /*
+   * The cards take the pointer the stage does not. Their container is a `role="dialog"` at
+   * tabindex −1, so the chassis's dialog exemption (unlayered, by the `zen-v2-*` ring) paints no
+   * whole-card ring while it holds the keyboard; a layered `outline: none` here would not win.
+   */
+  .zen-capture-card {
+    pointer-events: auto;
+  }
+  /*
+   * The result card's picture: centred in the card's 16 gutter on an inner box (§2: the inner
+   * radius, the hairline, the fill behind a picture that is not the box's shape), sized by
+   * `fitPicture` – the picture at its own CSS size at most, scaled down to the card's column
+   * (364: the 400 less the card's hairline, the gutters and this box's own, `PICTURE_COLUMN`)
+   * and half the page's height, never up. The box is content-box at the picture's size, so it
+   * fits the column with its hairline and the picture fills it edge to edge; a box wider than
+   * the column would be shrunk border-box and show a band of the fill inside the hairline. The
+   * fallback row follows on the row primitive (§9.33's status anatomy in the warn ink) 8 under it.
+   */
+  .zen-capture-picture {
+    display: flex;
+    justify-content: center;
+    padding: 0 16px;
+  }
+  .zen-capture-picture-box {
+    box-sizing: content-box;
+    overflow: hidden;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-fill);
+  }
+  .zen-capture-picture-box > img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .zen-capture-note {
+    margin-top: 8px;
+  }
+  /*
+   * The toast (§9.33): the message card 8 px inside the page's bottom edge, centred, at the
+   * notice width on a mouse (320: "Copied" across a 1600 px frame would be a bar, not a card),
+   * up from the edge on the toast's own rise. Centred by its auto margins between the stage's
+   * edges, not a `translate` (the rise's keyframes own `transform`, and a translated box rests
+   * where a fraction leaves it – an odd frame width would smear the hairline, §9.16 – where a
+   * laid-out box paints on whole pixels); under reduced motion the 120 ms fade in place
+   * (§11.3), `!important` past the global rule at the foot.
+   */
+  .zen-capture-toast {
+    position: absolute;
+    bottom: var(--zen-message-inset);
+    left: 0;
+    right: 0;
+    margin: 0 auto;
+    width: min(320px, 100% - 16px);
+    /* The toast's rise, the one number the sidebar's `.zen-toast` runs it at. */
+    animation: zen-toast-in 180ms var(--zen-ease);
+  }
+  /* One line (§9.33): the line never breaks; a folder's long name ends in an ellipsis. */
+  .zen-capture-toast .zen-message-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /*
+   * The stage passes the pointer through; the toast's one action takes it back – the action
+   * alone, so the toast's words never stand between a drag and the page under them.
+   */
+  .zen-capture-toast .zen-message-button {
+    pointer-events: auto;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-capture-toast {
+      animation: zen-fade 120ms var(--zen-ease) !important;
+    }
+  }
+}
+
+/*
+ * What the capture toolbar's action buttons add to the shared v2 button (§9.34: a modifier
+ * beside the primitive, unlayered like the scan sheet's torch chip above it): the 8 px between
+ * glyph and label, and the off state – `aria-disabled` where the host cannot say where the page
+ * is scrolled to: §9.30's .4 on the whole control with no fill on hover or press, the pointer
+ * kept so the title that says why is reachable (the primitive's `:disabled` would take it).
+ */
+.zen-v2-button.zen-capture-mode {
+  gap: 8px;
+}
+.zen-v2-button.zen-capture-mode[aria-disabled='true'] {
+  opacity: 0.4;
+  background: var(--v2-fill);
+  transform: none;
+}
+
+@layer components {
+  /*
    * The desktop's media hub (`media/MediaHubPopover.tsx`, MW-16: Chrome's global media
    * controls) as a §9.20 popover at 400 under the toolbar row. It opens on its cards with no
    * title block, like a menu (§9.7: the cards name themselves; the hub's name is the toolbar
@@ -9581,6 +9876,54 @@
   white-space: nowrap;
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
+}
+/*
+ * Look and Feel › Layout (components/pages/settings/LayoutCards.tsx; §9.37, §10.4's image radio
+ * cards, Zen's Browser layout): the label over four picture cards in one row of the column, 8
+ * apart, each the shared card radio (the 2 px accent outline on the choice) holding a line
+ * drawing of the window at 8 : 5 in the page's ink and fill, its caption 13 centred beneath.
+ * Under 560 (the block is the query's container) the row folds to two columns, §10.4's phone
+ * grid.
+ */
+.zen-settings-layout-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  container-type: inline-size;
+}
+.zen-settings-layout-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+@container (max-width: 560px) {
+  .zen-settings-layout-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.zen-settings-layout-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+}
+/*
+ * §9.37 names the captions, and Sidebar and top toolbar is wider than a card: the caption wraps
+ * to two balanced lines instead of the icon grid's ellipsis, and the row's stretch keeps the
+ * four cards one height.
+ */
+.zen-settings-layout-card > .zen-settings-icon-caption {
+  white-space: normal;
+  text-align: center;
+  text-wrap: balance;
+}
+.zen-settings-layout-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 8 / 5;
+  color: var(--v2-text);
 }
 .zen-settings-swatches {
   display: flex;

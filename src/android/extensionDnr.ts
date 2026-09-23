@@ -100,6 +100,14 @@ export interface DnrHost {
   /** Extensions using the API, most recently installed first (Chrome ranks newer ones' rules higher). */
   installOrder(): string[]
   warn(message: string): void
+  /**
+   * Brackets a rule update whose sets the sink receives during `update`: settles once the
+   * host's request engine applies them, so a request made after a rule update's answer meets
+   * the rules, as in Chrome (User-Agent Switcher reloads the tab the moment
+   * `updateSessionRules` settles). A host whose engine takes the sink's sets in place leaves it
+   * out and the update's answer stands.
+   */
+  applyRules?(update: () => Promise<void>): Promise<void>
 }
 
 /** The engine's decision on one request, as the Kotlin observer reports it (`ext.request`). */
@@ -172,19 +180,19 @@ export class AndroidDeclarativeNetRequest {
     const o = args[0]
     switch (method) {
       case 'updateDynamicRules':
-        return api.updateDynamicRules(ruleUpdate(o))
+        return this.applied(ext.record.id, () => api.updateDynamicRules(ruleUpdate(o)))
       case 'getDynamicRules':
         return api.getDynamicRules(rulesFilter(o))
       case 'updateSessionRules':
-        return api.updateSessionRules(ruleUpdate(o))
+        return this.applied(ext.record.id, () => api.updateSessionRules(ruleUpdate(o)))
       case 'getSessionRules':
         return api.getSessionRules(rulesFilter(o))
       case 'updateEnabledRulesets':
-        return api.updateEnabledRulesets(rulesetUpdate(o))
+        return this.applied(ext.record.id, () => api.updateEnabledRulesets(rulesetUpdate(o)))
       case 'getEnabledRulesets':
         return api.getEnabledRulesets()
       case 'updateStaticRules':
-        return api.updateStaticRules(staticOptions(o))
+        return this.applied(ext.record.id, () => api.updateStaticRules(staticOptions(o)))
       case 'getDisabledRuleIds':
         return api.getDisabledRuleIds({ rulesetId: staticOptions(o).rulesetId })
       case 'getAvailableStaticRuleCount':
@@ -372,6 +380,23 @@ export class AndroidDeclarativeNetRequest {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /**
+   * Chrome answers `updateSessionRules`, `updateDynamicRules`, `updateEnabledRulesets` and
+   * `updateStaticRules` once the rules are in effect, and extensions act on the answer: User-Agent
+   * Switcher reloads the tab as soon as its session rule's promise settles. The core's state
+   * changes first and notifies synchronously, so the sync its change started (`sync`) is in
+   * `syncing` when the update's own promise settles; the answer waits for that sync to reach the
+   * sink and then for the host to apply what the sink holds (`applyRules`), so a request made
+   * after the answer meets the rules.
+   */
+  private applied(extensionId: string, update: () => Promise<void>): Promise<void> {
+    const synced = async (): Promise<void> => {
+      await update()
+      await (this.syncing.get(extensionId) ?? Promise.resolve())
+    }
+    return this.host.applyRules ? this.host.applyRules(synced) : synced()
+  }
 
   private sync(extensionId: string): void {
     const entry = this.entries.get(extensionId)

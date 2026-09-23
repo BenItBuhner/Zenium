@@ -74,6 +74,11 @@ export interface UnitEnvironment {
   isolatedWorlds: boolean
   /** `userScripts.configureWorld({ messaging })`: whether user scripts get `runtime.sendMessage`. */
   userScriptMessaging: boolean
+  /**
+   * Chars a serialized message may have on the bridge (the host's, from its heap); absent, the
+   * engine keeps Chrome's 64 MB. See `EngineConfig.maxMessageLength`.
+   */
+  messageLimit?: number
 }
 
 /**
@@ -169,7 +174,8 @@ export function planUnits(
         uiLanguage: env.uiLanguage,
         world: draft.world,
         extension: { ...boot, groups, isolation },
-        ...(draft.world === 'user' ? { userScriptMessaging: env.userScriptMessaging } : {})
+        ...(draft.world === 'user' ? { userScriptMessaging: env.userScriptMessaging } : {}),
+        ...(env.messageLimit ? { messageLimit: env.messageLimit } : {})
       }
       return {
         key: unitKey(draft.world, draft.origins),
@@ -193,7 +199,8 @@ export function planUnits(
     kind: 'page',
     token: env.token,
     uiLanguage: env.uiLanguage,
-    extension: { ...boot, groups: [] }
+    extension: { ...boot, groups: [] },
+    ...(env.messageLimit ? { messageLimit: env.messageLimit } : {})
   }
   return {
     id: boot.id,
