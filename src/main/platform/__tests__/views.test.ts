@@ -15,7 +15,8 @@ import {
 } from '../pageDebugger'
 import {
   ElectronTabViewHost,
-  fullPagePaint,
+  fullPageCut,
+  protocolClip,
   pageViewportFrom,
   type ElectronTabView
 } from '../views'
@@ -154,7 +155,9 @@ vi.mock('electron', async () => {
   const nativeTheme = Object.assign(new EventEmitter().setMaxListeners(0), {
     shouldUseDarkColors: false
   })
-  return { WebContentsView: FakeWebContentsView, nativeTheme }
+  /** One plain display: a full-page paint's cut is the CSS-pixel one. */
+  const screen = { getAllDisplays: () => [{ scaleFactor: 1 }] }
+  return { WebContentsView: FakeWebContentsView, nativeTheme, screen }
 })
 
 /** A window's chrome page: the keyboard's home when no page on screen has it. */
@@ -995,22 +998,69 @@ describe('ElectronTabView.snapshot', () => {
  * does, and cuts it so the painted picture stays under Chromium's texture height whatever the
  * zoom and the display's scale (the protocol multiplies the clip by the latter on its own).
  */
-describe('fullPagePaint', () => {
-  it('paints at the page zoom and keeps the agents’ cut at 100 percent on a plain display', () => {
-    expect(fullPagePaint(1, 1)).toEqual({ scale: 1, maxHeight: 12_000 })
-    expect(fullPagePaint(1.25, 1)).toEqual({ scale: 1.25, maxHeight: 12_000 })
+describe('fullPageCut', () => {
+  it('keeps the agents’ cut at 100 percent on a plain display', () => {
+    expect(fullPageCut(1, 1)).toBe(12_000)
+    expect(fullPageCut(1.25, 1)).toBe(12_000)
   })
 
   it('shortens the cut as the zoom and the display scale grow, in CSS pixels', () => {
-    expect(fullPagePaint(2, 1)).toEqual({ scale: 2, maxHeight: 8_000 })
+    expect(fullPageCut(2, 1)).toBe(8_000)
     // A Retina display: the protocol paints twice the CSS pixels.
-    expect(fullPagePaint(1, 2)).toEqual({ scale: 1, maxHeight: 8_000 })
-    expect(fullPagePaint(1.5, 2)).toEqual({ scale: 1.5, maxHeight: 5_333 })
+    expect(fullPageCut(1, 2)).toBe(8_000)
+    expect(fullPageCut(1.5, 2)).toBe(5_333)
   })
 
   it('treats a zoom or scale it cannot read as 100 percent', () => {
-    expect(fullPagePaint(Number.NaN, 0)).toEqual({ scale: 1, maxHeight: 12_000 })
-    expect(fullPagePaint(-1, Number.POSITIVE_INFINITY)).toEqual({ scale: 1, maxHeight: 12_000 })
+    expect(fullPageCut(Number.NaN, 0)).toBe(12_000)
+    expect(fullPageCut(-1, Number.POSITIVE_INFINITY)).toBe(12_000)
+  })
+})
+
+/**
+ * `Page.captureScreenshot` reads its clip in the page's zoomed pixels (measured in Electron 44:
+ * a CSS-pixel clip at 150 % painted the wrong area, and `scale: zoom` only enlarged it), so a
+ * rectangle of CSS pixels is multiplied by the zoom and asked for at scale 1 – the protocol
+ * adds the display's scale on its own, and the picture is the rectangle at the page's device
+ * pixel ratio.
+ */
+describe('protocolClip', () => {
+  it('is the CSS rectangle itself at 100 percent', () => {
+    expect(protocolClip({ x: 200, y: 900, width: 300, height: 200 }, 1)).toEqual({
+      x: 200,
+      y: 900,
+      width: 300,
+      height: 200,
+      scale: 1
+    })
+  })
+
+  it('multiplies the rectangle by the zoom and keeps scale 1', () => {
+    expect(protocolClip({ x: 200, y: 900, width: 300, height: 200 }, 1.5)).toEqual({
+      x: 300,
+      y: 1350,
+      width: 450,
+      height: 300,
+      scale: 1
+    })
+    expect(protocolClip({ x: 200, y: 900, width: 300, height: 200 }, 0.8)).toEqual({
+      x: 160,
+      y: 720,
+      width: 240,
+      height: 160,
+      scale: 1
+    })
+  })
+
+  it('treats a zoom it cannot read as 100 percent', () => {
+    expect(protocolClip({ x: 1, y: 2, width: 3, height: 4 }, Number.NaN)).toEqual({
+      x: 1,
+      y: 2,
+      width: 3,
+      height: 4,
+      scale: 1
+    })
+    expect(protocolClip({ x: 1, y: 2, width: 3, height: 4 }, 0).scale).toBe(1)
   })
 })
 
@@ -1047,9 +1097,21 @@ describe('ElectronTabView.capture', () => {
     return { image: make(width, height), crops }
   }
 
+  /** A PNG's first 24 bytes – signature and IHDR – declaring `width` × `height`. */
+  const pngHeader = (width: number, height: number): Buffer => {
+    const bytes = Buffer.alloc(24)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes, 0)
+    bytes.writeUInt32BE(13, 8)
+    bytes.write('IHDR', 12, 'latin1')
+    bytes.writeUInt32BE(width, 16)
+    bytes.writeUInt32BE(height, 20)
+    return bytes
+  }
+
   const tabView = (
     geometry: Record<string, unknown> | null = GEOMETRY,
-    paint = bitmap(1280, 720)
+    paint = bitmap(1280, 720),
+    devtools: { zoom?: number; png?: Buffer } = {}
   ): {
     view: ElectronTabView
     wc: Electron.WebContents
@@ -1069,6 +1131,7 @@ describe('ElectronTabView.capture', () => {
     const wc = (view as unknown as { webContents: Electron.WebContents }).webContents
     Object.assign(wc, {
       capturePage: () => Promise.resolve(paint.image),
+      getZoomFactor: () => devtools.zoom ?? 1,
       executeJavaScriptInIsolatedWorld: () =>
         geometry === null
           ? Promise.reject(new Error('Script failed to execute'))
@@ -1088,9 +1151,12 @@ describe('ElectronTabView.capture', () => {
     dbg.sendCommand = async (method, params) => {
       const result = await send(method, params)
       if (method === 'Page.getLayoutMetrics')
-        return { cssContentSize: { width: 1280, height: 4000 } }
+        return {
+          cssContentSize: { width: 1280, height: 4000 },
+          contentSize: { width: 1280 * (devtools.zoom ?? 1), height: 4000 * (devtools.zoom ?? 1) }
+        }
       if (method === 'Page.captureScreenshot')
-        return { data: Buffer.from('devtools-png').toString('base64') }
+        return { data: (devtools.png ?? Buffer.from('devtools-png')).toString('base64') }
       return result
     }
     return { view, wc, dbg, paint }
@@ -1125,6 +1191,38 @@ describe('ElectronTabView.capture', () => {
     // The session was Zenium's for the paint and is closed after it.
     expect(dbg.log).toContain('attach')
     expect(dbg.log[dbg.log.length - 1]).toBe('detach')
+  })
+
+  it('asks for a zoomed page’s region in its zoomed pixels, and reports the picture’s own size', async () => {
+    // 150 % on a 2x display: the protocol paints the 450 × 300 zoomed pixels at the display's
+    // scale, 900 × 600 device pixels – the region at the page's device pixel ratio of 3.
+    const { view, dbg } = tabView(GEOMETRY, bitmap(1280, 720), {
+      zoom: 1.5,
+      png: pngHeader(900, 600)
+    })
+    const result = await view.capture({
+      mode: 'region',
+      region: { x: 200, y: 900, width: 300, height: 200 },
+      format: 'png'
+    })
+    const shot = dbg.commands.find((c) => c.method === 'Page.captureScreenshot')
+    expect(shot?.params?.clip).toEqual({ x: 300, y: 1350, width: 450, height: 300, scale: 1 })
+    expect(result).toMatchObject({ width: 900, height: 600, mimeType: 'image/png' })
+    expect(result?.fallback).toBeUndefined()
+  })
+
+  it('paints a full page as the document’s CSS size times the zoom, cut where the texture height says', async () => {
+    const { view, dbg } = tabView(GEOMETRY, bitmap(1280, 720), { zoom: 1.5 })
+    const result = await view.capture({ mode: 'fullPage', format: 'jpeg' })
+    const shot = dbg.commands.find((c) => c.method === 'Page.captureScreenshot')
+    expect(shot?.params).toMatchObject({
+      format: 'jpeg',
+      quality: 75,
+      clip: { x: 0, y: 0, width: 1920, height: 6000, scale: 1 },
+      captureBeyondViewport: true
+    })
+    // No header to read (the fake paint is not a picture): the clip's size stands in.
+    expect(result).toMatchObject({ width: 1920, height: 6000, mimeType: 'image/jpeg' })
   })
 
   it('leaves a page an extension’s chrome.debugger holds alone: the viewport paint cropped to the region, marked as the stand-in', async () => {

@@ -53,7 +53,7 @@ import {
 } from '../../shared/fonts'
 import { defer } from '../../core/platform'
 import { standinScale } from '../../shared/pageStandin'
-import type { PageViewport } from '../../shared/capture'
+import { imageDimensions, type PageViewport } from '../../shared/capture'
 import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
 import type { PdfRenderOptions } from '../../shared/print'
 import type {
@@ -1027,10 +1027,7 @@ export class ElectronTabView implements TabView {
           const capture = await this.captureWithDevtools(
             { mode: 'fullPage', format: 'png' },
             'image/png',
-            fullPagePaint(
-              this.wc.getZoomFactor(),
-              Math.max(...screen.getAllDisplays().map((d) => d.scaleFactor), 1)
-            )
+            this.fullPageCut()
           )
           png = Buffer.from(capture.data, 'base64')
         } catch {
@@ -1431,7 +1428,7 @@ export class ElectronTabView implements TabView {
     if (options.mode !== 'viewport') {
       if (!hasForeignDebuggerOwner(wc.id)) {
         try {
-          return await this.captureWithDevtools(options, mimeType)
+          return await this.captureWithDevtools(options, mimeType, this.fullPageCut())
         } catch {
           /* fall through to capturePage */
         }
@@ -1543,33 +1540,36 @@ export class ElectronTabView implements TabView {
   }
 
   /**
-   * `paint.scale` multiplies the CSS pixels of the clip (1 for the agents, who reason in CSS
-   * pixels; the page zoom for a person's full-page screenshot); `paint.maxHeight` cuts the
-   * document in CSS pixels.
+   * A full page or a region of the document through `Page.captureScreenshot`. The rectangle is
+   * measured in CSS pixels of the document (`AgentCaptureOptions.region`, the layout metrics'
+   * `cssContentSize`) and handed over as `protocolClip` has it – in the page's zoomed pixels,
+   * which is how Chromium reads a clip – so the picture is the rectangle at the page's device
+   * pixel ratio, as `capturePage`'s bitmap is, whatever the zoom. `maxHeight` cuts a full page
+   * in CSS pixels. The size reported is the picture's own, from its header.
    */
   private captureWithDevtools(
     options: AgentCaptureOptions,
     mimeType: string,
-    paint: { scale: number; maxHeight: number } = { scale: 1, maxHeight: MAX_CAPTURE_HEIGHT }
+    maxHeight = MAX_CAPTURE_HEIGHT
   ): Promise<AgentCapture> {
     return this.withDebugger(async (dbg) => {
+      const zoom = zoomFactorOf(this.wc)
       const metrics = (await dbg.sendCommand('Page.getLayoutMetrics')) as {
         cssContentSize?: { width: number; height: number }
         contentSize?: { width: number; height: number }
-        cssLayoutViewport?: { clientWidth: number; clientHeight: number }
       }
-      const content = metrics.cssContentSize ?? metrics.contentSize ?? { width: 0, height: 0 }
-      const maxHeight = Math.max(1, Math.min(paint.maxHeight, MAX_CAPTURE_HEIGHT))
-      const clip =
+      const content = cssContentSize(metrics, zoom)
+      const cut = Math.max(1, Math.min(maxHeight, MAX_CAPTURE_HEIGHT))
+      const area =
         options.mode === 'region' && options.region
-          ? { ...options.region, scale: 1 }
+          ? options.region
           : {
               x: 0,
               y: 0,
               width: Math.max(1, Math.round(content.width)),
-              height: Math.max(1, Math.min(Math.round(content.height), maxHeight)),
-              scale: paint.scale
+              height: Math.max(1, Math.min(Math.round(content.height), cut))
             }
+      const clip = protocolClip(area, zoom)
       const result = (await dbg.sendCommand('Page.captureScreenshot', {
         format: options.format,
         quality: options.format === 'jpeg' ? 75 : undefined,
@@ -1577,13 +1577,26 @@ export class ElectronTabView implements TabView {
         captureBeyondViewport: true,
         fromSurface: true
       })) as { data: string }
-      return {
-        data: result.data,
-        mimeType,
+      const size = imageDimensions(Buffer.from(result.data, 'base64')) ?? {
         width: Math.round(clip.width),
         height: Math.round(clip.height)
       }
+      return { data: result.data, mimeType, width: size.width, height: size.height }
     })
+  }
+
+  /** Where this page's full-page paint is cut, for its zoom on the most scaled display. */
+  private fullPageCut(): number {
+    return fullPageCut(zoomFactorOf(this.wc), largestDisplayScale())
+  }
+}
+
+/** The most scaled display's factor; 1 when the screen module cannot say (before the app is ready). */
+function largestDisplayScale(): number {
+  try {
+    return Math.max(...screen.getAllDisplays().map((d) => d.scaleFactor), 1)
+  } catch {
+    return 1
   }
 }
 
@@ -1592,21 +1605,66 @@ const MAX_CAPTURE_HEIGHT = 12_000
 /** The same limit in painted pixels, for a capture at the page's zoom on a scaled display. */
 const MAX_CAPTURE_PIXELS = 16_000
 
+/** The page's zoom factor, 1 for a view that cannot say (destroyed, or a host without one). */
+function zoomFactorOf(wc: WebContents): number {
+  try {
+    const zoom = wc.getZoomFactor()
+    return Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  } catch {
+    return 1
+  }
+}
+
 /**
- * How a person's full-page screenshot is painted: at the page's zoom, as the visible area's
- * `capturePage` is (the protocol adds the display's scale on its own), and cut in CSS pixels
- * so the whole picture stays under Chromium's texture height on the most scaled display.
+ * The document's size in CSS pixels from `Page.getLayoutMetrics`: `cssContentSize` says so
+ * directly; an older protocol's `contentSize` is in the page's zoomed pixels and is divided by
+ * the zoom.
  */
-export function fullPagePaint(
-  zoom: number,
-  displayScale: number
-): { scale: number; maxHeight: number } {
+function cssContentSize(
+  metrics: {
+    cssContentSize?: { width: number; height: number }
+    contentSize?: { width: number; height: number }
+  },
+  zoom: number
+): { width: number; height: number } {
+  if (metrics.cssContentSize) return metrics.cssContentSize
+  if (metrics.contentSize)
+    return { width: metrics.contentSize.width / zoom, height: metrics.contentSize.height / zoom }
+  return { width: 0, height: 0 }
+}
+
+/**
+ * A rectangle of the document, in CSS pixels, as `Page.captureScreenshot`'s clip. Chromium lays
+ * a zoomed page out in CSS pixels times the zoom factor and reads the clip in those (the page's
+ * zoomed pixels: at 150 % the box at CSS (200, 900) is asked for at (300, 1350)); `scale` stays
+ * 1 because the protocol adds the display's scale on its own, so the picture comes back at the
+ * page's device pixel ratio – the display's scale times the zoom, `window.devicePixelRatio` –
+ * as `capturePage`'s bitmap does. Measured in Electron 44 (Chromium 152): a CSS-pixel clip at
+ * 150 % painted the area two thirds of the way to the box, and `scale: zoom` only enlarged it.
+ */
+export function protocolClip(
+  rect: { x: number; y: number; width: number; height: number },
+  zoom: number
+): { x: number; y: number; width: number; height: number; scale: 1 } {
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  return {
+    x: rect.x * z,
+    y: rect.y * z,
+    width: rect.width * z,
+    height: rect.height * z,
+    scale: 1
+  }
+}
+
+/**
+ * Where a full-page paint is cut, in CSS pixels: at `MAX_CAPTURE_HEIGHT`, or sooner so the
+ * painted picture – the document at the page's zoom times the display's scale – stays under
+ * Chromium's texture height on the most scaled display.
+ */
+export function fullPageCut(zoom: number, displayScale: number): number {
   const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
   const d = Number.isFinite(displayScale) && displayScale > 0 ? displayScale : 1
-  return {
-    scale: z,
-    maxHeight: Math.max(1, Math.min(MAX_CAPTURE_HEIGHT, Math.floor(MAX_CAPTURE_PIXELS / (z * d))))
-  }
+  return Math.max(1, Math.min(MAX_CAPTURE_HEIGHT, Math.floor(MAX_CAPTURE_PIXELS / (z * d))))
 }
 
 /** A page that has not finished loading holds script evaluation; the geometry read gives up after this. */
