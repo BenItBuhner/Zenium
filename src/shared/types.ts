@@ -2005,7 +2005,14 @@ export interface Shortcut {
 // Settings
 // ---------------------------------------------------------------------------
 
-export type ToolbarLayout = 'single' | 'multiple' | 'collapsed'
+/**
+ * Where the desktop chrome puts its tabs and its navigation (Settings › Look and Feel › Layout,
+ * design language v2 §9.37, §10.4; Zen 1.22's Browser layout): `single` – the sidebar holds
+ * everything; `multiple` – a top toolbar holds navigation over the sidebar; `collapsed` – the
+ * sidebar starts as its icon rail; `horizontal` – the tab row runs along the caption band, the
+ * toolbar row under it, and the sidebar is the 56 rail beside the frame.
+ */
+export type ToolbarLayout = 'single' | 'multiple' | 'collapsed' | 'horizontal'
 export type UrlbarBehavior = 'float-typing' | 'always-float' | 'normal'
 export type GlanceTrigger = 'alt' | 'ctrl' | 'shift'
 export type PinnedCloseBehavior =
