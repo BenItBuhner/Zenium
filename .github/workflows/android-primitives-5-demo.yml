@@ -19,9 +19,6 @@ name: Android primitives pass 5 demo
 # android-emulator-demo.yml; this file picks the driver and the engine.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/android-primitives-pass-5-a6ba
 
 permissions:
   contents: read
