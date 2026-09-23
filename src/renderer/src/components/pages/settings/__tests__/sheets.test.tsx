@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { SheetFooter } from '../blocks'
-import type { ActionRow, DetailRow, ItemRow, RowGroup, ValueRow } from '../model'
+import type { ActionRow, DetailRow, FieldRow, ItemRow, RowGroup, ValueRow } from '../model'
 import { SheetStack } from '../sheets'
 
 /*
@@ -481,5 +481,91 @@ describe('a Settings sheet whose form claims the footer', () => {
     expect(frames.scheduled).toBe(true)
     rest()
     expect(counter.measures()).toBeGreaterThan(before)
+  })
+})
+
+/*
+ * Where the focus lands as a Settings sheet opens (§9.22): a confirmation is a title-and-notice
+ * sheet, so it holds its container – named by the question, described by the paragraph – and
+ * never Cancel, its first button (the failure the section names: the way out read first); a
+ * field sheet, whose first control is a text field, holds its container too – the chassis's own
+ * exception, the keyboard must not come up with the sheet; a picker opens on its checked option.
+ */
+describe('where a Settings sheet lands the focus (§9.22)', () => {
+  function stack(requests: Parameters<typeof SheetStack>[0]['requests'], rows: RowGroup[]): void {
+    render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={requests}
+          groups={rows}
+          ctx={{ open: () => undefined }}
+          closeTop={() => undefined}
+        />
+      </FrameDialogHost>
+    )
+  }
+  const sheetEl = (): HTMLElement => mount!.querySelector<HTMLElement>('.zen-sheet[role="dialog"]')!
+  const buttons = (): string[] =>
+    [...sheetEl().querySelectorAll<HTMLButtonElement>('.zen-settings-sheet-actions button')].map(
+      (b) => b.textContent ?? ''
+    )
+
+  it('a confirmation holds its container, never Cancel', async () => {
+    const onPress = vi.fn()
+    const row: ActionRow = {
+      kind: 'action',
+      id: 'clear-data',
+      label: 'Clear browsing data',
+      destructive: true,
+      confirm: {
+        title: 'Clear browsing data?',
+        description: 'History, cookies and site data go.',
+        action: 'Clear'
+      },
+      onPress
+    }
+    stack([{ kind: 'confirm', rowId: row.id }], [{ id: 'privacy', heading: null, rows: [row] }])
+    await settle()
+    rest()
+    const sheet = sheetEl()
+    expect(buttons()).toEqual(['Cancel', 'Clear'])
+    expect(document.activeElement).toBe(sheet)
+    expect(sheet.getAttribute('tabindex')).toBe('-1')
+    const block = sheet.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    expect(block.querySelector('h2')?.textContent).toBe('Clear browsing data?')
+    expect(sheet.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
+    expect(sheet.getAttribute('aria-describedby')).toBe(block.querySelector('p')!.id)
+    expect(onPress).not.toHaveBeenCalled()
+  })
+
+  it('a field sheet holds its container: its text field never takes the focus on its own', async () => {
+    const row: FieldRow = {
+      kind: 'field',
+      id: 'name',
+      label: 'Device name',
+      value: 'Pixel',
+      input: 'text',
+      onCommit: () => undefined
+    }
+    stack([{ kind: 'field', rowId: 'name' }], [{ id: 'sync', heading: null, rows: [row] }])
+    await settle()
+    rest()
+    const sheet = sheetEl()
+    const field = sheet.querySelector<HTMLInputElement>('input')
+    expect(field).not.toBeNull()
+    expect(document.activeElement).toBe(sheet)
+    expect(document.activeElement).not.toBe(field)
+  })
+
+  it('a picker opens on its checked option', async () => {
+    stack(
+      [{ kind: 'options', rowId: 'engine' }],
+      groups(() => undefined)
+    )
+    await settle()
+    rest()
+    const checked = options().find((o) => o.getAttribute('aria-checked') === 'true')
+    expect(checked?.textContent).toBe('Google')
+    expect(document.activeElement).toBe(checked)
   })
 })

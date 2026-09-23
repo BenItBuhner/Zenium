@@ -518,6 +518,14 @@
       "estimate": 2.5
     },
     {
+      "id": "primitives-4",
+      "class": "PrimitivesPass4Demo",
+      "shard": "phone-c",
+      "mirrors": "android-primitives-4-demo.yml",
+      "dir": "primitives-4-demo",
+      "estimate": 3.5
+    },
+    {
       "id": "cert-interstitial",
       "class": "CertInterstitialDemo",
       "shard": "phone-c",

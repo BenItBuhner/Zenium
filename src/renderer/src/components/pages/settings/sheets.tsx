@@ -1,5 +1,6 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { cn } from '@renderer/lib/utils'
 import { PhoneSheet, type SheetFocus, type SheetTitle } from '../../phone/PhoneSheet'
 import type { BottomSheetHandle } from '../../sheet/BottomSheet'
@@ -161,6 +162,12 @@ interface SheetProps {
    * landing on Cancel would announce the way out first.
    */
   focus?: SheetFocus
+  /**
+   * The body is a list of rows (a picker's options, an item's rows, a list form): the sheet
+   * stands at most 80 % of the frame and the list scrolls under the title (§9.20); a form or a
+   * prompt stands as tall as it is.
+   */
+  body?: SheetBody
   sheetRef?: RefObject<BottomSheetHandle | null>
 }
 
@@ -186,6 +193,7 @@ export function SettingsSheet({
   children,
   contentKey,
   focus,
+  body,
   sheetRef
 }: SheetProps): JSX.Element {
   const own = useRef<BottomSheetHandle>(null)
@@ -218,6 +226,7 @@ export function SettingsSheet({
       name={name}
       title={pose}
       focus={focus}
+      body={body}
       under={under}
       onClose={onClose}
       contentKey={`${contentKey ?? ''}|${relayouts}|${footerClaimed ? 'footer' : ''}`}
@@ -295,6 +304,7 @@ export function OptionsSheet({
       title={row.label}
       description={row.sheetDescription}
       under={under}
+      body="list"
       onClose={close}
       sheetRef={sheet}
     >
@@ -421,8 +431,10 @@ function FieldSheet({
 
 /**
  * A prompt (§9.23): the question as a title block over its one paragraph (the confirmation's
- * own, else the row's description), the destructive action trailing (§9.11); Cancel, the first
- * button, is where the chassis puts the focus as the sheet opens. A confirmation with no
+ * own, else the row's description), the destructive action trailing (§9.11). A
+ * title-and-notice sheet holds the focus on its container as it opens (§9.22: named by its
+ * title, described by its paragraph, as `SiteDataPrompt` does); landing on Cancel, the first
+ * button, is the failure the section names – the way out read first. A confirmation with no
  * paragraph anywhere would open on the 48 header (§9.23: the block is for a sheet that carries a
  * description), so every one in the model brings its own.
  */
@@ -443,6 +455,7 @@ function ConfirmSheet({
       title={confirm.title}
       description={confirm.description ?? row.description}
       under={under}
+      focus="dialog"
       onClose={close}
       sheetRef={sheet}
     >
@@ -473,6 +486,7 @@ function FormSheet({
       title={form.title}
       description={form.description}
       under={under}
+      body={form.body}
       onClose={close}
     >
       <FormBody render={form.render} />
@@ -509,6 +523,7 @@ function ItemSheet({
       description={row.sheet.description}
       descriptionTone={row.sheet.descriptionTone}
       under={under}
+      body="list"
       onClose={close}
       contentKey={String(row.sheet.groups.reduce((n, g) => n + g.rows.length, 0))}
     >

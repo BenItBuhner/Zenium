@@ -41,9 +41,11 @@ export function RecentlyClosedSheet({
   return (
     <PhoneSheet
       name="overview-recently-closed"
-      // A list sheet: the centred 48 header (§9.16).
+      // A list sheet: the centred 48 header (§9.16); it opens on its first row (§9.22) and
+      // stands at most 80 % of the frame, the list scrolling under the title (§9.20).
       title={{ pose: 'header', text: 'Recently closed' }}
-      focus="dialog"
+      focus="first"
+      body="list"
       onClose={onClose}
       sheetRef={sheet}
       contentKey={tabs.map((entry) => entry.id).join('/')}
@@ -88,7 +90,7 @@ export function ClosedTabRow({
       icon={
         <RowFavicon
           src={entry.favicon}
-          fallback={<Globe className="h-5 w-5 opacity-60" strokeWidth={1.75} />}
+          fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
         />
       }
       title={title}
