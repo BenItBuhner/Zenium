@@ -312,6 +312,11 @@ export interface UiState {
   pageDialogOpen: boolean
   /** A page's `getDisplayMedia` picker ("Choose what to share") is up (the page waits for it). */
   screenPickerOpen: boolean
+  /**
+   * A page's device chooser (`requestDevice()`: USB, serial, HID, Bluetooth) or the pairing
+   * prompt over it is up (the page waits for it; `components/devices`).
+   */
+  deviceChooserOpen: boolean
   /** A window-modal question ("Close N tabs?", "Quit Zenium?") is up over the whole window. */
   windowPromptOpen: boolean
   /**
@@ -587,6 +592,7 @@ export const uiStore = createStore<UiState>(
     credentialLeakOpen: false,
     pageDialogOpen: false,
     screenPickerOpen: false,
+    deviceChooserOpen: false,
     windowPromptOpen: false,
     starDialog: null,
     zoomBubble: null,
@@ -1141,6 +1147,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.screenPickerOpen &&
+    !ui.deviceChooserOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
@@ -1207,6 +1214,7 @@ export function invalidateSnapshot(): void {
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.screenPickerOpen &&
+    !ui.deviceChooserOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
@@ -1934,6 +1942,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
     ui.screenPickerOpen ||
+    ui.deviceChooserOpen ||
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||

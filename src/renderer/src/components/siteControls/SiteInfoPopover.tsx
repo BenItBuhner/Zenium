@@ -1,7 +1,7 @@
 import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ExternalLink } from 'lucide-react'
-import type { Rect, Tab, UIState } from '@shared/types'
+import type { DeviceGrant, DeviceKind, Rect, Tab, UIState } from '@shared/types'
 import {
   cookieBytes,
   describeSite,
@@ -9,11 +9,11 @@ import {
   permissionLabel,
   type SiteCookie,
   type SiteInfoSnapshot,
-  type SitePermission,
   type SiteSecurity
 } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { useEscape } from '@renderer/hooks/useEscape'
+import { DEVICE_KIND_WORDS, grantDetail, grantsOf, grantsRowLabel } from '@renderer/lib/devices'
 import { manageExtension } from '@renderer/lib/extensions/manage'
 import { extensionPageChrome, extensionPageLine } from '@renderer/lib/extensions/pages'
 import { openSettings } from '@renderer/lib/pages'
@@ -35,7 +35,11 @@ import {
   connectionDetail,
   connectionHeadline,
   cookiesSummary,
+  deviceLevelKind,
+  deviceRows,
   permissionOptions,
+  permissionRows,
+  permissionsSummary,
   security,
   summaryLine,
   type LevelId,
@@ -156,20 +160,30 @@ export function SiteInfoPopover({
       refreshSiteInfo()
     })
   const setPermission = (
-    permission: SitePermission,
+    permission: string,
     decision: 'allow' | 'deny' | 'default'
   ): Promise<void> =>
     act(async () => {
       if (!info) return
       if (decision === 'default')
-        await cmd('permissions.forget', { origin: info.origin, permission: permission.permission })
+        await cmd('permissions.forget', { origin: info.origin, permission })
       else
         await cmd('permissions.set', {
           origin: info.origin,
-          permission: permission.permission,
+          permission,
           decision
         })
       refreshSiteInfo()
+    })
+  // A device the site was connected to through a chooser is forgotten (MW-32..35): the grants
+  // are live state (`deviceGrants`), so the rows follow on their own.
+  const forgetDevice = (grant: DeviceGrant): Promise<void> =>
+    act(async () => {
+      await cmd('devices.forget', {
+        origin: grant.origin,
+        kind: grant.kind,
+        deviceId: grant.deviceId
+      })
     })
   // The site onto the list picked, or off its list (Chrome's "Add" of the cookies page, from the
   // page itself): the engine says why when it refused (a list at its thousand); the reading is
@@ -197,10 +211,13 @@ export function SiteInfoPopover({
 
   const cookies = info?.cookies.items ?? []
   const permissions = info?.permissions ?? []
+  // The devices the site is connected to (MW-32..35): live state, read by the site's origin.
+  const grants = info ? state.deviceGrants.filter((g) => g.origin === info.origin) : []
   const level = nav.level
+  const deviceKind = deviceLevelKind(level)
   // Local files share one permissions site (#139), so a decision of theirs shows here too; a
   // local file with none has only the title block, and the footer sits under its 16 (§9.20).
-  const rows = site.web || permissions.length > 0
+  const rows = site.web || permissions.length > 0 || grants.length > 0
 
   // A page of an extension (v2 §10.1 applied to extension pages): no site, no connection to
   // describe – the popover says whose page it is and leads to the extension's details.
@@ -301,11 +318,9 @@ export function SiteInfoPopover({
                   <ListRow
                     label="Permissions"
                     trailing={
-                      <RowValue muted={permissions.length === 0}>
+                      <RowValue muted={permissions.length === 0 && grants.length === 0}>
                         {info
-                          ? permissions.length === 0
-                            ? 'None'
-                            : permissions.map((p) => permissionLabel(p.permission)).join(', ')
+                          ? permissionsSummary(permissions, grants, info.origin)
                           : loading
                             ? 'Reading…'
                             : '—'}
@@ -328,7 +343,8 @@ export function SiteInfoPopover({
                   <ListRow
                     label="Reset permissions"
                     onClick={() => void resetPermissions()}
-                    disabled={busy || permissions.length === 0}
+                    // The core's reset drops the site's device grants with its decisions.
+                    disabled={busy || (permissions.length === 0 && grants.length === 0)}
                     aria-label="Reset permissions of this site"
                   />
                   {site.web && (
@@ -389,12 +405,25 @@ export function SiteInfoPopover({
           {level === 'permissions' && (
             <PermissionsLevel
               id={titleId}
-              permissions={permissions}
+              rows={info ? permissionRows(permissions, tab) : []}
+              devices={info ? deviceRows(grants, info.origin) : []}
               loading={loading}
               busy={busy}
               onBack={() => go('overview')}
-              onChange={(p, decision) => void setPermission(p, decision)}
+              onChange={(permission, decision) => void setPermission(permission, decision)}
+              onDevices={(kind) => go(`devices:${kind}`)}
               onReload={reload}
+            />
+          )}
+
+          {deviceKind && (
+            <DevicesLevel
+              id={titleId}
+              kind={deviceKind}
+              grants={info ? grantsOf(state.deviceGrants, info.origin, deviceKind) : []}
+              busy={busy}
+              onBack={() => go('permissions')}
+              onForget={(grant) => void forgetDevice(grant)}
             />
           )}
 
@@ -437,7 +466,11 @@ const DEPTH: Record<LevelId, number> = {
   cookies: 1,
   permissions: 1,
   'clear-data': 1,
-  'clear-cookies': 2
+  'clear-cookies': 2,
+  'devices:usb': 2,
+  'devices:serial': 2,
+  'devices:hid': 2,
+  'devices:bluetooth': 2
 }
 
 // ---------------------------------------------------------------------------
@@ -672,21 +705,31 @@ function storageRows(info: SiteInfoSnapshot): Array<[string, string]> {
   return rows
 }
 
+/**
+ * The Permissions level: a menulist row per stored decision (Sound among them for a tab that
+ * plays sound, at its default until the site has its own answer – the row Chrome's page info
+ * shows for an audible tab), then, for each device kind the site is connected to through a
+ * chooser (MW-32..35), a row with the count that leads to the kind's devices and their Revoke.
+ */
 function PermissionsLevel({
   id,
-  permissions,
+  rows,
+  devices,
   loading,
   busy,
   onBack,
   onChange,
+  onDevices,
   onReload
 }: {
   id: string
-  permissions: SitePermission[]
+  rows: Array<{ permission: string; decision: PermissionChoice }>
+  devices: Array<{ kind: DeviceKind; label: string; count: number }>
   loading: boolean
   busy: boolean
   onBack: () => void
-  onChange: (permission: SitePermission, decision: PermissionChoice) => void
+  onChange: (permission: string, decision: PermissionChoice) => void
+  onDevices: (kind: DeviceKind) => void
   onReload: () => void
 }): JSX.Element {
   const [scrolled, setScrolled] = useState(false)
@@ -695,13 +738,14 @@ function PermissionsLevel({
     <>
       <BarHeader id={id} title="Permissions" onBack={onBack} scrolled={scrolled} />
       <Body onScrolled={setScrolled}>
-        {permissions.length === 0 &&
+        {rows.length === 0 &&
+          devices.length === 0 &&
           (loading ? (
             <EmptyLine>Reading…</EmptyLine>
           ) : (
             <EmptyLine>This site has not asked for any permissions</EmptyLine>
           ))}
-        {permissions.map((p) => (
+        {rows.map((p) => (
           <ListRow
             key={p.permission}
             label={permissionLabel(p.permission)}
@@ -715,10 +759,21 @@ function PermissionsLevel({
                 disabled={busy}
                 onChange={(decision) => {
                   setChanged(true)
-                  onChange(p, decision)
+                  onChange(p.permission, decision)
                 }}
               />
             }
+          />
+        ))}
+        {devices.map((d) => (
+          <ListRow
+            key={d.kind}
+            label={d.label}
+            aria-label={grantsRowLabel(d.kind, d.count)}
+            data-device-kind={d.kind}
+            trailing={<RowValue>{d.count}</RowValue>}
+            chevron
+            onClick={() => onDevices(d.kind)}
           />
         ))}
       </Body>
@@ -732,6 +787,61 @@ function PermissionsLevel({
           </V2Button>
         </Footer>
       )}
+    </>
+  )
+}
+
+/**
+ * The devices of one kind the site is connected to (MW-32..35), a level under Permissions: a
+ * row per grant with the device's name and, where the engine knows them, its ids as the second
+ * line, and Revoke trailing (Chrome's word) – the site must ask again through a chooser. A row
+ * revoked leaves the list at once; the last one gone, the level says so and Back is the way out.
+ */
+function DevicesLevel({
+  id,
+  kind,
+  grants,
+  busy,
+  onBack,
+  onForget
+}: {
+  id: string
+  kind: DeviceKind
+  grants: DeviceGrant[]
+  busy: boolean
+  onBack: () => void
+  onForget: (grant: DeviceGrant) => void
+}): JSX.Element {
+  const [scrolled, setScrolled] = useState(false)
+  return (
+    <>
+      <BarHeader
+        id={id}
+        title={DEVICE_KIND_WORDS[kind].label}
+        onBack={onBack}
+        scrolled={scrolled}
+      />
+      <Body onScrolled={setScrolled}>
+        {grants.length === 0 && <EmptyLine>No devices</EmptyLine>}
+        {grants.map((grant) => (
+          <ListRow
+            key={grant.deviceId}
+            label={grant.name}
+            description={grantDetail(grant) || undefined}
+            control
+            data-device-id={grant.deviceId}
+            trailing={
+              <V2Button
+                disabled={busy}
+                onClick={() => onForget(grant)}
+                aria-label={`Revoke ${grant.name}`}
+              >
+                Revoke
+              </V2Button>
+            }
+          />
+        ))}
+      </Body>
     </>
   )
 }
