@@ -32,7 +32,8 @@ export function Toolbar({
   return (
     // A window surface (design language v2 §9.29): its chips draw in the window token family.
     // Floating, it is a panel; the slide that brings it out is its host's (`CompactToolbar`).
-    <div className={cn(floating && 'zen-panel')} data-surface="window" data-testid="toolbar">
+    // A `header` outside the sidebar and the page box: the window's banner landmark (a11y-02).
+    <header className={cn(floating && 'zen-panel')} data-surface="window" data-testid="toolbar">
       <div
         className="zen-drag flex h-10 items-center gap-1 px-1"
         data-zen-nav-bar
@@ -46,6 +47,6 @@ export function Toolbar({
         {showWindowControls && <WindowControls />}
       </div>
       {children}
-    </div>
+    </header>
   )
 }

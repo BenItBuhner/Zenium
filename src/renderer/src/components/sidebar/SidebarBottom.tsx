@@ -61,6 +61,9 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
           {toasts.map((t) => (
             <div
               key={t.id}
+              // A polite live region, as the message card is (`ToastCard`): a toast arriving is
+              // read without the keyboard moving to it (a11y-02).
+              role="status"
               className={cn(
                 'zen-toast zen-panel flex items-center gap-2 px-2.5 py-1.5 text-[12px]',
                 t.kind === 'error' && 'text-[var(--zen-danger)]'

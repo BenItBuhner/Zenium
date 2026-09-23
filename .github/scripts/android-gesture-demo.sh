@@ -197,7 +197,12 @@ sleep 2
 adb shell am force-stop com.google.android.apps.nexuslauncher || true
 sleep 3
 # Three-button navigation: no system gesture zone under the bar, so no accidental home swipes.
-adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
+# EXCLUSIVE within the navbar category: a plain `enable` is additive, and with the image's
+# gestural overlay still on beside it SystemUI drew the buttons in a 48 dp window while reporting
+# the gestural bar's insets (`navigationBars` 24 dp, `tappableElement` 0, a transparent bar), so
+# the chrome laid its sheets out 24 dp under the buttons and every still to date showed it
+# (INSET-CHECK's probe: `enable-exclusive` gives navigationBars = tappableElement = 48 dp, opaque).
+adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton || true
 adb shell settings put system screen_off_timeout 2147483647 || true
 adb shell svc power stayon true || true
 adb shell input keyevent KEYCODE_WAKEUP || true

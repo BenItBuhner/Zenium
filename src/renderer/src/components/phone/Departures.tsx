@@ -28,7 +28,9 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
  * search drops (`filtered`), and the New Tab card a query takes with it (`new-tab`), leave the
  * same way, released by the grid's own commit (`TabOverview`) – as is a group's exit whatever
  * took its cards: a closed group's folder stays, saved, so the commit that takes its card off
- * the grid is the one that releases it (the one whose glide closes the gap, §11.4's leave).
+ * the grid is the one that releases it (the one whose glide closes the gap, §11.4's leave). A
+ * card whose close is still in flight (`closingTabIds`: its page's `beforeunload` may be asking
+ * "Leave site?", PUI-28) stands as long as it is, and stands unmoved when the user stays.
  */
 export function Departures({
   state,
@@ -48,25 +50,50 @@ export function Departures({
     if (gone.length > 0) releaseDepartures(gone.map((item) => item.key))
   })
   if (items.length === 0) return null
+  // The New Tab card has no page to ask.
+  const asked = (item: Departure): boolean => {
+    if (item.kind === 'new-tab') return false
+    const ids = item.kind === 'tab' ? [item.tab.id] : item.tabs.map((t) => t.id)
+    return ids.some((id) => state.closingTabIds.includes(id))
+  }
   return (
     <>
       {items.map((item) => (
-        <Exit key={item.key} item={item} activeTabId={activeTabId} />
+        <Exit key={item.key} item={item} activeTabId={activeTabId} asked={asked(item)} />
       ))}
     </>
   )
 }
 
-function Exit({ item, activeTabId }: { item: Departure; activeTabId: string | null }): JSX.Element {
+function Exit({
+  item,
+  activeTabId,
+  asked
+}: {
+  item: Departure
+  activeTabId: string | null
+  /** The card's close is in flight (its page may be asking "Leave site?"): the exit waits with it. */
+  asked: boolean
+}): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const released = departStore.use((s) => s.released.has(item.key))
+  const wasAsked = useRef(false)
   // The browser may never show the close (the command failed): the exit runs anyway, and the
-  // card is back once it has.
+  // card is back once it has. Not while the close is in flight – its page may be asking "Leave
+  // site?", the close waiting on the user – and once it is through a tab still here after the
+  // same wait is one the user stayed on: its card is back where it stands, no exit run over it.
   useEffect(() => {
     if (released) return
-    const timer = setTimeout(() => releaseDepartures([item.key]), EXIT_WAIT_MS)
+    if (asked) {
+      wasAsked.current = true
+      return
+    }
+    const timer = setTimeout(
+      () => (wasAsked.current ? departed(item.key) : releaseDepartures([item.key])),
+      EXIT_WAIT_MS
+    )
     return () => clearTimeout(timer)
-  }, [released, item.key])
+  }, [released, asked, item.key])
   useLayoutEffect(() => {
     if (!released) return
     const el = ref.current

@@ -63,6 +63,7 @@ import { SiteInfoService } from './siteInfo'
 import { SiteDataService } from './siteData'
 import { TranslateService } from './translate/service'
 import { PrintService } from './print'
+import { CaptureService } from './capture'
 import { PdfViewerService } from './pdf'
 import { PageControls } from './pageControls'
 import { SpellcheckService } from './spellcheck'
@@ -290,6 +291,8 @@ export class Browser {
   readonly translate: TranslateService
   /** The print preview (`zen://print`) on hosts whose engine has none of its own. */
   readonly print: PrintService
+  /** Web capture: the page's picture for the chrome's capture UI, its copy and its save. */
+  readonly capture: CaptureService
   /** The inline PDF viewer (`zen://pdf`) on hosts whose engine cannot draw a PDF. */
   readonly pdf: PdfViewerService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
@@ -451,6 +454,7 @@ export class Browser {
     this.languages = new LanguagesService(this)
     this.pageFonts = new PageFontsService(this)
     this.print = new PrintService(this)
+    this.capture = new CaptureService(this)
     this.pdf = new PdfViewerService(this)
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
@@ -484,6 +488,7 @@ export class Browser {
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
       pageDialogs: this.pageDialogs.list(),
+      closingTabIds: this.tabs.closingTabIds(),
       screenCaptureRequests: this.screenCapture.list(),
       shareRequests: this.shares.listFor(win),
       crashRestore: this.session.crashRestoreOffer(),
@@ -2555,6 +2560,7 @@ export class Browser {
         tabs.activateTab(tabId, win, { keepFocus, userSwitch: true }),
       'tab.close': ({ tabId, force, keepFocus }, win) =>
         void tabs.requestClose(tabId, force, win, { keepFocus }),
+      'tab.closeMany': ({ tabIds, activate }, win) => void tabs.closeMany(tabIds, win, activate),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
       'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
       'private.setLockOnLeave': ({ enabled }) => this.setPrivateLockOnLeave(enabled),
@@ -3033,6 +3039,12 @@ export class Browser {
           sourceTabId: tabId,
           win
         }),
+      'page.capture': ({ tabId, mode, region, format }) =>
+        this.capture.capture(tabId, { mode, region, format }),
+      'page.viewport': ({ tabId }) => this.capture.viewport(tabId),
+      'capture.copy': ({ dataUrl }) => this.capture.copy(dataUrl),
+      'capture.save': ({ dataUrl, fileName, tabId }, win) =>
+        this.capture.save(dataUrl, win, { fileName, tabId }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
       'page.printPreview': ({ tabId }, win) =>
         this.actions.run('page.printPreview', { sourceTabId: tabId, win }),

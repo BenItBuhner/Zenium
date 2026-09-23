@@ -248,7 +248,14 @@ interface RequestDetails {
 /** The single window of the phone, as `tabs`/`windows` number it. */
 const WINDOW_ID = 1
 
-const ENGINE_ACTIONS: readonly EngineDecisionAction[] = ['allow', 'block', 'redirect', 'upgrade']
+/** The Kotlin engine's decision actions (`Decision.Action` in `Rules.kt`, as `Extensions.onDecision` names them). */
+const ENGINE_ACTIONS: readonly EngineDecisionAction[] = [
+  'allow',
+  'block',
+  'redirect',
+  'upgrade',
+  'modifyHeaders'
+]
 
 /** Runtime state that outlives the session (`extensions-runtime.json`). */
 interface RuntimeData {

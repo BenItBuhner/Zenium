@@ -344,6 +344,69 @@ describe('page dialogs', () => {
 })
 
 describe('closing tabs with beforeunload', () => {
+  it('lists a tab in closingTabIds from the close until its page has answered, whichever way', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const stays = f.browser.tabs.createTab({ url: 'https://example.com/stay', active: true }, win)
+    const goes = f.browser.tabs.createTab({ url: 'https://example.com/go', active: true }, win)
+    const listed = (): string[] => f.browser.state.snapshot(win).closingTabIds
+    expect(listed()).toEqual([])
+
+    // The page holds its answer: the tab is listed for as long as the question is up.
+    let answer: ((leave: boolean) => void) | null = null
+    f.viewOf(stays.id).view.confirmUnload = () =>
+      new Promise<boolean>((resolve) => {
+        answer = resolve
+      })
+    f.browser.handleCommand(win, 'tab.close', { tabId: stays.id })
+    await tick()
+    expect(listed()).toEqual([stays.id])
+    // Stay: the tab is kept and no longer listed.
+    answer!(false)
+    await tick()
+    await tick()
+    expect(listed()).toEqual([])
+    expect(f.browser.tabs.tab(stays.id)).toBeDefined()
+
+    // Leave: the tab closes, and is not listed once it has.
+    f.viewOf(goes.id).unload = 'leave'
+    f.browser.handleCommand(win, 'tab.close', { tabId: goes.id })
+    await tick()
+    await tick()
+    expect(f.browser.tabs.tab(goes.id)).toBeUndefined()
+    expect(listed()).toEqual([])
+  })
+
+  it('tab.closeMany asks each page in turn, keeps only the one that says stay, and ends on the tab named', async () => {
+    const f = fixture()
+    const win = firstWindow(f)
+    const keep = f.browser.tabs.createTab({ url: 'https://example.com/keep', active: true }, win)
+    const a = f.browser.tabs.createTab({ url: 'https://example.com/a', active: true }, win)
+    const b = f.browser.tabs.createTab({ url: 'https://example.com/b', active: true }, win)
+    const c = f.browser.tabs.createTab({ url: 'https://example.com/c', active: true }, win)
+    f.viewOf(b.id).unload = 'stay'
+    f.viewOf(c.id).unload = 'leave'
+
+    f.browser.handleCommand(win, 'tab.closeMany', {
+      tabIds: [a.id, b.id, 'tab_missing', c.id],
+      activate: keep.id
+    })
+    await tick()
+    await tick()
+    await tick()
+
+    expect(f.browser.tabs.tab(a.id)).toBeUndefined()
+    expect(f.browser.tabs.tab(b.id)).toBeDefined()
+    expect(f.browser.tabs.tab(c.id)).toBeUndefined()
+    // Every page was asked, one after the other, the missing tab skipped.
+    expect(f.views.filter((v) => v.unloadChecks === 1).map((v) => v.tabId)).toEqual([
+      a.id,
+      b.id,
+      c.id
+    ])
+    expect(f.browser.tabs.activeTabFor(win)?.id).toBe(keep.id)
+  })
+
   it('closes a tab whose page does not object, and keeps one whose page says stay', async () => {
     const f = fixture()
     const win = firstWindow(f)

@@ -349,9 +349,12 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         // The shield row: the sheet leaves and the Settings tab stands at Privacy and Security. The
         // row is found by its name's prefix alone: the count in it moves while the page loads
         // (run 1: the row read 3 when listed and 4 by the finger, so a whole-name match missed).
+        // The tab's URL carries the page it came from (`zen://settings/privacy?site=github.com`,
+        // SettingsPage.tsx), so the page is read by its section: the document's `data-section`
+        // first, the URL's path as the second word.
         if (shield != null && openSiteInfo()) {
             val took = touchTapLabelExpecting("Requests blocked", "the Settings tab is at Privacy and Security", timeoutMs = 10_000, prefix = true) {
-                activeCoreTab()?.optString("url") == "$SETTINGS_URL/privacy"
+                settingsSectionIs(PRIVACY_SECTION) || activeCoreTab()?.optString("url").orEmpty().startsWith("$SETTINGS_URL/privacy")
             }
             results.put("shieldRowOpensPrivacy", took)
             claim("a finger on the shield row leads to Settings › Privacy and Security", took, "the active tab is ${activeCoreTab()?.optString("url")}")
@@ -466,7 +469,7 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         ensureForeground()
         // The pill is no stop of its own (#237 took the group's name off it): its subtree is the
         // first ancestor of the address button that also holds the site icon.
-        val group = pillNode()
+        val group = pillGroupNode()
         val stops = group?.let { speakable(it).map { n -> label(n) } } ?: emptyList()
         val address = addressSpoken()
         note("  address stop: ${address ?: "(not in the tree)"}")
@@ -555,12 +558,13 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         findNode { it.startsWith("Address,") }?.let { it.contentDescription ?: it.text }?.toString()
 
     /**
-     * The pill's node in the tree: the nearest ancestor of the address button whose subtree also
-     * holds the site icon (the pill carries no role or name of its own since #237, so it is
-     * found by what it contains; the bar's own buttons are its siblings, not inside it).
+     * The pill's group in the tree: the nearest ancestor of the address button ([pillNode], the
+     * harness's matcher for the pill by either of its names) whose subtree also holds the site
+     * icon (the pill carries no role or name of its own since #237, so it is found by what it
+     * contains; the bar's own buttons are its siblings, not inside it).
      */
-    private fun pillNode(): AccessibilityNodeInfo? {
-        var node = findNode { it.startsWith("Address,") } ?: return null
+    private fun pillGroupNode(): AccessibilityNodeInfo? {
+        var node = pillNode() ?: return null
         while (true) {
             if (subtreeHas(node) { it == SITE_ICON_LABEL }) return node
             node = node.parent ?: return null

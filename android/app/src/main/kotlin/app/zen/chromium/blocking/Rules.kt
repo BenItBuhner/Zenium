@@ -4,16 +4,113 @@ import app.zen.chromium.privacy.NonUniqueHost
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** `chrome.declarativeNetRequest` action types the engine evaluates (header edits are desktop only). */
+/**
+ * `chrome.declarativeNetRequest` action types the engine evaluates; `rank` breaks a tie inside
+ * one effective priority (`RANK` in `engine.ts`). `modifyHeaders` never decides a request: its
+ * edits ride on the decision of whatever else stands ([Decision.requestHeaderEdits]).
+ */
 enum class RuleAction(val dnrName: String, val rank: Int) {
     ALLOW("allow", 5),
     ALLOW_ALL_REQUESTS("allowAllRequests", 4),
     BLOCK("block", 3),
     UPGRADE_SCHEME("upgradeScheme", 2),
-    REDIRECT("redirect", 1);
+    REDIRECT("redirect", 1),
+    MODIFY_HEADERS("modifyHeaders", 0);
 
     companion object {
         fun fromDnrName(name: String): RuleAction? = entries.firstOrNull { it.dnrName == name }
+    }
+}
+
+/**
+ * One header edit of a `modifyHeaders` rule (`chrome.declarativeNetRequest.ModifyHeaderInfo`,
+ * `HeaderOp` in `rules.ts`): `set` replaces the header, `append` adds a value (request headers
+ * are single valued and join with a comma, as the desktop's `applyRequestHeaderOps` joins them;
+ * a response header gains a line), `remove` deletes it. `value` is null for `remove`.
+ */
+class HeaderOp(val header: String, val operation: Operation, val value: String?) {
+    enum class Operation(val dnrName: String) {
+        SET("set"), APPEND("append"), REMOVE("remove");
+
+        companion object {
+            fun fromDnrName(name: String): Operation? = entries.firstOrNull { it.dnrName == name }
+        }
+    }
+
+    override fun equals(other: Any?): Boolean =
+        other is HeaderOp && other.header == header && other.operation == operation && other.value == value
+
+    override fun hashCode(): Int = (header.hashCode() * 31 + operation.hashCode()) * 31 + (value?.hashCode() ?: 0)
+
+    override fun toString(): String = "${operation.dnrName} $header" + (value?.let { "=$it" } ?: "")
+
+    companion object {
+        /**
+         * The edits of a `modifyHeaders` action's `requestHeaders` / `responseHeaders` array;
+         * null when absent or empty. An entry without a header name or with an operation the
+         * API does not know is left out (the desktop engine carries the array as written; on a
+         * request it would edit nothing either).
+         */
+        fun parse(arr: JSONArray?): List<HeaderOp>? {
+            if (arr == null || arr.length() == 0) return null
+            val out = ArrayList<HeaderOp>(arr.length())
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val header = o.optString("header")
+                if (header.isEmpty()) continue
+                val operation = Operation.fromDnrName(o.optString("operation")) ?: continue
+                val value = if (o.has("value") && !o.isNull("value")) o.optString("value") else null
+                out.add(HeaderOp(header, operation, value))
+            }
+            return if (out.isEmpty()) null else out
+        }
+
+        /**
+         * Apply `ops` to a request's headers, in order, as the desktop's `applyRequestHeaderOps`
+         * does: names compare without regard to case; `set` and `append` without a value edit
+         * nothing but a `set` still drops the header; `append` to a present header joins with
+         * `, ` (Chrome's separator for the request headers it lets rules append to).
+         */
+        fun applyToRequest(headers: MutableMap<String, String>, ops: List<HeaderOp>) {
+            for (op in ops) {
+                val existing = headers.keys.firstOrNull { it.equals(op.header, ignoreCase = true) }
+                when (op.operation) {
+                    Operation.REMOVE -> if (existing != null) headers.remove(existing)
+                    Operation.SET -> {
+                        if (existing != null) headers.remove(existing)
+                        if (op.value != null) headers[op.header] = op.value
+                    }
+                    Operation.APPEND -> {
+                        if (existing != null) headers[existing] = "${headers[existing]}, ${op.value ?: ""}"
+                        else if (op.value != null) headers[op.header] = op.value
+                    }
+                }
+            }
+        }
+
+        /**
+         * Apply `ops` to a response's headers (one entry per line under the wire's name, the
+         * shape of `HttpURLConnection.headerFields`; a null key is the status line and is never
+         * an edit's target), as the desktop's `applyResponseHeaderOps` does: `set` replaces every
+         * line of the header with one, `append` adds a line, `remove` drops them all.
+         */
+        fun applyToResponse(headers: MutableMap<String?, List<String>?>, ops: List<HeaderOp>) {
+            for (op in ops) {
+                val existing = headers.keys.firstOrNull { it != null && it.equals(op.header, ignoreCase = true) }
+                when (op.operation) {
+                    Operation.REMOVE -> if (existing != null) headers.remove(existing)
+                    Operation.SET -> {
+                        if (existing != null) headers.remove(existing)
+                        if (op.value != null) headers[op.header] = listOf(op.value)
+                    }
+                    Operation.APPEND -> {
+                        if (op.value == null) continue
+                        if (existing != null) headers[existing] = (headers[existing] ?: emptyList()) + op.value
+                        else headers[op.header] = listOf(op.value)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -61,13 +158,24 @@ class DnrRule(
      * reached through [HeaderStage]'s relay of a document request). Null without such conditions.
      */
     private val responseHeaders: List<HeaderCondition>? = null,
-    private val excludedResponseHeaders: List<HeaderCondition>? = null
+    private val excludedResponseHeaders: List<HeaderCondition>? = null,
+    /**
+     * A `modifyHeaders` rule's edits (`action.requestHeaders` / `action.responseHeaders`), in
+     * the rule's order; null without any. The engine stacks them onto the decision
+     * ([Decision.requestHeaderEdits], [Decision.responseHeaderEdits]); the header stage's relay
+     * applies them to the document it relays ([HeaderStage]).
+     */
+    val requestHeaderEdits: List<HeaderOp>? = null,
+    val responseHeaderEdits: List<HeaderOp>? = null
 ) {
     /** No `urlFilter`, `requestDomains` or `initiatorDomains`: the type conditions alone select requests. */
     private val unscoped: Boolean = pattern == null && requestDomains == null && initiatorDomains == null
 
     /** The rule has response header conditions: [matches] is its request stage, [matchesHeaders] its header stage. */
     val needsHeaders: Boolean = responseHeaders != null || excludedResponseHeaders != null
+
+    /** A `modifyHeaders` rule: an edit of the request's or the response's headers, never a decision of its own. */
+    val editsHeaders: Boolean = action == RuleAction.MODIFY_HEADERS
 
     /**
      * The rule's index in its set's [CompiledRules.rules] (resolution order, a stable sort of the
@@ -196,6 +304,9 @@ class DnrRule(
                 "thirdParty" -> 2
                 else -> 0
             }
+            // A `modifyHeaders` rule's edits. Kept as written even without an edit (the desktop
+            // engine compiles such a rule too, and it counts): it then matches and edits nothing.
+            val editsHeaders = action == RuleAction.MODIFY_HEADERS
             return DnrRule(
                 id = o.optInt("id"),
                 action = action,
@@ -218,7 +329,9 @@ class DnrRule(
                 tabIds = c.optJSONArray("tabIds")?.let { ints(it) },
                 excludedTabIds = c.optJSONArray("excludedTabIds")?.let { ints(it) },
                 responseHeaders = responseHeaders,
-                excludedResponseHeaders = excludedResponseHeaders
+                excludedResponseHeaders = excludedResponseHeaders,
+                requestHeaderEdits = if (editsHeaders) HeaderOp.parse(actionObj.optJSONArray("requestHeaders")) else null,
+                responseHeaderEdits = if (editsHeaders) HeaderOp.parse(actionObj.optJSONArray("responseHeaders")) else null
             )
         }
 
@@ -344,7 +457,13 @@ class RuleSetInfo(
     }
 }
 
-/** The engine's verdict for one request (the Kotlin twin of `Decision` in `rules.ts`). */
+/**
+ * The engine's verdict for one request (the Kotlin twin of `Decision` in `rules.ts`). A
+ * [Action.MODIFY_HEADERS] decision lets the request through with edits to make: the
+ * `requestHeaders` / `responseHeaders` of `rules.ts` are [requestHeaderEdits] /
+ * [responseHeaderEdits] here (the received headers a `decide` is asked with, and the header
+ * conditions of a rule, are the `responseHeaders` of this package).
+ */
 class Decision(
     val action: Action,
     val redirectUrl: String? = null,
@@ -357,15 +476,31 @@ class Decision(
      * response headers are in (`Decision.needsHeaders` in `rules.ts`): the host relays a document
      * request so decided and asks again with the headers ([HeaderStage]).
      */
-    val needsHeaders: Boolean = false
+    val needsHeaders: Boolean = false,
+    /**
+     * The `modifyHeaders` rules' edits, highest effective priority first and in scan order
+     * within one (`composeHeaderEdits` in `engine.ts`): the request's before it goes out, the
+     * response's once it is in. Empty but for a [Action.MODIFY_HEADERS] decision. On Android
+     * only a document's are applied, by the relay ([HeaderStage]); `shouldInterceptRequest`
+     * cannot edit the headers of a request WebView loads itself.
+     */
+    val requestHeaderEdits: List<HeaderOp> = emptyList(),
+    val responseHeaderEdits: List<HeaderOp> = emptyList()
 ) {
-    enum class Action { ALLOW, BLOCK, REDIRECT, UPGRADE }
+    enum class Action { ALLOW, BLOCK, REDIRECT, UPGRADE, MODIFY_HEADERS }
 
     val isBlocked: Boolean get() = action == Action.BLOCK
 
+    /** The request goes out (an allow, or an allow with header edits): what a header-conditioned rule may still overturn. */
+    val letsThrough: Boolean get() = action == Action.ALLOW || action == Action.MODIFY_HEADERS
+
+    /** The decision carries an edit of the request's or the response's headers. */
+    val editsHeaders: Boolean get() = requestHeaderEdits.isNotEmpty() || responseHeaderEdits.isNotEmpty()
+
     /** This decision, marked [needsHeaders]. */
     fun awaitingHeaders(): Decision =
-        if (needsHeaders) this else Decision(action, redirectUrl, matchedSet, matchedRule, matchedFilter, needsHeaders = true)
+        if (needsHeaders) this
+        else Decision(action, redirectUrl, matchedSet, matchedRule, matchedFilter, needsHeaders = true, requestHeaderEdits, responseHeaderEdits)
 
     companion object {
         val ALLOW = Decision(Action.ALLOW)

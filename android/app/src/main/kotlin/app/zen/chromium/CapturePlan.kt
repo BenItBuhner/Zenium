@@ -1,5 +1,6 @@
 package app.zen.chromium
 
+import org.json.JSONObject
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -81,6 +82,29 @@ object CapturePlan {
     /** Device pixels per CSS pixel: the view's width in pixels covers exactly the visual viewport. */
     fun deviceScale(viewWidthPx: Int, metrics: PageMetrics, fallback: Double): Double =
         if (viewWidthPx > 0 && metrics.viewportWidth > 0) viewWidthPx / metrics.viewportWidth else fallback
+
+    /**
+     * The page's geometry in the chrome's terms (`shared/capture.ts`'s `PageViewport`, the
+     * `page.viewport` command): the visual viewport's offset and size in CSS px – what is on
+     * screen, pinch-pan included – the device pixels per CSS px ([deviceScale]) and, as `zoom`,
+     * how many of the chrome's CSS px (dp) one page px takes: that scale over the display
+     * density. A desktop-layout page squeezed into the screen is below 1, a pinch zoom above.
+     * With no laid-out view (`viewWidthPx` 0) the density is the scale and the zoom 1.
+     */
+    fun viewportJson(metrics: PageMetrics, viewWidthPx: Int, density: Double): JSONObject {
+        val dp = if (density > 0) density else 1.0
+        val scale = deviceScale(viewWidthPx, metrics, dp)
+        return json(
+            "scrollX" to metrics.pageLeft,
+            "scrollY" to metrics.pageTop,
+            "width" to metrics.viewportWidth,
+            "height" to metrics.viewportHeight,
+            "zoom" to scale / dp,
+            "devicePixelRatio" to scale,
+            "documentWidth" to max(metrics.documentWidth, metrics.viewportWidth),
+            "documentHeight" to max(metrics.documentHeight, metrics.viewportHeight)
+        )
+    }
 
     /** The page rectangle to capture for `mode`, or null when there is nothing to capture. */
     fun target(mode: String, region: Box?, metrics: PageMetrics): Box? {

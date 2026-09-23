@@ -53,8 +53,9 @@
   --zen-ok-rgb: 31 138 76;
   --zen-warn: #b45f06;
   --zen-warn-rgb: 180 95 6;
-  --zen-danger: #c43434;
-  --zen-danger-rgb: 196 52 52;
+  /* Danger ink (v2 §1): 4.82:1 on the secondary fill, 5.95:1 on the panel; #c43434 was 3.98. */
+  --zen-danger: #b02a2a;
+  --zen-danger-rgb: 176 42 42;
 
   /* Surfaces over the window: the space-tinted panel colour, blurred. The scrim under them is
      the v2 one, aliased in the v2 token block below. */
@@ -7450,10 +7451,11 @@
  * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
  * = the X's 2 + 22); a saved row, with nothing to fold, keeps the chevron's box empty so the
  * counts share one edge. The name being edited takes the name's slot at the same 14. The rail
- * shows the glyph alone, centred. The rows of an open group sit 24 in (§9.36), where the
- * desktop's indent is 20 and the rail's none. The block of header and rows (`.zen-group-fold`)
- * is clipped while its height runs on the fold's spring (`useGroupFold`) and left alone at
- * rest, so a lifted row's ghost and a focus ring are never cut.
+ * shows the glyph alone, centred. The rows of an open group – their own tablist under the
+ * header (`.zen-group-rows`) – sit 24 in (§9.36), where the desktop's indent is 20 and the
+ * rail's none. The block of header and rows (`.zen-group-fold`) is clipped while its height
+ * runs on the fold's spring (`useGroupFold`) and left alone at rest, so a lifted row's ghost
+ * and a focus ring are never cut.
  */
 .zen-group-row-glyph {
   display: inline-flex;
@@ -7493,7 +7495,7 @@
 :root[data-form-factor='tablet'] .zen-tab.zen-group-row input {
   font-size: 14px;
 }
-:root[data-form-factor='tablet'] .zen-group-fold > .zen-tab:not(.zen-group-row, .justify-center) {
+:root[data-form-factor='tablet'] .zen-group-fold > .zen-group-rows > .zen-tab:not(.justify-center) {
   margin-left: 24px;
 }
 .zen-group-fold[data-folding] {
