@@ -1808,42 +1808,70 @@ abstract class DemoHarness(
     // --- the menu --------------------------------------------------------------------------------
 
     /**
-     * A finger on the bar's Menu button: by label, else where the default bar has it (rightmost,
-     * on the pill's line). The tap is READ BACK before it is taken as one: a stationary press the
-     * bar keeps 400 ms is the editor's entry point (`useBarHold`, #52), and on the recipe's
-     * software GPU a 60 ms tap can reach the chrome as a hold – the down dispatched, a long frame,
-     * the up behind the hold's timer – so the Navigation Bar editor stands where the menu should
-     * (private-lock in the repairs' second proof run: eleven checks lost to one such tap under
-     * the lock's cover). The editor (or the Tabs button's quick menu, the same recogniser) is
-     * dismissed with a back and the finger goes in again, [MENU_TAP_TRIES] times in all. True
-     * once the menu's sheet (its `Resize menu` handle) is in the chrome's document; false when
-     * nothing came within [MENU_OPEN_MS] – the caller's own wait for the handle in the tree says
-     * what that means for its claim, as before.
+     * A finger on the bar's Menu button, at [menuButtonPoint]. The tap is READ BACK before it is
+     * taken as one: a stationary press the bar keeps 400 ms is the editor's entry point
+     * (`useBarHold`, #52), and on the recipe's software GPU a 60 ms tap can reach the chrome as
+     * a hold – the down dispatched, a long frame, the up behind the hold's timer – so the
+     * Navigation Bar editor stands where the menu should (private-lock in the repairs' second
+     * proof run: eleven checks lost to one such tap under the lock's cover). The editor (or the
+     * Tabs button's quick menu, the same recogniser) is dismissed with a back and the finger goes
+     * in again. A tap that brought NEITHER within [MENU_OPEN_MS] goes in again too, the button
+     * read afresh (the repairs' fourth proof run lost two to such taps on one shard: touchfix's
+     * went in 1.5 s after the back that sent the Downloads panel away, while the panel was still
+     * leaving – 2.9 s to leave behind the software GPU – and took nothing but its scrim; ptr's
+     * went in 2 s after a drag had brought the hidden bar back, and nothing came of it either,
+     * the tree's Menu button the likeliest to have stood where the hide had it, under the
+     * navigation bar) – a surface still on its way out is given [MENU_SURFACE_WAIT_MS] to leave
+     * first. [MENU_TAP_TRIES] taps in all. True once the menu's sheet (its `Resize menu` handle)
+     * is in the chrome's document; false when nothing came of any of them – the caller's own
+     * wait for the handle in the tree says what that means for its claim, as before.
      */
     protected fun tapMenuButton(): Boolean {
         ensureForeground()
         repeat(MENU_TAP_TRIES) { attempt ->
-            val button = findByLabel(MENU_LABEL) ?: computedMenuButton()
-            Finger().tap(button.exactCenterX(), button.exactCenterY())
+            val button = menuButtonPoint()
+            Finger().tap(button.x, button.y)
             val deadline = SystemClock.uptimeMillis() + MENU_OPEN_MS
-            var held = false
+            var read = ""
             while (SystemClock.uptimeMillis() < deadline) {
-                when (menuTapRead()) {
-                    "menu" -> return true
-                    "held" -> {
-                        held = true
-                        break
-                    }
-                }
+                read = menuTapRead()
+                if (read == "menu") return true
+                if (read == "held") break
                 SystemClock.sleep(150)
             }
-            if (!held) return false
-            Log.w(tag, "the tap on Menu was read as a hold (the bar's editor opened instead); dismissing it and trying again (${attempt + 1}/$MENU_TAP_TRIES)")
-            back()
-            awaitTrue(4_000) { menuTapRead() != "held" }
-            SystemClock.sleep(800)
+            val last = attempt == MENU_TAP_TRIES - 1
+            if (read == "held") {
+                Log.w(tag, "the tap on Menu was read as a hold (the bar's editor opened instead); dismissing it${if (last) "" else " and trying again"} (${attempt + 1}/$MENU_TAP_TRIES)")
+                back()
+                awaitTrue(4_000) { menuTapRead() != "held" }
+                SystemClock.sleep(800)
+            } else if (!last) {
+                val surface = chromeSurfaceUp()
+                Log.w(tag, "nothing came of the tap on Menu at $button within $MENU_OPEN_MS ms (a chrome surface up: $surface); the button read again and the finger in again (${attempt + 1}/$MENU_TAP_TRIES)")
+                if (surface && !awaitSurface(false, MENU_SURFACE_WAIT_MS)) Log.w(tag, "the surface is still up after $MENU_SURFACE_WAIT_MS ms; the finger goes in regardless")
+            }
         }
         return false
+    }
+
+    /**
+     * Where a finger tapping the Menu button goes: the tree's button when its centre is in the
+     * window's touchable band, the bar's resting place ([computedMenuButton]: rightmost, on the
+     * pill's line) when the tree has none or has it in a system bar – the tree trails the bar's
+     * return from hidden by seconds on the emulator, and a finger never goes where the system
+     * takes the touch (the pill's [pillPoint] guards the same way).
+     */
+    private fun menuButtonPoint(): PointF {
+        val found = findByLabel(MENU_LABEL)
+        val target = when {
+            found == null -> computedMenuButton()
+            touchable.contains(found.centerX(), found.centerY()) -> found
+            else -> {
+                Log.w(tag, "the tree's Menu button $found is outside the touchable band $touchable; the bar's resting place ${computedMenuButton()} instead")
+                computedMenuButton()
+            }
+        }
+        return PointF(target.exactCenterX(), target.exactCenterY())
     }
 
     /**
@@ -2500,9 +2528,14 @@ abstract class DemoHarness(
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
-        /** [tapMenuButton]: how long the menu's sheet gets to reach the document, and how many taps are tried when one is read as a hold. */
+        /**
+         * [tapMenuButton]: how long the menu's sheet gets to reach the document, how many taps
+         * are tried when one is read as a hold or as nothing, and how long a chrome surface still
+         * leaving gets before the next tap goes in.
+         */
         const val MENU_OPEN_MS = 6_000L
         const val MENU_TAP_TRIES = 3
+        const val MENU_SURFACE_WAIT_MS = 4_000L
 
         /** The phone Settings page's `data-section` on its landing (SettingsPage.tsx). */
         const val SETTINGS_LANDING = "landing"
