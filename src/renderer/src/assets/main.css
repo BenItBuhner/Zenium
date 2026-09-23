@@ -561,34 +561,71 @@
   gap: 8px;
 }
 /*
- * The device chooser on the prompt's chassis (MW-32..35, `components/devices`; §9.13): its body
- * is the candidate list, rows on the shared `.zen-v2-row` running edge to edge through the
- * body's gutter as the check row does (their own 16 puts the text back on the title's edge),
- * clipped and scrolling past five rows – Chrome's chooser shows about as many – with §9.20's
- * ring room given back from the gutter so a focused row's ring is whole inside the scroller
- * (the `.zen-bm-popover-body` rule further down, the same modifier by context; at two classes
- * it wins over the primitive's own `width: 100%` further down whatever the order). A picked row
- * takes the primitive's selected fill (§9.6, the `[role='radio'][aria-checked='true']` rule)
- * and its trailing check is `.zen-v2-row-trail`. Under the list the scanning line (§9.30's 16
- * spinner, the words at 69%, a row's own geometry and no hairline over it – §10's lines rule)
- * and the empty state (§9.17's one sentence at 15 / 69%, centred in a 32 gutter, its first line
- * 32 under the title block; Chrome's udev notice 8 under it at 13) read the same tokens. The
- * requesting host in the title wraps at its dots
- * (`.zen-device-chooser-host`, as the screen picker's origin does). The pairing prompt's PIN to
- * compare (`confirmPin`) is the one large figure the chassis draws: the heading weight at twice
- * the heading size in `tabular-nums`, letter-spaced so six digits read as six, centred.
+ * The picker's list (`PickerDialog`: the body's slot carrying the consumer's rows – the device
+ * chooser's) runs edge to edge as the check row does (§9.25: the row's own 16 is the prompt's
+ * one gutter), with the body's specificity for the same reason. Carrying a list the prompt
+ * stands at most 80% of the frame's height (`data-body="list"`, the settings dialog's list rule
+ * below: a dialog 16 from the frame's top and bottom reads as a page) and the LIST scrolls under
+ * the title block, the footer in reach: the body may shrink (`min-height: 0` against a flex
+ * item's content floor) and the slot scrolls, contained; a notice, a field prompt and the footer
+ * keep standing as tall as their content. Rows inside are the consumer's (§9.25's row rules).
+ */
+.zen-confirm-dialog-body > .zen-confirm-dialog-slot {
+  width: calc(100% + 2 * var(--v2-card-padding));
+  min-height: 0;
+  margin: 0 calc(-1 * var(--v2-card-padding));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.zen-confirm-dialog[data-body='list'] {
+  max-height: 80%;
+}
+.zen-confirm-dialog[data-body='list'] > .zen-confirm-dialog-body {
+  min-height: 0;
+}
+/*
+ * The verb before it is an answer (§9.30: a picker's Connect until a pick): `aria-disabled`,
+ * not `disabled`, so it keeps its place in the tab order – and so the primitive's `:disabled`
+ * rules do not reach it. One ink: .4 on the whole control, no hover or press fill and no press
+ * scale – the fill named again at rest, since the shared hover and press rules (extensions.css,
+ * `.zen-v2-button:active` above) stand at the same specificity and these rules come later; the
+ * primary keeps its accent under the .4, as §9.30's "whole control" has it. The ring stays: a
+ * reachable control shows where the focus is.
+ */
+.zen-confirm-dialog-footer > .zen-v2-button[aria-disabled='true'] {
+  opacity: 0.4;
+  background: var(--v2-fill);
+  transform: none;
+}
+.zen-confirm-dialog-footer > .zen-v2-button[data-primary][aria-disabled='true'] {
+  background: var(--v2-accent);
+}
+/*
+ * The device chooser's rows in the picker's slot (MW-32..35, `components/devices`; §9.13): the
+ * list is the consumer's markup in `PickerDialog`'s body – the slot runs it edge to edge and
+ * scrolls it under the title block at the 80% cap (the primitive's rule above; no scroller of
+ * its own here). The slot clips at its sides as a popover's body does, so the rows stand
+ * `--v2-ring-room` in and give it back from their gutter (the `.zen-bm-popover-body` rule
+ * further down, the same modifier by context; at two classes it wins over the primitive's own
+ * `width: 100%` further down whatever the order) and a focused row's ring is whole. A picked
+ * row takes the primitive's selected fill (§9.6, the `[role='radio'][aria-checked='true']`
+ * rule) and its trailing check is `.zen-v2-row-trail`. Under the list the scanning line
+ * (§9.30's 16 spinner, the words at 69%, a row's own geometry and no hairline over it – §10's
+ * lines rule) and the empty state (§9.17's one sentence at 15 / 69%, centred in a 32 gutter,
+ * its first line 32 under the title block; Chrome's udev notice 8 under it at 13) read the same
+ * tokens. The requesting host in the title wraps at its dots (`.zen-device-chooser-host`, as
+ * the screen picker's origin does). The pairing prompt's PIN (`PromptDialog`'s field, six
+ * digits) reads in `tabular-nums`, letter-spaced so six digits read as six; the PIN to compare
+ * (`confirmPin`) is the one large figure the chassis draws: the heading weight at twice the
+ * heading size in `tabular-nums`, centred.
  */
 .zen-device-chooser {
   display: flex;
   flex-direction: column;
-  width: calc(100% + 2 * var(--v2-card-padding));
-  margin: 0 calc(-1 * var(--v2-card-padding));
 }
 .zen-device-chooser-list {
   display: flex;
-  max-height: calc(5 * var(--v2-row) + var(--v2-row) / 2);
   flex-direction: column;
-  overflow-y: auto;
 }
 .zen-device-chooser-list > .zen-device-chooser-row {
   width: calc(100% - 2 * var(--v2-ring-room));
@@ -627,12 +664,13 @@
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
 }
-.zen-device-pairing-input {
+.zen-confirm-dialog[data-pairing-kind='providePin'] .zen-v2-field[aria-label='PIN'] {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.25em;
 }
 .zen-device-pairing-pin {
   margin: 0;
+  padding: 0 16px;
   color: var(--v2-text);
   text-align: center;
   font-size: calc(2 * var(--v2-font-heading));

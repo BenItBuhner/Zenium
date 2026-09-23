@@ -1,5 +1,5 @@
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { Fragment, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Bluetooth, Cable, Check, Keyboard, type LucideIcon, Usb } from 'lucide-react'
 import type {
   DeviceCandidate,
@@ -26,8 +26,7 @@ import {
 } from '@renderer/lib/devices'
 import { hostLabels } from '@renderer/lib/screenPicker'
 import { captureActiveTab, invalidateSnapshot, returnFocusToPage, uiStore } from '@renderer/lib/ui'
-import { ConfirmDialog } from '../dialogs/ConfirmDialog'
-import { V2Field, V2FormField } from '../extensions/v2'
+import { ConfirmDialog, PickerDialog, PromptDialog } from '../dialogs/ConfirmDialog'
 
 /**
  * How long the chooser waits for the page's picture before it shows over a blank one: the page
@@ -100,20 +99,25 @@ export function DeviceChooserLayer({ state }: { state: UIState }): JSX.Element |
 }
 
 /**
- * Chrome's "<site> wants to connect to a USB device" as the chassis prompt (`ConfirmDialog`) in
- * its picker form: `role="dialog"`, §9.20's 400 since it carries a list, the title block (§9.23)
- * with the kind's 16 glyph and the requesting frame's host – never elided; it wraps at its dots
- * – then the live list the engine keeps as a radio list (§9.13): one row per candidate with the
- * kind's glyph, its name and, where the engine gives one, its detail (a serial number, a port's
- * path, an address) at 13 in the deemphasised ink; the picked row `aria-checked` with the
- * selected fill (§9.6) and a trailing check. A Bluetooth list still growing says so under the
- * rows (§9.30's spinner, "Looking for devices…"); an empty list is §9.17's one sentence, with
- * Chrome's udev notice under it on Linux. The §9.11 footer is Cancel and Connect, the primary,
- * at .4 until a row is picked; a double-click or Enter on the picked row is Connect too. The
- * keyboard is the prompt's (§9.22): the container holds it at the open, Tab enters the list at
- * its one roving stop (the pick, else the first row), then Cancel, then Connect, wrapping; Down,
- * Up, Home and End move the pick; Enter from the container is Connect once there is a pick;
- * Escape and the scrim are Cancel – the page's `NotFoundError`, as Chrome's.
+ * Chrome's "<site> wants to connect to a USB device" on the picker form of the chassis prompt –
+ * desktop's `PickerDialog` (#413): a `dialog` at §9.20's 400 (320 when it stands under the
+ * pairing prompt), the title block (§9.23) with the kind's 16 glyph and the requesting frame's
+ * host – never elided; it wraps at its dots – then, in the picker's body slot, the live list
+ * the engine keeps as a radio list (§9.13): one row per candidate with the kind's glyph, its
+ * name and, where the engine gives one, its detail (a serial number, a port's path, an address)
+ * at 13 in the deemphasised ink; the picked row `aria-checked` with the selected fill (§9.6)
+ * and a trailing check. The slot scrolls the list under the title block at the 80% cap (the
+ * primitive's). A Bluetooth list still growing says so under the rows (§9.30's spinner,
+ * "Looking for devices…"); an empty list is §9.17's one sentence, with Chrome's udev notice
+ * under it on Linux. The §9.11 footer is Cancel and Connect, the primary, `disabled` at .4
+ * until a row is picked (`aria-disabled`, still in the tab order); a double-click or Enter on
+ * the picked row is Connect too. The keyboard is the prompt's (§9.22): the container holds it
+ * at the open, Tab enters the list at its one roving stop (the pick, else the first row), then
+ * Cancel, then Connect, wrapping; Down, Up, Home and End move the pick; Enter from the
+ * container is Connect once there is a pick and inert before; Escape and the scrim are Cancel –
+ * the page's `NotFoundError`, as Chrome's. While the pairing prompt stands over it (`under`)
+ * the chooser is `inert` – §9.24's depth two, the cover this owner drops as the prompt goes –
+ * and the primitive reads its place for the 320.
  */
 export function DeviceChooserDialog({
   chooser,
@@ -131,6 +135,33 @@ export function DeviceChooserDialog({
   const { host, asks } = chooserTitle(chooser)
   const Glyph = DEVICE_KIND_GLYPH[chooser.kind]
   const listId = useId()
+
+  // The cover under the pairing prompt: the primitive's root is found by the handle the chooser
+  // puts on it, and made inert before the paint; lifted the same way as the prompt leaves, ahead
+  // of the prompt's return of the keyboard to the chooser (a passive cleanup, after this). A
+  // panel not in the document yet – the frame's host mounting in the same pass – is covered as
+  // it lands.
+  useLayoutEffect(() => {
+    const selector = `[data-device-chooser="${cssEscape(chooser.id)}"]`
+    const cover = (root: HTMLElement): void => {
+      if (under) root.setAttribute('inert', '')
+      else root.removeAttribute('inert')
+    }
+    const root = document.querySelector<HTMLElement>(selector)
+    if (root) {
+      cover(root)
+      return
+    }
+    if (!under) return
+    const observer = new MutationObserver(() => {
+      const late = document.querySelector<HTMLElement>(selector)
+      if (!late) return
+      cover(late)
+      observer.disconnect()
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [under, chooser.id])
 
   const answer = (deviceId: string | null): void => {
     if (answered.current) return
@@ -165,9 +196,8 @@ export function DeviceChooserDialog({
   }
 
   return (
-    <ConfirmDialog
+    <PickerDialog
       name="device-chooser"
-      role="dialog"
       data={{ 'data-device-kind': chooser.kind, 'data-device-chooser': chooser.id }}
       glyph={<Glyph aria-hidden />}
       title={
@@ -176,8 +206,7 @@ export function DeviceChooserDialog({
         </>
       }
       action="Connect"
-      confirmDisabled={!selected}
-      under={under}
+      disabled={!selected}
       returnFocus={false}
       onCancel={cancel}
       onConfirm={connect}
@@ -301,18 +330,21 @@ function Host({ host }: { host: string }): JSX.Element {
 
 /**
  * The Bluetooth pairing prompt (`devicePairings`): "Pair with <device>" on the same chassis,
- * over the chooser when one is up (§9.20: the 320 notice whatever it carries, stacked) and
- * alone otherwise. Three forms, by what the OS wants: `confirm` is the title block and Cancel |
- * Pair; `providePin` adds a six-digit field (§9.12) that takes the keyboard at the open, with
- * Pair at .4 until the digits are in – Enter in the field is Pair, as the field is not a
- * control that owns its Enter; `confirmPin`
- * shows the device's PIN large, in `tabular-nums`, to compare. Pair is the primary and the
- * prompt's default: nothing here destroys anything. Cancel, Escape and the scrim send null.
+ * over the chooser when one is up (§9.20: the 320 notice whatever it carries, stacked – the
+ * primitive reads its place) and alone otherwise. Three forms, by what the OS wants, each on
+ * the desktop's export for it (#413): `confirm` is the confirmation itself (`ConfirmDialog`, an
+ * `alertdialog`): the title block and Cancel | Pair; `providePin` is the one-field prompt
+ * (`PromptDialog`, §9.12: the field takes the keyboard at the open, its name is the title's
+ * and its `aria-label`, no placeholder) with the six digits its value – Pair `disabled` at .4
+ * until they are in, and Enter in the field the verb once they are, the primitive's default
+ * key; `confirmPin` shows the device's PIN large, in `tabular-nums`, to compare, as the body of
+ * the picker form (`PickerDialog`, the chassis' one body slot; a `dialog`, since a comparison
+ * is asked). Pair is the primary and the prompt's default: nothing here destroys anything.
+ * Cancel, Escape and the scrim send null.
  */
 export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.Element {
   const answered = useRef(false)
   const [pin, setPin] = useState('')
-  const fieldId = useId()
   const needsPin = prompt.kind === 'providePin'
   const ready = !needsPin || isCompletePin(pin)
 
@@ -325,49 +357,47 @@ export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.
     })
   }
 
-  return (
-    <ConfirmDialog
-      name="device-pairing"
-      role={prompt.kind === 'confirm' ? 'alertdialog' : 'dialog'}
-      data={{ 'data-pairing-kind': prompt.kind, 'data-device-pairing': prompt.id }}
-      glyph={<Bluetooth aria-hidden />}
-      title={pairingTitle(prompt)}
-      description={pairingDescription(prompt)}
-      action="Pair"
-      confirmDisabled={!ready}
-      onCancel={() => answer(false)}
-      onConfirm={() => answer(true)}
-      body={
-        prompt.kind === 'providePin' ? (
-          <V2FormField id={fieldId} label="PIN">
-            {(aria) => (
-              <V2Field
-                {...aria}
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="[0-9]*"
-                maxLength={PIN_LENGTH}
-                placeholder="000000"
-                value={pin}
-                className="zen-device-pairing-input"
-                // The digits are the whole interaction: the field takes the keyboard at the open.
-                data-autofocus=""
-                onChange={(e) => setPin(sanitizePin(e.target.value))}
-              />
-            )}
-          </V2FormField>
-        ) : prompt.kind === 'confirmPin' ? (
+  const shared = {
+    name: 'device-pairing',
+    data: { 'data-pairing-kind': prompt.kind, 'data-device-pairing': prompt.id },
+    glyph: <Bluetooth aria-hidden />,
+    title: pairingTitle(prompt),
+    description: pairingDescription(prompt),
+    action: 'Pair',
+    onCancel: () => answer(false),
+    onConfirm: () => answer(true)
+  }
+
+  if (prompt.kind === 'providePin') {
+    return (
+      <PromptDialog
+        {...shared}
+        disabled={!ready}
+        field={{
+          label: 'PIN',
+          value: pin,
+          onChange: (next) => setPin(sanitizePin(next)),
+          maxLength: PIN_LENGTH
+        }}
+      />
+    )
+  }
+  if (prompt.kind === 'confirmPin') {
+    return (
+      <PickerDialog
+        {...shared}
+        body={
           <p
             className="zen-device-pairing-pin"
             aria-label={`PIN ${prompt.pin.split('').join(' ')}`}
           >
             {prompt.pin}
           </p>
-        ) : undefined
-      }
-    />
-  )
+        }
+      />
+    )
+  }
+  return <ConfirmDialog {...shared} />
 }
 
 /** An id inside an attribute selector (`CSS.escape` is not in every test DOM). */

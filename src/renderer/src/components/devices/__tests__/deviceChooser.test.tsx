@@ -171,6 +171,12 @@ const cancelOf = (scope: ParentNode): HTMLButtonElement =>
   scope.querySelector<HTMLButtonElement>('[data-action="cancel"]')!
 const verbOf = (scope: ParentNode): HTMLButtonElement =>
   scope.querySelector<HTMLButtonElement>('[data-action="confirm"]')!
+/** The verb before it is an answer (§9.30): `aria-disabled` on the desktop primitive, never `disabled`. */
+const waiting = (scope: ParentNode): boolean => {
+  const verb = verbOf(scope)
+  expect(verb.disabled).toBe(false)
+  return verb.getAttribute('aria-disabled') === 'true'
+}
 const responses = (): unknown[][] =>
   vi.mocked(run).mock.calls.filter(([c]) => c === 'devices.respond')
 const pairingResponses = (): unknown[][] =>
@@ -219,7 +225,7 @@ describe('DeviceChooserLayer', () => {
 })
 
 describe('the chooser', () => {
-  it('is the chassis prompt in its picker form at 400: role dialog, Chrome’s title with the host apart and the kind’s glyph, the radio list, Cancel then Connect at .4', async () => {
+  it('is the picker form of the chassis prompt (PickerDialog) at 400: role dialog, Chrome’s title with the host apart and the kind’s glyph, the radio list in the body slot, Cancel then Connect at .4', async () => {
     render(layer(stateWith([CHOOSER])))
     await settle()
     const d = chooser()!
@@ -228,7 +234,12 @@ describe('the chooser', () => {
     expect(d.dataset.deviceKind).toBe('usb')
     expect(d.dataset.deviceChooser).toBe('ch-1')
     expect(d.style.width).toBe('400px')
+    expect(d.dataset.body).toBe('list')
     expect(d.closest('.zen-frame-dialogs-slot')).not.toBeNull()
+    // The list is the body slot's one element – the primitive's scroller, not one of its own.
+    const slot = d.querySelector<HTMLElement>('.zen-confirm-dialog-slot')!
+    expect(slot.firstElementChild!.classList.contains('zen-device-chooser')).toBe(true)
+    expect(slot.children).toHaveLength(1)
     const title = d.querySelector<HTMLElement>('.zen-v2-title-block-title')!
     expect(title.textContent).toBe('web.flasher.example wants to connect to a USB device')
     // The glyph leads the title; the host is its own span with a break after each dot.
@@ -260,7 +271,7 @@ describe('the chooser', () => {
     expect(cancelOf(d).textContent).toBe('Cancel')
     expect(verbOf(d).textContent).toBe('Connect')
     expect(verbOf(d).hasAttribute('data-primary')).toBe(true)
-    expect(verbOf(d).disabled).toBe(true)
+    expect(waiting(d)).toBe(true)
     expect(d.querySelectorAll('[data-primary]')).toHaveLength(1)
   })
 
@@ -274,14 +285,20 @@ describe('the chooser', () => {
     expect(cards.map((r) => r.tabIndex)).toEqual([0, -1, -1])
     expect(press(d, 'Tab').defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(cards[0])
-    // Shift+Tab from the container goes to the last control, the verb – disabled, so Cancel.
+    // Shift+Tab from the container goes to the last control, the verb: waiting for a pick it is
+    // `aria-disabled`, still in the tab order (§9.30), so the wrap does not shift as a pick arms it.
     act(() => d.focus())
     expect(press(d, 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
-    expect(document.activeElement).toBe(cancelOf(d))
+    expect(document.activeElement).toBe(verbOf(d))
+    expect(waiting(d)).toBe(true)
+    // A press on the waiting verb is nothing.
+    click(verbOf(d))
+    expect(responses()).toHaveLength(0)
     // A pick moves the stop to the picked row.
     click(cards[2])
     expect(rows(d).map((r) => r.tabIndex)).toEqual([-1, -1, 0])
-    // Connect is a control now: Shift+Tab from the container lands on it.
+    expect(waiting(d)).toBe(false)
+    // Shift+Tab from the container still lands on Connect, armed now.
     act(() => d.focus())
     expect(press(d, 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(verbOf(d))
@@ -299,7 +316,7 @@ describe('the chooser', () => {
     expect(row(d, 'usb-1')!.getAttribute('aria-checked')).toBe('false')
     expect(row(d, 'usb-2')!.querySelector('svg.zen-v2-row-trail')).not.toBeNull()
     expect(d.querySelectorAll('.zen-v2-row-trail')).toHaveLength(1)
-    expect(verbOf(d).disabled).toBe(false)
+    expect(waiting(d)).toBe(false)
     // Another click moves the pick; the pick is one.
     click(row(d, 'usb-1'))
     expect(row(d, 'usb-1')!.getAttribute('aria-checked')).toBe('true')
@@ -386,7 +403,7 @@ describe('the chooser', () => {
     await settle()
     const d = chooser()!
     click(row(d, 'usb-2'))
-    expect(verbOf(d).disabled).toBe(false)
+    expect(waiting(d)).toBe(false)
     rerender(
       layer(
         stateWith([{ ...CHOOSER, candidates: CHOOSER.candidates.filter((c) => c.id !== 'usb-2') }])
@@ -394,7 +411,7 @@ describe('the chooser', () => {
     )
     expect(rows(d).map((r) => r.dataset.deviceId)).toEqual(['usb-1', 'usb-3'])
     expect(rows(d).every((r) => r.getAttribute('aria-checked') === 'false')).toBe(true)
-    expect(verbOf(d).disabled).toBe(true)
+    expect(waiting(d)).toBe(true)
     // The stop goes back to the first row.
     expect(rows(d).map((r) => r.tabIndex)).toEqual([0, -1])
     rerender(
@@ -426,7 +443,7 @@ describe('the chooser', () => {
     expect(scanning.textContent).toBe('Looking for devices…')
     expect(d.querySelector('.zen-device-chooser-empty')).toBeNull()
     click(row(d, 'bt-1'))
-    expect(verbOf(d).disabled).toBe(false)
+    expect(waiting(d)).toBe(false)
     // The scan done: the line goes, the rows stay.
     rerender(layer(stateWith([{ ...BLUETOOTH, scanning: false }])))
     expect(d.querySelector('.zen-device-chooser-scanning')).toBeNull()
@@ -441,7 +458,7 @@ describe('the chooser', () => {
     expect(d.querySelector('[role="radiogroup"]')).toBeNull()
     expect(d.querySelector('.zen-device-chooser-scanning')).not.toBeNull()
     expect(d.querySelector('.zen-device-chooser-empty')).toBeNull()
-    expect(verbOf(d).disabled).toBe(true)
+    expect(waiting(d)).toBe(true)
     rerender(layer(stateWith([{ ...BLUETOOTH, candidates: [], scanning: false }])))
     expect(d.querySelector('.zen-device-chooser-scanning')).toBeNull()
     const empty = d.querySelector<HTMLElement>('.zen-device-chooser-empty')!
@@ -468,7 +485,7 @@ describe('the chooser', () => {
     expect(empty.querySelector('.zen-device-chooser-notice')!.textContent).toBe(
       'On Linux, a udev rule may be needed for this device'
     )
-    expect(verbOf(d).disabled).toBe(true)
+    expect(waiting(d)).toBe(true)
     rerender(layer(stateWith([{ ...CHOOSER, candidates: [], hint: 'none' }])))
     expect(d.querySelector('.zen-device-chooser-notice')).toBeNull()
   })
@@ -495,7 +512,7 @@ describe('the pairing prompt', () => {
     expect(p.querySelector('.zen-device-pairing-pin')).toBeNull()
     expect(verbOf(p).textContent).toBe('Pair')
     expect(verbOf(p).hasAttribute('data-primary')).toBe(true)
-    expect(verbOf(p).disabled).toBe(false)
+    expect(waiting(p)).toBe(false)
     expect(document.activeElement).toBe(p)
     expect(press(p, 'Enter').defaultPrevented).toBe(true)
     expect(pairingResponses()).toEqual([
@@ -529,20 +546,22 @@ describe('the pairing prompt', () => {
     )
     const field = p.querySelector<HTMLInputElement>('input')!
     expect(document.activeElement).toBe(field)
-    expect(field.getAttribute('inputmode')).toBe('numeric')
+    // The primitive's field (§9.12): named by its aria-label, no visible label, no placeholder.
+    expect(field.classList.contains('zen-v2-field')).toBe(true)
+    expect(field.getAttribute('aria-label')).toBe('PIN')
     expect(field.getAttribute('maxlength')).toBe('6')
-    expect(field.getAttribute('autocomplete')).toBe('one-time-code')
-    expect(p.querySelector('label')!.textContent).toBe('PIN')
-    expect(verbOf(p).disabled).toBe(true)
+    expect(field.hasAttribute('placeholder')).toBe(false)
+    expect(p.querySelector('label')).toBeNull()
+    expect(waiting(p)).toBe(true)
     type(field, '12a3')
     expect(field.value).toBe('123')
-    expect(verbOf(p).disabled).toBe(true)
+    expect(waiting(p)).toBe(true)
     // Enter short of six digits is swallowed and pairs nothing.
     expect(press(field, 'Enter').defaultPrevented).toBe(true)
     expect(pairingResponses()).toHaveLength(0)
     type(field, '1234567')
     expect(field.value).toBe('123456')
-    expect(verbOf(p).disabled).toBe(false)
+    expect(waiting(p)).toBe(false)
     expect(press(field, 'Enter').defaultPrevented).toBe(true)
     expect(pairingResponses()).toEqual([
       ['devices.respondPairing', { id: 'pair-1', response: { confirmed: true, pin: '123456' } }]
@@ -558,10 +577,13 @@ describe('the pairing prompt', () => {
       'Check that this PIN matches the one shown on Heart Rate Monitor.'
     )
     const pin = p.querySelector<HTMLElement>('.zen-device-pairing-pin')!
+    // The figure is the body slot's one element (the picker form's), at 400 alone.
+    expect(pin.parentElement!.classList.contains('zen-confirm-dialog-slot')).toBe(true)
+    expect(p.style.width).toBe('400px')
     expect(pin.textContent).toBe('482913')
     expect(pin.getAttribute('aria-label')).toBe('PIN 4 8 2 9 1 3')
     expect(p.querySelector('input')).toBeNull()
-    expect(verbOf(p).disabled).toBe(false)
+    expect(waiting(p)).toBe(false)
     click(verbOf(p))
     expect(pairingResponses()).toEqual([
       ['devices.respondPairing', { id: 'pair-1', response: { confirmed: true } }]
