@@ -23,6 +23,9 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import androidx.webkit.WebViewCompat
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.blocking.ListenerOptions
+import app.zen.chromium.blocking.WebRequestEvent
+import app.zen.chromium.blocking.WebRequestListener
 import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.Extensions
@@ -4232,15 +4235,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /**
-     * Video Downloader PLUS (njgeh...) over `video.html` (its clip playing): the popup's consent
-     * agreed, the popup reopened, the clip listed with a download control (the desktop's round
-     * 7 reading).
+     * Video Downloader PLUS (njgeh...) over `media.html` (its clip playing in `Range` pieces):
+     * the popup's consent agreed, the popup reopened, the clip listed with a download control
+     * (the desktop's round 7 reading). Its sniffer is an `onResponseStarted` listener with
+     * `responseHeaders` (`isMedia`: a `video/` or `audio/` content-type, or a content-length of
+     * 100 KB and a media extension), so the [WebRequestProbe] runs beside it (compat round 13's
+     * item 4) and a failing grade carries what the runtime gave.
      */
     private fun videoDownloaderPLUS(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val (tab, view) = fixture("video.html?vdplus2", factor, 2_500)
+        val webRequest = WebRequestProbe(row, factor).also { it.start() }
+        val (tab, view) = fixture("media.html?vdplus2", factor, 2_500)
         runCatching { tabEval(view, "(function(){var v=document.querySelector('video');if(v){v.muted=true;v.play().catch(function(){})}return 'played'})()") }
+        extra.put("webRequest", webRequest.read(view))
         SystemClock.sleep(scaled(4_000, factor))
         showTab(tab)
         val steps = JSONArray()
@@ -4268,10 +4276,12 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-media-popup")
         runCatching { coreCall("extension.closePopup", "null") }
+        webRequest.stop()
+        val measured = "; its sniffer listens to onResponseStarted with responseHeaders (a video/audio content-type, or content-length >= 100 KB with a media extension; tabId >= 0); the runtime gave it: ${webRequest.summary()}"
         return when {
-            dom.optBoolean("pass") -> Grade("P", "Video Downloader PLUS: popup over the playing clip ${dom.toString().take(220)}", extra)
-            popup == null -> Grade("F", "Video Downloader PLUS: popup did not render in the core check (steps ${steps.toString().take(120)})", extra)
-            else -> Grade("F", "Video Downloader PLUS: popup over the playing clip lists no clip: ${dom.toString().take(220)} (steps ${steps.toString().take(120)})", extra)
+            dom.optBoolean("pass") -> Grade("P", "Video Downloader PLUS: popup over the playing clip ${dom.toString().take(220)}; measured: ${webRequest.summary()}", extra)
+            popup == null -> Grade("F", "Video Downloader PLUS: popup did not render in the core check (steps ${steps.toString().take(120)})$measured", extra)
+            else -> Grade("F", "Video Downloader PLUS: popup over the playing clip lists no clip: ${dom.toString().take(220)} (steps ${steps.toString().take(120)})$measured", extra)
         }
     }
 
@@ -4767,12 +4777,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * (`listing`, a JS regex literal over the popup's text) polled. These list what their content
      * script or `webRequest` saw, no vendor service in between (Video Downloader Plus's reading of
      * round 9 has one), so a popup that lists nothing is F, with the worker's console beside it.
+     * With `probe`, the [WebRequestProbe] measures what the runtime's `webRequest` gave the
+     * sniffer while the page loaded (compat round 13's item 4), and a failing grade carries the
+     * measurement beside `listener`, the events the sniffer asked for (read off its code).
      */
-    private fun mediaPopup(label: String, page: String, listing: String, panel: String? = null, settleMs: Long = 25_000): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun mediaPopup(label: String, page: String, listing: String, panel: String? = null, settleMs: Long = 25_000, probe: Boolean = false, listener: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val factor = speedFactor(entry)
         val extra = JSONObject()
+        val webRequest = if (probe) WebRequestProbe(row, factor).also { it.start() } else null
         val (fixtureTab, view) = fixture(page, factor, 2_500)
         runCatching { tabEval(view, "(function(){var v=document.querySelector('video');if(v){v.muted=true;v.play().catch(function(){})}return 'played'})()") }
+        webRequest?.let { extra.put("webRequest", it.read(view)) }
         SystemClock.sleep(scaled(5_000, factor))
         extra.put("fixture", json(tabEval(view, "(function(){var v=document.querySelector('video');return JSON.stringify({video:v?(v.paused?'paused':'playing'):'none',src:v?(v.currentSrc||v.src||'').slice(-48):null,readyState:document.readyState})})()")))
         showTab(fixtureTab)
@@ -4795,10 +4810,95 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-media-popup")
         runCatching { coreCall("extension.closePopup", "null") }
+        webRequest?.stop()
+        val measured = webRequest?.let { "; its sniffer listens to ${listener ?: "webRequest"}; the runtime gave it: ${it.summary()}" } ?: ""
         when {
-            found.optBoolean("pass") -> Grade("P", "$label: popup over the playing clip lists it: ${found.toString().take(220)}", extra)
-            popup == null -> Grade("F", "$label: popup did not render in the core check", extra)
-            else -> Grade("F", "$label: popup over the playing clip lists no clip: ${found.toString().take(220)}", extra)
+            found.optBoolean("pass") -> Grade("P", "$label: popup over the playing clip lists it: ${found.toString().take(220)}${if (webRequest != null) "; measured: ${webRequest.summary()}" else ""}", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check$measured", extra)
+            else -> Grade("F", "$label: popup over the playing clip lists no clip: ${found.toString().take(220)}$measured", extra)
+        }
+    }
+
+    /**
+     * What the runtime's `webRequest` gives a media sniffer today, measured while a page loads
+     * (compat round 13's item 4, rows 28 Chrono Download Manager and C6 Video Downloader PLUS,
+     * over `media.html`: one clip in `Range` pieces with a seek for its tail, the same clip under
+     * an extension-less URL, one XHR and one `fetch`). Two listeners record it. The extension's
+     * own background registers one on every `chrome.webRequest` event (`requestHeaders` asked of
+     * the request stage, `responseHeaders` of the response stage) and keeps what it hears: the
+     * events the runtime emits, the `type` each carries, whether the headers came. Beside it, an
+     * `onSendHeaders` listener on the request engine ([Blocking.addListener], the desktop-parity
+     * registry over `shouldInterceptRequest`) keeps, per request, the header names WebView hands
+     * the embedder and the type the engine inferred – which is where a media load's type comes
+     * from (`ResourceType.guessKnown`: the main-frame flag, `Accept`, the URL's extension; a
+     * `Sec-Fetch-Dest` the embedder never sees cannot be read). [read] waits for the page to have
+     * played, seeked and fetched and takes both records; [stop] removes both listeners (the
+     * background's registrations are the extension's persisted listeners until then).
+     */
+    private inner class WebRequestProbe(private val row: Row, private val factor: Double) {
+        val result = JSONObject()
+        private val engineSeen = java.util.Collections.synchronizedList(ArrayList<JSONObject>())
+        private var removeEngine: (() -> Unit)? = null
+
+        fun start() {
+            val bg = awakeBackground(row.id, factor)
+            result.put("background", if (bg == null) JSONObject().put("error", "no background view") else json(tabEval(bg, WEBREQ_PROBE_START)))
+            val listener = WebRequestListener { d ->
+                if (engineSeen.size < 80) {
+                    val headers = d.requestHeaders ?: emptyMap()
+                    fun header(name: String): String? = headers.entries.firstOrNull { it.key.equals(name, ignoreCase = true) }?.value
+                    engineSeen.add(
+                        JSONObject().put("url", d.url.takeLast(60)).put("type", d.resourceType.dnrName).put("method", d.method)
+                            .put("headers", JSONArray(headers.keys.sorted()))
+                            .put("accept", header("Accept")?.take(60))
+                            .put("range", header("Range"))
+                            .put("secFetchDest", header("Sec-Fetch-Dest"))
+                    )
+                }
+                null
+            }
+            removeEngine = host.blocking.addListener(WebRequestEvent.ON_SEND_HEADERS, listener, ListenerOptions(registrant = "compat-sweep-probe"))
+        }
+
+        /** Both records once `view`'s page played, seeked and fetched (or the wait ran out), with the [summary]. */
+        fun read(view: WebView): JSONObject {
+            val page = poll(scaled(25_000, factor), 500) {
+                val s = json(tabEval(view, MEDIA_STATE))
+                if (s.optBoolean("playing") && s.optInt("seeked") > 0 && !s.isNull("xhr") && !s.isNull("fetch") && (s.optBoolean("streamMeta") || s.has("streamError"))) s else null
+            } ?: json(tabEval(view, MEDIA_STATE))
+            SystemClock.sleep(scaled(2_000, factor))
+            result.put("page", page)
+            backgroundView(row.id)?.let { result.put("events", json(tabEval(it, WEBREQ_PROBE_READ))) }
+            result.put("engine", JSONArray(engineSeen.toList()))
+            result.put("summary", summary())
+            return result
+        }
+
+        fun stop() {
+            removeEngine?.invoke()
+            removeEngine = null
+            backgroundView(row.id)?.let { runCatching { tabEval(it, WEBREQ_PROBE_STOP, 5) } }
+        }
+
+        /** One line per load of the page: the events the extension heard (with the type each carried) and what the engine saw of the request. */
+        fun summary(): String {
+            val events = result.optJSONObject("events")?.optJSONArray("events") ?: JSONArray()
+            val heard = (0 until events.length()).map { events.getJSONObject(it) }
+            val engine = result.optJSONArray("engine") ?: JSONArray()
+            val seen = (0 until engine.length()).map { engine.getJSONObject(it) }
+            val loads = listOf("clip.mp4" to Regex("clip\\.mp4"), "stream (no extension)" to Regex("/stream"), "XHR" to Regex("data\\.json\\?xhr"), "fetch" to Regex("data\\.json\\?fetch"))
+            val parts = loads.map { (name, re) ->
+                val own = heard.filter { re.containsMatchIn(it.optString("url")) }
+                val byEvent = own.groupBy { it.optString("ev") }.entries.joinToString(" ") { (ev, list) -> "$ev(${list.map { it.optString("type") }.distinct().joinToString("|")})x${list.size}" }
+                val e = seen.firstOrNull { re.containsMatchIn(it.optString("url")) }
+                val request = e?.let { "engine type ${it.optString("type")}, Accept ${it.optString("accept", "-")}, Range ${it.optString("range", "absent")}, Sec-Fetch-Dest ${it.optString("secFetchDest", "absent")}" } ?: "the engine saw no request"
+                "$name: ${if (own.isEmpty()) "the extension heard nothing" else "heard $byEvent"}; $request"
+            }
+            val responseStage = heard.count { it.optString("ev") in RESPONSE_STAGE_EVENTS }
+            val background = result.optJSONObject("background")
+            val registered = background?.opt("registered")?.toString() ?: "?"
+            return "$registered events registered; ${parts.joinToString("; ")}; response-stage events heard: $responseStage" +
+                (result.optJSONObject("events")?.optJSONArray("errors")?.takeIf { it.length() > 0 }?.let { "; errors $it" } ?: "")
         }
     }
 
@@ -5651,7 +5751,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("dfffkbbackkpgmddopaeohbdgfckogdn", "Audio Master mini", "audio-master-mini", core = captureLimit("Audio Master mini", "/volume|bass|boost|equal/i")),
         Row("iodihamcpbpeioajjeobimgagajmlibd", "Secure Shell", "secure-shell", core = ownPage("Secure Shell", "html/nassh.html", "(function(){var t=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var term=document.querySelector('#terminal, x-row, .hterm, iframe');var fields=document.querySelectorAll('input, select, textarea, [contenteditable]').length;var rows=document.querySelectorAll('x-row').length;return JSON.stringify({pass:!!term||fields>0||t.length>40,terminal:!!term,fields:fields,rows:rows,text:t.slice(0,160)})})()", gate = "an SSH host to connect to")),
         Row("cimpffimgeipdhnhjohpbehjkcdpjolg", "Watch2Gether", "watch2gether", core = accountGate("Watch2Gether", Regex("w2g\\.tv|watch2gether", RegexOption.IGNORE_CASE), gate = "a Watch2Gether room on w2g.tv (its share opens one)")),
-        Row("mciiogijehkdemklbdcbfkefimifhecn", "Chrono Download Manager", "chrono-download-manager", core = mediaPopup("Chrono Download Manager", "video.html?chrono", "/clip|mp4|webm|video/i", panel = "/sniffer|resources|media/i")),
+        // Over `media.html` with the webRequest probe (round 13's item 4): its sniffer is an
+        // `onHeadersReceived` listener with `responseHeaders` (`bg/bg.min.js`), reading the
+        // content-type, content-length and content-disposition, or the URL's media extension.
+        Row("mciiogijehkdemklbdcbfkefimifhecn", "Chrono Download Manager", "chrono-download-manager", core = mediaPopup("Chrono Download Manager", "media.html?chrono", "/clip|mp4|webm|video/i", panel = "/sniffer|resources|media/i", probe = true, listener = "onHeadersReceived with responseHeaders (content-type image/audio/video, content-length, content-disposition; or the URL's media extension; tabId != -1)")),
         Row("nfmmmhanepmpifddlkkmihkalkoekpfd", "FetchV", "fetchv", core = mediaPopup("FetchV", "hls.html?fetchv", "/m3u8|stream|hls|download|clip/i")),
         Row("jlgkpaicikihijadgifklkbpdajbkhjo", "CrxMouse", "crxmouse", core = contentAttached("CrxMouse", "its gestures need a mouse's right button and wheel, which the phone has not got: not applicable")),
         Row("cmdgdghfledlbkbciggfjblphiafkcgg", "SBlock", "sblock", core = ::adBlocker),
@@ -6897,6 +7000,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "return JSON.stringify({clicked:!!hit,bySelector:!!bySel,label:hit?label(hit).slice(0,60):null,tag:hit?hit.tagName+(hit.getAttribute('role')?'[role='+hit.getAttribute('role')+']':''):null,candidates:cands.slice(0,6).map(function(e){return e.tagName+':'+label(e).slice(0,30)}),switches:switches.length})})()"
         /** A consent screen's accepting control, for [CLICK_LABEL]: the whole label is one of these. */
         private const val CONSENT_WORDS = "/^(agree|accept|i agree|agree (and|&) continue|accept (and|&) continue|continue|get started|got it|start|skip|next|ok|okay|allow)[.!]?$/i"
+        /**
+         * [WebRequestProbe]'s listener on every `chrome.webRequest` event from the extension's
+         * background (`requestHeaders` asked of the request stage, `responseHeaders` of the
+         * response stage, `<all_urls>`): each delivery's event, `type`, URL tail, method, tab,
+         * status and whether the headers came, kept on `self.__zenWebReq` until [WEBREQ_PROBE_STOP].
+         */
+        private const val WEBREQ_PROBE_START =
+            "(function(){if(self.__zenWebReq)return JSON.stringify({registered:'already'});var E=['onBeforeRequest','onBeforeSendHeaders','onSendHeaders','onHeadersReceived','onResponseStarted','onBeforeRedirect','onCompleted','onErrorOccurred'];" +
+                "var spec={onBeforeSendHeaders:['requestHeaders'],onSendHeaders:['requestHeaders'],onHeadersReceived:['responseHeaders'],onResponseStarted:['responseHeaders'],onBeforeRedirect:['responseHeaders'],onCompleted:['responseHeaders']};var log=[],fns={},errors=[];" +
+                "E.forEach(function(ev){var fn=function(d){if(log.length<200)log.push({ev:ev,type:d.type,url:String(d.url||'').slice(-60),method:d.method,tabId:d.tabId,status:d.statusCode,reqH:d.requestHeaders?d.requestHeaders.length:null,resH:d.responseHeaders?d.responseHeaders.length:null})};fns[ev]=fn;" +
+                "try{var e=chrome.webRequest&&chrome.webRequest[ev];if(!e){errors.push(ev+': missing');return}if(spec[ev])e.addListener(fn,{urls:['<all_urls>']},spec[ev]);else e.addListener(fn,{urls:['<all_urls>']})}catch(x){errors.push(ev+': '+(x&&x.message||x))}});" +
+                "self.__zenWebReq={log:log,fns:fns,errors:errors};return JSON.stringify({registered:E.length-errors.length,errors:errors})})()"
+        private const val WEBREQ_PROBE_READ =
+            "(function(){var w=self.__zenWebReq;if(!w)return JSON.stringify({error:'no probe (the background restarted?)'});var by={};w.log.forEach(function(e){by[e.ev]=(by[e.ev]||0)+1});return JSON.stringify({count:w.log.length,byEvent:by,events:w.log.slice(0,60),errors:w.errors})})()"
+        private const val WEBREQ_PROBE_STOP =
+            "(function(){var w=self.__zenWebReq;if(!w)return 'none';var n=0;Object.keys(w.fns).forEach(function(ev){try{chrome.webRequest[ev].removeListener(w.fns[ev]);n++}catch(e){}});delete self.__zenWebReq;return 'removed '+n})()"
+        /** `media.html`'s own record of its loads (`window.__media`): the clip playing and seeked, the extension-less clip's metadata, the XHR's and the fetch's status. */
+        private const val MEDIA_STATE = "JSON.stringify(window.__media||{})"
+        /** The `webRequest` events of the response stage, which WebView shows the embedder nothing of. */
+        private val RESPONSE_STAGE_EVENTS = setOf("onHeadersReceived", "onResponseStarted", "onBeforeRedirect", "onCompleted")
         /**
          * A tap on the first drawn control whose whole label matches `__RE__` (buttons, links,
          * role=button, labelled inputs, then the innermost text container; through open shadow

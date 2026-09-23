@@ -23,18 +23,33 @@
     <p>
       One clip served by the fixture server (not a data URL), which answers <code>Range</code>
       requests with <code>206</code>: the browser asks for it in pieces, the way a media
-      element loads a file, and the page seeks once so a second range goes out. Beside it,
-      one <code>XMLHttpRequest</code> and one <code>fetch</code> of the server's JSON, so a
-      request observer sees the <code>media</code> and the <code>xmlhttprequest</code> kinds
-      from one page.
+      element loads a file, and the page seeks once so a second range goes out. The same clip
+      once more under an extension-less URL (<code>/stream?clip=2</code>, the shape of a CDN's
+      <code>/videoplayback?...</code>), metadata only, for a request observer whose type comes
+      from the URL's extension. Beside them, one <code>XMLHttpRequest</code> and one
+      <code>fetch</code> of the server's JSON, so a request observer sees the <code>media</code>
+      and the <code>xmlhttprequest</code> kinds from one page.
     </p>
     <video id="clip" src="/clip.mp4" muted autoplay loop playsinline preload="auto"></video>
     <p>Clip: <span id="state">loading</span></p>
+    <video id="stream" src="/stream?clip=2" muted playsinline preload="metadata" style="max-width: 160px"></video>
+    <p>Extension-less clip: <span id="streamState">loading</span></p>
     <p>XHR: <span id="xhr">pending</span>, fetch: <span id="fetch">pending</span></p>
     <script>
       var v = document.getElementById('clip')
       var state = document.getElementById('state')
-      window.__media = { playing: false, seeked: 0, duration: null, xhr: null, fetch: null, error: null, events: [] }
+      window.__media = { playing: false, seeked: 0, duration: null, streamMeta: false, xhr: null, fetch: null, error: null, events: [] }
+      var stream = document.getElementById('stream')
+      stream.addEventListener('loadedmetadata', function () {
+        window.__media.streamMeta = true
+        window.__media.events.push('stream-loadedmetadata')
+        document.getElementById('streamState').textContent = 'metadata loaded (' + stream.duration.toFixed(1) + ' s)'
+      })
+      stream.addEventListener('error', function () {
+        window.__media.streamError = stream.error ? stream.error.code : 'error'
+        window.__media.events.push('stream-error')
+        document.getElementById('streamState').textContent = 'error: ' + window.__media.streamError
+      })
       function report() {
         state.textContent = (v.paused ? 'paused' : 'playing') + ' at ' + v.currentTime.toFixed(1) + ' s' + (window.__media.seeked ? ', seeked ' + window.__media.seeked + 'x' : '')
       }

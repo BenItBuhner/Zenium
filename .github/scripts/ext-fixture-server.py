@@ -14,7 +14,8 @@ Serves `.github/scripts/ext-demo-pages/` as `python3 -m http.server` did, plus:
   - `Range` requests on the files it serves (`206 Partial Content` with `Content-Range`, and
     `Accept-Ranges: bytes` on every file), so a media element loads `clip.mp4` the way it loads a
     clip from a real origin – in pieces, a seek asking for the tail – and a request observer
-    (Chrono Download Manager, Video Downloader PLUS: compat round 13) sees a media load's shape;
+    (Chrono Download Manager, Video Downloader PLUS: compat round 13) sees a media load's shape,
+    and `/stream` is the same clip under an extension-less URL;
   - `/no-cors.json`: a JSON answer without `Access-Control-Allow-Origin`, for a page on the
     server's other origin (`cors.html`) whose fetch the browser refuses unless an extension
     sets the header on the response (Allow CORS).
@@ -49,6 +50,10 @@ class FixtureHandler(SimpleHTTPRequestHandler):
         if parts.path == '/no-cors.json':
             self.no_cors_json()
             return
+        if parts.path == '/stream':
+            # The clip under an extension-less URL (a CDN's `/videoplayback?...`): the same file,
+            # `video/mp4` and ranges, for a request observer whose type comes from the URL's extension.
+            self.path = '/clip.mp4' + ('?' + parts.query if parts.query else '')
         path = self.translate_path(self.path)
         if os.path.isfile(path):
             self.serves_file = True
