@@ -4,20 +4,24 @@ import app.zen.chromium.str
 import org.json.JSONException
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.util.Base64
 
 /**
  * The action calls the flood guard ([BridgeForward]) reads into: which tab a call's details
  * address, and a `setIcon`'s pixels scaled on this side of the bridge.
  *
  * A `setIcon({imageData})` carries its pixels as JSON: `serializeIconDetails` (shim.ts) ships an
- * ImageData as `{width, height, data}` with `data` the pixel bytes one JSON member each
- * (`{"0":255,"1":128,…}`) – some 0.3 M chars for a 96 px icon – and the core, which draws the
- * manifest's icons and no per-tab variant yet, threw them away after parsing them. Here the
- * pixels are read once, straight into an ARGB array, scaled to the slot the chrome draws
- * ([IconScaler]) and handed on as a `path` of one data URL – the form the core resolves icons by
- * anyway – at a few thousand chars. The rest of the details (`tabId`) cross as they were. A
- * message that is not a call in the engine's shape (`{"t":"call","id":…,"ns":…,"method":…,
- * "args":[{…`) is nobody's action state: it goes as it is, under the guard's plain bounds.
+ * ImageData as `{width, height, data}`, and the engine compacts `data` before the text crosses
+ * (`iconWire.ts`: scaled to [ICON_SLOT] where it has a canvas, the RGBA bytes as base64 – some
+ * 5.5 K chars for a 96 px icon). A bootstrap that does not compact ships the bytes one JSON
+ * member each (`{"0":255,"1":128,…}`), some 0.3 M chars for the same icon, and the core, which
+ * draws the manifest's icons and no per-tab variant yet, threw them away after parsing them.
+ * Here the pixels are read once in either form, straight into an ARGB array, scaled to the slot
+ * the chrome draws ([IconScaler]) and handed on as a `path` of one data URL – the form the core
+ * resolves icons by anyway – at a few thousand chars. The rest of the details (`tabId`) cross as
+ * they were. A message that is not a call in the engine's shape (`{"t":"call","id":…,"ns":…,
+ * "method":…,"args":[{…`) is nobody's action state: it goes as it is, under the guard's plain
+ * bounds.
  */
 object ActionCalls {
     /** The slot the chrome draws action icons in: Chrome's "32" (a 16 dp icon at 2×). */
@@ -332,8 +336,9 @@ object ActionCalls {
 
         /**
          * At the `{` of one image (`{width, height, data}`): its pixels, or null when its shape
-         * is not an ImageData's. `data` is the RGBA bytes as `Uint8ClampedArray` stringifies
-         * (`{"0":255,…}`) or as a plain array; each byte is read from its digits into the array.
+         * is not an ImageData's. `data` is the RGBA bytes as the engine compacts them for this
+         * bridge (base64 in a string, `iconWire.ts`), as `Uint8ClampedArray` stringifies
+         * (`{"0":255,…}`) or as a plain array; a byte in digits is read from them into the array.
          */
         fun image(): Pixels? {
             var width = -1
@@ -370,6 +375,14 @@ object ActionCalls {
         private fun readBytes(into: IntArray, count: Int) {
             space()
             when (peek()) {
+                '"' -> {
+                    val decoded = try {
+                        Base64.getDecoder().decode(string())
+                    } catch (e: IllegalArgumentException) {
+                        throw JSONException("base64 pixel bytes: ${e.message}")
+                    }
+                    for (index in 0 until minOf(count, decoded.size)) into[index] = decoded[index].toInt() and 0xff
+                }
                 '{' -> members { key ->
                     val index = key.toIntOrNull()
                     val value = byte()

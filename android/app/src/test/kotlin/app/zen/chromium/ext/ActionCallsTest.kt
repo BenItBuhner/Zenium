@@ -115,6 +115,41 @@ class ActionCallsTest {
     }
 
     @Test
+    fun `pixels the engine compacted to base64 read the same, and a small compacted call still crosses as a path`() {
+        // `iconWire.ts`: a 32 x 32 image, RGBA bytes base64 in a string; the whole call is small
+        // enough for the envelope to carry `args`, and the rewrite reads the text either way.
+        val bytes = ByteArray(32 * 32 * 4) { i -> listOf(10, 20, 30, 255)[i % 4].toByte() }
+        val data = java.util.Base64.getEncoder().encodeToString(bytes)
+        val text = call("""{"imageData":{"width":32,"height":32,"data":"$data"},"tabId":6}""")
+        assertTrue("a compacted setIcon is a small message (${text.length})", text.length < BridgeEnvelope.BIG_MESSAGE)
+        assertTrue(envelope(text).has("args"))
+        assertEquals("6", ActionCalls.detailsTabId(envelope(text), text))
+        val scaler = Scaler()
+        val out = ActionCalls.rewriteIcon(envelope(text), text, scaler)!!
+        assertEquals(1, scaler.seen.size)
+        val pixels = scaler.seen[0]
+        assertEquals(32, pixels.width)
+        assertEquals(32, pixels.height)
+        assertEquals((255 shl 24) or (10 shl 16) or (20 shl 8) or 30, pixels.argb[0])
+        assertEquals(pixels.argb[0], pixels.argb[32 * 32 - 1])
+        val details = JSONObject(out).getJSONArray("args").getJSONObject(0)
+        assertEquals(6, details.getInt("tabId"))
+        assertFalse(details.has("imageData"))
+        assertEquals("data:image/png;base64,QUJD", details.getJSONObject("path").getString("32"))
+        // Short of the pixel count: the missing bytes stay 0; not base64 at all: left out, the tab id kept.
+        val short = call("""{"imageData":{"width":2,"height":2,"data":"${java.util.Base64.getEncoder().encodeToString(ByteArray(4) { 255.toByte() })}"},"tabId":1}""")
+        val partial = Scaler()
+        ActionCalls.rewriteIcon(envelope(short), short, partial)!!
+        assertEquals(-1, partial.seen[0].argb[0])
+        assertEquals(0, partial.seen[0].argb[3])
+        val garbage = call("""{"imageData":{"width":2,"height":2,"data":"%%not base64%%"},"tabId":4}""")
+        val out2 = ActionCalls.rewriteIcon(envelope(garbage), garbage, Scaler())!!
+        val details2 = JSONObject(out2).getJSONArray("args").getJSONObject(0)
+        assertFalse(details2.has("imageData"))
+        assertEquals(4, details2.getInt("tabId"))
+    }
+
+    @Test
     fun `a setIcon by path goes as it came, and one whose pixels cannot be drawn crosses without them`() {
         val scaler = Scaler()
         val byPath = call("""{"path":{"16":"icons/16.png"},"tabId":2}""")

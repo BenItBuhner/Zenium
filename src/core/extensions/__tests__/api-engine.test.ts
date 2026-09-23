@@ -5,8 +5,10 @@ import {
   createEmulatedEngine,
   type EmulatedEngine,
   type EngineConfig,
+  type EngineOptions,
   type Primordials
 } from '../api/engine'
+import type { IconWireEnv } from '../api/iconWire'
 
 const EXT = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
 const ORIGIN = `https://${EXT}.ext.zenium.invalid`
@@ -34,7 +36,7 @@ interface Harness {
   fail(id: unknown, error: string): void
 }
 
-function harness(over: Partial<EngineConfig> = {}): Harness {
+function harness(over: Partial<EngineConfig> = {}, engineOptions: EngineOptions = {}): Harness {
   const sent: Record<string, unknown>[] = []
   const root: Record<string, unknown> = {}
   const { manifest: manifestOver, ...rest } = over
@@ -66,7 +68,7 @@ function harness(over: Partial<EngineConfig> = {}): Harness {
     config,
     { post: (m) => void sent.push(JSON.parse(m) as Record<string, unknown>) },
     primordials,
-    { root }
+    { root, ...engineOptions }
   )
   return {
     engine,
@@ -696,5 +698,70 @@ describe('createEmulatedEngine', () => {
     const chromeLike = harness()
     expect(() => (chromeLike.chrome.runtime.sendMessage as Fn)(store)).not.toThrow()
     await flush()
+  })
+
+  it("posts action.setIcon's pixels compacted for the text bridge, the rest of the call as it was (Clear Cache's spinner)", async () => {
+    // A 96 px ImageData as the shim hands it over: 36,864 bytes, 0.3 M chars written member by
+    // member. The engine posts them as base64 of the realm's scaling, here Node's (no canvas).
+    const data = new Uint8ClampedArray(96 * 96 * 4)
+    for (let i = 0; i < data.length; i += 4) data[i + 3] = 255
+    const h = harness()
+    const settled = (h.chrome.action.setIcon as Fn)({
+      imageData: { width: 96, height: 96, data },
+      tabId: 4
+    }) as Promise<unknown>
+    const call = h.last()
+    expect(call).toMatchObject({ t: 'call', ns: 'action', method: 'setIcon' })
+    const details = (call.args as Record<string, unknown>[])[0]
+    expect(details.tabId).toBe(4)
+    const wire = details.imageData as { width: number; height: number; data: unknown }
+    expect([wire.width, wire.height]).toEqual([96, 96])
+    expect(typeof wire.data).toBe('string')
+    expect((wire.data as string).length).toBe(49152)
+    expect(Buffer.from(wire.data as string, 'base64')).toEqual(Buffer.from(data))
+    expect(JSON.stringify(call).length).toBeLessThan(50_000)
+    // The host's usual reply settles the call.
+    h.reply(call.id, null)
+    await expect(settled).resolves.toBeNull()
+
+    // The realm's surfaces are what the engine draws with: an injected one scales to the slot.
+    let drawn = 0
+    const surfaces: IconWireEnv = {
+      canvas: (width, height) => ({
+        getContext: () => ({
+          imageSmoothingEnabled: false,
+          putImageData: () => undefined,
+          drawImage: () => {
+            drawn += 1
+          },
+          getImageData: (_x, _y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4).fill(7) })
+        }),
+        width,
+        height
+      }),
+      imageData: (bytes, width, height) => ({ data: bytes, width, height }),
+      btoa: (binary) => Buffer.from(binary, 'binary').toString('base64')
+    }
+    const scaled = harness({}, { iconWire: surfaces })
+    void (scaled.chrome.action.setIcon as Fn)({ imageData: { width: 96, height: 96, data } })
+    const small = (scaled.last().args as Record<string, unknown>[])[0].imageData as {
+      width: number
+      height: number
+      data: string
+    }
+    expect([small.width, small.height]).toEqual([32, 32])
+    expect(small.data.length).toBe(5464)
+    expect(Buffer.from(small.data, 'base64')[0]).toBe(7)
+    expect(drawn).toBe(1)
+    expect(JSON.stringify(scaled.last()).length).toBeLessThan(6_000)
+
+    // A setIcon by path (resolved by the shim, no realm location here) and a badge setter are untouched.
+    void (scaled.chrome.action.setIcon as Fn)({ path: 'icon.png', tabId: 2 })
+    const byPath = (scaled.last().args as Record<string, unknown>[])[0]
+    expect(Object.keys(byPath).sort()).toEqual(['path', 'tabId'])
+    expect(String(byPath.path).endsWith('icon.png')).toBe(true)
+    expect(drawn).toBe(1)
+    void (scaled.chrome.action.setBadgeText as Fn)({ text: '1' })
+    expect(scaled.last()).toMatchObject({ method: 'setBadgeText', args: [{ text: '1' }] })
   })
 })
