@@ -43,6 +43,30 @@ export interface ConfirmDialogProps {
   busy?: boolean
   /** The body's one element, when the prompt has one: a check row under the description (§9.23). */
   checkbox?: { label: string; checked: boolean; onChange: (next: boolean) => void }
+  /**
+   * The root's role: `alertdialog` for a question (the default), `dialog` for a picker or a form
+   * on the same chassis – the device chooser's list (§9.13), the pairing prompt's PIN field –
+   * which asks for a choice rather than announcing one.
+   */
+  role?: 'alertdialog' | 'dialog'
+  /**
+   * The body's content between the title block and the footer where the prompt carries more
+   * than the check row: a picker's list, a form's field (§9.13, §9.12). A prompt with a body
+   * takes §9.20's 400 as one with the check row does – and the 320 notice, body or not, when it
+   * stands over another dialog in the slot.
+   */
+  body?: ReactNode
+  /**
+   * The verb is not yet available (§9.30's .4): a picker with no pick, a PIN field short of its
+   * digits. The button is `disabled`, and Enter from the container or a field confirms nothing.
+   */
+  confirmDisabled?: boolean
+  /**
+   * Another dialog stands over this one in the slot (§9.24, depth two): the prompt is `inert` –
+   * receded, no target for the pointer or the keyboard – until the upper one leaves. Its owner
+   * sets this while it renders the upper dialog after it in the same portal.
+   */
+  under?: boolean
   /** Cancel: the button, Escape and a press on the scrim. */
   onCancel: () => void
   /**
@@ -97,6 +121,13 @@ export interface ConfirmDialogProps {
  * Motion is the host's: the §9.5 pop in and out, the §11.3 120 ms fade in place under reduced
  * motion (`zen-animate-pop`, the slot's `[data-leaving]` rule); the slot gives each root its
  * `isolation` and its rank.
+ *
+ * The same chassis carries the pickers and one-field forms that are not questions (`role:
+ * 'dialog'`, a `body`): the device chooser's list and the Bluetooth pairing prompt's PIN field
+ * (`components/devices`). They keep every rule above – the container focus, Tab's wrap, Enter as
+ * the verb where the verb is the primary, Escape and the scrim as Cancel, the width by content
+ * and by place – and add only what a choice needs: a verb that waits (`confirmDisabled`) until
+ * there is one, and an `under` state for the lower of two (§9.24).
  */
 export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
   return (
@@ -118,6 +149,10 @@ function ConfirmPanel({
   destructive = false,
   busy = false,
   checkbox,
+  role = 'alertdialog',
+  body,
+  confirmDisabled = false,
+  under = false,
   onCancel,
   onConfirm,
   returnFocus,
@@ -128,18 +163,21 @@ function ConfirmPanel({
   const id = useId()
   const titleId = `${id}title`
   const descriptionId = `${id}description`
-  const latest = useRef({ onConfirm, busy, returnFocus })
+  const latest = useRef({ onConfirm, busy, confirmDisabled, returnFocus })
   useLayoutEffect(() => {
-    latest.current = { onConfirm, busy, returnFocus }
+    latest.current = { onConfirm, busy, confirmDisabled, returnFocus }
   })
+  // A prompt under another (§9.24) is not the one Escape or the scrim answer: the upper dialog
+  // registered after it and the host's stack asks the top entry; its own key handler is off
+  // with the rest of it through `inert`.
   useEscape(onCancel)
   useFrameDialog({ onScrimPress: onCancel })
 
-  // The width (§9.20), before the first paint: 400 for a prompt carrying the check row, the 320
-  // notice otherwise – and the notice whatever it carries when it covers another dialog in the
-  // slot (a panel on its way out is not one). Read as the prompt mounts; the row's presence is
-  // the one prop that can move it.
-  const hasRow = checkbox !== undefined
+  // The width (§9.20), before the first paint: 400 for a prompt carrying the check row or a
+  // body, the 320 notice otherwise – and the notice whatever it carries when it covers another
+  // dialog in the slot (a panel on its way out is not one). Read as the prompt mounts; the
+  // row's or body's presence is the one prop that can move it.
+  const hasRow = checkbox !== undefined || body !== undefined
   useLayoutEffect(() => {
     const root = ref.current
     if (!root) return
@@ -183,15 +221,30 @@ function ConfirmPanel({
     }
   }, [])
 
+  // The lower of two (§9.24) as the upper leaves: the upper's one-hop return lands on the control
+  // of this prompt it came from once the `inert` lifts (`returnFocusTo`); where the focus fell
+  // to `body` instead (a control blurred as its subtree went inert), the container takes the
+  // keyboard back, as it held it at the open.
+  const wasUnder = useRef(under)
+  useEffect(() => {
+    const before = wasUnder.current
+    wasUnder.current = under
+    if (!before || under) return
+    const root = ref.current
+    if (!root) return
+    const now = document.activeElement
+    if (!now || now === document.body) root.focus({ preventScroll: true })
+  }, [under])
+
   const confirm = (): void => {
-    if (latest.current.busy) return
+    if (latest.current.busy || latest.current.confirmDisabled) return
     latest.current.onConfirm()
   }
   return (
     <div
       {...data}
       ref={ref}
-      role="alertdialog"
+      role={role}
       aria-modal="true"
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
@@ -199,6 +252,7 @@ function ConfirmPanel({
       data-destructive={destructive || undefined}
       data-surface="page"
       tabIndex={-1}
+      inert={under || undefined}
       className={cn('zen-v2-dialog zen-confirm-dialog zen-animate-pop', className)}
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
@@ -227,6 +281,7 @@ function ConfirmPanel({
         descriptionId={descriptionId}
       />
       <div className="zen-confirm-dialog-body">
+        {body}
         {checkbox && (
           <label className="zen-v2-row zen-v2-check-row zen-confirm-dialog-check">
             <span className="zen-v2-row-body">
@@ -253,6 +308,7 @@ function ConfirmPanel({
             data-primary={destructive ? undefined : ''}
             data-danger={destructive ? '' : undefined}
             aria-busy={busy || undefined}
+            disabled={confirmDisabled || undefined}
             onClick={confirm}
           >
             {busy ? (

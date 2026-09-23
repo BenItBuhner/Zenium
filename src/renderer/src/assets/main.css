@@ -561,6 +561,86 @@
   gap: 8px;
 }
 /*
+ * The device chooser on the prompt's chassis (MW-32..35, `components/devices`; §9.13): its body
+ * is the candidate list, rows on the shared `.zen-v2-row` running edge to edge through the
+ * body's gutter as the check row does (their own 16 puts the text back on the title's edge),
+ * clipped and scrolling past five rows – Chrome's chooser shows about as many – with §9.20's
+ * ring room given back from the gutter so a focused row's ring is whole inside the scroller
+ * (the `.zen-bm-popover-body` rule further down, the same modifier by context). A picked row
+ * takes the primitive's selected fill (§9.6, the `[role='radio'][aria-checked='true']` rule)
+ * and its trailing check is `.zen-v2-row-trail`. Under the list the scanning line (§9.30's 16
+ * spinner, the words at 69%, a row's own geometry and no hairline over it – §10's lines rule)
+ * and the empty state (§9.17's one sentence at 15 / 69%, centred in a 32 gutter, its first line
+ * 32 under the title block; Chrome's udev notice 8 under it at 13) read the same tokens. The
+ * requesting host in the title wraps at its dots
+ * (`.zen-device-chooser-host`, as the screen picker's origin does). The pairing prompt's PIN to
+ * compare (`confirmPin`) is the one large figure the chassis draws: the heading weight at twice
+ * the heading size in `tabular-nums`, letter-spaced so six digits read as six, centred.
+ */
+.zen-device-chooser {
+  display: flex;
+  flex-direction: column;
+  width: calc(100% + 2 * var(--v2-card-padding));
+  margin: 0 calc(-1 * var(--v2-card-padding));
+}
+.zen-device-chooser-list {
+  display: flex;
+  max-height: calc(5 * var(--v2-row) + var(--v2-row) / 2);
+  flex-direction: column;
+  overflow-y: auto;
+}
+.zen-device-chooser-list > .zen-v2-row {
+  width: calc(100% - 2 * var(--v2-ring-room));
+  margin-inline: var(--v2-ring-room);
+  padding-inline: calc(16px - var(--v2-ring-room));
+}
+.zen-device-chooser-host {
+  overflow-wrap: anywhere;
+}
+.zen-device-chooser-scanning {
+  display: flex;
+  min-height: var(--v2-row);
+  align-items: center;
+  gap: 12px;
+  padding: var(--v2-row-pad) 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-device-chooser-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 32px 0;
+  text-align: center;
+}
+.zen-device-chooser-empty-line {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-device-chooser-notice {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-device-pairing-input {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.25em;
+}
+.zen-device-pairing-pin {
+  margin: 0;
+  color: var(--v2-text);
+  text-align: center;
+  font-size: calc(2 * var(--v2-font-heading));
+  font-weight: var(--v2-weight-heading);
+  line-height: calc(2 * var(--v2-line-heading));
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.25em;
+}
+/*
  * The first run's own controls keep the ring under the coarse-pointer suppressor further down,
  * as every v2 control does (§9.6), in the window's accent; inside the row, since rows run edge to
  * edge.
