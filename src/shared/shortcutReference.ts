@@ -84,7 +84,7 @@ export function chromeReference(platform: Platform): ReferenceBinding[] {
     ref('l', ACCEL_SHIFT, 'Paste and search', [], EDGE),
     ref('u', ACCEL_SHIFT, 'Read aloud', [], EDGE),
     ref('y', ACCEL_SHIFT, 'Collections', [], EDGE),
-    ref('s', ACCEL_SHIFT, 'Web capture', ['page.screenshot'], EDGE),
+    ref('s', ACCEL_SHIFT, 'Web capture', ['capture.start', 'page.screenshot'], EDGE),
     ref(',', ACCEL_SHIFT, 'Toggle vertical tabs', [], EDGE)
   ]
 

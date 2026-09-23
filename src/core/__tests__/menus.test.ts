@@ -433,6 +433,7 @@ const DESKTOP_APP_MENU = [
   'Zoom > Fullscreen',
   'Print…',
   'Save Page As…',
+  'Web Capture…',
   'Reader View',
   '-',
   'Settings',
@@ -464,6 +465,7 @@ const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
 
 const DESKTOP_ONLY = [
   'Search Tabs…',
+  'Web Capture…',
   'Help > Keyboard Shortcuts',
   'More Tools > Compact Mode',
   'More Tools > Split View',
@@ -490,17 +492,18 @@ describe('the app menu', () => {
 
   it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {
     const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
-    // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen.
+    // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen, plus
+    // Edge's Web Capture… row in the page group (the desktop's overlay alone).
     const bare = harness(DESKTOP)
     appMenu(bare)
     expect(rows(bare)).toEqual(DESKTOP_APP_MENU_TOP.filter((l) => l !== '-'))
-    expect(rows(bare)).toHaveLength(18)
+    expect(rows(bare)).toHaveLength(19)
     expect(separators(bare.shown())).toBe(3)
-    // A build with a translate host carries Translate Page… (the Linux build: 19), one with a
-    // speech engine Listen to This Page too: 20, "about eighteen", every row Title Case (§9.1).
+    // A build with a translate host carries Translate Page… (the Linux build: 20), one with a
+    // speech engine Listen to This Page too: 21, "about eighteen", every row Title Case (§9.1).
     const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
     appMenu(full)
-    expect(rows(full)).toHaveLength(20)
+    expect(rows(full)).toHaveLength(21)
     expect(separators(full.shown())).toBe(3)
     for (const row of rows(full)) expect(row).toMatch(/^[A-Z]/)
     // With the media hub folded the Now Playing… row and its separator lead: four at most.
@@ -508,7 +511,7 @@ describe('the app menu', () => {
       { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
     ]
     appMenuFolded(full)
-    expect(rows(full)).toHaveLength(21)
+    expect(rows(full)).toHaveLength(22)
     expect(separators(full.shown())).toBe(4)
   })
 
@@ -570,7 +573,7 @@ describe('the app menu', () => {
     expect(history.at(-1)!.click).toBeUndefined()
     // With a tab closed the block is Chrome's: the header, the entries, Restore All, Clear List
     // – and every one of the flat menu's thirty-two rows is somewhere in the tree, the top level
-    // still at Firefox's count (twenty rows here, three separators).
+    // still about Firefox's count (twenty rows here plus Web Capture…, three separators).
     const closed = h.browser.tabs.createTab(
       { url: 'https://closed.example/', active: false },
       h.win
@@ -579,7 +582,7 @@ describe('the app menu', () => {
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
     for (const label of before) expect(everywhere, label).toContain(label)
-    expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
+    expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(21)
     expect(separators(h.shown())).toBe(3)
     expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
       'Show Full History',
@@ -596,9 +599,13 @@ describe('the app menu', () => {
   it('gives a tablet the sidebar layouts\u2019 menu, less what acts on chrome it does not draw (TABLET-01)', () => {
     // Compact Mode is the desktop's hover-revealed sidebar (the tablet's rail is the toolbar's
     // toggle) and the tablet has no bookmarks bar; everything else of the desktop's list is the
-    // tablet's too, its host permitting. Both rows live in submenus now (§6 "Menus").
+    // tablet's too, its host permitting. Both rows live in submenus now (§6 "Menus"). Web
+    // capture's overlay is the desktop chrome's, so its row is too.
     const tabletChrome = DESKTOP_APP_MENU.filter(
-      (label) => label !== 'More Tools > Compact Mode' && label !== 'Bookmarks > Show Bookmarks Bar'
+      (label) =>
+        label !== 'More Tools > Compact Mode' &&
+        label !== 'Bookmarks > Show Bookmarks Bar' &&
+        label !== 'Web Capture…'
     )
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(tabletChrome)
   })
@@ -1463,6 +1470,7 @@ describe('the page context menu', () => {
       'Print…',
       'Take Screenshot',
       'Capture Full Page',
+      'Capture Page…',
       'Enter Reader View',
       '-',
       'Boosts',
@@ -1472,6 +1480,11 @@ describe('the page context menu', () => {
     expect(item(h.items(), 'Back').enabled).toBe(false)
     expect(item(h.items(), 'Back').action).toBe('nav.back')
     expect(item(h.items(), 'Inspect Element').action).toBe('devtools.inspector')
+    // Edge's Web capture row (a region of the dimmed page) is the desktop overlay's alone.
+    expect(item(h.items(), 'Capture Page…').action).toBe('capture.start')
+    expect(pageHarness(DESKTOP, { formFactor: 'tablet' }).menu(pageParams())).not.toContain(
+      'Capture Page…'
+    )
   })
 
   it('leaves Print, View Page Source and Inspect to hosts that have them', () => {
@@ -2996,9 +3009,11 @@ describe('Send to your devices (ID-27)', () => {
     const menu = appMenu(h)
     expect(menu).toContain('Send to Work laptop')
     // On the desktop the app menu has no Share… (no share target): the item sits where Share…
-    // does on the hosts that have it – the page group's order is find, zoom, print, save,
-    // share, translate, reader (#299) – so after Save Page As… and before Reader View.
-    expect(menu.indexOf('Send to Work laptop')).toBe(menu.indexOf('Save Page As…') + 1)
+    // does on the hosts that have it – the page group's order is find, zoom, print, save, web
+    // capture, share, translate, reader (#299; Edge's Web capture between the save and the
+    // share) – so after Web Capture… and before Reader View.
+    expect(menu.indexOf('Send to Work laptop')).toBe(menu.indexOf('Web Capture…') + 1)
+    expect(menu.indexOf('Web Capture…')).toBe(menu.indexOf('Save Page As…') + 1)
     expect(menu.indexOf('Send to Work laptop')).toBeLessThan(menu.indexOf('Reader View'))
   })
 

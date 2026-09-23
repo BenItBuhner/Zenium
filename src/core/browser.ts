@@ -201,7 +201,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'bookmark.edit',
   'webapp.install',
   'translate.selection',
-  'import.open'
+  'import.open',
+  'capture.start'
 ])
 
 /**

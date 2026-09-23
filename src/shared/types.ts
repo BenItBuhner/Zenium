@@ -1967,6 +1967,13 @@ export type ShortcutAction =
   | 'page.screenshot'
   /** Edge's "Capture full page": the whole page, beyond the viewport, saved like a screenshot. */
   | 'page.captureFullPage'
+  /**
+   * Edge's Web capture (Ctrl+Shift+S there): the desktop chrome dims the page and the user drags
+   * a region, or takes the visible area or the full page, then copies or saves the picture
+   * (`shared/capture.ts` is the engine; the overlay is the chrome's). Hosts without the desktop
+   * chrome take the visible page the way Take Screenshot does.
+   */
+  | 'capture.start'
   | 'page.toggleMute'
   | 'zoom.in'
   | 'zoom.out'
@@ -5134,6 +5141,12 @@ export interface Events {
    * card in the toast's slot – the thumbnail, Share | Delete, Capture more – for `tabId`'s page.
    */
   'screenshot.saved': ScreenshotSaved & { tabId: string }
+  /**
+   * Web capture asked for its overlay over `tabId`'s page (Ctrl+Shift+S in the Chrome preset,
+   * the app menu's "Web Capture…", the palette): the desktop chrome dims the page's frame over
+   * its stand-in and takes the user's region, visible area or full page (`shared/capture.ts`).
+   */
+  'capture.start': { tabId: string }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }
   'sidebar.toggle': void

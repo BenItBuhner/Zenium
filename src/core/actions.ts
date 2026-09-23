@@ -254,6 +254,16 @@ export class Actions {
       case 'page.captureFullPage':
         if (target) void this.screenshot(target.id, win, { fullPage: true })
         return
+      // Web capture is the desktop chrome's overlay (`shared/capture.ts` is its engine); the
+      // phone and the tablet, which have no overlay for it, take the visible page instead.
+      case 'capture.start':
+        if (!target) return
+        if (win.formFactor === 'desktop') {
+          this.browser.emit('capture.start', { tabId: target.id }, win)
+        } else {
+          void this.screenshot(target.id, win)
+        }
+        return
       case 'page.toggleMute':
         if (target) tabs.toggleMute(target.id)
         return
