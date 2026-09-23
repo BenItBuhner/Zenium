@@ -219,7 +219,26 @@ export interface SliderRow extends RowBase {
   step: number
   /** The value as the row shows it ("70%", "16 px"). */
   format(value: number): string
+  /**
+   * A step (a press, one of a hold's repeats) or the thumb let go. A row whose builder
+   * coalesces its steps (the fonts group's draft, the Android performance gate's ruling for
+   * #350) moves its own value here and commits once the sequence is quiet; any other commits
+   * at once.
+   */
   onChange(value: number): void
+  /**
+   * The row is left: its focus moves out of the control (a finger on another row), or the
+   * control goes (its sheet closes, its drill-in is left). A coalescing builder commits what
+   * its steps have pending, so no step is lost to a close inside the quiet window.
+   */
+  onLeave?(): void
+  /**
+   * A step button is held: `true` at the pointer's down, `false` at its up, cancel or leave.
+   * A coalescing builder waits with its commit while the button is down – the hold's repeats
+   * are steps – and starts its quiet window at the release (the ruling's "the hold's end"), so
+   * a hold commits once, whatever its length.
+   */
+  onHold?(held: boolean): void
 }
 
 /** One entry of an item row's desktop ⋯ menu; Title Case, as Zen's menu items are (§9.1). */

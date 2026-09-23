@@ -136,6 +136,7 @@ import {
 } from '../../overlays/settingsCopy'
 import { ModelPickList, PickList } from '../../translate/pickers'
 import { fontsGroups } from './fonts'
+import type { FontsDraft } from './fontsDraft'
 import {
   addLanguageRow,
   addLanguageTargets,
@@ -259,6 +260,12 @@ export interface SectionContext {
    * generic families meanwhile.
    */
   localFonts?: string[] | null
+  /**
+   * The Customise fonts group's draft (`useFontsDraft`): the ± rows' steps coalesced into one
+   * commit per quiet sequence, the preview following each step (the Android performance gate's
+   * ruling for #350). Left out where no page holds one (a test), the group commits at once.
+   */
+  fontsDraft?: FontsDraft
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -388,7 +395,8 @@ function lookSection({
   formFactor,
   openBarEditor,
   tab,
-  localFonts
+  localFonts,
+  fontsDraft
 }: SectionContext): RowGroup[] {
   const s = state.settings
   const caps = state.capabilities
@@ -518,7 +526,7 @@ function lookSection({
   }
   // Customise fonts (CT-25) follows Appearance and the zooms: what pages look like, before the
   // chrome's own look.
-  groups.push(...fontsGroups({ state, set, localFonts }))
+  groups.push(...fontsGroups({ state, set, localFonts, fontsDraft }))
   groups.push({
     id: 'app-icon',
     heading: 'App icon',

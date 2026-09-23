@@ -1,5 +1,5 @@
-import type { JSX, ReactNode } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import type { FocusEvent, JSX, ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, Loader2, Minus, Plus } from 'lucide-react'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { cn } from '@renderer/lib/utils'
@@ -443,6 +443,11 @@ const HOLD_REPEAT_INTERVAL_MS = 100
  * description, then the 44 px − and + step buttons with the track between them (the Default
  * zoom block's stepper form, one step of the row's `step` per press, a hold repeating it), no
  * labels under the track's ends – where the desktop's control sits in its row's trailing slot.
+ *
+ * The control tells the row when it is left (`SliderRow.onLeave`): the focus moving out of it
+ * – to another row's button, as a finger lands there – and its unmount, the sheet closing or
+ * the drill-in leaving with it. A builder that coalesces the row's steps commits on either
+ * (the fonts group's draft), so a close inside the quiet window loses no step.
  */
 function SliderControl({
   row,
@@ -460,6 +465,16 @@ function SliderControl({
     setSeen(row.value)
     setLocal(row.value)
   }
+  const leave = useRef(row.onLeave)
+  useEffect(() => {
+    leave.current = row.onLeave
+  })
+  useEffect(() => () => leave.current?.(), [])
+  // The focus left the control for somewhere outside it; − to + within it is not a leave.
+  const onBlur = (e: FocusEvent<HTMLElement>): void => {
+    const to = e.relatedTarget
+    if (!(to instanceof Node) || !e.currentTarget.contains(to)) row.onLeave?.()
+  }
   const slider = (
     <Slider
       className={cn('zen-zoom-slider zen-settings-slider', labelled && 'min-w-0 flex-1')}
@@ -476,14 +491,14 @@ function SliderControl({
   )
   if (!labelled) {
     return (
-      <span className="zen-settings-slider-control">
+      <span className="zen-settings-slider-control" onBlur={onBlur}>
         {slider}
         <span className="zen-settings-slider-value">{row.format(local)}</span>
       </span>
     )
   }
   return (
-    <span className="zen-settings-row-text zen-settings-slider-block">
+    <span className="zen-settings-row-text zen-settings-slider-block" onBlur={onBlur}>
       {caption && <span className="zen-settings-caption">{caption}</span>}
       <span className="zen-settings-slider-head">
         <span className="zen-settings-label">{row.label}</span>
@@ -502,9 +517,12 @@ function SliderControl({
 /**
  * One of the phone slider row's two 44 px step buttons (§10.4): the shared icon button, named
  * for what it does to the row ("Decrease Font size"), disabled at the ladder's end with the
- * row's own .4 rule keeping one opacity. A press steps once and commits at once, as the zoom
- * block's buttons do; a hold repeats the step (`HOLD_REPEAT_*`) until the finger lifts or
- * leaves. The pointer's press is the step, so the `click` a pointer sends after it – `detail`
+ * row's own .4 rule keeping one opacity. A press steps once (`row.onChange` with the next stop:
+ * a commit at once for a row like the zoom block's, a step of the page's draft for a row that
+ * coalesces – the fonts rows, whose commit follows the quiet after the sequence); a hold
+ * repeats the step (`HOLD_REPEAT_*`) until the finger lifts or leaves, each repeat the same
+ * `onChange`, so a coalescing row commits a hold once, at its end. The pointer's press is the
+ * step, so the `click` a pointer sends after it – `detail`
  * 1, its tap or click count – is not one: on Android a tap's click is the gesture detector's
  * own event, arriving after `pointerup` by as much as the WebView's frame allows, so nothing
  * that keys off time may stand between them (emulator run 35815936330 read three taps of seven
@@ -530,17 +548,28 @@ function StepButton({
     latest.current = step
   })
   const timer = useRef<{ kind: 'delay' | 'repeat'; id: number } | null>(null)
-  const stop = (): void => {
+  const hold = useRef(row.onHold)
+  useEffect(() => {
+    hold.current = row.onHold
+  })
+  // The release (up, cancel, leave, unmount) ends the hold: the row hears it once per press.
+  const stop = useCallback((): void => {
     const t = timer.current
     if (t) {
       if (t.kind === 'delay') window.clearTimeout(t.id)
       else window.clearInterval(t.id)
       timer.current = null
+      hold.current?.(false)
     }
-  }
-  useEffect(() => stop, [])
+  }, [])
+  useEffect(() => stop, [stop])
   const atEnd = direction < 0 ? value <= row.min : value >= row.max
   const disabled = row.disabled === true || atEnd
+  // The ladder's end reached under a held finger disables the button, and a disabled control
+  // need not hear the pointer's up: the hold ends here.
+  useEffect(() => {
+    if (disabled) stop()
+  }, [disabled, stop])
   return (
     <V2IconButton
       icon={direction < 0 ? Minus : Plus}
@@ -549,6 +578,8 @@ function StepButton({
       disabled={disabled}
       onPointerDown={(e) => {
         if (e.button !== 0 || disabled) return
+        stop()
+        hold.current?.(true)
         latest.current()
         timer.current = {
           kind: 'delay',

@@ -11,7 +11,7 @@ import {
   type InternalPageSection,
   type InternalPageSubpage
 } from '@shared/internalPages'
-import type { FormFactor, Tab, UIState } from '@shared/types'
+import type { FormFactor, Settings, Tab, UIState } from '@shared/types'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
@@ -31,6 +31,7 @@ import { TWO_PANE_MIN_WIDTH } from '../PageFrame'
 import { AddLanguagePage } from './AddLanguagePage'
 import { DesktopSettings } from './desktop'
 import { DrillInBackContext } from './drillIn'
+import { useFontsDraft } from './fontsDraft'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
 import { findRow, searchRows, type SectionModel } from './model'
 import { GroupList, RowView, type RowContext } from './rows'
@@ -163,6 +164,9 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
 /** An address without parameters, the one object so a page's props do not change render to render. */
 const NO_QUERY: InternalPageQuery = {}
 
+/** A settings patch to the core (`SectionContext.set`); one function, so the fonts draft's hook keeps it. */
+const settingsUpdate = (patch: Partial<Settings>): void => run('settings.update', patch)
+
 // ---------------------------------------------------------------------------
 // Phone
 // ---------------------------------------------------------------------------
@@ -228,12 +232,15 @@ function PhoneSettings({
   const localFonts = useLocalFonts(current?.id === 'look' && state.capabilities.genericFontFamilies)
   // Likewise the other devices' open tabs, asked of the core once per `remoteTabsVersion`.
   useRemoteTabs(state.sync)
+  // Customise fonts' draft: the ± rows' steps coalesced into one commit per quiet sequence,
+  // flushed when the section is left (the drill-in's leave) or the page goes.
+  const fontsDraft = useFontsDraft(state.settings.fonts, settingsUpdate, current?.id ?? null)
   const ctx: SectionContext = {
     state,
     tab,
     pointer,
     formFactor,
-    set: (patch) => run('settings.update', patch),
+    set: settingsUpdate,
     navigate: (section) => run('page.navigate', { tabId: tab.id, section }),
     openBarEditor: () => void openBarEditor(tab.id),
     boost: (tabId) => {
@@ -245,7 +252,8 @@ function PhoneSettings({
     readAloudVoices,
     dictionary,
     downloadDirectory,
-    localFonts
+    localFonts,
+    fontsDraft
   }
   const searching = current === null && query.trim() !== ''
   // The section shown, or – while the landing's search is on – every section for its results.

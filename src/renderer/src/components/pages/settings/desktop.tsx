@@ -6,7 +6,7 @@ import {
   type InternalPageDefinition,
   type InternalPageSection
 } from '@shared/internalPages'
-import type { FormFactor, Tab, UIState } from '@shared/types'
+import type { FormFactor, Settings, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
@@ -20,12 +20,16 @@ import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DialogStack } from './dialogs'
+import { useFontsDraft } from './fontsDraft'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
 import { searchRows, type RowGroup, type SearchHit, type SectionModel } from './model'
 import { GroupList, RowView, type RowContext } from './rows'
 import { buildSection, buildSections, type SectionContext } from './sections'
 import { SheetStack } from './sheets'
 import { useSheetStack } from './useSheetStack'
+
+/** A settings patch to the core (`SectionContext.set`); one function, so the fonts draft's hook keeps it. */
+const settingsUpdate = (patch: Partial<Settings>): void => run('settings.update', patch)
 
 /**
  * The Settings tab where two panes fit (design language v2 §10.5; Zen's `about:preferences`):
@@ -104,12 +108,15 @@ export function DesktopSettings({
   // phone in landscape draws that row through these panes (the phone host's word; a desktop
   // host never shows the row).
   const screenLock = privateLockStore.use((s) => s.screenLock)
+  // Customise fonts' draft: a phone in landscape draws the ± rows through these panes, and
+  // their steps coalesce into one commit per quiet sequence, flushed when the category changes.
+  const fontsDraft = useFontsDraft(state.settings.fonts, settingsUpdate, sectionId)
   const ctx: SectionContext = {
     state,
     tab,
     pointer,
     formFactor,
-    set: (patch) => run('settings.update', patch),
+    set: settingsUpdate,
     navigate: (section) => run('page.navigate', { tabId: tab.id, section, replace: true }),
     openBarEditor: () => void openBarEditor(tab.id),
     boost: (tabId) => {
@@ -122,7 +129,8 @@ export function DesktopSettings({
     dictionary,
     importSources,
     downloadDirectory,
-    localFonts
+    localFonts,
+    fontsDraft
   }
 
   // The search: a query while it is not empty. A section change (the nav, back, forward)

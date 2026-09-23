@@ -7,6 +7,7 @@ import {
   type PageFontSettings
 } from '@shared/fonts'
 import { FontPickList, FontPreview } from './fontBlocks'
+import { immediateFontsDraft } from './fontsDraft'
 import {
   DEFAULT_FAMILY,
   SLOT_HINTS,
@@ -23,8 +24,11 @@ import type { SectionContext } from './sections'
  * Settings › Appearance › Customise fonts (CT-25; Chrome's chrome://settings/fonts as one group
  * of the shared builder, §10.3): the font size and the minimum size over Chrome's stops – on
  * the phone §10.4's slider row, the value on the label's line and the 44 px step buttons at
- * the track's ends, applied on a step or when the thumb is let go, so a drag never re-lays the
- * pages out per frame; on the desktop §10.5's menulist of the stops ("16 px", "None"), since a
+ * the track's ends, each step moving the row and the preview at once and the pages following
+ * once the sequence is quiet (`FontsDraft`: one commit per run of presses or per hold, the
+ * Android performance gate's ruling for #350; the thumb let go is a step like any), so neither
+ * a drag nor a run of presses re-lays the pages out per step; on the desktop §10.5's menulist
+ * of the stops ("16 px", "None"), since a
  * level on a desktop page is never a slider; the family rows as §9.13 menulist rows whose
  * picker shows each face (`RowOption.font`: the desktop's popover draws an "Aa" specimen in the
  * face after the name, which stays in the chrome's type so a symbol face cannot write its own
@@ -33,7 +37,7 @@ import type { SectionContext } from './sections'
  * the checked face when its rows exceed the peek); a Reset row once anything stands off the
  * defaults, plain and unconfirmed (§10.4: a reset to the defaults is no destruction); and the
  * preview as a static content row (§10.3: a 13/69 % label over content that grows with its
- * text) in the page fonts themselves, following each committed change. On a host whose engine
+ * text) in the page fonts themselves, following each step as it lands. On a host whose engine
  * ignores the generic-family slots (`capabilities.genericFontFamilies` false: Android, where
  * Blink resolves `serif` / `sans-serif` / `monospace` through `fonts.xml` and never reads the
  * settings) only the standard family and the two sizes are rows – the honest list, as the
@@ -53,18 +57,31 @@ import type { SectionContext } from './sections'
 export function fontsGroups({
   state,
   set,
-  localFonts
-}: Pick<SectionContext, 'state' | 'set' | 'localFonts'>): RowGroup[] {
-  const fonts = state.settings.fonts
+  localFonts,
+  fontsDraft
+}: Pick<SectionContext, 'state' | 'set' | 'localFonts' | 'fontsDraft'>): RowGroup[] {
+  // Every row reads the draft – the committed fonts with the ± steps not yet committed over
+  // them – so a step moves the row, the preview and the Reset row together; a builder run
+  // without a page's draft commits each change as it comes.
+  const draft = fontsDraft ?? immediateFontsDraft(state.settings.fonts, set)
+  const fonts = draft.fonts
   const generic = state.capabilities.genericFontFamilies
-  const patch = (change: Partial<PageFontSettings>): void => set({ fonts: { ...fonts, ...change } })
+  const patch = (change: Partial<PageFontSettings>): void => draft.commit(change)
   const keywords = ['fonts', 'customize fonts', 'typeface', 'text size', 'font size']
 
+  // The desktop's menulists commit a pick at once; the phone's ± rows step the draft, which
+  // commits once the sequence is quiet (`FontsDraft`).
   const setSize = (size: number): void => {
     if (size !== fonts.size) patch({ size })
   }
   const setMinimumSize = (minimumSize: number): void => {
     if (minimumSize !== fonts.minimumSize) patch({ minimumSize })
+  }
+  const stepSize = (size: number): void => {
+    if (size !== fonts.size) draft.step({ size })
+  }
+  const stepMinimumSize = (minimumSize: number): void => {
+    if (minimumSize !== fonts.minimumSize) draft.step({ minimumSize })
   }
   const minimumDescription = 'The smallest text a page may use.'
   const rows: SettingsRow[] = [
@@ -81,8 +98,10 @@ export function fontsGroups({
       format: (i) => formatFontSize(FONT_SIZE_STEPS[i] ?? fonts.size),
       onChange: (i) => {
         const size = FONT_SIZE_STEPS[i]
-        if (size !== undefined) setSize(size)
-      }
+        if (size !== undefined) stepSize(size)
+      },
+      onLeave: draft.flush,
+      onHold: draft.hold
     },
     {
       kind: 'value',
@@ -108,8 +127,10 @@ export function fontsGroups({
       format: (i) => formatFontSize(MINIMUM_FONT_SIZE_STEPS[i] ?? fonts.minimumSize),
       onChange: (i) => {
         const minimumSize = MINIMUM_FONT_SIZE_STEPS[i]
-        if (minimumSize !== undefined) setMinimumSize(minimumSize)
-      }
+        if (minimumSize !== undefined) stepMinimumSize(minimumSize)
+      },
+      onLeave: draft.flush,
+      onHold: draft.hold
     },
     {
       kind: 'value',
@@ -187,7 +208,7 @@ export function fontsGroups({
       description: 'Back to the platform’s fonts, 16 px and no minimum size.',
       keywords: [...keywords, 'reset', 'default'],
       button: 'Reset',
-      onPress: () => set({ fonts: { ...DEFAULT_FONT_SETTINGS } })
+      onPress: () => draft.commit({ ...DEFAULT_FONT_SETTINGS })
     })
   }
 
