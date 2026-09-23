@@ -4,10 +4,11 @@ import { downloadsSentence, windowPromptText } from '../windowPrompt'
 
 /*
  * The words of the window prompt (lib/windowPrompt.ts; v2 draft §9.23; downloads-35): the tabs
- * warning as it was, the download sentence – singular and plural – as the title block's second
- * description paragraph under it, or standing alone as the description when nothing about the
- * tabs is asked. The sentence says what the answer does (§9.1: quit, the verb's word): quitting
- * interrupts the downloads; closing the last private window cancels the private ones.
+ * warning as it was, the download sentence – singular and plural – after it in the title block's
+ * ONE description (the two facts peers, one sentence each; the lead's composed-prompt rule for
+ * #357), or standing alone as the description when nothing about the tabs is asked. The
+ * sentence says what the answer does (§9.1: quit, the verb's word): quitting interrupts the
+ * downloads; closing the last private window cancels the private ones.
  */
 
 function prompt(patch: Partial<WindowPrompt>): WindowPrompt {
@@ -51,14 +52,12 @@ describe('the prompt as it was', () => {
     expect(windowPromptText(prompt({ kind: 'quit', count: 3 }))).toEqual({
       title: 'Quit Zenium?',
       description: 'You are about to quit with 3 tabs open.',
-      downloadDescription: null,
       verb: 'Quit',
       tabsWarning: true
     })
     expect(windowPromptText(prompt({ kind: 'close-tabs', count: 2 }))).toEqual({
       title: 'Close 2 tabs?',
       description: 'You are about to close this window and its 2 tabs.',
-      downloadDescription: null,
       verb: 'Close tabs',
       tabsWarning: true
     })
@@ -66,23 +65,30 @@ describe('the prompt as it was', () => {
 })
 
 describe('with downloads in progress', () => {
-  it('the tabs warning keeps its title and description; the download sentence is the second description', () => {
+  it('the tabs warning keeps its title; the one description is its sentence, then the download sentence', () => {
     const text = windowPromptText(
       prompt({ kind: 'quit', count: 3, downloads: { count: 2, end: 'quit' } })
     )
     expect(text).toEqual({
       title: 'Quit Zenium?',
-      description: 'You are about to quit with 3 tabs open.',
-      downloadDescription: '2 downloads are in progress; quitting interrupts them.',
+      description:
+        'You are about to quit with 3 tabs open. 2 downloads are in progress; quitting interrupts them.',
       verb: 'Quit',
       tabsWarning: true
     })
+    // One paragraph, two sentences: the tabs fact first, the downloads fact after one space.
+    expect(text.description.split('. ')).toEqual([
+      'You are about to quit with 3 tabs open',
+      '2 downloads are in progress; quitting interrupts them.'
+    ])
     // The last window closing on Linux or Windows: the close's words, the quit's download line.
     const closing = windowPromptText(
       prompt({ kind: 'close-tabs', count: 2, downloads: { count: 1, end: 'quit' } })
     )
     expect(closing.title).toBe('Close 2 tabs?')
-    expect(closing.downloadDescription).toBe('1 download is in progress; quitting interrupts it.')
+    expect(closing.description).toBe(
+      'You are about to close this window and its 2 tabs. 1 download is in progress; quitting interrupts it.'
+    )
     expect(closing.verb).toBe('Close tabs')
   })
 
@@ -92,7 +98,6 @@ describe('with downloads in progress', () => {
     ).toEqual({
       title: 'Quit Zenium?',
       description: '1 download is in progress; quitting interrupts it.',
-      downloadDescription: null,
       verb: 'Quit',
       tabsWarning: false
     })
@@ -108,7 +113,6 @@ describe('with downloads in progress', () => {
     ).toEqual({
       title: 'Close private window?',
       description: '1 download is in progress; closing this window cancels it.',
-      downloadDescription: null,
       verb: 'Close window',
       tabsWarning: false
     })

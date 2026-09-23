@@ -9,7 +9,7 @@ import { dismissToast, pushToast } from './ui'
  * delete replaces the first's, whose delete stays undoable from the manager (Ctrl+Z). Its clock
  * runs longer than a plain action toast's: an accidental delete is noticed late.
  */
-// 8 s against §9.33's 5 s for a toast with an action (`TOAST_ACTION_DURATION`): held at 8 until the lead rules on #357 Q1; the ruling is this one number.
+// 8 s: §9.33's grant for Undo toasts (the lead's, #357), above the 5 s a plain action toast keeps (`TOAST_ACTION_DURATION`).
 export const BOOKMARK_UNDO_TOAST_MS = 8000
 
 let liveToastId: number | null = null
