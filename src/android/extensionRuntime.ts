@@ -130,8 +130,8 @@ import type { ViewEventPayloads } from './views'
  * Kotlin protocol (runtime → Kotlin), every call keyed by extension id:
  *  ext.env                                  → { token, uiLanguage, isolatedWorlds, worldSlots, navigationListener, messageLimit }
  *  ext.open { id, path }                    → { manifest, locales: { <locale>: <messages.json> } }
- *  ext.configure { id, version, path, allowFileAccess, allowPrivate, units, served, debug }
- *                                           → { units: [{ key, chars, cached }], ms }
+ *  ext.configure { id, name, version, path, allowFileAccess, allowPrivate, units, served, debug }
+ *                                           → { units: [{ key, chars, cached, refused? }], ms }
  *  ext.detach { id }
  *  ext.expect { ids }                       the extensions about to be attached (a restored tab's page on one is held, not 404'd)
  *  ext.background.start / stop { id }, ext.popup.open { id, url, context, title }, ext.popup.close,
@@ -188,7 +188,17 @@ interface OpenedExtension {
 
 /** What Kotlin reports after compiling and installing one extension's units. */
 export interface ConfigureStats {
-  units: Array<{ key: string; chars: number; cached: boolean }>
+  units: Array<{
+    key: string
+    chars: number
+    cached: boolean
+    /**
+     * Set when Kotlin refused the unit as more than the heap can hold as one script (the
+     * characters it would have run to); its content scripts are not injected, the extension's
+     * other units and pages are. Kotlin puts the line on the extension's error console.
+     */
+    refused?: number | null
+  }>
   ms: number
 }
 
@@ -978,6 +988,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     }
     const stats = await this.bridge.call<ConfigureStats>('ext.configure', {
       id,
+      // For the console line Kotlin writes when it refuses a unit.
+      name: ext.record.name,
       version: ext.manifest.version,
       path: ext.record.path,
       allowFileAccess: ext.record.allowFileAccess === true,

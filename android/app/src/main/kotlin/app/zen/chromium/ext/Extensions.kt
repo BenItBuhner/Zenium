@@ -500,11 +500,14 @@ class Extensions(private val host: Host) {
     }
 
     /**
-     * `ext.configure { id, version, path, allowFileAccess, allowPrivate, units: [{ key, origins,
-     * world, config, groups: [{ ext, index, js, isolation }], css: [{ ext, path }] }], served:
-     * { webAccessible, backgroundHtml, backgroundUrl, page, late }, debug }` → `{ units: [{ key,
-     * chars, cached }], ms }`. Reading the sources is file IO, so the units are compiled off the
-     * main thread and installed on it, on every tab, in place of this extension's earlier units only.
+     * `ext.configure { id, name, version, path, allowFileAccess, allowPrivate, units: [{ key,
+     * origins, world, config, groups: [{ ext, index, js, isolation }], css: [{ ext, path }] }],
+     * served: { webAccessible, backgroundHtml, backgroundUrl, page, late }, debug }` → `{ units:
+     * [{ key, chars, cached, refused? }], ms }`. Reading the sources is file IO, so the units are
+     * compiled off the main thread and installed on it, on every tab, in place of this
+     * extension's earlier units only. A unit the heap cannot hold ([UnitCompiler.Refused]) is
+     * not installed anywhere and is named once on the extension's error console; the rest of
+     * the extension goes on.
      */
     private fun configure(args: JSONObject, reply: (Any?) -> Unit) {
         val id = args.str("id")
@@ -512,6 +515,7 @@ class Extensions(private val host: Host) {
             reply(Host.Rejection("'$id' is not an extension id"))
             return
         }
+        val name = args.str("name").ifEmpty { id }
         val debug = args.bool("debug", true)
         io.execute {
             val started = System.nanoTime()
@@ -535,13 +539,18 @@ class Extensions(private val host: Host) {
                 lateConfig = s.str("late", "{}"),
                 cssMessages = s.obj("cssMessages").let { m -> m.keys().asSequence().associateWith { k -> m.optString(k, "") } }
             )
-            val compiled = compiler.compile(id, servedNow.version, args.arr("units"), debug) { path ->
-                fileIn(dir, path)?.takeIf { it.isFile }?.readText()
-            }
-            val unitsNow = compiled.map { ScriptUnit(id, it.key, it.origins.toSet(), it.script, it.world?.takeIf { isolatedWorlds }) }
+            val compiled = compiler.compile(
+                id, servedNow.version, args.arr("units"), debug,
+                read = { path -> fileIn(dir, path)?.takeIf { it.isFile }?.readText() },
+                size = { path -> fileIn(dir, path)?.takeIf { it.isFile }?.length() }
+            )
+            val unitsNow = compiled.filter { it.refused == null }
+                .map { ScriptUnit(id, it.key, it.origins.toSet(), it.script, it.world?.takeIf { isolatedWorlds }) }
             val ms = (System.nanoTime() - started) / 1_000_000
             val stats = json(
-                "units" to JSONArray(compiled.map { json("key" to it.key, "chars" to it.script.length, "cached" to it.cached) }),
+                "units" to JSONArray(compiled.map {
+                    json("key" to it.key, "chars" to it.script.length, "cached" to it.cached, "refused" to it.refused?.chars)
+                }),
                 "ms" to ms
             )
             main.post {
@@ -567,15 +576,44 @@ class Extensions(private val host: Host) {
                 // document it holds is loaded again, now that the origin answers (units first,
                 // so the page's document-start script is the extension's).
                 releaseHeld(id)
+                for (unit in compiled) {
+                    val refused = unit.refused ?: continue
+                    if (!unit.cached) unitRefusedLine(id, name, refused)
+                }
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
-                        "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached) in $ms ms, " +
+                        "${unitsNow.sumOf { it.script.length }} chars (${compiled.count { it.cached }} cached, " +
+                        "${compiled.count { it.refused != null }} refused) in $ms ms, " +
                         "worlds ${unitsNow.mapNotNull { u -> u.world?.let(worldSlots::slot) }.toSet()}"
                 )
                 reply(stats)
             }
         }
+    }
+
+    /**
+     * The one line an extension's error console gets for a unit the heap cannot hold (the
+     * extension's name, the unit's size and the budget); an `error`, since the unit's content
+     * scripts do not run, attributed to `content` as their own console lines would be.
+     */
+    private fun unitRefusedLine(id: String, name: String, refused: UnitCompiler.Refused) {
+        val groups = if (refused.groups == 1) "one group of scripts" else "${refused.groups} groups of scripts"
+        Log.w(TAG, "refused a unit of ${id.take(8)}: ${refused.chars} chars over ${refused.groups} group(s), budget ${refused.budgetChars}")
+        chromeEvent(
+            "ext.console",
+            json(
+                "id" to id,
+                "level" to "error",
+                "source" to "content",
+                "message" to "$name: a set of its content scripts was not injected. As one page script it would run to " +
+                    "${UnitCompiler.millions(refused.chars)} characters ($groups), more than the " +
+                    "${UnitCompiler.millions(refused.budgetChars.toLong())} this device's memory allows for one; " +
+                    "the extension's pages and background still run.",
+                "url" to null,
+                "context" to "content"
+            )
+        )
     }
 
     // --- notifications ---------------------------------------------------------------------------
