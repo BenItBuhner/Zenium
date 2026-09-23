@@ -241,6 +241,30 @@ export function paneFirstControl(pane: PaneId, doc: Document = document): HTMLEl
 }
 
 /**
+ * The mark a pane shortcut leaves on the control it lands the keyboard on. The chord (F6,
+ * Shift+F6, Shift+Alt+T, Shift+Alt+B) is consumed in the main process (`before-input-event`,
+ * platform/window.ts), so the chrome document never sees a key: the focus moved here by script
+ * after any mouse use reads to Chromium's `:focus-visible` heuristic as the mouse's – no ring,
+ * and no chrome tooltip – until the next key the document does see (measured by the a11y-2
+ * drive, 2026-09-23: Shift+Alt+T after the app menu's mouse clicks focused Reload with
+ * `:focus-visible` false; the Tab after it rang). The mark stands in for the heuristic where
+ * the chrome reads it: the tooltip counts it as keyboard focus (components/Tooltip.tsx). The
+ * ring is still `:focus-visible`'s alone (§1, main.css's base floor and the v2 and pill forms):
+ * a `[data-keyboard-focus]:focus` form beside each is the seam, the lead's to rule on. It goes
+ * with the control's blur.
+ */
+export const KEYBOARD_FOCUS_ATTR = 'data-keyboard-focus'
+
+/** Set before the focus lands: the tooltip host reads it in the synchronous `focusin`. */
+function markKeyboardFocus(target: HTMLElement): void {
+  if (target.hasAttribute(KEYBOARD_FOCUS_ATTR)) return
+  target.setAttribute(KEYBOARD_FOCUS_ATTR, '')
+  target.addEventListener('blur', () => target.removeAttribute(KEYBOARD_FOCUS_ATTR), {
+    once: true
+  })
+}
+
+/**
  * Move the keyboard as a pane shortcut asked. Into a chrome pane: the chrome takes the keyboard
  * (`focus.chrome`) and the pane's target is focused; into the page: the active view takes it
  * (`focus.content`). Leaving the toolbar puts its URL bar away. A named pane that is not on
@@ -273,6 +297,7 @@ export function focusPane(request: FocusPaneRequest, doc: Document = document): 
   }
   if (!target) return null
   run('focus.chrome', undefined)
+  markKeyboardFocus(target)
   target.focus()
   // After the target has the keyboard: the bar closing must not ask for the page's focus, which
   // would arrive later and take the keyboard back off the target.

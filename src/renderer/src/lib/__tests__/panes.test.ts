@@ -5,6 +5,7 @@ vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () =
 
 import { run } from '../api'
 import {
+  KEYBOARD_FOCUS_ATTR,
   PANE_ORDER,
   URLBAR_KEYBOARD_EVENT,
   URLBAR_LEAVE_EVENT,
@@ -351,6 +352,29 @@ describe('the document side', () => {
     mount(CHROME)
     expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
     expect(document.activeElement?.id).toBe('reload')
+  })
+
+  it('marks the landing as the keyboard’s before the focus arrives, and the mark goes with the blur', () => {
+    // The chord never reaches the document (the main process consumes it), so Chromium's
+    // `:focus-visible` would read a landing after mouse use as the mouse's: no ring, no tooltip.
+    // The mark is on the control when its focusin fires (the tooltip host reads it there).
+    mount(CHROME)
+    const reload = byId('reload')
+    const seen: (string | null)[] = []
+    reload.addEventListener('focusin', () => seen.push(reload.getAttribute(KEYBOARD_FOCUS_ATTR)))
+    expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
+    expect(seen).toEqual([''])
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(true)
+    // F6 on: the tab row takes the mark, Reload's goes with its blur.
+    expect(focusPane({ move: 'prev', from: 'chrome' })).toBe('tabs')
+    expect(reload.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(false)
+    expect(document.activeElement?.hasAttribute(KEYBOARD_FOCUS_ATTR)).toBe(true)
+    // Into the page nothing of the chrome keeps a mark.
+    expect(focusPane({ pane: 'toolbar' })).toBe('toolbar')
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBe('bookmarks')
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBe('sidepanel')
+    expect(focusPane({ move: 'next', from: 'chrome' })).toBe('page')
+    expect(document.querySelectorAll(`[${KEYBOARD_FOCUS_ATTR}]`)).toHaveLength(0)
   })
 })
 

@@ -18,6 +18,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { Tooltip } = await import('../Tooltip')
 const { TOOLTIP_ATTR, TOOLTIP_DELAY, TOOLTIP_ID, tooltip } = await import('@renderer/lib/tooltip')
+const { KEYBOARD_FOCUS_ATTR } = await import('@renderer/lib/panes')
 const { chromeLayer } = await import('@renderer/lib/portals')
 
 let root: Root | null = null
@@ -166,6 +167,21 @@ describe('Tooltip host', () => {
     focusVisible(button, false)
     act(() => button.focus())
     expect(shown()).toBeNull()
+  })
+
+  it('a pane shortcut’s landing shows at once although `:focus-visible` does not match (the mark, lib/panes.ts)', () => {
+    // Shift+Alt+T after the app menu's mouse clicks: the chord is consumed before the document
+    // sees a key, so the landing on Reload has no `:focus-visible`; the pane move marks it.
+    const matches = reload.matches.bind(reload)
+    reload.matches = (selector: string): boolean =>
+      selector === ':focus-visible' ? false : matches(selector)
+    act(() => reload.focus())
+    expect(shown()).toBeNull()
+    act(() => reload.blur())
+    reload.setAttribute(KEYBOARD_FOCUS_ATTR, '')
+    act(() => reload.focus())
+    expect(shown()!.textContent).toBe('Reload (Ctrl+R)')
+    expect(shown()!.getAttribute('data-by')).toBe('focus')
   })
 
   it('Escape takes it down and is consumed only then', () => {

@@ -1,5 +1,6 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { KEYBOARD_FOCUS_ATTR } from '@renderer/lib/panes'
 import { subscribePopovers } from '@renderer/lib/popoverStore'
 import { ChromePortal, toRect, viewportSize } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
@@ -10,6 +11,7 @@ import {
   tooltip,
   tooltipCoverHeld,
   tooltipPaneOf,
+  tooltipSize,
   tooltipStore,
   tooltipTargetOf,
   tooltipText,
@@ -153,7 +155,8 @@ export function Tooltip(): JSX.Element | null {
     }
   }, [target])
 
-  // The tooltip's own size decides where it fits; measured once it has rendered its text.
+  // The tooltip's own size decides where it fits; measured once it has rendered its text, to
+  // the fraction (`tooltipSize`: a rounded width clamps the box a fraction over the margin).
   useLayoutEffect(() => {
     const el = ref.current
     if (!target || !el || !text) {
@@ -164,7 +167,7 @@ export function Tooltip(): JSX.Element | null {
     setPlacement(
       placeTooltip(
         toRect(target.getBoundingClientRect()),
-        { width: el.offsetWidth, height: el.offsetHeight },
+        tooltipSize(el),
         viewportSize(),
         pane ? toRect(pane.getBoundingClientRect()) : null,
         contentAreaStore.get().area
@@ -245,9 +248,13 @@ function releaseHold(hold: { current: Hold | null }): void {
 /**
  * Whether the focus that landed on `focused` came from the keyboard – `:focus-visible` (a
  * pointer's press focuses a button without it, and its tooltip is the pointer's to show after
- * the wait). A DOM without the pseudo-class (a test's) counts every focus as the keyboard's.
+ * the wait), or a pane shortcut's landing (`KEYBOARD_FOCUS_ATTR`, lib/panes.ts: the chord is
+ * consumed before the document sees a key, so the heuristic alone would read the focus as the
+ * mouse's after any click). A DOM without the pseudo-class (a test's) counts every focus as the
+ * keyboard's.
  */
 function keyboardFocus(focused: HTMLElement): boolean {
+  if (focused.hasAttribute(KEYBOARD_FOCUS_ATTR)) return true
   try {
     return focused.matches(':focus-visible')
   } catch {

@@ -11,6 +11,7 @@ import {
   TOOLTIP_HIDDEN,
   TooltipController,
   tooltipPaneOf,
+  tooltipSize,
   tooltipTargetOf,
   type TooltipState
 } from '../tooltip'
@@ -118,6 +119,23 @@ describe('placeTooltip', () => {
     )
     expect(placed.box).toEqual({ side: 'below', left: 66, top: 77 })
     expect(placed.coversPage).toBe(false)
+  })
+})
+
+describe('tooltipSize', () => {
+  it('reads the used width and height to the fraction, and falls back to the offsets where none resolves', () => {
+    // The ⋯ tooltip measured 95.171875 wide (the a11y-2 drive, 2026-09-23); `offsetWidth` would
+    // say 95 and the clamp would leave the box 0.17 over the margin.
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    el.style.width = '95.171875px'
+    el.style.height = '30px'
+    expect(tooltipSize(el)).toEqual({ width: 95.171875, height: 30 })
+    const bare = document.createElement('div')
+    document.body.appendChild(bare)
+    Object.defineProperty(bare, 'offsetWidth', { value: 96 })
+    Object.defineProperty(bare, 'offsetHeight', { value: 30 })
+    expect(tooltipSize(bare)).toEqual({ width: 96, height: 30 })
   })
 })
 

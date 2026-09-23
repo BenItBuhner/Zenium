@@ -247,6 +247,24 @@ export interface TooltipPlacement {
 }
 
 /**
+ * The tooltip's border box to the fraction, for the placer. `offsetWidth` rounds to the pixel
+ * (a 95.17 wide tooltip reads 95, and a clamp against the margin computed from it leaves the
+ * real box 0.17 over the margin – the ⋯ button's, measured by the a11y-2 drive); the client
+ * rect is under the pop's scale while the appearance plays. The used width and height from the
+ * computed style are neither, and `.zen-tooltip` is `box-sizing: border-box`, so they are the
+ * border box. A DOM that resolves no used value (a test's) falls back to the offsets.
+ */
+export function tooltipSize(el: HTMLElement): Size {
+  const style = getComputedStyle(el)
+  const width = parseFloat(style.width)
+  const height = parseFloat(style.height)
+  return {
+    width: width > 0 ? width : el.offsetWidth,
+    height: height > 0 ? height : el.offsetHeight
+  }
+}
+
+/**
  * Where the tooltip goes, in viewport coordinates for a `fixed` element: centred under its
  * control, `TOOLTIP_GAP` below its box, never over it. Placed first inside the control's own
  * pane (`pane`: the sidebar, the toolbar band) with §9.20's 8 px margin – slid sideways to stay
