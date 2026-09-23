@@ -588,9 +588,13 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
                         attached = true
                         visible = v.visibility == View.VISIBLE
                         val index = parent.indexOfChild(v)
-                        topmost = index == parent.childCount - 1
+                        // Over a sibling as `root` draws and dispatches: by height first (the veil's
+                        // `LockVeil.Z_PX` over the chrome's and the page views' 0 – a page view
+                        // appended after the raise stands under it), by order among the equals.
+                        val over = { other: View -> v.z > other.z || (v.z == other.z && index > parent.indexOfChild(other)) }
+                        topmost = (0 until parent.childCount).all { i -> i == index || over(parent.getChildAt(i)) }
                         val chrome = h?.chrome
-                        aboveChrome = chrome != null && chrome.parent === parent && index > parent.indexOfChild(chrome)
+                        aboveChrome = chrome != null && chrome.parent === parent && over(chrome)
                         veilColour = (v.background as? ColorDrawable)?.color
                         rootColour = (parent.background as? ColorDrawable)?.color
                     }

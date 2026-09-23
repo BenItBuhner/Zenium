@@ -118,6 +118,18 @@ class LockVeil {
 
     companion object {
         /**
+         * The veil's height (px) over its siblings in `root` – the chrome and the page views, which
+         * the host never lifts (`LockVeilTest` pins that): a `ViewGroup` draws its children and
+         * dispatches touches to them by Z before child order, so a page view appended or fronted
+         * while the veil is up (`TabHost.create` / `adopt` / `replace`, the `view.bringToFront`
+         * command) stands under it whatever the order `raiseVeil`'s `bringToFront()` left. Any
+         * height above 0 orders it; this one keeps it over a sibling a later change lifts for a
+         * shadow of its own (that change answers the pin). The veil casts none: the host gives it
+         * no outline.
+         */
+        const val Z_PX = 1_000f
+
+        /**
          * The longest the veil stays after the window's start with no masked frame answered for
          * (the renderer gone, a chrome mid-rebuild, a callback the window never drew): the span
          * the paint probe gives the chrome for an answer (`HostLifecycle.PROBE_TIMEOUT_MS`),

@@ -1396,16 +1396,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * The veil goes up: an opaque view over everything in `root` – the chrome and the page views –
      * in the window's tone (the colour the chrome last painted on the root, the private theme's
      * near-black while a private surface is up). Its touches reach nothing, as its frames show
-     * nothing. With the window on screen the deadline runs from now; away, from the next start.
+     * nothing. It stands over its siblings by height ([LockVeil.Z_PX]), not by order: `root`
+     * draws and dispatches touches by Z first, and a page view [TabHost] appends or fronts while
+     * the veil is up stands at 0. With the window on screen the deadline runs from now; away,
+     * from the next start.
      */
     private fun raiseVeil() {
         val view = veilView ?: View(activity).also {
             it.isClickable = true
             it.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            // The height orders it; no outline, so it casts no shadow for it.
+            it.elevation = LockVeil.Z_PX
+            it.outlineProvider = null
             veilView = it
         }
         view.setBackgroundColor(themeBackground)
         if (view.parent == null) root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // Last among the siblings at 0 too, for a reader of the order (the harness's veil watch).
         view.bringToFront()
         Log.d(TAG, "private lock veil raised")
         if (lockVeil.windowVisible) main.postDelayed(veilDeadline, LockVeil.DEADLINE_MS)
