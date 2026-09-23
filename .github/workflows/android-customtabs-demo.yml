@@ -12,6 +12,10 @@ name: Android custom tabs demo
 # picks the driver and the demo it runs.
 on:
   workflow_dispatch:
+  # Temporary (W5-10, removed before the PR is ready): the one evidence run for CCT-07 / CCT-11.
+  push:
+    branches:
+      - cursor/android-custom-tabs-depth-9c30
 
 permissions:
   contents: read
