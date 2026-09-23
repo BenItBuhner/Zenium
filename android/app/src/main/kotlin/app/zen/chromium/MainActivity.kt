@@ -278,8 +278,12 @@ class MainActivity : BrowserActivity() {
                     if (view != null) host.tabs.adopt(view)
                     else intent.dataString?.let { if (DeepLinks.accepts(it)) host.chrome.openUrl(it) }
                 }
-                // A web link, or a `zenium://settings/…` deep link to one of Zenium's own pages.
-                else -> intent.dataString?.let { if (DeepLinks.accepts(it)) host.chrome.openUrl(it) }
+                // A web link, a `zenium://settings/…` deep link to one of Zenium's own pages, or a
+                // document on the device another app opened with Zenium (LocalDocuments.kt; the
+                // read grant travelled with the intent).
+                else -> intent.dataString?.let {
+                    if (DeepLinks.accepts(it) || LocalDocuments.accepts(this, intent)) host.chrome.openUrl(it)
+                }
             }
             // Shared into Zenium: the core routes it (a link opens, text searches with the user's
             // engine, an image gets a page) – see Share.kt and src/shared/shareTarget.ts.

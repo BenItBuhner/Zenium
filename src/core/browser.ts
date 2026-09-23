@@ -45,6 +45,7 @@ import { PrivacyService } from './privacy'
 import { PopupBlocker } from './popups'
 import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
+import { DeviceChooserService } from './deviceChooser'
 import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
 import { TabManager, isTabSection } from './tabs'
@@ -246,6 +247,8 @@ export class Browser {
   readonly external: ExternalLaunches
   /** HTTP authentication and client-certificate prompts. */
   readonly security: SecurityPromptService
+  /** The device choosers of Web Bluetooth, WebUSB, Web Serial and WebHID, and Bluetooth pairing. */
+  readonly devices: DeviceChooserService
   /** `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, shown by the chrome. */
   readonly pageDialogs: PageDialogService
   /** Window-modal questions ("Close N tabs?", "Quit Zenium?"), shown by a window's chrome. */
@@ -429,12 +432,18 @@ export class Browser {
     this.popups = new PopupBlocker(this)
     this.external = new ExternalLaunches(this)
     this.security = new SecurityPromptService(this)
+    this.devices = new DeviceChooserService(this)
     this.pageDialogs = new PageDialogService(this)
     this.windowPrompts = new WindowPrompts(this)
     this.pageControls = new PageControls(this)
     this.fullscreen = new FullscreenService(this)
     this.pages = new PageService(this)
     this.tabs = new TabManager(this)
+    // A site's mute is its `sound` setting: tabs follow every change of it, from wherever it came.
+    this.permissions.subscribe((change) => {
+      if (change.permission === 'sound') this.tabs.followSoundSetting(change.origin)
+    })
+    this.tabs.migrateMutedHosts()
     this.tabDrag = new TabDragController(this)
     this.session = new SessionService(this)
     this.inactiveTabs = new InactiveTabsService(this)
@@ -506,6 +515,9 @@ export class Browser {
       lastSafetyCheck: this.privacy.lastSafetyCheck(),
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
+      deviceChoosers: this.devices.list(),
+      devicePairings: this.devices.listPairings(),
+      deviceGrants: this.permissions.deviceGrants(),
       pageDialogs: this.pageDialogs.list(),
       closingTabIds: this.tabs.closingTabIds(),
       screenCaptureRequests: this.screenCapture.list(),
@@ -2642,6 +2654,14 @@ export class Browser {
       'privacy.setThirdPartyCookiesPrivate': ({ mode }, win) =>
         this.protection.setThirdPartyCookiesPrivate(mode, win),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
+      'devices.respond': ({ id, deviceId }) => this.devices.respond(id, deviceId),
+      'devices.respondPairing': ({ id, response }) => this.devices.respondPairing(id, response),
+      'devices.forget': ({ origin, kind, deviceId }) =>
+        this.permissions.forgetDevice(
+          kind,
+          origin,
+          deviceId === undefined ? undefined : { deviceId, name: '' }
+        ),
       'pageDialog.respond': ({ id, response }) => this.pageDialogs.respond(id, response),
       'window.respondPrompt': ({ id, accepted }) => this.windowPrompts.respond(id, accepted),
       'session.crashRestore': ({ restore }) => this.session.crashRestore(restore),
