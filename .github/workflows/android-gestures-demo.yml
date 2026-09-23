@@ -32,7 +32,6 @@ concurrency:
 jobs:
   record:
     name: Gestures demo
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[gestures-run]')
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
