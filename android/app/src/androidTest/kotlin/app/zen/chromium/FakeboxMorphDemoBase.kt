@@ -586,18 +586,19 @@ abstract class FakeboxMorphDemoBase(
 
     /**
      * A tap on the double on its way back: the omnibox dismissed by a back, and once the field is
-     * near the page (the value under [TURN_AT]: the spring's tail, where the box still moves but
-     * slowly) a finger on the double – the closing turns into an opening with the velocity
-     * carried, and lands open. The double turns on a click, which wants the finger down and up
-     * on it: the tap is aimed a little ahead of the box, toward the page's field, where the box
-     * will be over the tap's 60 ms; up to [ATTEMPTS] tries, the first the judge sees turn round
-     * (`turnedRound`) is the one kept.
+     * on its way (the value under [TURN_AT]: the spring past its first frames, the box moving) a
+     * finger on the double – the closing turns into an opening with the velocity carried, and
+     * lands open. The double turns on a click, which wants the finger down and up on it: the tap
+     * is aimed ahead of the box, toward the page's field, where the box will be when the click
+     * lands – a lead per try ([TAP_LEADS]), since that lag is the machine's; up to [ATTEMPTS]
+     * tries, the first the judge sees turn round (`turnedRound`) is the one kept.
      */
     private fun turnRound(scene: String) {
         section("$scene: a tap on the double on its way back turns it round")
         var kept: List<FakeboxMorph.Frame>? = null
         var g: FakeboxMorph.Geometry? = null
         for (attempt in 1..ATTEMPTS) {
+            val lead = TAP_LEADS[(attempt - 1).coerceAtMost(TAP_LEADS.lastIndex)]
             settleAtRest()
             g = geometry()
             tapField()
@@ -616,10 +617,10 @@ abstract class FakeboxMorphDemoBase(
                 if (ph == "closing" && m < TURN_AT) {
                     val box = s.optJSONObject("d") ?: break
                     val rest = g.rest
-                    // Ahead of the box: the fraction of the way to the field's rest box it covers in about a tap.
-                    val cy = FakeboxMorph.lerp((box.getDouble("y") + box.getDouble("h") / 2).toFloat(), rest.cy, TAP_LEAD)
+                    // Ahead of the box: the fraction of the way to the field's rest box it covers before the click lands.
+                    val cy = FakeboxMorph.lerp((box.getDouble("y") + box.getDouble("h") / 2).toFloat(), rest.cy, lead)
                     turned = PointF((rest.cx * density), cy * density)
-                    seen = "m ${"%.2f".format(m)}"
+                    seen = "m ${"%.2f".format(m)}, lead $lead"
                     Finger().tap(turned.x, turned.y)
                     break
                 }
@@ -1272,15 +1273,28 @@ abstract class FakeboxMorphDemoBase(
         /** The interruption scenes race the spring (some 300 ms of flight): tries before the scene counts as failed. */
         private const val ATTEMPTS = 3
         /**
-         * The closing's value under which the double is caught for the turn: the spring's second
-         * half (`SPRING_SNAPPY` 420 / 40 is all but critically damped: .25 at about 140 ms, .16 at
-         * 170, at rest by 320), where some 180 ms remain – a reading of the machine comes back
-         * once a frame or so, so the tail alone (.16) may never be read in time – and the box
-         * still moves, which the tap's lead ([TAP_LEAD]) allows for.
+         * The closing's value under which the double is caught for the turn. The reading that
+         * catches it lags the machine – a snapshot is a round trip through the chrome's main
+         * thread and the page's, and the tap's click another – and the emulator stretches both:
+         * its closing (`SPRING_SNAPPY` 420 / 40, stepped at most 64 ms a frame on frames 350–500
+         * ms apart) is home in 2.1–2.25 s of wall, a reading comes back about once a second and
+         * the click lands 0.6–0.95 s after it, so a window opening only in the spring's tail is
+         * read late and the click meets the field at rest.
+         * The value is under .6 from the spring's third frame (about 80 ms of wall; 67 ms of
+         * spring time at a phone's rate), so the first reading past the spring's start
+         * qualifies and the click lands with the field still on its way – at .01–.2 on the
+         * emulator, in the tail at a phone's rate.
          */
-        private const val TURN_AT = 0.25
-        /** How far from the box's centre toward the field's rest box the turn's tap is aimed: where the box will be mid-tap. */
-        private const val TAP_LEAD = 0.4f
+        private const val TURN_AT = 0.6
+        /**
+         * How far from the box's centre toward the field's rest box the turn's tap is aimed on
+         * each try: where the box will be when the click lands. That lag differs by an order of
+         * magnitude between the emulator (0.6–0.95 s: from a reading at .3–.6 the box is at .01–.2
+         * when the click lands, four fifths of its remaining way home) and a phone (tens of ms:
+         * a little way further along), so the tries walk the lead from the emulator's to a
+         * phone's; a box some 50 px tall on 260 px of travel forgives about .1 of the value.
+         */
+        private val TAP_LEADS = floatArrayOf(0.8f, 0.6f, 0.4f)
         /** The opening's values between which the double is caught for the second tap: any pace of the flight but its two ends. */
         private const val RETAP_FROM = 0.1
         private const val RETAP_TO = 0.95
