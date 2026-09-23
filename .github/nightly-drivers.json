@@ -985,7 +985,7 @@
       },
       "timeout": 1200,
       "estimate": 10,
-      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own). The estimate carries the group fold's four scenes (about a minute of the profile) and the group leave's two with their off-record steps (about another)."
+      "note": "The workflow's arguments; no recording in the nightly (the profile is the point, the encoder a load of its own). The estimate carries the group fold's four scenes (about a minute of the profile) and the group leave's three – the search, the close, the drag-out – with their off-record steps (about another minute and a half)."
     },
     {
       "id": "menu-perf",

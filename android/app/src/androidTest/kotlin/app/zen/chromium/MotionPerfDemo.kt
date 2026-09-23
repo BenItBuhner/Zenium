@@ -320,8 +320,9 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * The overview's scenes on the seeded six tabs, then on thirty: the pull in its pieces, the
      * pick that closes it, a fling open, and (under gesture navigation) the system's back gesture
      * over it (`overview`); the group folded and unfolded in the open overview (`overview-group`);
-     * a group's leave when a search drops its every card and when its last card is closed
-     * (`overview-group-leave`, on the six alone: its group is made and gone within its scenes).
+     * a group's leave when a search drops its every card and when its last card is closed, and
+     * the dissolve when its last card is dragged out (`overview-group-leave`, on the six alone:
+     * its groups are made and gone within its scenes).
      * The thirty are the six plus [EXTRA_TABS] created unloaded (`load: false`: a card each in the
      * grid, no page behind it, no picture in it), so the second set is the grid's size and nothing
      * else; the back scenes run on the six alone.
@@ -335,7 +336,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         settle()
         if (pull) overviewScenes("", back = gestural)
         if (fold) groupScenes("")
-        if (leave) groupLeaveScenes()
+        if (leave) {
+            groupLeaveScenes()
+            dragOutScene()
+        }
         var made = 0
         for (i in 1..EXTRA_TABS) {
             val id = coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/article?extra=$i")},\"active\":false,\"load\":false}")
@@ -588,6 +592,14 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      *    X – a group of one, in a single column.
      *  - `overview-group-leave-close`: the last card's close X; the scene is the tap and
      *    [LEAVE_SETTLE_MS] after it, with the same look [LEAVE_PEEK_MS] in.
+     *  - `overview-group-leave-drag-out` ([dragOutScene]): a second group of one made off the
+     *    record ([DISSOLVE_GROUP_NAME], the overview closed for it and opened again), the grid
+     *    scrolled off the record so the group stands [DRAG_OUT_SCROLL_PX] into the content, its
+     *    card pressed off the record (the ghost up); the scene is the carry to the slot before
+     *    the first loose card, the rest there – the stand-in takes the slot on the dwell, the
+     *    group has lost its last card and its shell takes §11.4's DISSOLVE with the finger down –
+     *    the lift [DRAG_OUT_REST_MS] in, and the drop's landing, with two looks at the boxes
+     *    ([LEAVE_PEEK_MS] and [DRAG_OUT_GLIDE_PEEK_MS] into the rest).
      *
      * What stood, at 60 Hz on the preview host (the driver PR's local runs, on main's product
      * code before the fix): no cut, and not the cards' leave either. The frame shrinks on the gentle spring
@@ -619,9 +631,23 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * close, in place of ~760 (~880 before #351). [leaveNumbers] names the shape `leave`, and its
      * `frameGhost*` fields read that exit.
      *
+     * The drag-out kept the DISSOLVE by design (§11.4: a loose card takes the cell, no exit
+     * stands) – and with it the placement, until #380 (seed 49): the shell is placed against the
+     * cells' grid now, so it stands where the card stood at any `scrollTop`, scrolls with the
+     * cells, and the tracker holds every cell below it. At 60 Hz on the preview host, the grid
+     * 200 px into its content: before, the shell landed 200 px low (`top` 309 against the pane,
+     * drawn at 409 where the card stood at 209), the tracker glided it down as it shrank, the
+     * row under the group set off 13 ms after the commit under the shrinking frame and the row
+     * after it only after the frame's end (~530 ms) – two waves, 3.2 cell writes per height
+     * frame; after, the shell is drawn at 209 with no transform, every cell below holds through
+     * the shrink (285 -> 0 over ~330 ms, unchanged) and sets off together after the frame's end –
+     * one wave, 1.2 cell writes per height frame. The drag-out scene's looks read the same on
+     * the device: the shell's top against the card's, the cells' `translateY` as a histogram.
+     *
      * Each scene's line reads the frame against its cards' exits off the probe's timeline
-     * ([leaveNumbers]). Afterwards the group's tabs are closed if any remain and the folder is
-     * deleted, off the record, so the thirty-tab set after these is the same six plus twenty-four.
+     * ([leaveNumbers]). Afterwards each made group's tabs are closed if any remain and the folder
+     * is deleted, off the record, so the thirty-tab set after these is the same six plus
+     * twenty-four.
      */
     private fun groupLeaveScenes() {
         val folderId = coreInvoke(
@@ -703,16 +729,110 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             SystemClock.sleep(FOLD_REST_MS)
             closeOverview()
         } finally {
-            dismissLeaveGroup(folderId, tabIds)
+            dismissLeaveGroup(folderId, tabIds, "overview-group-leave")
+        }
+    }
+
+    /**
+     * The drag-out of a group's last card (seed 49, #380): the DISSOLVE §11.4 gives it – the
+     * loose card takes the cell, the frame shrinks where the card stood, every cell below waits
+     * and glides once at the settle – measured with the grid scrolled, where the frame used to
+     * be placed `scrollTop` too low. A group of one is made off the record with the overview
+     * closed ([DISSOLVE_GROUP_NAME], [DISSOLVE_URL]; second in the grid, after Docs, the first
+     * loose card beside it), the overview opened, the grid scrolled [DRAG_OUT_SCROLL_PX] into
+     * its content off the record ([scrollGrid], read back), the card pressed off the record
+     * ([Finger.press]: the ghost up, the finger still). The scene: the carry to [DRAG_OUT_EDGE]
+     * into the first loose card from its left edge – the slot before it – over
+     * [DRAG_OUT_CARRY_MS]; the rest there, [DRAG_OUT_REST_MS] (the stand-in takes the slot on
+     * the dwell, the group has lost its last card, its shell dissolves with the finger down);
+     * the lift; the drop's landing in what is left of [LEAVE_SETTLE_MS]. Two looks at the boxes
+     * ([leaveBox]): [LEAVE_PEEK_MS] into the rest – the shell's top against the card's, the cells'
+     * `translateY` (the rows below held at one offset, the loose card on its own) – and
+     * [DRAG_OUT_GLIDE_PEEK_MS] in – the frame gone, every cell below the same way along on the
+     * one glide (placed against the pane, the row under the group was at 0 already and the rows
+     * further down still on their way: the two waves). Afterwards the tab is loose (its folder
+     * none) and the group's empty shell gone; [dismissLeaveGroup] closes the tab and deletes the
+     * folder.
+     */
+    private fun dragOutScene() {
+        val folderId = coreInvoke(
+            "folder.create",
+            "{\"spaceId\":\"space_main\",\"name\":${JSONObject.quote(DISSOLVE_GROUP_NAME)},\"icon\":\"\uD83D\uDCE6\",\"color\":\"green\",\"rename\":false}"
+        ).trim('"')
+        if (folderId.isEmpty()) {
+            finding("overview-group-leave-drag-out: folder.create made no group; the drag-out scene is skipped")
+            return
+        }
+        val tabId = coreInvoke("tab.create", "{\"url\":${JSONObject.quote(DISSOLVE_URL)},\"active\":false,\"load\":false,\"folderId\":${JSONObject.quote(folderId)}}").trim('"')
+        finding("overview-group-leave-drag-out: the $DISSOLVE_GROUP_NAME group $folderId made off the record with ${if (tabId.isEmpty()) "NO tab" else "one tab ($tabId)"}; ${coreState().getJSONObject("tabs").length()} tabs in the core")
+        SystemClock.sleep(OPEN_REST_MS)
+        try {
+            if (tabId.isEmpty()) {
+                finding("overview-group-leave-drag-out: the tab was not made; the drag-out scene is skipped")
+                return
+            }
+            if (!openOverview()) {
+                finding("overview-group-leave-drag-out: the overview did not open; the drag-out scene is skipped")
+                return
+            }
+            val atOpen = leaveBox(folderId)
+            val scrolled = scrollGrid(DRAG_OUT_SCROLL_PX)
+            SystemClock.sleep(LEAVE_REST_MS)
+            val card = domRect(".zen-overview [data-tab-id=${JSONObject.quote(tabId)}]")
+            val shell = domRect(leaveShell(folderId))
+            val loose = firstLooseCard()
+            finding(
+                "overview-group-leave-drag-out: at the open $atOpen; the grid scrolled to $scrolled (asked $DRAG_OUT_SCROLL_PX); ${cardsInGrid()} cards in the grid; " +
+                    "the $DISSOLVE_GROUP_NAME group ${leaveGroupState(folderId)} at $shell, its card at $card; the first loose card ${loose?.first ?: "NONE"} at ${loose?.second}; ${leaveBox(folderId)}"
+            )
+            if (card == null || shell == null || loose == null) {
+                finding("overview-group-leave-drag-out: no card, shell or loose card to drag to; the drag-out scene is skipped")
+                closeOverview()
+                return
+            }
+            // The long press, off the record: the ghost up, the finger still on the card.
+            val f = Finger()
+            f.press(card.exactCenterX(), card.exactCenterY())
+            val ghost = liftGhost()
+            if (ghost == "none") {
+                finding("overview-group-leave-drag-out: no ghost came up on the press (${leaveGroupState(folderId)}); the drag-out scene is skipped")
+                f.up()
+                SystemClock.sleep(LEAVE_REST_MS)
+                closeOverview()
+                return
+            }
+            val dx = loose.second.left + loose.second.width() * DRAG_OUT_EDGE - card.exactCenterX()
+            val dy = loose.second.exactCenterY() - card.exactCenterY()
+            var peek = ""
+            var glidePeek = ""
+            scene("overview-group-leave-drag-out", JankBudget.Kind.SPRING, profile = true) {
+                f.moveBy(dx, dy, DRAG_OUT_CARRY_MS)
+                SystemClock.sleep(LEAVE_PEEK_MS)
+                peek = leaveBox(folderId)
+                SystemClock.sleep(DRAG_OUT_GLIDE_PEEK_MS - LEAVE_PEEK_MS)
+                glidePeek = leaveBox(folderId)
+                SystemClock.sleep(DRAG_OUT_REST_MS - DRAG_OUT_GLIDE_PEEK_MS)
+                f.up()
+                SystemClock.sleep(LEAVE_SETTLE_MS - DRAG_OUT_CARRY_MS - DRAG_OUT_REST_MS)
+            }
+            finding(
+                "overview-group-leave-drag-out: the ghost $ghost on the press, carried ${dx.roundToInt()}, ${dy.roundToInt()} px to the slot; ${cardsInGrid()} cards in the grid; " +
+                    "the $DISSOLVE_GROUP_NAME group ${leaveGroupState(folderId)}; its card ${tabFolder(tabId)}; $LEAVE_PEEK_MS ms into the rest: $peek; $DRAG_OUT_GLIDE_PEEK_MS ms in: $glidePeek; ${leaveLine()}"
+            )
+            SystemClock.sleep(FOLD_REST_MS)
+            closeOverview()
+        } finally {
+            dismissLeaveGroup(folderId, listOf(tabId).filter { it.isNotEmpty() }, "overview-group-leave-drag-out")
         }
     }
 
     /**
      * The made group gone, off the record, with the overview closed: whatever of its tabs is still
-     * open closed (a tap the system dropped would leave a loose card in the thirty-tab set) and
-     * the folder deleted (the Groups pane would otherwise show it as a saved group).
+     * open closed (a tap the system dropped would leave a loose card in the thirty-tab set; the
+     * drag-out's tab is loose by design) and the folder deleted (the Groups pane would otherwise
+     * show it as a saved group).
      */
-    private fun dismissLeaveGroup(folderId: String, tabIds: List<String>) {
+    private fun dismissLeaveGroup(folderId: String, tabIds: List<String>, name: String) {
         if (overviewState() != "closed") closeOverview()
         val open = coreState().getJSONObject("tabs")
         var closed = 0
@@ -722,7 +842,34 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         }
         val deleted = runCatching { coreInvoke("folder.delete", "{\"folderId\":${JSONObject.quote(folderId)},\"unpack\":true}") }.isSuccess
         SystemClock.sleep(LEAVE_REST_MS)
-        finding("overview-group-leave: $closed of the group's tabs were still open and are closed; the folder ${if (deleted) "deleted" else "NOT deleted"}; ${coreState().getJSONObject("tabs").length()} tabs in the core")
+        finding("$name: $closed of the group's tabs were still open and are closed; the folder ${if (deleted) "deleted" else "NOT deleted"}; ${coreState().getJSONObject("tabs").length()} tabs in the core")
+    }
+
+    /** The grid scrolled off the record, `px` into its content; its `scrollTop` read back (the browser clamps to the content). */
+    private fun scrollGrid(px: Int): String = jsString(
+        "(function(){var g=document.querySelector('.zen-overview-grid[data-pane=\"regular\"]')||document.querySelector('.zen-overview-grid');if(!g)return 'no grid';" +
+            "g.scrollTop=$px;return String(Math.round(g.scrollTop*10)/10)})()"
+    )
+
+    /** The first loose card in the grid's order (no group's, not the New Tab card): its cell key and on-screen box. */
+    private fun firstLooseCard(): Pair<String, android.graphics.Rect>? {
+        val key = jsString(
+            "(function(){var c=Array.prototype.slice.call(document.querySelectorAll('.zen-overview-grid [data-cell]')).filter(function(e){var k=e.getAttribute('data-cell');" +
+                "return !e.closest('.zen-group')&&k!=='new-tab'&&k.indexOf('group:')!==0});return c.length?c[0].getAttribute('data-cell'):''})()"
+        )
+        if (key.isEmpty()) return null
+        val rect = domRect(".zen-overview-grid [data-cell=${JSONObject.quote(key)}]") ?: return null
+        return key to rect
+    }
+
+    /** `up, <transform>` when the lift's ghost stands over the grid (the long press fired), `none` otherwise. */
+    private fun liftGhost(): String = jsString("(function(){var g=document.querySelector('.zen-overview-ghost');return g?'up, '+(g.style.transform||'no transform'):'none'})()")
+
+    /** Where the core has a tab: `loose (no folder)`, `in folder <id>`, or `closed`. */
+    private fun tabFolder(tabId: String): String {
+        val tab = coreState().getJSONObject("tabs").optJSONObject(tabId) ?: return "closed"
+        val folder = tab.optString("folderId", "")
+        return if (folder.isEmpty() || folder == "null") "loose (no folder)" else "in folder $folder"
     }
 
     /** The made group's shell in the grid, by its cell key. */
@@ -737,21 +884,27 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     )
 
     /**
-     * Where the group's box stands against the grid's scroll – the leave's mechanism read
+     * Where the group's box stands against the grid's scroll – the dissolve's mechanism read
      * directly: `GroupCard`'s dissolving shell is `position: absolute` at its `offsetTop`, placed
-     * against the pane outside the scroller, so it lands `scrollTop` lower than the card stood and
-     * the tracker glides it down as it shrinks. The grid's `scrollTop`; the shell (the cell, or
-     * the dissolved shell after its cell attribute went): its top as drawn and, under a transform,
-     * untransformed (less the tracker's translateY), its height, its inline position; a group's
-     * exit where one stands (a group leaving as a card does: the ghost fading where the card stood),
-     * its top and opacity.
+     * against the cells' grid (#380), so it stands where the card stood and scrolls with the
+     * cells; placed against the pane outside the scroller before that, it landed `scrollTop`
+     * lower than the card stood, the tracker glided it down as it shrank, and held only the cells
+     * drawn under that lower box (seed 49). The grid's `scrollTop`; the shell (the cell, or the
+     * dissolved shell after its cell attribute went): its top as drawn and, under a transform,
+     * untransformed (less the tracker's translateY), its height, its inline position and `top`;
+     * the grid's other cells by their `translateY` (`34:4 16.7:1 0:4`: four held at one row's
+     * offset, one gliding, four at rest – the waves as state); a group's exit where one stands (a
+     * group leaving as a card does: the ghost fading where the card stood), its top and opacity.
      */
     private fun leaveBox(folderId: String): String = jsString(
         "(function(){var g=document.querySelector('.zen-overview-grid[data-pane=\"regular\"]')||document.querySelector('.zen-overview-grid'),s='scrollTop '+(g?Math.round(g.scrollTop*10)/10:'(no grid)');" +
             "var e=document.querySelector(${JSONObject.quote(leaveShell(folderId))})||document.querySelector('.zen-overview .zen-group[data-dissolving]');" +
             "if(e){var r=e.getBoundingClientRect(),tf=e.style.transform,k=tf.indexOf(','),ty=k<0?0:parseFloat(tf.slice(k+1));" +
-            "s+='; shell top '+Math.round(r.top*10)/10+(ty?' ('+Math.round((r.top-ty)*10)/10+' untransformed)':'')+', '+Math.round(r.height*10)/10+' px tall'+(e.style.position?', '+e.style.position:'')+(e.style.display==='none'?', hidden':'')}" +
+            "s+='; shell top '+Math.round(r.top*10)/10+(ty?' ('+Math.round((r.top-ty)*10)/10+' untransformed)':'')+', '+Math.round(r.height*10)/10+' px tall'+(e.style.position?', '+e.style.position+(e.style.top?' top '+e.style.top:''):'')+(e.style.display==='none'?', hidden':'')}" +
             "else s+='; no shell';" +
+            "if(g){var h={},n=0,cells=g.querySelectorAll('[data-cell]');for(var i=0;i<cells.length;i++){var c=cells[i];if(c===e||(e&&e.contains(c)))continue;" +
+            "var ct=c.style.transform,j=ct.indexOf(','),y=j<0?0:Math.round(parseFloat(ct.slice(j+1))*10)/10;h[y]=(h[y]||0)+1;n++}" +
+            "s+='; '+n+' cells by translateY '+Object.keys(h).map(function(y){return y+':'+h[y]}).join(' ')}" +
             "var x=document.querySelector('.zen-group:not([data-cell]):not([data-dissolving])');" +
             "if(x){var xr=x.getBoundingClientRect();s+='; a group exit at top '+Math.round(xr.top*10)/10+', opacity '+(x.style.opacity===''?'1':x.style.opacity)}" +
             "return s})()"
@@ -1596,6 +1749,19 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
          */
         private val LEAVE_URLS = listOf("http://leaving.example/one", "http://leaving.example/two")
         private const val LEAVE_QUERY = "1"
+        /** The group the drag-out scene makes off the record – one tab, [DISSOLVE_URL] – and drags apart; second in the grid, after Docs, once the leave's is gone. */
+        private const val DISSOLVE_GROUP_NAME = "Dissolving"
+        private const val DISSOLVE_URL = "http://dissolving.example/only"
+        /** The grid's scroll before the drag-out, off the record: the group's box this far into the content (the shell was placed this much too low – seed 49). */
+        private const val DRAG_OUT_SCROLL_PX = 200
+        /** The carry from the card's centre to the slot ([Finger.moveBy]'s duration). */
+        private const val DRAG_OUT_CARRY_MS = 300L
+        /** Where over the first loose card the finger rests: this far into it from its left edge – the slot before it. */
+        private const val DRAG_OUT_EDGE = 0.08f
+        /** The finger's rest at the slot before it lifts: the dwell (150 ms), the dissolve (~350), the glide after it (~300), and a margin. */
+        private const val DRAG_OUT_REST_MS = 2_500L
+        /** The second look into the rest: the frame gone, the cells below on their one glide (or, placed against the pane, the second wave alone). */
+        private const val DRAG_OUT_GLIDE_PEEK_MS = 600L
         /** The leave scene's window after the key or the tap: the exits, the frame's way out, the glide (generous, as the fold's). */
         private const val LEAVE_SETTLE_MS = 4_000L
         /**
