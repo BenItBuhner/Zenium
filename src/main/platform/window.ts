@@ -26,6 +26,7 @@ import { TitleThrottle } from '../../shared/windowTitle'
 import { windowIcon } from './appIcon'
 import { EdgeTracker, edgeState, type EdgeZone } from './edgeReveal'
 import { placeWindow, type DisplayArea } from './windowPlacement'
+import { showWhenReady } from './windowShow'
 
 const MIN_WIDTH = 640
 const MIN_HEIGHT = 420
@@ -164,7 +165,9 @@ export class ElectronWindow implements WindowHost {
     }
     if (init.maximized) win.maximize()
 
-    win.once('ready-to-show', () => win.show())
+    // Shown once the chrome has painted – or after a bounded wait when Electron never says so
+    // (`windowShow.ts`): a window that stays hidden is worse than one that paints a beat late.
+    showWhenReady(win)
     win.on('maximize', () => zen.onWindowStateChanged())
     win.on('unmaximize', () => zen.onWindowStateChanged())
     win.on('enter-full-screen', () => zen.onWindowStateChanged())
