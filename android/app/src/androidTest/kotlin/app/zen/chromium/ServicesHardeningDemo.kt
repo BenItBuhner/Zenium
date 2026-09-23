@@ -19,6 +19,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
@@ -66,6 +68,8 @@ class ServicesHardeningDemo {
     private lateinit var activity: Activity
     private var width = 0
     private var height = 0
+    /** The navigation bar's band along the bottom edge in px – the larger of the bar's and the tappable inset – where a touch never reaches the app. */
+    private var bottomBand = 0
     private val log = StringBuilder()
 
     @Test
@@ -152,6 +156,10 @@ class ServicesHardeningDemo {
             val root = activity.window.decorView
             width = root.width
             height = root.height
+            val insets = ViewCompat.getRootWindowInsets(root)
+            val bars = insets?.getInsets(WindowInsetsCompat.Type.systemBars())?.bottom ?: 0
+            val tappable = insets?.getInsets(WindowInsetsCompat.Type.tappableElement())?.bottom ?: 0
+            bottomBand = max(bars, tappable)
         }
         if (width == 0 || height == 0) {
             val probe = ui.takeScreenshot() ?: error("could not measure the window")
@@ -159,7 +167,7 @@ class ServicesHardeningDemo {
             height = probe.height
             probe.recycle()
         }
-        step("window ${width}x$height")
+        step("window ${width}x$height, navigation bar band $bottomBand px")
     }
 
     private fun handshake() {
@@ -801,28 +809,51 @@ class ServicesHardeningDemo {
     /**
      * Tap the node labelled `label` once it has come to rest (a sheet still sliding in reports
      * bounds a frame behind), inside its bounds but clear of the system navigation bar along
-     * the bottom edge, which would take the tap instead.
+     * the bottom edge ([bottomBand], from the window's insets), which would take the tap instead.
+     *
+     * At rest means two reads agree AND the bounds lie inside the window: the Settings drill-in
+     * pane enters by a 240 ms compositor transform (`zen-settings-enter-right`, main.css) and
+     * the tree serialised the Security section's answer row mid-slide once – x 512–1216 on a
+     * 720 px screen, 70 % of the width to the right – and kept that box (the compositor finishes
+     * the slide without a layout the tree would hear of): two reads agreed on the stale box and
+     * the finger went to x 864, off the screen. Bounds off the window are not at rest, however
+     * many reads agree; a full-width row (a Settings row spans the pane) whose box stays off
+     * to the side past `settleMs` is touched at the screen's middle at the row's height, and
+     * anything else that never comes inside is reported and not touched.
      */
     private fun tapLabel(
         f: Finger,
         label: String,
         prefix: Boolean = false,
         ignoreCase: Boolean = false,
-        contains: Boolean = false
+        contains: Boolean = false,
+        settleMs: Long = 4_000
     ): Boolean {
         var target = findByLabel(label, prefix, ignoreCase, contains) ?: run {
             step("no node labelled '$label'")
             return false
         }
-        val settleBy = SystemClock.uptimeMillis() + 2_000
+        val window = Rect(0, 0, width, height)
+        val inside = { r: Rect -> window.contains(r.centerX(), r.centerY()) }
+        val settleBy = SystemClock.uptimeMillis() + settleMs
         while (SystemClock.uptimeMillis() < settleBy) {
             SystemClock.sleep(150)
             val again = findByLabel(label, prefix, ignoreCase, contains) ?: break
-            if (again == target) break
+            if (again == target && inside(again)) break
+            if (again != target && !inside(again)) step("'$label' reads $again, outside the ${width}x$height window; waiting for it to come inside")
             target = again
         }
-        val x = target.exactCenterX()
-        val lowest = height - NAV_BAR_MARGIN
+        var x = target.exactCenterX()
+        if (!inside(target)) {
+            val fullWidthRow = target.width() >= width / 2 && target.top >= 0 && target.bottom <= height
+            if (!fullWidthRow) {
+                step("'$label' stayed outside the window at $target for ${settleMs}ms; not touched")
+                return false
+            }
+            x = width / 2f
+            step("'$label' stayed at $target, off to the side of the ${width}x$height window (the drill-in's slide in the tree's box); the finger goes to the screen's middle at its height")
+        }
+        val lowest = height - bottomBand - (8 * app.resources.displayMetrics.density).toInt()
         val y = if (target.exactCenterY() > lowest) {
             max(target.top + 8f, lowest.toFloat())
         } else {
@@ -980,7 +1011,5 @@ class ServicesHardeningDemo {
         private const val CERT_PASSWORD = "zenium"
         private const val INSTALLER = "com.android.certinstaller"
         private const val STEP_MS = 8L
-        /** The 3-button navigation bar's height on the runner's emulator, with room to spare. */
-        private const val NAV_BAR_MARGIN = 100
     }
 }
