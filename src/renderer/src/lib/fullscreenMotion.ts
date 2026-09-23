@@ -2,17 +2,16 @@ import { SPRING_SNAPPY, SpringAnimation } from './motion/spring'
 import { createStore } from './store'
 
 /**
- * The phone chrome around a page's fullscreen (MOT-32: the bar translates off and back on one
- * spring, in design language v2 §11.5's register for chrome that slides – pushed, not faded.
- * §11.5's first bullet still describes the return before MOT-32, a fade with no translate; the
- * brief supersedes it and the amendment is the lead's). The chrome stays mounted, with its state,
- * for the whole of a fullscreen; what moves is the bar – the row of controls with the pill and, while the active
- * tab is grouped, the group strip inside it – which translates off its edge as the system bars
- * slide away and back onto it as they return, on one spring (`SPRING_SNAPPY`, the bar hide's
- * snap), by `--zen-fullscreen-away`: 0 with the bar in place, 1 with it fully off (its own
- * height, past the inset line its clip box cuts it at). The value is written per frame on the
- * bar element itself (`bindFullscreenAway`), where main.css registers it as a property of that
- * one element (`inherits: false`) and composes it into the bar's transform next to the bar
+ * The phone chrome around a page's fullscreen (MOT-32, design language v2 §11.5's fullscreen
+ * bullet: the bar translates off and back on one spring – chrome that slides is pushed, not
+ * faded, and what left by a slide returns by one). The chrome stays mounted, with its state,
+ * for the whole of a fullscreen; what moves is the bar – the row of controls with the pill and,
+ * while the active tab is grouped, the group strip inside it – which translates off its edge as
+ * the system bars slide away and back onto it as they return, on one spring (`SPRING_SNAPPY`,
+ * the bar hide's snap), by `--zen-fullscreen-away`: 0 with the bar in place, 1 with it fully off
+ * (its own height, past the inset line its clip box cuts it at). The value is written per frame
+ * on the bar element itself (`bindFullscreenAway`), where main.css registers it as a property of
+ * that one element (`inherits: false`) and composes it into the bar's transform next to the bar
  * hide's – so a frame's write recalculates the bar's own style and no other (the bar hide
  * profile's H4, PERF-2's H3: a per-frame property on the root recalculated the whole chrome),
  * and the frame's change is the promoted layer's transform alone.
