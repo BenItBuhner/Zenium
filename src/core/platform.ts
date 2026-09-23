@@ -208,7 +208,14 @@ export interface PageMessage {
     | 'capture-state'
     /** The page script answers a `textFragment` / `generate` request with the selection's directive (`shared/textFragmentScript`). */
     | 'textFragment'
+    /**
+     * A frame that holds the keyboard says whether it is on a text field (`shared/editingFocus`;
+     * the Electron preload alone): the caret's ⌘← / ⌘→ stay the field's (`KeyboardHandler`).
+     */
+    | 'editing'
   url?: string
+  /** `editing`: whether a text field of the reporting frame has the keyboard. */
+  editing?: boolean
   /** `textFragment`: the request's id, and the encoded `text=` directive – null when the selection cannot be linked to. */
   id?: string
   directive?: string | null
@@ -924,6 +931,12 @@ export interface WindowHost {
   contentSize(): { width: number; height: number }
   isFullScreen(): boolean
   setFullScreen(fullscreen: boolean): void
+  /**
+   * The window is a kiosk (the desktop's `--kiosk`): fullscreen for its life, without the
+   * chrome, the fullscreen hint or a way out by keyboard – the host refuses `setFullScreen(false)`.
+   * Hosts without the mode leave it out.
+   */
+  readonly kiosk?: boolean
   isMaximized(): boolean
   isFocused(): boolean
   isVisible(): boolean
@@ -1580,7 +1593,17 @@ export interface AppHost {
    * only where the system has one (Windows, macOS).
    */
   showEmojiPanel?(): void
+  /**
+   * What the system does to a window whose title bar is double-clicked, read live from the
+   * user's setting: macOS's System Settings › Desktop & Dock › "Double-click a window's title bar
+   * to" (the `AppleActionOnDoubleClick` user default). Only the macOS host has it; the chrome's
+   * empty caption room follows it (`captionDoubleClickEffect`), and toggles maximise elsewhere.
+   */
+  titleBarDoubleClickAction?(): TitleBarDoubleClickAction
 }
+
+/** The three choices of macOS's title-bar double-click setting. */
+export type TitleBarDoubleClickAction = 'zoom' | 'minimize' | 'none'
 
 /**
  * The OS colour scheme as the engine sees it. Desktop hosts read it from the native theme so the

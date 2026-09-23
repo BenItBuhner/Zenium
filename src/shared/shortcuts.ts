@@ -608,6 +608,18 @@ const DEFS: Def[] = [
     chrome: { key: 'm', mods: META, platforms: MAC }
   },
   {
+    // Chrome's More tools › Name window… has no chord in either browser: the row is in the
+    // table so Settings can bind one and the palette lists it. The desktop layout's alone, as
+    // the palette's row is: a phone or tablet window shows no name (no title bar, no window
+    // switcher), so their listings leave the row out rather than offer a chord that does nothing.
+    id: 'key_nameWindow',
+    action: 'window.name',
+    group: 'windowAndTabManagement',
+    label: 'Name Window…',
+    layouts: ['desktop'],
+    ...both(UNBOUND)
+  },
+  {
     // Chrome quits on Ctrl+Shift+Q (Linux) and Cmd+Q; Zen keeps Firefox's Ctrl+Q.
     id: 'key_quitApplication',
     action: 'app.quit',
@@ -728,18 +740,33 @@ const DEFS: Def[] = [
 
   // --- Navigation -------------------------------------------------------------
   {
+    // Chrome's History menu says ⌘[ and ⌘] and takes ⌘← and ⌘→ as well (history-14). The arrows
+    // are the caret's line-start and line-end keys in a text field, which `KeyboardHandler`
+    // leaves them to; the Zen preset keeps to the brackets.
     id: 'goBackKb',
     action: 'nav.back',
     group: 'navigation',
     label: 'Back',
-    ...both({ key: 'ArrowLeft', mods: ALT, perPlatform: { darwin: { key: '[', mods: META } } })
+    zen: { key: 'ArrowLeft', mods: ALT, perPlatform: { darwin: { key: '[', mods: META } } },
+    chrome: {
+      key: 'ArrowLeft',
+      mods: ALT,
+      perPlatform: { darwin: { key: '[', mods: META } },
+      extra: [{ key: 'ArrowLeft', mods: META, platforms: MAC }]
+    }
   },
   {
     id: 'goForwardKb',
     action: 'nav.forward',
     group: 'navigation',
     label: 'Forward',
-    ...both({ key: 'ArrowRight', mods: ALT, perPlatform: { darwin: { key: ']', mods: META } } })
+    zen: { key: 'ArrowRight', mods: ALT, perPlatform: { darwin: { key: ']', mods: META } } },
+    chrome: {
+      key: 'ArrowRight',
+      mods: ALT,
+      perPlatform: { darwin: { key: ']', mods: META } },
+      extra: [{ key: 'ArrowRight', mods: META, platforms: MAC }]
+    }
   },
   {
     id: 'key_reload',
@@ -1067,6 +1094,14 @@ const DEFS: Def[] = [
     group: 'historyAndBookmarks',
     label: 'Show History',
     ...both({ key: 'h', mods: ACCEL, perPlatform: { darwin: { key: 'y', mods: META } } })
+  },
+  {
+    // Chrome's and Firefox's one chord for it (Firefox's `key_sanitize`, "Clear recent history").
+    id: 'key_clearBrowsingData',
+    action: 'privacy.clearBrowsingData',
+    group: 'historyAndBookmarks',
+    label: 'Delete Browsing Data…',
+    ...both({ key: 'Delete', mods: ACCEL_SHIFT })
   },
   {
     id: 'key_openDownloads',

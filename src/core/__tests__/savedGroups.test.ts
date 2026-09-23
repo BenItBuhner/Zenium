@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER } from '../../shared/defaults'
 import type { FormFactor, HostCapabilities, Platform as PlatformOs } from '../../shared/types'
+import { isEmptyTabUrl } from '../../shared/url'
 import { Browser } from '../browser'
 import { createSpace, createTabRecord, isPrivateFolder, isSavedFolder } from '../model'
 import type {
@@ -248,24 +249,47 @@ describe('a saved group (TAB-16)', () => {
     expect(isSavedFolder(m, m.folders[folder])).toBe(true)
   })
 
-  it('a tab joining a saved group opens it: the kept pages go, the group unfolds and counts as used', () => {
+  it('a tab moved into a saved group opens it first: the kept pages back as its tabs, the tab behind them, the group unfolded and used', () => {
     const h = harness()
     const m = h.browser.state.model
     const folder = h.group('Trip')
     h.open('https://a.test/', { folderId: folder })
+    h.open('https://b.test/', { folderId: folder })
     h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
     // Closing folded it shut with its pages (the desktop's saved chip); the tab moved into it
     // must not find it folded around itself: it is live and unfolded, whichever way it came.
     expect(m.folders[folder].collapsed).toBe(true)
     m.folders[folder].lastUsedAt = 1
     const loose = h.open('https://loose.test/')
+    const other = h.open('https://other.test/')
     h.browser.tabs.moveToFolder(loose, folder)
+    // Open-then-add: the pages first, in their order, then the joiner – all the group's; the
+    // tab that was not moved keeps its slot ahead of them.
+    expect(h.urls()).toEqual([
+      'https://other.test/',
+      'https://a.test/',
+      'https://b.test/',
+      'https://loose.test/'
+    ])
+    const members = h.win.activeSpace().tabIds.filter((id) => m.tabs[id].folderId === folder)
+    expect(members.map((id) => m.tabs[id].url)).toEqual([
+      'https://a.test/',
+      'https://b.test/',
+      'https://loose.test/'
+    ])
     expect(m.folders[folder].savedTabs).toBeNull()
     expect(m.folders[folder].collapsed).toBe(false)
     expect(m.folders[folder].lastUsedAt).toBeGreaterThan(1)
     expect(isSavedFolder(m, m.folders[folder])).toBe(false)
+    // The pages came back reading as they did, and the move activated nothing: the tab that
+    // was active stays so.
+    expect(m.tabs[members[0]].title).toBe('a.test')
+    expect(m.tabs[members[1]].title).toBe('b.test')
+    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(other)
 
-    // Undo of the close – the recently closed entry restored – opens it the same way.
+    // Undo of the close – the recently closed entry restored – takes the group as open: the
+    // reopened tab is one of its pages come back on its own, so the kept pages go (a restore
+    // that brought them back too would double it).
     const again = h.group('Again')
     h.open('https://again.test/', { folderId: again })
     h.browser.handleCommand(h.win, 'folder.close', { folderId: again })
@@ -276,12 +300,14 @@ describe('a saved group (TAB-16)', () => {
     )!
     h.browser.handleCommand(h.win, 'session.restoreClosed', { id: entry.id })
     expect(isSavedFolder(m, m.folders[again])).toBe(false)
-    const restored = Object.values(m.tabs).find((t) => t.url === 'https://again.test/')!
-    expect(restored.folderId).toBe(again)
+    const restored = Object.values(m.tabs).filter((t) => t.url === 'https://again.test/')
+    expect(restored).toHaveLength(1)
+    expect(restored[0].folderId).toBe(again)
     expect(m.folders[again].savedTabs).toBeNull()
     expect(m.folders[again].collapsed).toBe(false)
 
-    // A new tab made in the saved group, the third way in: the same.
+    // A tab made in the saved group by a path that is no join of the user's – a live folder's
+    // refresh repopulating it – takes the group as open the same way.
     const third = h.group('Third')
     h.open('https://third.test/', { folderId: third })
     h.browser.handleCommand(h.win, 'folder.close', { folderId: third })
@@ -289,6 +315,54 @@ describe('a saved group (TAB-16)', () => {
     h.open('https://new.test/', { folderId: third })
     expect(m.folders[third].savedTabs).toBeNull()
     expect(m.folders[third].collapsed).toBe(false)
+    expect(h.urls().filter((u) => u === 'https://third.test/')).toEqual([])
+
+    // A tab joining an open group is as it was: it takes the group's id, keeps its slot, and
+    // the group's members are as they were plus it.
+    const open = h.group('Open')
+    const member = h.open('https://member.test/', { folderId: open })
+    const joiner = h.open('https://joiner.test/')
+    const before = h.urls()
+    h.browser.tabs.moveToFolder(joiner, open)
+    expect(h.urls()).toEqual(before)
+    expect(m.tabs[joiner].folderId).toBe(open)
+    expect(m.tabs[member].folderId).toBe(open)
+  })
+
+  it('New Tab in Group on a saved group opens it first and adds the tab behind its pages (open-then-add), on the touch menu as on the desktop’s', () => {
+    const h = harness('tablet')
+    const m = h.browser.state.model
+    const folder = h.group('Trip')
+    h.open('https://a.test/', { folderId: folder })
+    h.open('https://b.test/', { folderId: folder })
+    h.browser.handleCommand(h.win, 'folder.close', { folderId: folder })
+    const loose = h.open('https://loose.test/')
+    expect(isSavedFolder(m, m.folders[folder])).toBe(true)
+    // The tablet's group menu on the saved group: Open Group (2 Tabs) leads, New Tab in Group
+    // is offered (TABLET-04's shape), and it forgets nothing.
+    h.browser.menus.showFolderContextMenu(folder, h.win)
+    expect(labels(h.shown())).toContain('Open Group (2 Tabs)')
+    expect(labels(h.shown())).toContain('New Tab in Group')
+    click(h.shown(), 'New Tab in Group')
+    const members = h.win.activeSpace().tabIds.filter((id) => m.tabs[id].folderId === folder)
+    expect(members.map((id) => m.tabs[id].url)).toEqual([
+      'https://a.test/',
+      'https://b.test/',
+      m.tabs[members[2]].url
+    ])
+    expect(isEmptyTabUrl(m.tabs[members[2]].url)).toBe(true)
+    expect(h.win.selectedTabIn(h.win.activeSpace())).toBe(members[2])
+    expect(h.browser.tabs.tab(loose)).toBeDefined()
+    expect(m.folders[folder].savedTabs).toBeNull()
+    expect(m.folders[folder].collapsed).toBe(false)
+    expect(isSavedFolder(m, m.folders[folder])).toBe(false)
+    // The pages came back titled as they were kept.
+    expect(m.tabs[members[0]].title).toBe('a.test')
+    // On an open group the same row adds one tab at the end, and nothing else moves.
+    const before = h.urls()
+    const created = h.browser.newTabInFolder(folder, h.win)
+    expect(h.urls()).toEqual([...before, m.tabs[created].url])
+    expect(m.tabs[created].folderId).toBe(folder)
   })
 
   it('rename and colour keep the saved pages; delete removes the group', () => {

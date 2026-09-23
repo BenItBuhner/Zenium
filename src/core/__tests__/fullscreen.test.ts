@@ -41,13 +41,19 @@ interface Page {
   events: TabViewEvents
 }
 
-/** A desktop host whose window can be put in fullscreen and whose pages record their hints. */
-function fakePlatform(io: StoreIO): Platform & {
+/**
+ * A desktop host whose window can be put in fullscreen and whose pages record their hints. A
+ * `kiosk` host's window is fullscreen from the start and refuses to leave, as the Electron one.
+ */
+function fakePlatform(
+  io: StoreIO,
+  { kiosk = false }: { kiosk?: boolean } = {}
+): Platform & {
   pages: Map<string, Page>
   frame: { fullscreen: boolean }
 } {
   const pages = new Map<string, Page>()
-  const frame = { fullscreen: false }
+  const frame = { fullscreen: kiosk }
   const capabilities = stub<HostCapabilities>({
     windows: true,
     updates: false,
@@ -69,8 +75,10 @@ function fakePlatform(io: StoreIO): Platform & {
           normalBounds: () => null,
           isFullScreen: () => frame.fullscreen,
           setFullScreen: (on: boolean) => {
+            if (kiosk && !on) return
             frame.fullscreen = on
           },
+          kiosk,
           isMaximized: () => false,
           isFocused: () => true,
           isVisible: () => true
@@ -100,12 +108,12 @@ function fakePlatform(io: StoreIO): Platform & {
   }
 }
 
-function start(): {
+function start(options: { kiosk?: boolean } = {}): {
   browser: Browser
   platform: ReturnType<typeof fakePlatform>
   win: ZenWindow
 } {
-  const platform = fakePlatform(memoryIo())
+  const platform = fakePlatform(memoryIo(), options)
   const browser = new Browser(platform)
   browser.start()
   const win = browser.allWindows()[0] as ZenWindow
@@ -355,6 +363,42 @@ describe("the window's fullscreen (F11)", () => {
     platform.pages.get(tab.id)!.events.onEnterHtmlFullscreen()
     browser.keys.handle(key('keyDown'), tab.id, win)
     vi.advanceTimersByTime(ESCAPE_HOLD_MS)
+    expect(platform.frame.fullscreen).toBe(true)
+  })
+})
+
+describe('a kiosk window (--kiosk)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('shows no exit hint for its fullscreen, with nothing to press to get out', () => {
+    const { browser, platform, win } = start({ kiosk: true })
+    const tab = browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    const page = platform.pages.get(tab.id)!
+    expect(win.host.kiosk).toBe(true)
+    expect(platform.frame.fullscreen).toBe(true)
+    win.onWindowStateChanged()
+    vi.advanceTimersByTime(HINT_DELAY_MS)
+    expect(page.hints).toEqual([])
+    // Its pages are in the `fullscreen` display mode all the same.
+    expect(win.windowState().fullscreen).toBe(true)
+  })
+
+  it('stays fullscreen through Esc held and F11', () => {
+    const { browser, platform, win } = start({ kiosk: true })
+    const tab = browser.tabs.createTab({ url: 'https://example.com/', active: true }, win)
+    win.onWindowStateChanged()
+    browser.keys.handle(key('keyDown'), tab.id, win)
+    vi.advanceTimersByTime(ESCAPE_HOLD_MS)
+    expect(platform.frame.fullscreen).toBe(true)
+    browser.keys.handle(key('keyUp'), tab.id, win)
+    browser.toggleFullscreen(win)
+    expect(platform.frame.fullscreen).toBe(true)
+    // A page's own fullscreen still comes and goes inside it.
+    platform.pages.get(tab.id)!.events.onEnterHtmlFullscreen()
+    expect(win.htmlFullscreenTabId).toBe(tab.id)
+    platform.pages.get(tab.id)!.events.onLeaveHtmlFullscreen()
+    expect(win.htmlFullscreenTabId).toBeNull()
     expect(platform.frame.fullscreen).toBe(true)
   })
 })
