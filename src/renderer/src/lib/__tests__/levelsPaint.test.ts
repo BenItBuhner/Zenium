@@ -34,6 +34,11 @@ class Frames {
 
 const WIDTH = 360
 
+/**
+ * The painter alone, on real elements (the sheet's own test, `siteInfoLevels.test.tsx`, drives
+ * it through the component): seed 51's contract is that the pane travelling on top is painted
+ * whole from its first frame, and that nothing the panes carry is reachable while it is away.
+ */
 describe('paintLevels', () => {
   const frames = new Frames()
   let levels: LevelMotion
@@ -69,28 +74,30 @@ describe('paintLevels', () => {
     vi.unstubAllGlobals()
   })
 
-  it('at rest shows the current pane alone, the others hidden and inert', () => {
+  it('at rest shows the current pane alone; every other pane is hidden and bare', () => {
     const main = panes.get('main')!
     const connection = panes.get('connection')!
-    expect(main.style.display).toBe('')
+    expect(main.hidden).toBe(false)
     expect(main.style.opacity).toBe('')
     expect(main.style.transform).toBe('')
-    expect(main.getAttribute('aria-hidden')).toBe('false')
-    expect(main.hasAttribute('inert')).toBe(false)
-    expect(connection.style.display).toBe('none')
-    expect(connection.getAttribute('aria-hidden')).toBe('true')
-    expect(connection.hasAttribute('inert')).toBe(true)
+    expect(main.hasAttribute('aria-hidden')).toBe(false)
+    expect(main.hasAttribute('data-over')).toBe(false)
+    expect(connection.hidden).toBe(true)
+    expect(connection.hasAttribute('aria-hidden')).toBe(false)
+    expect(connection.hasAttribute('data-leaving')).toBe(false)
   })
 
-  it('paints the arriving pane with its content from the first frame of a push (seed 51)', () => {
+  it('paints the arriving pane whole, with its content, from the first frame of a push (seed 51)', () => {
     const connection = panes.get('connection')!
     levels.push('connection')
-    // The synchronous first frame: t = 0, the pane parked at the trailing edge – and opaque.
+    // The synchronous first frame: t = 0, the pane parked at the trailing edge – on top, opaque.
     expect(levels.current.t).toBe(0)
-    expect(connection.style.display).toBe('')
+    expect(connection.hidden).toBe(false)
+    expect(connection.hasAttribute('data-over')).toBe(true)
     expect(connection.style.opacity).toBe('')
     expect(x(connection)).toBe(WIDTH)
     expect(connection.textContent).toBe('Certificate')
+    expect(connection.hasAttribute('aria-hidden')).toBe(false)
     // Every frame of the travel keeps it opaque; it only moves.
     const seen: number[] = []
     for (let i = 0; i < 6; i++) {
@@ -102,57 +109,62 @@ describe('paintLevels', () => {
     expect(connection.hasAttribute('data-leaving')).toBe(false)
   })
 
-  it('lays the leaving pane over the track, shifts it a third and dims it, never to nothing', () => {
+  it('lays the leaving pane over the track, out of the reader from its first frame, shifted a third at most and dimmed no lower than half', () => {
     const main = panes.get('main')!
     levels.push('connection')
     expect(main.hasAttribute('data-leaving')).toBe(true)
-    expect(main.style.opacity).toBe('1.000')
-    frames.run(60)
-    expect(levels.current.phase).toBe('rest')
-    // Mid-way the pane under is shifted at most a third of the width and still half visible.
-    levels.pop()
-    frames.run(3)
-    const shift = -x(main)
-    expect(shift).toBeGreaterThan(0)
-    expect(shift).toBeLessThanOrEqual(0.3 * WIDTH + 0.01)
-    expect(Number(main.style.opacity)).toBeGreaterThanOrEqual(0.5)
+    expect(main.getAttribute('aria-hidden')).toBe('true')
+    expect(Number(main.style.opacity)).toBe(1)
+    let lowest = 1
+    let farthest = 0
+    for (let i = 0; i < 40; i++) {
+      frames.run(1)
+      if (main.hidden) break
+      lowest = Math.min(lowest, Number(main.style.opacity))
+      farthest = Math.max(farthest, -x(main))
+    }
+    expect(lowest).toBeGreaterThanOrEqual(0.5)
+    expect(farthest).toBeGreaterThan(0)
+    // The shift follows the spring, overshoot and all (§11); the dim alone is bounded.
+    expect(farthest).toBeLessThanOrEqual(0.3 * WIDTH * 1.02)
   })
 
-  it('keeps the covered pane out of reach while it is mostly gone, and restores it at rest', () => {
+  it('at rest on the new level the pane that left is hidden and bare, the one shown untouched', () => {
     const main = panes.get('main')!
     const connection = panes.get('connection')!
     levels.push('connection')
-    expect(connection.getAttribute('aria-hidden')).toBe('true')
-    expect(connection.hasAttribute('inert')).toBe(true)
-    expect(main.getAttribute('aria-hidden')).toBe('false')
-    frames.run(60)
+    frames.run(80)
     expect(levels.current.phase).toBe('rest')
-    expect(connection.getAttribute('aria-hidden')).toBe('false')
-    expect(connection.hasAttribute('inert')).toBe(false)
+    expect(connection.hidden).toBe(false)
+    expect(connection.hasAttribute('data-over')).toBe(false)
     expect(connection.style.transform).toBe('')
     expect(connection.style.willChange).toBe('')
-    expect(main.style.display).toBe('none')
-    expect(main.hasAttribute('inert')).toBe(true)
+    expect(main.hidden).toBe(true)
     expect(main.hasAttribute('data-leaving')).toBe(false)
+    expect(main.hasAttribute('aria-hidden')).toBe(false)
+    expect(main.style.opacity).toBe('')
   })
 
-  it('a pop travels the deeper pane out on top, opaque, over the pane it reveals', () => {
+  it('a pop travels the deeper pane out on top, opaque, and the pane it reveals is in the reader from the first frame', () => {
     const main = panes.get('main')!
     const connection = panes.get('connection')!
     levels.push('connection')
-    frames.run(60)
+    frames.run(80)
     levels.pop()
     expect(connection.hasAttribute('data-leaving')).toBe(true)
+    expect(connection.hasAttribute('data-over')).toBe(true)
+    expect(connection.getAttribute('aria-hidden')).toBe('true')
     expect(connection.style.opacity).toBe('')
+    expect(main.hidden).toBe(false)
+    expect(main.hasAttribute('aria-hidden')).toBe(false)
     expect(main.hasAttribute('data-leaving')).toBe(false)
-    expect(main.style.display).toBe('')
     frames.run(2)
     expect(x(connection)).toBeGreaterThan(0)
     expect(connection.style.opacity).toBe('')
     expect(Number(main.style.opacity)).toBeGreaterThanOrEqual(0.5)
-    frames.run(60)
+    frames.run(80)
     expect(levels.current.phase).toBe('rest')
     expect(main.style.opacity).toBe('')
-    expect(connection.style.display).toBe('none')
+    expect(connection.hidden).toBe(true)
   })
 })

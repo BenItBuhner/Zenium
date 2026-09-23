@@ -1,6 +1,5 @@
-import type { JSX, ReactNode, RefObject } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import type { JSX, ReactNode, Ref } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Bell,
   Camera,
@@ -43,7 +42,6 @@ import {
 } from '@shared/siteInfo'
 import { describeNetError } from '@shared/zenPages'
 import { cmd } from '@renderer/lib/api'
-import { useBackSurface } from '@renderer/lib/back'
 import { manageExtension } from '@renderer/lib/extensions/manage'
 import {
   extensionPageChrome,
@@ -53,13 +51,13 @@ import {
 import { useViewport } from '@renderer/lib/formFactor'
 import { LevelMotion, paintLevels, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
-import { useFrameDialog } from '@renderer/lib/portals'
 import { privateLockStore } from '@renderer/lib/privateLock'
 import {
   securityToneClass,
   securityVerdict,
   type SecurityTone
 } from '@renderer/lib/securityVerdict'
+import { focusableIn } from '@renderer/lib/popover'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   SITE_DATA_TEXT,
@@ -78,17 +76,9 @@ import {
   siteInfoStore,
   stepBackSiteInfo
 } from '@renderer/lib/siteInfo'
-import {
-  browserStore,
-  closeSiteDataConfirm,
-  overlayAvailable,
-  pushToast,
-  uiStore,
-  type UiState
-} from '@renderer/lib/ui'
+import { browserStore, overlayAvailable, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { useEscapeTrap } from '../bookmarks/escape'
-import { focusAnchor, wrapTab } from '../bookmarks/popover'
+import { answerEnter, holdFocus, releaseFocus } from '../dialogs/confirmFocus'
 import { V2MenulistSheet } from '../extensions/V2Menulist'
 import { pillChipRows, type PillChipModel, type PillChipRow } from '../phone/pillChips'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -98,11 +88,28 @@ import { SiteInfoDesktopLayer } from '../siteControls/SiteInfoPopover'
 /** Cookies listed before the list folds. */
 const COOKIE_FOLD = 6
 
-type LevelId = 'main' | 'connection' | 'cookies' | 'permissions'
-const LEVEL_TITLES: Record<Exclude<LevelId, 'main'>, string> = {
+/**
+ * The sheet's levels: the root, the three detail levels behind its rows, and the two
+ * confirmations – levels too (§10.4: a confirmation inside a surface with levels is a level, not
+ * a prompt over it; the question stays in the site's own place, and a sheet over the sheet would
+ * spend §9.24's one depth on a question the sheet can ask itself).
+ */
+type LevelId = 'main' | 'connection' | 'cookies' | 'permissions' | ConfirmLevel
+/** The confirmation levels: Clear cookies, one level in from the cookies; Clear site data, from the root. */
+type ConfirmLevel = 'clear-cookies' | 'clear-data'
+/** The detail levels with a §9.16 header – the title and the back control. A confirmation carries none (§9.23). */
+type TitledLevel = 'connection' | 'cookies' | 'permissions'
+const LEVEL_TITLES: Record<TitledLevel, string> = {
   connection: 'Connection',
   cookies: 'Cookies and site data',
   permissions: 'Permissions'
+}
+const CONFIRM_KINDS: Record<ConfirmLevel, 'cookies' | 'data'> = {
+  'clear-cookies': 'cookies',
+  'clear-data': 'data'
+}
+function isConfirmLevel(id: LevelId): id is ConfirmLevel {
+  return id in CONFIRM_KINDS
 }
 
 /**
@@ -401,19 +408,34 @@ function useLevels(): Levels {
   return { motion, state: current, level, onFrame }
 }
 
+const LEVEL_IDS: readonly LevelId[] = [
+  'main',
+  'connection',
+  'cookies',
+  'permissions',
+  'clear-cookies',
+  'clear-data'
+]
+
 function usePaneRegistry(): {
-  panes: Map<string, HTMLElement>
+  panes: Map<LevelId, HTMLElement>
   register: (id: LevelId) => (el: HTMLElement | null) => void
 } {
-  const panes = useMemo(() => new Map<string, HTMLElement>(), [])
-  const register = useCallback(
-    (id: LevelId) => (el: HTMLElement | null) => {
-      if (el) panes.set(id, el)
-      else panes.delete(id)
-    },
-    [panes]
-  )
-  return { panes, register }
+  return useMemo(() => {
+    const panes = new Map<LevelId, HTMLElement>()
+    // One callback per pane for the life of the sheet: a new one each render would have React
+    // detach and re-attach every pane on every commit.
+    const callbacks = new Map<LevelId, (el: HTMLElement | null) => void>(
+      LEVEL_IDS.map((id) => [
+        id,
+        (el: HTMLElement | null): void => {
+          if (el) panes.set(id, el)
+          else panes.delete(id)
+        }
+      ])
+    )
+    return { panes, register: (id: LevelId) => callbacks.get(id)! }
+  }, [])
 }
 
 // ---------------------------------------------------------------------------
@@ -426,11 +448,10 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   const { info, loading } = useSiteInfo(tab)
   const levels = useLevels()
   const { panes, register } = usePaneRegistry()
-  const [confirm, setConfirm] = useState<'cookies' | 'data' | null>(null)
   // The per-site cookie picker (§9.13 under a finger): a sheet over this one while it is up.
   const [picker, setPicker] = useState(false)
   // A sheet stacked on this one (§9.24) answers Escape and the back gesture itself.
-  const stacked = confirm !== null || picker
+  const stacked = picker
   const stackedRef = useRef(stacked)
   useEffect(() => {
     stackedRef.current = stacked
@@ -445,6 +466,52 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   useLayoutEffect(paint)
   useEffect(() => levels.onFrame(paint), [levels, paint])
 
+  // The keyboard through the levels (§9.22, §10.4), on the confirm primitive's machinery
+  // (`dialogs/confirmFocus`, the #401 rulings). Entering a level takes the focus off the row
+  // that opened it – left there, it would sit in the pane leaving, hidden from assistive
+  // technology and then from view – and remembers the row as the level's opener. A confirmation
+  // level holds its container, as the prompt does: `role="alertdialog"`, `tabIndex -1`, no ring,
+  // no verb preselected. A detail level lands on its first row, as the desktop popover's levels
+  // and the chassis's opening focus do (`sheetInitialFocus`), or parks on the sheet's own held
+  // container when it has none to offer. Leaving a level by Cancel, Escape, the back control or
+  // the back gesture is one hop back: the keyboard returns to the opener (`releaseFocus`: only a
+  // focus the leave loses is moved). A confirmation answered by its verb parks on the sheet
+  // instead – the row it was asked from may go with what it removed. Every route that pops a
+  // level runs through `leave`.
+  const openers = useRef(new Map<LevelId, HTMLElement | null>())
+  const answered = useRef(false)
+  const sheetRoot = useCallback(
+    (): HTMLElement | null => trackRef.current?.closest<HTMLElement>('.zen-sheet') ?? null,
+    []
+  )
+  const enter = useCallback(
+    (id: LevelId): void => {
+      const { motion } = levels
+      if (motion.level === id) return
+      // The frame is painted in the push: the pane arriving is in the document before the focus moves.
+      motion.push(id)
+      const pane = panes.get(id)
+      if (!pane) return
+      const landing = isConfirmLevel(id) ? pane : (focusableIn(pane)[0] ?? sheetRoot() ?? pane)
+      openers.current.set(id, holdFocus(pane, landing))
+    },
+    [levels, panes, sheetRoot]
+  )
+  const leave = useCallback(
+    (commit: () => boolean): void => {
+      const { motion } = levels
+      if (motion.depth === 0) return
+      const id = motion.level as LevelId
+      if (!commit()) return
+      const pane = panes.get(id)
+      const opener = answered.current ? null : (openers.current.get(id) ?? null)
+      answered.current = false
+      openers.current.delete(id)
+      if (pane) releaseFocus(pane, opener ?? sheetRoot())
+    },
+    [levels, panes, sheetRoot]
+  )
+
   // What this module needs of the mounted surface: the chassis owns the sheet's motion, the
   // component its levels. The back gesture peeks and pops a level; on the root it pulls the
   // sheet down through the chassis, as every other sheet's does.
@@ -452,9 +519,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
     const { motion } = levels
     registerSiteInfoSurface({
       depth: () => motion.depth,
-      pop: () => {
-        motion.pop()
-      },
+      pop: () => leave(() => motion.pop()),
       dismiss: () => sheet.current?.dismiss(),
       backProgress: (p) => {
         if (motion.depth > 0) motion.backProgress(p)
@@ -462,8 +527,11 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
       },
       backCommit: () => {
         if (motion.depth > 0) {
-          if (motion.current.phase === 'back') motion.backCommit()
-          else motion.pop()
+          leave(() => {
+            if (motion.current.phase === 'back') motion.backCommit()
+            else motion.pop()
+            return true
+          })
         } else sheet.current?.commitBack()
       },
       backCancel: () => {
@@ -472,10 +540,11 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
       }
     })
     return () => registerSiteInfoSurface(null)
-  }, [levels])
+  }, [levels, leave])
 
-  // Escape (hardware keyboards exist on tablets): one level up, or away. A confirmation or
-  // picker sheet stacked on this one answers its own Escape first (§9.24).
+  // Escape (hardware keyboards exist on tablets): one level up, or away – from a confirmation
+  // level, one hop back to the row that asked (§10.4). A picker sheet stacked on this one
+  // answers its own Escape first (§9.24).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape' || stackedRef.current) return
@@ -495,11 +564,20 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   const extension =
     site.state === 'extension' ? extensionPageChrome(tab.url, state.extensions) : null
   const level = levels.level
-  const push = (id: LevelId): void => levels.motion.push(id)
-  const pop = (): void => {
-    levels.motion.pop()
-  }
+  const push = enter
+  const pop = (): void => leave(() => levels.motion.pop())
+  /** The pane is in the track's flow or on its way out; every other pane is `hidden`. */
+  const inPlay = (id: LevelId): boolean => id === levels.state.from || id === levels.state.to
+  /** The detail level whose header the sheet wears; none on the root or a confirmation. */
+  const titled: TitledLevel | null = level !== 'main' && !isConfirmLevel(level) ? level : null
   const cookies = info?.cookies.items ?? []
+  const siteName = site.site || site.host
+  /** The verb of a confirmation level: the level pops, then the deed, then the reading refreshes. */
+  const answer = (id: ConfirmLevel): void => {
+    answered.current = true
+    pop()
+    void (id === 'clear-cookies' ? actions.clearCookies() : actions.clearData())
+  }
   // The chips the phone pill keeps out of the pill (OMN-02, v2 §9.29): the blocking shield with
   // its count and the translate offer are this sheet's rows, always, at its top, with the same
   // names, states and actions the chips had, and a live state chip waits here as a row while a
@@ -529,14 +607,19 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
         handleLabel="Dismiss"
         // The dialog's name as TalkBack opens it (A11Y-01): what the sheet is and whose, then the
         // level's title once the sheet has drilled into one (the root pane stays in the track, so
-        // the name is composed rather than pointed at a title element).
+        // the name is composed rather than pointed at a title element), the question on a
+        // confirmation level.
         label={
           level === 'main'
             ? `Site information for ${sheetTitleOf(site, extension)}`
-            : LEVEL_TITLES[level]
+            : isConfirmLevel(level)
+              ? confirmWords(CONFIRM_KINDS[level], siteName, cookies.length).title
+              : LEVEL_TITLES[level]
         }
+        // The §9.16 header of a detail level; a confirmation level is a title block over its
+        // footer, with no bar and no control (§9.23, §10.4) – Escape and the back gesture pop it.
         header={
-          level !== 'main' ? (
+          titled ? (
             <>
               <button
                 type="button"
@@ -547,13 +630,24 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
               >
                 <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden />
               </button>
-              <h2 className="zen-sheet-title">{LEVEL_TITLES[level]}</h2>
+              <h2 className="zen-sheet-title">{LEVEL_TITLES[titled]}</h2>
             </>
           ) : undefined
         }
       >
+        {/*
+          The panes are rendered `hidden` but for the two in play, so the chassis measures the
+          sheet on the level it shows – on mount, before any frame is painted, as much as at a
+          push – and the first frame of a slide has the pane arriving in the document with its
+          content. Only a confirmation's pane holds the focus itself (§10.4).
+        */}
         <div ref={trackRef} className="zen-sheet-track">
-          <section ref={register('main')} className="zen-sheet-pane" data-level="main">
+          <section
+            ref={register('main')}
+            className="zen-sheet-pane"
+            data-level="main"
+            hidden={!inPlay('main')}
+          >
             <SheetTitle
               tab={tab}
               state={state}
@@ -583,14 +677,24 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                 loading={loading}
                 push={push}
                 onSettings={() => actions.openSettings()}
-                onClear={() => setConfirm('data')}
+                onClear={() => push('clear-data')}
               />
             )}
           </section>
-          <section ref={register('connection')} className="zen-sheet-pane" data-level="connection">
+          <section
+            ref={register('connection')}
+            className="zen-sheet-pane"
+            data-level="connection"
+            hidden={!inPlay('connection')}
+          >
             <ConnectionRows security={security} kit={SHEET_ROWS} />
           </section>
-          <section ref={register('cookies')} className="zen-sheet-pane" data-level="cookies">
+          <section
+            ref={register('cookies')}
+            className="zen-sheet-pane"
+            data-level="cookies"
+            hidden={!inPlay('cookies')}
+          >
             {info && (
               <SiteDataRow
                 site={info.siteData}
@@ -613,7 +717,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                   className="zen-sheet-item"
                   data-danger
                   aria-busy={actions.busy === 'cookies' || undefined}
-                  onClick={() => setConfirm('cookies')}
+                  onClick={() => push('clear-cookies')}
                 >
                   <span className="zen-sheet-item-glyph" data-tone="danger">
                     <Trash2 />
@@ -627,6 +731,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
             ref={register('permissions')}
             className="zen-sheet-pane"
             data-level="permissions"
+            hidden={!inPlay('permissions')}
           >
             <PermissionRows
               info={info}
@@ -635,21 +740,24 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
               kit={SHEET_ROWS}
             />
           </section>
+          <ConfirmPane
+            ref={register('clear-cookies')}
+            id="clear-cookies"
+            words={confirmWords('cookies', siteName, cookies.length)}
+            hidden={!inPlay('clear-cookies')}
+            onCancel={pop}
+            onConfirm={() => answer('clear-cookies')}
+          />
+          <ConfirmPane
+            ref={register('clear-data')}
+            id="clear-data"
+            words={confirmWords('data', siteName, cookies.length)}
+            hidden={!inPlay('clear-data')}
+            onCancel={pop}
+            onConfirm={() => answer('clear-data')}
+          />
         </div>
       </BottomSheet>
-      {confirm && (
-        <ConfirmSheet
-          kind={confirm}
-          site={site.site || site.host}
-          count={cookies.length}
-          onCancel={() => setConfirm(null)}
-          onConfirm={async () => {
-            setConfirm(null)
-            if (confirm === 'cookies') await actions.clearCookies()
-            else await actions.clearData()
-          }}
-        />
-      )}
       {picker && info && (
         // The picker as the Settings value rows open theirs (§9.13): the menulist's sheet over
         // this one, radio rows with the option's line under each; a pick applies once the sheet
@@ -968,88 +1076,91 @@ function SheetHeading({ title, aside }: { title: string; aside?: string }): JSX.
   )
 }
 
+/** The words of a confirmation: the question, what it does, the verb and the verb's spoken name. */
+interface ConfirmWords {
+  title: string
+  detail: string
+  action: string
+  confirmLabel: string
+}
+
 /**
- * "Clear site data?" on a phone: a sheet over the sheet (§9.24) – a title block with the
- * question and what it does, then the two actions splitting the footer (§9.11). Portalled next
- * to the site-information layer so it stacks above it; the chassis recedes the sheet beneath.
+ * "Clear cookies?" and "Clear site data?" as levels of the sheet (§10.4, the design lead's
+ * ruling on W5-17): one level in from the row that asks, a title block with the question and
+ * what it does over the two actions splitting the footer (§9.11), no header (§9.23). The pane
+ * wears the §9.23 confirmation's keyboard contract exactly, on the primitive's own machinery
+ * (`dialogs/confirmFocus`, `ConfirmDialog`): it is a dialog of its own – `role="alertdialog"`,
+ * named by its question, `tabIndex -1` and ringless – that holds the focus as the level is
+ * entered (`PhoneSheet`'s `enter`); Tab enters at Cancel and then the danger verb, Shift+Tab at
+ * the verb, the sheet's grabber after them (the chassis's `wrapTab` on a held container inside
+ * the sheet); Enter from the held container is inert – destructive, so no default (§9.22 as
+ * amended) – and a focused button answers its own; Escape, the back control's absence
+ * notwithstanding, and the back gesture are one hop back to the row that asked, which takes
+ * the keyboard again (`leave`). The verb pops the level and then does the deed.
  */
-function ConfirmSheet({
-  kind,
-  site,
-  count,
+function ConfirmPane({
+  ref,
+  id,
+  words,
+  hidden,
   onCancel,
   onConfirm
 }: {
-  kind: 'cookies' | 'data'
-  site: string
-  count: number
+  ref: Ref<HTMLElement>
+  id: ConfirmLevel
+  words: ConfirmWords
+  hidden: boolean
   onCancel: () => void
-  onConfirm: () => void | Promise<void>
+  onConfirm: () => void
 }): JSX.Element {
-  const sheet = useRef<BottomSheetHandle>(null)
-  const decided = useRef(false)
-  useBackSurface({
-    name: 'site-info-confirm',
-    onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
-    onCancel: () => sheet.current?.cancelBack()
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      sheet.current?.dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
-  const words = confirmWords(kind, site, count)
-  return createPortal(
-    <BottomSheet
-      ref={sheet}
-      onDismissed={() => {
-        if (!decided.current) onCancel()
+  const uid = useId()
+  const titleId = `${uid}title`
+  const descriptionId = `${uid}description`
+  return (
+    <section
+      ref={ref}
+      className="zen-sheet-pane"
+      data-level={id}
+      data-confirm={id}
+      data-destructive=""
+      role="alertdialog"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+      tabIndex={-1}
+      hidden={hidden}
+      onKeyDown={(e) => {
+        // Tab is the sheet's (`wrapTab` on the chassis, entering this held container at Cancel);
+        // Enter from the container is the confirmation's to swallow – destructive, no default.
+        if (answerEnter(e.nativeEvent, true, onConfirm)) e.stopPropagation()
       }}
-      contentKey={`site-info-confirm:${kind}`}
-      handleLabel="Dismiss"
-      label={words.title}
     >
       <div className="zen-sheet-title-block">
-        <h2>
+        <h2 id={titleId}>
           <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
           <span className="min-w-0 truncate">{words.title}</span>
         </h2>
-        <p>{words.detail}</p>
+        <p id={descriptionId}>{words.detail}</p>
       </div>
       <div className="zen-sheet-footer">
-        <button type="button" className="zen-v2-button" onClick={() => sheet.current?.dismiss()}>
+        <button type="button" className="zen-v2-button" data-action="cancel" onClick={onCancel}>
           Cancel
         </button>
         <button
           type="button"
           className="zen-v2-button"
+          data-action="confirm"
           data-danger
           aria-label={words.confirmLabel}
-          onClick={() => {
-            decided.current = true
-            // The sheet leaves first; the action runs once it is gone, then the reading refreshes.
-            sheet.current?.dismiss(() => void onConfirm())
-          }}
+          onClick={onConfirm}
         >
           {words.action}
         </button>
       </div>
-    </BottomSheet>,
-    document.body
+    </section>
   )
 }
 
-function confirmWords(
-  kind: 'cookies' | 'data',
-  site: string,
-  count: number
-): { title: string; detail: string; action: string; confirmLabel: string } {
+function confirmWords(kind: 'cookies' | 'data', site: string, count: number): ConfirmWords {
   const where = site || 'this site'
   return kind === 'cookies'
     ? {
@@ -1350,139 +1461,6 @@ function useActions(
       openSettingsPage()
     }
   }
-}
-
-/**
- * "Clear site data?" on a mouse: a frame dialog (§9.23, §9.5) over the page's picture, opened
- * from the popover, which the frame host closes as this comes up (§9.20, one popover at a time).
- * Rendered by `TabDialogs` inside its `FrameDialogHost`.
- */
-export function SiteDataConfirmDialog({
-  state,
-  request
-}: {
-  state: UIState
-  request: NonNullable<UiState['siteDataConfirm']>
-}): JSX.Element {
-  const cancelRef = useRef<HTMLButtonElement>(null)
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const [busy, setBusy] = useState(false)
-  const tab = state.tabs[request.tabId]
-  const words = confirmWords(request.kind, request.site, request.count)
-  useEffect(() => {
-    if (!tab) closeSiteDataConfirm()
-  }, [tab])
-  // Destructive: the keyboard starts on Cancel (§9.22); Escape and the scrim are Cancel too.
-  useEffect(() => {
-    cancelRef.current?.focus()
-  }, [])
-  useEscapeTrap(true, () => closeSiteDataConfirm())
-  useBackSurface({ name: 'site-data-confirm', onCommit: () => closeSiteDataConfirm() })
-  const confirm = async (): Promise<void> => {
-    if (busy || !tab) return
-    setBusy(true)
-    try {
-      if (request.kind === 'cookies') {
-        const { removed } = await cmd('site.clearCookies', { tabId: tab.id })
-        pushToast(
-          removed === 0
-            ? 'No cookies to remove'
-            : `Removed ${removed} cookie${removed === 1 ? '' : 's'}`
-        )
-      } else {
-        await cmd('site.clearData', { tabId: tab.id })
-        pushToast(`Cleared everything ${request.site || 'this site'} stored`)
-      }
-    } catch {
-      pushToast('That did not work. Try again.', 'error')
-    } finally {
-      setBusy(false)
-      closeSiteDataConfirm()
-      // The chip's next open reads the site again.
-      refreshSiteInfo()
-      focusAnchor('[data-site-info]')
-    }
-  }
-  return (
-    <FrameConfirm
-      ref={dialogRef}
-      title={words.title}
-      detail={words.detail}
-      action={words.action}
-      actionLabel={words.confirmLabel}
-      busy={busy}
-      cancelRef={cancelRef}
-      onCancel={() => closeSiteDataConfirm()}
-      onConfirm={() => void confirm()}
-    />
-  )
-}
-
-/** A `--v2-dialog` prompt (§9.23): a title block with the question, then its two actions. */
-function FrameConfirm({
-  ref,
-  title,
-  detail,
-  action,
-  actionLabel,
-  busy,
-  cancelRef,
-  onCancel,
-  onConfirm
-}: {
-  ref: RefObject<HTMLDivElement | null>
-  title: string
-  detail: string
-  action: string
-  actionLabel: string
-  busy: boolean
-  cancelRef: RefObject<HTMLButtonElement | null>
-  onCancel: () => void
-  onConfirm: () => void
-}): JSX.Element {
-  useFrameDialog({ onScrimPress: onCancel })
-  const titleId = 'zen-site-data-confirm-title'
-  const bodyId = 'zen-site-data-confirm-body'
-  return (
-    <div
-      ref={ref}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      aria-describedby={bodyId}
-      className="zen-animate-pop zen-bm-dialog flex w-[400px] max-w-[calc(100%-24px)] flex-col"
-      onKeyDown={(e) => {
-        if (e.key !== 'Escape') wrapTab(e, ref.current)
-      }}
-    >
-      <div className="zen-bm-title-block">
-        <h2 id={titleId} className="zen-bm-title flex items-center gap-2">
-          <Trash2 className="h-4 w-4 shrink-0" strokeWidth={1.5} aria-hidden />
-          <span className="min-w-0 truncate">{title}</span>
-        </h2>
-        <p id={bodyId} className="zen-bm-title-desc">
-          {detail}
-        </p>
-      </div>
-      <div className="zen-bm-form">
-        <div className="zen-bm-footer justify-end">
-          <button ref={cancelRef} type="button" className="zen-button" onClick={onCancel}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="zen-button"
-            data-variant="danger"
-            aria-label={actionLabel}
-            aria-busy={busy || undefined}
-            onClick={onConfirm}
-          >
-            {busy ? <Loader2 className="zen-spin h-4 w-4" aria-hidden /> : action}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
 }
 
 function summariseData(info: SiteInfo): string {

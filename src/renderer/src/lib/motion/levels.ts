@@ -150,20 +150,23 @@ export class LevelMotion {
   }
 }
 
-/** How far the pane under the one on top shifts, as a share of the track's width. */
+/** How far the pane under the travelling one shifts, as a fraction of the track's width. */
 const LEVEL_UNDER_SHIFT = 0.3
-/** How far the pane under the one on top dims once it is wholly covered. */
+/** The opacity the pane under dims to as it is covered; it is whole again as it is uncovered. */
 const LEVEL_UNDER_DIM = 0.5
 
 /**
  * Paints one frame of a `LevelMotion` onto its panes (one element per level id). The pane
- * arriving stays in flow and sizes the track; the pane leaving is laid over it (`data-leaving`)
- * and slides out. The deeper of the two is the pane on top: it travels the full width from the
- * trailing edge and stays opaque, so whatever it holds is on screen from its first frame; the
- * pane under it shifts by a third and dims while it is being covered, never to nothing – a pop
- * reveals it with its content, not a blank. Panes taking no part are hidden and inert, and a
- * pane that is mostly gone is `aria-hidden` and inert, so neither the reader nor the keyboard
- * reaches into a level that is not the one shown.
+ * arriving is in flow and sizes the track; the pane leaving is laid over it (`data-leaving`)
+ * and slides out; every other pane is `hidden`. The deeper of the two travels the whole width
+ * from the trailing edge OVER the other (`data-over`: above in the stacking order, the
+ * surface's own background behind it), drawn whole – opacity 1 – from its first frame: what
+ * arrives is painted with its content at once, and what leaves stays painted until it is off
+ * the track. The one under it shifts by a third and dims to `LEVEL_UNDER_DIM` as it is covered
+ * (§11: transform and opacity only; no duration or curve of its own – the spring's `t` is the
+ * one input). The pane leaving is out of the tree for assistive technology from its first
+ * frame, the one arriving in it from its own – a focus left in the pane leaving is moved by the
+ * surface before the frame is read (the site-information sheet's `enter` / `leave`).
  */
 export function paintLevels(
   motion: LevelMotion,
@@ -174,33 +177,29 @@ export function paintLevels(
   const moving = from !== to
   for (const [id, el] of panes) {
     const arriving = id === to
-    const leaving = id === from && moving
+    const leaving = moving && id === from
     if (!arriving && !leaving) {
-      el.style.display = 'none'
+      el.hidden = true
       el.removeAttribute('data-leaving')
-      setPaneHidden(el, true)
+      el.removeAttribute('data-over')
+      el.removeAttribute('aria-hidden')
+      el.style.transform = ''
+      el.style.opacity = ''
+      el.style.willChange = ''
       continue
     }
-    el.style.display = ''
-    if (leaving) el.setAttribute('data-leaving', '')
-    else el.removeAttribute('data-leaving')
+    el.hidden = false
+    el.toggleAttribute('data-leaving', leaving)
+    const over = moving && (motion.pushing ? arriving : leaving)
+    el.toggleAttribute('data-over', over)
     const shown = arriving ? t : 1 - t
-    const deeper = motion.pushing ? arriving : leaving
-    const x = !moving
-      ? 0
-      : deeper
-        ? (1 - shown) * width
-        : -LEVEL_UNDER_SHIFT * (1 - shown) * width
+    const x = !moving ? 0 : over ? (1 - shown) * width : -LEVEL_UNDER_SHIFT * (1 - shown) * width
     el.style.transform = x ? `translate3d(${x.toFixed(2)}px, 0, 0)` : ''
-    el.style.opacity =
-      !moving || deeper ? '' : (1 - LEVEL_UNDER_DIM * (1 - shown)).toFixed(3)
+    // The spring may overshoot its rest by a little (§11); the dim is bounded, never past its floor.
+    const covered = 1 - Math.min(1, Math.max(0, shown))
+    el.style.opacity = !moving || over ? '' : (1 - (1 - LEVEL_UNDER_DIM) * covered).toFixed(3)
     el.style.willChange = moving ? 'transform, opacity' : ''
-    setPaneHidden(el, shown < 0.5)
+    if (leaving) el.setAttribute('aria-hidden', 'true')
+    else el.removeAttribute('aria-hidden')
   }
-}
-
-function setPaneHidden(el: HTMLElement, hidden: boolean): void {
-  if (el.getAttribute('aria-hidden') !== String(hidden))
-    el.setAttribute('aria-hidden', String(hidden))
-  if (el.hasAttribute('inert') !== hidden) el.toggleAttribute('inert', hidden)
 }
