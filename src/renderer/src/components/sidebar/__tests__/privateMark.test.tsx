@@ -129,7 +129,9 @@ describe('the private window’s mark in the toolbar row', () => {
     expect(m!.tagName).toBe('SPAN')
     expect(m!.getAttribute('role')).toBe('img')
     expect(m!.getAttribute('aria-label')).toBe('Private browsing')
-    expect(m!.getAttribute('title')).toBe('Private browsing')
+    // §9.31's chrome tooltip (#400): the text rides `data-tooltip`, never a native `title`.
+    expect(m!.getAttribute('data-tooltip')).toBe('Private browsing')
+    expect(m!.hasAttribute('title')).toBe(false)
     expect(m!.tabIndex).toBeLessThan(0)
     expect(m!.classList.contains('zen-toolbar-mark')).toBe(true)
     // The mask at the toolbar glyph's size and stroke (§9.3).

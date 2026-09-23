@@ -718,15 +718,16 @@ export function NavRow({
         the extensions and the menu – so the window reads private in every layout, the compact
         column and the strip's toolbar included, where the sidebar's "Private Browsing" header is
         not drawn. An indicator, not a button: the toolbar glyph's box and ink with no hover, no
-        press and no stop in the tab order; its tooltip is its name. Only a private window's –
-        a private tab in a regular window (the tablet) is the pill's mask to mark (§9.19).
+        press and no stop in the tab order; its tooltip (§9.31's chrome tooltip, `data-tooltip`)
+        is its name. Only a private window's – a private tab in a regular window (the tablet) is
+        the pill's mask to mark (§9.19).
       */}
       {privateMark && (
         <span
           className="zen-toolbar-mark"
           role="img"
           aria-label="Private browsing"
-          title="Private browsing"
+          data-tooltip="Private browsing"
           data-zen-private-mark
         >
           <VenetianMask className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
