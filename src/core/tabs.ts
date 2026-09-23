@@ -1,6 +1,7 @@
 import type {
   CertificateError,
   ClosedTabEntry,
+  DevtoolsDock,
   HistoryTransition,
   NavigationSnapshot,
   Point,
@@ -84,8 +85,10 @@ import { openedWindowKind, planWindowOpen } from './windowOpen'
 import { parseDropKey } from './tabDrag'
 import {
   reportIsLive,
+  sameCapture,
   sanitiseCaptureReport,
   tabAlertFor,
+  tabCaptureFor,
   type CaptureStateReport
 } from '../shared/captureState'
 
@@ -735,6 +738,9 @@ export class TabManager {
         state.devtoolsOpenFor.delete(tabId)
         state.commitVolatile()
       },
+      // The toolbox's own dock buttons: remembered like the menu's choice (§9.29), for the next
+      // opening; the other open toolboxes stand where they are, as Chrome's do.
+      onDevtoolsDockChanged: (dock) => this.setDevtoolsDock(dock, ownerWindow(), { move: false }),
       onFoundInPage: (result) => {
         if (!result.finalUpdate) return
         const win = ownerWindow()
@@ -1138,7 +1144,9 @@ export class TabManager {
   /**
    * A frame's `capture-state` report (tabs-43): kept by the frame's id while something is live,
    * dropped when nothing is; the tab's `alert` is folded from all of them with Chrome's priority
-   * (recording > capturing > picture-in-picture) and the row repaints when it changes.
+   * (recording > capturing > picture-in-picture) and the row repaints when it changes. The
+   * kinds behind it (`capture`: camera, microphone, display; omnibox-38) are folded from the same
+   * reports for the URL pill's site-information slot, whose glyph says which.
    */
   onCaptureState(tabId: string, raw: unknown): void {
     const tab = this.tab(tabId)
@@ -1167,9 +1175,12 @@ export class TabManager {
   private refreshAlert(tabId: string): void {
     const tab = this.tab(tabId)
     if (!tab) return
-    const alert = tabAlertFor(this.captureReports.get(tabId)?.values() ?? [])
-    if ((tab.alert ?? null) === alert) return
+    const reports = [...(this.captureReports.get(tabId)?.values() ?? [])]
+    const alert = tabAlertFor(reports)
+    const capture = tabCaptureFor(reports)
+    if ((tab.alert ?? null) === alert && sameCapture(tab.capture, capture)) return
     tab.alert = alert
+    tab.capture = capture
     this.browser.state.commitVolatile()
   }
 
@@ -3511,12 +3522,30 @@ export class TabManager {
     )
   }
 
+  /** The developer tools open at the remembered dock (`settings.devtoolsDock`; §9.29). */
   toggleDevtools(tabId: string, mode: 'toggle' | 'inspect' | 'console' = 'toggle'): void {
     if (!this.browser.state.capabilities.devtools) {
       this.browser.toast('Developer tools are not available on this device.')
       return
     }
-    this.view(tabId)?.openDevTools(mode)
+    this.view(tabId)?.openDevTools(mode, this.browser.state.settings.devtoolsDock)
+  }
+
+  /**
+   * Where the developer tools stand (design language v2 §9.29: "bottom or right, the user's last
+   * choice remembered, undocked on offer"). The choice is kept in the settings for every later
+   * opening; from the app menu's rows (`move`, the default) every open toolbox moves to it as
+   * well, where the host can move one (`TabView.setDevtoolsDock`). A choice read back from a
+   * toolbox's own buttons (`onDevtoolsDockChanged`) is remembered alone: that toolbox has moved
+   * itself, and the others stand as Chrome's do until they are next opened.
+   */
+  setDevtoolsDock(dock: DevtoolsDock, win: ZenWindow, options: { move?: boolean } = {}): void {
+    const state = this.browser.state
+    if (!state.capabilities.devtools) return
+    if (state.settings.devtoolsDock !== dock)
+      this.browser.updateSettings({ devtoolsDock: dock }, win)
+    if (options.move === false) return
+    for (const tabId of state.devtoolsOpenFor) this.view(tabId)?.setDevtoolsDock?.(dock)
   }
 
   unloadSpace(spaceId: string): void {

@@ -219,6 +219,7 @@ export const DEFAULT_SETTINGS: Settings = {
   toolbarLayout: 'single',
   toolbarPins: {},
   sidebarSide: 'left',
+  devtoolsDock: 'bottom',
   sidebarWidth: 240,
   sidebarExpanded: true,
   sidebarExpandOnHover: false,

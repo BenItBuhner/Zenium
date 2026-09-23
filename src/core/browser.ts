@@ -156,6 +156,7 @@ import { sanitizePromoState } from '../shared/defaultBrowser'
 import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
+import { sanitizeDevtoolsDock } from '../shared/devtoolsDock'
 import { sanitizePrivacySettings } from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
@@ -3593,6 +3594,8 @@ export class Browser {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
       } else if (key === 'shortcutPreset') {
         if (isShortcutPreset(value)) s.shortcutPreset = value
+      } else if (key === 'devtoolsDock') {
+        s.devtoolsDock = sanitizeDevtoolsDock(value, s.devtoolsDock)
       } else if (key === 'searchEngines') {
         // The user's engines whole (a Settings row sends the edited list); the default is kept.
         const keep =

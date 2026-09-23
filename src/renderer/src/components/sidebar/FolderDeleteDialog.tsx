@@ -91,9 +91,12 @@ function FolderDeletePrompt({
       onCancel={cancel}
       onConfirm={confirm}
       returnFocus={() =>
+        // A keyboard's Cancel: the header (or, should it have gone under the prompt, the
+        // primitive's fallback to the opener). A pointer's Cancel and a Delete: nowhere of the
+        // prompt's own – `closeFolderDeleteConfirm` hands the keyboard to the page.
         keyboard && answer.current !== 'delete'
           ? document.querySelector<HTMLElement>(`[data-tab-folder="${folderId}"]`)
-          : null
+          : false
       }
       data={{ 'data-folder-delete': folderId }}
     />

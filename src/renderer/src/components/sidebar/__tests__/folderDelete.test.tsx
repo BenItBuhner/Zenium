@@ -382,6 +382,11 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(document.activeElement).toBe(document.querySelector('[data-tab-folder="g"]'))
     await settle()
 
+    // The header has the keyboard as this second prompt comes – it is the opener – and a
+    // pointer's Cancel still gives nothing back of its own (the getter says `false`, not the
+    // null the primitive would read as the opener): the page takes it.
+    const header = document.querySelector<HTMLElement>('[data-tab-folder="g"]')!
+    expect(document.activeElement).toBe(header)
     requestFolderDelete('g', false)
     await settle()
     run.mockClear()
@@ -392,6 +397,8 @@ describe('the "Delete <folder>?" prompt', () => {
     expect(run).not.toHaveBeenCalledWith('folder.delete', expect.anything())
     expect(uiStore.get().folderDeleteConfirm).toBeNull()
     expect(run).toHaveBeenCalledWith('focus.content', undefined)
+    await settle()
+    expect(document.activeElement).not.toBe(header)
   })
 
   it('a keyboard’s Cancel waits for the chrome’s inert to lift before the header takes the focus (lib/popover.ts returnFocusTo)', async () => {

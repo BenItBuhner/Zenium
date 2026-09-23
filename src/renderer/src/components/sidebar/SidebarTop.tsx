@@ -5,14 +5,21 @@ import {
   AppWindow,
   ArrowLeft,
   ArrowRight,
+  BellOff,
   BookOpenText,
+  Camera,
+  CameraOff,
   Copy,
   File,
   Info,
   Languages,
   Lock,
+  MapPinOff,
+  Mic,
+  MicOff,
   MoreHorizontal,
   RotateCw,
+  ScreenShare,
   Search,
   Sparkles,
   TriangleAlert,
@@ -35,7 +42,8 @@ import { PRIVATE_TAB_PLACEHOLDER, unlockPrivateTabs, useTabMasked } from '@rende
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
-import { openSiteInfo } from '@renderer/lib/siteInfo'
+import { siteChipName, siteSlotState, type SiteSlotState } from '@renderer/lib/siteChips'
+import { openSiteInfo, siteInfoAnchoredOn, siteInfoStore } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
 import {
@@ -79,6 +87,15 @@ import {
  * `fixedButtons` below), and the puzzle piece stands only while there are extensions.
  */
 const FIXED_BUTTONS = 5
+
+/**
+ * The site-information slot's one glyph size: §9.19's 16 in the slot's 24 box, at the row's
+ * stroke (`TOOLBAR_STROKE`), whatever the slot shows – the connection's lock, the private
+ * tab's mask, a live capture's camera, a block's crossed-out glyph (§9.29's precedence). One
+ * class for the resting glyph and the state glyphs alike, so the slot's box – and with it the
+ * address's room – never changes when a state comes on; the 12 was the shield's one-off.
+ */
+const SLOT_GLYPH = 'h-4 w-4'
 
 interface Props {
   state: UIState
@@ -176,8 +193,10 @@ export function NavRow({
   const row = useRef<HTMLDivElement>(null)
   const rowWidth = useElementWidth(row)
   const downloadsUiState = downloadsUi.use()
-  // What the chips have open, for their `aria-expanded`.
-  const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
+  // What the chips have open, for their `aria-expanded`. The site information's anchor is the
+  // one chip that opened it (§9.20; `siteInfoStore.openedBy`): the slot here, or the shield –
+  // never both for one popover.
+  const siteAnchored = siteInfoStore.use((s) => siteInfoAnchoredOn(s, 'site'))
   const boostsOpen = uiStore.use((s) => s.overlay === 'boosts')
   const blockedOpen = uiStore.use(
     (s) => s.blockedPopupsPanel !== null && s.blockedPopupsPanel.tabId === tab?.id
@@ -306,6 +325,15 @@ export function NavRow({
     !state.capabilities.pageControls &&
     isZoomed(tab, state.settings.pageControls, state.pageEnvironment)
   )
+  // The site-information slot's state (omnibox-38, §9.29): the glyph the leading chip draws in
+  // place of the connection's while the page holds the camera, the microphone or the screen
+  // (`Tab.capture`, folded from the frames' reports) or, at rest, while the user has a
+  // permission blocked on the site (the engine's live rules) – by the ruled precedence, a
+  // certificate error's glyph over both. Never a second chip: a state the slot can carry adds
+  // nothing to the tier, so the address keeps its width at 240 whatever the state. A masked
+  // page and an extension's page (its icon in the slot) say nothing of it.
+  const slot: SiteSlotState | null =
+    tab && !masked && !extension ? siteSlotState(state, tab, indicator.state) : null
   const chipsPresent: PillChipSpec[] = []
   if (tab && url) chipsPresent.push({ id: 'site', tier: 'site', width: CHIP_WIDTH.site })
   if (shieldState !== 'no-site') {
@@ -535,36 +563,73 @@ export function NavRow({
           */}
           <span className="contents group/chips">
             {isPrivate ? (
-              <VenetianMask
-                className="order-first h-3.5 w-3.5 shrink-0 opacity-70"
-                data-private-mark=""
-                aria-hidden="true"
-              />
-            ) : url && tab ? (
-              // The site icon: connection state at a glance, site information on click.
-              <PillChip
-                label="Site information"
-                title={indicator.title}
-                popup="dialog"
-                expanded={siteInfoOpen}
-                data-indicator={indicator.state}
+              // A private tab's mask in the site-information slot (§9.19: 16 at the row stroke
+              // in the pill's leading slot): the slot's 24 box and its one glyph size, so the
+              // address keeps the room it has on any other tab, in the slot's rest ink – the
+              // window's deemphasised token, once. The mask is the tab's, keyed on the tab's
+              // privacy (§9.19 as amended at #408); on the desktop the slot draws no button on
+              // a private tab, as before this round.
+              <span
                 className={cn(
-                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] hover:opacity-100',
-                  indicator.state === 'certificate-error' && 'text-[var(--v2-danger)] opacity-100',
-                  extension && 'opacity-100'
+                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center',
+                  'text-[var(--v2-control-text-deemphasized)]'
+                )}
+                data-private-slot=""
+                aria-hidden="true"
+              >
+                <VenetianMask
+                  className={SLOT_GLYPH}
+                  strokeWidth={TOOLBAR_STROKE}
+                  data-private-mark=""
+                />
+              </span>
+            ) : url && tab ? (
+              // The site-information slot (§9.19's 24 box, one 16 glyph in it at every state –
+              // `SLOT_GLYPH`): the site's state at a glance, site information on click. Its
+              // glyph is one state at a time (§9.29): the connection's – the lock, the info
+              // circle, a certificate error's triangle – or, in its place, the camera /
+              // microphone / screen the page is using, or the crossed-out glyph of the first
+              // permission blocked on the site (`slot`). Its name says which
+              // ("Site information · Camera and microphone blocked") and the tooltip carries the
+              // state's name (`PillChip`'s `title` → `data-tooltip`; a11y-26). The ink is the
+              // window's, once: the deemphasised 69 % at rest (the lock, a block – a standing
+              // decision – and the info circle alike), full ink for a live capture (a state that
+              // must be seen; no coloured mark – the tab row's dot already says recording), the
+              // danger ink for a certificate error, and full ink on the window fill under the
+              // pointer or while the popover it opened is up (the pressed anchor, §9.20) – no
+              // opacity stacked on the token's own alpha.
+              <PillChip
+                label={siteChipName(slot)}
+                title={slot ? slot.label : indicator.title}
+                popup="dialog"
+                expanded={siteAnchored}
+                data-site-chip=""
+                data-indicator={indicator.state}
+                data-slot-state={slot?.kind ?? 'connection'}
+                data-slot-glyph={slot?.glyph}
+                className={cn(
+                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--v2-control-text-deemphasized)] hover:bg-[var(--v2-control-fill-hover)] hover:text-[var(--v2-control-text)]',
+                  slot?.kind === 'capture' && 'text-[var(--v2-control-text)]',
+                  indicator.state === 'certificate-error' && 'text-[var(--v2-danger)]',
+                  siteAnchored && 'bg-[var(--v2-control-fill-hover)] text-[var(--v2-control-text)]'
                 )}
                 onActivate={(e) => {
                   const chip = e.currentTarget
                   const r = chip.getBoundingClientRect()
+                  // A state in the slot leads straight to the Permissions level, where its row
+                  // is changed (omnibox-38); the connection's glyph opens the overview.
                   void openSiteInfo(
                     tab,
                     { x: r.left, y: r.top, width: r.width, height: r.height },
-                    chip
+                    chip,
+                    { level: slot ? 'permissions' : 'overview', by: 'site' }
                   )
                 }}
               >
                 {extension ? (
                   <ExtensionIcon icon={extension.icon} size={16} box={16} />
+                ) : slot ? (
+                  <SlotGlyph glyph={slot.glyph} />
                 ) : (
                   <IndicatorGlyph state={indicator.state} scheme={tab.url.split(':')[0] ?? ''} />
                 )}
@@ -844,25 +909,51 @@ function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>, mounted: boole
 }
 
 /**
+ * The slot's state glyphs (omnibox-38; Chrome's location-bar icons): the camera, the microphone
+ * or the sharing glyph while the page captures, the crossed-out camera, microphone, location or
+ * bell for a permission blocked on the site. Drawn at the slot's one size (`SLOT_GLYPH`, §9.19's
+ * 16 in the 24 box), at the row's stroke like every 16 px glyph in the row (§9.3); the ink is
+ * the chip's.
+ */
+const SLOT_GLYPHS = {
+  camera: Camera,
+  microphone: Mic,
+  display: ScreenShare,
+  'camera-off': CameraOff,
+  'microphone-off': MicOff,
+  'geolocation-off': MapPinOff,
+  'notifications-off': BellOff
+} as const
+
+function SlotGlyph({ glyph }: { glyph: SiteSlotState['glyph'] }): JSX.Element {
+  const Glyph = SLOT_GLYPHS[glyph]
+  return <Glyph className={SLOT_GLYPH} strokeWidth={TOOLBAR_STROKE} aria-hidden />
+}
+
+/**
  * The site icon's glyph for an indicator state (the state itself is derived in the core, see
  * `securityIndicator`): the lock for https; Chrome's info circle for http, which the "Not
  * secure" text goes with; the warning triangle for a certificate error; the page glyph for
- * `file:` and Zenium's own pages; the info circle where nothing more is known.
+ * `file:` and Zenium's own pages; the info circle where nothing more is known. The connection's
+ * glyph is the slot's resting one and draws at the slot's one size and stroke (`SLOT_GLYPH`,
+ * §9.19 / §9.29), the same 16 a state glyph takes in its place; the ink is the chip's – the
+ * danger ink for the certificate error's triangle is set on the chip, not here.
  */
 function IndicatorGlyph({ state, scheme }: { state: IndicatorState; scheme: string }): JSX.Element {
+  const glyph = { className: SLOT_GLYPH, strokeWidth: TOOLBAR_STROKE, 'aria-hidden': true } as const
   switch (state) {
     case 'secure':
-      return <Lock className="h-3 w-3" />
+      return <Lock {...glyph} />
     case 'certificate-error':
-      return <TriangleAlert className="h-3 w-3" />
+      return <TriangleAlert {...glyph} />
     case 'internal':
-      return <File className="h-3 w-3" />
+      return <File {...glyph} />
     case 'local':
-      return scheme === 'file' ? <File className="h-3 w-3" /> : <Info className="h-3 w-3" />
+      return scheme === 'file' ? <File {...glyph} /> : <Info {...glyph} />
     case 'empty':
-      return <Search className="h-3 w-3" />
+      return <Search {...glyph} />
     default:
-      return <Info className="h-3 w-3" />
+      return <Info {...glyph} />
   }
 }
 
