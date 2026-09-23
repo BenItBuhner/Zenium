@@ -14,6 +14,7 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.view.ViewCompat
 import androidx.core.widget.ImageViewCompat
 import app.zen.chromium.Host
 import app.zen.chromium.PromptSheetSpec
@@ -40,8 +41,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
  * `V2TokensPinTest`, which holds the block to main.css, holds this sheet too. The hairline round
  * the top and the sides is the one edge every native sheet draws ([SheetEdge]: an open path at
  * [PromptSheetSpec.hairlinePx], one dp in whole pixels, with no run along the bottom, as
- * `.zen-sheet`'s `border: 1px` with `border-bottom: 0`), and the §9.7 line under the header is
- * the same dp in the same ink. The anatomy stays the WebView host's: this is not the §9.23
+ * `.zen-sheet`'s `border: 1px` with `border-bottom: 0`; its sides run through the host's bar to
+ * the screen's bottom, the column padding for the bar through the edge), and the §9.7 line under
+ * the header is the same dp in the same ink. The anatomy stays the WebView host's: this is not the §9.23
  * prompt composition ([app.zen.chromium.NativePromptSheet]), whose title block and footer are a
  * prompt's.
  */
@@ -103,9 +105,19 @@ class ExtensionSheet(
     }
 
     private fun content(): View {
+        val edge = edge()
         val column = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = edge()
+            background = edge
+        }
+        // The host's bar (or the keyboard over it): the column pads its bottom by it, through the
+        // edge, and its bounds run to the screen's bottom with the hairline's sides, as the chrome
+        // sheet's border runs under the safe area it pads for; the sheet style pads nothing for
+        // the bar under this sheet (`Widget.Zen.Sheet`).
+        ViewCompat.getRootWindowInsets(activity.window.decorView)?.let { edge.inset(column, it) }
+        ViewCompat.setOnApplyWindowInsetsListener(column) { v, insets ->
+            edge.inset(v, insets)
+            insets
         }
         column.addView(grip(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(GRIP_DP)))
         column.addView(header(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(HEADER_DP)))

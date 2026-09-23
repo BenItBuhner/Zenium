@@ -185,10 +185,12 @@ object PromptSheetSpec {
  * 10 % fill, the primary trailing in the accent fill with the on-accent label or, for a
  * destructive answer, in the 10 % fill with the label in the danger ink (Exit page, Remove) –
  * or one action spanning the row; and §9.25's 16 under the peers, above the host's safe-area
- * inset the sheet pads for – 16 to the edge where it reports none, 40 over a 24 gesture bar, 64
- * over a 48 three-button bar ([PromptSheetSpec.footerToEdge]: the gutter plus the inset, §9.25's
- * formula, the web chassis's `8 + max(8, inset)` the drift primitives pass 4 corrects). The sheet
- * stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
+ * inset the sheet's column pads for through its edge ([SheetEdge.inset]: the hairline's sides run
+ * through the bar to the screen's bottom, the content stops above it) – 16 to the edge where it
+ * reports none, 40 over a 24 gesture bar, 64 over a 48 three-button bar
+ * ([PromptSheetSpec.footerToEdge]: the gutter plus the inset, §9.25's formula, the web chassis's
+ * `8 + max(8, inset)` the drift primitives pass 4 corrects). The sheet stands at most
+ * [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
  * under the status bar: a long body scrolls between the pinned block and the pinned footer
  * rather than pushing either off. The keyboard lifts the sheet and takes its room from the body.
  *
@@ -297,11 +299,11 @@ class NativePromptSheet(
         dialog.behavior.isDraggable = false
         dialog.dismissWithAnimation = false
         // §9.22: the keyboard never comes up with the sheet; the field's tap brings it. When it
-        // does, the Material sheet lifts itself: it pads its bottom by the window's system-window
-        // inset, which counts the keyboard under `adjustResize` (the mode the Material sheet theme
-        // sets; deprecated from Android 11 for resizing the window, still what puts the keyboard
-        // into that inset) – one lift, Material's own, on every level, and the column's cap
-        // (Column) gives the body the room the lift takes.
+        // does, the sheet lifts itself: the column pads its bottom, through its edge, by the
+        // window's system-window inset, which counts the keyboard under `adjustResize` (the mode
+        // the Material sheet theme sets; deprecated from Android 11 for resizing the window, still
+        // what puts the keyboard into that inset) – one lift, the column's own, on every level,
+        // and the column's cap (Column) gives the body the room the lift takes.
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN or adjustResize())
         dialog.setOnDismissListener {
             if (this.dialog !== dialog) return@setOnDismissListener
@@ -345,10 +347,12 @@ class NativePromptSheet(
      * left under the cap, so the footer stays put), the pinned footer.
      */
     private fun content(): View {
-        val column = Column().apply {
+        // The hairline round the top and the sides, none along the bottom (the one edge every native
+        // sheet draws); the column takes the host's bottom inset as its padding through it.
+        val edge = SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP), ink.border)
+        val column = Column(edge).apply {
             orientation = LinearLayout.VERTICAL
-            // The hairline round the top and the sides, none along the bottom (the one edge every native sheet draws).
-            background = SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP), ink.border)
+            background = edge
             // The container holds the focus on open (§9.22); it draws no ring for it.
             isFocusable = true
             isFocusableInTouchMode = true
@@ -360,8 +364,10 @@ class NativePromptSheet(
         column.addView(titleBlock(toBody = body.childCount > 0))
         column.addView(scrollingBody(body), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         column.addView(footer())
-        // The status bar, where the column's cap starts; the bottom is the Material sheet's, which
-        // pads for the host's bar (or the keyboard over it) – §9.25's inset under the footer's 16.
+        // The status bar, where the column's cap starts; the host's bar (or the keyboard over it),
+        // which the column pads for through its edge – §9.25's inset under the footer's 16 – with
+        // its bounds, and the hairline's sides, at the screen's bottom: the sheet style pads nothing
+        // for the bar under this sheet (`Widget.Zen.Sheet`).
         val insets = (context as? android.app.Activity)?.window?.decorView?.let { ViewCompat.getRootWindowInsets(it) }
         if (insets != null) column.applyInsets(insets)
         ViewCompat.setOnApplyWindowInsetsListener(column) { v, dispatched ->
@@ -753,16 +759,18 @@ class NativePromptSheet(
 
     /**
      * The sheet's column: as tall as its content up to the cap – the height the sheet is offered
-     * (the window less the bottom the Material sheet pads for: the host's bar, the keyboard while it
-     * is up) less the status bar and the margin kept above an expanded sheet so the page shows over
-     * it – with the body taking whatever the grip, the pinned block and the pinned footer leave
-     * under it. It pads nothing at the bottom: §9.25's arithmetic ([PromptSheetSpec.footerToEdge])
-     * is the sheet's padding for the bar (or the keyboard over it) under the footer's 16.
+     * (the window, to the screen's bottom) less the status bar and the margin kept above an
+     * expanded sheet so the page shows over it – with the body taking whatever the grip, the
+     * pinned block, the pinned footer and its own bottom padding leave under it. That padding is
+     * the host's bar (or the keyboard while it is up), taken through the [edge] so the hairline's
+     * sides run through the bar to the bounds' bottom: §9.25's arithmetic
+     * ([PromptSheetSpec.footerToEdge]) is that padding under the footer's 16.
      */
-    private inner class Column : LinearLayout(context) {
+    private inner class Column(private val edge: SheetEdge) : LinearLayout(context) {
         private var insetTop = 0
 
         fun applyInsets(insets: WindowInsetsCompat) {
+            edge.inset(this, insets)
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             if (insetTop != bars.top) {
                 insetTop = bars.top
@@ -790,7 +798,7 @@ class NativePromptSheet(
     /**
      * `adjustResize`: deprecated from Android 11, where the window no longer resizes for the
      * keyboard, but still the mode that counts the keyboard into the window's system-window inset,
-     * which the Material sheet pads its bottom by – its lift, and this chassis's.
+     * which the column pads its bottom by through its edge ([SheetEdge.hostInset]) – its lift.
      */
     @Suppress("DEPRECATION")
     private fun adjustResize(): Int = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE

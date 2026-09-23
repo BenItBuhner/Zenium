@@ -69,8 +69,10 @@ class V2TokensPinTest {
 
     /**
      * What `themes.xml` draws of the sheet: the corners Material rounds are the sheet's radius (the
-     * hairline's arcs follow the same constant), and the field's overlay hands the platform the v2
-     * accent for the cursor and the handles, in each theme.
+     * hairline's arcs follow the same constant), the sheet style pads nothing for the host's bar
+     * (the sheet's own column does, through its edge, so the hairline's sides run to the screen's
+     * bottom), and the field's overlay hands the platform the v2 accent for the cursor and the
+     * handles, in each theme.
      */
     @Test
     fun theSheetThemesDrawTheTokens() {
@@ -79,6 +81,8 @@ class V2TokensPinTest {
             assertEquals("$corner is the sheet's radius", "${PromptSheetSpec.SHEET_RADIUS_DP}dp", Regex("""<item name="$corner">([^<]+)</item>""").find(shape)!!.groupValues[1])
         for (corner in listOf("cornerSizeBottomLeft", "cornerSizeBottomRight"))
             assertEquals("$corner: edge to edge at the bottom", "0dp", Regex("""<item name="$corner">([^<]+)</item>""").find(shape)!!.groupValues[1])
+        val sheetStyle = Regex("""<style name="Widget\.Zen\.Sheet" [^>]*>([\s\S]*?)</style>""").find(themes)!!.groupValues[1]
+        assertEquals("the sheet style pads nothing for the bar: the column does, through the edge", "false", Regex("""<item name="paddingBottomSystemWindowInsets">([^<]+)</item>""").find(sheetStyle)!!.groupValues[1])
         for ((style, theme) in listOf("ThemeOverlay\\.Zen\\.PromptField" to "light", "ThemeOverlay\\.Zen\\.PromptField\\.Dark" to "dark")) {
             val overlay = Regex("""<style name="$style"[^>]*>([\s\S]*?)</style>""").find(themes)!!.groupValues[1]
             for (attr in listOf("android:colorControlActivated", "colorControlActivated"))
@@ -216,6 +220,8 @@ class V2TokensPinTest {
             assertTrue("$path strokes no closed rectangle round the sheet", !source.contains("setStroke(1,"))
             assertTrue("$path draws the one edge at the pinned hairline in the border ink", source.contains("SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP), ink.border)"))
             assertTrue("$path takes its hairline from the spec", source.contains("PromptSheetSpec.hairlinePx(density)"))
+            // The host's bar is the column's padding through the edge, so the sides run through it to the screen's bottom.
+            assertTrue("$path takes the host's inset through the edge", source.contains("edge.inset("))
         }
         val extensionSheet = File(root, sheets[1]).readText()
         assertTrue("the extension sheet builds the theme's token block", extensionSheet.contains("V2Ink(activity, dark)"))
@@ -246,7 +252,8 @@ class V2TokensPinTest {
      * §9.25's formula, not the CSS as it stands: the footer's buttons stand 16 above the host's
      * safe-area inset – the gutter plus the inset the host reports, with its three hosts: 16 where
      * it reports none (the preview host), 40 over a 24 dp gesture bar, 64 over a 48 dp three-button
-     * bar. The one native constant is the gutter; the Material sheet pads the inset under it.
+     * bar. The one native constant is the gutter; the sheet's column pads the inset under it,
+     * through its edge, so the hairline's sides run through the bar to the screen's bottom.
      *
      * KNOWN DRIFT, the web chassis's: `.zen-sheet-footer` stands 8 over `BottomSheet.tsx`'s
      * `Math.max(8, insets.bottom)` – `8 + max(8, inset)`, the inset in place of the 8 floor rather
