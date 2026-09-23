@@ -1,0 +1,12 @@
+- tablist "Default tabs":
+  - 'tab "Smoke fixture: second page"':
+    - text: "Smoke fixture: second page"
+    - button "Close tab"
+  - 'tab "Smoke fixture: first page" [selected]':
+    - text: "Smoke fixture: first page"
+    - button "Unmute tab" [pressed]
+    - button "Close tab"
+
+# facts
+- tab "Smoke fixture: second page" [posinset=1 setsize=2]
+- tab "Smoke fixture: first page" [selected posinset=2 setsize=2]: muted

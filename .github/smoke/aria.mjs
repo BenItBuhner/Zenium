@@ -3,8 +3,66 @@
 // and axe-core's verdict on the same states. Pure functions only – the reading of the tree and the
 // running of axe are the harness's – unit-tested by aria.test.mjs.
 
-/** The states the walkthrough snapshots, in order; one baseline file per state under `aria/`. */
-export const ARIA_STATES = ['resting-window', 'app-menu', 'urlbar', 'hosted-dialog']
+/**
+ * The states the walkthrough snapshots, in order; one baseline file per state under `aria/`.
+ * The first four are surfaces at rest; the last four (a11y pass 2, W4-6) are the chrome's
+ * accessibility wiring the snapshot alone does not show, so each carries facts under it
+ * ({@link formatAriaFacts}): `dialog-cover` the inert chrome and frame behind the hosted dialog
+ * (a11y-32), `tooltip-focus` the tooltip a toolbar control shows on keyboard focus and the
+ * `aria-describedby` that ties it to the control (a11y-26), `tab-row` the tab rows' places in
+ * their list and the states a reader hears – muted, pinned, sleeping (a11y-31), `find-status`
+ * the find bar's own live region reading the count in words (a11y-35).
+ */
+export const ARIA_STATES = [
+  'resting-window',
+  'app-menu',
+  'urlbar',
+  'hosted-dialog',
+  'dialog-cover',
+  'tooltip-focus',
+  'tab-row',
+  'find-status'
+]
+
+/** The line that opens the facts under a snapshot in a baseline file. */
+export const ARIA_FACTS_HEADER = '# facts'
+
+/**
+ * What Playwright's aria snapshot leaves out, written under it in lines of the same shape, one
+ * per element: its role, its name in double quotes, then in brackets its states (`focused`,
+ * `selected`, `inert`) and the attributes the state is about (`posinset=2 setsize=2`,
+ * `describedby=zen-tooltip`), then after a colon its accessible description. The reading is the
+ * harness's (the DOM, or the computed tree); this is the writing. Nothing here is parsed back:
+ * a baseline is compared line by line, so the order given is the order kept.
+ * @param {Array<{role: string, name?: string | null, flags?: string[], attrs?: Record<string, string | number | boolean | null | undefined>, description?: string | null}>} facts
+ */
+export function formatAriaFacts(facts) {
+  const lines = []
+  for (const fact of facts ?? []) {
+    let line = `- ${fact.role}`
+    if (fact.name) line += ` "${String(fact.name).replace(/"/g, '\\"')}"`
+    const inside = [...(fact.flags ?? [])]
+    for (const [key, value] of Object.entries(fact.attrs ?? {})) {
+      if (value === null || value === undefined || value === false || value === '') continue
+      inside.push(value === true ? key : `${key}=${value}`)
+    }
+    if (inside.length) line += ` [${inside.join(' ')}]`
+    if (fact.description) line += `: ${fact.description}`
+    lines.push(line)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * A state's text as its baseline stores it: the normalised snapshot, then – when the state has
+ * facts – a blank line, {@link ARIA_FACTS_HEADER} and the facts. A state without facts is the
+ * snapshot alone, as before.
+ */
+export function withAriaFacts(snapshot, facts) {
+  const body = formatAriaFacts(facts)
+  if (!body) return snapshot
+  return `${snapshot.trimEnd()}\n\n${ARIA_FACTS_HEADER}\n${body}\n`
+}
 
 /** The impacts an axe violation fails the step at; anything milder is reported and tolerated. */
 export const AXE_GATE = ['serious', 'critical']
