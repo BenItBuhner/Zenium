@@ -8654,6 +8654,48 @@
     transition: opacity 120ms var(--zen-ease) !important;
   }
 }
+/*
+ * The overview's pane swipe (GN-19, `components/phone/usePaneSwipe.ts`): the overview's
+ * modifier beside the segment primitive, never a copy of it. While a swipe is live the tablist
+ * carries `data-swipe`: the primitive's lines under the labels go out at once and one line of
+ * the same make – 2 px, the accent, the 1 px radius, laid out in the tablist's box – rides the
+ * finger from under the current label to under the neighbour's, on a transform per frame
+ * (`translate3d` and `scaleX` from its box under the current label: the two are input while the
+ * finger is down, v2 §11.3, and the spring's after). When the swipe is over the attribute goes:
+ * this line fades out over the primitive's 120 ms as the picked label's own line fades in over
+ * the same place, so the two read as one line. Nothing else moves; the labels' ink switches at
+ * the pick as it does on a tap.
+ */
+.zen-overview-segment {
+  position: relative;
+}
+.zen-overview-segment-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--v2-control-accent, var(--v2-accent));
+  opacity: 0;
+  transform-origin: left center;
+  transition: opacity 120ms var(--zen-ease);
+  pointer-events: none;
+}
+.zen-v2-segment[data-swipe] > .zen-overview-segment-line {
+  opacity: 1;
+  transition: none;
+  will-change: transform;
+}
+.zen-v2-segment[data-swipe] > [role='tab']::after {
+  opacity: 0;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .zen-overview-segment-line {
+    transition: opacity 120ms var(--zen-ease) !important;
+  }
+}
 
 /*
  * The overview's tab search (TAB-21, `components/phone/OverviewSearch.tsx`): the phone panels'

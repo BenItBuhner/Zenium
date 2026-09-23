@@ -55,7 +55,7 @@ type Mode = 'pending' | 'tabs' | 'overview' | 'dock' | 'none'
  * the page consumes drops every gesture derived from it, fling included, and the moves of a
  * surface we drag ourselves are ours in full. Returns the function that hands them back.
  */
-function claimTouchMoves(target: HTMLElement): () => void {
+export function claimTouchMoves(target: HTMLElement): () => void {
   const consume = (e: TouchEvent): void => {
     if (e.cancelable) e.preventDefault()
   }

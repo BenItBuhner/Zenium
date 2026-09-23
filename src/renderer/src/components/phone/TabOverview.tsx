@@ -124,6 +124,7 @@ import { placeholderPx } from './tabPlaceholder'
 import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
 import { useFlip } from './useFlip'
+import { SEGMENT_LINE_CLASS, usePaneSwipe } from './usePaneSwipe'
 import { useOverviewHandle } from './usePillGestures'
 import { useSearchReach } from './useSearchReach'
 
@@ -415,6 +416,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const exitSelection = useCallback(() => setSelection(endSelection()), [setSelection])
   useBackSurface(selecting ? { name: 'overview-selection', onCommit: exitSelection } : null)
   const handle = useOverviewHandle({ edge })
+  // A horizontal drag over the pane's background moves to the neighbouring segment (GN-19), the
+  // segment's line under the finger; not while tabs are being selected (the pane is the
+  // selection's) and not before the overview has settled.
+  const swipe = usePaneSwipe(rootRef, {
+    pane,
+    panes: paneOrder(hasPrivate),
+    enabled: interactive && !selecting,
+    onPick: pickOverviewPane
+  })
   // Every `data-cell` under the grid – page and blank-tab cards, group cards, the New Tab card –
   // is one set on one spring; the same set answers where a card is for the morph and the exits.
   const flip = useFlip(scrollRef, settled)
@@ -1445,6 +1455,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           className="zen-overview absolute inset-0 flex flex-col"
           // The overview backdrop is window chrome (v2 §9.29): its controls draw in the window family.
           data-surface="window"
+          // The pane swipe listens here, above the slot it outlives (GN-19).
+          {...swipe}
         >
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
             {selecting ? (
@@ -2263,19 +2275,20 @@ function PaneSegment({
   hasPrivate: boolean
   onPick: (pane: OverviewPane) => void
 }): JSX.Element {
-  const panes: Array<{ id: OverviewPane; label: string }> = [
-    { id: 'tabs', label: 'Tabs' },
-    { id: 'groups', label: 'Groups' }
-  ]
-  if (hasPrivate) panes.push({ id: 'private', label: 'Private' })
+  const labels: Record<OverviewPane, string> = {
+    tabs: 'Tabs',
+    groups: 'Groups',
+    private: 'Private'
+  }
   return (
     <div
       role="tablist"
       // The list's name says what it holds: Private only where the host has it.
       aria-label={hasPrivate ? 'Tabs, groups and private tabs' : 'Tabs and groups'}
-      className="zen-v2-segment"
+      // The overview's modifier beside the primitive: the swipe's line is laid out in its box.
+      className="zen-v2-segment zen-overview-segment"
     >
-      {panes.map(({ id, label }) => (
+      {paneOrder(hasPrivate).map((id) => (
         <button
           key={id}
           type="button"
@@ -2287,11 +2300,19 @@ function PaneSegment({
             if (pane !== id) onPick(id)
           }}
         >
-          {label}
+          {labels[id]}
         </button>
       ))}
+      {/* The indicator while a pane swipe is live (GN-19, `usePaneSwipe`): the primitive's own
+          lines hide under `data-swipe` and this one rides the finger from label to label. */}
+      <span className={SEGMENT_LINE_CLASS} aria-hidden data-testid="overview-segment-line" />
     </div>
   )
+}
+
+/** The switcher's panes in the order the segment shows them – the order a swipe reads too. */
+function paneOrder(hasPrivate: boolean): readonly OverviewPane[] {
+  return hasPrivate ? ['tabs', 'groups', 'private'] : ['tabs', 'groups']
 }
 
 /**
