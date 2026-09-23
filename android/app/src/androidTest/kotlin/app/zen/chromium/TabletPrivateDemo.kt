@@ -2,6 +2,8 @@ package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -14,6 +16,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.math.abs
 
 /**
  * Drives the TABLET SIDEBAR's private mode (W4-11; the private-browsing rule of
@@ -302,12 +305,21 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         // departure (no frames while the window is away), the return, the lock, Unlock and the
         // lift – until scene 8 reads it after the veil has landed.
         lockProbe("start")
+        // The display as the window leaves: the picture the system keeps as the task snapshot and
+        // shows as the starting window on return until the app presents its own first frame – with
+        // the guard off for the recorder (`captureForRecording`), the departure's chrome, titles and
+        // all; a release build has FLAG_SECURE up on the private surface, the system keeps no
+        // snapshot and that starting window is blank (#250, PrivateLockDemo's note). The still of
+        // the locked state waits for the display to have moved on from it: on this emulator's
+        // WebView the first frame back presents seconds after the chrome committed it.
+        val departure = ui.takeScreenshot()
         home()
         check("Home puts Zenium in the background", awaitFront(ours = false), "front ${frontPackage()}")
         val armed = awaitUntil(4_000) { host.privateLock.locked }
         SystemClock.sleep(1_500)
         returnToApp()
         check("Zenium is back in front", awaitFront(ours = true), "front ${frontPackage()}")
+        val backAt = SystemClock.uptimeMillis()
         check("the lock armed as the window left", armed, "locked ${host.privateLock.locked}")
         check("the frame's cover is over the page on return", awaitCover(FRAME_COVER, 12_000), "cover ${coverState(FRAME_COVER)}")
         check("the host holds the lock and the chrome's store agrees", host.privateLock.locked && storeLocked(), "store ${storeField("locked")}")
@@ -320,8 +332,75 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         val leaked = findNode { it.contains(LEDGER_TITLE, ignoreCase = true) || it.contains(RECEIPTS_TITLE, ignoreCase = true) || it.contains(LEDGER_PATH) }
         check("the accessibility tree carries nothing of the pages under the lock", leaked == null, "node ${leaked?.text ?: leaked?.contentDescription ?: ""}")
         finding("  cover: ${coverState(FRAME_COVER)}; veil: ${coverState(VEIL)}; rows ${rowTitles()}; pill '${textOf(PILL_LOCKED)}'")
-        SystemClock.sleep(1_200)
+        val rows = screen(domRect(PRIVATE_LIST) ?: domRect(SIDEBAR))
+        val presented = departure != null && rows != null && awaitDisplayMovedOn(departure, rows, 15_000)
+        departure?.recycle()
+        finding(
+            "  the display: the app's own first frame back ${if (presented) "was on the screen ${SystemClock.uptimeMillis() - backAt} ms after the return" else "was not seen within 15 s of the return"}" +
+                " – until it, the OS's task-snapshot starting window, the departure's picture, present only because captureForRecording keeps FLAG_SECURE off for the recorder" +
+                " (a release build keeps the guard up on the private surface, the system keeps no snapshot, and that starting window is blank – #250); the recording's return frames before it are the snapshot's, not the chrome's"
+        )
+        check("FLAG_SECURE is on the window under the lock (a release build's read): Recents and the return's starting window carry nothing of it", guardNow(), "")
+        SystemClock.sleep(600)
         still("locked")
+    }
+
+    /**
+     * The display's `region` (the private list's rows) has moved on from `from` (the departure's
+     * picture, the task snapshot's) within `timeoutMs`: the app's own first frame back is on the
+     * screen. Sampled on a 4 px grid, a change on more than 1% of the samples: the titles turning
+     * to "Private tab" behind the mask under the veil changes several per cent of the rows' pixels;
+     * nothing else in the list moves.
+     */
+    private fun awaitDisplayMovedOn(from: Bitmap, region: Rect, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(250)
+            val now = ui.takeScreenshot() ?: continue
+            val moved = try { regionDiffers(from, now, region) } finally { now.recycle() }
+            if (moved) return true
+        }
+        return false
+    }
+
+    private fun regionDiffers(a: Bitmap, b: Bitmap, region: Rect): Boolean {
+        if (a.width != b.width || a.height != b.height) return true
+        val left = region.left.coerceIn(0, a.width - 1)
+        val top = region.top.coerceIn(0, a.height - 1)
+        val right = region.right.coerceIn(left + 1, a.width)
+        val bottom = region.bottom.coerceIn(top + 1, a.height)
+        var samples = 0
+        var changed = 0
+        var y = top
+        while (y < bottom) {
+            var x = left
+            while (x < right) {
+                samples++
+                val p = a.getPixel(x, y)
+                val q = b.getPixel(x, y)
+                if (abs(((p shr 16) and 0xff) - ((q shr 16) and 0xff)) > 24 || abs(((p shr 8) and 0xff) - ((q shr 8) and 0xff)) > 24 || abs((p and 0xff) - (q and 0xff)) > 24) changed++
+                x += 4
+            }
+            y += 4
+        }
+        return samples > 0 && changed * 100 > samples
+    }
+
+    /**
+     * The guard as a release build has it under the lock (`PrivateLockDemo`'s read): the recorder's
+     * exception off for a moment, the host's one call on the guard made again, the window's flag
+     * read, the exception back.
+     */
+    private fun guardNow(): Boolean {
+        PrivateBrowsing.captureForRecording = false
+        instrumentation.runOnMainSync { host.setPrivateSurface(host.privateSurface) }
+        SystemClock.sleep(600)
+        var guarded = false
+        instrumentation.runOnMainSync { guarded = PrivateBrowsing.guarded(activity.window) }
+        PrivateBrowsing.captureForRecording = true
+        instrumentation.runOnMainSync { host.setPrivateSurface(host.privateSurface) }
+        SystemClock.sleep(600)
+        return guarded
     }
 
     // --- 8. the unlock -------------------------------------------------------------------------------
