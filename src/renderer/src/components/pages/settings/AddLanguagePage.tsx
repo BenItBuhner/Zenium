@@ -42,8 +42,9 @@ export function AddLanguagePage({
   const shown = filterLanguageChoices(target.choices, filter)
   const term = filter.trim()
   useEffect(() => {
+    // The list's first row (§9.22); the field is left to a tap, so no keyboard comes up.
     root.current
-      ?.querySelector<HTMLElement>('.zen-settings-row-pressable')
+      ?.querySelector<HTMLElement>('[role="group"] > button')
       ?.focus({ preventScroll: true })
   }, [])
   const leave = (): void => {

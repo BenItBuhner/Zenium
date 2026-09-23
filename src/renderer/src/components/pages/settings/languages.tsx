@@ -161,6 +161,7 @@ export function preferredLanguagesGroups({
                 kind: 'action',
                 id: `${id}:up`,
                 label: 'Move Up',
+                button: 'Move Up',
                 disabled: index === 0,
                 onPress: () => set({ languages: moveLanguage(languages, index, -1) })
               },
@@ -168,6 +169,7 @@ export function preferredLanguagesGroups({
                 kind: 'action',
                 id: `${id}:down`,
                 label: 'Move Down',
+                button: 'Move Down',
                 disabled: index === languages.length - 1,
                 onPress: () => set({ languages: moveLanguage(languages, index, 1) })
               },
@@ -175,6 +177,7 @@ export function preferredLanguagesGroups({
                 kind: 'action',
                 id: `${id}:remove`,
                 label: 'Remove',
+                button: 'Remove',
                 disabled: languages.length <= 1,
                 onPress: () => set({ languages: languages.filter((_, i) => i !== index) })
               }

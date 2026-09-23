@@ -19,17 +19,21 @@ import {
   readerTranslateWorking
 } from '@renderer/lib/readerTranslate'
 import { DEFAULT_READER_PREFERENCES } from '@shared/reader'
-import { Rows, TranslateRows } from '../ReaderPreferencesPanel'
+import { Rows, TranslateRow } from '../ReaderPreferencesPanel'
 
 /*
- * Translate inside Reader View's text preferences (CT-36): a "Translate into" menulist row over
- * the languages the models reach, the first preferred one chosen, and the action row – Translate
- * with the translate glyph, busy with the progress as its second line while the core works, the
- * reason in the danger ink when it failed (the press the retry) – which gives way to the Show
- * original switch once the article is translated. A pick of another language while translated
- * or at work redoes the translation at once; before that it only sets what Translate will do.
- * In the panel the two rows are a group of their own after the type rows and before the aids,
- * so the phone sheet's peek keeps the live type rows whole above its fold (#265's rule).
+ * Translate inside Reader View's text preferences (CT-36; the #350 lead check's rulings 4 and
+ * 5): ONE row, Listen's sibling at the panel's head, a 44 action row with the translate glyph.
+ * The press opens the target picker – the languages the models reach, the remembered target
+ * checked (the last pick here, else the translation's own, else the first preferred language a
+ * model reaches; never the article's own language once known) – and the pick translates at
+ * once. The row is §9.30's busy row with the progress as its second line while the core works
+ * (a press doing nothing), keeps the reason in the danger ink when it failed (the press opens
+ * the picker again: the pick is the retry), and gives way to the "Show original" switch row,
+ * "Translated into <language>" its description, once the article is translated. Never a
+ * menulist-plus-action pair. In the panel the head rows are one group before the type rows'
+ * hairline, so #265's rule holds with the one head row: the live type rows stay whole above the
+ * phone sheet's peek fold.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -52,6 +56,11 @@ afterEach(() => {
   host = null
   vi.mocked(run).mockClear()
 })
+
+const desktop = (): void =>
+  viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+const phone = (): void =>
+  viewportStore.set({ ...viewportStore.get(), formFactor: 'phone', coarse: true })
 
 const TRANSLATE: TranslateUIState = {
   available: true,
@@ -84,8 +93,26 @@ function translation(patch: Partial<ReaderTranslateState> = {}): ReaderTranslate
   }
 }
 
-const row = (el: HTMLElement, pref: string): HTMLElement =>
-  el.querySelector<HTMLElement>(`[data-reader-pref="${pref}"]`)!
+const row = (el: HTMLElement, pref: string): HTMLButtonElement =>
+  el.querySelector<HTMLButtonElement>(`[data-reader-pref="${pref}"]`)!
+
+/** Press the row and let the popover's wait for the page's cover resolve (at once with no page). */
+async function open(translate: HTMLElement): Promise<void> {
+  await act(async () => {
+    translate.click()
+    await Promise.resolve()
+  })
+}
+
+const listbox = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>('[role="listbox"][aria-label="Translate into"]')
+const options = (): HTMLElement[] => [
+  ...(listbox()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])
+]
+const optionLabel = (option: HTMLElement): string =>
+  (option.querySelector('.truncate') ?? option).textContent ?? ''
+const checkedOption = (): HTMLElement | undefined =>
+  options().find((o) => o.getAttribute('aria-selected') === 'true')
 
 describe('the rows’ rules', () => {
   it('the target is the pick, else the translation’s, else the first preferred language a model reaches, else English, else the first language; null with no languages', () => {
@@ -196,27 +223,45 @@ describe('the rows’ rules', () => {
   })
 })
 
-describe('the Translate rows', () => {
-  it('before any translation: the menulist on the first preferred language, the Translate row with its glyph; a press asks the core for that language', () => {
-    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
-    const el = render(<TranslateRows tabId="t1" translate={TRANSLATE} translation={null} />)
-    const menulist = el.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')!
-    expect(menulist.textContent).toContain('French')
-    expect(menulist.disabled).toBe(false)
+describe('the Translate row', () => {
+  it('is one action row with its glyph that opens the target picker – no menulist beside it; the first preferred language a model reaches is checked, and the pick translates into it at once', async () => {
+    desktop()
+    const el = render(<TranslateRow tabId="t1" translate={TRANSLATE} translation={null} />)
+    expect(el.querySelectorAll('[data-reader-pref]').length).toBe(1)
+    expect(el.querySelector('.zen-v2-menulist')).toBeNull()
     const translate = row(el, 'translate')
     expect(translate.tagName).toBe('BUTTON')
-    expect(translate.textContent).toContain('Translate')
-    expect(translate.hasAttribute('aria-busy')).toBe(false)
+    expect(translate.querySelector('.truncate')?.textContent).toBe('Translate')
     expect(translate.querySelector('svg')).not.toBeNull()
-    expect(el.querySelector('[data-reader-pref="showOriginal"]')).toBeNull()
-    act(() => translate.click())
-    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'fr' })
+    expect(translate.hasAttribute('aria-busy')).toBe(false)
+    expect(translate.disabled).toBe(false)
+    expect(translate.getAttribute('aria-haspopup')).toBe('listbox')
+    expect(translate.getAttribute('aria-expanded')).toBe('false')
+    expect(listbox()).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+
+    await open(translate)
+    expect(translate.getAttribute('aria-expanded')).toBe('true')
+    // The languages the models reach, by name, the language's own name under each where it
+    // says something the name does not (the shipped table's, §10.2), French checked.
+    expect(options().map(optionLabel)).toEqual(['English', 'French', 'German', 'Spanish'])
+    expect(
+      options().map((o) => o.querySelector('.zen-v2-menulist-option-description')?.textContent)
+    ).toEqual([undefined, 'français', 'Deutsch', 'español'])
+    expect(optionLabel(checkedOption()!)).toBe('French')
+
+    const spanish = options().find((o) => optionLabel(o) === 'Spanish')!
+    act(() => spanish.click())
+    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'es' })
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(listbox()).toBeNull()
+    expect(translate.getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('an article the page translate found in the first preferred language: the menulist on the next one, so the press does not answer "already in"', () => {
-    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+  it('an article the page translate found in the first preferred language: the picker opens on the next one, so the pick does not answer "already in"; the picker remembers the pick', async () => {
+    desktop()
     const el = render(
-      <TranslateRows
+      <TranslateRow
         tabId="t1"
         translate={{
           ...TRANSLATE,
@@ -238,53 +283,71 @@ describe('the Translate rows', () => {
         translation={null}
       />
     )
-    expect(el.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')!.textContent).toContain(
-      'English'
-    )
-    act(() => row(el, 'translate').click())
-    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'en' })
+    const translate = row(el, 'translate')
+    await open(translate)
+    expect(optionLabel(checkedOption()!)).toBe('English')
+    act(() => options().find((o) => optionLabel(o) === 'German')!.click())
+    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'de' })
+    // The row is still the row (the core has not answered yet); opened again, the pick is checked.
+    await open(translate)
+    expect(optionLabel(checkedOption()!)).toBe('German')
   })
 
-  it('at work: a busy row with the progress as its second line, a press doing nothing', () => {
+  it('at work: the busy row with the progress as its second line, a press doing nothing', async () => {
+    desktop()
     const el = render(
-      <TranslateRows tabId="t1" translate={TRANSLATE} translation={translation()} />
+      <TranslateRow tabId="t1" translate={TRANSLATE} translation={translation()} />
     )
     const translate = row(el, 'translate')
     expect(translate.getAttribute('aria-busy')).toBe('true')
+    expect(translate.disabled).toBe(false)
     expect(translate.textContent).toContain('Translating from German to French… 12 of 40')
-    act(() => translate.click())
+    await open(translate)
+    expect(listbox()).toBeNull()
     expect(run).not.toHaveBeenCalled()
   })
 
-  it('failed: the reason in the danger ink under Translate, the press the retry', () => {
+  it('failed: the reason in the danger ink under Translate, the press the picker again with the failed target checked – the pick is the retry', async () => {
+    desktop()
     const el = render(
-      <TranslateRows
+      <TranslateRow
         tabId="t1"
         translate={TRANSLATE}
-        translation={translation({ status: 'error', error: 'this article is already in French' })}
+        translation={translation({
+          status: 'error',
+          target: 'es',
+          error: 'no model for German to Spanish'
+        })}
       />
     )
     const translate = row(el, 'translate')
     expect(translate.hasAttribute('aria-busy')).toBe(false)
     const reason = translate.querySelector('.zen-settings-danger')
-    expect(reason?.textContent).toBe('This article is already in French.')
-    act(() => translate.click())
-    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'fr' })
+    expect(reason?.textContent).toBe('No model for German to Spanish.')
+    await open(translate)
+    expect(optionLabel(checkedOption()!)).toBe('Spanish')
+    act(() => options().find((o) => optionLabel(o) === 'English')!.click())
+    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'en' })
   })
 
-  it('translated: Show original as a switch row naming the source; on shows the article as written', () => {
+  it('translated: the row is the Show original switch row naming the target; on shows the article as written', () => {
+    desktop()
     const el = render(
-      <TranslateRows
+      <TranslateRow
         tabId="t1"
         translate={TRANSLATE}
         translation={translation({ status: 'translated', progress: null })}
       />
     )
     expect(el.querySelector('[data-reader-pref="translate"]')).toBeNull()
+    expect(el.querySelectorAll('[data-reader-pref]').length).toBe(1)
     const original = row(el, 'showOriginal')
     expect(original.getAttribute('role')).toBe('switch')
     expect(original.getAttribute('aria-checked')).toBe('false')
-    expect(original.textContent).toContain('Translated from German')
+    expect(original.textContent).toContain('Show original')
+    expect(original.textContent).toContain('Translated into French')
+    // A setting row: no glyph (§9.13's control panel carries them on the head's action rows).
+    expect(original.querySelector('svg')).toBeNull()
     act(() => original.click())
     expect(run).toHaveBeenCalledWith('translate.readerShowOriginal', {
       tabId: 't1',
@@ -292,52 +355,30 @@ describe('the Translate rows', () => {
     })
   })
 
-  it('a pick while translated redoes the translation into the new language at once; before any translation it only sets what Translate will do', async () => {
-    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
-    const el = render(
-      <TranslateRows
-        tabId="t1"
-        translate={TRANSLATE}
-        translation={translation({ status: 'translated', progress: null })}
-      />
-    )
-    const menulist = el.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')!
-    await act(async () => {
-      menulist.click()
-      await Promise.resolve()
-    })
-    const spanish = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (o) => o.textContent === 'Spanish'
+  it('under a finger the picker is the menulist sheet of radio rows, the target checked', async () => {
+    phone()
+    const el = render(<TranslateRow tabId="t1" translate={TRANSLATE} translation={null} />)
+    const translate = row(el, 'translate')
+    expect(translate.getAttribute('aria-haspopup')).toBe('dialog')
+    await open(translate)
+    const group = document.querySelector<HTMLElement>(
+      '[role="radiogroup"][aria-label="Translate into"]'
     )!
-    act(() => spanish.click())
-    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'es' })
-    expect(menulist.textContent).toContain('Spanish')
-    act(() => root?.unmount())
-    host?.remove()
-    vi.mocked(run).mockClear()
-
-    const fresh = render(<TranslateRows tabId="t1" translate={TRANSLATE} translation={null} />)
-    const list = fresh.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')!
-    await act(async () => {
-      list.click()
-      await Promise.resolve()
-    })
-    const german = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (o) => o.textContent === 'German'
-    )!
-    act(() => german.click())
-    expect(run).not.toHaveBeenCalled()
-    expect(list.textContent).toContain('German')
-    act(() => row(fresh, 'translate').click())
-    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'de' })
+    expect(group).not.toBeNull()
+    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')]
+    expect(radios.length).toBe(4)
+    const checked = radios.filter((r) => r.getAttribute('aria-checked') === 'true')
+    expect(checked.length).toBe(1)
+    expect(checked[0].textContent).toContain('French')
+    expect(radios.map((r) => r.textContent?.includes('Deutsch')).filter(Boolean).length).toBe(1)
   })
 
-  it('no language the models reach: both rows disabled', () => {
+  it('no language the models reach: the row disabled', () => {
+    desktop()
     const el = render(
-      <TranslateRows tabId="t1" translate={{ ...TRANSLATE, languages: [] }} translation={null} />
+      <TranslateRow tabId="t1" translate={{ ...TRANSLATE, languages: [] }} translation={null} />
     )
-    expect(el.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')!.disabled).toBe(true)
-    expect((row(el, 'translate') as HTMLButtonElement).disabled).toBe(true)
+    expect(row(el, 'translate').disabled).toBe(true)
   })
 })
 
@@ -350,8 +391,8 @@ describe('the panel’s order', () => {
         : (child.querySelector('.truncate')?.textContent ?? '?')
     )
 
-  it('Translate is a group between two hairlines after the type rows and before the aids, so the type rows stay whole above the phone sheet’s peek fold (#265, #350 review R4)', () => {
-    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+  it('Listen and Translate are the head group, each with its glyph, before the type rows’ hairline; the type rows stay whole above the phone sheet’s peek fold (#265, lead rulings 4 and 5)', () => {
+    desktop()
     const el = render(
       <Rows
         prefs={DEFAULT_READER_PREFERENCES}
@@ -362,6 +403,7 @@ describe('the panel’s order', () => {
     )
     expect(outline(el)).toEqual([
       'Listen to this article',
+      'Translate',
       '—',
       'Text size',
       'Font',
@@ -369,17 +411,41 @@ describe('the panel’s order', () => {
       'Column width',
       'Text spacing',
       '—',
-      'Translate into',
-      'Translate',
-      '—',
       'Line focus',
       'Lines in focus',
       'Syllables'
     ])
+    // The head's action rows carry their glyphs together (§10.4's mixing rule within the
+    // group): the leading slot is each row's first child. The setting rows carry none: their
+    // first child is the text block, a menulist's chevron trailing in the control slot.
+    const rows = el.querySelector('[data-reader-prefs-rows]')!
+    expect(rows.children[0].querySelector('.lucide-audio-lines')).not.toBeNull()
+    expect(rows.children[1].querySelector('.lucide-languages')).not.toBeNull()
+    for (const index of [0, 1]) {
+      expect(rows.children[index].firstElementChild?.tagName).toBe('SPAN')
+      expect(rows.children[index].firstElementChild?.getAttribute('aria-hidden')).toBe('true')
+    }
+    for (const child of [...rows.children].slice(3)) {
+      expect(child.firstElementChild?.tagName).not.toBe('SPAN')
+      expect(child.querySelector('.lucide-languages, .lucide-audio-lines')).toBeNull()
+    }
+  })
+
+  it('Translate alone heads the panel where the article cannot be read aloud', () => {
+    desktop()
+    const el = render(
+      <Rows
+        prefs={DEFAULT_READER_PREFERENCES}
+        onChange={() => undefined}
+        onListen={null}
+        translate={{ tabId: 't1', translate: TRANSLATE, translation: null }}
+      />
+    )
+    expect(outline(el).slice(0, 3)).toEqual(['Translate', '—', 'Text size'])
   })
 
   it('without the engine the type rows run straight into the aids’ hairline', () => {
-    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+    desktop()
     const el = render(
       <Rows
         prefs={DEFAULT_READER_PREFERENCES}

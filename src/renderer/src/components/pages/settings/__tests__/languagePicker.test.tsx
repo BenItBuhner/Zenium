@@ -7,17 +7,20 @@ import {
   catalogueLanguageName,
   filterLanguageChoices,
   languageChoices,
-  nativeLanguageName
+  nativeLanguageName,
+  translateLanguageChoices
 } from '@renderer/lib/languageCatalogue'
 import { familiesOf } from '@renderer/lib/localFonts'
+import { languageName } from '@shared/languageNames'
 import { LanguagePickList } from '../LanguagePickList'
 import { moveLanguage } from '../languages'
 
 /*
  * CT-41's Add language picker and the pure rules under it: the catalogue is Chrome's
  * accept-language list as tags, each choice named in the UI's language with the language's own
- * name beside it where that says something more, sorted by name and less what is already on the
- * list; the filter matches every typed term against the name, the own name or the tag with
+ * name – the shipped table's, never the runtime's ICU (§10.2) – beside it where that says
+ * something more, sorted by name and less what is already on the list; the filter matches every
+ * typed term against the name, the own name or the tag with
  * accents ignored; a tag the runtime cannot name takes the catalogue's English name and is never
  * offered as itself; the list reorders by one place and never past its ends. The picker itself
  * is the filter field pinned first, then one pressable §10.4 row per match – a pick adds and
@@ -88,10 +91,62 @@ describe('the language catalogue', () => {
     expect(languageChoices(['EN-gb']).find((c) => c.value === 'en-GB')).toBeUndefined()
   })
 
-  it('the language’s own name is null where the runtime has none or it is the UI’s', () => {
+  it('the language’s own name comes from the shipped table, never the runtime’s ICU; null where it is the English name or the tag is outside the catalogue (lead ruling 7, §10.2)', () => {
     expect(nativeLanguageName('de')).toBe('Deutsch')
-    expect(nativeLanguageName('en')).toBe('English')
+    expect(nativeLanguageName('de-DE')).toBe('Deutsch (Deutschland)')
+    expect(nativeLanguageName('DE-de')).toBe('Deutsch (Deutschland)')
+    expect(nativeLanguageName('ja')).toBe('日本語')
+    // Its own name is its English name: one line on the row.
+    expect(nativeLanguageName('en')).toBeNull()
+    expect(nativeLanguageName('en-GB')).toBeNull()
+    expect(nativeLanguageName('af')).toBeNull()
     expect(nativeLanguageName('zz')).toBeNull()
+    // The runtime plays no part: a runtime naming nothing changes no own name.
+    const spy = vi
+      .spyOn(Intl.DisplayNames.prototype, 'of')
+      .mockImplementation(function (this: Intl.DisplayNames, code: string) {
+        return code
+      })
+    try {
+      expect(nativeLanguageName('de')).toBe('Deutsch')
+      expect(nativeLanguageName('as')).toBe('অসমীয়া')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('the table names every language or none: each own name is a word that is not the English one, and the ones without are the languages whose own name is the English name', () => {
+    const withoutOwn: string[] = []
+    for (const tag of LANGUAGE_CATALOGUE) {
+      const own = nativeLanguageName(tag)
+      const english = catalogueLanguageName(tag)
+      if (own === null) {
+        withoutOwn.push(tag)
+        continue
+      }
+      expect(own.trim(), tag).toBe(own)
+      expect(own.length, tag).toBeGreaterThan(1)
+      expect(own.toLowerCase(), tag).not.toBe(english?.toLowerCase())
+      expect(own.toLowerCase(), tag).not.toBe(tag.toLowerCase())
+    }
+    // English and its regions, and the languages whose own name is spelt as the English one
+    // (Afrikaans, Cebuano, Esperanto, Filipino, Hausa, Interlingua, Igbo, Malagasy, Māori,
+    // Occitan, Kinyarwanda, Wolof): their rows draw one line.
+    expect(withoutOwn.filter((tag) => !tag.startsWith('en'))).toEqual([
+      'af',
+      'ceb',
+      'eo',
+      'fil',
+      'ha',
+      'ia',
+      'ig',
+      'mg',
+      'mi',
+      'oc',
+      'rw',
+      'wo'
+    ])
+    expect(withoutOwn.filter((tag) => tag.startsWith('en')).length).toBe(9)
   })
 
   it('a tag the runtime cannot name takes the catalogue’s English name – never the bare tag – and a tag outside the catalogue is null (#350 review R6)', () => {
@@ -110,12 +165,22 @@ describe('the language catalogue', () => {
       expect(catalogueLanguageName('zz')).toBeNull()
       const assamese = languageChoices().find((c) => c.value === 'as')
       expect(assamese?.label).toBe('Assamese')
-      // The own name is what the runtime writes for the tag in itself; a runtime naming nothing
-      // has no line under the label rather than the tag again.
-      expect(assamese?.description === undefined || assamese?.description !== 'as').toBe(true)
+      // The own name is the table's, whatever the runtime holds for the tag.
+      expect(assamese?.description).toBe('অসমীয়া')
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('the translator’s languages take the same row form: the runtime’s name over the shipped own name, sorted by name', () => {
+    const choices = translateLanguageChoices(['fr', 'de', 'en', 'ja'])
+    expect(choices.map((c) => c.value)).toEqual(['en', 'fr', 'de', 'ja'])
+    expect(choices.map((c) => c.label)).toEqual(['English', 'French', 'German', 'Japanese'])
+    expect(choices.map((c) => c.description)).toEqual([undefined, 'français', 'Deutsch', '日本語'])
+    // A code neither the runtime nor the table names keeps the runtime's word, as the bar does.
+    expect(translateLanguageChoices(['zz'])).toEqual([
+      { value: 'zz', label: languageName('zz'), description: undefined }
+    ])
   })
 
   it('filters by every term against the name, the own name and the tag, accents and case aside', () => {
