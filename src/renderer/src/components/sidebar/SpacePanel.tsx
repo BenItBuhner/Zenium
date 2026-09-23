@@ -454,7 +454,9 @@ interface FolderRowProps {
  * 13/600 – ahead of its members, and the group's colour runs as one continuous 2 px line in the
  * band's top inset from the chip's start to the last member's end, bridging the gaps
  * (`.zen-strip-group-line` on the shell, never a dash per pill); the fold runs the shell's width
- * on the spring.
+ * on the spring. A SAVED group (TAB-16: its tabs closed, its pages kept) is its chip alone along
+ * the band – the ring, the name, the count of its pages as the aside – and a press on it opens
+ * the folder (`folder.open`), as the tablet's saved row does; its menu is the folder's.
  */
 export function FolderRow({
   folder,
@@ -515,10 +517,14 @@ export function FolderRow({
     horizontal ? 'x' : 'y'
   )
   // The desktop's sidebar lists a saved folder's pages under its header while it is unfolded;
-  // the tablet's saved row has nothing to fold (its tap opens the group); the strip draws no
-  // page rows along the band.
+  // the tablet's saved row has nothing to fold (its tap opens the group), and neither has the
+  // strip's saved chip (§9.37): along the band a saved group is its chip alone – the ring, the
+  // name, the count of the pages it keeps as the aside – and a press on it opens the folder.
   const savedPages =
     !tablet && !horizontal && saved && !folder.collapsed ? (folder.savedTabs ?? []) : []
+  // The strip's saved chip opens the group, as the tablet's saved row does; the sidebar's saved
+  // folder is a disclosure over its pages.
+  const opensOnPress = saved && (tablet || horizontal)
   const count = row.count
   const unit = count === 1 ? 'tab' : 'tabs'
   const description =
@@ -555,7 +561,7 @@ export function FolderRow({
         role="button"
         aria-label={folder.name}
         aria-description={description}
-        aria-expanded={tablet && saved ? undefined : !folder.collapsed}
+        aria-expanded={opensOnPress ? undefined : !folder.collapsed}
         data-strip-item={key}
         tabIndex={tabIndex}
         data-active={containsActive && folder.collapsed}
@@ -574,6 +580,12 @@ export function FolderRow({
             if (press.swallowsClick() || renaming) return
             if (saved) run('folder.open', { folderId: folder.id })
             else toggle()
+            return
+          }
+          if (opensOnPress) {
+            // The strip's saved chip (§9.37): a press brings the pages back as the group's
+            // tabs; there is nothing along the band to fold.
+            if (!renaming) run('folder.open', { folderId: folder.id })
             return
           }
           const now = performance.now()
@@ -615,6 +627,17 @@ export function FolderRow({
                 data-testid="group-chip-name"
               >
                 {folder.name}
+              </span>
+            )}
+            {/* A saved group's members are not along the band, so its chip carries the count
+                of the pages it keeps as the row's 13 tabular aside (§9.36); an open group's
+                tabs are its own count. */}
+            {saved && !renaming && (
+              <span
+                className="shrink-0 text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]"
+                data-testid="group-chip-count"
+              >
+                {count}
               </span>
             )}
             {live && (

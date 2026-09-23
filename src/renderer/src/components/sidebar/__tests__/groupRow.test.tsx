@@ -358,6 +358,47 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(glyph.querySelector('.zen-group-row-dot')).toBeNull()
   })
 
+  it('draws a saved group in the strip as its chip alone (§9.37, TAB-16): the ring, the name, the count of its pages, and a press opens the folder', () => {
+    const saved = folder({
+      savedTabs: [
+        { url: 'https://alpha.example/', title: 'ALPHA' },
+        { url: 'https://beta.example/', title: 'BETA' }
+      ]
+    })
+    panel([tab('home'), tab('gamma')], [saved], 'desktop', 'synced', 'x')
+    const chip = header()
+    expect(chip.className).toContain('zen-strip-group-chip')
+    expect(chip.hasAttribute('data-saved')).toBe(true)
+    expect(shell().dataset.groupKind).toBe('saved')
+    // Nothing along the band to fold: no disclosure state, the description says saved.
+    expect(chip.hasAttribute('aria-expanded')).toBe(false)
+    expect(chip.getAttribute('aria-description')).toBe('Tab group, saved, 2 tabs')
+    // The shared glyph wears the ring (its dot drawn hollow by `[data-saved]`), then the name,
+    // then the count of the pages the group keeps as the 13 tabular aside.
+    const glyph = chip.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
+    expect(glyph.hasAttribute('data-saved')).toBe(true)
+    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
+    expect(glyph.nextElementSibling?.getAttribute('data-testid')).toBe('group-chip-name')
+    const count = chip.querySelector<HTMLElement>('[data-testid="group-chip-count"]')!
+    expect(count.textContent).toBe('2')
+    expect(count.className).toContain('text-[13px]')
+    expect(count.className).toContain('tabular-nums')
+    expect(chip.querySelector('[data-testid="group-chip-name"]')?.nextElementSibling).toBe(count)
+    // No member rows and no page rows along the band; the group's line spans the chip alone.
+    expect(memberRows()).toEqual([])
+    expect(shell().querySelector('[data-saved-pages]')).toBeNull()
+    expect(shell().querySelector('[data-strip-group-line="g"]')).not.toBeNull()
+    // A press brings the pages back as the group's tabs; it folds nothing.
+    act(() => chip.click())
+    expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
+    expect(run).not.toHaveBeenCalledWith('folder.update', expect.anything())
+    // An open group's chip carries no count: its members are along the band.
+    panel(grouped(), [folder()], 'desktop', 'synced', 'x')
+    expect(header().querySelector('[data-testid="group-chip-count"]')).toBeNull()
+    expect(header().getAttribute('aria-expanded')).toBe('true')
+    expect(shell().dataset.groupKind).toBe('open')
+  })
+
   it('folds on a tap: the block’s height runs on SPRING_GENTLE, the rows it had staying drawn until it rests', () => {
     panel(grouped(), [folder()])
     act(() => header().click())
