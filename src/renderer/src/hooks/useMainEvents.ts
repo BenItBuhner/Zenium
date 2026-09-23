@@ -52,6 +52,7 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
+import { requestFolderDelete } from '@renderer/lib/folderDelete'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { openOverview } from '@renderer/lib/gestures/stage'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
@@ -303,6 +304,12 @@ export function useMainEvents(): void {
         // sheet holds the colours, so a new group there starts its inline rename as before.
         if (isPhone()) uiStore.set({ renamingFolderId: folderId })
         else openGroupEditor(folderId)
+      }),
+      // The desktop folder menu's "Delete Folder" on a folder with tabs or saved pages: the
+      // §9.23 prompt over the page (TAB-16's desktop half); the answer runs `folder.delete`.
+      onEvent('folder.confirmDelete', ({ folderId }) => {
+        closeUrlbar()
+        requestFolderDelete(folderId)
       }),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),

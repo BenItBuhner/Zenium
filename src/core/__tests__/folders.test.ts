@@ -334,7 +334,8 @@ describe('the folder header menu (tabs-13)', () => {
       'Make Live Folder…',
       '-',
       'Unpack Folder',
-      'Close Folder (2 Tabs)'
+      'Close Folder (2 Tabs)',
+      'Delete Folder'
     ])
     h.sent.length = 0
     item(h.shown(), 'Edit Folder…').click!()

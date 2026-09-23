@@ -219,7 +219,7 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     expect(header.querySelector('svg[data-space-dot]')).not.toBeNull()
   })
 
-  it('makes the folder header a row with its count and chevron deemphasised and its colour a hairlined swatch', () => {
+  it('makes the folder header a row with its count and chevron deemphasised and its colour the group’s bar and dot', () => {
     const folder: Folder = {
       id: 'f1',
       spaceId: 'space',
@@ -239,8 +239,13 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     const chevron = header.querySelector('svg.lucide-chevron-down')!
     expect(chevron.getAttribute('class')).toContain('text-[var(--v2-control-text-deemphasized)]')
     expect(chevron.getAttribute('class')).not.toContain('opacity-60')
-    const dot = header.querySelector<HTMLElement>('span.h-2.w-2')!
-    expect(dot.className).toContain('border-[rgb(var(--zen-fg-rgb)/0.2)]')
+    // The colour is the group's (TAB-16's desktop half): the 3 px bar down the block's leading
+    // edge and the 10 dot in the glyph slot, in place of the 8 px hairlined swatch.
+    expect(header.querySelector('span.h-2.w-2')).toBeNull()
+    const block = header.parentElement!
+    expect(block.hasAttribute('data-group-bar')).toBe(true)
+    expect(block.style.getPropertyValue('--zen-group-rgb')).toBe('76 141 255')
+    expect(header.querySelector('.zen-group-row-glyph .zen-group-row-dot')).not.toBeNull()
   })
 
   it('gives the New Tab row the row’s height and font in full ink', () => {

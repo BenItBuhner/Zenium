@@ -1985,9 +1985,24 @@ export class Menus {
       return
     }
     const live = this.browser.liveFolders.get(folderId)
-    const count = folderTabs(state.model, folderId).length
+    // The desktop's folder is the sidebar's tab group, saved when its tabs close (TAB-16, the
+    // desktop half of the shared groups): its menu leads with Open Folder while it is saved,
+    // Close Folder keeps it saved with its pages, and Delete Folder – which forgets them, or
+    // closes its tabs with it – asks first through the chrome's prompt when there is anything
+    // to lose (`folder.confirmDelete`). Zen's word is Folder; the touch hosts say Group.
+    const saved = isSavedFolder(state.model, folder)
+    const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
+    const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
     this.popup(
       [
+        ...((saved
+          ? [
+              {
+                label: `Open Folder (${tabs})`,
+                click: () => this.browser.openFolder(folderId, win)
+              }
+            ]
+          : []) as Template),
         // Chrome's group editor bubble (tabs-13): name, colour and the group's actions in one
         // surface beside the header; the desktop chrome draws it, the phone its group sheet.
         {
@@ -2043,20 +2058,42 @@ export class Menus {
               }
             ]) as Template),
         { type: 'separator' },
-        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list)
-        // with the folder. A touch host's group is saved instead, by `groupMenu` above.
-        { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
+        // Chrome's Ungroup and Close group on an open folder: the tabs stay, loose, or close
+        // (each to the recently closed list) and the folder stays SAVED with their pages; then
+        // Delete Folder, Chrome's for a saved group, which forgets what the folder holds.
+        ...((count && !saved
+          ? [
+              { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
+              {
+                label: `Close Folder (${tabs})`,
+                click: () => this.browser.closeFolder(folderId, win)
+              }
+            ]
+          : []) as Template),
         {
-          label: count
-            ? `Close Folder (${count} ${count === 1 ? 'Tab' : 'Tabs'})`
-            : 'Delete Folder',
-          click: () => this.browser.deleteFolder(folderId, false)
+          label: 'Delete Folder',
+          danger: true,
+          click: () => this.deleteFolderAsking(folderId, win)
         }
       ],
       win,
       'folder',
       anchor
     )
+  }
+
+  /**
+   * The desktop's "Delete Folder": a folder with tabs or saved pages is deleted only once the
+   * chrome's prompt (`folder.confirmDelete`, a §9.23 dialog) is answered – the answer runs
+   * `folder.delete` – and an empty one goes at once.
+   */
+  private deleteFolderAsking(folderId: string, win: ZenWindow): void {
+    const { model } = this.browser.state
+    const folder = model.folders[folderId]
+    if (!folder) return
+    const holds = folderTabs(model, folderId).length > 0 || Boolean(folder.savedTabs?.length)
+    if (holds) this.browser.emit('folder.confirmDelete', { folderId }, win)
+    else this.browser.deleteFolder(folderId, false)
   }
 
   /**

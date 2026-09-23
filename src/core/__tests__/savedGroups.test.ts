@@ -350,7 +350,9 @@ describe('a saved group (TAB-16)', () => {
     expect(isSavedFolder(m, m.folders[folder.id])).toBe(false)
     expect(m.tabs[tab.id]?.folderId).toBe(folder.id)
 
-    // Closing the group writes the pages and the moment; the file is the current version.
+    // Closing the group writes the pages and the moment, and folds the group shut (the desktop
+    // sidebar lists a saved group's pages only once it is unfolded); the file is the current
+    // version.
     h.browser.handleCommand(h.win, 'folder.close', { folderId: folder.id })
     await h.browser.state.flush()
     const written = JSON.parse(files['state.json']) as { version: number; folders: unknown[] }
@@ -358,6 +360,7 @@ describe('a saved group (TAB-16)', () => {
     expect(written.folders).toEqual([
       {
         ...folder,
+        collapsed: true,
         savedTabs: [{ url: 'https://a.test/', title: 'a.test', favicon: null }],
         lastUsedAt: expect.any(Number)
       }

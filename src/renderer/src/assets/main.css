@@ -7503,6 +7503,47 @@
 }
 
 /*
+ * The desktop's folder as a tab group (TAB-16's desktop half, tabs-15; `SpacePanel`'s
+ * `FolderRow`): the group's colour (`--zen-group-rgb`, Chrome's nine) as a 3 px bar down the
+ * leading edge of the block of header and rows – the §9.35 rail column's precedent for a
+ * colour that marks a run of rows, and the container bar's geometry (a 2 px bar inset 8 from
+ * the row's ends, `TabItem`), here 3 wide at radius 1.5 from 8 under the block's top to 8 above
+ * its bottom, so it clears the header's radius-8 corners and stops short of the last row's;
+ * never a fill across the row (§9.29 – the row's fills are the window's hover and active). The
+ * rows of an open folder sit 20 in, so the bar runs down the gutter beside them and meets
+ * nothing: a member row's container bar stands at x 20. Folded, the bar is the header's alone.
+ * The header's count while folded is §9.19's pill in the window family (`.zen-v2-badge` under
+ * the sidebar's `data-surface="window"`: `--v2-window-fill` on the ink at 69%, 20 tall, 13/600,
+ * 0 8) with tabular figures; a badge is full ink – never dimmed with its row (§9.29) – so it
+ * takes no opacity of its own and stands outside the fades below. A saved folder's page rows
+ * (`SavedPageRow`) wear the sleeping row's 69% on glyph and title: a page, not a live tab.
+ */
+.zen-group-fold[data-group-bar] {
+  position: relative;
+}
+.zen-group-fold[data-group-bar]::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 1.5px;
+  background: rgb(var(--zen-group-rgb));
+  pointer-events: none;
+  /* Over the rows' fills (the header is a later sibling), under a lifted row's ghost. */
+  z-index: 1;
+}
+.zen-group-count-badge {
+  font-variant-numeric: tabular-nums;
+  opacity: 1;
+}
+.zen-saved-page .zen-tab-favicon,
+.zen-saved-page .zen-tab-title {
+  opacity: 0.69;
+}
+
+/*
  * The drawer (`TabletDrawer`): the expanded sidebar over the page in a window too narrow to
  * dock it, on the phone Spaces drawer's panel (`.zen-drawer-panel`: the space-tinted panel
  * colour, blurred, flush with the window's edge and rounded towards the content). The sidebar's
