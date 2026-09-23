@@ -105,10 +105,11 @@ describe('the one-field sheet (§9.12)', () => {
     expect(block.firstElementChild).toBe(field)
     const body = sheet().querySelector<HTMLElement>('.zen-settings-sheet-body')!
     expect(body.firstElementChild).toBe(form())
-    // The row's description stays under the field.
-    expect(block.querySelector('.zen-settings-description')?.textContent).toBe(
-      'Where the Home button goes.'
-    )
+    // The row's description stays under the field, and the field names it.
+    const description = block.querySelector<HTMLElement>('.zen-settings-description')!
+    expect(description.textContent).toBe('Where the Home button goes.')
+    expect(description.id).toBe('settings-field-homepage-url-description')
+    expect(field.getAttribute('aria-describedby')).toBe(description.id)
     // The footer is the chassis's: Cancel | Save, the primary trailing, untouched.
     const actions = [
       ...form().querySelectorAll<HTMLButtonElement>('.zen-settings-sheet-actions > button')
@@ -134,10 +135,16 @@ describe('the one-field sheet (§9.12)', () => {
     )!
     click(save)
     const block = input().closest<HTMLElement>('.zen-settings-field-block')!
-    expect(block.querySelector('.zen-settings-validation')?.textContent).toBe('Enter a web address')
+    const message = block.querySelector<HTMLElement>('.zen-settings-validation')!
+    expect(message.textContent).toBe('Enter a web address')
     expect(block.querySelector('.zen-settings-description')).toBeNull()
     expect(form().querySelector('label')).toBeNull()
     expect(input().getAttribute('aria-invalid')).toBe('true')
+    // The field names the line in the description's place (`aria-describedby`), so a reader on
+    // the field hears the refusal.
+    expect(message.getAttribute('role')).toBe('alert')
+    expect(message.id).toBe('settings-field-homepage-url-error')
+    expect(input().getAttribute('aria-describedby')).toBe(message.id)
     expect(input().getAttribute('aria-labelledby')).toBe(
       sheet().querySelector('h2.zen-sheet-title')!.id
     )

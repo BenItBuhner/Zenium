@@ -355,6 +355,10 @@ function FieldSheet({
   const [busy, setBusy] = useState(false)
   const id = `settings-field-${row.id.replace(/[^a-z0-9-]/gi, '-')}`
   const titleId = `${id}-title`
+  // The line under the field – the error while one shows, the row's description otherwise – is
+  // the field's description (`aria-describedby`), so a reader on the field hears it.
+  const errorId = `${id}-error`
+  const descriptionId = `${id}-description`
   const refuse = (message: string): void => {
     setError(message)
     setValue('')
@@ -408,6 +412,7 @@ function FieldSheet({
             readOnly={busy}
             aria-labelledby={titleId}
             aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : row.description ? descriptionId : undefined}
             value={value}
             onChange={(e) => {
               setValue(e.target.value)
@@ -418,9 +423,13 @@ function FieldSheet({
             }}
           />
           {error ? (
-            <ValidationMessage message={error} />
+            <ValidationMessage id={errorId} message={error} />
           ) : (
-            row.description && <span className="zen-settings-description">{row.description}</span>
+            row.description && (
+              <span id={descriptionId} className="zen-settings-description">
+                {row.description}
+              </span>
+            )
           )}
         </div>
         <SheetActions

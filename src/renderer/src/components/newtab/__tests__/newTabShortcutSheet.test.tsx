@@ -281,10 +281,14 @@ describe('the shortcut form on a phone (gate item 4: the Address sheet’s chass
       url.closest('.zen-settings-field-block')
     )
     expect(url.getAttribute('aria-invalid')).toBe('true')
+    // The field names the line (`aria-describedby`), as the desktop dialog names its own.
+    expect(message.id).not.toBe('')
+    expect(url.getAttribute('aria-describedby')).toBe(message.id)
     expect(buttons()[1].disabled).toBe(true)
     // The value corrected, the line goes and Save is back.
     type(url, 'https://c.example/')
     expect(form().querySelector('.zen-settings-validation')).toBeNull()
+    expect(url.getAttribute('aria-describedby')).toBeNull()
     expect(buttons()[1].disabled).toBe(false)
   })
 

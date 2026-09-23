@@ -240,6 +240,9 @@ function ShortcutSheet({
   const urlRef = useRef<HTMLInputElement>(null)
   const nameId = useId()
   const urlId = useId()
+  // The URL's validation line, named by the field (`aria-describedby`) while it shows, as the
+  // desktop dialog names `zen-ntp-shortcut-error`.
+  const urlErrorId = `${urlId}-error`
   const editing = request.id !== null
   const dismiss = (then?: () => void): void => sheet.current?.dismiss(then)
 
@@ -290,6 +293,7 @@ function ShortcutSheet({
               if (!form.blocked) save()
             }}
             aria-invalid={form.shownError ? true : undefined}
+            aria-describedby={form.shownError ? urlErrorId : undefined}
             spellCheck={false}
             autoComplete="off"
             autoCapitalize="off"
@@ -297,7 +301,7 @@ function ShortcutSheet({
             enterKeyHint="done"
             placeholder="example.com"
           />
-          {form.shownError && <ValidationMessage message={form.shownError} />}
+          {form.shownError && <ValidationMessage id={urlErrorId} message={form.shownError} />}
         </Field>
         <SheetActions
           action={editing ? 'Save' : 'Add'}
