@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's face (SearchWidgetProvider; WID-01): the omnibox pill as it rests on the
+     new tab page – Zenium's mark, the omnibox's own hint, the mic, the private mask – built of the
+     views RemoteViews allows. The pill is 48 dp with §9.3's 44 dp boxes round 20 dp glyphs; the
+     face fills the cells the launcher gives it and centres in their height. Three taps, three
+     landings (Landing.kt): the face is search, the mic voice, the mask a new private tab.
+     Colours are the v2 tokens' (colors.xml, values-night/colors.xml): the launcher inflates this
+     in the system's theme, so light and dark follow the system as Chrome's widget does. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:id="@+id/widget_search_face"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_gravity="center_vertical"
+        android:background="@drawable/widget_search_pill"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="2dp">
+
+        <ImageView
+            android:id="@+id/widget_search_mark"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_widget_mark" />
+
+        <TextView
+            android:id="@+id/widget_search_hint"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="4dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif"
+            android:maxLines="1"
+            android:text="@string/widget_search_hint"
+            android:textColor="@color/widget_search_hint"
+            android:textSize="16sp" />
+
+        <ImageView
+            android:id="@+id/widget_search_mic"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/widget_search_mic"
+            android:padding="12dp"
+            android:src="@drawable/ic_widget_mic" />
+
+        <ImageView
+            android:id="@+id/widget_search_private"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/widget_search_private"
+            android:padding="12dp"
+            android:src="@drawable/ic_widget_mask" />
+    </LinearLayout>
+</FrameLayout>

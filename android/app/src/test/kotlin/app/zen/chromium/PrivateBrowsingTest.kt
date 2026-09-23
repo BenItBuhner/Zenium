@@ -88,12 +88,12 @@ class PrivateBrowsingTest {
     }
 
     @Test
-    fun theTrampolineForwardsTheShortcutsActionAndNothingElse() {
-        assertEquals(PrivateBrowsing.ACTION_NEW_TAB, PrivateBrowsing.forwardedAction(PrivateBrowsing.ACTION_NEW_TAB))
+    fun theTrampolineForwardsTheShortcutsActionAsThePrivateLandingAndNothingElse() {
+        assertEquals(Landing.PRIVATE, Landing.forwarded(PrivateBrowsing.ACTION_NEW_TAB, null))
         // A launcher tap on an icon alias, or any other start, is the launcher's plain start.
-        assertEquals(null, PrivateBrowsing.forwardedAction("android.intent.action.MAIN"))
-        assertEquals(null, PrivateBrowsing.forwardedAction("android.intent.action.VIEW"))
-        assertEquals(null, PrivateBrowsing.forwardedAction(null))
+        assertEquals(null, Landing.forwarded("android.intent.action.MAIN", null))
+        assertEquals(null, Landing.forwarded("android.intent.action.VIEW", null))
+        assertEquals(null, Landing.forwarded(null, null))
     }
 
     /**

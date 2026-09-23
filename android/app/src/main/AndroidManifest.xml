@@ -374,6 +374,21 @@
             android:name=".ShortcutPinnedReceiver"
             android:exported="false" />
 
+        <!-- The Home-screen search widget (SearchWidgetProvider; WID-01): the pill's face opens the
+             app in the omnibox, the mic in voice search, the mask in a new private tab, each through
+             the landing extra (Landing.kt). Exported for the system's APPWIDGET_UPDATE alone. -->
+        <receiver
+            android:name=".SearchWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_search_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/appwidget_search" />
+        </receiver>
+
         <!-- "Close all private tabs" on the private session's notification (PrivateSession.kt); in the
              manifest so a press on a card that outlived the process still takes the card down. -->
         <receiver

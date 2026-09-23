@@ -298,9 +298,10 @@ class MainActivity : BrowserActivity() {
             Intent.ACTION_WEB_SEARCH -> host.share.onWebSearch(intent)
             // One of Zenium's own buttons in the system share sheet (Android 14).
             Share.ACTION_BROWSER_ACTION -> host.share.onBrowserAction(intent)
-            // The launcher's "New private tab" shortcut (src/main/shortcuts/shortcuts.xml, relayed
-            // by LauncherIconActivity): the chrome opens one in the current space, or says why it
-            // cannot on a WebView without profiles.
+            // "New private tab" by its action, aimed straight at this activity (a pinned copy of the
+            // launcher shortcut from before the landing extra; the shortcut itself arrives through
+            // LauncherIconActivity as the private landing below): the chrome opens one in the
+            // current space, or says why it cannot on a WebView without profiles.
             PrivateBrowsing.ACTION_NEW_TAB -> host.chrome.newPrivateTab()
             // A tap or a button on an extension's notification card (chrome.notifications).
             ExtensionNotifications.ACTION_OPENED -> host.extensions.onNotificationIntent(intent)
@@ -309,8 +310,13 @@ class MainActivity : BrowserActivity() {
             // A tap on a page's notification: its tab comes forward (WebNotifications.kt).
             WebNotifications.ACTION_OPENED -> host.webNotifications.onOpenIntent(intent)
         }
+        // The search widget's face or a launcher shortcut (relayed by LauncherIconActivity) named
+        // the state to open in (Landing.kt, WID-07): the chrome lands in it – the one extra and
+        // this read are all the boot path carries for it.
+        Landing.of(intent)?.let { host.chrome.land(it) }
         // Consume so a configuration change does not re-open it.
         intent.action = null
+        intent.removeExtra(Landing.EXTRA)
     }
 
     // --- lifecycle --------------------------------------------------------------------------

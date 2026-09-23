@@ -48,6 +48,7 @@ import { Bridge, getNativeBridge } from './bridge'
 import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
+import { landFromIntent } from './landing'
 import { schemeForPages } from './pageScheme'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
@@ -115,6 +116,12 @@ export interface HostGlobal {
   selectionMenu(tabId: string, json: string | null): SelectionToolbarItem[]
   /** The launcher's "New private tab" shortcut: a private tab in the current space. */
   newPrivateTab(): void
+  /**
+   * The search widget's or a launcher shortcut's landing state (`Landing.kt`'s intent extra,
+   * WID-07): the app opens straight in it – a new tab with the omnibox focused, listening, the
+   * QR scanner, or a private tab – the previous tab never painting (`landing.ts`).
+   */
+  land(state: string): void
 }
 /**
  * Start Zen inside the chrome WebView: build the core on the Android platform, expose the
@@ -473,7 +480,11 @@ function installHostGlobal(
     newPrivateTab: () =>
       withPlatform((platform) => {
         openShortcutPrivateTab(platform.browser, platform.window)
-      })
+      }),
+    land: (state) =>
+      withPlatform((platform) => {
+        landFromIntent(state, platform.browser, platform.window)
+      }, 'land')
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
   return {

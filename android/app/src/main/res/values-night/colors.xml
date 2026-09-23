@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search widget's face in the system's dark theme (see values/colors.xml): the v2 tokens'
+     dark values, the hint the dark text ink at 69 %, the mark the indigo Theme.Zen lifts for dark. -->
+<resources>
+    <color name="widget_search_fill">@color/v2_panel_dark</color>
+    <color name="widget_search_hairline">@color/v2_border_dark</color>
+    <color name="widget_search_ink">@color/v2_text_dark</color>
+    <color name="widget_search_hint">#B0FBFBFE</color>
+    <color name="widget_search_mark">#8284F0</color>
+</resources>

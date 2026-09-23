@@ -47,4 +47,18 @@
     <!-- The danger ink (the zen-danger status ink): a destructive peer's label (Exit page, Remove). -->
     <color name="v2_danger_light">#B02A2A</color>
     <color name="v2_danger_dark">#FF8080</color>
+
+    <!--
+      The search widget's face (SearchWidgetProvider, res/layout/widget_search.xml; WID-01): the
+      launcher inflates it in the system's theme, so these carry the v2 tokens' light values and
+      values-night/colors.xml the dark ones. The fill is the panel's (a surface floating over the
+      wallpaper, as a sheet floats over the page), the hairline the border's, the glyphs the text
+      ink, the hint the text ink at 69 % (§9.29's deemphasised text), the mark the app icon's
+      indigo (Theme.Zen's primary, lifted for dark as the theme lifts it).
+    -->
+    <color name="widget_search_fill">@color/v2_panel_light</color>
+    <color name="widget_search_hairline">@color/v2_border_light</color>
+    <color name="widget_search_ink">@color/v2_text_light</color>
+    <color name="widget_search_hint">#B015141A</color>
+    <color name="widget_search_mark">#6264DC</color>
 </resources>

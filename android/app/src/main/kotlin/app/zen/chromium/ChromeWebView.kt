@@ -312,6 +312,15 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         onReady { js("window.__zenHost&&__zenHost.newPrivateTab()") }
     }
 
+    /**
+     * The search widget's or a launcher shortcut's landing state ([Landing], WID-07): the chrome
+     * opens straight in it once the core is up – the same ready queue as [openUrl], so on a cold
+     * start it is applied in the boot's own run, before the chrome's first frame (`landing.ts`).
+     */
+    fun land(state: String) {
+        onReady { js("window.__zenHost&&__zenHost.land(${JSONObject.quote(state)})") }
+    }
+
     // --- the omnibox field's floating toolbar (see FieldToolbar.kt) --------------------------
 
     /**
