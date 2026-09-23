@@ -81,6 +81,15 @@ import {
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
 
+/**
+ * The site-information slot's one glyph size: §9.19's 16 in the slot's 24 box, at the row's
+ * stroke (`TOOLBAR_STROKE`), whatever the slot shows – the connection's lock, the private
+ * tab's mask, a live capture's camera, a block's crossed-out glyph (§9.29's precedence). One
+ * class for the resting glyph and the state glyphs alike, so the slot's box – and with it the
+ * address's room – never changes when a state comes on; the 12 was the shield's one-off.
+ */
+const SLOT_GLYPH = 'h-4 w-4'
+
 interface Props {
   state: UIState
   tab: Tab | null
@@ -508,17 +517,33 @@ export function NavRow({
           */}
           <span className="contents group/chips">
             {isPrivate ? (
-              <VenetianMask
-                className="order-first h-3.5 w-3.5 shrink-0 opacity-70"
-                data-private-mark=""
+              // A private tab's mask in the site-information slot (§9.19: 16 at the row stroke
+              // in the pill's leading slot): the slot's 24 box and its one glyph size, so the
+              // address keeps the room it has on any other tab, in the slot's rest ink – the
+              // window's deemphasised token, once. The mask is the tab's, keyed on the tab's
+              // privacy (§9.19 as amended at #408); on the desktop the slot draws no button on
+              // a private tab, as before this round.
+              <span
+                className={cn(
+                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center',
+                  'text-[var(--v2-control-text-deemphasized)]'
+                )}
+                data-private-slot=""
                 aria-hidden="true"
-              />
+              >
+                <VenetianMask
+                  className={SLOT_GLYPH}
+                  strokeWidth={TOOLBAR_STROKE}
+                  data-private-mark=""
+                />
+              </span>
             ) : url && tab ? (
-              // The site-information slot (§9.19's 24 box): the site's state at a glance, site
-              // information on click. Its glyph is one state at a time (§9.29): the connection's
-              // – the lock, the info circle, a certificate error's triangle – or, in its place,
-              // the camera / microphone / screen the page is using, or the crossed-out glyph of
-              // the first permission blocked on the site (`slot`). Its name says which
+              // The site-information slot (§9.19's 24 box, one 16 glyph in it at every state –
+              // `SLOT_GLYPH`): the site's state at a glance, site information on click. Its
+              // glyph is one state at a time (§9.29): the connection's – the lock, the info
+              // circle, a certificate error's triangle – or, in its place, the camera /
+              // microphone / screen the page is using, or the crossed-out glyph of the first
+              // permission blocked on the site (`slot`). Its name says which
               // ("Site information · Camera and microphone blocked") and the tooltip carries the
               // state's name (`PillChip`'s `title` → `data-tooltip`; a11y-26). The ink is the
               // window's, once: the deemphasised 69 % at rest (the lock, a block – a standing
@@ -842,8 +867,9 @@ function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>, mounted: boole
 /**
  * The slot's state glyphs (omnibox-38; Chrome's location-bar icons): the camera, the microphone
  * or the sharing glyph while the page captures, the crossed-out camera, microphone, location or
- * bell for a permission blocked on the site. Drawn at §9.19's 16 in the 24 box, at the row's
- * stroke like every 16 px glyph in the row (§9.3); the ink is the chip's.
+ * bell for a permission blocked on the site. Drawn at the slot's one size (`SLOT_GLYPH`, §9.19's
+ * 16 in the 24 box), at the row's stroke like every 16 px glyph in the row (§9.3); the ink is
+ * the chip's.
  */
 const SLOT_GLYPHS = {
   camera: Camera,
@@ -857,29 +883,33 @@ const SLOT_GLYPHS = {
 
 function SlotGlyph({ glyph }: { glyph: SiteSlotState['glyph'] }): JSX.Element {
   const Glyph = SLOT_GLYPHS[glyph]
-  return <Glyph className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} aria-hidden />
+  return <Glyph className={SLOT_GLYPH} strokeWidth={TOOLBAR_STROKE} aria-hidden />
 }
 
 /**
  * The site icon's glyph for an indicator state (the state itself is derived in the core, see
  * `securityIndicator`): the lock for https; Chrome's info circle for http, which the "Not
  * secure" text goes with; the warning triangle for a certificate error; the page glyph for
- * `file:` and Zenium's own pages; the info circle where nothing more is known.
+ * `file:` and Zenium's own pages; the info circle where nothing more is known. The connection's
+ * glyph is the slot's resting one and draws at the slot's one size and stroke (`SLOT_GLYPH`,
+ * §9.19 / §9.29), the same 16 a state glyph takes in its place; the ink is the chip's – the
+ * danger ink for the certificate error's triangle is set on the chip, not here.
  */
 function IndicatorGlyph({ state, scheme }: { state: IndicatorState; scheme: string }): JSX.Element {
+  const glyph = { className: SLOT_GLYPH, strokeWidth: TOOLBAR_STROKE, 'aria-hidden': true } as const
   switch (state) {
     case 'secure':
-      return <Lock className="h-3 w-3" />
+      return <Lock {...glyph} />
     case 'certificate-error':
-      return <TriangleAlert className="h-3 w-3" />
+      return <TriangleAlert {...glyph} />
     case 'internal':
-      return <File className="h-3 w-3" />
+      return <File {...glyph} />
     case 'local':
-      return scheme === 'file' ? <File className="h-3 w-3" /> : <Info className="h-3 w-3" />
+      return scheme === 'file' ? <File {...glyph} /> : <Info {...glyph} />
     case 'empty':
-      return <Search className="h-3 w-3" />
+      return <Search {...glyph} />
     default:
-      return <Info className="h-3 w-3" />
+      return <Info {...glyph} />
   }
 }
 
