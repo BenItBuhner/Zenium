@@ -31,10 +31,11 @@ export const HISTORY_MENU_MAX = 8
  * eight rows of favicon and title (the URL where the page had none), then a rule and "Show full
  * history" – Chrome's `NavigationPopup` on its tablet toolbar's Back (GN-08), which leaves the
  * full-history row out of an incognito window as this does on a private tab. A row jumps the tab
- * to that entry (`tab.goToIndex`) – picked by the finger that opened the popup dragging to it
- * and releasing (§9.13's popover exception as granted: the finger never lifts; `useBarHold`'s
- * release reads the `data-hold-pick` mark), or by a tap after a release elsewhere, as Chrome
- * Android's popup is used. A popover on the v2 menu surface through the chrome layer
+ * to that entry (`tab.goToIndex`), in both of §9.13's forms as the lead ruled them for GN-08:
+ * the finger that opened the popup drags to the row – lit under it as it passes (`useBarHold`
+ * sets `data-hold-lit` on the `data-hold-pick` row it stands over) – and releases on it, or it
+ * lifts on no row, which leaves the popup up, and taps the row, as Chrome Android's popup is
+ * used. A popover on the v2 menu surface through the chrome layer
  * (§9.20's placement: hanging from the bar's edge, start-aligned on the button, flipped above a
  * bar docked at the bottom); the layer's light dismiss, the system back and Escape close it, and
  * so does the tab moving on underneath – a navigation, another tab, the overview or the URL bar

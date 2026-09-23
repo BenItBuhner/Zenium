@@ -169,6 +169,32 @@ describe('BackHistoryMenu', () => {
     expect(popup()?.querySelector('[role="separator"]')).toBeNull()
   })
 
+  it('stays up when the held finger lifts on no row, and closes on the next press outside', async () => {
+    await show(STACK)
+    const outside = (type: string): void => {
+      act(() => {
+        document.body.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 1,
+            pointerType: 'touch',
+            button: 0,
+            clientX: 300,
+            clientY: 400
+          })
+        )
+      })
+    }
+    // The hold's release beside the rows (§9.13's second form): the popup waits for a tap.
+    outside('pointerup')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(popup()).not.toBeNull()
+    // A press elsewhere is the layer's light dismiss.
+    outside('pointerdown')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('closes on Escape', async () => {
     await show(STACK)
     act(() => {

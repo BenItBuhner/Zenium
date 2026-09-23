@@ -15,9 +15,18 @@ const CLICK_GRACE_MS = 400
  * that opened a surface with a hold either drags to a row and releases on it – the desktop's
  * reading of v2 §9.13's popover exception, Chrome's desktop back menu – or lifts elsewhere and
  * taps a row, as Chrome Android's popup is used: a release over nothing so marked leaves the
- * surface as it was.
+ * surface as it was. Both forms are the lead's ruling for GN-08 (§9.13 widened to say so).
  */
 export const HOLD_PICK_ATTR = 'data-hold-pick'
+
+/**
+ * Set on the {@link HOLD_PICK_ATTR} row the held finger stands over, as it passes: the row shows
+ * its pressed tone (the rows' own `:active` rule reads the mark too) and follows the finger
+ * through the list, cleared when the finger leaves it, lifts or is taken away. A touch is
+ * implicitly captured by the button it pressed, so the row never turns `:active` itself; the
+ * hold's own hit test lights it. Drivers read the mark for the row under the finger.
+ */
+export const HOLD_LIT_ATTR = 'data-hold-lit'
 
 export interface BarHoldOptions {
   /** A hold on a button (named) or on the bar's background (null). */
@@ -43,8 +52,9 @@ interface Hold {
  * editor's entry point (and the Tabs button's quick menu). The press is cancelled by movement
  * or by the finger lifting first. A hold that fires swallows the click its release would
  * produce, wherever that click lands: by then the surface the hold opened lies under the
- * finger, and a click on its scrim would close it again before it had arrived. The release
- * itself may pick: let go over a row marked {@link HOLD_PICK_ATTR}, the finger that never
+ * finger, and a click on its scrim would close it again before it had arrived. From then on the
+ * finger is followed: the row marked {@link HOLD_PICK_ATTR} under it is lit ({@link HOLD_LIT_ATTR})
+ * as it passes, and the release itself may pick – let go over such a row, the finger that never
  * lifted has chosen it, and the row is clicked; let go anywhere else, the surface stays for a
  * tap (both readings of §9.13's popover exception hold).
  *
@@ -80,19 +90,35 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
   )
 
   /**
-   * Eat the next click, until shortly after the pointer `id` has lifted – and read the lift
-   * itself: released over a {@link HOLD_PICK_ATTR} row, the finger picks it.
+   * Follow the pointer `id` from the hold to its lift: the {@link HOLD_PICK_ATTR} row under the
+   * finger lit as it passes, the next click eaten until shortly after the lift – and the lift
+   * itself read: released over such a row, the finger picks it.
    */
   const swallowRelease = (id: number): void => {
     disarm.current?.()
     let timer: ReturnType<typeof setTimeout> | null = null
     // The pick's own click passes; the platform's, should the release produce one, is eaten.
     let picking = false
+    let lit: HTMLElement | null = null
+    const light = (row: HTMLElement | null): void => {
+      if (row === lit) return
+      lit?.removeAttribute(HOLD_LIT_ATTR)
+      lit = row
+      row?.setAttribute(HOLD_LIT_ATTR, '')
+    }
+    // The finger's own point: a touch pointer is implicitly captured by the button it pressed,
+    // so the event's target is the button wherever the finger has gone.
+    const rowUnder = (e: PointerEvent): HTMLElement | null =>
+      document
+        .elementFromPoint(e.clientX, e.clientY)
+        ?.closest<HTMLElement>(`[${HOLD_PICK_ATTR}]`) ?? null
     const off = (): void => {
       window.removeEventListener('click', swallow, true)
+      window.removeEventListener('pointermove', moved, true)
       window.removeEventListener('pointerup', lifted, true)
       window.removeEventListener('pointercancel', lifted, true)
       if (timer) clearTimeout(timer)
+      light(null)
       disarm.current = null
     }
     const swallow = (e: MouseEvent): void => {
@@ -101,16 +127,18 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
       e.stopPropagation()
       off()
     }
+    const moved = (e: PointerEvent): void => {
+      if (e.pointerId === id) light(rowUnder(e))
+    }
     const lifted = (e: PointerEvent): void => {
       if (e.pointerId !== id) return
+      window.removeEventListener('pointermove', moved, true)
+      window.removeEventListener('pointerup', lifted, true)
+      window.removeEventListener('pointercancel', lifted, true)
       timer = setTimeout(off, CLICK_GRACE_MS)
       // A touch the system took away (pointercancel) chose nothing.
-      if (e.type !== 'pointerup') return
-      // The finger's own release point: a touch pointer is implicitly captured by the button it
-      // pressed, so the event's target is the button wherever the finger has gone.
-      const row = document
-        .elementFromPoint(e.clientX, e.clientY)
-        ?.closest<HTMLElement>(`[${HOLD_PICK_ATTR}]`)
+      const row = e.type === 'pointerup' ? rowUnder(e) : null
+      light(null)
       if (!row) return
       picking = true
       try {
@@ -120,6 +148,7 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
       }
     }
     window.addEventListener('click', swallow, true)
+    window.addEventListener('pointermove', moved, true)
     window.addEventListener('pointerup', lifted, true)
     window.addEventListener('pointercancel', lifted, true)
     disarm.current = off

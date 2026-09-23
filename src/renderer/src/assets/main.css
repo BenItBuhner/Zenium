@@ -8222,7 +8222,11 @@
     font-weight: var(--v2-weight-body);
     transition: background 120ms var(--zen-ease);
   }
-  .zen-quick-menu-item:active:not(:disabled) {
+  /*
+   * The pressed tone: a finger on the row, or the hold's finger standing over it (`data-hold-lit`,
+   * `useBarHold` – the touch is captured by the bar's button, so the row is never `:active`).
+   */
+  .zen-quick-menu-item:is(:active, [data-hold-lit]):not(:disabled) {
     background: var(--v2-fill);
   }
   .zen-quick-menu-item:disabled {
