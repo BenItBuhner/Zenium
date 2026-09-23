@@ -2843,19 +2843,19 @@ export class Menus {
    * The "⋯" application menu in the toolbar (Firefox's hamburger menu). One set of items for
    * every layout, in two orders. The sidebar layouts (desktop and tablet) take Firefox's groups
    * (design language v2 §6 "Menus"): the tabs and windows; the library – bookmarks, history,
-   * downloads, passwords, add-ons; the page's actions; Chrome's Save and share – Save Page As…,
-   * Create Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – as a group of its
-   * own between the page's and the app's (shortcuts-menus-120; Chrome folds it into a submenu,
-   * Firefox keeps save and print in the flat list); the app's – Settings, More Tools, Help,
-   * Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
-   * eighteen rows and four separators (§6's ceiling; a fifth under the "Now Playing…" row while
-   * the media hub's button has folded, which the PR body names), so the menu stands on an 800 px
-   * window without scrolling (§6: a menu is exempt from §9.20's 60% cap and takes the room to the
-   * window's bottom margin). What Firefox's count leaves out is not lost but moves into a
-   * submenu: History carries the recently closed list as Chrome's does, Zoom the fullscreen
-   * toggle as Firefox's zoom row does, More Tools Zenium's space and window actions with an
-   * installed app's Open in <app>, the captures, the developer tools and the resources (Chrome's
-   * More tools holds its window and task-manager rows the same way), Help the menu bar's Help
+   * downloads, passwords, add-ons; the page's actions, closing with Chrome's Save and share –
+   * Save Page As…, Create Shortcut…, Web Capture…, Print…, Share…, Send to Your Devices – as
+   * the submenu Chrome folds it into (shortcuts-menus-120; Firefox keeps save and print in the
+   * flat list, and a flat group here spent rows the menu has not got); the app's – Settings,
+   * More Tools, Help, Quit, Firefox's order and §6's ("settings, tools, help, quit") – about
+   * eighteen rows and three separators (§6's ceiling; a fourth under the "Now Playing…" row
+   * while the media hub's button has folded), so the menu stands on an 800 px window without
+   * scrolling (§6: a menu is exempt from §9.20's 60% cap and takes the room to the window's
+   * bottom margin). What Firefox's count leaves out is not lost but moves into a submenu:
+   * History carries the recently closed list as Chrome's does, Zoom the fullscreen toggle as
+   * Firefox's zoom row does, More Tools Zenium's space and window actions with an installed
+   * app's Open in <app>, the captures, the developer tools and the resources (Chrome's More
+   * tools holds its window and task-manager rows the same way), Help the menu bar's Help
    * entries and the About row. The phone layout – which has no
    * sidebar, window frame or keyboard to speak of – keeps Chrome's phone menu (TB-08): the icon
    * row first, then the tabs, library, page and app groups in one flat list, without the items
@@ -3299,18 +3299,24 @@ export class Menus {
         ...textPreferences,
         ...listen,
         ...pageControls,
-        separator,
-        // Chrome's Save and share as a group of its own (shortcuts-menus-120), one separator
-        // each side: the saves first – Save Page As…, the install row (Create Shortcut…, or
-        // Install <app>…), Web Capture… between the save and the print where Edge's menu keeps
-        // it, Print… – then the shares, Share… and Send to Your Devices. No Cast row: Zenium
-        // has no cast target.
-        savePageAs,
-        ...createShortcut,
-        ...webCapture,
-        ...print,
-        ...share,
-        ...sendToDevices,
+        // Chrome's Save and share (shortcuts-menus-120) closes the page group as its last row,
+        // folded into a submenu as Chrome folds it (the #396 review's ruling 1): the saves first
+        // – Save Page As…, the install row (Create Shortcut…, or Install <app>…), Web Capture…
+        // between the save and the print where Edge's menu keeps it, Print… – then the shares,
+        // Share… and Send to Your Devices. No Cast row: Zenium has no cast target. Folded, the
+        // top level keeps #299's count whatever the host gates – twenty rows and three
+        // separators on the Linux build, 661 px – and stands whole on an 800 px window (§6).
+        {
+          label: 'Save and Share',
+          submenu: [
+            savePageAs,
+            ...createShortcut,
+            ...webCapture,
+            ...print,
+            ...share,
+            ...sendToDevices
+          ]
+        },
         separator,
         // The app's, in Firefox's order and §6's: settings, tools, help, quit.
         settings,
