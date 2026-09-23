@@ -10380,6 +10380,21 @@
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* The column's top for anything scrolled into view is the sticky find field's bottom edge
+     (its box below: 16 + the control + 8), so a landed group's heading shows under the field. */
+  scroll-padding-top: calc(var(--v2-control) + 24px);
+}
+/*
+ * A landing (`?row=` / `?site=`, `SettingsPage`'s `landingPad`): the column pads its end by what
+ * the landed group lacks to reach the top – a group near a section's end otherwise stops where
+ * the content under it runs out (the desktop's #356: Sync's Open tabs group mid-page at a 1000 px
+ * window) – as Chrome's settings pages pad the page for a deep link. The page measures the pad
+ * and carries `data-landing` only while a landing is asked, so an ordinary section keeps its
+ * end: the phone's 24 under the rows, the pane's 40.
+ */
+.zen-settings-page[data-landing] .zen-settings-scroll > .zen-settings-body,
+.zen-settings-page[data-landing] .zen-settings-pane > .zen-settings-body {
+  padding-bottom: var(--zen-settings-landing-pad, 0px);
 }
 /*
  * "Find in Settings" (§10.5, §9.12): the column opens with the shared field – 32 tall on the
