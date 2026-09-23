@@ -5293,6 +5293,13 @@ export interface Events {
    */
   'view.drawn': { tabId: string; visible: boolean }
   /**
+   * A hardware keyboard's Tab ran past the active page's last tabbable (`forward`) or its
+   * Shift+Tab past the first (`backward`) and the host handed the chrome the keyboard – the
+   * Android host, whose page and chrome are WebViews side by side (`FocusHandoff.kt`; A11Y-09):
+   * the chrome lands the focus on its first or last control (`lib/panes.ts`).
+   */
+  'focus.fromPage': { direction: 'forward' | 'backward' }
+  /**
    * The host has drawn `tabId`'s page view at a new size (CSS px) – raised by the Android host
    * after every change of the view's size, once the page has content at it – for the chrome's
    * return from a page's fullscreen to fade in on the page's landing (`lib/fullscreenLanding.ts`).

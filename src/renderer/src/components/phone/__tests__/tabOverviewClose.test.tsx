@@ -388,8 +388,10 @@ describe('Close all tabs', () => {
       '.zen-frame-dialogs input[type="checkbox"]'
     )!
     expect(checkbox.checked).toBe(false)
-    // Cancel takes the focus as the sheet opens, so a stray Enter closes nothing.
-    expect(document.activeElement).toBe(buttonByText('Cancel'))
+    // The checkbox row takes the focus as the sheet opens (§9.22: a sheet whose first control
+    // is a checkbox opens on it; Cancel first is the named failure), so a stray Enter closes
+    // nothing.
+    expect(document.activeElement).toBe(checkbox)
     await pick('Cancel')
     expect(dialogTitle()).toBeUndefined()
     expect(commands()).toEqual([])

@@ -9,7 +9,8 @@ import {
   PhoneGroupHeading,
   PhoneIconButton,
   PhoneListRow,
-  PhoneSelectionHeader
+  PhoneSelectionHeader,
+  RowFavicon
 } from '../PhoneList'
 
 /*
@@ -272,6 +273,121 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
       expect(row.firstElementChild!.getAttribute('role')).toBe('button')
     }
     expect(css).not.toMatch(/data-static/)
+  })
+
+  it('draws a leading glyph in full ink like the label it introduces (§10.4): no .7 on the lead box or on a caller’s glyph', () => {
+    // The lead box itself carries no opacity; the deemphasis is §9.29's, for supplementary text.
+    expect(rule('.zen-list-lead')).not.toMatch(/opacity/)
+    // Nor does any glyph a `PhoneListRow` caller hands it (`icon={…}`): the puzzle piece before
+    // Manage extensions, the folder before a bookmark folder, the closed window's glyph, a
+    // device's kind. The one exception §10.4 grants is a stand-in for a picture the row does not
+    // have (the globe for a page with no favicon), which is `RowFavicon`'s `fallback`, never the
+    // `icon` itself – so the first tag after `icon={` is the one judged.
+    const phone = resolve(__dirname, '..')
+    const callers = [
+      'ExtensionsSheet.tsx',
+      'PhoneBookmarksPanel.tsx',
+      'PhoneHistoryPanel.tsx',
+      'RecentlyClosedSheet.tsx',
+      'SendTabSheet.tsx'
+    ]
+    let judged = 0
+    for (const file of callers) {
+      const source = readFileSync(resolve(phone, file), 'utf8')
+      for (const at of source.matchAll(/icon=\{/g)) {
+        // The tag's own attributes, up to a nested tag (a `RowFavicon`'s `fallback={<Globe …`).
+        const tag = /<(\w+)([^<>]*)/.exec(source.slice(at.index, at.index + 400))
+        if (!tag) continue
+        judged++
+        const className = /className="([^"]*)"/.exec(tag[2])?.[1] ?? ''
+        expect(className, `${file}: <${tag[1]}> as a row's leading glyph`).not.toMatch(/opacity-/)
+      }
+    }
+    expect(judged).toBeGreaterThanOrEqual(5)
+  })
+
+  it('draws the stand-in for a missing favicon at 69% (§10.4’s one exception), the real favicon full', () => {
+    // The one glyph §10.4 dims: a stand-in for a picture the row does not have, the globe where a
+    // page offered no favicon, at 69% "so it reads as the absence it is and not as a site's mark
+    // beside the real favicons around it". One class carries the value; the callers name it.
+    expect(rule('.zen-list-standin')).toMatch(/opacity: 0?\.69\b/)
+    const phone = resolve(__dirname, '..')
+    const callers = [
+      'OtherDevicesGroup.tsx',
+      'PhoneBookmarksPanel.tsx',
+      'PhoneHistoryPanel.tsx',
+      'RecentlyClosedSheet.tsx'
+    ]
+    let standIns = 0
+    for (const file of callers) {
+      const source = readFileSync(resolve(phone, file), 'utf8')
+      for (const at of source.matchAll(/fallback=\{<Globe([^<>]*)/g)) {
+        standIns++
+        const className = /className="([^"]*)"/.exec(at[1])?.[1] ?? ''
+        expect(className.split(/\s+/), `${file}: the globe stand-in`).toContain('zen-list-standin')
+        expect(
+          className,
+          `${file}: the stand-in's ink is the class's, not a utility's`
+        ).not.toMatch(/opacity-/)
+      }
+    }
+    expect(standIns).toBeGreaterThanOrEqual(5)
+    // The fallback stands only where there is no picture: a favicon that arrives is drawn full.
+    const missing = render(
+      <RowFavicon src={null} fallback={<span data-standin className="zen-list-standin" />} />
+    )
+    expect(missing.querySelector('[data-standin]')).not.toBeNull()
+    expect(missing.querySelector('img')).toBeNull()
+    const present = render(
+      <RowFavicon src="https://example.com/favicon.ico" fallback={<span data-standin />} />
+    )
+    const img = present.querySelector<HTMLImageElement>('img.zen-list-favicon')!
+    expect(img).not.toBeNull()
+    expect(img.className).not.toMatch(/standin|opacity/)
+    expect(present.querySelector('[data-standin]')).toBeNull()
+  })
+
+  it('draws a row’s trailing icon button in the row’s ink (§9.3): the stand-in alone is dimmed', () => {
+    // §9.3 puts an icon button in the ink of the row it sits in, at one stroke – the ⋮ that
+    // opens a bookmark's menu, the × that removes a history entry – so the shared button carries
+    // no opacity and no caller dims the glyph it hands it. The one dimmed glyph in these rows is
+    // §10.4's stand-in (the test above); a trailing button at .6 read as a second one.
+    const main_css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    const button = main_css.slice(main_css.indexOf('\n.zen-v2-icon-button {\n'))
+    expect(button.slice(0, button.indexOf('\n}'))).not.toMatch(/opacity/)
+    const phone = resolve(__dirname, '..')
+    // From `<PhoneIconButton` to the glyph tag closing right before `</PhoneIconButton>`, never
+    // across a second button (a self-closing one has no glyph to judge).
+    const glyphInButton =
+      /<PhoneIconButton\b(?:(?!<PhoneIconButton)[\s\S])*?<(\w+)([^<>]*)\/>\s*<\/PhoneIconButton>/g
+    let judged = 0
+    for (const file of ['PhoneBookmarksPanel.tsx', 'PhoneHistoryPanel.tsx', 'GroupsPane.tsx']) {
+      const source = readFileSync(resolve(phone, file), 'utf8')
+      for (const at of source.matchAll(glyphInButton)) {
+        judged++
+        const className = /className="([^"]*)"/.exec(at[2])?.[1] ?? ''
+        expect(className, `${file}: <${at[1]}> in an icon button`).not.toMatch(/opacity-/)
+      }
+    }
+    // The bookmarks panel's five buttons (the header's, the selection bar's, the row's ⋮), the
+    // history panel's three (the selection bar's two, the row's ×) and the groups pane's one.
+    expect(judged).toBeGreaterThanOrEqual(8)
+    const el = render(
+      <PhoneListRow
+        icon={<span />}
+        title="Hacker News"
+        trailing={
+          <PhoneIconButton label="More options for Hacker News" onClick={noop}>
+            <svg className="h-5 w-5" />
+          </PhoneIconButton>
+        }
+        onTap={noop}
+      />
+    )
+    const action = el.querySelector<HTMLButtonElement>('button.zen-v2-icon-button')!
+    expect(action.className).not.toMatch(/opacity/)
+    expect(action.style.opacity).toBe('')
+    expect(action.firstElementChild!.getAttribute('class')).not.toMatch(/opacity/)
   })
 })
 

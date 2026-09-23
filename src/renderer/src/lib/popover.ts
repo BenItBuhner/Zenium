@@ -148,14 +148,18 @@ const CHECKED =
 /**
  * What takes the focus as a phone sheet opens (§9.22, §9.24): the option that is checked or
  * selected, so a picker opens on its current value; else the first row or focusable control of
- * the body that is not a text field – a field would bring the keyboard up with the sheet, so a
- * form's first focus is its first button, Cancel – else such a control in the sheet's header;
- * else the dialog itself (`tabIndex -1`), for a sheet that is all notice. The grabber is first
- * in the tab order but never the first focus. `sheet` is the dialog element, `body` its
- * scrolling content.
+ * the body – unless that first control is a text field: a field would bring the keyboard up
+ * with the sheet, so a form sheet whose first control is a field focuses the dialog itself
+ * (`tabIndex -1`, named by its title), §9.22's form-sheet exception, and never the button after
+ * the field (landing on Cancel is the failure case the section names); else such a control in
+ * the sheet's header that is not a text field; else the dialog itself, for a sheet that is all
+ * notice. A footer's buttons – `.zen-sheet-footer`, the chassis's slot or a prompt's own under
+ * its paragraph, Cancel first – are the way out, never the landing: a prompt whose only controls
+ * are its footer's opens on its container. The grabber is first in the tab order but never the
+ * first focus. `sheet` is the dialog element, `body` its scrolling content.
  */
 export function sheetInitialFocus(sheet: HTMLElement, body: HTMLElement): HTMLElement {
-  const inBody = focusableIn(body)
+  const inBody = focusableIn(body).filter((el) => !el.closest('.zen-sheet-footer'))
   const checked = body.querySelector(CHECKED)
   if (checked) {
     const option = inBody.find(
@@ -163,10 +167,11 @@ export function sheetInitialFocus(sheet: HTMLElement, body: HTMLElement): HTMLEl
     )
     if (option) return option
   }
-  const control = (list: HTMLElement[]): HTMLElement | undefined =>
-    list.find((el) => !isTextField(el))
+  const first = inBody[0]
+  if (first) return isTextField(first) ? sheet : first
   const inHeader = focusableIn(sheet).filter(
-    (el) => !body.contains(el) && !el.closest('.zen-sheet-handle-hit')
+    (el) =>
+      !body.contains(el) && !el.closest('.zen-sheet-handle-hit') && !el.closest('.zen-sheet-footer')
   )
-  return control(inBody) ?? control(inHeader) ?? sheet
+  return inHeader.find((el) => !isTextField(el)) ?? sheet
 }

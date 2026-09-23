@@ -251,3 +251,29 @@ describe('the Android page script and the PDF viewer’s report (CT-02; the nigh
     expect(messages.every((m) => m.token === '__ZEN_TOKEN__')).toBe(true)
   })
 })
+
+describe('the Android page script and a Tab entering the page (A11Y-09’s remainder)', () => {
+  it('lands the host’s focus message on the document’s first or last tabbable', () => {
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<a id="first-link" href="#a">a</a><button id="last-button">b</button>'
+    )
+    const onScreen = (): DOMRect[] => [new DOMRect(0, 0, 10, 10)]
+    const previous = Element.prototype.getClientRects
+    Element.prototype.getClientRects =
+      onScreen as unknown as typeof Element.prototype.getClientRects
+    try {
+      down({ type: 'focus', edge: 'first' })
+      expect(document.activeElement?.id).toBe('first-link')
+      down({ type: 'focus', edge: 'last' })
+      expect(document.activeElement?.id).toBe('last-button')
+      // Kotlin's message names the edge or the landing is the first, as a Tab's is.
+      down({ type: 'focus' })
+      expect(document.activeElement?.id).toBe('first-link')
+    } finally {
+      Element.prototype.getClientRects = previous
+      document.getElementById('first-link')?.remove()
+      document.getElementById('last-button')?.remove()
+    }
+  })
+})

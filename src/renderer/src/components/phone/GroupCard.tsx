@@ -108,9 +108,15 @@ export function GroupCard({
     const anim = new SpringAnimation(
       SPRING_GENTLE,
       (h) => {
-        const height = Math.max(latest.current.dissolving ? 0 : groupHeaderHeight(), h)
+        const floor = latest.current.dissolving ? 0 : groupHeaderHeight()
+        const height = Math.max(floor, h)
         if (shellRef.current) shellRef.current.style.height = `${height}px`
         layoutAnimations.frame(key, height)
+        // Folding to the header (or shrinking away), the written height stops at the floor the
+        // frame the spring passes it, and the spring's way to rest beneath it – the §7 hair of
+        // overshoot and back, ~100 ms at 60 Hz, one or two of a slow emulator's frames – would
+        // draw nothing while the cells below wait for it (PERF-5, #349): the card is at rest here.
+        if (h <= floor && anim.destination <= floor) anim.settle()
       },
       () => {
         const shell = shellRef.current

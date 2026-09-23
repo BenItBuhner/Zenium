@@ -479,6 +479,18 @@ export interface HostEventPayloads {
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
   /**
+   * A hardware keyboard's Tab ran past a page's last tabbable (`forward`) or Shift+Tab past its
+   * first (`backward`) and the host gave the chrome's WebView the keyboard (`FocusHandoff.kt`,
+   * A11Y-09): the chrome lands the focus on its first or last control (`lib/panes.ts`).
+   */
+  'focus.fromPage': { direction: 'forward' | 'backward' }
+  /**
+   * The same Tab ran past the chrome's last control (`forward`) or Shift+Tab past its first
+   * (`backward`): the active page takes the keyboard with the focus on its first or last
+   * tabbable (`AndroidTabView.focusEdge`, the page script's `focus` message).
+   */
+  'focus.toPage': { direction: 'forward' | 'backward' }
+  /**
    * A page view laid out at a new size (CSS px) has drawn the page at it (`Host.viewSized`):
    * the chrome's return from a fullscreen fades in on the page's landing (`lib/fullscreenLanding.ts`).
    */
@@ -1564,6 +1576,26 @@ export class AndroidPlatform implements Platform {
       case 'view.drawn':
         this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
         return
+      case 'focus.fromPage': {
+        const p = (payload ?? {}) as Partial<HostEventPayloads['focus.fromPage']>
+        if (p.direction !== 'forward' && p.direction !== 'backward') return
+        this.events.send('focus.fromPage', { direction: p.direction })
+        return
+      }
+      case 'focus.toPage': {
+        const p = (payload ?? {}) as Partial<HostEventPayloads['focus.toPage']>
+        if (p.direction !== 'forward' && p.direction !== 'backward') return
+        // The active page's view, with the focus landed at the edge the Tab came in at; a page
+        // whose view has no document yet (nothing to land on) takes the keyboard plainly.
+        const active = browser.tabs.activeTabFor(this.window)
+        const view = active ? browser.tabs.view(active.id) : undefined
+        if (view?.focusEdge && view.hasDocument()) {
+          view.focusEdge(p.direction === 'forward' ? 'first' : 'last')
+        } else {
+          this.window.focusContent()
+        }
+        return
+      }
       case 'view.sized':
         this.events.send('view.sized', payload as HostEventPayloads['view.sized'])
         return

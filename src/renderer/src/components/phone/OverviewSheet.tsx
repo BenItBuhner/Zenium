@@ -67,7 +67,7 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
       }
     >
       {header}
-      <ul className="flex flex-col pb-1">
+      <ul className="flex flex-col pb-2">
         {actions.map((action) => (
           <li key={action.id}>
             <button

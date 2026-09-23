@@ -104,7 +104,9 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
       <PhoneSheet
         name="extensions"
         title={{ pose: 'header', text: 'Extensions' }}
-        focus="dialog"
+        // A list sheet opens on its first row (§9.22) and stands at most 80 % of the frame (§9.20).
+        focus="first"
+        body="list"
         onClose={closeExtensionsSheet}
         sheetRef={sheet}
         contentKey={rows.map((row) => `${row.id}:${row.badge}`).join('/')}
@@ -134,7 +136,7 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
           )}
           <div className="zen-sheet-sep" aria-hidden />
           <PhoneListRow
-            icon={<Puzzle className="h-5 w-5 opacity-70" strokeWidth={1.75} />}
+            icon={<Puzzle className="h-5 w-5" strokeWidth={1.75} />}
             title="Manage extensions"
             trailing={
               <span className="flex h-11 w-11 shrink-0 items-center justify-center" aria-hidden>
@@ -289,7 +291,7 @@ function ActionMenuSheet({
       sheetRef={sheet}
       contentKey={`${own.length}:${path.map((item) => item.id).join('/')}`}
     >
-      <div className="zen-ext-action-menu flex flex-col pb-1">
+      <div className="zen-ext-action-menu flex flex-col pb-2">
         {groups.map((group, index) => (
           <ul key={index} className="flex flex-col">
             {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
@@ -352,7 +354,9 @@ function ActionMenuSheet({
  * The menu's Remove asks first (§10.4, the wording of Settings › Extensions' Remove row): a prompt
  * sheet in the menu's place – title block with the glyph, the one paragraph, the §9.11 footer –
  * whose Remove, in the danger ink, runs once the sheet is gone; Cancel, the scrim, Escape and the
- * back gesture keep the extension. Focus starts on Cancel so a stray Enter does no harm.
+ * back gesture keep the extension. The focus starts on the sheet itself (§9.22: a title-and-notice
+ * sheet holds its container; Cancel first is the failure the section names), so a stray Enter
+ * does no harm.
  */
 function RemoveSheet({
   ext,
@@ -374,7 +378,8 @@ function RemoveSheet({
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: confirm.description
       }}
-      focus="first"
+      // A title-and-notice sheet holds the focus on its container (§9.22), never on Cancel.
+      focus="dialog"
       onClose={onClose}
       handleLabel="Dismiss"
       sheetRef={sheet}

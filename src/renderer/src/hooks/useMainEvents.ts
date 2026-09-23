@@ -14,7 +14,7 @@ import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
-import { focusPane, pageTookKeyboard } from '@renderer/lib/panes'
+import { focusPane, pageHandedKeyboard, pageTookKeyboard } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
@@ -424,6 +424,9 @@ export function useMainEvents(): void {
       onEvent('view.drawn', ({ tabId, visible }) => {
         if (followsCover()) onViewDrawn(tabId, visible)
       }),
+      // A hardware keyboard's Tab past the page's end (Shift+Tab past its start) came to the
+      // chrome: the focus lands on its first (last) control, ringed as the keyboard's (A11Y-09).
+      onEvent('focus.fromPage', ({ direction }) => pageHandedKeyboard(direction)),
       // The host drew a page view at a new size: the return from a fullscreen lands on it.
       onEvent('view.sized', ({ tabId, width, height }) => noteViewSized(tabId, width, height)),
       // Tab card pictures (lib/thumbnails.ts): the host's captures, the tabs' navigations and
