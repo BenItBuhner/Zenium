@@ -86,14 +86,16 @@ jobs:
         # is not setuid and ubuntu-24.04 denies unprivileged user namespaces. Every profile lives
         # under a temporary XDG_CONFIG_HOME; the scenarios, their screenshots and result.json land
         # in smoke-out/unpacked. boot and restore run on every platform; the crash pair (a killed
-        # run, then "Restore pages?"), the Chrome-preset shortcut walkthrough and pip run here only
-        # (clear-on-exit too, in the step after this one) –
+        # run, then "Restore pages?"), the Chrome-preset shortcut walkthrough, pip and the split
+        # pair run here only (clear-on-exit too, in the step after this one) –
         # the walkthrough ends with a pop-up opened by a real xdotool click on a button inside a
         # cross-origin iframe of a local fixture (the #142 regressions: the frame's gesture must
         # reach the pop-up blocker and the pop-up's page must run the page preload); pip puts a
         # fixture page's playing video into Chromium's picture-in-picture window through the media
         # hub's button (the X server shows the window; xwininfo from x11-utils reads it) and brings
-        # it back with the page.pip chord. Known bugs are named through
+        # it back with the page.pip chord; split makes a split view with the chord, drops a third
+        # tab on the content's edge, un-splits a pane, drags the divider, quits, finds the split
+        # and its ratio back on the relaunch and unsplits it. Known bugs are named through
         # .github/smoke/known-failures.json.
         # --disable-gpu (both smoke steps): under Xvfb there is no GPU, and Chromium's GPU process
         # finds that out by probing GL through Mesa – some 190 MB of libgallium/libLLVM paged in
@@ -108,7 +110,7 @@ jobs:
         run: >
           xvfb-run -a -s '-screen 0 1600x1000x24'
           node .github/smoke/smoke.mjs --exe dist/linux-unpacked/zenium --label unpacked
-          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip
+          --out "$SMOKE_OUT" --scenarios boot,restore,crash,walkthrough,pip,split
           --extra-args="--no-sandbox --disable-gpu"
       - name: Clear browsing data on exit under Xvfb (the quit run, the owed clear at launch)
         # The clear-on-exit scenario (#310) on its own run of the harness, so its four launches

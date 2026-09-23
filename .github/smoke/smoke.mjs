@@ -3,7 +3,7 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker,pip,split]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
 //                                 --no-sandbox in --extra-args is refused; on Linux the build's
@@ -90,10 +90,23 @@
 //                one "Picture in picture" window with a size); the page.pip chord
 //                (Ctrl+Shift+]) brings it back (the element cleared, `leavepictureinpicture`
 //                seen, the window gone, the video still playing) (Linux job)
+//   split        a split view's life (ci-07), on a profile past onboarding with the fixture's
+//                pages: two tabs, Toggle Split View Vertical (Ctrl+Alt+V in the Chrome preset)
+//                makes one vertical split of both in halves – the model's group, both tabs
+//                pointing at it, the panes' views side by side to the sizes, the sidebar's group
+//                row; a third tab's row dragged from the sidebar onto the content area's right
+//                edge zone (a real pointer drag on the chrome page; the zone lights up under the
+//                pointer) joins as the right pane, in thirds; its header's un-split button with
+//                Shift held leaves a two-pane split in halves with the third tab still open; the
+//                divider dragged right by 15 % of the area moves the ratio to 0.65 / 0.35 and the
+//                views with it; a graceful quit persists the group; the relaunch (split-restore)
+//                shows the same group, tabs and ratio without "Restore pages?"; Unsplit View
+//                (Ctrl+Alt+U) dissolves it, the active tab's view has the whole area, all three
+//                tabs stay (Linux job; two launches: split and split-restore)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs and pip run
-// on Linux under Xvfb only.
+// restore); the walkthrough, the crash pair, clear-on-exit, the two mv3-worker legs, pip and the
+// split pair run on Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -4811,6 +4824,428 @@ async function scenarioPip() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// split: a split view's life on the chrome (ci-07) – made with the chord, a third tab dropped on
+// the content's edge, one pane un-split from its header, the divider dragged, the split restored
+// on relaunch with its ratio, unsplit with the chord.
+// ---------------------------------------------------------------------------------------------
+
+// The Chrome preset's chords for Zen's own features (shared/shortcuts.ts zenFeature): Ctrl+Alt
+// on Windows and Linux, Cmd+Ctrl on macOS.
+const ZEN_FEATURE_MODS = IS_MAC ? 'Meta+Control' : 'Control+Alt'
+const SPLIT_VERTICAL_COMBO = `${ZEN_FEATURE_MODS}+v`
+const UNSPLIT_COMBO = `${ZEN_FEATURE_MODS}+u`
+// The un-split button on a pane's header strip (SplitChrome.tsx), by its title.
+const UNSPLIT_BUTTON = 'button[title^="Un-split this tab"]'
+// A vertical split's divider (SplitChrome.tsx Gutter): the chrome's one element with the class.
+const GUTTER = '.cursor-col-resize'
+// The sidebar row a split's tabs share (SplitGroupRow.tsx).
+const SPLIT_ROW = '[data-split-row]'
+// How far along the content area the divider is dragged, as a share of the area's width.
+const RESIZE_SHARE = 0.15
+
+/** The split groups, the tabs and the active tab as the chrome's state has them. */
+function splitState(s) {
+  return s.chrome.evaluate(async () => {
+    const st = await window.zen.invoke('app.getState')
+    const space = st.spaces.find((sp) => sp.id === st.activeSpaceId)
+    return {
+      groups: Object.values(st.splitGroups || {}).map((g) => ({
+        id: g.id,
+        layout: g.layout,
+        tabIds: g.tabIds,
+        sizes: g.sizes
+      })),
+      activeTabId: space ? space.activeTabId : null,
+      tabs: Object.values(st.tabs).map((t) => ({
+        id: t.id,
+        url: t.url,
+        title: t.title,
+        splitGroupId: t.splitGroupId || null
+      }))
+    }
+  })
+}
+
+/**
+ * Where the panes of `group` are on the screen: each tab's view, by the tab's URL (the model's
+ * tab ids and the views' webContents ids are two names for a tab), in the group's order.
+ */
+async function paneRects(s, group, tabs) {
+  const views = await s.tabs()
+  const out = []
+  for (const id of group.tabIds) {
+    const tab = tabs.find((t) => t.id === id)
+    const view = tab ? views.find((v) => v.url === tab.url) : null
+    const rect = view ? await s.tabViewScreenRect(view.id) : null
+    out.push({ tabId: id, url: tab ? tab.url : null, webContentsId: view ? view.id : null, rect })
+  }
+  return out
+}
+
+/**
+ * A vertical split's panes on screen as its sizes say: every pane has a view placed, they stand
+ * in the group's order left to right on one row without overlapping, and each one's share of the
+ * views' width is its size (within `tolerance`: the gaps and the outline's band between them are
+ * a few pixels each). Returns the panes with their shares.
+ */
+function assertVerticalPanes(panes, sizes, tolerance = 0.04) {
+  const missing = panes.filter((p) => !p.rect || !(p.rect.width > 0 && p.rect.height > 0))
+  if (missing.length) {
+    throw new Error(`panes without a view on screen: ${JSON.stringify(missing)}`)
+  }
+  const total = panes.reduce((sum, p) => sum + p.rect.width, 0)
+  const shares = panes.map((p) => p.rect.width / total)
+  for (let i = 0; i < panes.length; i++) {
+    const r = panes[i].rect
+    if (i > 0) {
+      const prev = panes[i - 1].rect
+      if (r.x < prev.x + prev.width) {
+        throw new Error(`pane ${i} overlaps pane ${i - 1}: ${JSON.stringify(panes)}`)
+      }
+      if (Math.abs(r.y - prev.y) > 2 || Math.abs(r.height - prev.height) > 2) {
+        throw new Error(`panes ${i - 1} and ${i} are not on one row: ${JSON.stringify(panes)}`)
+      }
+    }
+    if (Math.abs(shares[i] - sizes[i]) > tolerance) {
+      throw new Error(
+        `pane ${i} takes ${shares[i].toFixed(3)} of the width, its size is ${sizes[i].toFixed(3)}: ${JSON.stringify(panes)}`
+      )
+    }
+  }
+  return panes.map((p, i) => ({ ...p, share: Number(shares[i].toFixed(3)) }))
+}
+
+/**
+ * The state once it holds exactly one vertical split of `n` panes, every one of its tabs pointing
+ * back at it, and the panes' views placed as its sizes say – a change of the model reaches the
+ * chrome's state a broadcast later and the views a layout after that, so both are polled. The
+ * group, the state and the panes with their shares; on the timeout, the last thing wrong.
+ */
+async function waitForVerticalPanes(s, n, what, timeoutMs = 10000) {
+  let last = null
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      const state = await splitState(s)
+      const [group] = state.groups
+      if (state.groups.length !== 1 || group.tabIds.length !== n) {
+        throw new Error(
+          `the split groups: ${JSON.stringify(state.groups)} (one of ${n} panes expected)`
+        )
+      }
+      if (group.layout !== 'vertical') {
+        throw new Error(`the split's layout is ${group.layout}, not vertical`)
+      }
+      const tabs = group.tabIds.map((id) => state.tabs.find((t) => t.id === id) ?? null)
+      if (tabs.some((t) => !t || t.splitGroupId !== group.id)) {
+        throw new Error(`the group's tabs do not all point back at it: ${JSON.stringify(state)}`)
+      }
+      const panes = assertVerticalPanes(await paneRects(s, group, state.tabs), group.sizes)
+      return { group, state, panes }
+    } catch (e) {
+      last = e
+    }
+    if (Date.now() >= deadline) break
+    await delay(250)
+  }
+  throw new Error(`${what} (not within ${timeoutMs} ms): ${last ? last.message : 'no reading'}`)
+}
+
+/**
+ * A mouse drag on the chrome page: down at `from`, `steps` moves to `to`, a moment, up –
+ * Playwright's mouse dispatches through CDP into the chrome's renderer as pointer events of type
+ * mouse, which is what the sidebar's tab drag and the split's divider listen for. `before(up)`
+ * runs with the button still down at `to`, for a check the drop depends on.
+ */
+async function mouseDrag(page, from, to, { steps = 12, before = null } = {}) {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps })
+  if (before) await before()
+  await page.mouse.up()
+}
+
+const centre = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 })
+
+async function scenarioSplit() {
+  const userData = freshProfile('profile-split', { onboardingDone: true })
+  const pages = { a: bootSite.first, b: bootSite.second, c: bootSite.handoff }
+  const first = await runScenario('split', userData, {}, async (s, out) => {
+    out.fixture = {
+      origin: bootSite.origin,
+      pages: { a: pages.a.url, b: pages.b.url, c: pages.c.url }
+    }
+    await s.step('two-tabs', async () => {
+      // The fresh window past onboarding opens with no tab: two pages into two tabs, the second
+      // one active, no split anywhere.
+      await openUrlInNewTab(s, pages.a.url)
+      const second = await openUrlInNewTab(s, pages.b.url)
+      const st = await splitState(s)
+      if (st.groups.length) throw new Error(`a split before any was made: ${JSON.stringify(st)}`)
+      return { sidebarTabs: second.sidebarTabs, tabs: st.tabs.map((t) => t.url) }
+    })
+    await s.step('create', async () => {
+      // Toggle Split View Vertical: the active tab with its neighbour in the list, side by side,
+      // in equal halves; the sidebar shows the group's row.
+      await s.press(SPLIT_VERTICAL_COMBO)
+      const { group, panes } = await waitForVerticalPanes(
+        s,
+        2,
+        'one vertical split of the two tabs, its panes side by side in halves'
+      )
+      const urls = panes.map((p) => p.url)
+      if (!urls.includes(pages.a.url) || !urls.includes(pages.b.url)) {
+        throw new Error(`the split holds ${JSON.stringify(urls)}`)
+      }
+      const row = s.chrome.locator(SPLIT_ROW)
+      await row.first().waitFor({ state: 'visible', timeout: 5000 })
+      const rows = await row.count()
+      const rowGroup = await row.first().getAttribute('data-split-row')
+      const rowLayout = await row.first().getAttribute('data-split-layout')
+      if (rows !== 1 || rowGroup !== group.id || rowLayout !== 'vertical') {
+        throw new Error(
+          `the sidebar's split rows: ${rows}, for group ${rowGroup} (${rowLayout}); the split is ${group.id}`
+        )
+      }
+      await s.settle()
+      await s.shot('01-split-created')
+      return { group, panes, sizes: group.sizes }
+    })
+    await s.step('drag-to-edge', async () => {
+      // A third tab, opened (so shown alone), then the split brought back with a click on one
+      // pane's row; the third tab's row dragged from the sidebar onto the content area's right
+      // edge zone – the zones mount once the pointer is over the page, the zone under it lights
+      // up – joins the split as its right pane, in thirds.
+      await openUrlInNewTab(s, pages.c.url)
+      const before = await splitState(s)
+      const thirdTab = before.tabs.find((t) => t.url === pages.c.url)
+      if (!thirdTab) throw new Error(`no tab on ${pages.c.url} in ${JSON.stringify(before.tabs)}`)
+      if (thirdTab.splitGroupId) throw new Error('the new tab opened into the split')
+      await s.sidebarTab(pages.a.title).first().click({ timeout: 5000 })
+      await waitFor(
+        async () => {
+          const st = await splitState(s)
+          const g = st.groups[0]
+          return g && g.tabIds.includes(st.activeTabId) ? st : null
+        },
+        5000,
+        'a pane of the split active again',
+        200
+      )
+      const row = s.chrome.locator(`[data-tab-id="${thirdTab.id}"]`).first()
+      const rowBox = await row.boundingBox()
+      const page = await s.chrome.locator('[data-tear-zone]').first().boundingBox()
+      if (!rowBox || !page) {
+        throw new Error(
+          `no box for the row (${JSON.stringify(rowBox)}) or the page (${JSON.stringify(page)})`
+        )
+      }
+      // The right edge zone: the area's right 22 % inside a 16 px frame, its middle 60 % in height.
+      const inner = page.width - 32
+      const target = { x: page.x + 16 + inner - inner * 0.11, y: page.y + page.height / 2 }
+      const zone = s.chrome.locator('[data-drop="split:right"]').first()
+      let lit = null
+      await mouseDrag(s.chrome, centre(rowBox), target, {
+        steps: 16,
+        before: async () => {
+          await zone.waitFor({ state: 'visible', timeout: 5000 })
+          // One more move with the zone there: the drag resolves it as the target.
+          await s.chrome.mouse.move(target.x + 1, target.y)
+          await waitFor(
+            async () => ((await zone.getAttribute('class')) ?? '').includes('border-white') || null,
+            5000,
+            'the right edge zone lit under the pointer'
+          )
+          lit = await zone.textContent()
+          await s.shot('02-drag-over-right-edge')
+        }
+      })
+      const { group, panes, state } = await waitForVerticalPanes(
+        s,
+        3,
+        'the split with the third tab as its right pane, in thirds'
+      )
+      if (panes[2].url !== pages.c.url) {
+        throw new Error(
+          `the panes are ${JSON.stringify(panes.map((p) => p.url))}: the dropped tab is not the right one`
+        )
+      }
+      if (state.activeTabId !== thirdTab.id) {
+        throw new Error(`the dropped tab is not the active one: ${state.activeTabId}`)
+      }
+      const windows = await s.windowCount()
+      if (windows !== 1) throw new Error(`${windows} windows after the drop: the tab tore off`)
+      await s.settle()
+      await s.shot('03-three-panes')
+      return { zone: (lit ?? '').trim(), group, panes, target, rowBox }
+    })
+    await s.step('close-pane', async () => {
+      // The right pane's un-split button on its header, Shift held (the split keeps the focus):
+      // the third tab leaves the split, stays open in the strip, the split is two halves again.
+      const buttons = s.chrome.locator(UNSPLIT_BUTTON)
+      const boxes = []
+      for (let i = 0, n = await buttons.count(); i < n; i++) {
+        const box = await buttons.nth(i).boundingBox()
+        if (box) boxes.push({ i, box })
+      }
+      if (boxes.length !== 3)
+        throw new Error(`${boxes.length} un-split buttons on the headers, not 3`)
+      boxes.sort((p, q) => q.box.x - p.box.x)
+      await buttons.nth(boxes[0].i).click({ modifiers: ['Shift'], timeout: 5000 })
+      const { group, panes, state } = await waitForVerticalPanes(
+        s,
+        2,
+        'the split back to two panes in halves'
+      )
+      if (panes.some((p) => p.url === pages.c.url)) {
+        throw new Error(`the third tab is still a pane: ${JSON.stringify(panes.map((p) => p.url))}`)
+      }
+      const thirdTab = state.tabs.find((t) => t.url === pages.c.url)
+      if (!thirdTab || thirdTab.splitGroupId) {
+        throw new Error(`the third tab after the un-split: ${JSON.stringify(thirdTab)}`)
+      }
+      if (!group.tabIds.includes(state.activeTabId)) {
+        throw new Error(`the active tab left the split with Shift held: ${state.activeTabId}`)
+      }
+      const rows = await s.sidebarTabCount()
+      if (rows !== 3) throw new Error(`${rows} sidebar rows, the third tab should stay open`)
+      return { group, panes, sidebarTabs: rows, buttons: boxes.length }
+    })
+    await s.step('resize', async () => {
+      // The divider dragged right by RESIZE_SHARE of the area: the left pane grows by that
+      // share (the gutter reads the pointer's travel against the area's width), the views follow.
+      const gutters = s.chrome.locator(GUTTER)
+      const count = await gutters.count()
+      if (count !== 1) throw new Error(`${count} dividers for a two-pane split`)
+      const gutter = await gutters.first().boundingBox()
+      const page = await s.chrome.locator('[data-tear-zone]').first().boundingBox()
+      if (!gutter || !page) throw new Error('no box for the divider or the page')
+      const before = (await splitState(s)).groups[0]
+      const dx = Math.round(page.width * RESIZE_SHARE)
+      const from = centre(gutter)
+      await mouseDrag(s.chrome, from, { x: from.x + dx, y: from.y }, { steps: 10 })
+      const expected = [before.sizes[0] + dx / page.width, before.sizes[1] - dx / page.width]
+      // The model's sizes first (the gutter commits them on the release), then the placement.
+      await waitFor(
+        async () => {
+          const g = (await splitState(s)).groups[0]
+          return g && Math.abs(g.sizes[0] - expected[0]) <= 0.02 ? g : null
+        },
+        10000,
+        `the left pane at ${expected[0].toFixed(3)} of the split after the drag`,
+        200
+      )
+      const { group, panes } = await waitForVerticalPanes(
+        s,
+        2,
+        'the split placed to the dragged ratio'
+      )
+      await s.settle()
+      await s.shot('04-resized')
+      return {
+        dx,
+        areaWidth: page.width,
+        before: before.sizes,
+        expected,
+        after: group.sizes,
+        panes
+      }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      const state = assertCleanState(userData, pages.a.url)
+      const raw = JSON.parse(fs.readFileSync(path.join(userData, 'zen', 'state.json'), 'utf8'))
+      const groups = raw.splitGroups ?? []
+      if (groups.length !== 1 || groups[0].tabIds.length !== 2) {
+        throw new Error(`state.json holds the split as ${JSON.stringify(groups)}`)
+      }
+      out.persisted = { group: groups[0], tabs: state.tabs }
+      return { ...r, state, split: groups[0] }
+    })
+  })
+  if (first.fatal) return first
+
+  const persisted = first.persisted
+  return runScenario('split-restore', userData, {}, async (s, out) => {
+    out.persisted = persisted
+    await s.step('restored', async () => {
+      // The relaunch shows the split as it was left: the same group, the same two tabs in the
+      // same order, the dragged ratio; both pages loaded, the panes placed to the ratio.
+      await s.waitForTab(pages.a.url, 30000)
+      await s.waitForTab(pages.b.url, 30000)
+      const { group, panes, state } = await waitForVerticalPanes(
+        s,
+        2,
+        'the split restored with its two panes placed to the persisted ratio'
+      )
+      if (group.id !== persisted.group.id) {
+        throw new Error(`the split came back as ${group.id}, it was saved as ${persisted.group.id}`)
+      }
+      if (JSON.stringify(group.tabIds) !== JSON.stringify(persisted.group.tabIds)) {
+        throw new Error(
+          `the split's tabs came back as ${JSON.stringify(group.tabIds)}, saved as ${JSON.stringify(persisted.group.tabIds)}`
+        )
+      }
+      if (group.sizes.some((v, i) => Math.abs(v - persisted.group.sizes[i]) > 0.001)) {
+        throw new Error(
+          `the split's ratio came back as ${JSON.stringify(group.sizes)}, saved as ${JSON.stringify(persisted.group.sizes)}`
+        )
+      }
+      if (!group.tabIds.includes(state.activeTabId)) {
+        throw new Error(`the active tab ${state.activeTabId} is not a pane of the restored split`)
+      }
+      const restoreBar = await s.chrome.locator('[data-crash-restore]').count()
+      if (restoreBar) throw new Error('"Restore pages?" offered after a clean quit')
+      await s.settle()
+      await s.shot('05-restored-split')
+      return { group, panes, sidebarTabs: await s.sidebarTabCount() }
+    })
+    await s.step('unsplit', async () => {
+      // Unsplit View: the group is gone, both tabs stay open on their own, the active tab's view
+      // has the whole area again, the sidebar's group row is gone.
+      const before = await paneRects(s, persisted.group, (await splitState(s)).tabs)
+      await s.press(UNSPLIT_COMBO)
+      const st = await waitFor(
+        async () => {
+          const state = await splitState(s)
+          return state.groups.length === 0 && state.tabs.every((t) => !t.splitGroupId)
+            ? state
+            : null
+        },
+        10000,
+        'no split group left and no tab in one',
+        200
+      )
+      await s.chrome.locator(SPLIT_ROW).first().waitFor({ state: 'hidden', timeout: 5000 })
+      const active = st.tabs.find((t) => t.id === st.activeTabId)
+      const view = active ? (await s.tabs()).find((v) => v.url === active.url) : null
+      const rect = view ? await s.tabViewScreenRect(view.id) : null
+      const wide = before.reduce((sum, p) => sum + (p.rect ? p.rect.width : 0), 0)
+      if (!rect || rect.width < wide) {
+        throw new Error(
+          `the active tab's view after the unsplit: ${JSON.stringify(rect)}; the panes spanned ${wide}`
+        )
+      }
+      const rows = await s.sidebarTabCount()
+      if (rows !== 3)
+        throw new Error(`${rows} sidebar rows after the unsplit, the tabs should stay`)
+      await s.settle()
+      await s.shot('06-unsplit')
+      return { active: active?.url ?? null, view: rect, panesBefore: before, sidebarTabs: rows }
+    })
+    await s.step('quit', async () => {
+      const r = await s.quitGracefully()
+      const state = assertCleanState(userData, pages.a.url)
+      const raw = JSON.parse(fs.readFileSync(path.join(userData, 'zen', 'state.json'), 'utf8'))
+      if ((raw.splitGroups ?? []).length) {
+        throw new Error(`state.json still holds a split: ${JSON.stringify(raw.splitGroups)}`)
+      }
+      return { ...r, state }
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
 
 function finish(exitCode) {
   const failures = []
@@ -4921,7 +5356,8 @@ async function main() {
       scale: scenarioScale,
       dark: scenarioDark,
       'mv3-worker': scenarioMv3Worker,
-      pip: scenarioPip
+      pip: scenarioPip,
+      split: scenarioSplit
     }[name]
     if (!run) {
       result.scenarios[name] = { fatal: `unknown scenario ${name}` }
