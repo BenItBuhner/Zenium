@@ -1934,11 +1934,13 @@ const HARNESS_SETTINGS = {
 
 /**
  * A profile with the harness settings, past onboarding when asked, plus `settings` on top (a
- * scenario's own, e.g. `privacy.clearOnExit`; the state's sanitisers fill in the rest).
+ * scenario's own, e.g. `privacy.clearOnExit`; the state's sanitisers fill in the rest). A
+ * profile of that name from an earlier launch goes first, with the retries every teardown
+ * removal runs with (a Chromium helper may still be flushing into it – #392's sign-in smoke).
  */
 function freshProfile(name, { onboardingDone = false, settings: extra = {} } = {}) {
   const dir = path.join(profileRoot, name)
-  fs.rmSync(dir, { recursive: true, force: true })
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   fs.mkdirSync(path.join(dir, 'zen'), { recursive: true })
   const settings = { ...structuredClone(HARNESS_SETTINGS), ...structuredClone(extra) }
   if (onboardingDone) settings.onboardingDone = true

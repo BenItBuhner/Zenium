@@ -54,3 +54,14 @@ there and point at the installed executable (`registrationProblems` in
 still name the ProgID (`registrationLeftovers` in `installed-uninstall.json`). Either list
 non-empty fails its step in `desktop-smoke.yml` with the lines. The user's own http/https choice
 (`UserChoice`) is Windows's and is neither written nor read.
+
+## Teardown
+
+Removing a tree a launched build wrote into retries or polls, never a plain `rmSync`: Chromium's
+helpers (the network service, the GPU process) flush into `Partitions/<name>` for a moment after
+the browser process is gone, and a plain removal met that on #392's run (`ENOTEMPTY` on
+`Partitions/zen-default` after every check had passed). Every teardown `rmSync` here and in
+`.github/scripts` runs with `{ recursive: true, force: true, maxRetries: 5, retryDelay: 100 }`;
+the sign-in smoke's profile removal goes through `.github/scripts/remove-tree.mjs`, which repeats
+the pass until the tree is gone – Node's `maxRetries` retries only the failing `rmdir` and never
+sees an entry created after the walk read the directory.
