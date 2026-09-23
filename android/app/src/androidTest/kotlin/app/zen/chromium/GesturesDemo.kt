@@ -208,7 +208,8 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         // The disc's layer clips it to the page frame (the DOM disc's `overflow: hidden`): the
         // frame sits in from the window's edge, and the disc must come out from the frame's side,
         // not show over the gutter. The DOM's box, unshifted: the layer is in window px.
-        val frameBox = domBox("document.querySelector('[data-testid=\"history-nav\"]').parentElement")?.also { it.offset(-domShiftX, -domShiftY) }
+        val frameBox = domBox("(function(){var r=document.querySelector('[data-testid=\"history-nav\"]');return r?r.parentElement:null})()")
+            ?.also { it.offset(-domShiftX, -domShiftY) }
         claim("the disc's layer clips to the page frame's box (clip ${disc.clip}; frame $frameBox)", disc.clip != null && frameBox != null && disc.clip.within(frameBox, 2))
         noteScene(scene)
         shot("03-edge-drag-armed")
