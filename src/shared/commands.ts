@@ -160,8 +160,17 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
   {
     id: 'captureFullPage',
     label: 'Capture Full Page',
-    keywords: ['screenshot', 'capture', 'full page', 'web capture', 'long'],
+    keywords: ['screenshot', 'capture', 'full page', 'long'],
     action: 'page.captureFullPage'
+  },
+  // Edge's Web capture: the overlay over the dimmed page (a region, the visible area or the
+  // full page, then Copy or Save). "web capture" typed names this row, not the one above.
+  {
+    id: 'web-capture',
+    label: 'Web Capture',
+    keywords: ['web capture', 'capture', 'screenshot', 'region', 'select', 'clip', 'snip'],
+    action: 'capture.start',
+    layouts: DESKTOP_LAYOUT
   },
   {
     id: 'fullscreen',

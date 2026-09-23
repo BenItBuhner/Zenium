@@ -111,6 +111,50 @@ describe('placeHoverCard', () => {
   })
 })
 
+describe('placeHoverCard along the strip (§9.37)', () => {
+  const band: Rect = { x: 0, y: 0, width: 1600, height: 38 }
+  const tab = (x: number, width = 177): Rect => ({ x, y: 6, width, height: 32 })
+
+  it('hangs flush under the band, left edges together with its tab', () => {
+    expect(placeHoverCard(tab(200), band, viewport, card, 'x')).toEqual({
+      side: 'below',
+      left: 200,
+      top: 38,
+      width: 320,
+      maxHeight: 92
+    })
+  })
+
+  it('slides back inside the window’s margin for a tab near the trailing edge', () => {
+    expect(placeHoverCard(tab(1400), band, viewport, card, 'x')).toMatchObject({
+      left: 1600 - 320 - POPOVER_MARGIN,
+      top: 38
+    })
+  })
+
+  it('never starts left of the margin, and takes the room down to the bottom margin', () => {
+    expect(placeHoverCard(tab(2), band, viewport, card, 'x')).toMatchObject({
+      left: POPOVER_MARGIN
+    })
+    const short = { width: 1600, height: 120 }
+    expect(placeHoverCard(tab(200), band, short, card, 'x')).toEqual({
+      side: 'below',
+      left: 200,
+      top: 38,
+      width: 320,
+      maxHeight: 120 - POPOVER_MARGIN - 38
+    })
+  })
+
+  it('a card wider than the window minus 16 shrinks to that', () => {
+    const narrow = { width: 300, height: 1000 }
+    expect(placeHoverCard(tab(20), band, narrow, card, 'x')).toMatchObject({
+      left: POPOVER_MARGIN,
+      width: 300 - 2 * POPOVER_MARGIN
+    })
+  })
+})
+
 describe('hoverCardHost', () => {
   it('shows the site of a web page as the pill does: no www, a non-default port kept', () => {
     expect(hoverCardHost('https://www.example.com/a/b?c#d')).toBe('example.com')

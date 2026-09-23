@@ -1973,6 +1973,13 @@ export type ShortcutAction =
   | 'page.screenshot'
   /** Edge's "Capture full page": the whole page, beyond the viewport, saved like a screenshot. */
   | 'page.captureFullPage'
+  /**
+   * Edge's Web capture (Ctrl+Shift+S there): the desktop chrome dims the page and the user drags
+   * a region, or takes the visible area or the full page, then copies or saves the picture
+   * (`shared/capture.ts` is the engine; the overlay is the chrome's). Hosts without the desktop
+   * chrome take the visible page the way Take Screenshot does.
+   */
+  | 'capture.start'
   | 'page.toggleMute'
   | 'zoom.in'
   | 'zoom.out'
@@ -2006,13 +2013,26 @@ export interface Shortcut {
   unsupported?: boolean
   /** Reserved for a feature that has not shipped: bound (a no-op) but left out of the list. */
   hidden?: boolean
+  /**
+   * The chrome layouts whose listings show the row, when the action is one shell's alone
+   * (Web Capture is the desktop's; the phone's chord takes its screenshot); left out, every
+   * layout lists it. The binding itself is untouched – a layout that hides the row keeps the key.
+   */
+  layouts?: FormFactor[]
 }
 
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
-export type ToolbarLayout = 'single' | 'multiple' | 'collapsed'
+/**
+ * Where the desktop chrome puts its tabs and its navigation (Settings › Look and Feel › Layout,
+ * design language v2 §9.37, §10.4; Zen 1.22's Browser layout): `single` – the sidebar holds
+ * everything; `multiple` – a top toolbar holds navigation over the sidebar; `collapsed` – the
+ * sidebar starts as its icon rail; `horizontal` – the tab row runs along the caption band, the
+ * toolbar row under it, and the sidebar is the 56 rail beside the frame.
+ */
+export type ToolbarLayout = 'single' | 'multiple' | 'collapsed' | 'horizontal'
 export type UrlbarBehavior = 'float-typing' | 'always-float' | 'normal'
 export type GlanceTrigger = 'alt' | 'ctrl' | 'shift'
 export type PinnedCloseBehavior =
@@ -5238,6 +5258,12 @@ export interface Events {
    * card in the toast's slot – the thumbnail, Share | Delete, Capture more – for `tabId`'s page.
    */
   'screenshot.saved': ScreenshotSaved & { tabId: string }
+  /**
+   * Web capture asked for its overlay over `tabId`'s page (Ctrl+Shift+S in the Chrome preset,
+   * the app menu's "Web Capture…", the palette): the desktop chrome dims the page's frame over
+   * its stand-in and takes the user's region, visible area or full page (`shared/capture.ts`).
+   */
+  'capture.start': { tabId: string }
   /** Link hover status text (Firefox shows this in the bottom corner). */
   status: { text: string }
   'sidebar.toggle': void
