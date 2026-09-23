@@ -175,23 +175,37 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     }
   })
 
+  /**
+   * The address surface from the pill: what a tap on the pill's body opens, and what a hold let
+   * go in place opens once the pill is back (GN-10) – Chrome's long-press on the address bar
+   * offers the clipboard, and here the omnibox's clipboard row carries Paste and Paste and go.
+   */
+  const openAddress = (): void => {
+    if (overviewIsOpen()) closeOverview()
+    else if (tab && privateTabLocked(state)) {
+      // The pill over a locked private tab says nothing of the page and opens nothing of it
+      // (the omnibox would show its address): a tap asks for the screen lock, as the cover's
+      // Unlock does (INC-05).
+      void unlockPrivateTabs()
+    }
+    // The new tab page's field is the address control while the pill's slot is its well
+    // (NTP-02): a tap on the well is a tap on the field, which morphs into the omnibox. The
+    // well's chips are inert (main.css `.zen-pill-away > *`), so none is under the finger here.
+    else if (fakeboxAway()) tapFakebox()
+    else {
+      // The pill grows into the omnibox's field as the bar's buttons are pushed off (MOT-07,
+      // lib/omniboxFocus.ts): the bar opens under the field on its way.
+      focusOmnibox(tab?.id ?? null)
+    }
+  }
+
   const pill = usePillGestures({
     edge,
     onTap: (e) => {
       const icon = (e.target as HTMLElement).closest('[data-site-info]')
       const media = (e.target as HTMLElement).closest('[data-media]')
       const session = media ? mediaSession(state) : null
-      if (overviewIsOpen()) closeOverview()
-      else if (tab && privateTabLocked(state)) {
-        // The pill over a locked private tab says nothing of the page and opens nothing of it
-        // (the omnibox would show its address): a tap asks for the screen lock, as the cover's
-        // Unlock does (INC-05).
-        void unlockPrivateTabs()
-      }
-      // The new tab page's field is the address control while the pill's slot is its well
-      // (NTP-02): a tap on the well is a tap on the field, which morphs into the omnibox. The
-      // well's chips are inert (main.css `.zen-pill-away > *`), so none is under the finger here.
-      else if (fakeboxAway()) tapFakebox()
+      if (overviewIsOpen() || (tab && privateTabLocked(state)) || fakeboxAway()) openAddress()
       else if (session) {
         // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16),
         // over a picture of the tab on screen.
@@ -201,12 +215,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         // information instead – where the translate offer and the blocking shield are (OMN-02).
         const r = icon.getBoundingClientRect()
         void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
-      } else {
-        // The pill grows into the omnibox's field as the bar's buttons are pushed off (MOT-07,
-        // lib/omniboxFocus.ts): the bar opens under the field on its way.
-        focusOmnibox(tab?.id ?? null)
-      }
-    }
+      } else openAddress()
+    },
+    onHold: openAddress
   })
 
   const barHidden = ui.urlbar.open

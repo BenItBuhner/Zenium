@@ -731,6 +731,17 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
     inputRef.current?.focus()
   }
   /**
+   * The row's Paste (GN-10, the §6 fill control on the clipboard row): the clip's text into the
+   * field as typed, suggestions refreshed, nothing submitted – Chrome's plain Paste beside its
+   * "Paste and go", which the row's tap is. Read once, as the reveal; the clip is not used up.
+   */
+  const pasteClip = (): void => {
+    void readClip().then((content) => {
+      if (content) setTyped(content.text, true)
+    })
+    inputRef.current?.focus()
+  }
+  /**
    * Tapping the row: a link opens, text is searched for with the default engine. The pick is
    * what uses the clip up: the host remembers it and does not offer it again until the
    * clipboard changes (a reveal alone does not, as in Chrome).
@@ -1170,7 +1181,16 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
           removeId={rowActionId(i, 0)}
           actionFocused={!sheet && i === selected && action === 0}
           onActionKeyDown={onActionKeyDown}
-          onRefine={sheet && refinable(item) ? refine : undefined}
+          // The phone's fill arrow: a query's text (OMN-09), or the clipboard's as Paste (GN-10).
+          onRefine={
+            !sheet
+              ? undefined
+              : item.kind === 'clipboard'
+                ? pasteClip
+                : refinable(item)
+                  ? refine
+                  : undefined
+          }
           clip={item.kind === 'clipboard' ? clip : undefined}
           onReveal={sheet && item.kind === 'clipboard' && !clip ? revealClip : undefined}
         />
@@ -1830,7 +1850,10 @@ function SuggestionRow({
   /** The X has the keyboard (Tab reached it, omnibox-50); the row keeps its highlight. */
   actionFocused?: boolean
   onActionKeyDown?: (e: React.KeyboardEvent<HTMLElement>) => void
-  /** A query row's Refine arrow (OMN-09): the row's text into the field, nothing submitted. */
+  /**
+   * The row's fill arrow: a query row's Refine (OMN-09), the clipboard row's Paste (GN-10) –
+   * the row's text into the field, nothing submitted.
+   */
   onRefine?: (item: Suggestion) => void
   /** The clipboard row's content once revealed (OMN-14); the row then shows it. */
   clip?: ClipboardContent | null
@@ -1947,7 +1970,7 @@ function SuggestionRow({
           <button
             type="button"
             className="zen-v2-icon-button zen-omnibox-refine ml-3"
-            aria-label="Refine"
+            aria-label={item.kind === 'clipboard' ? 'Paste' : 'Refine'}
             onPointerDown={keepFocus}
             onClick={() => onRefine(item)}
           >

@@ -411,7 +411,11 @@ describe('the clipboard row (OMN-14)', () => {
       )
     })
     expect(callsTo('clipboard.read')).toHaveLength(1)
-    expect(rows(el)[0].querySelector('button')).toBeNull()
+    // Show has done its work; Paste (GN-10) stays, the field being where the text can go.
+    const controls = Array.from(rows(el)[0].querySelectorAll('button'))
+    expect(controls.map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim())).toEqual([
+      'Paste'
+    ])
 
     await tap(option(rows(el)[0]))
     await act(async () => {
@@ -477,6 +481,52 @@ describe('the clipboard row (OMN-14)', () => {
     expect(callsTo('clipboard.read')).toHaveLength(1)
     expect(commands()).not.toContain('clipboard.markUsed')
     expect(commands()).not.toContain('urlbar.submit')
+  })
+
+  it('Paste (GN-10) puts the clip in the field as typed, reading it once; nothing goes anywhere', async () => {
+    clip = { kind: 'text', text: 'grey cats' }
+    suggestions = (q) =>
+      q === '' ? [{ ...clipRow(), title: 'Text you copied', targetId: 'text' }] : []
+    const el = await render(phone(tab(PAGE)))
+    await act(async () => {
+      await vi.waitFor(() => expect(rows(el)).toHaveLength(1))
+    })
+    const [item] = rows(el)
+    // The §6 fill arrow, labelled for what it does here; Show stands beside it.
+    const paste = button(item, 'Paste')
+    expect(paste.classList.contains('zen-omnibox-refine')).toBe(true)
+    expect(option(item).contains(paste)).toBe(false)
+    expect(button(item, 'Show')).toBeDefined()
+    await tap(paste)
+    await act(async () => {
+      await vi.waitFor(() => expect(input(el).value).toBe('grey cats'))
+    })
+    expect(callsTo('clipboard.read')).toHaveLength(1)
+    // Suggestions refresh for the pasted text; the clip is neither submitted nor used up.
+    expect(
+      callsTo('urlbar.suggest').some((a) => (a as { query: string }).query === 'grey cats')
+    ).toBe(true)
+    expect(commands()).not.toContain('urlbar.submit')
+    expect(commands()).not.toContain('clipboard.markUsed')
+  })
+
+  it('Paste after a reveal reuses the revealed content', async () => {
+    suggestions = (q) => (q === '' ? [clipRow()] : [])
+    const el = await render(phone(tab(PAGE)))
+    await act(async () => {
+      await vi.waitFor(() => expect(rows(el)).toHaveLength(1))
+    })
+    await tap(button(rows(el)[0], 'Show'))
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(rows(el)[0].textContent).toContain('https://copied.example/page')
+      )
+    })
+    await tap(button(rows(el)[0], 'Paste'))
+    await act(async () => {
+      await vi.waitFor(() => expect(input(el).value).toBe('https://copied.example/page'))
+    })
+    expect(callsTo('clipboard.read')).toHaveLength(1)
   })
 })
 
