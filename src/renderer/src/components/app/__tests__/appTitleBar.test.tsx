@@ -146,7 +146,9 @@ describe('AppTitleBar', () => {
   it('opens the web-app menu from the button, and from the keyboard through the menu event', () => {
     bar(stateWith(), tab())
     const button = q<HTMLButtonElement>('[data-zen-app-titlebar] button[aria-haspopup="menu"]')
-    expect(button.getAttribute('title')).toBe('Menu')
+    expect(button.getAttribute('aria-label')).toBe('Menu')
+    expect(button.getAttribute('data-tooltip')).toBe('Menu')
+    expect(button.hasAttribute('title')).toBe(false)
     act(() => button.click())
     expect(vi.mocked(run).mock.calls.at(-1)?.[0]).toBe('app.menu')
     expect((vi.mocked(run).mock.calls.at(-1)?.[1] as { keyboard: boolean }).keyboard).toBe(false)
@@ -172,7 +174,7 @@ describe('AppTitleBar', () => {
 
   it("draws the window's buttons where the host does not, and keeps the host's insets clear", () => {
     bar(stateWith(), tab(), { trailing: 138, leading: 72 })
-    expect(document.querySelector('[title="Close"]')).not.toBeNull()
+    expect(document.querySelector('[aria-label="Close"][data-tooltip="Close"]')).not.toBeNull()
     const row = q('[data-zen-app-titlebar]')
     expect(row.style.paddingRight).toBe('142px')
     expect(row.style.paddingLeft).toBe('72px')

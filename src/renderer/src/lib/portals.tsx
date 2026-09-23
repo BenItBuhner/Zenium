@@ -172,6 +172,60 @@ export function chromeInertHeld(): boolean {
   return inertHolds > 0
 }
 
+/** The elements the frame covers have made inert, with how many covers hold each. */
+const frameInertMarked = new Map<Element, number>()
+
+/**
+ * Make the frame behind a dialog host inert – the host's siblings in its parent, which for the
+ * content frame's host (TabDialogs') is the content area: the find bar, a New Tab page, a chrome
+ * page tab, the split panes' bars and the page's picture – until the returned release runs.
+ * With `holdChromeInert` this is the host's cover (a11y-32): while a dialog is open nothing
+ * behind it takes a press, the focus or a Tab, so the dialog holds the keyboard until it
+ * closes. The page's own view lies under a covering dialog's picture and cannot be pressed; the
+ * core keeps its focus pending while the page is hidden, and the pane rotation asks nothing of
+ * it while a hold stands (lib/panes.ts). Siblings mounted while the hold lasts are covered as
+ * they come; one that was inert already is left to whoever made it so; another dialog host is
+ * never covered (its dialogs stack above this host's). Two hosts covering the same sibling each
+ * count, and it comes back with the last release.
+ */
+export function holdFrameInert(host: HTMLElement): () => void {
+  const parent = host.parentElement
+  if (!parent) return () => undefined
+  const mine = new Set<Element>()
+  const cover = (): void => {
+    for (const el of parent.children) {
+      if (el === host || mine.has(el) || el.classList.contains('zen-frame-dialogs')) continue
+      const held = frameInertMarked.get(el)
+      if (held === undefined && el.hasAttribute('inert')) continue
+      if (held === undefined) el.setAttribute('inert', '')
+      frameInertMarked.set(el, (held ?? 0) + 1)
+      mine.add(el)
+    }
+  }
+  cover()
+  let observer: MutationObserver | null = null
+  if (typeof MutationObserver !== 'undefined') {
+    observer = new MutationObserver(cover)
+    observer.observe(parent, { childList: true })
+  }
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    observer?.disconnect()
+    for (const el of mine) {
+      const held = (frameInertMarked.get(el) ?? 1) - 1
+      if (held > 0) {
+        frameInertMarked.set(el, held)
+        continue
+      }
+      frameInertMarked.delete(el)
+      el.removeAttribute('inert')
+    }
+    mine.clear()
+  }
+}
+
 /**
  * How long a kept panel waits for the end of its exit animation before it goes regardless: an
  * animation that never reports its end (paused in a background window, or none running at all
@@ -923,11 +977,23 @@ export function FrameDialogHost({
   // layout cleanup – a hold of the host's would still stand at that moment (the host's state
   // clears a commit later), the opener under it would refuse the focus, and focus would fall to
   // `body` (the 9.22 regression of the Settings pickers and every other hosted sheet).
+  //
+  // The frame behind the host – its siblings, the content area for the frame's host – is inert
+  // for the same span (`holdFrameInert`, a11y-32): the cover is the chrome's and the frame's
+  // both, and the dialog holds the keyboard until it closes. Where focus goes then is the
+  // dialog's own: the page (`returnFocusToPage`), or the opener it remembers – a control in the
+  // covered frame refuses the focus until this release lifts the `inert`, and `returnFocusTo`
+  // (lib/popover.ts) watches for that and gives it then.
   const holds = (!sheet && chassisOpen) || leaving.exiting
   useEffect(() => {
     if (!holds) return
-    return holdChromeInert()
-  }, [holds])
+    const releaseChrome = holdChromeInert()
+    const releaseFrame = hostRef.current ? holdFrameInert(hostRef.current) : null
+    return () => {
+      releaseChrome()
+      releaseFrame?.()
+    }
+  }, [holds, hostRef])
   // A dialog opening (or another stacking on it) is an open that is not a press on a popover:
   // it closes whatever popover is up (§9.20, one at a time).
   const count = dialogs.length

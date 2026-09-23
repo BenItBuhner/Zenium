@@ -60,9 +60,11 @@ export function DownloadButton({
       data-zen-downloads-button
       // The pressed fill while the bubble is up is the toolbar button's own, off `aria-expanded`.
       className="zen-toolbar-button zen-dl-button-toolbar relative"
-      // The tooltip carries the chord (a11y-26); the name stays the state line alone.
-      title={hint(label, state, 'downloads.open')}
+      // The chrome tooltip carries the chord (a11y-26, lib/tooltip.ts); the name stays the state
+      // line alone, and the chord reaches a reader as the description.
+      data-tooltip={hint(label, state, 'downloads.open')}
       aria-label={label}
+      aria-description={hint(label, state, 'downloads.open')}
       aria-expanded={open}
       aria-haspopup="dialog"
       onClick={() => toggleDownloadBubble(activeTabId)}
