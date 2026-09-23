@@ -716,21 +716,44 @@ abstract class FakeboxMorphDemoBase(
         tapField()
         awaitPhase("open", 8_000)
         SystemClock.sleep(600)
-        startSampling()
-        if (!awaitSurface(true, 2_000)) finding("  the chrome does not own the back")
-        val f = Finger()
-        f.down(EDGE_X, height * 0.5f)
-        f.moveBy(0.28f * width, 0f, 520)
-        f.hold(900)
-        // The chrome's word on the pull, read while the finger holds: the hold has no clock in
-        // the system's back, and on the emulator the pull reached the field after the 900 ms
-        // (the repairs' third proof run read 'open' at 1.00 with the finger down while the
-        // scene's own frames held a pulled pair), so the read waits [PULL_READ_MS] for it.
-        var held = snapshot()
-        val heldBy = SystemClock.uptimeMillis() + PULL_READ_MS
-        while (held.optString("lk") != "pulled" && SystemClock.uptimeMillis() < heldBy) {
-            f.hold(100)
+        // The pull, held, and the chrome's word on it read while the finger holds: the hold has
+        // no clock in the system's back, and on the emulator the pull reached the field after the
+        // 900 ms (the repairs' third proof run read 'open' at 1.00 with the finger down while the
+        // scene's own frames held a pulled pair), so the read waits [PULL_READ_MS] for it. When
+        // no word comes in that time the swipe never became a back gesture: the emulator's
+        // recogniser withdraws one now and then under load (#393's retry, run 35880635017: the
+        // shell's BackAnimationController "Finishing gesture with event action: 3", mTriggerBack
+        // false, 90 ms after the DOWN; the app's callback never called; the finger's travel an
+        // ordinary touch the page idled through at 1.00). So the finger goes back to the edge
+        // and off, and the swipe is made once more ([PULL_SWIPES]), the miss a finding with the
+        // frames its sample held; the swipe that was read as a pull is the one judged.
+        var held = JSONObject()
+        lateinit var f: Finger
+        for (swipe in 1..PULL_SWIPES) {
+            startSampling()
+            if (!awaitSurface(true, 2_000)) finding("  the chrome does not own the back")
+            f = Finger()
+            f.down(EDGE_X, height * 0.5f)
+            f.moveBy(0.28f * width, 0f, 520)
+            f.hold(900)
             held = snapshot()
+            val heldBy = SystemClock.uptimeMillis() + PULL_READ_MS
+            while (held.optString("lk") != "pulled" && SystemClock.uptimeMillis() < heldBy) {
+                f.hold(100)
+                held = snapshot()
+            }
+            if (held.optString("lk") == "pulled" || swipe == PULL_SWIPES) break
+            // Off at the edge – an ordinary touch's end when the gesture was never recognised,
+            // the cancel when it was and the word came late – the field's rest waited for, and again.
+            f.moveBy(-(0.28f * width) + 4f, 0f, 320)
+            f.up()
+            val after = awaitPullRest()
+            val missed = stopSampling("$scene-cancel-missed-$swipe")
+            finding(
+                "  (swipe $swipe was not read as a pull within $PULL_READ_MS ms of the hold: look '${held.optString("lk")}', value ${"%.2f".format(held.optDouble("m"))}; " +
+                    "${missed.count { it.pulled }} pulled frame(s) of ${missed.size}; ${FakeboxMorph.describe(missed)}; " +
+                    "the finger off at the edge, the field at phase ${after.optString("ph")}, look '${after.optString("lk")}', value ${"%.2f".format(after.optDouble("m"))}; swiping once more)"
+            )
         }
         shot("$scene-held")
         // Back to the edge and off: the system cancels a gesture let go where it began.
@@ -739,14 +762,7 @@ abstract class FakeboxMorphDemoBase(
         SystemClock.sleep(1_200)
         // The spring back to the omnibox at 14 fps takes longer than the 1.2 s (the first two
         // proof runs read it at 0.80 and 0.72, still 'pulled'): the read waits for its rest.
-        var cancelled = snapshot()
-        val cancelledBy = SystemClock.uptimeMillis() + PULL_READ_MS
-        while (!(cancelled.optString("ph") == "open" && cancelled.optString("lk") == "open" && cancelled.optDouble("m") > 0.99) &&
-            SystemClock.uptimeMillis() < cancelledBy
-        ) {
-            SystemClock.sleep(100)
-            cancelled = snapshot()
-        }
+        val cancelled = awaitPullRest()
         val frames1 = stopSampling(scene + "-cancel")
         finding(
             "  held: look '${held.optString("lk")}', value ${"%.2f".format(held.optDouble("m"))}; " +
@@ -793,6 +809,20 @@ abstract class FakeboxMorphDemoBase(
         report(scene, FakeboxMorph.noJump(frames2))
         report(scene, FakeboxMorph.barStays(frames2))
         frames2.lastOrNull()?.let { report(scene, FakeboxMorph.resolved(it, "", false)) }
+    }
+
+    /**
+     * The field's rest at the omnibox after a pull let go – phase open, look open, value past
+     * 0.99 – waited for up to [PULL_READ_MS]; the last reading, whatever it says.
+     */
+    private fun awaitPullRest(): JSONObject {
+        var s = snapshot()
+        val by = SystemClock.uptimeMillis() + PULL_READ_MS
+        while (!(s.optString("ph") == "open" && s.optString("lk") == "open" && s.optDouble("m") > 0.99) && SystemClock.uptimeMillis() < by) {
+            SystemClock.sleep(100)
+            s = snapshot()
+        }
+        return s
     }
 
     /**
@@ -1334,6 +1364,12 @@ abstract class FakeboxMorphDemoBase(
          * drawing at 14 fps with gaps of half a second.
          */
         private const val PULL_READ_MS = 3_000L
+        /**
+         * The pulled scene's edge swipes: the swipe, and one more when the first was not read as
+         * a pull within [PULL_READ_MS] – the emulator's back recogniser withdrew it under load
+         * (#393's retry, run 35880635017). Harmless on a phone, where the first is read.
+         */
+        private const val PULL_SWIPES = 2
         /**
          * The measured window of a cost scene ([morphCost]) from the touch: the flight and its
          * landing with nothing read from the chrome meanwhile. The emulator's flights in runs 1
