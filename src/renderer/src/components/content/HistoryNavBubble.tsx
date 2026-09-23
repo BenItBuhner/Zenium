@@ -30,13 +30,13 @@ function measureAnchor(root: HTMLElement, edge: HistoryNavEdge): BubbleAnchor {
 }
 
 /**
- * Chrome's history navigation bubble (GN-04): a disc with an arrow that a drag in from a page's
- * side pulls out from beyond that side, vertically centred on the content frame as Chrome's
- * `SideSlideLayout` lays it. The host recognises the drag in 3-button navigation mode and the
- * machine in `lib/historyNav.ts` turns it into the bubble's offset, its armed growth and its
+ * Chrome's history navigation bubble (GN-04, v2 §11.9): a disc with an arrow that a drag in from
+ * a page's side pulls out from beyond that side, vertically centred on the content frame as
+ * Chrome's `SideSlideLayout` lays it. The host recognises the drag in 3-button navigation mode
+ * and the machine in `lib/historyNav.ts` turns it into the bubble's offset, its growth and its
  * hide; everything per frame goes straight to the DOM through refs – transform and opacity, and
- * the `data-armed` flag the accent arrow's 250 ms tint reads – so a drag re-renders nothing.
- * Idle it draws nothing at all, so hosts without the gesture pay nothing for it.
+ * the `data-armed` flag as the drag's state – so a drag re-renders nothing. Idle it draws
+ * nothing at all, so hosts without the gesture pay nothing for it.
  *
  * Where the pages are layered above the chrome (Android), nothing drawn here at a page's side
  * could show: with a host bound (`setHistoryNavHost`) the disc is the host's, fed the same
@@ -110,10 +110,7 @@ export function HistoryNavBubble(): JSX.Element | null {
             opacity: 0
           }}
         >
-          <span className="zen-histnav-glyph zen-histnav-ink">
-            <Arrow />
-          </span>
-          <span className="zen-histnav-glyph zen-histnav-accent">
+          <span className="zen-histnav-glyph">
             <Arrow />
           </span>
         </div>

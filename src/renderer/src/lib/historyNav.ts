@@ -24,14 +24,17 @@ import { browserStore } from './ui'
  * (`SideSlideLayout.java`), the motion taken in steps of at most a third of a drag distance as
  * Chrome's `MIN_PULLS_TO_ACTIVATE` guards a fast fling from navigating by accident – and past
  * the threshold the finger's excess is rubber-banded with the app's shared band, so a long pull
- * never carries the disc into the page. Crossing the threshold is the landmark: one haptic tick
- * (Chrome's `KEYBOARD_TAP`), the arrow's tint to the accent (Chrome's 250 ms), and the disc grows
- * by {@link ARMED_GROWTH} on `SPRING_SNAPPY` – the one part of the drag on a spring; easing back
- * below it shrinks the disc again. A release past the threshold goes back or forward while the
- * bubble shrinks away where it stands (Chrome's hiding animation); a release short of it springs
- * the bubble home. The bubble is drawn by `HistoryNavBubble` off {@link onHistoryNavFrame}, on
- * transform and opacity only – in the chrome's DOM where the chrome is on top, or by a host that
- * draws the disc itself ({@link HistoryNavHost}) where the pages are layered above the chrome.
+ * never carries the disc into the page. The disc (v2 §11.9: 44 in the panel with a 20 arrow in
+ * the text ink) grows from {@link BUBBLE_MIN_SCALE} to 1 on `SPRING_SNAPPY` as the drag
+ * approaches the threshold – the growth is the one part of the drag on a spring, its target the
+ * finger's approach ({@link navGrowth}), so easing back shrinks it again – and crossing the
+ * threshold is the landmark: the disc full, the arrow whole, one haptic tick (Chrome's
+ * `KEYBOARD_TAP`). A release past the threshold goes back or forward while the disc leaves on
+ * the exit fade where it stands (§11.4's departure: opacity out with a tenth of shrink on the
+ * exit spring); a release short of it springs the bubble home, shrinking back on the growth's
+ * spring. The bubble is drawn by `HistoryNavBubble` off {@link onHistoryNavFrame}, on transform
+ * and opacity only – in the chrome's DOM where the chrome is on top, or by a host that draws the
+ * disc itself ({@link HistoryNavHost}) where the pages are layered above the chrome.
  */
 
 export type HistoryNavEdge = 'left' | 'right'
@@ -63,9 +66,12 @@ export interface HistoryNavState {
 export interface HistoryNavFrame {
   /** How far the bubble's leading edge has come in from the page's side, CSS px (0: hidden). */
   offset: number
-  /** 0 while the bubble is up; runs to 1 as it shrinks away after a navigation. */
+  /** 0 while the bubble is up; runs to 1 as it leaves on the exit fade after a navigation. */
   hide: number
-  /** The armed growth's progress, 0 (the disc at its size) to 1 (grown by {@link ARMED_GROWTH}). */
+  /**
+   * The growth's progress: 0 (the disc at {@link BUBBLE_MIN_SCALE}, the drag just begun) to 1
+   * (full, at the threshold). Under reduced motion 1 for the whole drag (v2 §11.9).
+   */
   grow: number
 }
 
@@ -80,15 +86,22 @@ export const NAV_STEP_CLAMP = NAV_DRAG_DISTANCE / 3
  * leading edge never comes further in than the threshold plus this.
  */
 export const NAV_BAND_EXTENT = NAV_DRAG_DISTANCE
-/** How much the disc grows once letting go would navigate: `scale(1 + ARMED_GROWTH)`. */
-export const ARMED_GROWTH = 0.15
+/** The disc's scale as the drag begins; it is 1 – full – at the threshold (v2 §11.9's .6 → 1). */
+export const BUBBLE_MIN_SCALE = 0.6
 /**
- * The hide and the growth run on their springs as distances of this many px (the spring's rest
- * thresholds are in px, and a 0…1 value would rest at once); `hide` and `grow` are the
- * fractions of it covered.
+ * The growth runs on its spring as a distance of this many px (the spring's rest thresholds are
+ * in px, and a 0…1 value would rest at once); `grow` is the fraction of it covered.
  */
-const HIDE_RUN = 100
-/** The disc's diameter, CSS px: Chrome's `navigation_bubble_size`. */
+const GROW_RUN = 100
+/**
+ * The exit fade the disc leaves on after a navigation, v2 §11.4's departure as `Departures`
+ * runs it: `SPRING_SNAPPY` over this many px of travel, `hide` the fraction covered, the disc at
+ * `scale(1 − HIDE_SHRINK · hide)` and opacity `1 − hide`.
+ */
+const HIDE_RUN = 120
+/** How far the disc shrinks on its way out: §11.4's tenth. */
+export const HIDE_SHRINK = 0.1
+/** The disc's diameter, CSS px: Chrome's `navigation_bubble_size`, v2 §11.9's 44. */
 export const BUBBLE_SIZE = 44
 /** The bubble is fully opaque once its leading edge has come this far in from the side. */
 export const BUBBLE_FADE_IN = 16
@@ -100,7 +113,7 @@ export interface BubbleVisuals {
    * page's side (a whole disc out, `-BUBBLE_SIZE`); its leading edge is `offset` in.
    */
   x: number
-  /** About the disc's centre: the armed growth, taken to nothing by the hide. */
+  /** About the disc's centre: {@link BUBBLE_MIN_SCALE} → 1 by the growth, a tenth less by the end of the hide. */
   scale: number
   /** Up over the first {@link BUBBLE_FADE_IN} px of offset, taken to nothing by the hide. */
   opacity: number
@@ -108,11 +121,11 @@ export interface BubbleVisuals {
 
 /** Transform and opacity for a frame of the machine – the one mapping the DOM disc and a host's share. */
 export function bubbleVisuals(frame: HistoryNavFrame): BubbleVisuals {
-  const shown = 1 - frame.hide
   return {
     x: frame.offset - BUBBLE_SIZE,
-    scale: (1 + ARMED_GROWTH * frame.grow) * shown,
-    opacity: Math.min(1, frame.offset / BUBBLE_FADE_IN) * shown
+    scale:
+      (BUBBLE_MIN_SCALE + (1 - BUBBLE_MIN_SCALE) * frame.grow) * (1 - HIDE_SHRINK * frame.hide),
+    opacity: Math.min(1, frame.offset / BUBBLE_FADE_IN) * (1 - frame.hide)
   }
 }
 
@@ -146,6 +159,15 @@ export function releaseNavigates(motion: number): boolean {
   return motion > NAV_THRESHOLD
 }
 
+/**
+ * Where the growth is heading for `motion` px of finger: the drag's approach to the threshold,
+ * 0 as it begins to 1 at {@link NAV_THRESHOLD} and past it (v2 §11.9: the disc grows from .6 to
+ * 1 on the spring as the drag approaches the commit, and is full at it).
+ */
+export function navGrowth(motion: number): number {
+  return Math.min(1, Math.max(0, motion) / NAV_THRESHOLD)
+}
+
 // ---------------------------------------------------------------------------
 // The machine
 // ---------------------------------------------------------------------------
@@ -171,9 +193,9 @@ export class HistoryNavMachine {
   private offset = 0
   private hide = 0
   private grow = 0
-  /** The release's motion: the return home, or the hide after a navigation. */
+  /** The release's motion: the return home, or the exit fade after a navigation. */
   private readonly spring: SpringAnimation
-  /** The armed growth, the one spring that runs while the finger is down. */
+  /** The growth, the one spring that runs while the finger is down: its target the finger's approach. */
   private readonly growth: SpringAnimation
   private timer: ReturnType<typeof setTimeout> | null = null
 
@@ -251,7 +273,9 @@ export class HistoryNavMachine {
     this.lastTravel = 0
     this.offset = 0
     this.hide = 0
-    this.grow = 0
+    // Under reduced motion the disc is drawn at its full size the moment the drag arms (v2
+    // §11.9): the growth is movement, and movement goes.
+    this.grow = this.reduced() ? 1 : 0
     this.setPhase('dragging', false)
     this.options.paint(tabId, this.current)
   }
@@ -260,12 +284,11 @@ export class HistoryNavMachine {
     this.motion = navMotion(this.motion, travel, this.lastTravel)
     this.lastTravel = travel
     this.offset = bubbleOffset(this.motion)
-    const armed = releaseNavigates(this.motion)
-    const wasArmed = this.armed
-    this.setPhase('dragging', armed)
+    this.setPhase('dragging', releaseNavigates(this.motion))
     if (this.tabId) this.options.paint(this.tabId, this.current)
-    // Crossing the threshold either way: the disc grows, or shrinks back, on its spring.
-    if (armed !== wasArmed) this.growTo(armed ? 1 : 0)
+    // The growth follows the finger's approach to the threshold on its spring: out as the drag
+    // comes in, back as it eases out.
+    this.growTo(navGrowth(this.motion))
   }
 
   private release(): void {
@@ -278,40 +301,47 @@ export class HistoryNavMachine {
     if (!tabId) return
     this.setPhase('navigating', true)
     this.options.navigate(tabId, this.edge)
-    // The growth holds where it got to: the hide shrinks the disc from that size.
-    this.growth.stop()
-    // Chrome hides the bubble where it stands, scale and alpha to nothing.
+    // The growth is heading for full already (the motion is past the threshold) and runs on to
+    // it; the disc leaves on the exit fade where it stands (v2 §11.9), the spring resting both.
     this.animate(0, HIDE_RUN, SPRING_SNAPPY)
   }
 
   private retract(): void {
     this.setPhase('settling', false)
-    // A cancel can land while armed: the growth runs back with the return.
+    // The disc shrinks back on the same spring it grew on while the return runs (v2 §11.9).
     if (this.grow !== 0 || this.growth.running) this.growTo(0)
     // Chrome's return: the bubble runs back out over the side it came from.
     this.animate(this.offset, 0, SPRING_GENTLE)
   }
 
-  /** Run the growth to 0 or 1 on `SPRING_SNAPPY` from wherever it is; under reduced motion it jumps. */
+  /**
+   * Head the growth for `target` on `SPRING_SNAPPY`: retargeted in flight, set off from rest.
+   * Under reduced motion nothing runs – the disc is full from the drag's start ({@link start}).
+   */
   private growTo(target: number): void {
-    if (this.options.reduced?.() ?? reducedMotion()) {
-      this.growth.stop()
-      this.grown(target * HIDE_RUN)
+    if (this.reduced()) return
+    const to = target * GROW_RUN
+    if (this.growth.running) {
+      this.growth.retarget(to)
       return
     }
-    const wasRunning = this.growth.running
-    const { v } = this.growth.stop()
-    this.growth.start(this.grow * HIDE_RUN, wasRunning ? v : 0, target * HIDE_RUN)
+    const from = this.grow * GROW_RUN
+    if (Math.abs(from - to) < 1e-6) return
+    this.growth.start(from, 0, to)
   }
 
   private grown(x: number): void {
-    this.grow = Math.min(1, Math.max(0, x / HIDE_RUN))
+    this.grow = Math.min(1, Math.max(0, x / GROW_RUN))
     if (this.tabId) this.options.paint(this.tabId, this.current)
+  }
+
+  private reduced(): boolean {
+    return this.options.reduced?.() ?? reducedMotion()
   }
 
   /** Run the phase's value from `from` to `to`: on the spring, or under reduced motion as a 120 ms fade. */
   private animate(from: number, to: number, config: SpringConfig): void {
-    if (this.options.reduced?.() ?? reducedMotion()) {
+    if (this.reduced()) {
       // The bubble stays where it is and fades (v2 §11.3); the value jumps once the fade is over.
       this.hide = 1
       if (this.tabId) this.options.paint(this.tabId, this.current)
@@ -406,7 +436,10 @@ export interface HistoryNavHostFrame {
   /** About the disc's centre. */
   scale: number
   opacity: number
-  /** Letting go would navigate: the arrow's accent tint (the host's own 250 ms fade). */
+  /**
+   * Letting go would navigate – the drag's state, for a host that wants it. The disc draws no
+   * mark of its own for it: v2 §11.9's threshold shows as the full disc and the haptic.
+   */
   armed: boolean
   /** Motion is reduced: an opacity change fades over 120 ms; the box still follows the finger. */
   reduced: boolean

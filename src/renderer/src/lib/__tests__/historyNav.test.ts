@@ -1,16 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  ARMED_GROWTH,
   BUBBLE_FADE_IN,
+  BUBBLE_MIN_SCALE,
   BUBBLE_SIZE,
   bubbleHostFrame,
   bubbleOffset,
   bubbleVisuals,
+  HIDE_SHRINK,
   HistoryNavMachine,
   NAV_BAND_EXTENT,
   NAV_DRAG_DISTANCE,
   NAV_STEP_CLAMP,
   NAV_THRESHOLD,
+  navGrowth,
   navMotion,
   releaseNavigates,
   type HistoryNavEdge,
@@ -25,7 +27,6 @@ describe('history navigation mapping (Chrome SideSlideLayout; v2 §11.3 input ru
     expect(NAV_THRESHOLD).toBe(96)
     expect(NAV_BAND_EXTENT).toBe(32)
     expect(NAV_STEP_CLAMP).toBeCloseTo(32 / 3, 9)
-    expect(ARMED_GROWTH).toBe(0.15)
   })
 
   it('rides the finger one to one up to the threshold, then rubber-bands the excess', () => {
@@ -69,30 +70,54 @@ describe('history navigation mapping (Chrome SideSlideLayout; v2 §11.3 input ru
     expect(releaseNavigates(NAV_THRESHOLD + 0.01)).toBe(true)
     expect(releaseNavigates(0)).toBe(false)
   })
+
+  it("heads the growth for the drag's approach to the threshold: 0 as it begins, 1 at and past it", () => {
+    expect(navGrowth(0)).toBe(0)
+    expect(navGrowth(-20)).toBe(0)
+    expect(navGrowth(NAV_THRESHOLD / 2)).toBe(0.5)
+    expect(navGrowth(NAV_THRESHOLD)).toBe(1)
+    expect(navGrowth(NAV_THRESHOLD + 30)).toBe(1)
+    for (let m = 0; m < NAV_THRESHOLD; m += 4)
+      expect(navGrowth(m + 4)).toBeGreaterThan(navGrowth(m))
+  })
 })
 
 describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => {
-  it("pins Chrome's 44 disc and the 16 px fade-in", () => {
+  it("pins v2 §11.9's 44 disc, its .6 → 1 growth, the exit's tenth of shrink and the 16 px fade-in", () => {
     expect(BUBBLE_SIZE).toBe(44)
+    expect(BUBBLE_MIN_SCALE).toBe(0.6)
+    expect(HIDE_SHRINK).toBe(0.1)
     expect(BUBBLE_FADE_IN).toBe(16)
   })
 
   it('shifts the disc by its offset from a whole disc out, fading up over the first 16 px', () => {
-    expect(bubbleVisuals({ offset: 0, hide: 0, grow: 0 })).toEqual({ x: -44, scale: 1, opacity: 0 })
+    expect(bubbleVisuals({ offset: 0, hide: 0, grow: 0 })).toEqual({
+      x: -44,
+      scale: BUBBLE_MIN_SCALE,
+      opacity: 0
+    })
     expect(bubbleVisuals({ offset: 8, hide: 0, grow: 0 })).toEqual({
       x: -36,
-      scale: 1,
+      scale: BUBBLE_MIN_SCALE,
       opacity: 0.5
     })
-    expect(bubbleVisuals({ offset: 96, hide: 0, grow: 0 })).toEqual({ x: 52, scale: 1, opacity: 1 })
+    expect(bubbleVisuals({ offset: 96, hide: 0, grow: 0 })).toEqual({
+      x: 52,
+      scale: BUBBLE_MIN_SCALE,
+      opacity: 1
+    })
   })
 
-  it('grows by the armed growth and is taken to nothing by the hide', () => {
-    expect(bubbleVisuals({ offset: 96, hide: 0, grow: 1 }).scale).toBeCloseTo(1 + ARMED_GROWTH, 9)
+  it('grows from .6 to full with the growth, and leaves on the exit fade: opacity out with a tenth of shrink', () => {
+    expect(bubbleVisuals({ offset: 48, hide: 0, grow: 0.5 }).scale).toBeCloseTo(0.8, 9)
+    expect(bubbleVisuals({ offset: 96, hide: 0, grow: 1 }).scale).toBe(1)
     const half = bubbleVisuals({ offset: 96, hide: 0.5, grow: 1 })
-    expect(half.scale).toBeCloseTo((1 + ARMED_GROWTH) / 2, 9)
+    expect(half.scale).toBeCloseTo(1 - HIDE_SHRINK / 2, 9)
     expect(half.opacity).toBe(0.5)
-    expect(bubbleVisuals({ offset: 96, hide: 1, grow: 1 })).toEqual({ x: 52, scale: 0, opacity: 0 })
+    const gone = bubbleVisuals({ offset: 96, hide: 1, grow: 1 })
+    expect(gone.x).toBe(52)
+    expect(gone.scale).toBeCloseTo(1 - HIDE_SHRINK, 9)
+    expect(gone.opacity).toBe(0)
   })
 
   it("lays a host's disc against the page's side: a whole disc out at rest, its leading edge `offset` in", () => {
@@ -111,7 +136,7 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
       left: 6 - 44,
       top: 378,
       size: 44,
-      scale: 1,
+      scale: BUBBLE_MIN_SCALE,
       opacity: 0,
       armed: false,
       reduced: false,
@@ -127,7 +152,8 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
     expect(armed.left + armed.size).toBe(6 + 96)
     // The clip is the frame's box, the same every frame of the drag.
     expect(armed.clip).toBe(clip)
-    expect(armed.scale).toBeCloseTo(1 + ARMED_GROWTH, 9)
+    // Full at the threshold (v2 §11.9).
+    expect(armed.scale).toBe(1)
     expect(armed.opacity).toBe(1)
     expect(armed.armed).toBe(true)
     expect(armed.reduced).toBe(true)
@@ -229,8 +255,9 @@ describe('HistoryNavMachine', () => {
     h.machine.dispatch('t1', 'move', { travel: 10, time: now })
     expect(h.machine.current.offset).toBe(10)
     expect(h.machine.state.armed).toBe(false)
-    // Nothing is on a spring while the finger rides short of the threshold.
-    expect(queued).toHaveLength(0)
+    // The offset is the finger's alone (input); the growth is the one spring, and it is on its
+    // way from the first sample.
+    expect(queued).toHaveLength(1)
     drag(h, 120, 12)
     // 120 px over 12 samples of 10 px: every step under the clamp, the motion is the travel.
     expect(h.machine.current.offset).toBeCloseTo(bubbleOffset(120), 9)
@@ -246,29 +273,46 @@ describe('HistoryNavMachine', () => {
     expect(h.machine.state.armed).toBe(false)
   })
 
-  it('arming grows the disc on the spring and disarming shrinks it back; the ride stays input', () => {
+  it("the growth follows the finger's approach to the threshold on its spring; the ride stays input", () => {
     const h = harness()
-    drag(h, 100, 10)
-    expect(h.machine.state.armed).toBe(true)
-    expect(h.machine.current.grow).toBe(0)
+    // Half way: the growth heads for .5 and runs there on its own frames, monotonically.
+    drag(h, NAV_THRESHOLD / 2, 6)
+    expect(h.machine.state.armed).toBe(false)
     expect(queued).toHaveLength(1)
-    // The finger holds still: the growth runs to 1 on its own frames, monotonically.
     settle()
     const growing = h.frames.filter((f) => f.grow > 0)
     expect(growing.length).toBeGreaterThan(3)
     for (let i = 1; i < growing.length; i++)
       expect(growing[i].grow).toBeGreaterThanOrEqual(growing[i - 1].grow - 1e-9)
-    expect(h.machine.current.grow).toBeCloseTo(1, 2)
+    expect(h.machine.current.grow).toBeCloseTo(0.5, 2)
     // The offset never moved with the growth: the ride is the finger's alone.
-    for (const f of growing) expect(f.offset).toBeCloseTo(bubbleOffset(100), 9)
-    // Back under the threshold: the disc shrinks again, from where the growth was.
+    for (const f of growing) expect(f.offset).toBeCloseTo(NAV_THRESHOLD / 2, 9)
+    // On to the threshold in steps under the clamp, the spring retargeted mid-flight each time:
+    // full at the threshold, no jump on the way.
+    const painted = h.frames.length
+    for (const travel of [58, 68, 78, 88, 100]) {
+      now += 16
+      h.machine.dispatch('t1', 'move', { travel, time: now })
+      settle(2)
+    }
+    expect(h.machine.state.armed).toBe(true)
+    settle()
+    expect(h.machine.current.grow).toBeCloseTo(1, 2)
+    const onward = h.frames.slice(painted)
+    for (let i = 1; i < onward.length; i++)
+      expect(onward[i].grow).toBeGreaterThanOrEqual(onward[i - 1].grow - 1e-9)
+    // Easing back out shrinks it again, to where the finger's approach stands.
     for (const travel of [90, 80]) {
       now += 16
       h.machine.dispatch('t1', 'move', { travel, time: now })
     }
     expect(h.machine.state.armed).toBe(false)
     settle()
-    expect(h.machine.current.grow).toBeCloseTo(0, 2)
+    // Under the threshold the offset is the motion itself (the clamp trimmed the 12 px step).
+    const motion = h.machine.current.offset
+    expect(motion).toBeLessThan(80)
+    expect(motion).toBeGreaterThan(70)
+    expect(h.machine.current.grow).toBeCloseTo(navGrowth(motion), 2)
     expect(h.machine.state.phase).toBe('dragging')
   })
 
@@ -298,7 +342,7 @@ describe('HistoryNavMachine', () => {
     }
   })
 
-  it('a release past the threshold goes back and shrinks the bubble away where it stands', () => {
+  it('a release past the threshold goes back and the bubble leaves on the exit fade where it stands', () => {
     const h = harness()
     drag(h, 120)
     expect(h.machine.state.armed).toBe(true)
@@ -310,7 +354,7 @@ describe('HistoryNavMachine', () => {
     const standing = h.machine.current.offset
     settle()
     expect(h.machine.state.phase).toBe('idle')
-    // The disc stayed where the finger left it, grown, while `hide` ran to 1.
+    // The disc stayed where the finger left it, full, while `hide` ran to 1.
     const hiding = h.frames.filter((f) => f.hide > 0 && f.hide < 1)
     expect(hiding.length).toBeGreaterThan(2)
     for (const f of hiding) {
@@ -375,13 +419,16 @@ describe('HistoryNavMachine', () => {
     expect(queued).toHaveLength(0)
   })
 
-  it('under reduced motion the drag still tracks, the growth jumps and the bubble leaves on a 120 ms fade', () => {
+  it('under reduced motion the drag still tracks, the disc is full from the start and leaves on a 120 ms fade', () => {
     const h = harness()
     h.reduced = true
+    h.machine.dispatch('t1', 'start', { edge: 'left' })
+    // Drawn at its full size the moment the drag arms (v2 §11.9): the growth is movement, and
+    // movement goes – no spring, no frame asked for.
+    expect(h.frames).toEqual([{ offset: 0, hide: 0, grow: 1 }])
     drag(h, 120)
     const standing = bubbleOffset(120)
     expect(h.machine.current.offset).toBeCloseTo(standing, 9)
-    // The growth is a spring, so it jumps: no frame was asked for.
     expect(h.machine.current.grow).toBe(1)
     expect(queued).toHaveLength(0)
     h.machine.dispatch('t1', 'release', { time: now })
@@ -399,7 +446,8 @@ describe('HistoryNavMachine', () => {
     short.reduced = true
     drag(short, 30)
     short.machine.dispatch('t1', 'release', { time: now })
-    expect(short.frames[short.frames.length - 1]).toEqual({ offset: 30, hide: 1, grow: 0 })
+    // Cut on release, still full: nothing shrinks back under reduced motion.
+    expect(short.frames[short.frames.length - 1]).toEqual({ offset: 30, hide: 1, grow: 1 })
     vi.advanceTimersByTime(120)
     expect(short.machine.state.phase).toBe('idle')
     expect(short.navigated).toEqual([])

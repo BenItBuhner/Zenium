@@ -1995,13 +1995,12 @@
   }
 
   /*
-   * Overscroll history navigation (GN-04): Chrome's arrow bubble, drawn in from the side of the
-   * page a drag began at in 3-button navigation mode (see `lib/historyNav.ts`). The same v2
-   * panel as the pull disc, a 44 disc round a 32 arrow (Chrome's `navigation_bubble_size` and
-   * arrow size); position, scale and opacity are written per frame. The arrow is drawn twice,
-   * in the deemphasised ink and in the accent, the accent copy coming up over 250 ms once
-   * letting go would navigate (Chrome's `NavigationBubble` tint); under reduced motion the
-   * bubble still tracks the finger and leaves on a 120 ms fade (v2 §11.3).
+   * Overscroll history navigation (GN-04, v2 §11.9): Chrome's arrow bubble, drawn in from the
+   * side of the page a drag began at in 3-button navigation mode (see `lib/historyNav.ts`). The
+   * same v2 panel as the pull disc, a 44 disc (Chrome's `navigation_bubble_size`) round a 20
+   * arrow in the text ink; position, scale and opacity are written per frame – the disc grows
+   * from .6 to 1 on its spring as the drag approaches the threshold, and is full there. Under
+   * reduced motion the bubble still tracks the finger and leaves on a 120 ms fade (v2 §11.3).
    */
   .zen-histnav-disc {
     display: flex;
@@ -2019,20 +2018,12 @@
   .zen-histnav-glyph {
     position: absolute;
     display: flex;
-    color: var(--v2-text-deemphasized);
+    color: var(--v2-text);
   }
   .zen-histnav-glyph svg {
-    width: 32px;
-    height: 32px;
+    width: 20px;
+    height: 20px;
     stroke-width: 1.75;
-  }
-  .zen-histnav-accent {
-    color: var(--v2-accent);
-    opacity: 0;
-    transition: opacity 250ms var(--zen-ease);
-  }
-  .zen-histnav-disc[data-armed] .zen-histnav-accent {
-    opacity: 1;
   }
 
   .zen-space-strip {

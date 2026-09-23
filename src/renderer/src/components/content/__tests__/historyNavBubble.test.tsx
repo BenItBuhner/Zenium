@@ -24,6 +24,7 @@ vi.mock('@renderer/lib/api', () => ({
 
 const {
   abortHistoryNav,
+  BUBBLE_MIN_SCALE,
   BUBBLE_SIZE,
   dispatchHistoryNavEvent,
   NAV_STEP_CLAMP,
@@ -139,7 +140,7 @@ describe('HistoryNavBubble', () => {
           left: FRAME.left - BUBBLE_SIZE,
           top: (FRAME.top + FRAME.bottom) / 2 - BUBBLE_SIZE / 2,
           size: BUBBLE_SIZE,
-          scale: 1,
+          scale: BUBBLE_MIN_SCALE,
           opacity: 0,
           armed: false,
           reduced: false,

@@ -206,8 +206,9 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         claim("the bubble is armed past the threshold (root data-armed; disc: $disc)", armed)
         // The chrome's DOM lies under the pages, so the disc is the host's view above them
         // (HistoryNavBubbleView), moved on translation, scale and alpha alone: it is visible,
-        // opaque, its leading edge past the threshold, and grown by the armed 15 %.
-        claim("the native disc is up above the pages, riding its translation, grown as armed", disc.up && disc.leadingEdgeDp > NAV_THRESHOLD_DP && disc.scale > 1.1f)
+        // opaque, its leading edge past the threshold, and full – the growth's spring at 1 with
+        // the finger held past the threshold (v2 §11.9's .6 → 1).
+        claim("the native disc is up above the pages, riding its translation, full past the threshold", disc.up && disc.leadingEdgeDp > NAV_THRESHOLD_DP && disc.scale > FULL_SCALE_FLOOR)
         // The disc's layer clips it to the page frame (the DOM disc's `overflow: hidden`): the
         // frame sits in from the window's edge, and the disc must come out from the frame's side,
         // not show over the gutter. The DOM's box, unshifted: the layer is in window px.
@@ -227,8 +228,9 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
 
     /**
      * A drag of 60 dp in two halves, a still at each with the finger held: the disc rides the
-     * finger out from the frame's side, never arms, and the release springs it away with nothing
-     * navigated. Unmeasured, so the stills cost the frames nothing.
+     * finger out from the frame's side, growing with the approach but short of full, never arms,
+     * and the release springs it away with nothing navigated. Unmeasured, so the stills cost the
+     * frames nothing.
      */
     private fun edgeDragShort() {
         section("GN-04: a short edge drag springs back")
@@ -240,7 +242,7 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         f.hold(300)
         val riding = nativeDisc()
         finding("(half way, ${SHORT_DRAG_DP / 2} dp of travel with the finger held: disc $riding; phase '${bubblePhase()}')")
-        claim("the native disc rides the finger out from the frame's side, un-armed (disc: $riding)", riding.up && riding.leadingEdgeDp in 1f..NAV_THRESHOLD_DP && riding.scale < 1.01f)
+        claim("the native disc rides the finger out from the frame's side, un-armed and short of full (disc: $riding)", riding.up && riding.leadingEdgeDp in 1f..NAV_THRESHOLD_DP && riding.scale in MIN_SCALE..FULL_SCALE_FLOOR)
         shot("05-edge-drag-riding")
         f.moveBy(SHORT_DRAG_DP / 2 * density, 0f, 250)
         f.hold(350)
@@ -249,8 +251,9 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         val disc = nativeDisc()
         claim("the short drag has the bubble dragging (phase '$phase')", phase == "dragging")
         claim("the short drag is not armed", !armed)
-        claim("the native disc is up short of the threshold at its own size (disc: $disc)", disc.up && disc.leadingEdgeDp in 1f..NAV_THRESHOLD_DP && disc.scale < 1.01f)
+        claim("the native disc is up short of the threshold, short of full (disc: $disc)", disc.up && disc.leadingEdgeDp in 1f..NAV_THRESHOLD_DP && disc.scale in MIN_SCALE..FULL_SCALE_FLOOR)
         claim("the disc went further with the finger (${"%.1f".format(riding.leadingEdgeDp)} -> ${"%.1f".format(disc.leadingEdgeDp)} dp)", disc.leadingEdgeDp > riding.leadingEdgeDp)
+        claim("and grew with the approach (scale ${"%.3f".format(riding.scale)} -> ${"%.3f".format(disc.scale)})", disc.scale > riding.scale)
         shot("05-edge-drag-short")
         f.up()
         SystemClock.sleep(1_500)
@@ -654,6 +657,13 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         const val LONG_DRAG_DP = 200f
         /** Short of the threshold: the disc follows and springs back. */
         const val SHORT_DRAG_DP = 60f
+        /** The disc's scale as the drag begins (`lib/historyNav.ts` `BUBBLE_MIN_SCALE`, v2 §11.9's .6). */
+        const val MIN_SCALE = 0.6f
+        /**
+         * Full is 1 at the threshold; the growth's spring rests a hair short of it, and a finger held
+         * short of the threshold (60 dp of 96) leaves the disc well under it.
+         */
+        const val FULL_SCALE_FLOOR = 0.97f
         const val THREE_BUTTON = "threebutton"
         const val GESTURAL = "gestural"
         const val THREE_BUTTON_OVERLAY = "com.android.internal.systemui.navbar.threebutton"
