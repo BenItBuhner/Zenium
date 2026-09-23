@@ -44,15 +44,15 @@ export interface FontsDraft {
 }
 
 /**
- * How long a step sequence is quiet before it commits, ms: the timer restarts on every step,
- * so the commit comes this long after the last press, or after the last of a hold's repeats
- * (the hold steps every 100 ms, so a hold commits once, at its end plus the window). The
- * window is longer than a gap between taps: a person tapping a button repeatedly lands about
- * 200 to 300 ms apart, and #350's run 8 on the emulator (35827411459) saw its seven injected
- * taps 146 to 285 ms apart – past the ruling's first "about 150 ms", which split that
- * sequence into four commits. 400 ms closes over both; a longer pause is a new sequence,
- * committed on its own. (A held button suspends the timer altogether – `hold` – so a hold's
- * 400 ms delay before it repeats never commits the first step early.)
+ * The quiet window of RULING 4 in `internal/android-parity/perf-program.md`, ms – the one
+ * constant for every ± row (Font size and Minimum font size alike), so a later change is this
+ * line. The timer restarts on every step, so the commit comes this long after the last press
+ * or after a hold's end (a held button suspends the timer – `hold` – so the hold's 400 ms delay
+ * never commits its first step early, and its 100 ms repeats commit once). The window is longer
+ * than a gap between taps: a person tapping repeatedly lands about 200 to 300 ms apart, and
+ * #350's run 8 on the emulator (35827411459) saw its seven injected taps 146 to 285 ms apart –
+ * past the ruling's first "about 150 ms", which split that sequence into four commits. 400 ms,
+ * Android's long-press timeout, closes over both; a longer pause is a new sequence, its own.
  */
 export const FONTS_COMMIT_QUIET_MS = 400
 
