@@ -1,5 +1,5 @@
 import { app, Menu, powerMonitor, systemPreferences } from 'electron'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { optimizer } from '@electron-toolkit/utils'
 import { registerZenScheme } from './platform/protocol'
 import { ElectronPlatform } from './platform'
@@ -11,6 +11,12 @@ import { runStdioShim } from './agent/shim'
 import { LINUX_DESKTOP_ID } from './platform/defaultBrowser'
 import { parseLaunchArgs, pathToFileUrl, type LaunchArgs } from '../shared/launchArgs'
 import { holdBackgroundWorkRequested } from './platform/backgroundWork'
+import {
+  describeSwitches,
+  droppedSecondInstanceSwitches,
+  parseCliSwitches,
+  windowSwitchesOf
+} from './cli'
 import type { Browser } from '../core/browser'
 
 app.setName('Zenium')
@@ -24,6 +30,21 @@ const LEGACY_APP_NAME = 'Zen'
 // process" dialog and blocks the main process (a quit never completes). Log to stderr instead.
 process.on('uncaughtException', (error) => console.error('[zenium] uncaught', error))
 
+// `electron .` in development carries the app path as its second argument.
+const argvOffset = app.isPackaged ? 1 : 2
+/**
+ * Chrome's launch switches (`cli.ts`): `--kiosk`, `--user-data-dir`, `--restore-last-session`,
+ * `--start-maximized`; `--profile-directory` accepted and ignored. Parsed before anything reads
+ * the profile: the MCP shim below relays to the browser of the same user data directory.
+ */
+const switches = parseCliSwitches(process.argv.slice(argvOffset))
+// Electron resolves `--user-data-dir` itself; set explicitly so a relative path resolves against
+// the working directory as Chrome's does, and so the choice is in one place. Per-directory
+// single-instance lock as in Chrome: two profiles run side by side.
+if (switches.userDataDir !== null) {
+  app.setPath('userData', resolve(process.cwd(), switches.userDataDir))
+}
+
 // `zenium --mcp`: relay stdio to the running browser's MCP server and exit – no windows, no lock.
 if (process.argv.slice(1).includes('--mcp')) {
   app.disableHardwareAcceleration()
@@ -34,17 +55,24 @@ if (process.argv.slice(1).includes('--mcp')) {
 }
 
 function main(): void {
+  for (const line of describeSwitches(switches, app.getPath('userData'))) {
+    console.log('[zen] cli:', line)
+  }
   // Before anything reads userData (and before `ready` creates it): a profile written by the app
   // while it was called Zen moves to the Zenium directory, so tabs, spaces and settings survive
   // the rename. The MCP shim above never migrates – it only runs while the browser is running.
-  try {
-    moveLegacyDirectory(
-      join(app.getPath('appData'), LEGACY_APP_NAME),
-      app.getPath('userData'),
-      (message) => console.warn('[zen] profile:', message)
-    )
-  } catch (error) {
-    console.error('[zen] profile: could not take over the Zen user data directory:', error)
+  // Nor does a launch with `--user-data-dir`: the directory named is the profile, whatever the
+  // default one holds.
+  if (switches.userDataDir === null) {
+    try {
+      moveLegacyDirectory(
+        join(app.getPath('appData'), LEGACY_APP_NAME),
+        app.getPath('userData'),
+        (message) => console.warn('[zen] profile:', message)
+      )
+    } catch (error) {
+      console.error('[zen] profile: could not take over the Zen user data directory:', error)
+    }
   }
 
   // Must run before `ready`.
@@ -117,12 +145,18 @@ function main(): void {
     win.host.focus()
   }
 
-  // `electron .` in development carries the app path as its second argument.
-  const argvOffset = app.isPackaged ? 1 : 2
   const openArgv = (argv: string[], cwd: string): void =>
     openLaunch(parseLaunchArgs(argv.slice(argvOffset), cwd))
 
-  app.on('second-instance', (_event, argv, workingDirectory) => openArgv(argv, workingDirectory))
+  // A second `zenium …` on the same user data directory: its URLs and window flags open here;
+  // its `--kiosk`, `--start-maximized`, `--restore-last-session` change nothing in a running
+  // instance, as in Chrome, and are named in the log. (Another `--user-data-dir` is another
+  // lock, so another instance.)
+  app.on('second-instance', (_event, argv, workingDirectory) => {
+    const dropped = droppedSecondInstanceSwitches(parseCliSwitches(argv.slice(argvOffset)))
+    if (dropped) console.warn('[zen] cli:', dropped)
+    openArgv(argv, workingDirectory)
+  })
   // macOS: links from other apps and documents from the Finder (also the initial launch).
   app.on('open-url', (event, url) => {
     event.preventDefault()
@@ -143,7 +177,8 @@ function main(): void {
     const platform = new ElectronPlatform(app.getPath('userData'), {
       // The desktop demo drivers' hold on the startup sweeps (`--hold-background-work`; a normal
       // launch never carries it): the core's `performance.releaseBackgroundWork` ends it.
-      holdBackgroundWork: holdBackgroundWorkRequested(process.argv)
+      holdBackgroundWork: holdBackgroundWorkRequested(process.argv),
+      windowSwitches: windowSwitchesOf(switches)
     })
     // Launched for an app alone (`zenium --app=<url>`, an installed app's launcher): the app's
     // window comes up by itself, as Chrome's does; the browser windows wait for the first thing
@@ -151,7 +186,10 @@ function main(): void {
     const initial = parseLaunchArgs(process.argv.slice(argvOffset), process.cwd())
     const appAlone =
       initial.app !== null && initial.urls.length === 0 && initial.window === 'current'
-    browser = platform.start({ windows: !appAlone })
+    browser = platform.start({
+      windows: !appAlone,
+      restoreLastSession: switches.restoreLastSession
+    })
     installShellTasks((kind) => void browser?.createWindow({ kind }))
     openLaunch(initial)
     for (const launch of queued.splice(0)) openLaunch(launch)

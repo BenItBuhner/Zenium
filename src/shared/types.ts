@@ -3918,7 +3918,9 @@ export interface Commands {
   'folder.contextMenu': { args: { folderId: string } & MenuAnchor; result: void }
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
-   * folder's space and the container of its last member. Resolves with the new tab's id.
+   * folder's space and the container of its last member. A SAVED folder opens first – its pages
+   * back as its tabs, as `folder.open` brings them – and the new tab joins behind them.
+   * Resolves with the new tab's id.
    */
   'folder.newTab': { args: { folderId: string }; result: string }
   'newtab.contextMenu': { args: MenuAnchor | void; result: void }

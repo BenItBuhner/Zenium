@@ -2063,25 +2063,36 @@ export class Menus {
     const live = this.browser.liveFolders.get(folderId)
     // The desktop's folder is the sidebar's tab group, saved when its tabs close (TAB-16, the
     // desktop half of the shared groups). Its menu runs act / change / destroy in four groups:
-    // what the folder does (Open Folder while it is saved, New Tab in Folder while it is open),
+    // what the folder does (Open Folder while it is saved, then New Tab in Folder on either),
     // what changes it (Edit Folder… – Chrome's group editor bubble, tabs-13: name, colour and
-    // the group's actions in one surface beside the header – and the live folder's items or
-    // Make Live Folder…), what ends one half of an open folder and can be undone (Unpack Folder
-    // leaves the tabs loose to regroup, Close Folder closes them and the folder stays SAVED with
-    // their pages, Open Folder brings them back), then Delete Folder alone – Chrome's for a saved
+    // the group's actions in one surface beside the header – the live folder's items or Make
+    // Live Folder…, and last, for an open folder with tabs on a host with windows to give, Move
+    // Folder to New Window – a change of place, filed with the verbs that change the folder as
+    // the tab menu files Move Tab to New Window with its place-changing verbs, not beside New
+    // Tab), what ends one half of an open folder and can be undone (Unpack Folder leaves the
+    // tabs loose to regroup, Close Folder closes them and the folder stays SAVED with their
+    // pages, Open Folder brings them back), then Delete Folder alone – Chrome's for a saved
     // group – which forgets what the folder holds, or closes its tabs with it, and so asks first
     // through the chrome's prompt when there is anything to lose (`folder.confirmDelete`). New
-    // Tab in Folder is an open folder's alone: on a saved one the first tab it holds again
-    // forgets the pages it kept (the model's `folderOpened` rule), a loss no plain-ink verb may
-    // carry (§5, §9.1); Open Folder brings them back first. No Rename Folder… and no Expand or
-    // Collapse Folder: each duplicates a control the row already has (the editor's Name field,
-    // the header's own click). Zen's word is Folder; the touch hosts say Group.
+    // Tab in Folder on a saved folder opens it first – its pages back as its tabs – and adds the
+    // tab behind them (`newTabInFolder`), so the plain-ink verb loses nothing (§5, §9.1). Move
+    // Folder to New Window (Chrome's Move group to new window, context-menus-107) takes the
+    // folder's tabs and the folder to a window of their own beside this one
+    // (`moveFolderToNewWindow`); the saved folder keeps its three rows (Open Folder brings the
+    // pages back here). No Rename Folder… and no Expand or Collapse Folder: each duplicates a
+    // control the row already has (the editor's Name field, the header's own click). Zen's word
+    // is Folder; the touch hosts say Group.
+    const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     const saved = isSavedFolder(state.model, folder)
     const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
     const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
-    const act: Template = saved
-      ? [{ label: `Open Folder (${tabs})`, click: () => this.browser.openFolder(folderId, win) }]
-      : [{ label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }]
+    const act: Template = [
+      ...when(saved, {
+        label: `Open Folder (${tabs})`,
+        click: () => this.browser.openFolder(folderId, win)
+      }),
+      { label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }
+    ]
     const change: Template = [
       {
         label: 'Edit Folder…',
@@ -2119,7 +2130,11 @@ export class Menus {
               label: 'Make Live Folder…',
               click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
             }
-          ]) as Template)
+          ]) as Template),
+      ...when(!saved && count > 0 && state.capabilities.windows, {
+        label: 'Move Folder to New Window',
+        click: () => void this.browser.tabs.moveFolderToNewWindow(folderId, win)
+      })
     ]
     const end: Template =
       count && !saved

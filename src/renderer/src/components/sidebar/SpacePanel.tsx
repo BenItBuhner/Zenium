@@ -503,8 +503,10 @@ export function FolderRow({
   // The tablet's row (TABLET-04, v2 §9.36): the group as a full-width 44 row like Zen's folder –
   // the colour dot or the saved ring in the glyph slot, the name, the count as a 13 aside, the
   // chevron trailing, the tabs indented beneath while open – the phone overview's own group
-  // header on the sidebar's grid; the fold on a spring (`useGroupFold`); a SAVED group – its
-  // tabs closed, its pages kept (TAB-16) – as a row whose tap opens it.
+  // header on the sidebar's grid; the fold on a spring (`useGroupFold`), the chevron turning
+  // with it – one glyph rotated 90° on the fold's progress, the same value as the height
+  // (§9.36 as amended; the lead's #398 ruling binds both hosts); a SAVED group – its tabs
+  // closed, its pages kept (TAB-16) – as a row whose tap opens it.
   //
   // The desktop's row (TAB-16's desktop half, tabs-15): Zen's folder header on §5's 32 row, the
   // group's colour in the glyph slot alone – the same dot, saved ring or own icon as the tablet's
@@ -513,7 +515,9 @@ export function FolderRow({
   // tablet row's 13 tabular aside at 69%, folded and open alike – the tabs it holds, or the
   // pages a saved one keeps; a SAVED folder stays in the strip as a saved group, a disclosure
   // like any folder whose rows, while it is unfolded, are the pages it kept (`SavedPageRow`),
-  // and whose menu and editor open it.
+  // and whose menu and editor open it. Its fold is the tablet's spring (`useGroupFold`, §9.36
+  // as amended): the block's height on SPRING_GENTLE with the rows it had – tabs or pages –
+  // kept drawn until the spring rests, the cut under reduced motion (§11.3).
   const tablet = viewportStore.use((v) => v.formFactor === 'tablet')
   const row = groupRowOf(folder, tabs)
   const saved = row.kind === 'saved'
@@ -535,20 +539,20 @@ export function FolderRow({
   const tabIndex = useStripTabIndex(key, containsActive && folder.collapsed)
   const shell = useRef<HTMLDivElement>(null)
   const header = useRef<HTMLDivElement>(null)
-  const drawn = useGroupFold(
-    shell,
-    header,
-    folder.collapsed,
-    tabs,
-    tablet || horizontal,
-    horizontal ? 'x' : 'y'
-  )
   // The desktop's sidebar lists a saved folder's pages under its header while it is unfolded;
   // the tablet's saved row has nothing to fold (its tap opens the group), and neither has the
   // strip's saved chip (§9.37): along the band a saved group is its chip alone – the ring, the
   // name, the count of the pages it keeps as the aside – and a press on it opens the folder.
-  const savedPages =
-    !tablet && !horizontal && saved && !folder.collapsed ? (folder.savedTabs ?? []) : []
+  const savedPages = !tablet && !horizontal && saved ? (folder.savedTabs ?? []) : []
+  // The fold keeps the rows it had – the tabs, or the pages – through the spring, so the block
+  // measures whole as it folds (a saved folder's pages are rows of the block as much as tabs).
+  const drawn = useGroupFold(
+    shell,
+    header,
+    folder.collapsed,
+    { tabs, pages: savedPages },
+    horizontal ? 'x' : 'y'
+  )
   // The strip's saved chip opens the group, as the tablet's saved row does; the sidebar's saved
   // folder is a disclosure over its pages.
   const opensOnPress = saved && (tablet || horizontal)
@@ -692,13 +696,14 @@ export function FolderRow({
                     {count}
                   </span>
                   {/* A saved group has nothing to fold: its chevron's box stays, empty, so the
-                      counts of saved and open rows share one edge. */}
+                      counts of saved and open rows share one edge. An open group's chevron is
+                      the ONE glyph, turned 90° by the fold's progress (`.zen-group-row-chevron`,
+                      `--zen-fold-progress`): › folded, ⌄ open, and every angle between as the
+                      rows fold – never a swap at the commit. */}
                   {saved ? (
                     <span className="zen-group-row-chevron" aria-hidden />
-                  ) : folder.collapsed ? (
-                    <ChevronRight className="zen-group-row-chevron" aria-hidden />
                   ) : (
-                    <ChevronDown className="zen-group-row-chevron" aria-hidden />
+                    <ChevronRight className="zen-group-row-chevron" aria-hidden />
                   )}
                 </>
               ))}
@@ -736,21 +741,18 @@ export function FolderRow({
                   >
                     {count}
                   </span>
-                  {folder.collapsed ? (
-                    <ChevronRight
-                      className={cn(
-                        V2_TRAILING_GLYPH,
-                        'text-[var(--v2-control-text-deemphasized)]'
-                      )}
-                    />
-                  ) : (
-                    <ChevronDown
-                      className={cn(
-                        V2_TRAILING_GLYPH,
-                        'text-[var(--v2-control-text-deemphasized)]'
-                      )}
-                    />
-                  )}
+                  {/* The disclosure's chevron: one glyph, › folded and ⌄ open, turned through
+                      the angles between on the fold's progress – the same value as the block's
+                      height (§9.36 as amended, §11.1) – so the folded state reads no earlier
+                      than the container rests. The rest angle is the header's state's
+                      (`aria-expanded`), the in-flight one the fold's (`--zen-fold-progress`). */}
+                  <ChevronRight
+                    className={cn(
+                      'zen-group-row-chevron',
+                      V2_TRAILING_GLYPH,
+                      'text-[var(--v2-control-text-deemphasized)]'
+                    )}
+                  />
                 </>
               ))}
           </>
@@ -760,7 +762,7 @@ export function FolderRow({
           beside it (§9.37) – and the list a row of them is dragged in (lib/drag.ts: a row's list
           is its parent). Folded, there is no list (an empty one would take the block's gap under
           the header). */}
-      {drawn.length > 0 && (
+      {drawn.tabs.length > 0 && (
         <div
           className={cn(
             'zen-group-rows flex',
@@ -768,7 +770,7 @@ export function FolderRow({
           )}
           {...tablistProps(`${folder.name} tabs`, horizontal ? 'horizontal' : 'vertical')}
         >
-          {stripRows(drawn, splitGroups).map((row) => (
+          {stripRows(drawn.tabs, splitGroups).map((row) => (
             <StripRowItem
               key={rowKey(row)}
               row={row}
@@ -783,16 +785,16 @@ export function FolderRow({
       )}
       {/* A saved folder's pages, unfolded (the sidebar's disclosure): buttons that open the
           folder, not tabs – so a run of their own under the header, outside any tablist (a
-          tablist holds tabs alone). */}
-      {savedPages.length > 0 && (
+          tablist holds tabs alone); kept drawn while the fold shuts over them. */}
+      {drawn.pages.length > 0 && (
         <div className="zen-group-rows flex flex-col gap-0.5" data-saved-pages={folder.id}>
-          {savedPages.map((page, index) => (
+          {drawn.pages.map((page, index) => (
             <SavedPageRow
               key={`${index}:${page.url}`}
               folder={folder}
               page={page}
               index={index}
-              count={savedPages.length}
+              count={drawn.pages.length}
               compact={compact}
               parent={key}
             />
