@@ -457,9 +457,6 @@ const DESKTOP_APP_MENU = [
   'More Tools > Split View',
   'More Tools > Change Theme…',
   'More Tools > -',
-  'More Tools > Take Screenshot',
-  'More Tools > Capture Full Page',
-  'More Tools > -',
   'More Tools > Resources',
   'More Tools > Developer Tools',
   'Help',
@@ -478,6 +475,16 @@ const DESKTOP_APP_MENU = [
  * the app's.
  */
 const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
+
+/**
+ * The tablet's More Tools keeps the two captures (its chrome has no Web Capture… overlay), in
+ * their own group before the resources and the developer's rows.
+ */
+const TABLET_CAPTURES = [
+  'More Tools > Take Screenshot',
+  'More Tools > Capture Full Page',
+  'More Tools > -'
+]
 
 const DESKTOP_ONLY = [
   'Search Tabs…',
@@ -632,6 +639,35 @@ describe('the app menu', () => {
     expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Name Window…')
   })
 
+  it('folds the desktop’s Take Screenshot and Capture Full Page into Web Capture… (the #396 review’s ruling 3); the tablet keeps its two rows', () => {
+    const desktop = harness(DESKTOP)
+    const desktopMenu = appMenu(desktop)
+    const everywhere = allItems(desktop.shown()).map((i) => i.label)
+    expect(everywhere).not.toContain('Take Screenshot')
+    expect(everywhere).not.toContain('Capture Full Page')
+    expect(desktopMenu).toContain('Save and Share > Web Capture…')
+    // More Tools: two rows and a separator fewer than the row had – eight rows, two separators.
+    const moreTools = item(desktop.shown(), 'More Tools').submenu!
+    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(8)
+    expect(separators(moreTools)).toBe(2)
+    // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
+    // in their own group before the resources.
+    const tablet = harness(DESKTOP, 'tablet')
+    const tabletMenu = appMenu(tablet)
+    for (const label of TABLET_CAPTURES) expect(tabletMenu).toContain(label)
+    expect(tabletMenu.indexOf('More Tools > Capture Full Page')).toBe(
+      tabletMenu.indexOf('More Tools > Take Screenshot') + 1
+    )
+    expect(tabletMenu).not.toContain('Save and Share > Web Capture…')
+    const tabletMore = item(tablet.shown(), 'More Tools').submenu!
+    expect(separators(tabletMore)).toBe(3)
+    // The rows keep their actions where they stand, so the palette and the Zen preset's chord
+    // (`key_screenshot`) still reach them on the tablet; the phone's flat list keeps them too.
+    expect(deepItem(tablet.shown(), 'Take Screenshot').action).toBe('page.screenshot')
+    expect(deepItem(tablet.shown(), 'Capture Full Page').action).toBe('page.captureFullPage')
+    expect(appMenu(harness(ANDROID, 'phone'))).toContain('Take Screenshot')
+  })
+
   it('loses nothing the flat menu could do: every one of its thirty-two rows, on a host with every capability, is a row or a submenu row now', () => {
     /**
      * The flat menu of main at a8cca556 as the Linux build drew it on a web page with a
@@ -700,7 +736,15 @@ describe('the app menu', () => {
     h.browser.tabs.closeTab(closed.id, false, h.win)
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
-    for (const label of before) expect(everywhere, label).toContain(label)
+    // The flat menu's two captures are the desktop's one Web Capture… row now (the #396
+    // review's ruling 3): the overlay takes the visible area and the full page both, so
+    // nothing the two rows did is lost, and More Tools is two rows and a separator shorter.
+    const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
+    for (const label of before)
+      expect(everywhere, label).toContain(
+        foldedIntoWebCapture.has(label) ? 'Web Capture…' : label
+      )
+    for (const label of foldedIntoWebCapture) expect(everywhere).not.toContain(label)
     expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
     expect(separators(h.shown())).toBe(3)
     expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
@@ -719,8 +763,9 @@ describe('the app menu', () => {
     // Compact Mode is the desktop's hover-revealed sidebar (the tablet's rail is the toolbar's
     // toggle) and the tablet has no bookmarks bar; everything else of the desktop's list is the
     // tablet's too, its host permitting. Both rows live in submenus now (§6 "Menus"). Web
-    // capture's overlay is the desktop chrome's, so its row is too; Name Window… names an OS
-    // title bar the tablet's one window does not have.
+    // capture's overlay is the desktop chrome's, so its row is too – which is why the tablet's
+    // More Tools keeps Take Screenshot and Capture Full Page, the rows the desktop folded into
+    // it; Name Window… names an OS title bar the tablet's one window does not have.
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
@@ -728,6 +773,7 @@ describe('the app menu', () => {
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Save and Share > Web Capture…'
     )
+    tabletChrome.splice(tabletChrome.indexOf('More Tools > Resources'), 0, ...TABLET_CAPTURES)
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(tabletChrome)
   })
 

@@ -3352,10 +3352,13 @@ export class Menus {
           // Firefox's "More tools" row of its app group; Chrome's More tools, which carries its
           // window rows (Name window…), Task manager and Developer tools, gives the submenu its
           // contents: an installed app's Open in <app>, Zenium's space and window actions with
-          // Chrome's Name Window…, the window's layout toggles, the captures, then the
-          // developer's and the resources.
+          // Chrome's Name Window…, the window's layout toggles, the tablet's captures, then the
+          // resources and the developer's.
           // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
           // whose zoom is the sheet keeps it here with the other window toggles.
+          // The two captures are the tablet's: on the desktop they fold into Save and Share's
+          // Web Capture… (the #396 review's ruling 3), whose overlay takes the visible area and
+          // the full page both; the page context menu keeps its own capture rows on every host.
           submenu: tidySeparators([
             ...openInApp,
             separator,
@@ -3368,8 +3371,7 @@ export class Menus {
             ...changeTheme,
             ...when(caps.pageControls, fullscreen),
             separator,
-            screenshot,
-            captureFullPage,
+            ...when(win.formFactor !== 'desktop', screenshot, captureFullPage),
             separator,
             ...resources,
             ...devtools
