@@ -27,8 +27,9 @@ import {
   X
 } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
-import type { Tab, UIState } from '@shared/types'
+import type { SearchEngine, Tab, UIState } from '@shared/types'
 import { toolbarPinned, type ToolbarControl } from '@shared/toolbarPins'
+import { defaultSearchEngineOf } from '@shared/search'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
 import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
@@ -61,6 +62,7 @@ import { ExtensionIcon } from '../extensions/ExtensionIcon'
 import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
+import { EngineFieldGlyph } from '../urlbar/EngineFieldGlyph'
 import { PillChip } from '../urlbar/PillChip'
 import { CHIP_WIDTH, fittingChips, type PillChipSpec } from '../urlbar/pillChipTiers'
 import { TOOLBAR_STROKE } from '../v2/controls'
@@ -180,6 +182,12 @@ export function NavRow({
   // a host that keeps private browsing in tabs (the tablet), where the theme re-inks with the
   // tab (v2 §9.19: the mask is the private tab's identity, on the phone pill as here).
   const isPrivate = isPrivateWindow(state) || Boolean(tab && isPrivateTab(tab))
+  // The field of a tab with no site (the lead on #406 §G; §6): it leads with the engine's
+  // favicon at 16, as the new tab page's resting field does, for the search a typed word
+  // becomes – the same resolution as the omnibox's, so the pill, the page's field and the bar
+  // agree on the engine. An empty private tab keeps the mask there instead (one leading glyph).
+  const emptyField = !url && !masked && !isPrivate
+  const engine = emptyField ? fieldEngine(state) : null
   // A page of the web gets the site chips; an extension page is not one, whatever origin the
   // Android runtime serves it from (v2 §10.1 applied to extension pages): its icon takes the
   // site icon's place, titled for what it is, and no lock, shield, reader or translation chip.
@@ -334,6 +342,10 @@ export function NavRow({
   // page and an extension's page (its icon in the slot) say nothing of it.
   const slot: SiteSlotState | null =
     tab && !masked && !extension ? siteSlotState(state, tab, indicator.state) : null
+  // The mask draws in the slot on a private tab with a page (§9.19) at the connection glyph's
+  // rank: a state in the slot (`slot`) and the danger tier of the connection itself – a
+  // certificate error, a dangerous site – take the one 16 box over it (`maskYields`).
+  const maskDraws = isPrivate && !slot && !extension && !maskYields(indicator.state)
   const chipsPresent: PillChipSpec[] = []
   if (tab && url) chipsPresent.push({ id: 'site', tier: 'site', width: CHIP_WIDTH.site })
   if (shieldState !== 'no-site') {
@@ -483,7 +495,7 @@ export function NavRow({
           <button
             type="button"
             className={cn(
-              'flex h-full min-w-0 flex-1 items-center text-left',
+              'flex h-full min-w-0 flex-1 items-center gap-1.5 text-left',
               readOnly && 'cursor-default'
             )}
             aria-label={masked ? 'Private tab locked, unlock' : undefined}
@@ -500,6 +512,28 @@ export function NavRow({
               }
             }}
           >
+            {emptyField && (
+              /*
+                A tab with no site has no site-information slot – nothing to tell of, nothing to
+                open (the lead on #406 §G) – and its field leads with §6's glyph instead: the
+                engine's favicon at 16, the slot's glyph size, as the new tab page's resting
+                field carries it at 20 (the magnifier standing in until it arrives, or for an
+                engine without one). The field's own mark, inside its button, so a reader hears
+                one thing – the prompt; drawn in the slot's 24 box pulled the same 4 into the
+                pad, so the prompt starts where any tab's address does.
+              */
+              <span
+                className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center text-[var(--v2-control-text-deemphasized)]"
+                data-field-glyph="engine"
+                aria-hidden="true"
+              >
+                {engine ? (
+                  <EngineFieldGlyph engine={engine} fallback="magnifier" size={16} />
+                ) : (
+                  <Search className={SLOT_GLYPH} strokeWidth={TOOLBAR_STROKE} />
+                )}
+              </span>
+            )}
             <span
               ref={field}
               className={cn(
@@ -562,13 +596,13 @@ export function NavRow({
             notice rather than a tool, and the only word of a pop-up the page tried to open.
           */}
           <span className="contents group/chips">
-            {isPrivate ? (
-              // A private tab's mask in the site-information slot (§9.19: 16 at the row stroke
-              // in the pill's leading slot): the slot's 24 box and its one glyph size, so the
-              // address keeps the room it has on any other tab, in the slot's rest ink – the
-              // window's deemphasised token, once. The mask is the tab's, keyed on the tab's
-              // privacy (§9.19 as amended at #408); on the desktop the slot draws no button on
-              // a private tab, as before this round.
+            {isPrivate && !(url && tab) ? (
+              // A private tab with no page to tell of – under #250's lock (§9.19: "Private tab"
+              // behind the one mask, no chip), or an empty private tab (no site, so no site
+              // information to open; the mask stands in for the field's engine glyph as it
+              // stands in for the favicon in the sidebar row while the tab has no page): the
+              // mask alone, the tab's identity in the slot's 24 box at its one glyph size, in
+              // the slot's rest ink – the window's deemphasised token, once.
               <span
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center',
@@ -589,23 +623,38 @@ export function NavRow({
               // glyph is one state at a time (§9.29): the connection's – the lock, the info
               // circle, a certificate error's triangle – or, in its place, the camera /
               // microphone / screen the page is using, or the crossed-out glyph of the first
-              // permission blocked on the site (`slot`). Its name says which
+              // permission blocked on the site (`slot`). On a private tab the mask is the tab's
+              // identity in this slot (§9.19: "the slot stays the site-information button" –
+              // the lead's ruling on #406 §G; a bare mark that opened nothing was the defect):
+              // it takes the connection glyph's place in the one 16 box, at the connection's
+              // rank in the ruled precedence – a certificate error's triangle (the danger tier),
+              // a live capture and a standing block each take the box over it, and the mask
+              // returns as the state ends; never two glyphs in the box, never a badge on the
+              // mask (§9.19, §9.29). The private window's theme and the sidebar's header still
+              // say private while a state stands. Its name says which state
               // ("Site information · Camera and microphone blocked") and the tooltip carries the
-              // state's name (`PillChip`'s `title` → `data-tooltip`; a11y-26). The ink is the
-              // window's, once: the deemphasised 69 % at rest (the lock, a block – a standing
-              // decision – and the info circle alike), full ink for a live capture (a state that
-              // must be seen; no coloured mark – the tab row's dot already says recording), the
-              // danger ink for a certificate error, and full ink on the window fill under the
-              // pointer or while the popover it opened is up (the pressed anchor, §9.20) – no
-              // opacity stacked on the token's own alpha.
+              // state's name – "Private tab · " ahead of the connection's while the mask draws
+              // (`PillChip`'s `title` → `data-tooltip`; a11y-26). The ink is the
+              // window's, once: the deemphasised 69 % at rest (the lock, the mask, a block – a
+              // standing decision – and the info circle alike), full ink for a live capture (a
+              // state that must be seen; no coloured mark – the tab row's dot already says
+              // recording), the danger ink for a certificate error, and full ink on the window
+              // fill under the pointer or while the popover it opened is up (the pressed anchor,
+              // §9.20) – no opacity stacked on the token's own alpha.
               <PillChip
                 label={siteChipName(slot)}
-                title={slot ? slot.label : indicator.title}
+                title={
+                  slot
+                    ? slot.label
+                    : maskDraws
+                      ? `${PRIVATE_TAB_PLACEHOLDER} · ${indicator.title}`
+                      : indicator.title
+                }
                 popup="dialog"
                 expanded={siteAnchored}
                 data-site-chip=""
                 data-indicator={indicator.state}
-                data-slot-state={slot?.kind ?? 'connection'}
+                data-slot-state={slot?.kind ?? (maskDraws ? 'private' : 'connection')}
                 data-slot-glyph={slot?.glyph}
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--v2-control-text-deemphasized)] hover:bg-[var(--v2-control-fill-hover)] hover:text-[var(--v2-control-text)]',
@@ -630,13 +679,18 @@ export function NavRow({
                   <ExtensionIcon icon={extension.icon} size={16} box={16} />
                 ) : slot ? (
                   <SlotGlyph glyph={slot.glyph} />
+                ) : maskDraws ? (
+                  <VenetianMask
+                    className={SLOT_GLYPH}
+                    strokeWidth={TOOLBAR_STROKE}
+                    aria-hidden
+                    data-private-mark=""
+                  />
                 ) : (
                   <IndicatorGlyph state={indicator.state} scheme={tab.url.split(':')[0] ?? ''} />
                 )}
               </PillChip>
-            ) : (
-              <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
-            )}
+            ) : null}
             {tab && isWebPage && state.capabilities.requestBlocking && (
               <BlockedChip
                 tab={tab}
@@ -955,6 +1009,27 @@ function IndicatorGlyph({ state, scheme }: { state: IndicatorState; scheme: stri
     default:
       return <Info {...glyph} />
   }
+}
+
+/**
+ * Whether the connection's own state outranks a private tab's mask for the slot's one box
+ * (§9.29's precedence as #406 wrote it, the mask at the connection glyph's rank): the danger
+ * tier – a certificate error's triangle, a dangerous site – must be seen; the lock, the info
+ * circle and the page glyph yield to the mask, the tab's identity.
+ */
+function maskYields(state: IndicatorState): boolean {
+  return state === 'certificate-error' || state === 'dangerous'
+}
+
+/**
+ * The engine the empty tab's field leads with (§6, the omnibox's resolution): null while the
+ * state lists no engine – a host's first frame, a test's partial state – when the field falls
+ * back to the magnifier at the slot's size.
+ */
+function fieldEngine(state: UIState): SearchEngine | null {
+  const engines: readonly SearchEngine[] | undefined = state.searchEngines
+  if (!engines || engines.length === 0) return null
+  return defaultSearchEngineOf(engines, state.settings.searchEngineId, state.searchEngineControl)
 }
 
 /**

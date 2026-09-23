@@ -615,13 +615,176 @@ describe('desktop pill (NavRow)', () => {
       expect(el.querySelector('[data-site-chip] svg.h-3, [data-site-chip] svg.h-3\\.5')).toBeNull()
     })
 
-    it('draws a private tab’s mask in the slot’s box at the same size and stroke, in the slot’s rest ink, the token once', () => {
+    it('draws a private tab’s mask as the slot’s glyph – the slot stays the site-information button (§9.19; #406 §G) – at the same size and stroke, in the slot’s rest ink, the token once', async () => {
       const secret = tab(page.url, { readerable: true, containerId: PRIVATE_CONTAINER_ID })
       const el = render(<NavRow state={state(secret)} tab={secret} compact={false} />)
-      // The mask stands where the site chip stands, in its 24 box (§9.19's leading slot); the
-      // desktop draws no button there on a private tab, as before.
-      expect(el.querySelector('[data-site-chip]')).toBeNull()
-      const slot = el.querySelector<HTMLElement>('[data-private-slot]')!
+      // The mask is the site chip's glyph state, in its 24 box (§9.19's leading slot): a real
+      // button, named as the slot is, opening the site information as the slot does – no bare
+      // mark beside it (the desktop's since #108/#346, the behaviour defect #406 §G named).
+      expect(el.querySelector('[data-private-slot]')).toBeNull()
+      const slot = slotOf(el)
+      expectChip(slot, 'Site information')
+      expect(slot.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(slot.getAttribute('data-slot-state')).toBe('private')
+      expect(slot.getAttribute('data-indicator')).toBe('secure')
+      // The tooltip says what the glyph is and what it stands in for.
+      expect(slot.getAttribute('data-tooltip')).toBe(
+        'Private tab · Connection is secure · Site information'
+      )
+      expect(box(slot).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      const mask = glyphOf(slot)
+      expect(mask.classList.contains('lucide-venetian-mask')).toBe(true)
+      expect(mask.hasAttribute('data-private-mark')).toBe(true)
+      expectSlotGlyph(mask)
+      expect(el.querySelectorAll('svg.lucide-venetian-mask')).toHaveLength(1)
+      // The window's deemphasised token, once: no opacity stacked on it, on the box or the glyph.
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      expect(restOpacity(slot)).toEqual([])
+      expect(Array.from(mask.classList).filter((c) => /^opacity-/.test(c))).toEqual([])
+      // A click opens the site information on the overview, from the slot, and the slot is the
+      // pressed anchor while it is up.
+      await openFromChip(slot)
+      expect(siteInfoStore.get().tabId).toBe('t1')
+      expect(siteInfoStore.get().level).toBe('overview')
+      expect(siteInfoStore.get().openedBy).toBe('site')
+      expect(slot.getAttribute('aria-expanded')).toBe('true')
+      await dismiss()
+      expect(document.activeElement).toBe(slot)
+      // The regular tab's slot in the same box: a private tab's address has the room any tab's has.
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      expect(box(slotOf(el)).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      expect(el.querySelector('svg.lucide-venetian-mask')).toBeNull()
+    })
+
+    it('the mask stands at the connection glyph’s rank: a certificate error, a live capture and a standing block each take the one box over it, and the mask returns as the state ends', () => {
+      const secret = (patch: Partial<Tab> = {}): Tab =>
+        tab(page.url, { readerable: true, containerId: PRIVATE_CONTAINER_ID, ...patch })
+      const el = render(<NavRow state={state(secret())} tab={secret()} compact={false} />)
+      const slot = slotOf(el)
+      expect(glyphOf(slot).classList.contains('lucide-venetian-mask')).toBe(true)
+      const atRest = box(slot)
+      // The danger tier over the mask: the triangle in the danger ink, the mask gone.
+      const broken = secret({
+        certificateError: { code: -201, url: page.url, certificate: null, bypassed: false }
+      })
+      act(() => root!.render(<NavRow state={state(broken)} tab={broken} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-triangle-alert')).toBe(true)
+      expect(slot.getAttribute('data-slot-state')).toBe('connection')
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-danger)]'])
+      expect(el.querySelector('svg.lucide-venetian-mask')).toBeNull()
+      expect(slot.querySelectorAll('svg')).toHaveLength(1)
+      expectSlotGlyph(glyphOf(slot))
+      expect(box(slot)).toEqual(atRest)
+      // A live capture over the mask: the camera at full ink, named for what it holds, still
+      // leading to Permissions.
+      const call = secret({ capture: { camera: true, microphone: false, display: false } })
+      act(() => root!.render(<NavRow state={state(call)} tab={call} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-camera')).toBe(true)
+      expect(slot.getAttribute('data-slot-state')).toBe('capture')
+      expect(slot.getAttribute('aria-label')).toBe(
+        'Site information · This page is using your camera'
+      )
+      expect(el.querySelector('svg.lucide-venetian-mask')).toBeNull()
+      expect(slot.querySelectorAll('svg')).toHaveLength(1)
+      // A standing block over the mask: the crossed-out glyph.
+      act(() =>
+        root!.render(
+          <NavRow state={withRules(secret(), [deny('camera')])} tab={secret()} compact={false} />
+        )
+      )
+      expect(glyphOf(slot).classList.contains('lucide-camera-off')).toBe(true)
+      expect(slot.getAttribute('data-slot-state')).toBe('blocked')
+      expect(el.querySelector('svg.lucide-venetian-mask')).toBeNull()
+      // The state ends: the mask returns, in the same box, the rest ink.
+      act(() => root!.render(<NavRow state={state(secret())} tab={secret()} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-venetian-mask')).toBe(true)
+      expect(slot.getAttribute('data-slot-state')).toBe('private')
+      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
+      expect(box(slot)).toEqual(atRest)
+      // A private http page: the "Not secure" label still precedes the address, the mask keeps
+      // the box (the info circle is the connection glyph's rank, which the mask holds).
+      const http = secret({ url: 'http://example.com/some/path' })
+      act(() => root!.render(<NavRow state={state(http)} tab={http} compact={false} />))
+      expect(glyphOf(slot).classList.contains('lucide-venetian-mask')).toBe(true)
+      expect(el.querySelector('.zen-pill-label')?.textContent).toBe('Not secure')
+    })
+
+    it('an empty tab has no site and no slot (#406 §G): the field leads with §6’s engine favicon at 16 – the slot’s glyph size – in place of the 12 px search glass', () => {
+      const empty = tab('zen://newtab')
+      const engines = [
+        {
+          id: 'ddg',
+          name: 'DuckDuckGo',
+          glyph: 'D',
+          searchUrl: 'https://duckduckgo.com/?q=%s',
+          suggestUrl: null,
+          favicon: 'https://duckduckgo.com/favicon.ico',
+          builtIn: true
+        }
+      ]
+      const withEngines = {
+        ...state(empty),
+        searchEngines: engines,
+        settings: { urlbarBehavior: 'normal', searchEngineId: 'ddg' }
+      } as unknown as UIState
+      const el = render(<NavRow state={withEngines} tab={empty} compact={false} />)
+      const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+      // No site-information slot, no private mark, no glass of its own before the field.
+      expect(pill.querySelector('[data-site-chip]')).toBeNull()
+      expect(pill.querySelector('[data-private-slot]')).toBeNull()
+      expect(pill.querySelector('svg.lucide-search.h-3')).toBeNull()
+      expect(pill.querySelector('.order-first')).toBeNull()
+      // The field's own mark, inside its button ahead of the prompt: the engine's favicon at 16,
+      // in the slot's 24 box pulled the same 4 into the pad, so the prompt starts where an
+      // address does.
+      const address = focusable(pill)[0]
+      expect(address.textContent).toBe('Search or enter address')
+      const mark = address.querySelector<HTMLElement>('[data-field-glyph="engine"]')!
+      expect(mark).not.toBeNull()
+      expect(mark.getAttribute('aria-hidden')).toBe('true')
+      expect(box(mark).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      expect(mark.nextElementSibling?.textContent).toBe('Search or enter address')
+      const glyph = mark.querySelector<HTMLElement>('[data-testid="engine-field-glyph"]')!
+      expect(glyph).not.toBeNull()
+      expect(
+        Array.from(glyph.classList)
+          .filter((c) => /^(h-|w-)/.test(c))
+          .sort()
+      ).toEqual(['h-4', 'w-4'])
+      const img = mark.querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+      expect(img).not.toBeNull()
+      expect(img.getAttribute('src')).toBe('https://duckduckgo.com/favicon.ico')
+      expect(
+        Array.from(img.classList)
+          .filter((c) => /^(h-|w-)/.test(c))
+          .sort()
+      ).toEqual(['h-4', 'w-4'])
+      // Until it arrives, the magnifier at the same 16 and the row stroke stands in – never 12.
+      const magnifier = mark.querySelector<SVGElement>('svg.lucide-search')!
+      expect(magnifier).not.toBeNull()
+      expectSlotGlyph(magnifier)
+      // The pill lists no site chip: the address keeps the whole tier.
+      expect(chipLabels(el)).not.toContain('Site information')
+
+      // A state that lists no engine yet: the magnifier alone, at the slot's size and stroke.
+      act(() => root!.render(<NavRow state={state(empty)} tab={empty} compact={false} />))
+      const bare = pill.querySelector<HTMLElement>('[data-field-glyph="engine"]')!
+      expect(bare.querySelector('[data-testid="engine-field-glyph"]')).toBeNull()
+      expectSlotGlyph(bare.querySelector<SVGElement>('svg.lucide-search')!)
+
+      // A page arrives: the mark leaves with the prompt, the slot stands in its box.
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      expect(pill.querySelector('[data-field-glyph]')).toBeNull()
+      expect(box(slotOf(el)).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+    })
+
+    it('an empty private tab keeps the mask alone in the leading slot – identity with nothing to open, standing in for the engine’s mark – and no button', () => {
+      const empty = tab('zen://newtab', { containerId: PRIVATE_CONTAINER_ID })
+      const el = render(<NavRow state={state(empty)} tab={empty} compact={false} />)
+      const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+      expect(pill.querySelector('[data-site-chip]')).toBeNull()
+      expect(pill.querySelector('[data-field-glyph]')).toBeNull()
+      const slot = pill.querySelector<HTMLElement>('[data-private-slot]')!
       expect(slot).not.toBeNull()
       expect(slot.tagName).toBe('SPAN')
       expect(slot.getAttribute('aria-hidden')).toBe('true')
@@ -630,13 +793,9 @@ describe('desktop pill (NavRow)', () => {
       expect(mask.classList.contains('lucide-venetian-mask')).toBe(true)
       expect(mask.hasAttribute('data-private-mark')).toBe(true)
       expectSlotGlyph(mask)
-      // The window's deemphasised token, once: no opacity stacked on it, on the box or the glyph.
-      expect(inkOf(slot)).toEqual(['text-[var(--v2-control-text-deemphasized)]'])
-      expect(restOpacity(slot)).toEqual([])
-      expect(Array.from(mask.classList).filter((c) => /^opacity-/.test(c))).toEqual([])
-      // The regular tab's slot in the same box: a private tab's address has the room any tab's has.
-      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
-      expect(box(slotOf(el)).sort()).toEqual(['-ml-1', 'h-6', 'w-6'])
+      expect(pill.querySelectorAll('svg.lucide-venetian-mask')).toHaveLength(1)
+      expect(labels(focusable(pill))).not.toContain('Site information')
+      expect(focusable(pill)[0].textContent).toBe('Search or enter address')
     })
 
     it('adds nothing to the pill: the same chips, in the same order, with a state as at rest', () => {
@@ -1058,15 +1217,20 @@ describe('desktop pill on a tablet’s private tab', () => {
     return { ...s, capabilities: { ...s.capabilities, privateTabs: true } } as UIState
   }
 
-  it('puts the mask in the leading slot in place of the site icon', () => {
+  it('puts the mask in the leading slot in place of the site icon – the slot still the site-information chip', () => {
     const el = render(<NavRow state={tablet(privatePage)} tab={privatePage} compact={false} />)
     const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
-    // The mask in the slot's 24 box at the pill's start (§9.19), the site icon's place.
+    // The mask in the slot's 24 box at the pill's start (§9.19), the site icon's place, as the
+    // glyph of the site-information button the slot stays (#406 §G).
     expect(
-      pill.querySelector('[data-private-slot].order-first > svg.lucide-venetian-mask')
+      pill.querySelector('[data-site-chip].order-first > svg.lucide-venetian-mask')
     ).not.toBeNull()
-    expect(pill.querySelector('[aria-label="Site information"]')).toBeNull()
+    expect(pill.querySelector('[data-private-slot]')).toBeNull()
+    const slot = pill.querySelector<HTMLElement>('[aria-label="Site information"]')!
+    expect(slot).not.toBeNull()
+    expect(slot.getAttribute('data-slot-state')).toBe('private')
     expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
+    expect(labels(focusable(pill))).toContain('Site information')
   })
 
   it('locked, reads "Private tab" behind the mask with no address, no chip and no menu; its click asks the unlock', async () => {
