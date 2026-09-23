@@ -26,8 +26,12 @@ import { HOVER_CARD_HIDDEN, overlayCoversContent, uiStore } from './ui'
  */
 export const TOOLTIP_ATTR = 'data-tooltip'
 export const TOOLTIP_ID = 'zen-tooltip'
-/** How long the pointer rests on a control before its tooltip shows – §9.31's 600 ms. */
-export const TOOLTIP_DELAY = 600
+/**
+ * How long the pointer rests on a control before its tooltip shows: §9.31 as amended – 500 ms,
+ * the platform's (Chrome's views, GTK, Windows and Firefox share the number; the draft's 600 was
+ * the lead's own and is corrected).
+ */
+export const TOOLTIP_DELAY = 500
 /** The tooltip's distance from its control's box. */
 export const TOOLTIP_GAP = 8
 /**

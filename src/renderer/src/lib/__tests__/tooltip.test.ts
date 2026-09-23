@@ -18,9 +18,10 @@ import {
 
 /*
  * The chrome tooltip's timing and geometry (lib/tooltip.ts; v2 draft §9.31, a11y-26): the
- * 600 ms dwell, the browse window that reads a row of buttons without the wait, keyboard focus
- * at once, the leave, blur, press and Escape that take it down, and the placer that keeps it
- * 8 px from its control inside the control's pane and the window.
+ * 500 ms dwell (§9.31 as amended – the platform's number), the browse window that reads a row
+ * of buttons without the wait, keyboard focus at once, the leave, blur, press and Escape that
+ * take it down, and the placer that keeps it 8 px from its control inside the control's pane
+ * and the window.
  */
 
 const viewport = { width: 1600, height: 1000 }
