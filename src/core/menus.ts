@@ -29,6 +29,7 @@ import {
   type Folder,
   type MenuAnchor,
   type MenuItemDescriptor,
+  type PhoneBarItemId,
   type Platform as PlatformOs,
   type Rect,
   type Settings,
@@ -38,6 +39,7 @@ import {
   type Tab
 } from '../shared/types'
 import { ZOOM_CEILING, ZOOM_FLOOR, formatZoom, siteKey } from '../shared/pageControls'
+import { phoneBarHas } from '../shared/phoneBar'
 import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
@@ -1538,7 +1540,12 @@ export class Menus {
               click: () => tabs.toggleEssential(tabId, win)
             }
       ),
-      { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
+      {
+        label: 'Rename Tab…',
+        // The pick mounts the row's rename field: the keyboard stays in the chrome for it.
+        keepsKeyboard: true,
+        click: () => this.browser.emit('tab.startRename', { tabId }, win)
+      },
       { label: 'Change Icon…', click: () => this.browser.emit('tab.pickIcon', { tabId }, win) }
     ]
 
@@ -2211,6 +2218,8 @@ export class Menus {
       ...open,
       {
         label: 'Rename Group…',
+        // The pick mounts the row's rename field: the keyboard stays in the chrome for it.
+        keepsKeyboard: true,
         click: () => browser.emit('folder.startRename', { folderId: id }, win)
       },
       {
@@ -3229,8 +3238,9 @@ export class Menus {
       this.popup(
         [
           // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set,
-          // the star, Download page, Page info and Reload / Stop, which the chrome draws as a
-          // row of icon buttons from each item's glyph.
+          // the star, Download page, Page info and Reload / Stop – less what the user's bar
+          // carries (§9.13) – which the chrome draws as a row of icon buttons from each item's
+          // glyph.
           ...this.phoneIconRow(active, win),
           separator,
           newTab,
@@ -3476,38 +3486,43 @@ export class Menus {
   }
 
   /**
-   * Chrome's icon row at the head of the phone's app menu (matrix TB-08): Forward, the bookmark
-   * star, Download page, Page info and Reload / Stop, each an item with a `glyph` the chrome draws
-   * as a 44 px icon button (design language v2 §9.3) named by its label. Every button runs what
-   * the bar's own button for it runs – the row consumes the core's commands and adds none – and a
-   * button whose action has nowhere to go (Forward on the last entry, Download off the web) is
-   * disabled rather than dropped (§9.30), so the row keeps its shape from one opening to the next.
+   * Chrome's icon row at the head of the phone's app menu (matrix TB-08): Forward, Home while a
+   * homepage is set, the bookmark star, Download page, Page info and Reload / Stop (v2 §9.13's
+   * six), each an item with a `glyph` the chrome draws as a 44 px icon button (§9.3) named by its
+   * label. Every button runs what the bar's own button for it runs – the row consumes the core's
+   * commands and adds none – and a button whose action has nowhere to go (Forward on the last
+   * entry, Download off the web) is disabled rather than dropped (§9.30), so the row keeps its
+   * shape from one opening to the next. An action the bar carries is not repeated in the row
+   * (§9.13; Firefox's customisation: a control lives once): the user's bar is `settings.phoneBar`
+   * (`shared/phoneBar.ts`, what the chrome draws – its four of the six, Forward, Home, Bookmark
+   * and Reload / Stop, need nothing of the host), and each leaves the row while the bar holds
+   * it; Download page and Page info have no bar item and always stand. Home the bar shows only
+   * while a homepage is set, as the row does, so the two agree on when there is a Home at all.
    */
   private phoneIconRow(active: Tab | undefined, win: ZenWindow): Template {
     const { tabs } = this.browser
+    const bar = this.browser.state.settings.phoneBar
+    const unlessOnBar = (id: PhoneBarItemId, item: MenuItemTemplate): Template =>
+      phoneBarHas(bar, id) ? [] : [item]
     return [
-      {
+      ...unlessOnBar('forward', {
         label: 'Forward',
         glyph: 'forward',
         action: 'nav.forward',
         enabled: Boolean(active?.canGoForward),
         click: () => active && tabs.goForward(active.id)
-      },
+      }),
       // Home (TB-15 / NTP-30, v2 §9.13): a button wherever it lives – the bar's item when the
       // user adds it, this glyph otherwise, never a text row among New Tab and New Private Tab
       // (a row reads as a destination). The tab goes to the homepage; with the homepage off
-      // there is no Home anywhere, as Chrome's button leaves the toolbar. Not repeating it here
-      // while the bar carries it is §9.13's rule for the whole row, a follow-up once the menu
-      // model can see the bar as the chrome draws it.
+      // there is no Home anywhere, as Chrome's button leaves the toolbar.
       ...(this.browser.newTab.homepageUrl() !== null
-        ? [
-            {
-              label: 'Home',
-              glyph: 'home',
-              enabled: Boolean(active),
-              click: () => active && this.browser.goHome(active.id, win)
-            } satisfies MenuItemTemplate
-          ]
+        ? unlessOnBar('home', {
+            label: 'Home',
+            glyph: 'home',
+            enabled: Boolean(active),
+            click: () => active && this.browser.goHome(active.id, win)
+          })
         : []),
       // The star (TB-16), with Chrome's flow as the phone's Bookmarks submenu ran it before: a
       // page that is not bookmarked is saved and toasted with Edit, a bookmarked one opens its
@@ -3515,14 +3530,14 @@ export class Menus {
       // words, Chrome's: "Bookmark" outlined, "Edit Bookmark" filled). A plain item, not a
       // checkbox (a stateful glyph, not a toggle): a press never unchecks it, and the mouse
       // popover would otherwise mark a checked action row.
-      {
+      ...unlessOnBar('bookmark', {
         label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark',
         glyph: 'star',
         action: 'bookmark.add',
         checked: Boolean(active?.bookmarked),
         enabled: Boolean(active) && this.browser.bookmarkable(active!.url),
         click: () => active && this.browser.starTab(active.id, win)
-      },
+      }),
       // Chrome's Download keeps the page for later; `page.savePage` is the core's way (the host
       // writes an archive into Downloads and files it there). A page of the web only.
       {
@@ -3544,15 +3559,18 @@ export class Menus {
       },
       // Reload and Stop share the last slot, as they share the bar's button: Stop while the page
       // loads, Reload otherwise. The menu is a picture of the moment it opened, like any menu.
-      active?.loading
-        ? { label: 'Stop', glyph: 'stop', action: 'nav.stop', click: () => tabs.stop(active.id) }
-        : {
-            label: 'Reload',
-            glyph: 'reload',
-            action: 'nav.reload',
-            enabled: Boolean(active),
-            click: () => active && tabs.reload(active.id)
-          }
+      ...unlessOnBar(
+        'reload',
+        active?.loading
+          ? { label: 'Stop', glyph: 'stop', action: 'nav.stop', click: () => tabs.stop(active.id) }
+          : {
+              label: 'Reload',
+              glyph: 'reload',
+              action: 'nav.reload',
+              enabled: Boolean(active),
+              click: () => active && tabs.reload(active.id)
+            }
+      )
     ]
   }
 

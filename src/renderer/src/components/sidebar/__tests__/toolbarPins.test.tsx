@@ -99,9 +99,11 @@ function q<T extends Element = HTMLElement>(selector: string): T | null {
   return document.querySelector<T>(selector)
 }
 
+/** A nav button's name: the `aria-label` that carries its chord (a11y-26), the tooltip's text. */
+const nameOf = (b: HTMLButtonElement): string => b.getAttribute('aria-label') ?? b.title
 const forwardButton = (): HTMLButtonElement | null =>
   [...document.querySelectorAll<HTMLButtonElement>('[data-zen-nav-row] > button')].find((b) =>
-    b.title.startsWith('Forward')
+    nameOf(b).startsWith('Forward')
   ) ?? null
 const chip = (label: string): HTMLElement | null => q(`[aria-label="${label}"]`)
 
@@ -130,8 +132,8 @@ describe('the desktop toolbar’s pins (settings-36)', () => {
     )
     expect(forwardButton()).toBeNull()
     const buttons = [...document.querySelectorAll<HTMLButtonElement>('[data-zen-nav-row] > button')]
-    expect(buttons.some((b) => b.title.startsWith('Back'))).toBe(true)
-    expect(buttons.some((b) => b.title.startsWith('Reload'))).toBe(true)
+    expect(buttons.some((b) => nameOf(b).startsWith('Back'))).toBe(true)
+    expect(buttons.some((b) => nameOf(b).startsWith('Reload'))).toBe(true)
     // The compact rail follows the same setting.
     render(<NavRow state={state(page, { toolbarPins: { forward: false } })} tab={page} compact />)
     expect(forwardButton()).toBeNull()

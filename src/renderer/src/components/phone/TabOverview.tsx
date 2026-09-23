@@ -1,6 +1,7 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
+  Archive,
   Ellipsis,
   Group,
   PanelLeft,
@@ -12,8 +13,8 @@ import {
   X
 } from 'lucide-react'
 import type {
+  ArchivedTabSummary,
   Folder,
-  FolderColor,
   PhoneBarPosition,
   Rect,
   Space,
@@ -38,8 +39,9 @@ import {
   type OverviewState
 } from '@renderer/lib/gestures/stage'
 import { groupRows, isPrivateGroup, type GroupRow } from '@renderer/lib/groupRows'
-import { groupColorVars, groupsOf, nextGroupColor } from '@renderer/lib/groups'
+import { DEFAULT_FOLDER_ICON, groupsOf, nextGroupColor } from '@renderer/lib/groups'
 import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAdapter'
+import { inactiveTabsAdapter } from '@renderer/lib/inactiveTabs'
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
@@ -96,6 +98,7 @@ import {
 } from '@renderer/lib/selectors'
 import { browserStore, openOverlay, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { GroupGlyph } from '../GroupGlyph'
 import { Favicon } from '../sidebar/Favicon'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { CloseAllSheet } from './CloseAllSheet'
@@ -110,8 +113,9 @@ import {
   type Departure,
   type GroupDeparture
 } from './departureStore'
-import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
+import { GroupCard } from './GroupCard'
 import { DeleteGroupSheet, GroupColorPalette, GroupRowSheet, GroupsPane } from './GroupsPane'
+import { InactiveTabsSheet } from './InactiveTabsSheet'
 import { CARD_RADIUS, CardBody, NewTabFace, OverviewCard } from './OverviewCard'
 import { cardHeaderHeight } from './overviewCardHeader'
 import { OVERVIEW_SEARCH_ID, OverviewSearchField, OverviewSearchReach } from './OverviewSearch'
@@ -177,7 +181,8 @@ interface Props {
 /**
  * The sheet up over the grid: a card's or a group's menu, the header's menu (with the recently
  * closed list as the menu read it), the close-all question, the recently closed list, the
- * select-tabs mode's group picker, a Groups pane row's menu and the delete-group question.
+ * inactive tabs list (as the segment row's entry read it), the select-tabs mode's group picker,
+ * a Groups pane row's menu and the delete-group question.
  */
 type Sheet =
   | { kind: 'tab'; tabId: string }
@@ -185,6 +190,7 @@ type Sheet =
   | { kind: 'menu'; closed: ClosedEntrySummary[] }
   | { kind: 'close-all' }
   | { kind: 'recently-closed'; closed: ClosedEntrySummary[] }
+  | { kind: 'inactive-tabs'; entries: ArchivedTabSummary[] }
   | { kind: 'group-picker' }
   | { kind: 'group-row'; folderId: string }
   | { kind: 'delete-group'; folderId: string }
@@ -1030,17 +1036,32 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     setSheet({ kind: 'menu', closed: closed.filter((entry) => entry.kind === 'tab') })
   }
   /**
-   * A recently closed tab picked from the sheet comes back into its place and the overview
-   * leaves on it: the tab is a new record, so the leave waits for the browser to show it.
+   * A tab brought back – a recently closed one into its place, an inactive one to the start of
+   * its space – is a new record, and the overview leaves on it once the browser shows it.
    */
-  const restoreClosed = (entry: ClosedEntrySummary): void => {
+  const leaveOnRestored = (restore: () => void): void => {
     const known = new Set(Object.keys(state.tabs))
-    void historyAdapter.restoreClosed(entry.id)
+    restore()
     void whenState(
       (s) => Object.keys(s.tabs).find((id) => !known.has(id)) ?? null,
       RESTORE_TIMEOUT_MS
     ).then((tabId) => closeOverview(tabId ?? undefined))
   }
+  /** A recently closed tab picked from the sheet comes back into its place. */
+  const restoreClosed = (entry: ClosedEntrySummary): void =>
+    leaveOnRestored(() => void historyAdapter.restoreClosed(entry.id))
+  /**
+   * The segment row's Inactive tabs entry (TAB-20): it reads the archive first, so the sheet
+   * opens full; the private pane has no such entry, a private tab being never archived.
+   */
+  const openInactiveTabs = async (): Promise<void> => {
+    noteSheetOpener()
+    const entries = await inactiveTabsAdapter.list().catch(() => [])
+    setSheet({ kind: 'inactive-tabs', entries })
+  }
+  /** An inactive tab picked from the sheet comes back at the start of its space, in front. */
+  const restoreArchived = (entry: ArchivedTabSummary): void =>
+    leaveOnRestored(() => void inactiveTabsAdapter.restore(entry.id))
   /**
    * A search row from another device leaves the overview on the tab it brings to the front: the
    * device's page in a new tab of this space, or the tab this device already holds. Either way
@@ -1521,7 +1542,31 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               onClose={closeSearch}
             />
           )}
-          <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
+          <div className="flex shrink-0 items-center pr-1">
+            <PaneSegment pane={pane} hasPrivate={hasPrivate} onPick={pickOverviewPane} />
+            <span className="flex-1" />
+            {!privatePane && state.archivedTabCount > 0 && (
+              // The Inactive tabs entry (TAB-20): the segment row's trailing control – never a
+              // fourth segment (v2 §9.34) – a §9.3 icon button with the §9.19 count badge
+              // after its glyph, there only while the archive holds something, as Chrome's
+              // card at the top of its grid is; the private pane has none (§9.29's family
+              // aside, a private tab is never archived).
+              <button
+                type="button"
+                className="zen-v2-icon-button zen-overview-inactive"
+                aria-label={`Inactive tabs, ${state.archivedTabCount}`}
+                aria-haspopup="dialog"
+                aria-expanded={sheet?.kind === 'inactive-tabs'}
+                data-testid="overview-inactive-tabs"
+                onClick={() => void openInactiveTabs()}
+              >
+                <Archive aria-hidden />
+                <span className="zen-v2-badge" aria-hidden>
+                  {state.archivedTabCount}
+                </span>
+              </button>
+            )}
+          </div>
           <PaneSlot
             // Each pane is a slot's worth of its own – the space strip, the grid, the groups'
             // rows or the empty explainer – coming up fresh on a 120 ms fade in while the still
@@ -1763,6 +1808,14 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           initial={sheet.closed}
           onClose={() => leaveSheet('recently-closed')}
           onRestore={restoreClosed}
+        />
+      )}
+      {interactive && sheet?.kind === 'inactive-tabs' && (
+        <InactiveTabsSheet
+          initial={sheet.entries}
+          archiveDays={state.settings.inactiveTabsArchiveDays}
+          onClose={() => leaveSheet('inactive-tabs')}
+          onRestore={restoreArchived}
         />
       )}
     </>
@@ -2038,7 +2091,7 @@ function GroupPickerSheet({
     ...groups.map(({ folder, count: held }): SheetAction => ({
       id: `group-${folder.id}`,
       label: `Add to ${folder.name} (${held})`,
-      icon: <GroupDot color={folder.color} />,
+      icon: <GroupGlyph folder={folder} />,
       onPick: () => onPick(folder.id)
     }))
   ]
@@ -2121,7 +2174,7 @@ function TabSheet({
       actions.push({
         id: `group-${g.id}`,
         label: current ? `Move to ${g.name}` : `Add to ${g.name}`,
-        icon: <GroupDot color={g.color} />,
+        icon: <GroupGlyph folder={g} />,
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: g.id })
       })
     }
@@ -2205,17 +2258,6 @@ function GroupSheet({
       header={<GroupColorPalette folder={folder} />}
       actions={actions}
       onClose={onClose}
-    />
-  )
-}
-
-/** A sheet row's leading dot in the group's colour – the scheme's set (§9.14's pair), following a theme flip live. */
-function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Element {
-  return (
-    <span
-      className="h-2.5 w-2.5 rounded-full bg-[rgb(var(--zen-group-rgb))]"
-      data-group-rgb=""
-      style={groupColorVars(color) as CSSProperties}
     />
   )
 }

@@ -13,6 +13,7 @@ import {
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useNow } from '../extensions/useNow'
+import { GroupGlyph } from '../GroupGlyph'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { GroupRename } from './GroupCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
@@ -38,8 +39,9 @@ type SectionProps = Omit<Props, 'rows'> & { heading: string; rows: GroupRow[]; n
  * `PhoneListRow`) in the window family (§9.29, `.zen-overview-groups` in main.css) – under two
  * §10.3 headings with their counts: OPEN groups in the grid's order, then SAVED ones, whose tabs
  * have closed but whose pages the group kept (`Folder.savedTabs`), the most recently used first.
- * A row is the group's colour in the leading box (a dot for an open group, a ring for a saved
- * one), its name, and "N tabs · when it was last used"; its trailing 44 button and its hold open
+ * A row is the group's glyph in the leading box (the one `GroupGlyph`, §9.37: the 10 dot for an
+ * open group, the ring for a saved one), its name, and "N tabs · when it was last used"; its
+ * trailing 44 button and its hold open
  * the group's sheet (`GroupRowSheet`). A tap on an open group's row shows the group in the Tabs
  * pane, expanded and scrolled to; a tap on a saved group's row opens it – its pages come back as
  * tabs of the group – and shows it the same way. An empty group (no tabs, nothing saved) is
@@ -156,22 +158,6 @@ function GroupRenameRow({ row }: { row: GroupRow }): JSX.Element {
         </span>
       </div>
     </div>
-  )
-}
-
-/**
- * The group's colour in the row's 20 box: a 12 px dot for an open group, a 2 px ring for a
- * saved one. The colour is §9.14's pair on the glyph (`groupColorVars`), so the theme's pick
- * (`--zen-group-rgb`) follows a flip live.
- */
-function GroupGlyph({ folder, saved }: { folder: Folder; saved: boolean }): JSX.Element {
-  return (
-    <span
-      className="zen-overview-group-glyph"
-      data-saved={saved || undefined}
-      data-group-rgb=""
-      style={groupColorVars(folder.color) as CSSProperties}
-    />
   )
 }
 

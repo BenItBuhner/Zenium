@@ -375,13 +375,15 @@ class SettingsTabDemo : DemoHarness("settings-tab-demo-state.json", "android-set
             // data-recessed) and, on the same progress, takes over the scrim – the lower sheet's
             // fades out as the upper's fades in, so one scrim is lit over page and lower sheet.
             // The upper sheet's spring is waited out (64 ms a frame at most, long frames here).
+            // `data-recessed` is a bare toggle since #168 (`toggleAttribute`, no value): its
+            // presence is the reading, not a 'true'.
             awaitChrome("(function(){var s=document.querySelectorAll('.zen-sheet');return s.length===2&&+s[0].style.getPropertyValue('--zen-layer-recede')>0.9})()", 8_000)
             SystemClock.sleep(600)
             val stackJson = chromeValue(
                 "(function(){var s=Array.from(document.querySelectorAll('.zen-sheet'));var l=s[0];" +
                     "var scrims=Array.from(document.querySelectorAll('.zen-sheet-scrim')).map(function(e){return Math.round(+getComputedStyle(e).opacity*100)/100});" +
                     "return JSON.stringify({sheets:s.length,recede:l?l.style.getPropertyValue('--zen-layer-recede').trim():''," +
-                    "recessed:!!(l&&l.dataset.recessed==='true'&&l.inert),scrims:scrims,lit:scrims.filter(function(o){return o>0.05}).length})})()"
+                    "recessed:!!(l&&l.hasAttribute('data-recessed')&&l.inert),scrims:scrims,lit:scrims.filter(function(o){return o>0.05}).length})})()"
             )
             val stack = runCatching { JSONObject(stackJson) }.getOrNull()
             val sheets = stack?.optInt("sheets", -1) ?: sheetCount()
