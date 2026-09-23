@@ -164,7 +164,8 @@ class SelectTabsDemo : DemoHarness("overview-demo-state.json", "select-tabs", "s
         touchUntil("the header's ×", { steadyRect({ domRect(DONE) }) }, { !modeState().on })
         val mode = modeState()
         expect("the mode is off: the cards are buttons again", !mode.on && mode.cards == 0)
-        expect("the header row is the overview's: ${mode.header}", mode.header == listOf("Spaces", "More"))
+        // The overview's header since #316 (TAB-21): the search toggle leads the row on the Tabs pane.
+        expect("the header row is the overview's: ${mode.header}", mode.header == listOf("Search tabs", "Spaces", "More"))
         expect("the strip has left", awaitDom("!document.querySelector('[data-testid=\"overview-actions\"]')", 4_000))
         expect("the cards draw their close again", inDom(".zen-overview-card-close"))
         still("done")

@@ -1145,7 +1145,7 @@
       "shard": "tablet",
       "mirrors": "android-tab-groups-demo.yml:tablet",
       "dir": "tablet-groups-demo",
-      "estimate": 2
+      "estimate": 2.5
     },
     {
       "id": "tablet-private",
