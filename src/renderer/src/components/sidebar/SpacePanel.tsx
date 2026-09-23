@@ -447,7 +447,8 @@ interface FolderRowProps {
  * A group's header and its member rows. In the sidebar the header is a folder row – icon,
  * colour swatch, name, count, chevron – with the members indented beneath it; on the tablet the
  * full-width group row (§9.36). In the horizontal strip (§9.37, the list's axis `x`) the header
- * is the group's chip – 32 tall at radius 8, the 8 colour dot, the name at 13/600 – ahead of its
+ * is the group's chip – 32 tall at radius 8, the shared group glyph (`GroupRowGlyph`: the 16 box,
+ * the 10 colour dot or the folder's own icon), the name at 13/600 – ahead of its
  * members, and the group's colour runs as one continuous 2 px line in the band's top inset from
  * the chip's start to the last member's end, bridging the gaps (`.zen-strip-group-line` on the
  * shell, never a dash per pill); the fold runs the shell's width on the spring.
@@ -582,13 +583,9 @@ export function FolderRow({
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
         {horizontal ? (
           <>
-            {/* The chip's dot: the group's colour with the ink's 20 % hairline (a11y-30). */}
-            <span
-              className="h-2 w-2 shrink-0 rounded-full border border-[rgb(var(--zen-fg-rgb)/0.2)]"
-              style={{ background: groupColorHex(folder.color) }}
-              data-strip-group-dot
-              aria-hidden
-            />
+            {/* The chip's glyph is the shared group glyph (§9.36 / §9.37): the 16 box with the
+                10 colour dot, the saved ring, or the folder's own icon – one glyph on every host. */}
+            <GroupRowGlyph folder={folder} saved={saved} />
             {renaming ? (
               <FolderRename folder={folder} />
             ) : (

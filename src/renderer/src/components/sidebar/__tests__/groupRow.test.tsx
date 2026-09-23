@@ -38,6 +38,7 @@ import { run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { SpacePanel } from '../SpacePanel'
+import { StripAxisContext, type StripAxis } from '../stripAxis'
 
 /*
  * The tablet sidebar's tab group rendered for real (TABLET-04; design language v2 §9.36 as
@@ -142,7 +143,8 @@ function panel(
   tabs: Tab[],
   folders: Folder[],
   formFactor: 'tablet' | 'desktop' = 'tablet',
-  windowKind: 'synced' | 'private' = 'synced'
+  windowKind: 'synced' | 'private' = 'synced',
+  axis: StripAxis = 'y'
 ): void {
   const space: Space = {
     id: 'space',
@@ -173,7 +175,11 @@ function panel(
   browserStore.set({ state })
   const touch = formFactor === 'tablet'
   viewportStore.set({ ...viewportStore.get(), formFactor, coarse: touch, hover: !touch })
-  render(<SpacePanel state={state} space={space} isActive compact={false} />)
+  render(
+    <StripAxisContext.Provider value={axis}>
+      <SpacePanel state={state} space={space} isActive compact={false} />
+    </StripAxisContext.Provider>
+  )
 }
 
 /** The fold's own springs: the block's height on SPRING_GENTLE, from one height to the other. */
@@ -326,6 +332,27 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
   it('keeps the folder’s own icon in the glyph slot where the desktop gave it one', () => {
     panel(grouped(), [folder({ icon: '🔬' })])
     const glyph = header().querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
+    expect(glyph.querySelector('.zen-group-row-icon')?.textContent).toBe('🔬')
+    expect(glyph.querySelector('.zen-group-row-dot')).toBeNull()
+  })
+
+  it('draws the same glyph in the horizontal strip’s chip (§9.37): the 10 dot, or the folder’s own icon', () => {
+    // The strip's chip on the desktop (the list's axis `x`): the shared glyph ahead of the name,
+    // the dot in the group's colour where the folder keeps the default icon…
+    panel(grouped(), [folder()], 'desktop', 'synced', 'x')
+    let chip = header()
+    expect(chip.className).toContain('zen-strip-group-chip')
+    let glyph = chip.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
+    expect(glyph).not.toBeNull()
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('76 141 255')
+    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
+    expect(glyph.querySelector('.zen-group-row-icon')).toBeNull()
+    expect(glyph.nextElementSibling?.getAttribute('data-testid')).toBe('group-chip-name')
+    expect(chip.querySelector('[data-testid="group-chip-name"]')?.textContent).toBe('Research')
+    // …and the folder's own icon where it has one, as on every other host.
+    panel(grouped(), [folder({ icon: '🔬' })], 'desktop', 'synced', 'x')
+    chip = header()
+    glyph = chip.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
     expect(glyph.querySelector('.zen-group-row-icon')?.textContent).toBe('🔬')
     expect(glyph.querySelector('.zen-group-row-dot')).toBeNull()
   })
