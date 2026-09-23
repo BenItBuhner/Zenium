@@ -9543,6 +9543,54 @@
   font-size: var(--v2-font-small);
   line-height: var(--v2-line-small);
 }
+/*
+ * Look and Feel › Layout (components/pages/settings/LayoutCards.tsx; §9.37, §10.4's image radio
+ * cards, Zen's Browser layout): the label over four picture cards in one row of the column, 8
+ * apart, each the shared card radio (the 2 px accent outline on the choice) holding a line
+ * drawing of the window at 8 : 5 in the page's ink and fill, its caption 13 centred beneath.
+ * Under 560 (the block is the query's container) the row folds to two columns, §10.4's phone
+ * grid.
+ */
+.zen-settings-layout-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  container-type: inline-size;
+}
+.zen-settings-layout-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+@container (max-width: 560px) {
+  .zen-settings-layout-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.zen-settings-layout-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+}
+/*
+ * §9.37 names the captions, and Sidebar and top toolbar is wider than a card: the caption wraps
+ * to two balanced lines instead of the icon grid's ellipsis, and the row's stretch keeps the
+ * four cards one height.
+ */
+.zen-settings-layout-card > .zen-settings-icon-caption {
+  white-space: normal;
+  text-align: center;
+  text-wrap: balance;
+}
+.zen-settings-layout-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 8 / 5;
+  color: var(--v2-text);
+}
 .zen-settings-swatches {
   display: flex;
   flex-wrap: wrap;

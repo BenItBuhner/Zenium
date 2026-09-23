@@ -32,7 +32,6 @@ import type {
   ShortcutPreset,
   Tab,
   ThirdPartyPinnedBehavior,
-  ToolbarLayout,
   UIState,
   UrlbarBehavior,
   WindowSyncMode
@@ -76,6 +75,7 @@ import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { languageName } from '@shared/languageNames'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
+import { TOOLBAR_LAYOUTS, TOOLBAR_LAYOUT_LABELS } from '@shared/toolbarLayout'
 import type { TranslatePreferences } from '@shared/translate'
 import { cmd, run } from '@renderer/lib/api'
 import {
@@ -145,6 +145,7 @@ import {
 } from './blocks'
 import { importGroups } from '../../import/importRows'
 import { extensionsGroups } from './extensions'
+import { LayoutCards } from './LayoutCards'
 import {
   choice,
   onLayout,
@@ -374,20 +375,24 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
           ],
           onChange: (v) => set({ colorScheme: v })
         }),
-        choice<ToolbarLayout>({
+        // One layout setting with four pictures (§9.37, §10.4's image radio cards): the desktop's
+        // alone – the phone and the tablet have shells of their own.
+        {
+          kind: 'custom',
           id: 'toolbar-layout',
-          label: 'Toolbar layout',
-          value: s.toolbarLayout,
-          sheetDescription:
-            'Single: everything lives in the sidebar. Multiple: a top toolbar holds navigation.',
-          options: [
-            { value: 'single', label: 'Single toolbar' },
-            { value: 'multiple', label: 'Multiple toolbars' },
-            { value: 'collapsed', label: 'Collapsed toolbar' },
-            { value: 'horizontal', label: 'Horizontal tabs' }
+          label: 'Layout',
+          keywords: [
+            'toolbar layout',
+            'browser layout',
+            'horizontal tabs',
+            'tab strip',
+            ...TOOLBAR_LAYOUTS.map((layout) => TOOLBAR_LAYOUT_LABELS[layout])
           ],
-          onChange: (v) => set({ toolbarLayout: v })
-        }),
+          layouts: ['desktop'],
+          render: () => (
+            <LayoutCards value={s.toolbarLayout} onChange={(v) => set({ toolbarLayout: v })} />
+          )
+        },
         {
           kind: 'switch',
           id: 'tabs-right',
@@ -750,7 +755,7 @@ function compactSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'switch',
           id: 'compact-hide-toolbar',
           label: 'Hide top toolbar',
-          description: 'Only applies to the Multiple / Collapsed toolbar layouts.',
+          description: 'Not in the Only sidebar layout, which has no top toolbar to hide.',
           checked: cm.hideToolbar,
           disabled: s.toolbarLayout === 'single',
           onChange: (v) =>

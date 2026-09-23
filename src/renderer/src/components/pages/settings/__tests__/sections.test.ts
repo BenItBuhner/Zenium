@@ -3501,10 +3501,16 @@ describe('searching the rows', () => {
     expect(hits.map((h) => [h.row.id, h.caption])).toEqual([['new-container', 'Containers']])
   })
 
-  it('reads a value row’s current label and a field row’s display', () => {
+  it('reads a value row’s option labels, a custom row’s keywords and a field row’s display', () => {
     const look = section('look')
-    const scheme = row(look, 'toolbar-layout')
-    expect(rowText(scheme)).toContain('Collapsed toolbar')
+    const scheme = row(look, 'color-scheme')
+    expect(rowText(scheme)).toContain('Follow system')
+    // The layout cards are a custom row: its captions are its keywords, so a search for a
+    // layout's name lands on the grid.
+    const layout = row(look, 'toolbar-layout')
+    expect(layout.kind).toBe('custom')
+    expect(rowText(layout)).toContain('Collapsed sidebar')
+    expect(rowText(layout)).toContain('Horizontal tabs')
     const tabs = section('tabs')
     const max = row(tabs, 'essentials-max')
     expect(max.kind).toBe('field')
