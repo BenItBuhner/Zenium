@@ -24,7 +24,7 @@ import {
 } from '@renderer/lib/selectors'
 import { hint, useHint } from '@renderer/lib/shortcuts'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
-import type { StripSlot } from '@renderer/lib/tabStripLayout'
+import { STRIP_FADE, type StripSlot } from '@renderer/lib/tabStripLayout'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { GroupGlyph } from '../GroupGlyph'
@@ -32,12 +32,15 @@ import { SpaceGlyph } from '../SpaceGlyph'
 import { useLongPress } from '../phone/useLongPress'
 import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon, type FaviconSource } from './Favicon'
+import { watchGutter } from './listGutter'
 import { ENTER_BATCH, ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
 import { useStripAxis } from './stripAxis'
 import { TabItem } from './TabItem'
 import { TabSet } from './TabSet'
+import { useActiveRowInView } from './useActiveRowInView'
 import { useGroupFold } from './useGroupFold'
+import { useRailFlyoutOut } from './useRailFlyout'
 
 interface Props {
   state: UIState
@@ -81,20 +84,30 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   const loose = regular.filter((t) => !t.folderId || !listed.has(t.folderId))
   const activeTabId = space.activeTabId
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
-  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  // The collapsed rail's flyout (tabs-03, §9.20's cascade) lays the rail's own rows out in their
+  // expanded form; the separator keeps the rail's form there – the line alone, no brush row –
+  // so no row moves under the pointer that opened it (the brush's 20 would push every row
+  // below the line down by 19). The flyout's Close Unpinned Tabs is the space menu's.
+  const railOut = useRailFlyoutOut()
+  // The list's edge fades are the strip's (§9.37: 24): one depth for the tab list on both axes.
+  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y', size: STRIP_FADE })
 
   // The rows' motion (design-language §7): neighbours slide open for a lifted row, rows whose
   // slot moved spring there, new rows grow into their slot. One per panel, keyed by its scroller
   // so lib/drag.ts finds it from a row.
   const [motion] = useState(() => new SlideMotion('y', { enter: true, batch: ENTER_BATCH }))
   useEffect(() => () => motion.dispose(), [motion])
+  const scrollerEl = useRef<HTMLDivElement | null>(null)
   const scroller = useCallback(
     (el: HTMLDivElement | null) => {
+      scrollerEl.current = el
       const teardown = fade(el)
       motion.setScroller(el)
       if (el) listMotions.set(el, motion)
+      const gutter = el ? watchGutter(el) : null
       return () => {
         if (typeof teardown === 'function') teardown()
+        gutter?.()
         motion.setScroller(null)
       }
     },
@@ -111,6 +124,8 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
     // glide when a drop zone above the panel takes its room (`zones`), rather than jumping.
     motion.flip(uiStore.get().drag?.tabId ?? null, isActive)
   }, [motion, orderKey, isActive, zones])
+  // After the flip: the active row's resting box is read with its glide taken off (BUG-008).
+  useActiveRowInView(scrollerEl, motion, activeTabId, isActive)
 
   const pinnedHeaderKey = `header:${space.id}`
   const activePinnedHidden = space.pinnedCollapsed && pinned.some((t) => t.id === activeTabId)
@@ -118,31 +133,41 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   return (
     <ListMotionContext.Provider value={motion}>
       {/* The panels of the other spaces are off to the side: out of the tab order and the
-          accessibility tree (`inert`) until the strip slides them in. */}
+          accessibility tree (`inert`) until the strip slides them in. The panel is the list's
+          column: the scroller of rows, then its foot – the New Tab row and the empty room under
+          it – outside the scroller (tabs-28), so the row stays in view however long the list
+          (Zen's, Edge's, the strip's + fixed at its end, §9.37); the scroller takes no more room
+          than its rows, so with a short list the foot stands right under the last row as
+          before, and with a long one the rows scroll between the fades and the row holds. */}
       <div
         className="flex h-full w-full shrink-0 flex-col"
+        data-tab-panel
+        data-active={isActive}
         aria-hidden={!isActive}
         inert={!isActive}
+        onContextMenu={(e) => {
+          // The strip's own menu on its empty space (tabs-35, BUG-049): the room below the
+          // rows, the gaps between them, the list's padding. A row, header or the New Tab
+          // row that opened its own menu has claimed the event by now.
+          if (e.isDefaultPrevented()) return
+          e.preventDefault()
+          run('newtab.contextMenu', contextMenuAnchor(e))
+        }}
       >
+        {/* The rows' scroller: §9.20's overlay scrollbar (the chassis rule on every scroller of
+            a mouse's chrome – the 8 gutter, the 6 pill in the window's ink; nothing to state
+            here), the wheel's, and the strip's 24 fades at its edges. */}
         <div
           ref={scroller}
           data-tab-scroller
           data-active={isActive}
-          className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden px-2 pb-1"
+          className="flex min-h-0 shrink flex-col overflow-y-auto overflow-x-hidden px-2"
           onDoubleClick={(e) => {
             // Chrome's title-bar double-click on the strip's empty room (tabs-47,
             // shortcuts-menus-94): maximise / restore, or the Mac's own choice. The list's
             // padding is the scroller's own; a row's double-click (a pinned tab's rename) is
             // the row's.
             if (e.target === e.currentTarget) run('window.captionDoubleClick', undefined)
-          }}
-          onContextMenu={(e) => {
-            // The strip's own menu on its empty space (tabs-35, BUG-049): the room below the
-            // rows, the gaps between them, the list's padding. A row, header or the New Tab
-            // row that opened its own menu has claimed the event by now.
-            if (e.isDefaultPrevented()) return
-            e.preventDefault()
-            run('newtab.contextMenu', contextMenuAnchor(e))
           }}
         >
           {/* The space's lists (a11y-07, a11y-31, a11y-02): the pinned header and its rows, the
@@ -179,7 +204,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
             {showSeparator && (
               <div className="group/sep relative my-1.5 flex items-center gap-2 px-1">
                 <div className="h-px flex-1 bg-[var(--zen-border)]" />
-                {regular.length > 0 && !compact && (
+                {regular.length > 0 && !compact && !railOut && (
                   // Pointer-only (it shows on hover); the keyboard has the space menu's
                   // "Close Unpinned Tabs" and the action's shortcut.
                   <button
@@ -242,6 +267,20 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
               )}
             </div>
           </div>
+        </div>
+        {/* The list's foot at the rows' width (`.zen-list-foot`): the rows' inset, and the
+            scrollbar's gutter, while the list overflows, given back on the right
+            (`--zen-list-gutter`, `watchGutter`) so the New Tab row's box stays the rows' box and
+            nothing steps out under the bar. It takes the column's spare room (`grow`) and none
+            of the rows' (`shrink-0`): the scroller alone gives way when the list is long. */}
+        <div
+          className="zen-list-foot flex shrink-0 grow flex-col pb-1"
+          data-strip-foot
+          onDoubleClick={(e) => {
+            // The foot's own padding is the strip's empty room too (tabs-47).
+            if (e.target === e.currentTarget) run('window.captionDoubleClick', undefined)
+          }}
+        >
           <NewTabButton
             compact={compact}
             spaced={folders.length > 0 || regular.length > 0}
@@ -337,7 +376,7 @@ function SpaceHeader({
   return (
     <button
       type="button"
-      className="mb-1 flex h-[var(--zen-tab-row)] w-full items-center gap-2 rounded-lg px-2 text-[13px] font-semibold text-[var(--zen-fg)] hover:bg-[var(--v2-window-fill-hover)]"
+      className="zen-space-header mb-1 flex h-[var(--zen-tab-row)] w-full items-center gap-2 rounded-lg px-2 text-[13px] font-semibold text-[var(--zen-fg)]"
       title={space.pinnedCollapsed ? 'Show pinned tabs' : 'Collapse pinned tabs'}
       aria-label={`${space.name} pinned tabs`}
       aria-expanded={!space.pinnedCollapsed}
@@ -353,7 +392,11 @@ function SpaceHeader({
       }}
     >
       <SpaceGlyph icon={space.icon} size={14} />
-      {!compact && <span className="min-w-0 flex-1 truncate text-left">{space.name}</span>}
+      {!compact && (
+        <span className="zen-space-header-name min-w-0 flex-1 truncate text-left">
+          {space.name}
+        </span>
+      )}
       {!compact &&
         (space.pinnedCollapsed ? (
           <ChevronRight className={V2_TRAILING_GLYPH} />
@@ -866,6 +909,7 @@ function SavedPageRow({
       aria-label={title}
       aria-description={`Saved page ${index + 1} of ${count}, opens the folder`}
       data-saved-page={index}
+      data-indent
       data-strip-item={key}
       data-strip-parent={parent}
       tabIndex={tabIndex}
@@ -882,7 +926,7 @@ function SavedPageRow({
       <Favicon tab={source} />
       {!compact && (
         <>
-          <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="saved-page-title">
+          <span className="zen-tab-title min-w-0 flex-1" data-testid="saved-page-title">
             {title}
           </span>
           <span className="h-6 w-6 shrink-0" data-testid="saved-page-slot" aria-hidden />

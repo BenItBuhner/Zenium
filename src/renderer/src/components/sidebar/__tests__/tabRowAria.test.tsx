@@ -199,6 +199,19 @@ describe('the row’s states (lib/tabRowAria.ts)', () => {
     ).toEqual(['recording', 'muted', 'sleeping', 'pinned'])
   })
 
+  it('names a device session the way the glyph’s tooltip does (tabs-43)', () => {
+    expect(tabRowStates(tab('a'), 'bluetooth')).toEqual(['Bluetooth device'])
+    expect(tabRowStates(tab('a'), 'usb')).toEqual(['USB device'])
+    expect(tabRowStates(tab('a'), 'hid')).toEqual(['HID device'])
+    expect(tabRowStates(tab('a'), 'serial')).toEqual(['serial port'])
+    expect(tabRowStates(tab('a'), 'vr')).toEqual(['VR headset'])
+    expect(tabRowStates(tab('a', { audible: true, pinned: true }), 'usb')).toEqual([
+      'USB device',
+      'playing',
+      'pinned'
+    ])
+  })
+
   it('says nothing of a row under the private lock', () => {
     expect(tabRowStates(tab('a', { pinned: true, audible: true }), 'recording', true)).toEqual([])
   })

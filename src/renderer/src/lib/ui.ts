@@ -285,6 +285,11 @@ export interface UiState {
   compactHover: boolean
   /** The hidden top toolbar (compact mode, fullscreen) is out over a picture of the page. */
   toolbarHover: boolean
+  /**
+   * The collapsed rail's flyout (tabs-03, `useRailFlyout`) is out over a picture of the page:
+   * from the capture that stands in for the page until the fold back to the rail rests.
+   */
+  railFlyout: boolean
   renamingTabId: string | null
   renamingFolderId: string | null
   /** Tab whose pinned URL is being edited in the small prompt. */
@@ -577,6 +582,7 @@ export const uiStore = createStore<UiState>(
     drag: null,
     compactHover: false,
     toolbarHover: false,
+    railFlyout: false,
     renamingTabId: null,
     renamingFolderId: null,
     editingPinnedUrlTabId: null,
@@ -1002,8 +1008,15 @@ export const coverBandStore = createStore<ContentCover>({ top: 0, bottom: 0 }, '
 /** Captures in flight, per tab: a sheet and the dialog it hosts asking together pay for one. */
 const captures = new Map<string, Promise<void>>()
 
-/** Capture the active tab before a chrome overlay hides it. */
-export async function captureActiveTab(tabId: string | null): Promise<void> {
+/**
+ * Capture the active tab before a chrome overlay hides it. `fresh` captures a page whose view is
+ * hidden already – a tab activated under chrome that keeps the page under its picture (the
+ * rail's flyout), which would otherwise show only what it looked like the last time it was seen.
+ */
+export async function captureActiveTab(
+  tabId: string | null,
+  { fresh = false }: { fresh?: boolean } = {}
+): Promise<void> {
   if (!tabId) {
     uiStore.set({ snapshot: null, snapshotTabId: null })
     return
@@ -1012,7 +1025,9 @@ export async function captureActiveTab(tabId: string | null): Promise<void> {
   const pending = captures.get(tabId)
   if (pending) return pending
   const capture = (async (): Promise<void> => {
-    const data = await cmd('overlay.snapshot', { tabId }).catch(() => null)
+    const data = await cmd('overlay.snapshot', fresh ? { tabId, fresh } : { tabId }).catch(
+      () => null
+    )
     if (data) rememberThumbnail(tabId, data)
     // A page that is already hidden (behind the gesture stage) cannot be captured: show what it
     // looked like the last time it was.
@@ -1176,6 +1191,7 @@ export function invalidateSnapshot(): void {
     !ui.drag &&
     !ui.compactHover &&
     !ui.toolbarHover &&
+    !ui.railFlyout &&
     !ui.drawerOpen &&
     !ui.menu &&
     !ui.siteInfoOpen &&
@@ -1301,11 +1317,18 @@ if (!snapshotFlags.__zenSnapshotWired) {
 /**
  * Whether the page views are hidden under the chrome right now – what `useLayoutReporter`
  * reports as `contentHidden`: a chrome overlay covers the content, a compact sidebar or the
- * toolbar is revealed over it, or a frame dialog host keeps the page under its picture for a
- * panel's way out (`holdFrameDialogCover`).
+ * toolbar is revealed over it, the collapsed rail's flyout is out over it (`useRailFlyout`), or
+ * a frame dialog host keeps the page under its picture for a panel's way out
+ * (`holdFrameDialogCover`).
  */
 export function pageHidden(ui: UiState): boolean {
-  return overlayCoversContent(ui) || ui.compactHover || ui.toolbarHover || ui.frameDialogCover > 0
+  return (
+    overlayCoversContent(ui) ||
+    ui.compactHover ||
+    ui.toolbarHover ||
+    ui.railFlyout ||
+    ui.frameDialogCover > 0
+  )
 }
 
 /**
@@ -2228,8 +2251,9 @@ export function closePrintPreview(): void {
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
  * blocked pop-ups popover, an autofill prompt in its popover form, a menu the renderer draws,
- * or a sign-in or certificate dialog. The page behind them is captured all the same (they
- * overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
+ * the collapsed rail's flyout (`useRailFlyout` – the sidebar itself, §9.20's cascade beside
+ * the rail), or a sign-in or certificate dialog. The page behind them is captured all the same
+ * (they overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
  * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5),
  * so the same holds under the site-information sheet and the prompt sheet on a phone, and the
  * security prompt's dim is the frame dialog host's scrim alone (v2 §9.5, §11.5: one dim layer),
@@ -2261,6 +2285,11 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // it undimmed), a host's context menu – is the `.zen-v2-menu` popover on a mouse and a
       // bottom sheet with its own scrim on touch: no dim of the frame's either way.
       ui.menu !== null ||
+      // The rail's flyout stands over the page's picture as the sidebar stands beside the
+      // page: no scrim (Edge's and Zen's hover reveals leave the page as it was). The flag is
+      // `pageHidden`'s, not `overlayCoversContent`'s, so the reduced check below needs no
+      // clearing of it.
+      ui.railFlyout ||
       popover) &&
     !overlayCoversContent({
       ...ui,

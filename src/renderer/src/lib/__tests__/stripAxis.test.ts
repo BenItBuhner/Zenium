@@ -60,6 +60,24 @@ describe('measureRow', () => {
     expect(measureRow(row)).toBeNull()
   })
 
+  it('reads a row of the collapsed rail’s flyout against the flyout’s box out over the page, not the 56 rail under it (tabs-03)', () => {
+    const aside = document.createElement('aside')
+    const flyout = document.createElement('div')
+    flyout.setAttribute('data-rail-flyout', '')
+    flyout.setAttribute('data-flyout', 'out')
+    const row = document.createElement('div')
+    flyout.append(row)
+    aside.append(flyout)
+    document.body.append(aside)
+    box(aside, 0, 0, 56, 1000)
+    box(flyout, 0, 0, 240, 1000)
+    box(row, 8, 120, 224, 36)
+    expect(measureRow(row)).toEqual({
+      anchor: { x: 8, y: 120, width: 224, height: 36 },
+      sidebar: { x: 0, y: 0, width: 240, height: 1000 }
+    })
+  })
+
   it('a row in neither list measures nothing', () => {
     const row = document.createElement('div')
     document.body.append(row)
