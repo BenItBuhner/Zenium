@@ -520,10 +520,23 @@ describe('the chrome and the motion (main.css)', () => {
     expect(footer).toContain('justify-content: flex-end')
     expect(footer).toContain('gap: 8px')
     expect(footer).not.toMatch(/margin/)
-    // The check row runs edge to edge (§9.25), its box at the gutter.
-    const check = rule('.zen-confirm-dialog-check')
+    // The check row runs edge to edge (§9.25), its box at the gutter – past the row primitive's
+    // own unlayered `width: 100%`, which stands LATER in the file at one class: a one-class rule
+    // here lost to it by order while the negative margin still applied, and the row ran from
+    // the left border to 32 short of the right (pr-392 A1). The body's specificity wins
+    // whatever the order.
+    const check = rule('.zen-confirm-dialog-body > .zen-confirm-dialog-check')
     expect(check).toContain('width: calc(100% + 2 * var(--v2-card-padding))')
     expect(check).toContain('margin: 0 calc(-1 * var(--v2-card-padding))')
+    const row = rule('.zen-v2-row')
+    expect(row).toContain('width: 100%')
+    expect(bare.indexOf('.zen-v2-row {')).toBeGreaterThan(
+      bare.indexOf('.zen-confirm-dialog-body > .zen-confirm-dialog-check {')
+    )
+    // No one-class rule for the row is left to lose that way: every rule on it is the body's.
+    const rules = [...bare.matchAll(/\.zen-confirm-dialog-check \{/g)].map((m) => m.index)
+    expect(rules.length).toBeGreaterThan(0)
+    for (const at of rules) expect(bare.slice(0, at)).toMatch(/\.zen-confirm-dialog-body > $/)
     // Nothing of the prompt's draws a border.
     for (const selector of [
       '.zen-confirm-dialog',

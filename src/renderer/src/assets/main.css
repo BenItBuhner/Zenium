@@ -533,9 +533,11 @@
  * hairline anywhere and no margin of the footer's own: a one-line notice measures
  * 1 + 16 + 22 + 4 + 20 + 16 + 32 + 16 + 1 = 128 and a two-line one 148 (pr-360 §D: the
  * `.zen-bm-*` chrome gave 153 – a transparent hairline under the title block and a 4 the footer
- * carried). Unlayered, beside the button: the check row's reach past the gutter has to beat the
- * row primitive's own unlayered `width: 100%`, which no layered rule could. The prompt's ring
- * rules are the chassis's: none on the container that holds the focus
+ * carried). Unlayered, beside the button, and the check row's reach past the gutter carries the
+ * body's specificity: the row primitive's own unlayered `width: 100%` (`.zen-v2-row`, later in
+ * this file, one class) beat a one-class rule here by order while the negative margin still
+ * applied – the row ran from the left border to 32 short of the right (pr-392 A1). The prompt's
+ * ring rules are the chassis's: none on the container that holds the focus
  * (`[role='alertdialog'][tabindex='-1']` above), the shared v2 ring on its controls.
  */
 .zen-confirm-dialog {
@@ -549,7 +551,7 @@
   gap: var(--v2-card-padding);
   padding: 0 var(--v2-card-padding) var(--v2-card-padding);
 }
-.zen-confirm-dialog-check {
+.zen-confirm-dialog-body > .zen-confirm-dialog-check {
   width: calc(100% + 2 * var(--v2-card-padding));
   margin: 0 calc(-1 * var(--v2-card-padding));
 }
