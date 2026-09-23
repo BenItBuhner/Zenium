@@ -1091,7 +1091,12 @@ export class Menus {
   private pageGroup(tab: Tab, win: ZenWindow): Template {
     const { state, reader, translate } = this.browser
     const run = (
-      action: 'page.savePage' | 'page.printPreview' | 'page.screenshot' | 'page.captureFullPage'
+      action:
+        | 'page.savePage'
+        | 'page.printPreview'
+        | 'page.screenshot'
+        | 'page.captureFullPage'
+        | 'capture.start'
     ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
     return [
@@ -1116,6 +1121,16 @@ export class Menus {
         action: 'page.captureFullPage',
         click: () => run('page.captureFullPage')
       },
+      // Edge's Web capture row (a region of the dimmed page): the desktop's overlay alone.
+      ...(win.formFactor === 'desktop'
+        ? [
+            {
+              label: 'Capture Page…',
+              action: 'capture.start' as const,
+              click: () => run('capture.start')
+            }
+          ]
+        : []),
       {
         label: readerOpen ? 'Exit Reader View' : 'Enter Reader View',
         enabled: readerOpen || reader.canRead(tab),
@@ -3011,6 +3026,15 @@ export class Menus {
       click: () =>
         active && this.browser.actions.run('page.captureFullPage', { sourceTabId: active.id, win })
     }
+    // Edge's "Web capture" row of its page group (Print, Web capture, Share): the desktop's
+    // overlay over the dimmed page; the tablet's menu keeps the two captures in More Tools.
+    const webCapture = desktop({
+      label: 'Web Capture…',
+      action: 'capture.start',
+      enabled: Boolean(active),
+      click: () =>
+        active && this.browser.actions.run('capture.start', { sourceTabId: active.id, win })
+    })
     // Chrome's per-site page controls (Desktop Site, the dark-theme exception) on the hosts
     // that have them; a phone puts "Add to Home Screen" (W1-7) ahead of them.
     const pageControls = when(
@@ -3141,12 +3165,14 @@ export class Menus {
         ...addons,
         separator,
         // The page's actions, in the brief's order: find, zoom, print, save, share and
-        // translate, then the reader's; the long tail is the app group's More Tools.
+        // translate, then the reader's; the long tail is the app group's More Tools. Web
+        // capture sits between the save and the share, where Edge's menu keeps it.
         findInPage,
         ...zoomSheet,
         ...zoom,
         ...print,
         savePageAs,
+        ...webCapture,
         ...share,
         ...sendToDevices,
         ...translate,

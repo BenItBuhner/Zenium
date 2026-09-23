@@ -4358,7 +4358,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // the iframe is another origin's frame in the tab's WebView, so its Clear is tapped
         // through the accessibility tree, which Chromium exposes across frames. Both are looked
         // for until the tab reloads or the wait runs out; the confirmation taken is recorded.
+        // The iframe sits in an open shadow root (`[data-clear-cache]` > #shadow-root > iframe),
+        // where a plain `document.querySelector` never found it (compat round 10, row 03: the
+        // frame stood sized on screen while the driver read "no iframe"); the query walks the
+        // shadow roots, and the frame's rect is sampled each round – the tab's side of the
+        // `cc-resize` exchange – with the accessibility nodes inside it, for the trace.
         val iframeSelector = JSONObject.quote("iframe[src*=\"${row.id}\"]")
+        val iframeExpr = "(function(){var sel=$iframeSelector;var find=function(root){var f=root.querySelector(sel);if(f)return f;var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){if(all[i].shadowRoot){var r=find(all[i].shadowRoot);if(r)return r}}return null};" +
+            "var f=find(document);if(!f)return JSON.stringify({host:!!document.querySelector('[data-clear-cache]')});var r=f.getBoundingClientRect();return JSON.stringify({w:r.width,h:r.height,x:r.left,y:r.top,dpr:window.devicePixelRatio,src:String(f.src).slice(0,120)})})()"
+        val frameSamples = JSONArray()
         val confirmed = poll(scaled(15_000, factor), 500) {
             val now = runCatching { tabEval(view, "String(performance.timeOrigin)") }.getOrNull()
             if (!now.isNullOrEmpty() && now != "null" && now != originBefore) return@poll JSONObject().put("reloadedFirst", now)
@@ -4375,7 +4383,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     return@poll JSONObject().put("popupClear", clicked)
                 }
             }
-            val iframe = json(tabEval(view, "(function(){var f=document.querySelector($iframeSelector);if(!f)return '{}';var r=f.getBoundingClientRect();return JSON.stringify({w:r.width,h:r.height})})()"))
+            val iframe = json(tabEval(view, iframeExpr))
+            if (frameSamples.length() < 40) frameSamples.put(JSONObject().put("t", SystemClock.uptimeMillis()).put("frame", iframe))
             if (iframe.has("w")) {
                 val button = nodes { node ->
                     val label = (node.text ?: node.contentDescription)?.toString()?.trim().orEmpty()
@@ -4389,6 +4398,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
             }
             null
+        }
+        extra.put("frameSamples", frameSamples)
+        if (confirmed == null) {
+            // What the accessibility tree had where the frame stood, for the trace of a miss.
+            val last = (0 until frameSamples.length()).map { frameSamples.getJSONObject(it).getJSONObject("frame") }.lastOrNull { it.has("w") }
+            if (last != null) {
+                val labels = nodes { node -> !(node.text ?: node.contentDescription).isNullOrBlank() }
+                    .map { node -> Rect().also(node::getBoundsInScreen).flattenToString() + " " + ((node.text ?: node.contentDescription)?.toString()?.trim()?.take(40) ?: "") }
+                extra.put("a11yLabels", JSONArray(labels.take(40)))
+            }
         }
         extra.put("confirmation", confirmed ?: JSONObject().put("none", "no Clear in the popup or the tab's accessibility tree within ${scaled(15_000, factor) / 1000} s"))
         val reloaded = confirmed?.optString("reloadedFirst")?.takeIf { it.isNotEmpty() } ?: poll(scaled(25_000, factor), 500) {

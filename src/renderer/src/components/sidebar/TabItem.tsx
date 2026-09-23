@@ -9,6 +9,7 @@ import {
   ScreenShare,
   Snowflake,
   Turtle,
+  VenetianMask,
   Volume2,
   VolumeX,
   X
@@ -22,6 +23,7 @@ import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -31,11 +33,13 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
+import { hasStateGlyph, type StripSlot } from '@renderer/lib/tabStripLayout'
 import { cn } from '@renderer/lib/utils'
 import { useTabTouch } from '../tablet/useTabTouch'
 import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon } from './Favicon'
 import { useListMotion } from './listMotion'
+import { useStripAxis } from './stripAxis'
 
 interface Props {
   tab: Tab
@@ -51,9 +55,28 @@ interface Props {
    * row is the list's slot (its motion and its hover fill), not the segment.
    */
   segment?: { index: number; count: number }
+  /**
+   * The horizontal strip's trailing slot (§9.37, `lib/tabStripLayout.ts`): `reserved` keeps the
+   * sidebar's 24 for the state glyph at rest and the × on hover; `glyph` is the same slot on a
+   * narrow tab that carries a state; `title` gives the slot to the title until the pointer
+   * arrives with the ×. Only the strip passes it; the sidebar's row has the sidebar's trailing.
+   */
+  slot?: StripSlot
 }
 
-export function TabItem({ tab, active, compact, indent, parent, segment }: Props): JSX.Element {
+export function TabItem({
+  tab,
+  active,
+  compact,
+  indent,
+  parent,
+  segment,
+  slot
+}: Props): JSX.Element {
+  // The list's axis (`stripAxis.ts`): the strip lays this row along the caption band, so its
+  // drop halves are left and right, it never indents under a header, and its trailing end is
+  // the one 24 slot rather than the sidebar's run of buttons.
+  const horizontal = useStripAxis() === 'x'
   const dragging = uiStore.use((s) => s.drag)
   const renaming = uiStore.use((s) => s.renamingTabId === tab.id)
   const tabIndex = useStripTabIndex(`tab:${tab.id}`, active)
@@ -87,7 +110,13 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
   const dropInto = dropStore.use((s) => s.key === `tab:${tab.id}:into`)
   const isDragSource = dragging?.tabId === tab.id
   const showDropZones = Boolean(dragging) && !isDragSource
-  const title = tabTitle(tab)
+  // A private row under the lock (INC-05, §9.19; the overview card's rule): nothing of the page
+  // shows – the mask stands in for the favicon, the row reads "Private tab", and the trailing
+  // slot is empty, its states and its close with it – until the cover has lifted. The row lies
+  // inert under the sidebar's veil meanwhile (`PrivatePanel`); the placeholder is for the reader
+  // that reaches it all the same.
+  const masked = useTabMasked(tab)
+  const title = masked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(tab)
   const pinnedChanged = tab.pinned && tab.pinnedUrl !== null && tab.url !== tab.pinnedUrl
   // The indicator slot shows one state, Chrome's priority: recording > capturing > PiP > audio.
   const alert = !tab.discarded ? (tab.alert ?? null) : null
@@ -174,7 +203,8 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
   // or an overlay has the chrome. The row's buttons keep their own tooltips.
   const cardUp = uiStore.use((s) => s.hoverCard.tabId === tab.id)
   const onPointerEnter = (e: React.PointerEvent): void => {
-    if (e.pointerType !== 'mouse' || renaming || dragging) return
+    // The card would read the page's title and address: none for a masked row.
+    if (e.pointerType !== 'mouse' || renaming || dragging || masked) return
     const el = e.currentTarget as HTMLElement
     hoverCard.pointerEnter(tab.id, () => measureRow(el))
   }
@@ -182,7 +212,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
   const onFocus = (e: React.FocusEvent<HTMLDivElement>): void => {
     stripFocusIn(e)
     const el = e.currentTarget
-    if (e.target !== el || !el.matches(':focus-visible')) return
+    if (e.target !== el || !el.matches(':focus-visible') || masked) return
     hoverCard.focus(tab.id, () => measureRow(el))
   }
   const onBlur = (e: React.FocusEvent<HTMLDivElement>): void => {
@@ -197,7 +227,11 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
   // title, the close, a live audio or alert state – and not the trailing slot's other buttons,
   // whose room a segment does not have (§9.35); their states stay in the row's fade, its tooltip
   // and its context menu.
-  const trailing = !segment
+  const trailing = !segment && !masked
+  // The strip's row shows one state at its trailing end (§9.37's slot), the sidebar's priority:
+  // what the user cannot otherwise see first (an alert, audio), then the page's own state. A
+  // masked row shows none: nothing of the page, its states included.
+  const stateGlyph = horizontal && !compact && !renaming && !masked ? hasStateGlyph(tab) : false
   return (
     <div
       ref={attach}
@@ -205,7 +239,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
         'zen-tab group',
         segment && 'zen-split-seg',
         compact && 'justify-center px-0',
-        indent && 'ml-5'
+        indent && !horizontal && 'ml-5'
       )}
       role="tab"
       aria-selected={active}
@@ -218,11 +252,14 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
       data-discarded={tab.discarded}
       data-frozen={tab.frozen}
       data-agent={agent ? true : undefined}
+      data-masked={masked || undefined}
       data-lifted={isDragSource || undefined}
       data-drop-into={dropInto || undefined}
       data-tab-id={tab.id}
       data-strip-item={`tab:${tab.id}`}
       data-strip-parent={parent}
+      data-slot={horizontal ? slot : undefined}
+      data-state={stateGlyph || undefined}
       tabIndex={tabIndex}
       aria-describedby={cardUp ? 'zen-tab-hover-card' : undefined}
       data-testid="tab"
@@ -240,7 +277,19 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
       onAuxClick={onAuxClick}
       onContextMenu={onContextMenu}
     >
-      {showDropZones && (
+      {showDropZones && horizontal && (
+        <>
+          <div
+            data-drop={`tab:${tab.id}:before`}
+            className="absolute inset-y-0 left-0 w-1/2 z-10"
+          />
+          <div
+            data-drop={`tab:${tab.id}:after`}
+            className="absolute inset-y-0 right-0 w-1/2 z-10"
+          />
+        </>
+      )}
+      {showDropZones && !horizontal && (
         <>
           <div data-drop={`tab:${tab.id}:before`} className="absolute inset-x-0 top-0 h-1/2 z-10" />
           <div
@@ -256,15 +305,17 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
           aria-hidden
         />
       )}
-      {tab.loading && !tab.discarded && <span className="zen-tab-progress" aria-hidden />}
-      {agent && compact && (
+      {tab.loading && !tab.discarded && !masked && (
+        <span className="zen-tab-progress" aria-hidden />
+      )}
+      {agent && compact && !masked && (
         <span
           className="pointer-events-none absolute right-0.5 top-0.5 h-2 w-2 rounded-full ring-1 ring-white/70"
           style={{ background: agent.color }}
           aria-hidden
         />
       )}
-      {compact && alert && (
+      {compact && alert && !masked && (
         <span
           className="zen-tab-audio-dot zen-tab-alert-dot"
           data-alert={alert}
@@ -272,17 +323,22 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
           aria-label={tabAlertTooltip(alert)}
         />
       )}
-      {compact && !alert && (tab.audible || tab.muted) && (
+      {compact && !alert && !masked && (tab.audible || tab.muted) && (
         <span
           className="zen-tab-audio-dot"
           data-muted={tab.muted || undefined}
           aria-label={tab.muted ? 'Muted' : 'Playing audio'}
         />
       )}
-      <Favicon tab={tab} />
+      {masked ? (
+        // The private marker in the favicon's slot (§9.19), at the stand-in's 69% (§10.4).
+        <VenetianMask className="zen-tab-favicon h-4 w-4 shrink-0 opacity-[0.69]" aria-hidden />
+      ) : (
+        <Favicon tab={tab} />
+      )}
       {!compact && (
         <>
-          {renaming ? (
+          {renaming && !masked ? (
             <RenameInput tab={tab} />
           ) : (
             <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="tab-title">
@@ -296,66 +352,28 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
               aria-label="Shown in another window"
             />
           )}
-          {trailing && tab.discarded && !renaming && (
-            <RowControl
-              className="zen-toolbar-button zen-tab-sleeping h-6 w-6 shrink-0"
-              title={tabTooltip(tab)}
-              aria-label="Sleeping – click to wake"
-              onClick={() => run('tab.activate', { tabId: tab.id })}
-            >
-              <Moon className={V2_TRAILING_GLYPH} />
-            </RowControl>
-          )}
-          {trailing && tab.frozen && !renaming && (
-            <RowControl
-              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
-              title="Frozen by the resource governor – click to wake"
-              onClick={() => run('tab.wake', { tabId: tab.id })}
-            >
-              <Snowflake className={V2_TRAILING_GLYPH} />
-            </RowControl>
-          )}
-          {trailing && !tab.frozen && tab.cpuThrottle > 1 && !renaming && (
-            <RowControl
-              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
-              title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
-              onClick={() => run('tab.wake', { tabId: tab.id })}
-            >
-              <Turtle className={V2_TRAILING_GLYPH} />
-            </RowControl>
-          )}
-          {alert && !renaming && <AlertIndicator alert={alert} />}
-          {!alert && (tab.audible || tab.muted) && !renaming && (
-            <RowControl
-              className="zen-toolbar-button zen-tab-audio h-6 w-6 shrink-0"
-              data-muted={tab.muted || undefined}
-              title={tab.muted ? 'Unmute tab' : 'Mute tab'}
-              aria-pressed={tab.muted}
-              onClick={() => run('tab.toggleMute', { tabId: tab.id })}
-            >
-              {tab.muted ? (
-                <VolumeX className={V2_TRAILING_GLYPH} />
-              ) : (
-                <Volume2 className={V2_TRAILING_GLYPH} />
-              )}
-            </RowControl>
-          )}
-          {trailing && pinnedChanged ? (
-            <RowControl
-              className="zen-toolbar-button h-6 w-6 shrink-0"
-              title="Reset pinned tab to its original URL"
-              onClick={() => run('tab.resetPinned', { tabId: tab.id })}
-            >
-              <RotateCcw className={V2_TRAILING_GLYPH} />
-            </RowControl>
+          {horizontal ? (
+            // A masked row's trailing slot is empty: no state, no × (the lock's rule above).
+            !masked && (
+              <StripTrailing tab={tab} active={active} trailing={trailing} renaming={renaming} />
+            )
           ) : (
-            <RowControl
-              className="zen-tab-close zen-toolbar-button h-6 w-6 shrink-0"
-              title={tab.pinned ? 'Close (keep pinned)' : 'Close tab'}
-              onClick={() => run('tab.close', { tabId: tab.id })}
-            >
-              <X className={V2_TRAILING_GLYPH} />
-            </RowControl>
+            <>
+              {trailing && tab.discarded && !renaming && <SleepingButton tab={tab} />}
+              {trailing && tab.frozen && !renaming && <FrozenButton tab={tab} />}
+              {trailing && !tab.frozen && tab.cpuThrottle > 1 && !renaming && (
+                <ThrottledButton tab={tab} />
+              )}
+              {alert && !renaming && !masked && <AlertIndicator alert={alert} />}
+              {!alert && (tab.audible || tab.muted) && !renaming && !masked && (
+                <AudioButton tab={tab} />
+              )}
+              {trailing && pinnedChanged ? (
+                <ResetPinnedButton tab={tab} />
+              ) : (
+                !masked && <CloseButton tab={tab} />
+              )}
+            </>
           )}
         </>
       )}
@@ -413,6 +431,132 @@ function RowControl({
     >
       {children}
     </span>
+  )
+}
+
+/**
+ * The strip's trailing end (design language v2 §9.37): the sidebar's 24 as one slot
+ * (`.zen-tab-slot`). An inactive tab shows its one state glyph there at rest – the alert, the
+ * audio button, the sleeping moon, the governor's snowflake or turtle, in the sidebar's priority
+ * – and the × in the glyph's place while the pointer is on the tab, so nothing in the title
+ * shifts; the active tab keeps its × in the slot always and draws its state glyph in flow ahead
+ * of it (`.zen-tab-state`; the stylesheet drops it under 160, where the × alone fits). A row
+ * whose `data-slot` is `title` has no slot at rest (the stylesheet hides it until the hover).
+ * A split row's segment (`trailing` false) keeps the alert and the audio, as in the sidebar.
+ */
+function StripTrailing({
+  tab,
+  active,
+  trailing,
+  renaming
+}: {
+  tab: Tab
+  active: boolean
+  trailing: boolean
+  renaming: boolean
+}): JSX.Element | null {
+  if (renaming) return null
+  const alert = !tab.discarded ? (tab.alert ?? null) : null
+  const pinnedChanged = tab.pinned && tab.pinnedUrl !== null && tab.url !== tab.pinnedUrl
+  let glyph: JSX.Element | null = null
+  if (alert) glyph = <AlertIndicator alert={alert} />
+  else if (tab.audible || tab.muted) glyph = <AudioButton tab={tab} />
+  else if (trailing && tab.discarded) glyph = <SleepingButton tab={tab} />
+  else if (trailing && tab.frozen) glyph = <FrozenButton tab={tab} />
+  else if (trailing && tab.cpuThrottle > 1) glyph = <ThrottledButton tab={tab} />
+  return (
+    <>
+      {active && glyph && <span className="zen-tab-state">{glyph}</span>}
+      <span className="zen-tab-slot">
+        {!active && glyph}
+        {trailing && pinnedChanged ? <ResetPinnedButton tab={tab} /> : <CloseButton tab={tab} />}
+      </span>
+    </>
+  )
+}
+
+/** The row's ×; `.zen-tab-close` shows it on hover (and always on the strip's active tab). */
+function CloseButton({ tab }: { tab: Tab }): JSX.Element {
+  return (
+    <RowControl
+      className="zen-tab-close zen-toolbar-button h-6 w-6 shrink-0"
+      title={tab.pinned ? 'Close (keep pinned)' : 'Close tab'}
+      onClick={() => run('tab.close', { tabId: tab.id })}
+    >
+      <X className={V2_TRAILING_GLYPH} />
+    </RowControl>
+  )
+}
+
+/** A pinned tab that has left its pinned page: the arrow that takes it back, in the ×'s place. */
+function ResetPinnedButton({ tab }: { tab: Tab }): JSX.Element {
+  return (
+    <RowControl
+      className="zen-toolbar-button h-6 w-6 shrink-0"
+      title="Reset pinned tab to its original URL"
+      onClick={() => run('tab.resetPinned', { tabId: tab.id })}
+    >
+      <RotateCcw className={V2_TRAILING_GLYPH} />
+    </RowControl>
+  )
+}
+
+/** A sleeping (discarded) page's moon; the click wakes it. */
+function SleepingButton({ tab }: { tab: Tab }): JSX.Element {
+  return (
+    <RowControl
+      className="zen-toolbar-button zen-tab-sleeping h-6 w-6 shrink-0"
+      title={tabTooltip(tab)}
+      aria-label="Sleeping – click to wake"
+      onClick={() => run('tab.activate', { tabId: tab.id })}
+    >
+      <Moon className={V2_TRAILING_GLYPH} />
+    </RowControl>
+  )
+}
+
+/** A page the resource governor froze; the click wakes it. */
+function FrozenButton({ tab }: { tab: Tab }): JSX.Element {
+  return (
+    <RowControl
+      className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
+      title="Frozen by the resource governor – click to wake"
+      onClick={() => run('tab.wake', { tabId: tab.id })}
+    >
+      <Snowflake className={V2_TRAILING_GLYPH} />
+    </RowControl>
+  )
+}
+
+/** A page the resource governor throttles; the click lifts it. */
+function ThrottledButton({ tab }: { tab: Tab }): JSX.Element {
+  return (
+    <RowControl
+      className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
+      title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
+      onClick={() => run('tab.wake', { tabId: tab.id })}
+    >
+      <Turtle className={V2_TRAILING_GLYPH} />
+    </RowControl>
+  )
+}
+
+/** The tab's audio state as its mute toggle (`.zen-tab-audio`). */
+function AudioButton({ tab }: { tab: Tab }): JSX.Element {
+  return (
+    <RowControl
+      className="zen-toolbar-button zen-tab-audio h-6 w-6 shrink-0"
+      data-muted={tab.muted || undefined}
+      title={tab.muted ? 'Unmute tab' : 'Mute tab'}
+      aria-pressed={tab.muted}
+      onClick={() => run('tab.toggleMute', { tabId: tab.id })}
+    >
+      {tab.muted ? (
+        <VolumeX className={V2_TRAILING_GLYPH} />
+      ) : (
+        <Volume2 className={V2_TRAILING_GLYPH} />
+      )}
+    </RowControl>
   )
 }
 

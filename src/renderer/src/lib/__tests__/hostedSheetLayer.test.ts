@@ -41,6 +41,9 @@ const OWN_SCRIM_CONSUMERS = [
   'components/autofill/LeakWarning.tsx',
   'components/autofill/PassphraseDialog.tsx',
   'components/autofill/controls.tsx',
+  // The desktop's Web capture overlay: the frame's §9.5 scrim is its own, with the marquee cut
+  // out of it, so the host draws none; its root is the slot's child and carries the mark.
+  'components/capture/CaptureOverlay.tsx',
   'components/downloads/DownloadsSheet.tsx',
   // The password manager's phone passphrase prompt, and its prompt and picker sheets (#92).
   'components/overlays/passwords/PassphrasePrompt.tsx',

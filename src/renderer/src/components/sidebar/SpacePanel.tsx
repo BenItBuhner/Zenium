@@ -1,8 +1,8 @@
 import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Brush, ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { Brush, ChevronDown, ChevronRight, Plus, VenetianMask } from 'lucide-react'
 import type { Folder, SavedGroupTab, Space, Tab, UIState } from '@shared/types'
-import { DEFAULT_CONTAINER_ID } from '@shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { getHost } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
@@ -13,25 +13,28 @@ import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { groupColorVars, groupsOf } from '@renderer/lib/groups'
 import { groupRowOf, isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { SlideMotion } from '@renderer/lib/motion/slide'
-import { isPrivateTab } from '@renderer/lib/privateTabs'
+import { privateInTabs, tabsOnPane } from '@renderer/lib/privateTabs'
 import {
   isPrivateWindow,
   pinnedOf,
   regularOf,
+  rowKey,
   stripRows,
   type StripRow
 } from '@renderer/lib/selectors'
 import { hint, useHint } from '@renderer/lib/shortcuts'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
+import type { StripSlot } from '@renderer/lib/tabStripLayout'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { DEFAULT_FOLDER_ICON } from '../phone/GroupCard'
 import { useLongPress } from '../phone/useLongPress'
-import { V2_TRAILING_GLYPH } from '../v2/controls'
+import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon, type FaviconSource } from './Favicon'
-import { ListMotionContext } from './listMotion'
+import { ENTER_BATCH, ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
+import { useStripAxis } from './stripAxis'
 import { TabItem } from './TabItem'
 import { useGroupFold } from './useGroupFold'
 
@@ -42,35 +45,39 @@ interface Props {
   compact: boolean
 }
 
-/** More rows than this arriving in one commit is a restore, placed without motion. */
-const ENTER_BATCH = 6
-
 /** One space's tab list: space header, pinned tabs, separator, folders + regular tabs, new tab. */
 export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Element {
   const drag = uiStore.use((s) => s.drag)
   const dropKey = dropStore.use((s) => s.key)
   const zones = dropStore.use((s) => s.zones)
-  const pinned = pinnedOf(state, space)
-  const regular = regularOf(state, space)
-  // The space's groups as rows. On a host that keeps private browsing in tabs the space holds
-  // its private tabs among the regular ones, and this panel is a REGULAR surface (a private
-  // window's is private mode itself, and lists its own groups whole): a PRIVATE group
-  // (`isPrivateGroup` – private tabs alone live in it, nothing saved) is no row of it, so no
-  // private group's existence or name shows outside private mode, and a group's private members
-  // are not its rows or its count here (the Groups pane's rule); they list among the loose rows,
-  // where the panel lists the space's private tabs. The desktop's regular spaces hold no private
-  // tab (a private window's live in its own space), so its rows are as they were.
+  // On a host that keeps private browsing in tabs (the tablet) the space holds its private tabs
+  // among the regular ones, and this panel is the sidebar's REGULAR pose (`sidebarPose`): it
+  // lists the space's regular tabs and never a private one – no row, no title, no count, no
+  // hint that one exists (the project-context rule: private browsing leaks nothing outside its
+  // mode; W4-11). The private tabs are the private pose's (`PrivatePanel`), on while one is in
+  // view. The desktop's regular spaces hold no private tab (a private window's live in its own
+  // space, and that window's panel is private mode itself, listing them whole), so its rows
+  // are as they were.
+  const mixed = privateInTabs(state)
+  const pinned = mixed ? tabsOnPane(pinnedOf(state, space), 'tabs') : pinnedOf(state, space)
+  // The space's unpinned tabs as the space holds them, private ones included: what says which
+  // of its groups are private.
+  const live = regularOf(state, space)
+  const regular = mixed ? tabsOnPane(live, 'tabs') : live
+  // The space's groups as rows. This panel is a REGULAR surface (a private window's is private
+  // mode itself, and lists its own groups whole): a PRIVATE group (`isPrivateGroup` – private
+  // tabs alone live in it, nothing saved) is no row of it, so no private group's existence or
+  // name shows outside private mode, and a group's private members are not its rows or its
+  // count here (the Groups pane's rule).
   const regularSurface = !isPrivateWindow(state)
-  const liveOf = (folderId: string): Tab[] => regular.filter((t) => t.folderId === folderId)
+  const liveOf = (folderId: string): Tab[] => live.filter((t) => t.folderId === folderId)
   const membersOf = (folderId: string): Tab[] =>
     regularSurface ? regularMembers(liveOf(folderId)) : liveOf(folderId)
   const folders = groupsOf(state, space.id).filter(
     (f) => !regularSurface || !isPrivateGroup(f, liveOf(f.id))
   )
   const listed = new Set(folders.map((f) => f.id))
-  const loose = regular.filter(
-    (t) => !t.folderId || !listed.has(t.folderId) || (regularSurface && isPrivateTab(t))
-  )
+  const loose = regular.filter((t) => !t.folderId || !listed.has(t.folderId))
   const activeTabId = space.activeTabId
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
@@ -245,42 +252,49 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   )
 }
 
-/** A row's React key: the tab's id, or the split row's anchor (the slot it stands in). */
-const rowKey = (row: StripRow): string => (row.kind === 'tab' ? row.tab.id : row.anchor.id)
-
-/** The attributes of one run of rows as a vertical tablist named `label`. */
+/** The attributes of one run of rows as a tablist named `label` along `orientation`. */
 const tablistProps = (
-  label: string
-): { role: 'tablist'; 'aria-orientation': 'vertical'; 'aria-label': string } => ({
+  label: string,
+  orientation: 'vertical' | 'horizontal' = 'vertical'
+): { role: 'tablist'; 'aria-orientation': 'vertical' | 'horizontal'; 'aria-label': string } => ({
   role: 'tablist',
-  'aria-orientation': 'vertical',
+  'aria-orientation': orientation,
   'aria-label': label
 })
 
-/** One row of a tab list: a tab's own row, or a split group's row (§9.35). */
-function StripRowItem({
+/**
+ * One row of a tab list: a tab's own row, or a split group's row (§9.35). The horizontal strip
+ * (§9.37) lays the same rows along the caption band and passes each its trailing `slot`; the
+ * sidebar's private pose (`PrivatePanel`) lists the private session's rows with it, flat.
+ */
+export function StripRowItem({
   row,
   activeTabId,
   compact,
   indent,
-  parent
+  parent,
+  slot
 }: {
   row: StripRow
   activeTabId: string | null
   compact: boolean
   indent?: boolean
   parent?: string
+  slot?: (tab: Tab, active: boolean) => StripSlot
 }): JSX.Element {
-  if (row.kind === 'tab')
+  if (row.kind === 'tab') {
+    const active = row.tab.id === activeTabId
     return (
       <TabItem
         tab={row.tab}
-        active={row.tab.id === activeTabId}
+        active={active}
         compact={compact}
         indent={indent}
         parent={parent}
+        slot={slot?.(row.tab, active)}
       />
     )
+  }
   return (
     <SplitGroupRow
       group={row.group}
@@ -379,37 +393,61 @@ function DropZone({
 /**
  * The New Tab row under the list; `spaced` keeps the list's 2 px gap above it when it has rows.
  * An address dragged from outside opens in a new tab at the end of the list when dropped on it
- * (lib/dnd.ts, `data-new-tab`), and the button shows it will (§9.4).
+ * (lib/dnd.ts, `data-new-tab`), and the button shows it will (§9.4). In the horizontal strip
+ * (§9.37) it is a 28 `zen-toolbar-button` 4 after the last tab (`button`), the same event, the
+ * same menu and the same drop. On the sidebar's private pose it is New Private Tab (the
+ * overview's private new-tab card, INC-01): the mask for its glyph, asking for a tab of the
+ * private container (`pane`). The strip passes its axis and the tablet its pane: the horizontal
+ * layout is the desktop's, the poses the tablet's, so no button is both.
  */
-function NewTabButton({
+export function NewTabButton({
   compact,
   spaced,
-  dropInto
+  dropInto,
+  button,
+  pane = 'tabs'
 }: {
   compact: boolean
   spaced: boolean
   dropInto: boolean
+  /** The strip's 28 icon button rather than the sidebar's row. */
+  button?: boolean
+  pane?: 'tabs' | 'private'
 }): JSX.Element {
-  const title = useHint('New Tab', 'tab.new')
+  const isPrivate = pane === 'private'
+  const label = isPrivate ? 'New Private Tab' : 'New Tab'
+  const hinted = useHint('New Tab', 'tab.new')
   return (
     <button
       type="button"
       className={cn(
-        'zen-tab text-[var(--zen-fg)]',
-        compact && 'justify-center px-0',
-        spaced && 'mt-0.5'
+        button
+          ? 'zen-toolbar-button zen-no-drag shrink-0'
+          : ['zen-tab text-[var(--zen-fg)]', compact && 'justify-center px-0', spaced && 'mt-0.5']
       )}
       data-new-tab
+      data-strip-new-tab={button || undefined}
       data-drop-into={dropInto || undefined}
-      title={title}
-      onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
+      title={isPrivate ? label : hinted}
+      aria-label={button ? label : undefined}
+      onClick={() =>
+        window.dispatchEvent(
+          new CustomEvent('zen-new-tab', {
+            detail: isPrivate ? { containerId: PRIVATE_CONTAINER_ID } : {}
+          })
+        )
+      }
       onContextMenu={(e) => {
         e.preventDefault()
         run('newtab.contextMenu', contextMenuAnchor(e))
       }}
     >
-      <Plus className="h-4 w-4 shrink-0" />
-      {!compact && <span>New Tab</span>}
+      {isPrivate ? (
+        <VenetianMask className="h-4 w-4 shrink-0" />
+      ) : (
+        <Plus className="h-4 w-4 shrink-0" strokeWidth={button ? TOOLBAR_STROKE : undefined} />
+      )}
+      {!compact && !button && <span>{label}</span>}
     </button>
   )
 }
@@ -425,9 +463,26 @@ interface FolderRowProps {
   live: boolean
   liveError: string | null
   splitGroups: UIState['splitGroups']
+  /** The horizontal strip's trailing slot for each member row (§9.37). */
+  slot?: (tab: Tab, active: boolean) => StripSlot
 }
 
-function FolderRow({
+/**
+ * A group's header and its member rows. In the sidebar the header is a folder row – the group's
+ * glyph, name, count, chevron – with the members indented beneath it; on the tablet the
+ * full-width group row (§9.36). In the horizontal strip (§9.37, the list's axis `x`) the header
+ * is the group's chip – 32 tall at radius 8, the shared group glyph (`GroupRowGlyph`: the 16 box,
+ * the 10 colour dot, the 2 px ring of a saved group, or the folder's own icon), the name at
+ * 13/600 – ahead of its members, and the group's colour runs as one continuous 2 px line in the
+ * band's top inset from the chip's start to the last member's end, bridging the gaps
+ * (`.zen-strip-group-line` on the shell, never a dash per pill), wearing the colour as the §9.14
+ * pair (`groupColorVars`, `data-group-rgb`) so the theme's pick recolours it with the glyph's
+ * dot; the fold runs the shell's width on the spring. A SAVED group (TAB-16: its tabs closed,
+ * its pages kept) is its chip alone along
+ * the band – the ring, the name, the count of its pages as the aside – and a press on it opens
+ * the folder (`folder.open`), as the tablet's saved row does; its menu is the folder's.
+ */
+export function FolderRow({
   folder,
   tabs,
   activeTabId,
@@ -436,8 +491,10 @@ function FolderRow({
   dragging,
   live,
   liveError,
-  splitGroups
+  splitGroups,
+  slot
 }: FolderRowProps): JSX.Element {
+  const horizontal = useStripAxis() === 'x'
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
   // The tablet's row (TABLET-04, v2 §9.36): the group as a full-width 44 row like Zen's folder –
@@ -475,15 +532,29 @@ function FolderRow({
   const tabIndex = useStripTabIndex(key, containsActive && folder.collapsed)
   const shell = useRef<HTMLDivElement>(null)
   const header = useRef<HTMLDivElement>(null)
-  const drawn = useGroupFold(shell, header, folder.collapsed, tabs, tablet)
-  // The desktop lists a saved folder's pages under its header while it is unfolded; the tablet's
-  // saved row has nothing to fold (its tap opens the group).
-  const savedPages = !tablet && saved && !folder.collapsed ? (folder.savedTabs ?? []) : []
+  const drawn = useGroupFold(
+    shell,
+    header,
+    folder.collapsed,
+    tabs,
+    tablet || horizontal,
+    horizontal ? 'x' : 'y'
+  )
+  // The desktop's sidebar lists a saved folder's pages under its header while it is unfolded;
+  // the tablet's saved row has nothing to fold (its tap opens the group), and neither has the
+  // strip's saved chip (§9.37): along the band a saved group is its chip alone – the ring, the
+  // name, the count of the pages it keeps as the aside – and a press on it opens the folder.
+  const savedPages =
+    !tablet && !horizontal && saved && !folder.collapsed ? (folder.savedTabs ?? []) : []
+  // The strip's saved chip opens the group, as the tablet's saved row does; the sidebar's saved
+  // folder is a disclosure over its pages.
+  const opensOnPress = saved && (tablet || horizontal)
   const count = row.count
   const unit = count === 1 ? 'tab' : 'tabs'
-  const description = tablet
-    ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
-    : `${live ? 'Live folder' : 'Folder'}, ${saved ? 'saved, ' : ''}${count} ${unit}`
+  const description =
+    tablet || horizontal
+      ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
+      : `${live ? 'Live folder' : 'Folder'}, ${saved ? 'saved, ' : ''}${count} ${unit}`
   // The tablet row's hold (the phone's group card's, `useLongPress`: a haptic tick at 380 ms, the
   // menu on the release, the click after it swallowed): the group's menu as a §9.36 popover at
   // the finger.
@@ -492,20 +563,36 @@ function FolderRow({
   )
   const { onContextMenu: holdMenu, ...hold } = press.handlers
   return (
-    <div ref={shell} className="zen-group-fold flex flex-col gap-0.5" data-group-kind={row.kind}>
+    <div
+      ref={shell}
+      className={cn(
+        'zen-group-fold',
+        horizontal
+          ? 'zen-strip-group relative flex h-full shrink-0 items-end gap-1'
+          : 'flex flex-col gap-0.5'
+      )}
+      data-group-kind={row.kind}
+      data-strip-group-shell={horizontal ? folder.id : undefined}
+    >
       <div
         ref={header}
-        className={cn('zen-tab', compact && 'justify-center px-0', tablet && 'zen-group-row')}
+        className={cn(
+          'zen-tab',
+          compact && !horizontal && 'justify-center px-0',
+          tablet && 'zen-group-row',
+          horizontal && 'zen-strip-group-chip'
+        )}
         role="button"
         aria-label={folder.name}
         aria-description={description}
-        aria-expanded={tablet && saved ? undefined : !folder.collapsed}
+        aria-expanded={opensOnPress ? undefined : !folder.collapsed}
         data-strip-item={key}
         tabIndex={tabIndex}
         data-active={containsActive && folder.collapsed}
         data-editing={editing || undefined}
         data-drop-into={isDropTarget || undefined}
         data-tab-folder={folder.id}
+        data-strip-group={horizontal ? folder.id : undefined}
         data-saved={saved || undefined}
         onFocus={stripFocusIn}
         onBlur={stripFocusOut}
@@ -517,6 +604,12 @@ function FolderRow({
             if (press.swallowsClick() || renaming) return
             if (saved) run('folder.open', { folderId: folder.id })
             else toggle()
+            return
+          }
+          if (opensOnPress) {
+            // The strip's saved chip (§9.37): a press brings the pages back as the group's
+            // tabs; there is nothing along the band to fold.
+            if (!renaming) run('folder.open', { folderId: folder.id })
             return
           }
           const now = performance.now()
@@ -544,7 +637,44 @@ function FolderRow({
         title={compact ? folder.name : undefined}
       >
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
-        {tablet ? (
+        {horizontal ? (
+          <>
+            {/* The chip's glyph is the shared group glyph (§9.36 / §9.37): the 16 box with the
+                10 colour dot, the saved ring, or the folder's own icon – one glyph on every host. */}
+            <GroupRowGlyph folder={folder} saved={saved} />
+            {renaming ? (
+              <FolderRename folder={folder} />
+            ) : (
+              <span
+                className="min-w-0 truncate text-[13px] font-semibold"
+                data-strip-group-name
+                data-testid="group-chip-name"
+              >
+                {folder.name}
+              </span>
+            )}
+            {/* A saved group's members are not along the band, so its chip carries the count
+                of the pages it keeps as the row's 13 tabular aside (§9.36); an open group's
+                tabs are its own count. */}
+            {saved && !renaming && (
+              <span
+                className="shrink-0 text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]"
+                data-testid="group-chip-count"
+              >
+                {count}
+              </span>
+            )}
+            {live && (
+              <span
+                className={cn(
+                  'h-1.5 w-1.5 shrink-0 rounded-full',
+                  liveError ? 'bg-[var(--v2-danger)]' : 'zen-live-dot bg-[var(--v2-control-accent)]'
+                )}
+                title={liveError ?? 'Live folder – updates automatically'}
+              />
+            )}
+          </>
+        ) : tablet ? (
           <>
             <GroupRowGlyph folder={folder} saved={saved} />
             {!compact &&
@@ -623,13 +753,17 @@ function FolderRow({
           </>
         )}
       </div>
-      {/* The folder's rows as their own tablist under the header (a11y-02), and the list a row
-          of them is dragged in (lib/drag.ts: a row's list is its parent). Folded, there is no
-          list (an empty one would take the block's gap under the header). */}
+      {/* The folder's rows as their own tablist under the header (a11y-02) – along the strip
+          beside it (§9.37) – and the list a row of them is dragged in (lib/drag.ts: a row's list
+          is its parent). Folded, there is no list (an empty one would take the block's gap under
+          the header). */}
       {drawn.length > 0 && (
         <div
-          className="zen-group-rows flex flex-col gap-0.5"
-          {...tablistProps(`${folder.name} tabs`)}
+          className={cn(
+            'zen-group-rows flex',
+            horizontal ? 'h-full items-end gap-1' : 'flex-col gap-0.5'
+          )}
+          {...tablistProps(`${folder.name} tabs`, horizontal ? 'horizontal' : 'vertical')}
         >
           {stripRows(drawn, splitGroups).map((row) => (
             <StripRowItem
@@ -637,14 +771,16 @@ function FolderRow({
               row={row}
               activeTabId={activeTabId}
               compact={compact}
-              indent
+              indent={!horizontal}
               parent={key}
+              slot={slot}
             />
           ))}
         </div>
       )}
-      {/* A saved folder's pages, unfolded: buttons that open the folder, not tabs – so a run of
-          their own under the header, outside any tablist (a tablist holds tabs alone). */}
+      {/* A saved folder's pages, unfolded (the sidebar's disclosure): buttons that open the
+          folder, not tabs – so a run of their own under the header, outside any tablist (a
+          tablist holds tabs alone). */}
       {savedPages.length > 0 && (
         <div className="zen-group-rows flex flex-col gap-0.5" data-saved-pages={folder.id}>
           {savedPages.map((page, index) => (
@@ -659,6 +795,15 @@ function FolderRow({
             />
           ))}
         </div>
+      )}
+      {horizontal && (
+        <span
+          className="zen-strip-group-line"
+          data-strip-group-line={folder.id}
+          data-group-rgb=""
+          style={groupColorVars(folder.color) as CSSProperties}
+          aria-hidden
+        />
       )}
     </div>
   )

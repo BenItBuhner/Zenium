@@ -28,6 +28,14 @@ interface Props {
    */
   tab?: Tab | null
   className?: string
+  /**
+   * The cover whole (the default): the opaque base, the picture where there is one, the veil
+   * and the block with Unlock. Or the VEIL alone, over a surface whose rows are masked already
+   * and whose Unlock is the frame's – the tablet sidebar's private pose (W4-11): the veil in the
+   * window's tone over the rows reading "Private tab", no base under it (the rows show through,
+   * masked), no second block, lifting on the same spring as the frame's cover beside it.
+   */
+  variant?: 'cover' | 'veil'
 }
 
 /** The picture's blur under the veil, at rest (CSS px; `--zen-lock-blur` in main.css). */
@@ -43,11 +51,16 @@ export const LOCK_BLUR_PX = 18
  */
 const SPRING_LIFT: SpringConfig = { ...SPRING_SNAPPY, restDelta: 0.004, restSpeed: 0.08 }
 
-/** What the last render had of the lock and the ask, and whether the cover is on its lift. */
+/**
+ * What the last render had of the lock and the ask, whether the cover is on its lift, and
+ * whether the page and the rows wait on that lift (`lifting`): a lift waited on ends with the
+ * wait.
+ */
 interface Phase {
   locked: boolean
   shown: boolean
   leaving: boolean
+  waited: boolean
 }
 
 /**
@@ -68,7 +81,12 @@ interface Phase {
  * it, the prompt having carried its own message. The regular tabs, Settings and the bar are not
  * covered: only private content is.
  */
-export function PrivateLockCover({ shown, tab = null, className }: Props): JSX.Element | null {
+export function PrivateLockCover({
+  shown,
+  tab = null,
+  className,
+  variant = 'cover'
+}: Props): JSX.Element | null {
   const prompting = privateLockStore.use((s) => s.prompting)
   const locked = privateLockStore.use((s) => s.locked)
   const lifting = privateLockStore.use((s) => s.lifting)
@@ -77,15 +95,26 @@ export function PrivateLockCover({ shown, tab = null, className }: Props): JSX.E
   // while the lock stands – the gesture stage or the omnibox taking the frame over – it goes at
   // once: a cover fading behind the shrinking hero card would show around it. State derived
   // during render (the React pattern for "what did the previous render have"), as `SheetPresence`.
-  const [phase, setPhase] = useState<Phase>({ locked, shown, leaving: false })
+  const [phase, setPhase] = useState<Phase>({ locked, shown, leaving: false, waited: false })
   if (locked) {
     // At rest – or back at rest: a lock again during a lift (Home right after the pass).
     if (phase.leaving || phase.locked !== locked || phase.shown !== shown)
-      setPhase({ locked, shown, leaving: false })
+      setPhase({ locked, shown, leaving: false, waited: false })
   } else if (phase.locked) {
     // The lock came off since the last render: under a cover at rest it lifts – whether the
     // cover is still asked for meanwhile (the frame's, through `lifting`) or not (the pane's).
-    setPhase({ locked, shown, leaving: phase.shown })
+    setPhase({ locked, shown, leaving: phase.shown, waited: lifting })
+  } else if (phase.leaving && phase.waited && !lifting) {
+    // The wait ended before this cover landed – `LIFT_MAX_MS` ran out (the spring steps at most
+    // 64 ms a frame, and on a device drawing a frame every 100 ms or more it lands after the
+    // deadline), or the cover beside it (the frame's, the sidebar's veil) landed a frame first:
+    // the cover goes with the wait, in the render that brings the page and the titles back, so
+    // neither ever shows under a cover still up. The wait is the release's, not a surface's:
+    // `lifting` is set when the release finds a private tab in view (`activeTabIsPrivate`), and
+    // every cover up in that render is waited on – the frame's, the sidebar's veil, the overview
+    // pane's alike. A lift nothing waited on (a release with a regular tab in view: the pane's
+    // cover alone) runs its spring out.
+    setPhase({ locked, shown, leaving: false, waited: false })
   } else if (phase.shown !== shown) {
     setPhase({ ...phase, shown })
   }
@@ -123,11 +152,13 @@ export function PrivateLockCover({ shown, tab = null, className }: Props): JSX.E
     }
   }, [leaving])
   if (!shown && !leaving) return null
+  const veil = variant === 'veil'
   return (
     <div
       ref={ref}
       className={cn('zen-private-lock absolute inset-0', className)}
       data-testid="private-lock-cover"
+      data-variant={veil ? 'veil' : undefined}
       data-leaving={leaving || undefined}
       // The window family: the private theme's ink (§9.29).
       data-surface="window"
@@ -136,25 +167,27 @@ export function PrivateLockCover({ shown, tab = null, className }: Props): JSX.E
       role="group"
       aria-label="Private tabs locked"
     >
-      {tab && <TabPreview tab={tab} cover className="zen-private-lock-picture" />}
+      {tab && !veil && <TabPreview tab={tab} cover className="zen-private-lock-picture" />}
       <div className="zen-private-lock-veil absolute inset-0" />
-      <div
-        className="zen-private-lock-block absolute inset-x-0 flex flex-col items-center px-8 text-center"
-        style={{ top: '45%' }}
-      >
-        <VenetianMask className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-        <h2 className="zen-private-lock-title mt-3">Your private tabs are locked</h2>
-        <V2Button
-          variant="primary"
-          busy={prompting}
-          className="mt-2 gap-2"
-          data-testid="private-lock-unlock"
-          onClick={() => void unlockPrivateTabs()}
+      {!veil && (
+        <div
+          className="zen-private-lock-block absolute inset-x-0 flex flex-col items-center px-8 text-center"
+          style={{ top: '45%' }}
         >
-          <Fingerprint className="h-5 w-5" strokeWidth={1.75} aria-hidden />
-          Unlock
-        </V2Button>
-      </div>
+          <VenetianMask className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+          <h2 className="zen-private-lock-title mt-3">Your private tabs are locked</h2>
+          <V2Button
+            variant="primary"
+            busy={prompting}
+            className="mt-2 gap-2"
+            data-testid="private-lock-unlock"
+            onClick={() => void unlockPrivateTabs()}
+          >
+            <Fingerprint className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+            Unlock
+          </V2Button>
+        </div>
+      )}
     </div>
   )
 }

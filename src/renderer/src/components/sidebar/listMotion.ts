@@ -11,3 +11,6 @@ export const ListMotionContext = createContext<SlideMotion | null>(null)
 export function useListMotion(): SlideMotion | null {
   return useContext(ListMotionContext)
 }
+
+/** More rows than this arriving in one commit is a restore, placed without motion. */
+export const ENTER_BATCH = 6

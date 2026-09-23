@@ -52,6 +52,9 @@ const PLAIN: PageViewport = {
   scrollY: 600,
   width: 1280,
   height: 720,
+  clientWidth: 1280,
+  clientHeight: 720,
+  rtl: false,
   zoom: 1,
   devicePixelRatio: 1,
   documentWidth: 1280,
@@ -286,6 +289,33 @@ describe('page.capture', () => {
       { mode: 'viewport', format: 'png' },
       { mode: 'fullPage', format: 'jpeg' }
     ])
+  })
+
+  it('measures a viewport capture as the visible area minus the scrollbar gutters, and reads its ratio against that', async () => {
+    // A 15 px classic scrollbar on a 2x display: the host paints 1265 × 720 CSS px as 2530 × 1440.
+    const f = fixture({
+      viewport: { ...PLAIN, clientWidth: 1265, devicePixelRatio: 2 },
+      capture: () => ({
+        data: pngHeader(2530, 1440),
+        mimeType: 'image/png',
+        width: 2530,
+        height: 1440
+      })
+    })
+    const tab = openSite(f)
+    const result = await command<CaptureResult>(f, 'page.capture', {
+      tabId: tab.id,
+      mode: 'viewport'
+    })
+    expect(result).toMatchObject({ width: 2530, height: 1440, devicePixelRatio: 2 })
+    expect(result?.fallback).toBeUndefined()
+    // page.viewport carries the area and the direction for the overlay to size itself to.
+    await expect(command(f, 'page.viewport', { tabId: tab.id })).resolves.toMatchObject({
+      width: 1280,
+      clientWidth: 1265,
+      clientHeight: 720,
+      rtl: false
+    })
   })
 
   it('refuses a request past the pixel budget with the named error before the host paints anything', async () => {

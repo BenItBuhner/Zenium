@@ -23,6 +23,9 @@ const plain: PageViewport = {
   scrollY: 600,
   width: 1280,
   height: 720,
+  clientWidth: 1280,
+  clientHeight: 720,
+  rtl: false,
   zoom: 1,
   devicePixelRatio: 1,
   documentWidth: 1280,
@@ -40,6 +43,17 @@ describe('captureArea', () => {
       width: 1280,
       height: 720
     })
+  })
+
+  it('takes the viewport minus the scrollbar gutters where the page has them – what the visible-area picture paints', () => {
+    // A 15 px classic vertical scrollbar and a 15 px horizontal one.
+    expect(
+      captureArea({ mode: 'viewport' }, { ...plain, clientWidth: 1265, clientHeight: 705 })
+    ).toEqual({ x: 0, y: 600, width: 1265, height: 705 })
+    // A gutter reported wider than the viewport or not laid out is no gutter.
+    expect(
+      captureArea({ mode: 'viewport' }, { ...plain, clientWidth: 1300, clientHeight: 0 })
+    ).toEqual({ x: 0, y: 600, width: 1280, height: 720 })
   })
 
   it('takes the full page as the document cut at the hosts’ height limit', () => {
@@ -331,11 +345,34 @@ describe('parsePageViewport', () => {
       scrollY: 10,
       width: 411,
       height: 700,
+      clientWidth: 411,
+      clientHeight: 700,
+      rtl: false,
       zoom: 1,
       devicePixelRatio: 1,
       documentWidth: 411,
       documentHeight: 700
     })
+  })
+
+  it('takes the area minus the scrollbar gutters and the direction, and without them has no gutter', () => {
+    // A desktop-like host answer: a 15 px classic scrollbar, on a right-to-left page.
+    expect(
+      parsePageViewport({ ...plain, clientWidth: 1265, clientHeight: 705, rtl: true })
+    ).toEqual({ ...plain, clientWidth: 1265, clientHeight: 705, rtl: true })
+    // An answer from before the fields existed (an older host): the visible area is all page.
+    const old: Partial<PageViewport> = { ...plain }
+    delete old.clientWidth
+    delete old.clientHeight
+    delete old.rtl
+    expect(parsePageViewport(old)).toEqual(plain)
+    // Nothing usable – not laid out, past the visible area, not a number, not a boolean: the same.
+    expect(parsePageViewport({ ...plain, clientWidth: 0, clientHeight: 800, rtl: 'rtl' })).toEqual(
+      plain
+    )
+    expect(parsePageViewport({ ...plain, clientWidth: '1265', clientHeight: Number.NaN })).toEqual(
+      plain
+    )
   })
 
   it('refuses anything short of one', () => {

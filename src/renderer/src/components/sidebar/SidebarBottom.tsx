@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useEffect } from 'react'
-import { Bot, Palette, Pause, Play, Plus, Volume2, VolumeX } from 'lucide-react'
+import { Bot, Palette, Pause, Play, Plus, VenetianMask, Volume2, VolumeX } from 'lucide-react'
 import type { MediaState, Space, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
@@ -8,6 +8,8 @@ import { run } from '@renderer/lib/api'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore } from '@renderer/lib/drag'
 import { openSettings } from '@renderer/lib/pages'
+import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
+import { isPrivateTab, privateInTabs, type SidebarPose } from '@renderer/lib/privateTabs'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
 import { hint } from '@renderer/lib/shortcuts'
 import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@renderer/lib/ui'
@@ -21,17 +23,33 @@ interface Props {
   state: UIState
   compact: boolean
   isDark: boolean
+  /**
+   * The sidebar's pose (`sidebarPose`; the tablet). On the PRIVATE pose the foot is the
+   * private session's: its players are the private tabs' alone, and the spaces row and the
+   * palette – the workspaces' – are not drawn (the phone's Private pane shows no space strip
+   * either: the session is one across the spaces). On the regular pose no private tab's player
+   * shows, whatever it plays: a player names its tab.
+   */
+  pose?: SidebarPose
 }
 
-export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
+export function SidebarBottom({ state, compact, isDark, pose = 'regular' }: Props): JSX.Element {
   const drag = uiStore.use((s) => s.drag)
   const dropKey = dropStore.use((s) => s.key)
   const status = uiStore.use((s) => s.statusText)
   const toasts = uiStore.use((s) => s.toasts)
   const current = activeTab(state)
   const local = isLocalWindow(state)
-  // Zen 1.21.11: every playing tab gets its own media control.
-  const media = state.media.filter((m) => state.tabs[m.tabId]).slice(0, 3)
+  const privatePose = pose === 'private'
+  // Zen 1.21.11: every playing tab gets its own media control – of the pose's mode, on a host
+  // that keeps private browsing in tabs.
+  const mixed = privateInTabs(state)
+  const media = state.media
+    .filter((m) => {
+      const tab = state.tabs[m.tabId]
+      return tab !== undefined && (!mixed || isPrivateTab(tab) === privatePose)
+    })
+    .slice(0, 3)
 
   const agents = state.agents.filter((a) => !a.pending)
   // The space row scrolls sideways when expanded and downwards when the sidebar is compact.
@@ -92,7 +110,7 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
           {status}
         </div>
       )}
-      {!local && (
+      {!local && !privatePose && (
         <div className={cn('flex items-center gap-1', compact && 'flex-col')}>
           <div
             ref={fadeSpaces}
@@ -238,18 +256,29 @@ function MediaPlayer({
   compact: boolean
 }): JSX.Element | null {
   const tab = state.tabs[media.tabId]
+  // A private tab's player under the lock names nothing of its page (§9.19; `mediaMasked`'s
+  // rule for the phone's player): the mask and the placeholder, the transport as it is.
+  const masked = useTabMasked(tab ?? { containerId: '' })
   if (!tab) return null
+  const title = masked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(tab)
   return (
-    <div className={cn('zen-panel flex items-center gap-2 px-2 py-1.5', compact && 'flex-col')}>
-      <Favicon tab={tab} />
+    <div
+      className={cn('zen-panel flex items-center gap-2 px-2 py-1.5', compact && 'flex-col')}
+      data-masked={masked || undefined}
+    >
+      {masked ? (
+        <VenetianMask className="h-4 w-4 shrink-0 opacity-[0.69]" aria-hidden />
+      ) : (
+        <Favicon tab={tab} />
+      )}
       {!compact && (
         <button
           type="button"
           className="min-w-0 flex-1 truncate text-left text-[12px]"
-          title={tabTitle(tab)}
+          title={title}
           onClick={() => run('tab.activate', { tabId: tab.id })}
         >
-          {tabTitle(tab)}
+          {title}
         </button>
       )}
       <button

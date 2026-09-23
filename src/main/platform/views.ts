@@ -53,7 +53,7 @@ import {
 } from '../../shared/fonts'
 import { defer } from '../../core/platform'
 import { standinScale } from '../../shared/pageStandin'
-import { imageDimensions, type PageViewport } from '../../shared/capture'
+import { clientSide, imageDimensions, type PageViewport } from '../../shared/capture'
 import { hasForeignDebuggerOwner, recycleDebugger } from './pageDebugger'
 import type { PdfRenderOptions } from '../../shared/print'
 import type {
@@ -1418,6 +1418,13 @@ export class ElectronTabView implements TabView {
    * override, which would clobber the extension's own, so such a page is left to it), a full
    * page or region falls back to cropping the viewport paint and the answer says so
    * (`fallback: 'viewport'`).
+   *
+   * `capturePage` paints the whole widget, the page's classic scrollbar gutters included
+   * (Linux, Windows; macOS's overlay scrollbars take no room); the visible-area picture – the
+   * `viewport` mode and the fallback stand-in alike – is cut to the layout viewport minus the
+   * gutters (`visibleAreaClip`), as Chrome's visible-area capture is, and a region's crop is
+   * cut at that area's edge: the gutter is never part of a picture. Without the page's
+   * geometry (it did not answer) the bitmap stands as it is.
    */
   async capture(options: AgentCaptureOptions): Promise<AgentCapture | null> {
     const wc = this.wc
@@ -1438,21 +1445,27 @@ export class ElectronTabView implements TabView {
     try {
       let image = await wc.capturePage()
       if (image.isEmpty()) return null
+      // `capturePage` hands the device pixels over as a 1x bitmap: CSS px times the page's device
+      // pixel ratio (the display's scale times the zoom – `window.devicePixelRatio` carries both).
+      const geometry = await this.viewport()
+      const bitmap = image.getSize()
+      const visible = geometry
+        ? visibleAreaClip(geometry, bitmap)
+        : { x: 0, y: 0, width: bitmap.width, height: bitmap.height }
       if (options.mode === 'region' && options.region) {
-        // `capturePage` hands the device pixels over as a 1x bitmap: the region's CSS px, minus
-        // the scroll offset, times the page's device pixel ratio (the display's scale times the
-        // zoom – `window.devicePixelRatio` carries both).
-        const geometry = await this.viewport()
+        // The region's CSS px minus the scroll offset, cut at the visible area's edge: the
+        // gutter is never part of a region.
         const scroll = geometry ?? { scrollX: 0, scrollY: 0 }
         const ratio = geometry?.devicePixelRatio ?? wc.getZoomFactor()
-        const size = image.getSize()
         const r = options.region
         const x = Math.max(0, Math.round((r.x - scroll.scrollX) * ratio))
         const y = Math.max(0, Math.round((r.y - scroll.scrollY) * ratio))
-        const width = Math.min(size.width - x, Math.round(r.width * ratio))
-        const height = Math.min(size.height - y, Math.round(r.height * ratio))
+        const width = Math.min(visible.width - x, Math.round(r.width * ratio))
+        const height = Math.min(visible.height - y, Math.round(r.height * ratio))
         if (width <= 0 || height <= 0) return null
         image = image.crop({ x, y, width, height })
+      } else if (visible.width < bitmap.width || visible.height < bitmap.height) {
+        image = image.crop(visible)
       }
       const size = image.getSize()
       const buffer = format === 'png' ? image.toPNG() : image.toJPEG(75)
@@ -1672,15 +1685,22 @@ const VIEWPORT_TIMEOUT_MS = 1500
 
 /**
  * The page's geometry, read in the isolated world: the layout viewport's scroll offset and
- * size, `devicePixelRatio` (the display's scale times the page zoom in a Chromium page) and the
- * document's scrollable size (the larger of the root's and the body's, never smaller than the
- * viewport). One expression, so a single evaluation answers it.
+ * size (`innerWidth` × `innerHeight`, the scrollbar gutters included), the same minus the
+ * gutters (`cw` × `ch`: the scrolling element's `clientWidth` × `clientHeight` – the root's in
+ * standards mode, the body's in quirks mode, either way the viewport less a rendered
+ * scrollbar), whether the document runs right-to-left (`direction: rtl` on the root – for the
+ * chrome's information; the main frame's scrollbar stays on the right either way, see
+ * `visibleAreaClip`), `devicePixelRatio` (the display's scale times the page zoom in a Chromium
+ * page) and the document's scrollable size (the larger of the root's and the body's, never
+ * smaller than the viewport). One expression, so a single evaluation answers it.
  */
 const VIEWPORT_SCRIPT = `(function () {
-  var d = document.documentElement, b = document.body
+  var d = document.documentElement, b = document.body, s = document.scrollingElement || d
   return {
     sx: window.scrollX, sy: window.scrollY,
     vw: window.innerWidth, vh: window.innerHeight,
+    cw: s ? s.clientWidth : 0, ch: s ? s.clientHeight : 0,
+    rtl: !!d && getComputedStyle(d).direction === 'rtl',
     dpr: window.devicePixelRatio,
     dw: Math.max(d ? d.scrollWidth : 0, b ? b.scrollWidth : 0, window.innerWidth),
     dh: Math.max(d ? d.scrollHeight : 0, b ? b.scrollHeight : 0, window.innerHeight)
@@ -1691,7 +1711,9 @@ const VIEWPORT_SCRIPT = `(function () {
  * `VIEWPORT_SCRIPT`'s answer as the chrome's `PageViewport`, with the engine's zoom factor
  * (the page cannot read its own). Null for anything but a full answer with finite numbers – a
  * page that did not answer in time, a view with no document – and null too for a viewport
- * of no size (a view not yet laid out), which nothing could be captured from.
+ * of no size (a view not yet laid out), which nothing could be captured from. The area minus
+ * the gutters (`cw` / `ch`) is taken within the visible area and is the visible area itself
+ * when not reported (an answer from before it was read) or not laid out (0): no gutter then.
  */
 export function pageViewportFrom(raw: unknown, zoom: number): PageViewport | null {
   if (!raw || typeof raw !== 'object') return null
@@ -1716,11 +1738,47 @@ export function pageViewportFrom(raw: unknown, zoom: number): PageViewport | nul
     scrollY: Math.max(0, sy),
     width: vw,
     height: vh,
+    clientWidth: clientSide(num('cw'), vw),
+    clientHeight: clientSide(num('ch'), vh),
+    rtl: r.rtl === true,
     zoom: z,
     devicePixelRatio: dpr !== null && dpr > 0 ? dpr : z,
     documentWidth: Math.max(dw, vw),
     documentHeight: Math.max(dh, vh)
   }
+}
+
+/**
+ * The part of a `capturePage` bitmap that is page content – the layout viewport minus the
+ * scrollbar gutters, as Chrome's visible-area capture paints it – in the bitmap's pixels: the
+ * page's `clientWidth` × `clientHeight` at its device pixel ratio (the display's scale times
+ * the zoom, which is what the bitmap is in), cut at the bitmap's edge and anchored at the
+ * bitmap's top-left corner: Chromium draws the main frame's vertical scrollbar in the
+ * right-hand columns and a horizontal one in the bottom rows whatever the document's direction
+ * (Blink puts a right-to-left main frame's scrollbar on the left only under its
+ * `placeRTLScrollbarsOnLeftSideInMainFrame` setting, which Chrome and Electron leave off –
+ * measured on the packaged build with `dir="rtl"` on the root, on the body and by CSS; only
+ * an element's own scroller follows `direction`). With overlay scrollbars
+ * (`clientWidth === width`) this is the whole bitmap.
+ *
+ * Floored, not rounded: `clientWidth` is an integer of CSS pixels, so at a fractional ratio
+ * (150 %: a 15 px scrollbar is 10 CSS px, but 769 content rows are 512.67 CSS px, reported as
+ * 513) the product can overshoot the content by up to half a CSS pixel – rounding would keep a
+ * one-pixel sliver of the scrollbar's track (measured in the proof at 150 %); flooring drops
+ * at most one row or column of page content instead, which nothing can see. At an integer
+ * ratio the cut is exact either way.
+ */
+export function visibleAreaClip(
+  viewport: Pick<PageViewport, 'clientWidth' | 'clientHeight' | 'devicePixelRatio'>,
+  bitmap: { width: number; height: number }
+): { x: number; y: number; width: number; height: number } {
+  const ratio =
+    Number.isFinite(viewport.devicePixelRatio) && viewport.devicePixelRatio > 0
+      ? viewport.devicePixelRatio
+      : 1
+  const width = Math.max(1, Math.min(bitmap.width, Math.floor(viewport.clientWidth * ratio)))
+  const height = Math.max(1, Math.min(bitmap.height, Math.floor(viewport.clientHeight * ratio)))
+  return { x: 0, y: 0, width, height }
 }
 
 /** The parts of `Security.visibleSecurityStateChanged` the site-information sheet uses. */
