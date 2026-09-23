@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flash embed page (Ruffle fixture)</title>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Flash embed page</h1>
+    <p>
+      Two Flash tags for a Flash emulator to take over: an <code>&lt;embed&gt;</code> and an
+      <code>&lt;object&gt;</code>, both on <code>sample.swf</code> (one orange frame).
+    </p>
+    <embed id="swf-embed" src="sample.swf" type="application/x-shockwave-flash" width="400" height="300" />
+    <object id="swf-object" data="sample.swf" type="application/x-shockwave-flash" width="400" height="300">
+      <param name="movie" value="sample.swf" />
+      <p id="fallback">No Flash player here.</p>
+    </object>
+    <ul>
+      <li>ruffle tags: <span id="tags">0</span></li>
+    </ul>
+    <script>
+      function count() {
+        var all = document.querySelectorAll('*')
+        var n = 0
+        for (var i = 0; i < all.length; i++) if (/^ruffle-/i.test(all[i].tagName)) n++
+        document.getElementById('tags').textContent = String(n)
+        return n
+      }
+      var tries = 0
+      var timer = setInterval(function () {
+        if (count() > 0 || ++tries > 120) clearInterval(timer)
+      }, 500)
+    </script>
+  </body>
+</html>

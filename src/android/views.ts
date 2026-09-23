@@ -9,6 +9,7 @@ import type {
 import type { SafeBrowsingHit } from '@shared/privacy'
 import type { FormsCommand } from '@shared/forms'
 import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
+import { parsePageViewport, type PageViewport } from '@shared/capture'
 import { certificateDetailsFrom } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
@@ -621,6 +622,17 @@ export class AndroidTabView implements TabView {
       region: options.mode === 'region' ? (options.region ?? null) : null,
       format: options.format
     })
+  }
+
+  /**
+   * The page's geometry for the chrome's capture overlay (`shared/capture.ts`): Kotlin reads
+   * the same metrics the stitcher plans with (`PageCapture.METRICS_SCRIPT`) and puts the visual
+   * viewport's offset, size and scale in the chrome's terms (`TabWebView.viewport`).
+   */
+  async viewport(): Promise<PageViewport | null> {
+    return parsePageViewport(
+      await this.bridge.call<unknown>('view.viewport', { tabId: this.tabId })
+    )
   }
 
   async copyImageAt(): Promise<boolean> {

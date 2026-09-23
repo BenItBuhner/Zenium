@@ -65,6 +65,7 @@ import { SiteInfoService } from './siteInfo'
 import { SiteDataService } from './siteData'
 import { TranslateService } from './translate/service'
 import { PrintService } from './print'
+import { CaptureService } from './capture'
 import { PdfViewerService } from './pdf'
 import { PageControls } from './pageControls'
 import { SpellcheckService } from './spellcheck'
@@ -294,6 +295,8 @@ export class Browser {
   readonly translate: TranslateService
   /** The print preview (`zen://print`) on hosts whose engine has none of its own. */
   readonly print: PrintService
+  /** Web capture: the page's picture for the chrome's capture UI, its copy and its save. */
+  readonly capture: CaptureService
   /** The inline PDF viewer (`zen://pdf`) on hosts whose engine cannot draw a PDF. */
   readonly pdf: PdfViewerService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
@@ -456,6 +459,7 @@ export class Browser {
     this.languages = new LanguagesService(this)
     this.pageFonts = new PageFontsService(this)
     this.print = new PrintService(this)
+    this.capture = new CaptureService(this)
     this.pdf = new PdfViewerService(this)
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
@@ -3103,6 +3107,12 @@ export class Browser {
           sourceTabId: tabId,
           win
         }),
+      'page.capture': ({ tabId, mode, region, format }) =>
+        this.capture.capture(tabId, { mode, region, format }),
+      'page.viewport': ({ tabId }) => this.capture.viewport(tabId),
+      'capture.copy': ({ dataUrl }) => this.capture.copy(dataUrl),
+      'capture.save': ({ dataUrl, fileName, tabId }, win) =>
+        this.capture.save(dataUrl, win, { fileName, tabId }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
       'page.printPreview': ({ tabId }, win) =>
         this.actions.run('page.printPreview', { sourceTabId: tabId, win }),

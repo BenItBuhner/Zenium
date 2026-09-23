@@ -27,6 +27,7 @@ class V2TokensPinTest {
         "page" to "--v2-page",
         "panel" to "--v2-panel",
         "border" to "--v2-border",
+        "card_border" to "--v2-card-border",
         "text" to "--v2-text",
         "scrim" to "--v2-scrim",
         "accent" to "--v2-accent",
@@ -68,8 +69,10 @@ class V2TokensPinTest {
 
     /**
      * What `themes.xml` draws of the sheet: the corners Material rounds are the sheet's radius (the
-     * hairline's arcs follow the same constant), and the field's overlay hands the platform the v2
-     * accent for the cursor and the handles, in each theme.
+     * hairline's arcs follow the same constant), the sheet style pads nothing for the host's bar
+     * (the sheet's own column does, through its edge, so the hairline's sides run to the screen's
+     * bottom), and the field's overlay hands the platform the v2 accent for the cursor and the
+     * handles, in each theme.
      */
     @Test
     fun theSheetThemesDrawTheTokens() {
@@ -78,6 +81,8 @@ class V2TokensPinTest {
             assertEquals("$corner is the sheet's radius", "${PromptSheetSpec.SHEET_RADIUS_DP}dp", Regex("""<item name="$corner">([^<]+)</item>""").find(shape)!!.groupValues[1])
         for (corner in listOf("cornerSizeBottomLeft", "cornerSizeBottomRight"))
             assertEquals("$corner: edge to edge at the bottom", "0dp", Regex("""<item name="$corner">([^<]+)</item>""").find(shape)!!.groupValues[1])
+        val sheetStyle = Regex("""<style name="Widget\.Zen\.Sheet" [^>]*>([\s\S]*?)</style>""").find(themes)!!.groupValues[1]
+        assertEquals("the sheet style pads nothing for the bar: the column does, through the edge", "false", Regex("""<item name="paddingBottomSystemWindowInsets">([^<]+)</item>""").find(sheetStyle)!!.groupValues[1])
         for ((style, theme) in listOf("ThemeOverlay\\.Zen\\.PromptField" to "light", "ThemeOverlay\\.Zen\\.PromptField\\.Dark" to "dark")) {
             val overlay = Regex("""<style name="$style"[^>]*>([\s\S]*?)</style>""").find(themes)!!.groupValues[1]
             for (attr in listOf("android:colorControlActivated", "colorControlActivated"))
@@ -99,6 +104,10 @@ class V2TokensPinTest {
         assertEquals(css.px("--v2-line-body"), PromptSheetSpec.BODY_LINE_SP)
         assertEquals(css.weight("--v2-weight-body"), PromptSheetSpec.BODY_WEIGHT)
         assertEquals(css.weight("--v2-weight-button"), PromptSheetSpec.BUTTON_WEIGHT)
+        // The caption over a list of rows (`.zen-v2-caption`) and a phone row's leading glyph (`--v2-icon`).
+        assertEquals(css.px("--v2-font-small"), PromptSheetSpec.SMALL_SP)
+        assertEquals(css.px("--v2-line-small"), PromptSheetSpec.SMALL_LINE_SP)
+        assertEquals(css.px("--v2-icon", css.phone), PromptSheetSpec.ROW_GLYPH_DP)
         // The inks a token derives from the text, in both blocks (the dark block restates them): the
         // alpha each states, and the colour it comes to – `--v2-text` at that alpha, as V2Ink derives it.
         for (dark in listOf(false, true)) {
@@ -188,6 +197,43 @@ class V2TokensPinTest {
     }
 
     /**
+     * The native sheets read their inks from the token block and nowhere else: the prompt sheet
+     * ([NativePromptSheet]) and the extension surfaces' sheet (`ext/ExtensionSheet.kt`, the WebView
+     * host of a popup, an options page, a side panel, the auth flow) build a [V2Ink] and take
+     * every colour from it – no `R.color.v2_*` read of their own, no `ContextCompat.getColor`, no
+     * literal – so a colour this pin holds to main.css is the colour those sheets draw. Both draw
+     * the one edge ([SheetEdge]) at [PromptSheetSpec.hairlinePx] round the sheet's radius in the
+     * border ink, and the extension sheet's §9.7 header line is that dp in that ink: no `1`
+     * physical-pixel stroke and no closed rectangle stroke (`setStroke`) round a sheet anywhere.
+     */
+    @Test
+    fun theNativeSheetsTakeEveryInkFromTheTokenBlockAndDrawTheOneEdge() {
+        val sheets = listOf(
+            "android/app/src/main/kotlin/app/zen/chromium/NativePromptSheet.kt",
+            "android/app/src/main/kotlin/app/zen/chromium/ext/ExtensionSheet.kt"
+        )
+        for (path in sheets) {
+            val source = File(root, path).readText().replace(Regex("""/\*[\s\S]*?\*/"""), "").lines().filterNot { it.trim().startsWith("//") }.joinToString("\n")
+            assertTrue("$path reads no v2 colour resource of its own", !source.contains("R.color.v2_"))
+            assertTrue("$path resolves no colour of its own", !source.contains("ContextCompat.getColor"))
+            assertTrue("$path mints no colour literal", !Regex("""Color\.(parseColor|rgb|argb)\(|0x[0-9A-Fa-f]{8}\b""").containsMatchIn(source))
+            assertTrue("$path strokes no closed rectangle round the sheet", !source.contains("setStroke(1,"))
+            assertTrue("$path draws the one edge at the pinned hairline in the border ink", source.contains("SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP), ink.border)"))
+            assertTrue("$path takes its hairline from the spec", source.contains("PromptSheetSpec.hairlinePx(density)"))
+            // The host's bar is the column's padding through the edge, so the sides run through it to the screen's bottom.
+            assertTrue("$path takes the host's inset through the edge", source.contains("edge.inset("))
+        }
+        val extensionSheet = File(root, sheets[1]).readText()
+        assertTrue("the extension sheet builds the theme's token block", extensionSheet.contains("V2Ink(activity, dark)"))
+        assertTrue("the extension sheet's header line is the border ink", extensionSheet.contains("headerLine.setBackgroundColor(ink.border)"))
+        assertTrue("the extension sheet's header line is one dp", extensionSheet.contains("LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline)"))
+        for (ink in listOf("ink.text", "ink.panel", "ink.grabber", "ink.fillPressed"))
+            assertTrue("the extension sheet draws $ink", extensionSheet.contains(ink))
+        // The grip's numbers are the spec's, so the strip the extension sheet keeps is §9.9's.
+        assertEquals(PromptSheetSpec.GRIP_STRIP_DP, app.zen.chromium.ext.ExtensionSheet.GRIP_DP)
+    }
+
+    /**
      * The hairline is one dp on the device, in whole pixels: the chrome's `1px` border is a CSS px,
      * one dp; a physical pixel would be 0.57 dp at 1.75x. Rounded at the density, never under one.
      */
@@ -206,7 +252,8 @@ class V2TokensPinTest {
      * §9.25's formula, not the CSS as it stands: the footer's buttons stand 16 above the host's
      * safe-area inset – the gutter plus the inset the host reports, with its three hosts: 16 where
      * it reports none (the preview host), 40 over a 24 dp gesture bar, 64 over a 48 dp three-button
-     * bar. The one native constant is the gutter; the Material sheet pads the inset under it.
+     * bar. The one native constant is the gutter; the sheet's column pads the inset under it,
+     * through its edge, so the hairline's sides run through the bar to the screen's bottom.
      *
      * KNOWN DRIFT, the web chassis's: `.zen-sheet-footer` stands 8 over `BottomSheet.tsx`'s
      * `Math.max(8, insets.bottom)` – `8 + max(8, inset)`, the inset in place of the 8 floor rather
