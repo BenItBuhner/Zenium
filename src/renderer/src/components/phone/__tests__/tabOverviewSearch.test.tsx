@@ -162,6 +162,7 @@ function stateOf(tabs: Tab[], patch: Partial<UIState> = {}): UIState {
     extensions: [],
     bookmarks: [],
     recentlyClosed: [],
+    closingTabIds: [],
     sync: sync(false),
     ...patch
   } as unknown as UIState

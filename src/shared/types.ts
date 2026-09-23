@@ -3324,6 +3324,13 @@ export interface UIState {
   securityPrompts: SecurityPrompt[]
   /** Pending `alert` / `confirm` / `prompt` and "Leave site?" dialogs of pages, oldest first. */
   pageDialogs: PageDialog[]
+  /**
+   * Tabs the user has told to close whose close is still in flight (`tab.close`,
+   * `tab.closeMany`): their pages' `beforeunload` handlers are being run, one that objects
+   * asking "Leave site?" – on a host that draws that question itself (Android) the chrome hears
+   * of it only here. The phone overview holds a card's exit while its tab is listed.
+   */
+  closingTabIds: string[]
   /** Pages waiting on the screen-capture picker, oldest first (one per tab). */
   screenCaptureRequests: ScreenCaptureRequest[]
   /** Shares waiting on this window's share sheet, oldest first. */
@@ -3644,6 +3651,14 @@ export interface Commands {
    */
   'tab.activate': { args: { tabId: string; keepFocus?: boolean }; result: void }
   'tab.close': { args: { tabId: string; force?: boolean; keepFocus?: boolean }; result: void }
+  /**
+   * Close several tabs the way the user asks for them, one after the other: a page whose
+   * `beforeunload` handler objects asks "Leave site?" in its turn, and a "Cancel" keeps that tab
+   * alone, the run going on (the desktop's Close N Tabs loop; the phone overview's Close, Close
+   * other tabs and Close all). `activate` names the tab to end on once the closes are through,
+   * if it is still open.
+   */
+  'tab.closeMany': { args: { tabIds: string[]; activate?: string }; result: void }
   /**
    * A private tab in this window (`capabilities.privateTabs`): the in-memory private container,
    * no history, no persisted downloads; its session is wiped when the last private tab closes.

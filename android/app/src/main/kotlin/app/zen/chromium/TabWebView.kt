@@ -31,6 +31,8 @@ import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
@@ -220,6 +222,19 @@ class TabWebView(
     private val refusedCertificates = HashMap<String, RefusedCertificate>()
 
     private class RefusedCertificate(val code: Int, val certificate: JSONObject?)
+    /**
+     * The page's dialog up right now (PUI-27, PUI-28): Zenium's sheet and the `JsResult` of the
+     * `alert` / `confirm` / `prompt` the page is blocked in, or of the `beforeunload` objection the
+     * WebView holds a navigation for, until the sheet's answer settles it ([showDialog]; [destroy]
+     * cancels one left up). One at a time: the renderer waits in the call.
+     */
+    private var dialog: PageDialogUp? = null
+    /** What the page has done with dialogs this visit: Chrome's count and its silencing ([PageDialogVisit]). */
+    private val dialogVisit = PageDialogVisit()
+    /** The `beforeunload` check in flight, if any (see [confirmUnload]). */
+    private var unloadCheck: UnloadCheck? = null
+    /** When the core last asked for a reload: a `beforeunload` objection right after it is "Reload site?". */
+    private var reloadAskedAt = 0L
     /** What [NavigationReports.attach] registered, to unregister at [destroy]. */
     private var navigationListener: androidx.webkit.NavigationListener? = null
     private var lastProgressAt = 0L
@@ -294,13 +309,24 @@ class TabWebView(
         host.extensions?.attach(this)
         // The navigation listener's reports carry `chrome.webNavigation` on a WebView that has
         // it; the extension runtime infers the family from the client callbacks otherwise.
-        if (host.extensions != null) navigationListener = NavigationReports.attach(this) { host.viewEvent(tabId, "navigation", it) }
+        if (host.extensions != null) {
+            // The unload check's own navigation (see [confirmUnload]) is not the page's news.
+            navigationListener = NavigationReports.attach(this) { if (unloadCheck == null) host.viewEvent(tabId, "navigation", it) }
+        }
         applyPrivacy()
         // The renderer stopping to answer an input to this page (the unresponsive-page prompt).
         host.watchRenderer(this)
     }
 
     override fun destroy() {
+        // A page gone in one of its dialogs: its sheet goes, the renderer is released from the
+        // call (it goes anyway), and a check still waiting on it hears that the page went.
+        dialog?.let { up ->
+            dialog = null
+            up.sheet.dismiss()
+            up.result.cancel()
+        }
+        unloadCheck?.settle(leave = true, destroyView = false)
         NavigationReports.detach(this, navigationListener)
         navigationListener = null
         host.extensions?.detach(this)
@@ -1216,6 +1242,172 @@ class TabWebView(
     /** The scale the cover and the card picture copy the page at: at most 1400 px wide, else half. */
     private fun coverScale(): Float = if (width > 1400) 1400f / width else 0.5f
 
+    // --- the page's dialogs and its beforeunload (PUI-27, PUI-28) ---------------------------------
+
+    /** A dialog up: the sheet, the WebView's result it answers, and what to do with the answer. */
+    private class PageDialogUp(val sheet: PageDialogSheet, val result: JsResult)
+
+    /**
+     * Show `spec` as Zenium's sheet over the page ([PageDialogSheet]) and hold `result` for its
+     * answer: the page's `alert` dismissed, its `confirm` / `prompt` answered (the prompt's text
+     * with an accepted one), its `beforeunload` objection overruled (the navigation goes on) or
+     * upheld (the page stays). `then` hears the answer after the result has been settled. Main
+     * thread (the `WebChromeClient`'s). A dialog already up – it cannot be, the renderer waits in
+     * the call – would be cancelled for this one.
+     */
+    private fun showDialog(spec: PageDialogSpec, result: JsResult, then: (accepted: Boolean, suppress: Boolean) -> Unit) {
+        dialog?.let { up ->
+            dialog = null
+            up.sheet.dismiss()
+            up.result.cancel()
+        }
+        lateinit var up: PageDialogUp
+        val sheet = PageDialogSheet(host, spec) { accepted, value, suppress ->
+            if (dialog !== up) return@PageDialogSheet
+            dialog = null
+            when {
+                !accepted -> result.cancel()
+                result is JsPromptResult -> result.confirm(value ?: "")
+                else -> result.confirm()
+            }
+            then(accepted, suppress)
+        }
+        up = PageDialogUp(sheet, result)
+        dialog = up
+        sheet.show()
+    }
+
+    /**
+     * The page called `alert`, `confirm` or `prompt` from the frame at `frameUrl` and waits in
+     * the call (PUI-27). A page the user is not looking at – a hidden tab's, or the shown tab's
+     * under the overview – has its dialog answered as a dismissal at once: the WebView's one
+     * renderer waits in the call for every page and for the chrome, so nothing could bring the
+     * tab forward for the dialog to wait on, as Chrome's would (`PageDialogSpec`). So is a
+     * dialog of a page told to open no more this visit ([PageDialogVisit]); the checkbox that
+     * tells it so is offered from its second dialog on.
+     */
+    private fun pageDialog(kind: PageDialogKind, frameUrl: String, message: String?, defaultValue: String?, result: JsResult) {
+        if (!isShown) {
+            result.cancel()
+            return
+        }
+        val offer = dialogVisit.request()
+        if (offer == null) {
+            result.cancel()
+            return
+        }
+        val spec = PageDialogSpec.page(kind, frameUrl, currentDocument ?: url ?: "", message ?: "", defaultValue ?: "", offer)
+        showDialog(spec, result) { _, suppress -> dialogVisit.answered(suppress) }
+    }
+
+    /**
+     * The user stayed on the page that objected to the core's own navigation. [loadUrl] wrote
+     * the destination into the document mirror as the load was asked for (the requests of the
+     * page that is coming are its own from the first); with the navigation cancelled before it
+     * started, the document is the one that stayed – the WebView's word, the committed page's URL.
+     */
+    private fun stayedOnPage() {
+        val stayed = url?.takeIf(PageRules::isWebPage) ?: return
+        currentDocument = stayed
+        switchDesktopModeFor(stayed)
+        val flags = host.privacy.flags
+        applyMixedContentPolicy(flags, stayed)
+        applyCookiePolicy(flags, stayed)
+    }
+
+    /**
+     * Whether the page may be unloaded (the core's `TabView.confirmUnload`, ahead of a tab close,
+     * the app's exit): its `beforeunload` handlers run, and one that objects has the core ask
+     * "Leave site?". `reply` hears true once the page may go – no objection, the user chose to
+     * leave, the page gone or silent for [UNLOAD_CHECK_TIMEOUT_MS] (a hung renderer holds no
+     * close up, as in Chrome) – and false when the user chose to stay, the page intact.
+     *
+     * The WebView runs the handlers for a navigation only, so the check is one: a load of
+     * `about:blank` the page may object to, started past this view's own [loadUrl] (nothing of
+     * it is the page's news: the callbacks it raises are dropped while the check is up, its
+     * navigation report too). An objection comes as `onJsBeforeUnload` with the navigation held,
+     * and the answer either lets it go on or cancels it, the page as it was. A page that does
+     * not object commits the blank document, and the view is destroyed at once (Electron's
+     * `close({ waitForBeforeUnload })` does the same): the core hears `destroyed` and closes
+     * the tab, or keeps it unloaded with its stack when the check was the app's exit. Its card
+     * picture is taken before any of it, so an undo shows the page as it was left.
+     *
+     * A page with no handlers to run has nothing to check: an internal page (`zen://`, the PDF
+     * viewer), the blank document, an error page, a view with no document yet.
+     */
+    fun confirmUnload(reply: (Boolean) -> Unit) {
+        unloadCheck?.let { running ->
+            // A second check joins the first (a Close Others sweeping a tab a Close asked already).
+            running.replies.add(reply)
+            return
+        }
+        val document = currentDocument
+        if (document == null || document == "about:blank" || !PageRules.isWebPage(document) || failedUrl != null || interstitial || pdfPage != null) {
+            reply(true)
+            return
+        }
+        captureThumbnail()
+        val check = UnloadCheck(reply)
+        unloadCheck = check
+        postDelayed(check.timeout, UNLOAD_CHECK_TIMEOUT_MS)
+        super.loadUrl("about:blank")
+    }
+
+    /**
+     * A `beforeunload` check in flight (see [confirmUnload]): what it answers to, the id of the
+     * objection the page raised under it (if it did), and whether its blank document started.
+     */
+    private inner class UnloadCheck(reply: (Boolean) -> Unit) {
+        val replies = arrayListOf(reply)
+        /** The page objected under the check: its "Leave site?" is up (its answer settles the check). */
+        var asked = false
+        /** The check's blank document has started: the page did not object, and is on its way out. */
+        var navigated = false
+        val timeout = Runnable { settle(leave = true, destroyView = false) }
+
+        /**
+         * The check is over: every asker hears `leave`, and with `destroyView` the view goes
+         * (posted: never from inside the WebView's own callback), the core hearing `destroyed`.
+         * A "Leave site?" still up (the page went another way) goes with the check, its
+         * navigation let go or held as `leave` says.
+         */
+        fun settle(leave: Boolean, destroyView: Boolean) {
+            if (unloadCheck !== this) return
+            removeCallbacks(timeout)
+            if (asked) dialog?.let { up ->
+                dialog = null
+                up.sheet.dismiss()
+                if (leave) up.result.confirm() else up.result.cancel()
+            }
+            val askers = replies.toList()
+            replies.clear()
+            if (destroyView) {
+                navigated = true
+                post {
+                    // The view goes with the check still up: the picture TabHost.destroy takes
+                    // of a shown view would be of the blank document (captureThumbnail leaves
+                    // it, the page's own picture taken as the check began), and destroy() ends
+                    // the check. The askers hear once the core has heard `destroyed`.
+                    if (host.tabs.get(tabId) === this@TabWebView) host.tabs.destroy(tabId)
+                    unloadCheck = null
+                    for (asker in askers) asker(true)
+                }
+                return
+            }
+            unloadCheck = null
+            for (asker in askers) asker(leave)
+        }
+    }
+
+    /**
+     * Whether a `WebViewClient` / `WebChromeClient` word about `url` is the unload check's blank
+     * document ([confirmUnload]) rather than the page's: dropped by the callbacks.
+     */
+    private fun isUnloadCheckDocument(url: String): Boolean {
+        val check = unloadCheck ?: return false
+        return url == "about:blank" || check.navigated
+    }
+
     // --- card thumbnails (the pictures of the tab overview's cards, `Thumbnails.kt`) --------------
 
     /**
@@ -1229,6 +1421,9 @@ class TabWebView(
     fun captureThumbnail() {
         val thumbnails = host.thumbnails ?: return
         if (backTransition != null || awaitingCommit) return
+        // Under an unload check the view may be on the check's blank document already
+        // ([confirmUnload] took the page's picture before it began).
+        if (unloadCheck != null) return
         if (width <= 0 || height <= 0 || !isShown) return
         if (thumbnails.fresh(tabId, SystemClock.uptimeMillis())) return
         // A view with no document yet shows nothing worth a picture; its card has its placeholder.
@@ -1353,6 +1548,8 @@ class TabWebView(
         // The core spells an extension page's URL as Chrome does; the WebView loads the served origin.
         val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
+        // A load supersedes a reload asked just before: an objection now is to leaving.
+        reloadAskedAt = 0L
         if (url.startsWith("http", ignoreCase = true)) currentDocument = url
         switchDesktopModeFor(url)
         if (url.startsWith("http", ignoreCase = true)) {
@@ -1384,6 +1581,7 @@ class TabWebView(
     override fun loadUrl(requested: String, additionalHttpHeaders: MutableMap<String, String>) {
         val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
+        reloadAskedAt = 0L
         switchDesktopModeFor(url)
         if (url.startsWith("http", ignoreCase = true)) applyMixedContentPolicy(host.privacy.flags, url)
         super.loadUrl(url, additionalHttpHeaders)
@@ -1440,6 +1638,7 @@ class TabWebView(
 
     override fun reload() {
         rememberCurrentPage()
+        reloadAskedAt = SystemClock.uptimeMillis()
         url?.let(::switchDesktopModeFor)
         if (userAgentStale) {
             // Like Chrome, a reload under a changed user agent asks again from the URL the entry
@@ -1470,6 +1669,7 @@ class TabWebView(
 
     override fun goBack() {
         rememberCurrentPage()
+        reloadAskedAt = 0L
         val history = copyBackForwardList()
         val steps = backIndex(history) - history.currentIndex
         if (steps == -1) super.goBack() else if (steps < 0) super.goBackOrForward(steps)
@@ -1489,6 +1689,7 @@ class TabWebView(
 
     override fun goForward() {
         rememberCurrentPage()
+        reloadAskedAt = 0L
         super.goForward()
     }
 
@@ -1917,7 +2118,18 @@ class TabWebView(
 
         override fun onPageStarted(view: WebView, rawUrl: String, favicon: Bitmap?) {
             val url = pageUrlFor(rawUrl)
-            // Another document is on its way: the viewer page's file is not to be served for it.
+            unloadCheck?.let { check ->
+                // The check's blank document started: the page did not object (or the user chose
+                // to leave) and is on its way out; the view goes with it (see confirmUnload).
+                // Nothing of the blank document is the tab's.
+                if (isUnloadCheckDocument(url)) {
+                    if (!check.navigated) check.settle(leave = true, destroyView = true)
+                    return
+                }
+            }
+            // Another document is on its way: the page's dialog visit is over (its count and its
+            // silencing, PageDialogVisit), and the viewer page's file is not to be served for it.
+            dialogVisit.reset()
             if (pdfPage != null && url != pdfPage?.url) pdfPage = null
             // Navigations with no link click ahead of them (forms, history.back(), redirects).
             rememberCurrentPage()
@@ -1960,6 +2172,8 @@ class TabWebView(
          */
         override fun doUpdateVisitedHistory(view: WebView, rawUrl: String, isReload: Boolean) {
             val url = pageUrlFor(rawUrl)
+            // The unload check's blank document is not the tab's (see confirmUnload).
+            if (isUnloadCheckDocument(url)) return
             onHistoryCommitted(shown = url, reload = isReload)
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (failedUrl != null && url == failedUrl) {
@@ -2004,6 +2218,7 @@ class TabWebView(
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
+            if (isUnloadCheckDocument(url)) return
             // WebView's word that nothing of the page before is drawn any more: from here the
             // pixels are this document's, and so may its card picture be.
             paintedDocument = url
@@ -2011,6 +2226,7 @@ class TabWebView(
         }
 
         override fun onPageFinished(view: WebView, url: String) {
+            if (isUnloadCheckDocument(url)) return
             loading = false
             // A document that finished has drawn (the word for one whose commit-visible never came).
             paintedDocument = url
@@ -2114,7 +2330,60 @@ class TabWebView(
     // --- WebChromeClient ----------------------------------------------------------------------
 
     private inner class Chrome : WebChromeClient() {
+        // --- the page's dialogs: Zenium's sheet (PUI-27, PUI-28), Chrome's own wording --------------
+
+        /**
+         * `alert` / `confirm` / `prompt`: on a host with a chrome the page waits in its call, as in
+         * Chrome, for Zenium's sheet ([pageDialog]); a host without one (a custom tab) keeps the
+         * WebView's own dialogs. `url` is the calling frame's: the dialog is titled after its
+         * site, an embedded frame's told from the page's by the document's URL.
+         */
+        override fun onJsAlert(view: WebView, url: String, message: String?, result: JsResult): Boolean {
+            if (!host.pageDialogs) return false
+            pageDialog(PageDialogKind.ALERT, url, message, null, result)
+            return true
+        }
+
+        override fun onJsConfirm(view: WebView, url: String, message: String?, result: JsResult): Boolean {
+            if (!host.pageDialogs) return false
+            pageDialog(PageDialogKind.CONFIRM, url, message, null, result)
+            return true
+        }
+
+        override fun onJsPrompt(view: WebView, url: String, message: String?, defaultValue: String?, result: JsPromptResult): Boolean {
+            if (!host.pageDialogs) return false
+            pageDialog(PageDialogKind.PROMPT, url, message, defaultValue, result)
+            return true
+        }
+
+        /**
+         * The page's `beforeunload` handler objects to the navigation the WebView is about to
+         * run – the core's own (address bar, back, reload), the page's, or the unload check's
+         * blank document ([confirmUnload]) – and holds it in `result` (PUI-28). The sheet asks
+         * "Leave site?" ("Reload site?" right after the core asked for a reload, never under a
+         * check, as Electron's host tells them apart; the WebView raises the question only for a
+         * page the user has touched, as Chrome), and its answer lets the navigation go on or
+         * cancels it, the page as it was ([stayedOnPage]). A check waits as long as the question
+         * is up: its silence timer stops here, and the answer settles it.
+         */
+        override fun onJsBeforeUnload(view: WebView, url: String, message: String?, result: JsResult): Boolean {
+            if (!host.pageDialogs) return false
+            val check = unloadCheck
+            if (check != null) {
+                removeCallbacks(check.timeout)
+                check.asked = true
+            }
+            val reload = check == null && SystemClock.uptimeMillis() - reloadAskedAt < RELOAD_ASK_WINDOW_MS
+            showDialog(PageDialogSpec.beforeUnload(reload), result) { leave, _ ->
+                if (check != null) check.settle(leave = leave, destroyView = leave)
+                else if (!leave) stayedOnPage()
+            }
+            return true
+        }
+
         override fun onReceivedTitle(view: WebView, title: String?) {
+            // The unload check's blank document has no title for the tab (see confirmUnload).
+            if (unloadCheck != null) return
             // "Webpage not available" is the built-in error page's, not the tab's (see failedUrl).
             if (failedUrl != null || interstitial) return
             host.viewEvent(tabId, "title", json("title" to (title ?: "")))
@@ -2130,7 +2399,7 @@ class TabWebView(
          * through so the bar fills before it fades.
          */
         override fun onProgressChanged(view: WebView, newProgress: Int) {
-            if (!loading) return
+            if (!loading || unloadCheck != null) return
             val now = SystemClock.uptimeMillis()
             if (newProgress < 100 && now - lastProgressAt < PROGRESS_THROTTLE_MS) return
             lastProgressAt = now
@@ -2273,6 +2542,12 @@ class TabWebView(
 
         /** Progress reports between the first and the last (see `Chrome.onProgressChanged`). */
         private const val PROGRESS_THROTTLE_MS = 100L
+
+        /** A `beforeunload` check whose page neither goes nor objects by then may go (Electron's, `UNLOAD_CHECK_TIMEOUT_MS`). */
+        private const val UNLOAD_CHECK_TIMEOUT_MS = 5_000L
+
+        /** A `beforeunload` objection this soon after the core asked for a reload is "Reload site?". */
+        private const val RELOAD_ASK_WINDOW_MS = 2_000L
 
         /** Where the visual viewport sits in the layout viewport (non-zero only while pinch-zoomed). */
         private const val VISUAL_OFFSET_SCRIPT =
