@@ -101,7 +101,12 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
         val id = installed.getString("id")
         results.put("installedAs", installed)
 
-        // 2. uBlock Origin Lite's popup in the extension sheet, light.
+        // 2. uBlock Origin Lite's popup in the extension sheet, light. Dark Reader's worker opens
+        //    its help page in a new tab a few seconds after its first start (`tabs.create` on
+        //    install), and a shown tab navigating closes an action popup, as Chrome's does
+        //    (`Browser.onNavigated`): run 35800722950 shot the help tab where the sheet had been.
+        //    The tabs settle first.
+        results.put("tabsSettled", awaitTabsSettled(30_000))
         results.put("popupLight", popupStill(POPUP_ID, "light"))
 
         // 3. The dark scheme: the chrome's setting and the system's night mode together.
@@ -173,21 +178,33 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
      * The extension's popup opened through the core and shot once its text is in. The runtime's
      * `openPopup` answers nothing for an id it has not attached yet (a record the store lists
      * before its units are configured), so the open waits for the configure and is asked again
-     * while no sheet comes up.
+     * while no sheet comes up; a sheet that goes before its text is in (a tab navigating under
+     * it closes the popup, as in Chrome) is opened again while the budget lasts.
      */
     private fun popupStill(id: String, scheme: String): JSONObject {
         val configured = waitUntil(60_000) { configured(id) }
         var opens = 0
-        val openDeadline = SystemClock.uptimeMillis() + 30_000
-        while (popupView() == null && SystemClock.uptimeMillis() < openDeadline) {
-            opens++
-            coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-            waitUntil(5_000) { popupView() != null }
-        }
-        val up = popupView() != null
-        val ready = up && waitUntil(45_000) {
-            val view = popupView() ?: return@waitUntil false
-            eval(view, "String(!!(document.body && document.body.innerText.length > 20))") == "true"
+        var went = 0
+        var ready = false
+        val deadline = SystemClock.uptimeMillis() + 75_000
+        while (!ready && SystemClock.uptimeMillis() < deadline) {
+            if (popupView() == null) {
+                opens++
+                coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+                if (!waitUntil(5_000) { popupView() != null }) continue
+            }
+            val textDeadline = SystemClock.uptimeMillis() + 30_000
+            while (!ready && SystemClock.uptimeMillis() < textDeadline) {
+                val view = popupView()
+                if (view == null) {
+                    went++
+                    Log.i(TAG, "$scheme popup: the sheet went before its text was in (open $opens)")
+                    break
+                }
+                ready = eval(view, "String(!!(document.body && document.body.innerText.length > 20))") == "true"
+                if (!ready) SystemClock.sleep(250)
+            }
+            if (!ready && popupView() != null) break
         }
         // The sheet's rise and the popup's own layout after its text is in.
         SystemClock.sleep(3_000)
@@ -197,6 +214,7 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
         val report = JSONObject()
             .put("configured", configured)
             .put("opens", opens)
+            .put("went", went)
             .put("ready", ready)
             .put("url", view?.let { eval(it, "location.href") })
             .put("textLength", view?.let { eval(it, "String(document.body ? document.body.innerText.length : -1)") })
@@ -204,6 +222,37 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
         coreInvoke("extension.closePopup")
         waitUntil(10_000) { popupView() == null }
         SystemClock.sleep(1_000)
+        return report
+    }
+
+    /**
+     * The core's tabs unchanged (their count and the active tab's address) for six seconds, or
+     * `timeoutMs` up: what an install's worker opens has opened before the popup goes up over it.
+     */
+    private fun awaitTabsSettled(timeoutMs: Long): JSONObject {
+        val started = SystemClock.uptimeMillis()
+        val deadline = started + timeoutMs
+        var last = ""
+        var since = started
+        var state = coreState()
+        while (true) {
+            val now = SystemClock.uptimeMillis()
+            val signature = "${state.getJSONObject("tabs").length()} ${activeCoreTab(state)?.optString("url")}"
+            if (signature != last) {
+                last = signature
+                since = now
+            } else if (now - since >= 6_000) {
+                break
+            }
+            if (now >= deadline) break
+            SystemClock.sleep(500)
+            state = coreState()
+        }
+        val report = JSONObject()
+            .put("afterMs", SystemClock.uptimeMillis() - started)
+            .put("tabs", state.getJSONObject("tabs").length())
+            .put("activeUrl", activeCoreTab(state)?.optString("url"))
+        Log.i(TAG, "tabs settled: $report")
         return report
     }
 
