@@ -1999,9 +1999,7 @@ describe('the page context menu', () => {
       'Bookmark Page',
       'Save Page As…',
       'Print…',
-      'Take Screenshot',
-      'Capture Full Page',
-      'Capture Page…',
+      'Web Capture…',
       'Enter Reader View',
       '-',
       'Boosts',
@@ -2011,11 +2009,43 @@ describe('the page context menu', () => {
     expect(item(h.items(), 'Back').enabled).toBe(false)
     expect(item(h.items(), 'Back').action).toBe('nav.back')
     expect(item(h.items(), 'Inspect Element').action).toBe('devtools.inspector')
-    // Edge's Web capture row (a region of the dimmed page) is the desktop overlay's alone.
-    expect(item(h.items(), 'Capture Page…').action).toBe('capture.start')
-    expect(pageHarness(DESKTOP, { formFactor: 'tablet' }).menu(pageParams())).not.toContain(
-      'Capture Page…'
-    )
+  })
+
+  it('says capture once on the desktop – one Web Capture… row with its chord, where the menu said it three times (the #396 review’s ruling 3, the lead on #414); a touch host keeps its two one-shot rows', () => {
+    const h = pageHarness()
+    const menu = h.menu(pageParams())
+    // One row, between Print… and Reader View, where the three stood.
+    expect(menu.filter((l) => /capture|screenshot/i.test(l))).toEqual(['Web Capture…'])
+    expect(menu.indexOf('Web Capture…')).toBe(menu.indexOf('Print…') + 1)
+    expect(menu[menu.indexOf('Web Capture…') + 1]).toBe('Enter Reader View')
+    const row = item(h.items(), 'Web Capture…')
+    // Edge's row runs the overlay – the visible area, the full page and an area select are its
+    // toolbar's – and wears the Chrome preset's chord (Edge's Web capture chord).
+    expect(row.action).toBe('capture.start')
+    expect(row.accelerator).toBe('Ctrl+Shift+S')
+    expect(row.hint).toBe('Ctrl+Shift+S')
+    h.viewCalls.length = 0
+    h.sent.length = 0
+    row.click?.()
+    expect(h.sent).toContain('capture.start')
+    // The Zen preset gives Ctrl+Shift+S to Firefox's Take Screenshot: the row stands, unchorded.
+    h.browser.handleCommand(h.win, 'settings.update', { shortcutPreset: 'zen' })
+    h.menu(pageParams())
+    expect(item(h.items(), 'Web Capture…').accelerator).toBeUndefined()
+    // A tablet's page menu has no overlay to open: Take Screenshot and Capture Full Page stay,
+    // in the same seat, running their one-shot actions.
+    const tablet = pageHarness(DESKTOP, { formFactor: 'tablet' })
+    const tabletMenu = tablet.menu(pageParams())
+    expect(tabletMenu).not.toContain('Web Capture…')
+    expect(tabletMenu).not.toContain('Capture Page…')
+    expect(tabletMenu.indexOf('Take Screenshot')).toBe(tabletMenu.indexOf('Print…') + 1)
+    expect(tabletMenu.indexOf('Capture Full Page')).toBe(tabletMenu.indexOf('Take Screenshot') + 1)
+    expect(item(tablet.items(), 'Take Screenshot').action).toBe('page.screenshot')
+    expect(item(tablet.items(), 'Capture Full Page').action).toBe('page.captureFullPage')
+    const phone = pageHarness(ANDROID, { formFactor: 'phone' })
+    const phoneMenu = phone.menu(pageParams())
+    expect(phoneMenu).toContain('Take Screenshot')
+    expect(phoneMenu).not.toContain('Web Capture…')
   })
 
   it('leaves Print, View Page Source and Inspect to hosts that have them', () => {
