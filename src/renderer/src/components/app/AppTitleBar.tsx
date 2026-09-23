@@ -77,7 +77,8 @@ export function AppTitleBar({
         // browser toolbar's; the menu marks it `aria-expanded` while it stands.
         data-zen-app-menu-button
         className="zen-toolbar-button zen-no-drag"
-        title={hint('Menu', state, 'menu.app')}
+        aria-label={hint('Menu', state, 'menu.app')}
+        data-tooltip={hint('Menu', state, 'menu.app')}
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}
       >

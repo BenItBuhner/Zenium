@@ -167,6 +167,34 @@ describe("the host's word on the lock", () => {
     applyPrivateLock({ locked: true })
     expect(privateLockStore.get()).toMatchObject({ locked: true, lifting: false })
   })
+
+  it("a lock that stands is reported masked to the host once its render has committed (the host's veil, seed 47)", async () => {
+    const masked = vi.fn()
+    setPrivateLockHost({
+      unlock: vi.fn(async () => ({ locked: true })),
+      verify: vi.fn(async () => true),
+      masked
+    })
+    applyPrivateLock({ locked: true, screenLock: true })
+    // Not in the same task as the store's set: React's sync-lane commit runs first (a microtask).
+    expect(masked).not.toHaveBeenCalled()
+    await Promise.resolve()
+    expect(masked).toHaveBeenCalledTimes(1)
+    // Every word that the lock stands is reported again (the host re-announces on its return).
+    applyPrivateLock({ locked: true })
+    await Promise.resolve()
+    expect(masked).toHaveBeenCalledTimes(2)
+    // A lock released before the commit has no masked frame to report; a release itself reports nothing.
+    applyPrivateLock({ locked: true })
+    applyPrivateLock({ locked: false })
+    await Promise.resolve()
+    expect(masked).toHaveBeenCalledTimes(2)
+    // A host without a veil (the desktop, the tests' hosts) is asked nothing.
+    host()
+    applyPrivateLock({ locked: true })
+    await Promise.resolve()
+    expect(masked).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe("the cover's Unlock", () => {

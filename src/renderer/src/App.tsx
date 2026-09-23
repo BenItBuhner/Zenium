@@ -41,6 +41,7 @@ import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { HorizontalChrome } from './components/strip/HorizontalChrome'
 import { TabDialogs } from './components/TabDialogs'
 import { TabHoverCard } from './components/TabHoverCard'
+import { Tooltip } from './components/Tooltip'
 import { TabletShell } from './components/tablet/TabletShell'
 import { Toolbar } from './components/Toolbar'
 
@@ -330,6 +331,8 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />
       <TabHoverCard state={state} />
+      {/* The chrome tooltip's one host (a11y-26): the desktop's, mouse and keyboard only (§9.31). */}
+      <Tooltip />
       {onboarding && <Onboarding state={state} />}
     </div>
   )

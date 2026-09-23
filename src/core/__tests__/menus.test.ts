@@ -1400,6 +1400,44 @@ describe("the phone menu's icon row", () => {
     expect(allItems(below).every((item) => item.glyph === undefined)).toBe(true)
   })
 
+  it('leaves out an action the bar carries (§9.13: a control lives once), and keeps the two the bar cannot host', () => {
+    const h = phone()
+    const labels = (): (string | undefined)[] => h.row().map((item) => item.label)
+    // Forward and Reload / Stop moved onto the bar: the row is the other four, in its order.
+    h.browser.handleCommand(h.win, 'settings.update', {
+      phoneBar: { left: ['back', 'forward'], right: ['reload', 'tabs', 'menu'] }
+    })
+    expect(labels()).toEqual(['Home', 'Bookmark', 'Download Page', 'Page Info'])
+    // Stop shares Reload's slot, so it leaves with it while the page loads.
+    h.browser.tabs.tab(h.tabId)!.loading = true
+    expect(labels()).toEqual(['Home', 'Bookmark', 'Download Page', 'Page Info'])
+    h.browser.tabs.tab(h.tabId)!.loading = false
+    // The bar holding all four: Download Page and Page Info stand alone, still a row of glyphs.
+    h.browser.handleCommand(h.win, 'settings.update', {
+      phoneBar: { left: ['back', 'forward', 'home'], right: ['bookmark', 'reload', 'menu'] }
+    })
+    expect(h.row().map((item) => [item.label, item.glyph])).toEqual([
+      ['Download Page', 'download'],
+      ['Page Info', 'info']
+    ])
+    // Home on the bar and the homepage Off: no Home anywhere, the bar's and the row's agreeing.
+    h.browser.handleCommand(h.win, 'settings.update', { homepage: { mode: 'off', url: '' } })
+    expect(appMenu(h)).not.toContain('Home')
+    // The bar back to its default: the six return.
+    h.browser.handleCommand(h.win, 'settings.update', {
+      homepage: { mode: 'newtab', url: '' },
+      phoneBar: { left: ['back'], right: ['new-tab', 'tabs', 'menu'] }
+    })
+    expect(labels()).toEqual([
+      'Forward',
+      'Home',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload'
+    ])
+  })
+
   it('serialises the glyph for the chrome and leaves every other descriptor as it was', () => {
     const { items } = serialiseMenu(
       [

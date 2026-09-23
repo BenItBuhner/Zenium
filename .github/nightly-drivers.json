@@ -1058,6 +1058,16 @@
       "note": "W5-7's private and security surfaces (ERR-09, TAB-03, INC-03, NOT-07) in both schemes. Sets a device PIN for the run (locksettings set-pin, cleared at the end) as the private lock demo does; the certificate-error scene is best effort over the network and skips without failing."
     },
     {
+      "id": "primitives-5",
+      "class": "Primitives5Demo",
+      "shard": "webview",
+      "mirrors": "android-primitives-5-demo.yml",
+      "dir": "primitives-5-demo",
+      "timeout": 1200,
+      "estimate": 8,
+      "note": "Seeds 43-48 on a device. The veil (47) needs a private surface, so the multi-profile WebView: the reason it sits here, not on a phone shard. Sets and clears its own device PIN."
+    },
+    {
       "id": "media",
       "class": "MediaDemo",
       "shard": "webview",

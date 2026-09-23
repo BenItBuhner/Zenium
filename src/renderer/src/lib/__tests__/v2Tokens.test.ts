@@ -1709,6 +1709,23 @@ describe('the fullscreen hint palette', () => {
   })
 })
 
+describe('the chrome tooltip (§9.31, a11y-26)', () => {
+  it('is the plain panel at the control radius through the token, a round corner – no squircle under 8 (§2)', () => {
+    // The design review of #400 (A2): the tooltip had its own 6 with the squircle. It reads
+    // the control radius (4 on the desktop; the coarse-pointer block's 6 follows through the
+    // same token), and declares no `corner-shape` – §2 keeps the squircle for radius 8 and up.
+    // The rule sits inside `@layer components`: its own close is the indented one.
+    const whole = block('.zen-tooltip')
+    const tip = whole.slice(0, whole.indexOf('\n  }'))
+    expect(tip).toMatch(/^ {4}border-radius: var\(--v2-radius-control\);$/m)
+    expect(tip).not.toMatch(/corner-shape/)
+    expect(tip).not.toMatch(/box-shadow/)
+    expect(tip).toMatch(/^ {4}background: var\(--v2-panel\);$/m)
+    expect(tip).toMatch(/^ {4}border: 1px solid var\(--v2-border\);$/m)
+    expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-radius-control: 4px;$/m)
+  })
+})
+
 describe('live counts (§4)', () => {
   it('are tabular wherever the request engine writes one, through the slot the count sits in', () => {
     // "1,284 requests", "116,161 filters", "Updated 2 h ago": a count that changes under the
