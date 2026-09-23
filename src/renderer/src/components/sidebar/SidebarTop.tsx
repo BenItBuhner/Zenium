@@ -304,6 +304,11 @@ export function NavRow({
       // The toolbar pane of the F6 rotation (lib/panes.ts): F6 lands on the address, Shift+Alt+T
       // on the first enabled control.
       data-pane="toolbar"
+      // Chrome's toolbar role for the row (a11y-02); the keyboard stays Tab and F6 (§9.22), as
+      // in Chrome, so the role says what the row is and asks nothing more of the arrows.
+      role="toolbar"
+      aria-label="Toolbar"
+      aria-orientation={compact ? 'vertical' : undefined}
     >
       {leading}
       <NavigationButton
