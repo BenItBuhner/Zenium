@@ -4,8 +4,9 @@
  * for a Tab, its last for a Shift+Tab. The Android host hands the focus between a page's WebView
  * and the chrome's when Tab runs past a document's end (`FocusHandoff.kt`); the document it
  * lands in reads its own order here – the chrome from the host's `focus.fromPage` event, a page
- * from the `focus` message its page script receives – because the WebView gives a document the
- * focus without placing it (`setNeedInitialFocus` off) or on its first node only.
+ * from the `focus` message its page script receives – because the WebView's own initial focus
+ * (Blink's, the keyboard focus that draws the ring; `Host.onFocusLanding`) lands on the first
+ * tabbable whichever way the Tab came in: forward it is confirmed, backward moved to the last.
  *
  * The order is sequential focus navigation's as far as a script can read it: what Tab reaches
  * – links, form controls, frames, `summary`, media with controls, anything with a `tabindex`
