@@ -25,6 +25,7 @@ import { ERROR_URL_PREFIX, displayUrl, isEmptyTabUrl, isNewTabUrl } from '@share
 import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
+import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { useOmniboxFocusBinding } from '@renderer/hooks/useOmniboxFocusBinding'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
@@ -1524,6 +1525,10 @@ function PhoneSheet({
   // The pill's focus motion (MOT-07, lib/omniboxFocus.ts) writes its value on the layer per
   // frame: the sheet and the field under it read it, so a frame recalculates the omnibox alone.
   const bindFocus = useOmniboxFocusBinding()
+  // The new tab page's field morphing into this bar (NTP-02, lib/fakeboxMorph.ts) fades the sheet
+  // in on its value: the sheet carries it the same way, from the frame it mounts under the
+  // arriving field.
+  useFakeboxSurface(sheetRef)
   const bandStyle = {
     left: 'var(--zen-inset-left)',
     right: 'var(--zen-inset-right)',
