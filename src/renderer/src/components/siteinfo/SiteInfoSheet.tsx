@@ -51,7 +51,7 @@ import {
   type ExtensionPageChrome
 } from '@renderer/lib/extensions/pages'
 import { useViewport } from '@renderer/lib/formFactor'
-import { LevelMotion, type LevelState } from '@renderer/lib/motion/levels'
+import { LevelMotion, paintLevels, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
 import { useFrameDialog } from '@renderer/lib/portals'
 import { privateLockStore } from '@renderer/lib/privateLock'
@@ -399,37 +399,6 @@ function useLevels(): Levels {
   // The level the surface shows or is heading to: the target of a push, the parent of a pop.
   const level = current.to as LevelId
   return { motion, state: current, level, onFrame }
-}
-
-/**
- * Paints one frame of the level motion onto the panes: the pane arriving is in flow and sizes
- * the track; the pane leaving is laid over it and slides out; the deeper of the two travels the
- * full width from the trailing edge, the one under it shifts by a third and fades.
- */
-function paintLevels(motion: LevelMotion, panes: Map<string, HTMLElement>, width: number): void {
-  const { from, to, t } = motion.current
-  for (const [id, el] of panes) {
-    const arriving = id === to
-    const leaving = id === from && from !== to
-    if (!arriving && !leaving) {
-      el.style.display = 'none'
-      el.removeAttribute('data-leaving')
-      continue
-    }
-    el.style.display = ''
-    if (leaving) el.setAttribute('data-leaving', '')
-    else el.removeAttribute('data-leaving')
-    const shown = arriving ? t : 1 - t
-    const pushing = motion.pushing
-    const deeper = pushing ? arriving : leaving
-    const x = from === to ? 0 : deeper ? (1 - shown) * width : -0.3 * (1 - shown) * width
-    el.style.transform = x ? `translate3d(${x.toFixed(2)}px, 0, 0)` : ''
-    el.style.opacity = from === to ? '' : String(Math.min(1, Math.max(0, (shown - 0.2) / 0.6)))
-    el.style.willChange = from === to ? '' : 'transform, opacity'
-    const hidden = shown < 0.5
-    if (el.getAttribute('aria-hidden') !== String(hidden))
-      el.setAttribute('aria-hidden', String(hidden))
-  }
 }
 
 function usePaneRegistry(): {

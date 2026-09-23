@@ -149,3 +149,58 @@ export class LevelMotion {
     this.onChange(state)
   }
 }
+
+/** How far the pane under the one on top shifts, as a share of the track's width. */
+const LEVEL_UNDER_SHIFT = 0.3
+/** How far the pane under the one on top dims once it is wholly covered. */
+const LEVEL_UNDER_DIM = 0.5
+
+/**
+ * Paints one frame of a `LevelMotion` onto its panes (one element per level id). The pane
+ * arriving stays in flow and sizes the track; the pane leaving is laid over it (`data-leaving`)
+ * and slides out. The deeper of the two is the pane on top: it travels the full width from the
+ * trailing edge and stays opaque, so whatever it holds is on screen from its first frame; the
+ * pane under it shifts by a third and dims while it is being covered, never to nothing – a pop
+ * reveals it with its content, not a blank. Panes taking no part are hidden and inert, and a
+ * pane that is mostly gone is `aria-hidden` and inert, so neither the reader nor the keyboard
+ * reaches into a level that is not the one shown.
+ */
+export function paintLevels(
+  motion: LevelMotion,
+  panes: Map<string, HTMLElement>,
+  width: number
+): void {
+  const { from, to, t } = motion.current
+  const moving = from !== to
+  for (const [id, el] of panes) {
+    const arriving = id === to
+    const leaving = id === from && moving
+    if (!arriving && !leaving) {
+      el.style.display = 'none'
+      el.removeAttribute('data-leaving')
+      setPaneHidden(el, true)
+      continue
+    }
+    el.style.display = ''
+    if (leaving) el.setAttribute('data-leaving', '')
+    else el.removeAttribute('data-leaving')
+    const shown = arriving ? t : 1 - t
+    const deeper = motion.pushing ? arriving : leaving
+    const x = !moving
+      ? 0
+      : deeper
+        ? (1 - shown) * width
+        : -LEVEL_UNDER_SHIFT * (1 - shown) * width
+    el.style.transform = x ? `translate3d(${x.toFixed(2)}px, 0, 0)` : ''
+    el.style.opacity =
+      !moving || deeper ? '' : (1 - LEVEL_UNDER_DIM * (1 - shown)).toFixed(3)
+    el.style.willChange = moving ? 'transform, opacity' : ''
+    setPaneHidden(el, shown < 0.5)
+  }
+}
+
+function setPaneHidden(el: HTMLElement, hidden: boolean): void {
+  if (el.getAttribute('aria-hidden') !== String(hidden))
+    el.setAttribute('aria-hidden', String(hidden))
+  if (el.hasAttribute('inert') !== hidden) el.toggleAttribute('inert', hidden)
+}
