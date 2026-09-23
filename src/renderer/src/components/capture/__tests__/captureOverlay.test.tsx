@@ -189,7 +189,11 @@ describe('the dimmed page (capture-02)', () => {
     expect(el.querySelector('.zen-capture-scrim')).not.toBeNull()
     const toolbar = el.querySelector<HTMLElement>('[data-capture-toolbar]')!
     expect(toolbar.getAttribute('role')).toBe('toolbar')
-    expect(toolbar.querySelector('[data-capture-free]')?.getAttribute('aria-pressed')).toBe('true')
+    const free = toolbar.querySelector<HTMLButtonElement>('[data-capture-free]')!
+    expect(free.getAttribute('aria-pressed')).toBe('true')
+    // On, with the geometry in hand: neither aria-disabled nor a title.
+    expect(free.hasAttribute('aria-disabled')).toBe(false)
+    expect(free.hasAttribute('title')).toBe(false)
     expect(toolbar.querySelector('[data-capture-visible]')?.textContent).toBe('Visible area')
     expect(toolbar.querySelector('[data-capture-full]')?.textContent).toBe('Full page')
     expect(toolbar.querySelector('[data-capture-cancel]')).not.toBeNull()
@@ -215,10 +219,14 @@ describe('the dimmed page (capture-02)', () => {
     expect(toolbar.style.translate).toBe('')
   })
 
-  it('a page whose geometry the host could not give has Free select off and only the visible area and the full page to offer', () => {
+  it('a page whose geometry the host could not give has Free select off (aria-disabled, its title reachable) and only the visible area and the full page to offer', () => {
     const el = open(null)
     const free = el.querySelector<HTMLButtonElement>('[data-capture-free]')!
-    expect(free.disabled).toBe(true)
+    // §9.30: off on aria-disabled, not disabled – the pointer and the keyboard still reach it,
+    // so the title that says why a drag draws nothing can be read.
+    expect(free.disabled).toBe(false)
+    expect(free.getAttribute('aria-disabled')).toBe('true')
+    expect(free.title).toBe('The page’s position could not be read')
     expect(free.getAttribute('aria-pressed')).toBe('false')
     expect(overlay(el)!.dataset.selecting).toBeUndefined()
     // A drag draws nothing.

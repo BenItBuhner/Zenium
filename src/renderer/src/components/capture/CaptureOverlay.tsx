@@ -362,7 +362,9 @@ function CaptureOverlay({
             type="button"
             className="zen-v2-button zen-capture-mode"
             aria-pressed={canSelect}
-            disabled={!viewport}
+            // Off on `aria-disabled` (§9.30), not `disabled`: the button keeps the pointer and
+            // the keyboard, so its title – why a drag draws nothing – can be reached.
+            aria-disabled={!viewport || undefined}
             title={viewport ? undefined : 'The page’s position could not be read'}
             data-capture-free
           >

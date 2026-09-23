@@ -6095,8 +6095,9 @@
  * primitive, unlayered like the scan sheet's torch chip above it): the 8 px between glyph and
  * label, and Free select's on state (`aria-pressed`) as §9.6 has a toggle that is on –
  * `--v2-selected` with the glyph and the label in the accent – while a drag would draw the
- * marquee; off and disabled (§9.30's .4, the primitive's) where the host cannot say where the
- * page is scrolled to.
+ * marquee; off and `aria-disabled` where the host cannot say where the page is scrolled to:
+ * §9.30's .4 on the whole control with no fill on hover or press, the pointer kept so the
+ * title that says why is reachable (the primitive's `:disabled` would take it).
  */
 .zen-v2-button.zen-capture-mode {
   gap: 8px;
@@ -6104,6 +6105,11 @@
 .zen-v2-button.zen-capture-mode[aria-pressed='true'] {
   background: var(--v2-selected);
   color: var(--v2-accent);
+}
+.zen-v2-button.zen-capture-mode[aria-disabled='true'] {
+  opacity: 0.4;
+  background: var(--v2-fill);
+  transform: none;
 }
 
 @layer components {
