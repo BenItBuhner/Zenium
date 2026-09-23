@@ -58,6 +58,16 @@ interface Hold {
  * lifted has chosen it, and the row is clicked; let go anywhere else, the surface stays for a
  * tap (both readings of §9.13's popover exception hold).
  *
+ * For the finger to reach a row at all, its moves are taken from the browser at the hold: a
+ * non-passive `touchmove` block on the document and on the bar, as `useLongPress` sets them for
+ * a draggable hold (and the overview's cards, the tablet's rows and the spaces drawer, which
+ * drag on the device with it). Chromium decides at a touch's first move whether the page may
+ * cancel it, from the touch-action under the finger – the chrome's `manipulation` lets the
+ * browser scroll – and a move the page may not cancel becomes the browser's scroll, which
+ * cancels the pointer: a `pointercancel`, then no `pointermove` at all, though nothing under the
+ * finger scrolls. The gestures demo's device run of 23 Sep showed it on this hold: the held
+ * finger's first move lit no row and its release picked nothing. The block goes with the lift.
+ *
  * The pointer is deliberately not captured: a capture on the bar would retarget the release,
  * and with it the click, away from the button that was tapped.
  */
@@ -90,16 +100,26 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
   )
 
   /**
-   * Follow the pointer `id` from the hold to its lift: the {@link HOLD_PICK_ATTR} row under the
-   * finger lit as it passes, the next click eaten until shortly after the lift – and the lift
-   * itself read: released over such a row, the finger picks it.
+   * Follow the pointer `id` from the hold to its lift: the touch's moves kept from the browser
+   * (see the note on the block above), the {@link HOLD_PICK_ATTR} row under the finger lit as it
+   * passes, the next click eaten until shortly after the lift – and the lift itself read:
+   * released over such a row, the finger picks it.
    */
-  const swallowRelease = (id: number): void => {
+  const swallowRelease = (id: number, bar: HTMLElement): void => {
     disarm.current?.()
     let timer: ReturnType<typeof setTimeout> | null = null
     // The pick's own click passes; the platform's, should the release produce one, is eaten.
     let picking = false
     let lit: HTMLElement | null = null
+    // The whole view blocking for Chromium's first-move hit test, and the bar because the
+    // WebView keeps sending the touch's events to the node it began on.
+    const block = (ev: TouchEvent): void => {
+      if (ev.cancelable) ev.preventDefault()
+    }
+    const unblock = (): void => {
+      document.removeEventListener('touchmove', block)
+      bar.removeEventListener('touchmove', block)
+    }
     const light = (row: HTMLElement | null): void => {
       if (row === lit) return
       lit?.removeAttribute(HOLD_LIT_ATTR)
@@ -113,6 +133,7 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
         .elementFromPoint(e.clientX, e.clientY)
         ?.closest<HTMLElement>(`[${HOLD_PICK_ATTR}]`) ?? null
     const off = (): void => {
+      unblock()
       window.removeEventListener('click', swallow, true)
       window.removeEventListener('pointermove', moved, true)
       window.removeEventListener('pointerup', lifted, true)
@@ -132,6 +153,8 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
     }
     const lifted = (e: PointerEvent): void => {
       if (e.pointerId !== id) return
+      // The touch is over (or the browser's): its moves are no longer ours to keep.
+      unblock()
       window.removeEventListener('pointermove', moved, true)
       window.removeEventListener('pointerup', lifted, true)
       window.removeEventListener('pointercancel', lifted, true)
@@ -147,6 +170,8 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
         picking = false
       }
     }
+    document.addEventListener('touchmove', block, { passive: false })
+    bar.addEventListener('touchmove', block, { passive: false })
     window.addEventListener('click', swallow, true)
     window.addEventListener('pointermove', moved, true)
     window.addEventListener('pointerup', lifted, true)
@@ -160,7 +185,8 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
       const target = e.target as HTMLElement
       if (target.closest('.zen-phone-pill')) return
       const button = target.closest<HTMLElement>('[data-bar-item]')
-      const anchor = button ?? e.currentTarget
+      const bar = e.currentTarget
+      const anchor = button ?? bar
       const id = e.pointerId
       hold.current = {
         id,
@@ -169,7 +195,7 @@ export function useBarHold({ onHold }: BarHoldOptions): BarHoldHandlers {
         timer: setTimeout(() => {
           if (hold.current?.id !== id) return
           cancel()
-          swallowRelease(id)
+          swallowRelease(id, bar)
           run('haptic', { kind: 'lift' })
           const r = anchor.getBoundingClientRect()
           latest.current((button?.dataset.barItem as PhoneBarItemId | undefined) ?? null, {

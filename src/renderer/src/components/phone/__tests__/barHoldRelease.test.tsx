@@ -79,6 +79,15 @@ const click = (el: HTMLElement): void => {
   })
 }
 
+/** A touch's touchmove as the browser raises it before scrolling, on `target`; whether the page cancelled it. */
+const scrolls = (target: EventTarget): boolean => {
+  const e = new Event('touchmove', { bubbles: true, cancelable: true })
+  act(() => {
+    target.dispatchEvent(e)
+  })
+  return !e.defaultPrevented
+}
+
 /** A hold on Back that has fired, the finger still down. */
 function holdBack(): HTMLElement {
   const back = render()
@@ -129,6 +138,51 @@ describe("the bar hold's finger (GN-08, §9.13 in both forms)", () => {
     pointer(back, 'pointermove', 200, 680)
     expect(lit()).toEqual([])
     expect(onRow).not.toHaveBeenCalled()
+  })
+
+  it('keeps the touch from the browser from the hold to the lift: the moves cancelled on the bar and anywhere in the view', () => {
+    const back = render()
+    pointer(back, 'pointerdown', 30, 780)
+    // A press is not a hold: its moves are the browser's, a swipe from the bar still one.
+    act(() => vi.advanceTimersByTime(200))
+    expect(scrolls(back)).toBe(true)
+    act(() => vi.advanceTimersByTime(200))
+    expect(onHold).toHaveBeenCalledTimes(1)
+    // Held: the touch's own events reach the button it pressed, and the bar over it ...
+    expect(scrolls(back)).toBe(false)
+    // ... and the whole view blocks, for Chromium's first-move hit test (the device runs of
+    // 22 and 23 Sep: a block on the element alone leaves the move to the browser's scroll,
+    // which cancels the pointer before it reaches a row).
+    expect(scrolls(document.body)).toBe(false)
+    const row = openRow()
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(row)
+    pointer(back, 'pointermove', 40, 700)
+    expect(lit()).toEqual([row])
+    expect(scrolls(document.body)).toBe(false)
+    // The lift ends the claim with the touch, the pick made.
+    pointer(back, 'pointerup', 40, 700)
+    expect(onRow).toHaveBeenCalledTimes(1)
+    expect(scrolls(back)).toBe(true)
+    expect(scrolls(document.body)).toBe(true)
+  })
+
+  it('hands the touch back when the system takes it away, and when the hook unmounts mid-hold', () => {
+    const back = holdBack()
+    expect(scrolls(document.body)).toBe(false)
+    pointer(back, 'pointercancel', 30, 780)
+    expect(scrolls(document.body)).toBe(true)
+    expect(scrolls(back)).toBe(true)
+    // A second hold, unmounted with the finger still down: nothing left on the document.
+    act(() => root!.unmount())
+    root = null
+    mount?.remove()
+    onHold.mockClear()
+    const again = holdBack()
+    expect(scrolls(document.body)).toBe(false)
+    act(() => root!.unmount())
+    root = null
+    expect(scrolls(document.body)).toBe(true)
+    expect(scrolls(again)).toBe(true)
   })
 
   it("lights nothing for another pointer's movement, or before the hold has fired", () => {
