@@ -71,10 +71,11 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         val address = DemoServer.siteAddress()
             ?: error("the device has no network address besides the loopback: no insecure origin to serve the http page from")
         siteOrigin = "http://$address:$SITE_PORT"
-        // Both on every interface: the site answers on the device's address (the chip's page) and
-        // on 127.0.0.1 (the cookies probe); the tracker on 127.0.0.2, another loopback host.
+        // The site on every interface: it answers on the device's address (the chip's page) and on
+        // 127.0.0.1 (the cookies probe). The tracker on 127.0.0.2 alone: the second loopback host
+        // is the one address its frame is ever fetched from, so it listens nowhere else.
         site = DemoServer(SITE_PORT, siteRoutes(), address = "0.0.0.0").also { it.start() }
-        tracker = DemoServer(TRACKER_PORT, trackerRoutes(), address = "0.0.0.0").also { it.start() }
+        tracker = DemoServer(TRACKER_PORT, trackerRoutes(), address = "127.0.0.2").also { it.start() }
         var fault: Throwable? = null
         try {
             runDemo()
