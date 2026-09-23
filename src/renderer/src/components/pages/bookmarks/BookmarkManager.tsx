@@ -490,6 +490,28 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
   // Keyboard
   // ---------------------------------------------------------------------------
 
+  /**
+   * Ctrl+Z (Cmd+Z) anywhere on the page but in a text field, whose own undo it is: take back
+   * the last delete, move or rename (Chrome's manager, bookmarks-31), and put the focus and the
+   * selection on what came back or moved.
+   */
+  const onPageKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key.toLowerCase() !== 'z' || e.shiftKey || e.altKey) return
+    if (!(e.ctrlKey || e.metaKey) || (e.ctrlKey && e.metaKey)) return
+    if ((e.target as HTMLElement).closest('input, textarea, [contenteditable]')) return
+    e.preventDefault()
+    void cmd('bookmark.undo', {}).then((undone) => {
+      if (!undone) return
+      const first = undone.ids[0]
+      if (!first) return
+      // The rows come back in the folder they were in: show that folder when it is not this one.
+      if (undone.parentId && undone.parentId !== folderId && !searching) navigate(undone.parentId)
+      setSelection(new Set(undone.ids))
+      setAnchorId(first)
+      setFocusId(first)
+    })
+  }
+
   const onListKeyDown = (e: KeyboardEvent<HTMLUListElement>): void => {
     if (renamingId) return
     if ((e.target as HTMLElement).closest('input, textarea')) return
@@ -741,6 +763,7 @@ export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): J
       data-testid="bookmarks-manager"
       data-layout={twoPane ? 'two-pane' : 'one-pane'}
       data-folder={searching ? undefined : folderId}
+      onKeyDown={onPageKeyDown}
     >
       <header
         className="zen-page-header zen-bm-header"

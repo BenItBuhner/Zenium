@@ -1089,7 +1089,10 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         var last: List<ToolbarItem>? = null
         for (attempt in 1..tries) {
             val p = pagePoint(selector) ?: run {
-                finding("  no $selector on the page")
+                // No point is a claim, not a throw: the seeded article's tab is not there (a
+                // fresh boot that lost it, #344 finding 5) or the page has no such element.
+                if (tab() == null) check("the seeded article's tab is there for the long press on $selector", false)
+                else check("$selector is on the page for the long press (${describeTab()})", false)
                 return null
             }
             Finger().apply {
@@ -1173,13 +1176,20 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         return runCatching { JSONObject(jsonString(raw)) }.getOrDefault(JSONObject())
     }
 
-    /** Where the middle of the first element matching `selector` is on screen (device px), or null. */
+    /**
+     * Where the middle of the first element matching `selector` is on screen (device px); null
+     * when there is no such element – or no such page: a tab that is not there answers [pageJs]
+     * with nothing at all (the nightly's fresh boot in 3.2 had lost the seeded article, #344
+     * finding 5), and a blank or non-JSON answer is the caller's claim to fail, never a
+     * `JSONException` out of the driver.
+     */
     private fun pagePoint(selector: String): PointF? {
         val raw = pageJs(
             "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return null;" +
                 "e.scrollIntoView({block:'center'});var r=e.getBoundingClientRect();return JSON.stringify([r.left+r.width/2,r.top+r.height/2])})()"
         )
-        val json = (JSONTokener(raw).nextValue() as? String)?.let { runCatching { JSONArray(it) }.getOrNull() } ?: return null
+        val json = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
+            ?.let { runCatching { JSONArray(it) }.getOrNull() } ?: return null
         var origin: IntArray? = null
         var scale = 0f
         instrumentation.runOnMainSync {

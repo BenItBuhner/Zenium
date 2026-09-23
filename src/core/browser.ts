@@ -25,7 +25,8 @@ import type {
   Tab,
   TabSection,
   WindowChrome,
-  WindowKind
+  WindowKind,
+  WindowPromptDownloads
 } from '../shared/types'
 import { CONTENT_SETTINGS } from '../shared/contentSettings'
 import { BrowserState, type PersistedWindow } from './state'
@@ -34,6 +35,7 @@ import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
+import { BookmarkUndoStack, type BookmarkUndone } from './bookmarkUndo'
 import { DownloadService, isQuarantined } from './downloads'
 import { resolveDownloadSettings } from '../shared/downloads'
 import { PermissionService } from './permissions'
@@ -222,6 +224,8 @@ export class Browser {
    */
   readonly newTab: NewTabService
   readonly bookmarks: BookmarkService
+  /** The user's bookmark edits that can be taken back (bookmarks-31). */
+  readonly bookmarkUndo: BookmarkUndoStack
   readonly downloads: DownloadService
   private readonly downloadListeners = new Set<DownloadChangeListener>()
   readonly permissions: PermissionService
@@ -382,6 +386,7 @@ export class Browser {
       if (kind === 'clear') this.omniboxShortcuts.clear()
     })
     this.bookmarks = new BookmarkService(this.state)
+    this.bookmarkUndo = new BookmarkUndoStack(this.bookmarks)
     this.downloads = new DownloadService(
       platform.io,
       platform.downloads,
@@ -830,11 +835,40 @@ export class Browser {
 
   private async confirmWindowClose(win: ZenWindow): Promise<boolean> {
     const count = this.tabs.closingTabCount(win)
-    if (this.state.settings.warnOnCloseWindow && count > 1) {
-      if (!(await this.windowPrompts.ask(win, 'close-tabs', count))) return false
+    const warnTabs = this.state.settings.warnOnCloseWindow && count > 1
+    const downloads = this.downloadsEndedByClosing(win)
+    if (warnTabs || downloads) {
+      const asked = await this.windowPrompts.ask(win, 'close-tabs', warnTabs ? count : 0, downloads)
+      if (!asked) return false
     }
     if (this.quitting) return true
     return this.confirmUnloadAll(this.tabs.viewsClosingWith(win), [win])
+  }
+
+  /**
+   * The downloads in progress that closing `win` would end (downloads-35, Chrome's "Download is
+   * in progress" on the last window): every one when it is the last window and closing it quits
+   * (every desktop but macOS, where the app stays up without a window), the private ones when it
+   * is the last private window (the private session ends with it, and its transfers with the
+   * session). Null when none would.
+   */
+  private downloadsEndedByClosing(win: ZenWindow): WindowPromptDownloads | null {
+    const others = this.allWindows().filter((w) => w !== win)
+    if (others.length === 0 && this.state.platform !== 'darwin') return this.downloadsEndedByQuit()
+    if (win.isPrivate && !others.some((w) => w.isPrivate)) {
+      const count = this.downloads.activeCount({ private: true })
+      return count > 0 ? { count, end: 'private-window' } : null
+    }
+    return null
+  }
+
+  /**
+   * The downloads in progress that quitting would end – every one that is running: the private
+   * ones for good, the others parked as interrupted by `shutdown` to be resumed next launch.
+   */
+  private downloadsEndedByQuit(): WindowPromptDownloads | null {
+    const count = this.downloads.activeCount()
+    return count > 0 ? { count, end: 'quit' } : null
   }
 
   /**
@@ -895,8 +929,12 @@ export class Browser {
     if (windows.length === 0) return true
     const win = from?.alive ? from : this.focusedWindow()
     const count = this.tabs.openTabCount()
-    if (this.state.settings.warnOnCloseWindow && count > 1) {
-      if (!(await this.windowPrompts.ask(win, 'quit', count))) return false
+    const warnTabs = this.state.settings.warnOnCloseWindow && count > 1
+    // The downloads a quit ends are asked about in the same prompt as the tabs (downloads-35).
+    const downloads = this.downloadsEndedByQuit()
+    if (warnTabs || downloads) {
+      if (!(await this.windowPrompts.ask(win, 'quit', warnTabs ? count : 0, downloads)))
+        return false
     }
     if (this.quitting) return true
     const tabIds = windows.flatMap((w) => [...this.tabs.viewsOwnedBy(w).keys()])
@@ -1249,8 +1287,10 @@ export class Browser {
     const tab = this.tabs.tab(tabId)
     if (!tab || !this.bookmarkable(tab.url)) return
     if (this.bookmarks.has(tab.url)) {
-      this.bookmarks.removeByUrl(tab.url)
-      this.toast('Bookmark removed', 'info', win)
+      this.deleteBookmarks(
+        this.bookmarks.findByUrl(tab.url).map((n) => n.id),
+        win
+      )
       return
     }
     const node = this.bookmarks.create({
@@ -1377,7 +1417,32 @@ export class Browser {
   /** The bar folder menu's "Sort by name": folders first, then bookmarks, A to Z, in one move. */
   sortBookmarkFolder(folderId: string): boolean {
     const order = sortedByNameOrder(this.bookmarks.tree, folderId)
-    return order ? this.bookmarks.move(order, folderId, 0) : false
+    return order ? this.bookmarkUndo.move(order, folderId, 0) : false
+  }
+
+  /**
+   * Delete bookmarks and folders as the user asked (the manager, the bar, the star dialog's
+   * Remove, Ctrl+D or a tab row's Remove Bookmark on a bookmarked page): undoable, and the window
+   * hears of it for the toast whose Undo brings them back (bookmarks-31) – unless `quiet`, for a
+   * caller whose own undo UI already spoke (the phone panels' deferred deletes); the delete is
+   * on the undo stack all the same.
+   */
+  deleteBookmarks(ids: readonly string[], win: ZenWindow, quiet = false): void {
+    const removal = this.bookmarkUndo.remove(ids)
+    if (removal && !quiet) this.emit('bookmark.deleted', removal, win)
+  }
+
+  /**
+   * Take back the newest bookmark edit, or the one `token` names: every window hears which, so
+   * the toast of a delete undone from the manager (or another window) goes down with it.
+   */
+  undoBookmarkEdit(token?: number): BookmarkUndone | null {
+    const undone = this.bookmarkUndo.undo(token)
+    if (undone) {
+      const word = { token: undone.token, kind: undone.kind }
+      for (const w of this.allWindows()) w.send('bookmark.undone', word)
+    }
+    return undone
   }
 
   /** Open the bookmarks below the given nodes in a new window (private when asked). */
@@ -2875,10 +2940,15 @@ export class Browser {
         this.menus.showHistoryDayMenu(dayKey, count, win),
       'history.foldedDevices': () => this.pages.foldedDeviceIds(),
       'history.foldDevice': ({ deviceId, folded }) => this.pages.foldDevice(deviceId, folded),
+      'history.hiddenDevices': () => this.pages.hiddenDeviceIds(),
+      'history.hideDevice': ({ deviceId, hidden }) => this.pages.hideDevice(deviceId, hidden),
+      'history.showHiddenDevices': () => this.pages.showHiddenDevices(),
+      'history.deviceMenu': ({ deviceId, ...anchor }, win) =>
+        this.menus.showHistoryDeviceMenu(deviceId, win, anchor),
 
       'session.recentlyClosed': () => this.session.summaries(),
       'session.restoreClosed': ({ id, background }, win) =>
-        this.session.restoreClosed(id, win, Boolean(background)),
+        void this.session.restoreClosed(id, win, Boolean(background)),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
       'clipboard.writeText': ({ text, sensitive, confirmation }, win) => {
@@ -2908,9 +2978,11 @@ export class Browser {
       'bookmark.star': ({ tabId }, win) => this.starTab(tabId, win),
       'bookmark.create': ({ parentId, index, title, url, type, favicon }) =>
         this.bookmarks.create({ parentId, index, title, url, type, favicon }),
-      'bookmark.update': ({ id, title, url }) => void this.bookmarks.update(id, { title, url }),
-      'bookmark.move': ({ ids, parentId, index }) => void this.bookmarks.move(ids, parentId, index),
-      'bookmark.remove': ({ ids }) => void this.bookmarks.removeMany(ids),
+      'bookmark.update': ({ id, title, url }) => void this.bookmarkUndo.update(id, { title, url }),
+      'bookmark.move': ({ ids, parentId, index }) =>
+        void this.bookmarkUndo.move(ids, parentId, index),
+      'bookmark.remove': ({ ids, quiet }, win) => this.deleteBookmarks(ids, win, quiet),
+      'bookmark.undo': ({ token }) => this.undoBookmarkEdit(token),
       'bookmark.open': ({ id, newTab, tabId, background }, win) =>
         this.openBookmark(id, newTab, tabId, win, Boolean(background)),
       'bookmark.openAll': ({ ids }, win) => this.openBookmarks(ids, win),

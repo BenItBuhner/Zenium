@@ -31,7 +31,16 @@ export interface CreateBookmarkOptions {
   dateAdded?: number
 }
 
-/** The subset of a node that replicates between devices (see `src/main/sync/records.ts`). */
+export interface RestoreBookmarkOptions {
+  /**
+   * The folder for a node whose parent is neither in the tree nor in the batch (the folder went
+   * for good, or moved on with a sync); the platform's default root when omitted or not a
+   * folder. A node is never dropped for want of a parent.
+   */
+  parentId?: string
+}
+
+/** The subset of a node that replicates between devices (see `src/core/sync/records.ts`). */
 export interface SyncedBookmarkFields {
   parentId: string
   index: number
@@ -287,6 +296,102 @@ export class BookmarkService {
 
   removeByUrl(url: string): void {
     for (const node of this.tree.byUrl(url)) this.removeTree(node.id)
+  }
+
+  /**
+   * Put removed nodes back as themselves – the undo of a delete (Chrome's `BookmarkUndoService`).
+   * Each node returns under its OWN id with its `dateAdded`, `dateLastUsed` and
+   * `dateGroupModified`, into its `parentId` at its `index` (clamped to the folder's children;
+   * the followers move down one). An id taken meanwhile (a sync brought the node back, or – ids
+   * being minted – a race with a new node) makes the node come back under a new id with the same
+   * fields, as `create` would file it; the children handed in with it follow it. Parents go
+   * before children whatever the order handed in, siblings by index; a node whose parent is
+   * neither in the tree nor in the batch lands in `options.parentId` (else the platform's
+   * default root) rather than being dropped. The batch is ONE write: listeners (the sidebar,
+   * the sync publisher, the tabs' `bookmarked` flag) see it once, and a node back under its old
+   * id re-publishes the same sync record (its tombstone reverts) instead of a new one.
+   *
+   * Returns one entry per node handed in, in that order: the node as it stands now (an `id`
+   * other than the one handed in is the fallback, for the caller to alias), or null for the
+   * two that cannot come back – a root id, a bookmark without a URL.
+   */
+  restore(
+    nodes: readonly BookmarkNode[],
+    options: RestoreBookmarkOptions = {}
+  ): Array<BookmarkNode | null> {
+    const results: Array<BookmarkNode | null> = nodes.map(() => null)
+    const seen = new Set<string>()
+    const wanted = nodes
+      .map((node, at) => ({ node, at }))
+      .filter(({ node }) => {
+        if (isBookmarkRoot(node.id) || (node.type === 'url' && !node.url)) return false
+        if (seen.has(node.id)) return false
+        seen.add(node.id)
+        return true
+      })
+    if (wanted.length === 0) return results
+
+    // The working list, by id: survivors first, restored nodes appended in placement order.
+    const byId = new Map(this.state.bookmarks.map((n) => [n.id, n]))
+    const named = options.parentId ? byId.get(options.parentId) : undefined
+    const fallbackParent = named?.type === 'folder' ? named.id : this.fallbackFolder()
+    const inBatch = new Map(wanted.map(({ node }) => [node.id, node]))
+    /** Handed-in id → the id it came back under (itself, or the fallback's new id). */
+    const cameBackAs = new Map<string, string>()
+    const restoredIds = new Set<string>()
+    const touched = new Set<string>()
+
+    const place = (entry: (typeof wanted)[number], parentId: string): void => {
+      const id = byId.has(entry.node.id) ? newId('bm') : entry.node.id
+      let count = 0
+      for (const n of byId.values()) if (n.parentId === parentId) count += 1
+      const at = clampIndex(entry.node.index, count)
+      for (const n of byId.values()) {
+        if (n.parentId === parentId && n.index >= at) byId.set(n.id, { ...n, index: n.index + 1 })
+      }
+      const restored: BookmarkNode = { ...entry.node, id, parentId, index: at }
+      byId.set(id, restored)
+      cameBackAs.set(entry.node.id, id)
+      restoredIds.add(id)
+      if (!restoredIds.has(parentId)) touched.add(parentId)
+      results[entry.at] = restored
+    }
+
+    // Parents first: a node whose parent is restored in this batch waits for it; siblings go
+    // by index (a stable sort keeps the handed-in order among equals) so each lands on its slot.
+    const slot = (entry: (typeof wanted)[number]): number =>
+      Number.isFinite(entry.node.index) ? entry.node.index : Number.MAX_SAFE_INTEGER
+    let pending = [...wanted].sort((a, b) => slot(a) - slot(b))
+    while (pending.length) {
+      const waiting: typeof pending = []
+      for (const entry of pending) {
+        const parent = entry.node.parentId
+        const batchParent = parent === null ? undefined : inBatch.get(parent)
+        if (parent !== null && batchParent?.type === 'folder' && !cameBackAs.has(parent)) {
+          waiting.push(entry)
+          continue
+        }
+        const target = parent === null ? undefined : byId.get(cameBackAs.get(parent) ?? parent)
+        place(entry, target?.type === 'folder' ? target.id : fallbackParent)
+      }
+      if (waiting.length === pending.length) {
+        // Folders waiting on each other (never from a real tree): the first is homed in the
+        // fallback folder rather than dropped, and the rest follow it in the next rounds.
+        const [first, ...rest] = waiting
+        place(first, fallbackParent)
+        pending = rest
+      } else {
+        pending = waiting
+      }
+    }
+
+    const now = this.now()
+    for (const id of touched) {
+      const parent = byId.get(id)
+      if (parent) byId.set(id, { ...parent, dateGroupModified: now })
+    }
+    this.write([...byId.values()])
+    return results.map((r) => (r ? this.tree.get(r.id) : null))
   }
 
   /** Record that the user opened a bookmark. */

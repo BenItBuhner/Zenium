@@ -25,7 +25,8 @@
 
     <!-- A phone sheet drawn natively per the v2 draft (§6): neutral panel, top radius 12, edge to
          edge under the navigation bar, scrim black .4 light / .55 dark. The 1 dp hairline is drawn
-         by the sheet's content view (SheetEdge, under NativePromptSheet and ext/ExtensionSheet):
+         by the sheet's content view (SheetEdge, under NativePromptSheet, ext/ExtensionSheet and
+         CustomTabMenuSheet):
          its sides run through the navigation bar to the screen's bottom, so the sheet style pads
          nothing for the bar – the content view takes the bar as its own bottom padding, through the
          edge – where Material's would pad the container and stop the content view, and the
@@ -57,21 +58,12 @@
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
 
-    <!-- The custom tab's menu: the same sheet under its own name, with the sheet style padding the
-         container for the navigation bar as Material's does (CustomTabMenuSheet draws its own
-         border and pads nothing for the bar itself). -->
-    <style name="ThemeOverlay.Zen.CustomTabSheet" parent="ThemeOverlay.Zen.Sheet">
-        <item name="bottomSheetStyle">@style/Widget.Zen.CustomTabSheet</item>
-    </style>
-    <style name="ThemeOverlay.Zen.CustomTabSheet.Dark" parent="ThemeOverlay.Zen.Sheet.Dark">
-        <item name="bottomSheetStyle">@style/Widget.Zen.CustomTabSheet.Dark</item>
-    </style>
-    <style name="Widget.Zen.CustomTabSheet" parent="Widget.Zen.Sheet">
-        <item name="paddingBottomSystemWindowInsets">true</item>
-    </style>
-    <style name="Widget.Zen.CustomTabSheet.Dark" parent="Widget.Zen.Sheet.Dark">
-        <item name="paddingBottomSystemWindowInsets">true</item>
-    </style>
+    <!-- The custom tab's menu: the same sheet under its own name. Its content view (CustomTabMenuSheet)
+         draws the edge and takes the navigation bar as its own bottom padding through it, like the
+         prompt sheet's and the extension sheet's, so the sheet style pads nothing for the bar here
+         either: the hairline's sides run through the bar to the screen's bottom. -->
+    <style name="ThemeOverlay.Zen.CustomTabSheet" parent="ThemeOverlay.Zen.Sheet" />
+    <style name="ThemeOverlay.Zen.CustomTabSheet.Dark" parent="ThemeOverlay.Zen.Sheet.Dark" />
 
     <!-- A native prompt sheet (NativePromptSheet, v2 §9.23): the same sheet, coming and going on
          §11.3's 120 ms opacity fade in place instead of the platform's slide; the dim with it. -->

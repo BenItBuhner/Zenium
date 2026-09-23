@@ -215,7 +215,8 @@ function PromoSheet({ due, onGone }: PromoProps): JSX.Element {
         appIcon: <AppIconImage variant={appIconVariant(appIcon)} />,
         description: BODY
       }}
-      focus="first"
+      // A title-and-notice sheet holds the focus on its container (§9.22), never on "Not now".
+      focus="dialog"
       handleLabel="Resize prompt"
       sheetRef={sheet}
       onClose={() => {

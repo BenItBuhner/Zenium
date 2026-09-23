@@ -1,4 +1,4 @@
-import type { WindowPrompt } from '../shared/types'
+import type { WindowPrompt, WindowPromptDownloads } from '../shared/types'
 import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
@@ -10,19 +10,28 @@ interface Pending {
 
 /**
  * Questions the chrome asks about a window as a whole – "Close N tabs?" before a window with
- * several tabs closes, "Quit Zenium?" – shown window-modal by that window's chrome. One at a
- * time per window: a question raised while another is up is answered no, so the flow that asked
- * simply stops.
+ * several tabs closes, "Quit Zenium?", the downloads a quit or a close would end (downloads-35)
+ * – shown window-modal by that window's chrome. One at a time per window: a question raised
+ * while another is up is answered no, so the flow that asked simply stops.
  */
 export class WindowPrompts {
   private readonly pending = new Map<string, Pending>()
 
   constructor(private readonly browser: Browser) {}
 
-  /** Resolves with the user's answer; a window that is gone (or busy with a question) says no. */
-  ask(win: ZenWindow, kind: WindowPrompt['kind'], count: number): Promise<boolean> {
+  /**
+   * Resolves with the user's answer; a window that is gone (or busy with a question) says no.
+   * `count` is the tabs warning's (0 when it is not asked), `downloads` the downloads the answer
+   * ends; the two make one prompt.
+   */
+  ask(
+    win: ZenWindow,
+    kind: WindowPrompt['kind'],
+    count: number,
+    downloads: WindowPromptDownloads | null = null
+  ): Promise<boolean> {
     if (!win.alive || win.prompt) return Promise.resolve(false)
-    const prompt: WindowPrompt = { id: newId('prompt'), kind, count }
+    const prompt: WindowPrompt = { id: newId('prompt'), kind, count, downloads }
     return new Promise((resolve) => {
       this.pending.set(prompt.id, { win, resolve })
       win.prompt = prompt
