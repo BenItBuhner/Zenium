@@ -45,10 +45,12 @@ import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
   closeBarEditor,
+  closeHistoryMenu,
   closeTabsMenu,
   contentAreaStore,
   dismissBanner,
   openBarEditor,
+  openHistoryMenu,
   openMediaSheet,
   openTabsMenu,
   overlayCoversContent,
@@ -73,6 +75,7 @@ import { ChipRun, phonePillChips, pillChipsDrawn, pillChipsSpoken } from './pill
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
+import { BackHistoryMenu } from './BackHistoryMenu'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
 import { useFullscreenReturn } from './useFullscreenReturn'
@@ -116,12 +119,13 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     lastActive.current = activeTabId
   }, [activeTabId, ui.drawerOpen])
 
-  // Leaving the phone layout (rotation, DeX) drops a half-carried bar, the bar's editor and menu.
+  // Leaving the phone layout (rotation, DeX) drops a half-carried bar, the bar's editor and menus.
   useEffect(
     () => () => {
       dismissDock()
       closeBarEditor()
       closeTabsMenu()
+      closeHistoryMenu()
     },
     []
   )
@@ -157,11 +161,16 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   useConnectivityMessages(state.network.online)
 
   // A hold on the Tabs button: its quick menu, anchored to the button; on Home, the homepage
-  // setting (TB-15: Chrome's long-press on its Home button); any other hold, the editor.
+  // setting (TB-15: Chrome's long-press on its Home button); on Back or Forward with history that
+  // way, the tab's history popup (GN-08: Chrome's long-press on its toolbar's Back); any other
+  // hold – a Back with nothing behind it included – the editor, as before.
   const hold = useBarHold({
     onHold: (item, rect) => {
       if (item === 'tabs') void openTabsMenu(rect, activeTabId)
       else if (item === 'home') openSettings('look')
+      else if (item === 'back' && tab?.canGoBack) void openHistoryMenu(rect, 'back', activeTabId)
+      else if (item === 'forward' && tab?.canGoForward)
+        void openHistoryMenu(rect, 'forward', activeTabId)
       else void openBarEditor(activeTabId)
     }
   })
@@ -379,6 +388,14 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       {ui.drawerOpen && <SpacesDrawer state={state} isDark={isDark} />}
       {ui.tabsMenu && !barHidden && (
         <TabsQuickMenu state={state} anchor={ui.tabsMenu} edge={edge} onClose={closeTabsMenu} />
+      )}
+      {ui.historyMenu && !barHidden && (
+        <BackHistoryMenu
+          state={state}
+          anchor={ui.historyMenu.anchor}
+          direction={ui.historyMenu.direction}
+          onClose={closeHistoryMenu}
+        />
       )}
       {/* The frame's dialog host (the shell's box on a phone): the bookmark editor is one of its sheets. */}
       <TabDialogs state={state} />

@@ -51,7 +51,7 @@ import { TabDragController, parseDropKey } from './tabDrag'
 import { surfaceMounted, ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
-import { Menus } from './menus'
+import { Menus, directedNavigationHistory } from './menus'
 import { SuggestionService } from './suggestions'
 import { sanitizeResourceSettings } from './resources/switches'
 import { AgentService } from './agent/service'
@@ -2700,6 +2700,13 @@ export class Browser {
       'tab.switchTo': ({ tabId }, win) => tabs.switchTo(tabId, win),
       'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
       'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),
+      'tab.navigationHistory': ({ tabId, direction, limit }) => {
+        const { entries, index } = tabs.navigationEntries(tabId)
+        return directedNavigationHistory(entries, index, direction, limit).map((entry) => ({
+          ...entry,
+          favicon: this.history.faviconFor(entry.url)
+        }))
+      },
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
       'tab.navigationMenu': ({ tabId }, win) => this.menus.showNavigationMenu(tabId, win),
       'tab.setZoom': ({ tabId, delta }) =>

@@ -69,6 +69,12 @@ describe('extensionChromeAloneOverContent', () => {
     expect(alone({ ...withPanel, barMenuOpen: true })).toBe(false)
     expect(alone({ ...withPanel, bookmarkAllTabs: { tabIds: [], defaultTitle: '' } })).toBe(false)
     expect(alone({ ...withPanel, tabsMenu: { x: 0, y: 0, width: 44, height: 44 } })).toBe(false)
+    expect(
+      alone({
+        ...withPanel,
+        historyMenu: { anchor: { x: 0, y: 0, width: 44, height: 44 }, direction: 'back' }
+      })
+    ).toBe(false)
     expect(alone({ ...quiet, extensionPrompts: [prompt], overlay: 'settings' })).toBe(false)
   })
 })

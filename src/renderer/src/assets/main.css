@@ -7750,6 +7750,19 @@
   .zen-quick-menu-item:disabled {
     opacity: 0.4;
   }
+  /*
+   * The Back button's history popup (`BackHistoryMenu`, GN-08): the same menu surface at §9.20's
+   * list width, its rows leading with a 16 px favicon – the globe in the de-emphasised ink where
+   * the site has none, as Chrome's default favicon.
+   */
+  .zen-histmenu-favicon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .zen-histmenu-favicon-fallback {
+    color: var(--v2-text-deemphasized);
+  }
 
   /*
    * The bar's editor (`BarEditorSheet`), on the v2 draft: the dialog surface with a hairline

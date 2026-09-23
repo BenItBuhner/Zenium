@@ -37,6 +37,7 @@ import type {
 import type { ZenWindow } from '../window'
 import type { ChromeContextParams, PageContextParams } from '../platform'
 import {
+  directedNavigationHistory,
   hasSiteInfo,
   isDownloadable,
   joinGroups,
@@ -3706,5 +3707,32 @@ describe('navigationWindow', () => {
     expect(navigationWindow(40, 39, NAVIGATION_MENU_MAX)).toEqual({ start: 30, end: 40 })
     // At the oldest entry: all ten are forward entries.
     expect(navigationWindow(40, 0, NAVIGATION_MENU_MAX)).toEqual({ start: 0, end: 10 })
+  })
+})
+
+describe('directedNavigationHistory', () => {
+  const stack = Array.from({ length: 12 }, (_, i) => ({
+    url: `https://example.org/${i}`,
+    title: i % 3 === 0 ? '' : `Page ${i}`
+  }))
+
+  it('lists the back entries nearest first, capped at the limit, never the current one', () => {
+    const rows = directedNavigationHistory(stack, 10, 'back', 8)
+    expect(rows.map((r) => r.index)).toEqual([9, 8, 7, 6, 5, 4, 3, 2])
+    expect(rows[0]).toEqual({ index: 9, url: 'https://example.org/9', title: '' })
+    expect(rows[1].title).toBe('Page 8')
+  })
+
+  it('lists the forward entries nearest first and stops at the stack’s end', () => {
+    expect(directedNavigationHistory(stack, 9, 'forward', 8).map((r) => r.index)).toEqual([10, 11])
+  })
+
+  it('gives nothing at either end of the stack, off it, or for a stack of one', () => {
+    expect(directedNavigationHistory(stack, 0, 'back', 8)).toEqual([])
+    expect(directedNavigationHistory(stack, 11, 'forward', 8)).toEqual([])
+    expect(directedNavigationHistory(stack, -1, 'back', 8)).toEqual([])
+    expect(directedNavigationHistory(stack, 12, 'back', 8)).toEqual([])
+    expect(directedNavigationHistory(stack.slice(0, 1), 0, 'back', 8)).toEqual([])
+    expect(directedNavigationHistory([], -1, 'back', 8)).toEqual([])
   })
 })

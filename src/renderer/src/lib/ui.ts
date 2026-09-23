@@ -15,6 +15,7 @@ import type {
   LongCapture,
   LongCaptureCrop,
   MenuDescriptor,
+  NavigationDirection,
   OverlayKind,
   Rect,
   ScreenshotSaved,
@@ -442,6 +443,11 @@ export interface UiState {
   frameSheetOpen: boolean
   /** Phone layout: the Tabs button's quick menu is up, anchored to the button (window px). */
   tabsMenu: Rect | null
+  /**
+   * Phone layout: the Back (or Forward) button's hold has its history popup up, anchored to the
+   * button (window px), listing the stack in `direction` (GN-08).
+   */
+  historyMenu: { anchor: Rect; direction: NavigationDirection } | null
   /** The downloads bubble (anchored under the toolbar button) is up. */
   downloadsOpen: boolean
   /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
@@ -597,6 +603,7 @@ export const uiStore = createStore<UiState>(
     sendTabSheet: null,
     frameSheetOpen: false,
     tabsMenu: null,
+    historyMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     defaultBrowserAsk: null,
@@ -1097,6 +1104,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.extensionsSheetOpen &&
     !ui.sendTabSheet &&
     !ui.tabsMenu &&
+    !ui.historyMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.credentialLeakOpen &&
@@ -1160,6 +1168,7 @@ export function invalidateSnapshot(): void {
     !ui.sendTabSheet &&
     !ui.frameSheetOpen &&
     !ui.tabsMenu &&
+    !ui.historyMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.credentialLeakOpen &&
@@ -1861,6 +1870,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.barEditorOpen ||
     ui.frameSheetOpen ||
     ui.tabsMenu !== null ||
+    ui.historyMenu !== null ||
     ui.blockedPopupsPanel !== null ||
     ui.securityPromptOpen ||
     ui.credentialLeakOpen ||
@@ -2081,6 +2091,28 @@ export async function openTabsMenu(anchor: Rect, activeTabId: string | null): Pr
 export function closeTabsMenu(): void {
   if (!uiStore.get().tabsMenu) return
   uiStore.set({ tabsMenu: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The Back (or Forward) button's hold: the tab's history popup, anchored to the button (GN-08;
+ * Chrome's `NavigationPopup` on its tablet toolbar's Back). It overhangs the content area like
+ * the Tabs button's menu, so the page gives way to its snapshot while the popup is up.
+ */
+export async function openHistoryMenu(
+  anchor: Rect,
+  direction: NavigationDirection,
+  activeTabId: string | null
+): Promise<void> {
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ historyMenu: { anchor, direction } })
+}
+
+export function closeHistoryMenu(): void {
+  if (!uiStore.get().historyMenu) return
+  uiStore.set({ historyMenu: null })
   invalidateSnapshot()
   returnFocusToPage()
 }
