@@ -164,7 +164,7 @@ function Exit({
       <div className="zen-group-header flex shrink-0 items-center gap-2 pl-3 pr-2">
         <GroupBadge folder={item.folder} />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{item.folder.name}</span>
-        <span className="text-[12px] tabular-nums text-[var(--zen-muted)]">{item.tabs.length}</span>
+        <span className="zen-group-row-count">{item.tabs.length}</span>
         <ChevronDown
           className="h-4 w-4 shrink-0 opacity-60"
           style={{ transform: item.folder.collapsed ? 'rotate(-90deg)' : 'none' }}

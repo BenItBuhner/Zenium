@@ -276,7 +276,12 @@ export function GroupCard({
             <Favicon key={tab.id} tab={tab} size={14} />
           ))}
         </span>
-        <span className="text-[12px] tabular-nums text-[var(--zen-muted)]">{count}</span>
+        {/* The count is the aside in both states (§9.36; #360's verdict): the tablet row's 13
+            tabular at 69%, never a badge – a pill on the tinted header would be two fills
+            stacked, and a header carrying the group's dot never carries a badge too (§9.19). */}
+        <span className="zen-group-row-count" data-testid="group-card-count">
+          {count}
+        </span>
         <ChevronDown
           className="h-4 w-4 shrink-0 opacity-60 transition-transform duration-200 motion-reduce:transition-none"
           style={{ transform: collapsed ? 'rotate(-90deg)' : 'none' }}

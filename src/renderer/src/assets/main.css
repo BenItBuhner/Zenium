@@ -7890,6 +7890,9 @@
   font-size: calc(14px / var(--zen-text-zoom, 1));
   line-height: 1;
 }
+/* The count is the aside on every host and in both states (#360's verdict on §9.36): the phone
+   overview's group card header (`GroupCard`, the Departures ghost) reads it too – never a pill on
+   the tinted header, never a badge beside the group's dot (§9.19). */
 .zen-group-row-count {
   flex-shrink: 0;
   color: var(--v2-control-text-deemphasized, var(--zen-muted));
