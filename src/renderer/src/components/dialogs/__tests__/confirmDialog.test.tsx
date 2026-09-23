@@ -511,11 +511,7 @@ describe('the exported keyboard (useConfirmKeyboard) on a bare container', () =>
     root = createRoot(container)
     const later = vi.fn()
     render(
-      <Bare
-        inner
-        confirm={later}
-        container={(body) => body.closest<HTMLElement>('[data-bare]')}
-      />
+      <Bare inner confirm={later} container={(body) => body.closest<HTMLElement>('[data-bare]')} />
     )
     await settle()
     // The focus held on the box, above the body the ref names: heard, because the listener

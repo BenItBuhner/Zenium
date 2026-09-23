@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- the prompt primitive ships with its keyboard (`useConfirmKeyboard`, `OWN_ENTER`): one implementation of §9.22's contract, for the primitive's own root and for any other held container – a popover's level, the phone's confirmation sheet */
 import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
