@@ -35,6 +35,7 @@ import { LongScreenshotLayer } from './phone/LongScreenshotSheet'
 import { PrintPreviewDialog } from './print/PrintPreviewDialog'
 import { MediaLayer } from './phone/MediaSheet'
 import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
+import { DeviceChooserLayer } from './devices/DeviceChooserDialog'
 import { ShareLayer } from './share/SharePopover'
 import { FolderDeleteDialog } from './sidebar/FolderDeleteDialog'
 import { NameWindowDialog } from './windowName/NameWindowDialog'
@@ -63,7 +64,8 @@ const TAB_ICONS = [
  * other request through to this dialog), the pinned-URL editor
  * and the icon picker, the security prompts (HTTP sign-in, certificate choice) the page's
  * requests wait on, the permission prompts a page's requests wait on, the screen-capture picker
- * a page's `getDisplayMedia` waits on, the page's own dialogs
+ * a page's `getDisplayMedia` waits on, the device chooser a page's `requestDevice()` waits on
+ * (with the Bluetooth pairing prompt over it), the page's own dialogs
  * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes or
  * Zenium quits, Chrome's Name window prompt, the new tab page's add / edit shortcut dialog, the extension install and
  * permission prompts, the site-information popover's "Clear site data?" confirmation, the
@@ -135,6 +137,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <LongScreenshotLayer />
       <InstallDialogLayer state={state} />
       <ScreenPickerLayer state={state} />
+      <DeviceChooserLayer state={state} />
       <CaptureLayer />
       <ShareLayer state={state} />
       <LeakWarnings state={state} />

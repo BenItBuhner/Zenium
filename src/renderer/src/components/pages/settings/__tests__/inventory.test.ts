@@ -280,6 +280,7 @@ function desktopState(): UIState {
     blockedPopups: {},
     permissionRules: [{ origin: 'https://meet.example', permission: 'camera', decision: 'allow' }],
     permissionDefaults: {},
+    deviceGrants: [],
     lastSafetyCheck: null,
     permissionPrompts: [],
     securityPrompts: [],

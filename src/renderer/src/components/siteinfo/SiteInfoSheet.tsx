@@ -21,6 +21,8 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
+  Volume2,
+  VolumeX,
   type LucideIcon
 } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
@@ -76,6 +78,7 @@ import {
   siteInfoStore,
   stepBackSiteInfo
 } from '@renderer/lib/siteInfo'
+import { showsSoundRow, soundChoice } from '@renderer/lib/siteInfoCopy'
 import { browserStore, overlayAvailable, pushToast, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
@@ -713,13 +716,16 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
             )}
             {!extension && (
               <SheetMainRows
+                tab={tab}
                 site={site}
                 security={security}
                 info={info}
                 loading={loading}
+                busy={actions.busy}
                 push={push}
                 onSettings={() => actions.openSettings()}
                 onClear={() => push('clear-data')}
+                onSound={(allowed) => void actions.setSound(allowed)}
               />
             )}
           </section>
@@ -936,28 +942,41 @@ function PillChipRows({
   )
 }
 
-/** The four rows of the root level, and the two actions under a hairline. */
+/**
+ * The four rows of the root level – with the Sound switch row after Permissions for a tab that
+ * plays or has played sound, or whose site has its own `sound` answer (the one setting "Mute
+ * Site" and Settings write too), as Chrome Android's page info shows Sound for an audible tab –
+ * and the two actions under a hairline.
+ */
 function SheetMainRows({
+  tab,
   site,
   security,
   info,
   loading,
+  busy,
   push,
   onSettings,
-  onClear
+  onClear,
+  onSound
 }: {
+  tab: Tab
   site: SiteDescription
   security: Security
   info: SiteInfo | null
   loading: boolean
+  busy: Busy
   push: (id: LevelId) => void
   onSettings: () => void
   onClear: () => void
+  onSound: (allowed: boolean) => void
 }): JSX.Element {
   const reading = loading && !info
   const cookies = info?.cookies.items ?? []
   const permissions = info?.permissions ?? []
   const hasData = info ? cookies.length > 0 || storesAnything(info) : false
+  const sound = info !== null && showsSoundRow(permissions, tab)
+  const soundAllowed = soundChoice(permissions) !== 'deny'
   return (
     <div className="flex flex-col pb-2">
       <SheetRow
@@ -995,6 +1014,13 @@ function SheetMainRows({
             }
             onClick={permissions.length ? () => push('permissions') : undefined}
           />
+          {sound && (
+            <SoundSwitchRow
+              allowed={soundAllowed}
+              busy={busy === 'permission:sound'}
+              onChange={onSound}
+            />
+          )}
           <div aria-hidden className="zen-sheet-sep" />
           <SheetRow glyph={<Settings />} label="Site settings" onClick={onSettings} />
           <button
@@ -1020,6 +1046,40 @@ function SheetMainRows({
         />
       )}
     </div>
+  )
+}
+
+/**
+ * The Sound row as a switch (§10.4: the phone's form of a two-way setting): the chassis row at
+ * its base 44 (§9.21: the 20 px switch asks for no more) with the speaker glyph – crossed while
+ * the site is muted – "Sound" and the shared `.zen-v2-switch` trailing, the whole row the
+ * target; on is the default (Allow), off blocks the
+ * site's sound as "Mute Site" does. Busy while the core writes (§9.30): `aria-busy`, a second
+ * press does nothing, the switch shows the value the core still holds.
+ */
+function SoundSwitchRow({
+  allowed,
+  busy,
+  onChange
+}: {
+  allowed: boolean
+  busy: boolean
+  onChange: (allowed: boolean) => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={allowed}
+      aria-busy={busy || undefined}
+      className="zen-sheet-item"
+      data-permission="sound"
+      onClick={busy ? undefined : () => onChange(!allowed)}
+    >
+      <span className="zen-sheet-item-glyph">{allowed ? <Volume2 /> : <VolumeX />}</span>
+      <span className="min-w-0 flex-1 truncate">Sound</span>
+      <span className="zen-v2-switch" aria-hidden />
+    </button>
   )
 }
 
@@ -1455,6 +1515,7 @@ function useActions(
   clearCookies: () => Promise<void>
   clearData: () => Promise<void>
   resetPermission: (permission?: string) => Promise<void>
+  setSound: (allowed: boolean) => Promise<void>
   setSiteData: (current: SiteInfo['siteData'], choice: SiteDataChoice) => Promise<void>
   openSettings: () => void
 } {
@@ -1493,6 +1554,19 @@ function useActions(
     resetPermission: (permission?: string) =>
       act(`permission:${permission ?? '*'}`, async () => {
         await cmd('site.resetPermissions', { tabId: tab.id, permission })
+        refreshSiteInfo()
+      }),
+    // The Sound row: off is a `sound` block for the site (what "Mute Site" writes); on takes the
+    // block away rather than storing an allow, as Chrome clears an exception equal to the default.
+    setSound: (allowed: boolean) =>
+      act('permission:sound', async () => {
+        if (allowed) await cmd('permissions.forget', { origin: site.origin, permission: 'sound' })
+        else
+          await cmd('permissions.set', {
+            origin: site.origin,
+            permission: 'sound',
+            decision: 'deny'
+          })
         refreshSiteInfo()
       }),
     // The site onto the list picked (Chrome's "Add" of the cookies page, from the page itself),

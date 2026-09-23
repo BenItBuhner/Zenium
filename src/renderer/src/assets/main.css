@@ -601,6 +601,86 @@
   background: var(--v2-accent);
 }
 /*
+ * The device chooser's rows in the picker's slot (MW-32..35, `components/devices`; §9.13): the
+ * list is the consumer's markup in `PickerDialog`'s body – the slot runs it edge to edge and
+ * scrolls it under the title block at the 80% cap (the primitive's rule above; no scroller of
+ * its own here). The slot clips at its sides as a popover's body does, so the rows stand
+ * `--v2-ring-room` in and give it back from their gutter (the `.zen-bm-popover-body` rule
+ * further down, the same modifier by context; at two classes it wins over the primitive's own
+ * `width: 100%` further down whatever the order) and a focused row's ring is whole. A picked
+ * row takes the primitive's selected fill (§9.6, the `[role='radio'][aria-checked='true']`
+ * rule) and its trailing check is `.zen-v2-row-trail`. Under the list the scanning line
+ * (§9.30's 16 spinner, the words at 69%, a row's own geometry and no hairline over it – §10's
+ * lines rule) and the empty state (§9.17's one sentence at 15 / 69%, centred in a 32 gutter,
+ * its first line 32 under the title block; Chrome's udev notice 8 under it at 13) read the same
+ * tokens. The requesting host in the title wraps at its dots (`.zen-device-chooser-host`, as
+ * the screen picker's origin does). The pairing prompt's PIN (`PromptDialog`'s field, six
+ * digits) reads in `tabular-nums`, letter-spaced so six digits read as six; the PIN to compare
+ * (`confirmPin`) is the title size of §4's scale (22 on 28 – the wordmark's 34 is the one size
+ * off the scale and stays the wordmark's) at the heading weight in `tabular-nums`, centred; six
+ * letter-spaced digits at 22 read across a room.
+ */
+.zen-device-chooser {
+  display: flex;
+  flex-direction: column;
+}
+.zen-device-chooser-list {
+  display: flex;
+  flex-direction: column;
+}
+.zen-device-chooser-list > .zen-device-chooser-row {
+  width: calc(100% - 2 * var(--v2-ring-room));
+  margin-inline: var(--v2-ring-room);
+  padding-inline: calc(16px - var(--v2-ring-room));
+}
+.zen-device-chooser-host {
+  overflow-wrap: anywhere;
+}
+.zen-device-chooser-scanning {
+  display: flex;
+  min-height: var(--v2-row);
+  align-items: center;
+  gap: 12px;
+  padding: var(--v2-row-pad) 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-device-chooser-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 32px 0;
+  text-align: center;
+}
+.zen-device-chooser-empty-line {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-device-chooser-notice {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-confirm-dialog[data-pairing-kind='providePin'] .zen-v2-field[aria-label='PIN'] {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.25em;
+}
+.zen-device-pairing-pin {
+  margin: 0;
+  padding: 0 16px;
+  color: var(--v2-text);
+  text-align: center;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.25em;
+}
+/*
  * The first run's own controls keep the ring under the coarse-pointer suppressor further down,
  * as every v2 control does (§9.6), in the window's accent; inside the row, since rows run edge to
  * edge.

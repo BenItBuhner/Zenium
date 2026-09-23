@@ -278,6 +278,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     defaultBrowser: { isDefault: false, prompt: null },
     permissionRules: [],
     permissionDefaults: {},
+    deviceGrants: [],
     lastSafetyCheck: null,
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),
