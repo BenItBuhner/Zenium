@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Smoke: MV3 worker probe",
+  "version": "1.0",
+  "description": "Reports the chrome.* surface its background service worker starts with; the desktop smoke's mv3-worker scenario reads the line.",
+  "permissions": ["contextMenus", "storage"],
+  "background": { "service_worker": "sw.js" }
+}
