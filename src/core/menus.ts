@@ -2569,8 +2569,9 @@ export class Menus {
    * The menu of a device's heading in the History page's "Tabs from other devices" (ID-28; the
    * lead's #326 ruling: a device's actions are its heading's context menu on desktop – a
    * right-click or the menu key on the line, as Firefox's Synced Tabs keep theirs – and the
-   * phone's sheet). Two items, Chrome's synced-device card's: Open All Tabs opens every tab the
-   * device lists here, and Hide Device takes the group off the page for the session (the core
+   * phone's sheet). Two items, Chrome's synced-device card's pair under §10.1's names: Open All
+   * in Tabs (Firefox's word for the action) opens every tab the device lists here, and Hide
+   * Device takes the group off the page for the session (the core
    * holds the set, `PageService.hideDevice`; the page's "Show hidden devices" row brings them
    * back). A device the engine no longer lists – its list moved since the page drew it – has no
    * tabs to open; its Hide Device still stands, since its heading does.
@@ -2581,7 +2582,7 @@ export class Menus {
     this.popup(
       [
         {
-          label: 'Open All Tabs',
+          label: 'Open All in Tabs',
           enabled: tabs.length > 0,
           click: () => this.openRemoteTabs(tabs, win)
         },
@@ -2594,9 +2595,9 @@ export class Menus {
   }
 
   /**
-   * Open All Tabs: each tab the device lists opens in this window as a new tab, the first in
-   * front and the rest behind it in the group's order (newest activity first) – Firefox's
-   * "Open All in Tabs". A tab this window already holds under the tab's own id (the Open tabs
+   * Open All in Tabs: each tab the device lists opens in this window as a new tab, the first in
+   * front and the rest behind it in the group's order (newest activity first). A tab this
+   * window already holds under the tab's own id (the Open tabs
    * scope carries the records too, ID-10) is not opened a second time: it is the one brought to
    * the front when it is first, as the row's click has it.
    */

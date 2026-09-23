@@ -153,7 +153,7 @@ interface Picked {
  * sync on and nothing published no group at all, as Recently closed when empty. A remote tab's
  * row opens the page in a new tab (a middle or Ctrl click behind this one), or brings the tab to
  * the front when this device already holds it; its menu is the history menu less the visit's
- * items (`RemoteTabs`). A device's heading line has a menu of its own – Open All Tabs, Hide
+ * items (`RemoteTabs`). A device's heading line has a menu of its own – Open All in Tabs, Hide
  * Device (the lead's #326 ruling; a hidden device stays hidden for the session and comes back
  * through the "Show hidden devices" row, the phone's #316 answer).
  *
@@ -993,7 +993,7 @@ function RemoteTabs({
  * would read as an empty one. The chevron points at the rows – right while they are folded
  * away, turned down while they show, as the bookmarks tree's twisty. Folded, the rows leave
  * the DOM (the arrows walk what is shown, §9.22) and the group keeps its heading line; the
- * fold is the session's (`collapsedDevices`). The device's actions – Open All Tabs, Hide
+ * fold is the session's (`collapsedDevices`). The device's actions – Open All in Tabs, Hide
  * Device – are the heading line's native context menu (the lead's #326 ruling: a right-click
  * on the line or the menu key with the focus in it, as Firefox's Synced Tabs; the heading's
  * one trailing slot holds the disclosure alone, and the disclosure stays one – `aria-expanded`

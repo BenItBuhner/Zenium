@@ -4158,7 +4158,7 @@ export interface Commands {
   'history.showHiddenDevices': { args: void; result: void }
   /**
    * The menu of a device's heading on the History page (a right-click or the menu key on its
-   * line; the lead's #326 ruling): Open All Tabs and Hide Device.
+   * line; the lead's #326 ruling): Open All in Tabs and Hide Device.
    */
   'history.deviceMenu': { args: { deviceId: string } & MenuAnchor; result: void }
 

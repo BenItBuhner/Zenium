@@ -2885,7 +2885,7 @@ describe('the history device heading menu', () => {
     Object.values(h.browser.state.model.tabs).map((t) => t.url)
   const activeUrl = (h: Harness): string | undefined => h.browser.tabs.activeTabFor(h.win)?.url
 
-  it('offers Open All Tabs and Hide Device, at the anchor the heading asked with', () => {
+  it('offers Open All in Tabs and Hide Device, at the anchor the heading asked with', () => {
     const h = harness(DESKTOP)
     vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([
       phone([remote('p1', 'https://a.test/'), remote('p2', 'https://b.test/')])
@@ -2896,12 +2896,12 @@ describe('the history device heading menu', () => {
       y: 80,
       keyboard: true
     })
-    expect(labels(h.shown())).toEqual(['Open All Tabs', 'Hide Device'])
+    expect(labels(h.shown())).toEqual(['Open All in Tabs', 'Hide Device'])
     expect(h.shown()[0]!.enabled).toBe(true)
     expect(h.where()).toMatchObject({ source: 'history', x: 120, y: 80, keyboard: true })
   })
 
-  it('Open All Tabs opens every listed tab here in the group’s order, the first in front, the rest behind', () => {
+  it('Open All in Tabs opens every listed tab here in the group’s order, the first in front, the rest behind', () => {
     const h = harness(DESKTOP)
     vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([
       phone([
@@ -2912,7 +2912,7 @@ describe('the history device heading menu', () => {
     ])
     const before = openTabs(h)
     h.browser.handleCommand(h.win, 'history.deviceMenu', { deviceId: 'phone' })
-    h.shown().find((item) => item.label === 'Open All Tabs')!.click!()
+    h.shown().find((item) => item.label === 'Open All in Tabs')!.click!()
     const opened = openTabs(h).filter((url) => !before.includes(url))
     expect(opened).toEqual(['https://a.test/', 'https://b.test/', 'https://c.test/'])
     expect(activeUrl(h)).toBe('https://a.test/')
@@ -2932,7 +2932,7 @@ describe('the history device heading menu', () => {
     ])
     const before = openTabs(h)
     h.browser.handleCommand(h.win, 'history.deviceMenu', { deviceId: 'phone' })
-    h.shown().find((item) => item.label === 'Open All Tabs')!.click!()
+    h.shown().find((item) => item.label === 'Open All in Tabs')!.click!()
     const opened = openTabs(h).filter((url) => !before.includes(url))
     expect(opened).toEqual(['https://b.test/'])
     expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(held.id)
@@ -2942,7 +2942,7 @@ describe('the history device heading menu', () => {
     const h = harness(DESKTOP)
     vi.spyOn(h.browser.sync, 'tabsFromDevices').mockReturnValue([])
     h.browser.handleCommand(h.win, 'history.deviceMenu', { deviceId: 'gone' })
-    expect(labels(h.shown())).toEqual(['Open All Tabs', 'Hide Device'])
+    expect(labels(h.shown())).toEqual(['Open All in Tabs', 'Hide Device'])
     expect(h.shown()[0]!.enabled).toBe(false)
     h.sent.length = 0
     h.shown().find((item) => item.label === 'Hide Device')!.click!()
