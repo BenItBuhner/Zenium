@@ -469,6 +469,7 @@ describe('the hub from the app menu (§9.29)', () => {
       downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 },
       shortcuts: defaultShortcuts('linux', 'chrome'),
       blockedPopups: {},
+      permissionRules: [],
       translate: { available: true, tabs: {} },
       securityPrompts: [],
       autofill: { prompts: [], picker: null }

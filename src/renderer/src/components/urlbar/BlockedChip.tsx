@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { Shield, ShieldOff } from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { blockedChipLabel, chipCount, siteBlockingState } from '@renderer/lib/blockingUi'
-import { openSiteInfo } from '@renderer/lib/siteInfo'
+import { openSiteInfo, siteInfoAnchoredOn, siteInfoStore } from '@renderer/lib/siteInfo'
 import { uiStore } from '@renderer/lib/ui'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { PillChip } from './PillChip'
@@ -40,7 +40,13 @@ export function BlockedChip({
   collapsed?: boolean
 }): JSX.Element | null {
   const siteState = siteBlockingState(tab, state.blocking, state.settings.blocking)
-  const expanded = uiStore.use((s) => s.siteInfoOpen)
+  // On the desktop the chip reads expanded only while it is the open popover's anchor (§9.20:
+  // one pressed chip per popover – the site-information slot beside it opens the same popover
+  // and wears the fill when it did); the phone's sheet has no anchor, and every site chip on
+  // that pill reflects it.
+  const anchored = siteInfoStore.use((s) => siteInfoAnchoredOn(s, 'shield'))
+  const sheetOpen = uiStore.use((s) => s.siteInfoOpen)
+  const expanded = variant === 'desktop' ? anchored : sheetOpen
   if (siteState === 'no-site') return null
   if (collapsed && !expanded) return null
   const label = blockedChipLabel(siteState, tab.blockedCount)
@@ -67,7 +73,9 @@ export function BlockedChip({
         onActivate={(e) => {
           const chip = e.currentTarget
           const r = chip.getBoundingClientRect()
-          void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height }, chip)
+          void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height }, chip, {
+            by: 'shield'
+          })
         }}
       >
         {content}

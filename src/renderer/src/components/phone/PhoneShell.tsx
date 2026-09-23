@@ -46,10 +46,12 @@ import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import {
   closeBarEditor,
+  closeHistoryMenu,
   closeTabsMenu,
   contentAreaStore,
   dismissBanner,
   openBarEditor,
+  openHistoryMenu,
   openMediaSheet,
   openTabsMenu,
   overlayCoversContent,
@@ -74,6 +76,7 @@ import { ChipRun, phonePillChips, pillChipsDrawn, pillChipsSpoken } from './pill
 import { PhoneStage } from './PhoneStage'
 import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
+import { BackHistoryMenu } from './BackHistoryMenu'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
 import { useFullscreenReturn } from './useFullscreenReturn'
@@ -117,12 +120,13 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     lastActive.current = activeTabId
   }, [activeTabId, ui.drawerOpen])
 
-  // Leaving the phone layout (rotation, DeX) drops a half-carried bar, the bar's editor and menu.
+  // Leaving the phone layout (rotation, DeX) drops a half-carried bar, the bar's editor and menus.
   useEffect(
     () => () => {
       dismissDock()
       closeBarEditor()
       closeTabsMenu()
+      closeHistoryMenu()
     },
     []
   )
@@ -158,14 +162,43 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   useConnectivityMessages(state.network.online)
 
   // A hold on the Tabs button: its quick menu, anchored to the button; on Home, the homepage
-  // setting (TB-15: Chrome's long-press on its Home button); any other hold, the editor.
+  // setting (TB-15: Chrome's long-press on its Home button); on Back or Forward with history that
+  // way, the tab's history popup (GN-08: Chrome's long-press on its toolbar's Back); any other
+  // hold – a Back with nothing behind it included – the editor, as before.
   const hold = useBarHold({
     onHold: (item, rect) => {
       if (item === 'tabs') void openTabsMenu(rect, activeTabId)
       else if (item === 'home') openSettings('look')
+      else if (item === 'back' && tab?.canGoBack) void openHistoryMenu(rect, 'back', activeTabId)
+      else if (item === 'forward' && tab?.canGoForward)
+        void openHistoryMenu(rect, 'forward', activeTabId)
       else void openBarEditor(activeTabId)
     }
   })
+
+  /**
+   * The address surface from the pill: what a tap on the pill's body opens, and what a hold let
+   * go in place opens once the pill is back (GN-10) – Chrome's long-press on the address bar
+   * offers the clipboard, and here the omnibox's clipboard row carries Paste and Paste and go.
+   */
+  const openAddress = (): void => {
+    if (overviewIsOpen()) closeOverview()
+    else if (tab && privateTabLocked(state)) {
+      // The pill over a locked private tab says nothing of the page and opens nothing of it
+      // (the omnibox would show its address): a tap asks for the screen lock, as the cover's
+      // Unlock does (INC-05).
+      void unlockPrivateTabs()
+    }
+    // The new tab page's field is the address control while the pill's slot is its well
+    // (NTP-02): a tap on the well is a tap on the field, which morphs into the omnibox. The
+    // well's chips are inert (main.css `.zen-pill-away > *`), so none is under the finger here.
+    else if (fakeboxAway()) tapFakebox()
+    else {
+      // The pill grows into the omnibox's field as the bar's buttons are pushed off (MOT-07,
+      // lib/omniboxFocus.ts): the bar opens under the field on its way.
+      focusOmnibox(tab?.id ?? null)
+    }
+  }
 
   const pill = usePillGestures({
     edge,
@@ -173,17 +206,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       const icon = (e.target as HTMLElement).closest('[data-site-info]')
       const media = (e.target as HTMLElement).closest('[data-media]')
       const session = media ? mediaSession(state) : null
-      if (overviewIsOpen()) closeOverview()
-      else if (tab && privateTabLocked(state)) {
-        // The pill over a locked private tab says nothing of the page and opens nothing of it
-        // (the omnibox would show its address): a tap asks for the screen lock, as the cover's
-        // Unlock does (INC-05).
-        void unlockPrivateTabs()
-      }
-      // The new tab page's field is the address control while the pill's slot is its well
-      // (NTP-02): a tap on the well is a tap on the field, which morphs into the omnibox. The
-      // well's chips are inert (main.css `.zen-pill-away > *`), so none is under the finger here.
-      else if (fakeboxAway()) tapFakebox()
+      if (overviewIsOpen() || (tab && privateTabLocked(state)) || fakeboxAway()) openAddress()
       else if (session) {
         // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16),
         // over a picture of the tab on screen.
@@ -193,12 +216,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         // information instead – where the translate offer and the blocking shield are (OMN-02).
         const r = icon.getBoundingClientRect()
         void openSiteInfo(tab, { x: r.left, y: r.top, width: r.width, height: r.height })
-      } else {
-        // The pill grows into the omnibox's field as the bar's buttons are pushed off (MOT-07,
-        // lib/omniboxFocus.ts): the bar opens under the field on its way.
-        focusOmnibox(tab?.id ?? null)
-      }
-    }
+      } else openAddress()
+    },
+    onHold: openAddress
   })
 
   const barHidden = ui.urlbar.open
@@ -380,6 +400,14 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       {ui.drawerOpen && <SpacesDrawer state={state} isDark={isDark} />}
       {ui.tabsMenu && !barHidden && (
         <TabsQuickMenu state={state} anchor={ui.tabsMenu} edge={edge} onClose={closeTabsMenu} />
+      )}
+      {ui.historyMenu && !barHidden && (
+        <BackHistoryMenu
+          state={state}
+          anchor={ui.historyMenu.anchor}
+          direction={ui.historyMenu.direction}
+          onClose={closeHistoryMenu}
+        />
       )}
       {/* The frame's dialog host (the shell's box on a phone): the bookmark editor is one of its sheets. */}
       <TabDialogs state={state} />

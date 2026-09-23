@@ -89,7 +89,9 @@ function state(t: Tab, kind: 'normal' | 'private'): UIState {
     blockedPopups: {},
     translate: { available: false, tabs: {} },
     securityPrompts: [],
-    autofill: { prompts: [], picker: null }
+    autofill: { prompts: [], picker: null },
+    // The site-information slot reads the site's blocked permissions from the engine's rules.
+    permissionRules: []
   } as unknown as UIState
 }
 
