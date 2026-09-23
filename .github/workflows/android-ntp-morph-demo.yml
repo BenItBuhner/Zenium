@@ -39,6 +39,11 @@ name: Android new tab page morph demo
 # workflow and kept as its jank-report artifact; the gate is the shared default, soft (reported,
 # never failed: the HWUI numbers are the software GPU's, the trace columns provisional).
 on:
+  # TEMPORARY (the coordinator's one authorised run of both acts on this head – the scrub's
+  # ntp-scrub-<edge> on the private act, the morph's ntp-morph-open / close-<edge> on the space
+  # act: no token in the project can dispatch); removed in the next commit.
+  push:
+    branches: [cursor/android-perf-ntp-root-vars-cf22]
   workflow_dispatch:
 
 permissions:
