@@ -68,8 +68,10 @@ import java.io.File
  * (`font-size-step-presses`, `minimum-font-size-step-presses`, `gesture`: the fingers on the +
  * in turn, each stepping the row's own value, the sequence committed once when it is quiet –
  * the Android performance gate's ruling, [stepPresses]: at most three long tasks over the whole
- * sequence, exactly one `fonts.apply` in its trace, the value moved on every press), the font
- * picker's open and pick
+ * sequence, exactly one `fonts.apply` in its trace, the value moved on every press; and before
+ * them one press on Font size's +, `font-size-single-press`, reported alone – its long tasks
+ * by CPU and by wall, its one `fonts.apply`, its one move – undone on the − outside any scene),
+ * the font picker's open and pick
  * (`font-family-picker-open` / `-pick`), the language row's item sheet open and its Move Up
  * (`language-item-sheet-open` / `-move-up`), Add language's page open and the pick that leaves
  * it (`add-language-page-open` / `-pick`), the Text preferences sheet's open and its close on a
@@ -578,6 +580,19 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         snap("customise-fonts")
         beat()
 
+        // One press on Font size's + (16 -> 17 px), REPORTED, no claim: the single-press case of
+        // the ruling's condition (d) – the value moves on the press, exactly one `fonts.apply`
+        // after the window – is accepted on the unit test (`fontsDraft.test.tsx`: none at 399 ms,
+        // one at 400, still one at 1000), and the scene carries it here so a run that is asked has
+        // it in the table. One finger on the − after it, outside any scene, puts the row back at
+        // 16 px, where the three-press sequence and its claims begin.
+        val singleTook = stepPresses(FONT_SIZE_ROW_ID, FONT_SIZE_ROW, 1, "font-size-single-press", claims = false) {
+            fonts().optInt("size") == 17
+        }
+        val backAt16 = if (singleTook) stepBack(FONT_SIZE_ROW_ID, FONT_SIZE_ROW) { fonts().optInt("size") == 16 } else fonts().optInt("size") == 16
+        finding("  the single press (took: $singleTook) undone on the −: settings.fonts.size=${fonts().optInt("size")}, the row reads ${sliderValue(FONT_SIZE_ROW_ID)} (back at 16: $backAt16)")
+        SystemClock.sleep(600)
+
         // Font size: three presses on the row's + (16 -> 17 -> 18 -> 20 px). Each press steps
         // the row's own value and the preview; the sequence commits once when it is quiet (the
         // ruling's coalescing, `FONTS_COMMIT_QUIET_MS` – 400 ms – after the last step), and
@@ -692,8 +707,16 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
      * row's). The button is placed before the clock starts ([controlPoint]: the tree's node
      * named for it, else the document's box – the tree's range node for the track, when it has
      * one, is noted). `took` is the claim polled after the block.
+     *
+     * The long tasks are read as RULING 5 counts them (`BlinkTrace.Reading.longTasks`: by the
+     * thread's own clock, `tdur` over 50 ms, where the trace carries thread times), and the
+     * finding carries the wall count and the two longest beside it – a wall count over the CPU's
+     * is the thread off the CPU inside its tasks (the emulator's software GPU), not the chrome's
+     * work. With `claims` false the sequence is REPORTED alone – the three readings in the
+     * finding, no check: the single-press case of the ruling's condition (d), which is accepted
+     * on the unit test (`fontsDraft.test.tsx`), so a run that is asked carries it in the table.
      */
-    private fun stepPresses(rowId: String, label: String, presses: Int, scene: String, took: () -> Boolean): Boolean {
+    private fun stepPresses(rowId: String, label: String, presses: Int, scene: String, claims: Boolean = true, took: () -> Boolean): Boolean {
         val name = "Increase $label"
         val plus = controlPoint(name, "document.querySelector('[data-row=\"$rowId\"] button[aria-label=\"$name\"]')")
         val rangeNode = findNodeWhere { it.rangeInfo != null && ((it.contentDescription ?: it.text)?.toString() == label) }
@@ -723,15 +746,45 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         val longTasks = trace?.longTasks
         val marked = trace?.marks?.get("fonts.apply") ?: 0
         val after = sliderValue(rowId)
+        // The count the claim reads is the ruling's (by CPU where the trace has thread times); the
+        // wall count and both longest tasks are reported beside it.
+        val longTasksRead = when {
+            trace == null -> "no trace (${measured.traceMissing})"
+            trace.longestTaskCpuMs != null ->
+                "${trace.longTasks} by CPU (tdur over 50 ms, RULING 5), ${trace.longTasksWall} by wall; the longest ${"%.1f".format(trace.longestTaskCpuMs)} ms on the CPU, ${"%.0f".format(trace.longestTaskMs)} ms of wall time"
+            else -> "${trace.longTasks} (no thread times in the trace: the wall count; the longest ${"%.0f".format(trace.longestTaskMs)} ms)"
+        }
         finding(
-            "  the sequence ($scene): $presses presses, ${STEP_PRESS_GAP_MS} ms between; the value moved $before -> ${values.joinToString(" -> ").ifEmpty { "(no move seen)" }} (at ${times.joinToString(", ")} ms of the chrome's clock), reads $after after; " +
-                "long tasks over the whole sequence: ${longTasks ?: "no trace (${measured.traceMissing})"} (budget ${JankBudget.GESTURE_BUDGET.longTasks}); " +
+            "  the sequence ($scene${if (claims) "" else ", reported"}): $presses ${if (presses == 1) "press" else "presses, ${STEP_PRESS_GAP_MS} ms between"}; the value moved $before -> ${values.joinToString(" -> ").ifEmpty { "(no move seen)" }} (at ${times.joinToString(", ")} ms of the chrome's clock), reads $after after; " +
+                "long tasks over the whole sequence: $longTasksRead (budget ${JankBudget.GESTURE_BUDGET.longTasks}); " +
                 "fonts.apply in the trace: $marked; in the chrome's timeline: ${if (applied >= 0) applied else "unread"}"
         )
-        check("$scene: at most ${JankBudget.GESTURE_BUDGET.longTasks} long tasks over the whole press sequence (the ruling: one gesture scene, no per-press budget)", longTasks != null && longTasks <= JankBudget.GESTURE_BUDGET.longTasks)
-        check("$scene: exactly one fonts.apply per sequence in the trace (the commit coalesced: one settings.update, one broadcast, one host apply)", marked == 1 && (applied < 0 || applied == 1))
-        check("$scene: the row's value moved on every press ($presses new values, each a step on from the last)", values.size == presses && values.distinct().size == presses && values.none { it == before } && values.lastOrNull() == after)
+        val withinBudget = longTasks != null && longTasks <= JankBudget.GESTURE_BUDGET.longTasks
+        val oneApply = marked == 1 && (applied < 0 || applied == 1)
+        val everyPress = values.size == presses && values.distinct().size == presses && values.none { it == before } && values.lastOrNull() == after
+        if (claims) {
+            check("$scene: at most ${JankBudget.GESTURE_BUDGET.longTasks} long tasks over the whole press sequence (the ruling: one gesture scene, no per-press budget)", withinBudget)
+            check("$scene: exactly one fonts.apply per sequence in the trace (the commit coalesced: one settings.update, one broadcast, one host apply)", oneApply)
+            check("$scene: the row's value moved on every press ($presses new values, each a step on from the last)", everyPress)
+        } else {
+            finding("  reported, no claim ($scene): within the long-task budget ${if (withinBudget) "yes" else "no"}; exactly one fonts.apply ${if (oneApply) "yes" else "no"}; the value moved on the press ${if (everyPress) "yes" else "no"}")
+        }
         return tookIt
+    }
+
+    /**
+     * One finger on the − of the ± row `rowId` outside any scene, until `took` – up to three
+     * fingers, each given its window and commit: the reported single press undone, so the
+     * sequence that follows starts where the run's claims expect it.
+     */
+    private fun stepBack(rowId: String, label: String, took: () -> Boolean): Boolean {
+        val name = "Decrease $label"
+        val minus = controlPoint(name, "document.querySelector('[data-row=\"$rowId\"] button[aria-label=\"$name\"]')") ?: return took()
+        repeat(3) {
+            Finger().tap(minus)
+            if (poll(4_000, took)) return true
+        }
+        return took()
     }
 
     /**

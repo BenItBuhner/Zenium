@@ -20,7 +20,9 @@ name: Android fonts / languages UI demo
 # point of reference, then every sheet, page and picker this PR adds, the two runs of step
 # presses as gestures – each ONE scene for its whole sequence, with the ruling's claims beside
 # the budget's: at most three long tasks over the sequence, exactly one `fonts.apply` in its
-# trace, the row's value moved on every press;
+# trace, the row's value moved on every press (the long tasks counted by main-thread CPU where
+# the trace has thread times, RULING 5, the wall count reported beside them), and one press on
+# Font size's + before them as a reported scene, no claim (the single-press case is on a unit test);
 # the core's startup sweeps held for the run (`holdBackgroundWork`) so no feed refresh lands in a
 # measured scene, the Settings tab paid for off camera in the warm-up. The table lands in the job
 # summary; the gate is soft unless dispatched hard. Dispatch-only, like the other demos: about ten
