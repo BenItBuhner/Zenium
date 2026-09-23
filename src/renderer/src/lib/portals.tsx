@@ -838,7 +838,9 @@ function useSheetChassis(
  *
  * Dialogs placed through it call `useFrameDialog` and render their panel as a child of the host,
  * in flow – never `fixed`, never with a scrim of their own, and with no positioning of their own
- * needed to sit above the scrim. A phone sheet aligns itself with `self-end justify-self-stretch`.
+ * needed to sit above the scrim. On a phone every dialog placed through it is a §9.16 sheet on
+ * the shared chassis (`PhoneSheet`: the grip, edge to edge, its own scrim), never a floating card
+ * (`bookmarks/__tests__/phoneDialogSheets.test.tsx` keeps it so).
  * A page surface: its root carries `data-surface="page"`, so the dialogs' controls draw in the
  * page family (§9.29).
  *
