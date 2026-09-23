@@ -12,7 +12,12 @@
 //   permission-granted   the page's `Notification.permission` (the app's store through its shim)
 //   app-id-registered    HKCU\Software\Classes\AppUserModelId\<id> with DisplayName and IconUri
 //                        (the registration a copy without installer shortcuts writes for itself,
-//                        src/main/platform/notifications.ts; read with win-toast.ps1) – Windows
+//                        src/main/platform/notifications.ts; read with win-toast.ps1) – Windows.
+//                        The key is read before the launch too: what a leg before left (the
+//                        installed leg finds the unpacked build's icon path) or, absent, a stale
+//                        registration seeded for the purpose – and after the launch the IconUri
+//                        has to be under the running executable's directory: the running build
+//                        refreshed the key rather than kept another copy's (W4-12's finding 1)
 //   shortcut-aumid       the installed shortcuts' System.AppUserModel.ID (the installer's
 //                        WinShell::SetLnkAUMI; the id an installed build's toasts carry) – Windows,
 //                        installed build only
@@ -34,7 +39,9 @@
 //                        again, the window's show()/focus() called (wrapped) – the app's path
 //                        from `onclick` on; Chromium's routing of an OS toast activation to
 //                        `onclick` is the one link no runner click exercises
+import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const NOTIFICATIONS_SCENARIO = 'notifications'
 
@@ -108,9 +115,14 @@ export function toastLogSummary(stderr) {
 /**
  * What is wrong with the AppUserModelId class key (`win-toast.ps1 -Action app-id`) for a copy
  * that registers itself: the key with `DisplayName` = the app's name and an `IconUri` naming a
- * file that exists. One line per miss, empty when the registration is complete.
+ * file that exists – and, given `exeDir` (the running executable's directory), one under that
+ * directory: the icon this build ships, not another copy's that an earlier run registered and
+ * this one failed to refresh. One line per miss, empty when the registration is complete.
  */
-export function appIdProblems(facts, { displayName, aumid = APP_USER_MODEL_ID } = {}) {
+export function appIdProblems(
+  facts,
+  { displayName, aumid = APP_USER_MODEL_ID, exeDir = null } = {}
+) {
   const problems = []
   const key = facts?.classKey ?? `HKCU\\Software\\Classes\\AppUserModelId\\${aumid}`
   if (!facts?.class) return [`${key} is missing`]
@@ -120,9 +132,62 @@ export function appIdProblems(facts, { displayName, aumid = APP_USER_MODEL_ID } 
   }
   const icon = facts.class.IconUri
   if (!icon) problems.push(`${key} has no IconUri`)
-  else if (facts.iconExists !== true)
-    problems.push(`${key} IconUri names ${shown(icon)}, which is not on disk`)
+  else {
+    if (facts.iconExists !== true)
+      problems.push(`${key} IconUri names ${shown(icon)}, which is not on disk`)
+    // `iconRealPath` is the file's resolved path when the scenario could resolve it (8.3
+    // names, links): either form under the directory counts.
+    const under = (p) => Boolean(p) && isUnderDirectory(p, exeDir)
+    if (exeDir && !under(icon) && !under(facts.iconRealPath)) {
+      problems.push(
+        `${key} IconUri names ${shown(icon)}, which is not under the running build's directory '${exeDir}' (another copy's registration, not refreshed)`
+      )
+    }
+  }
   return problems
+}
+
+/** Whether `file` lies under `dir` – Windows paths: either separator, case ignored. */
+export function isUnderDirectory(file, dir) {
+  const norm = (p) => String(p).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+  return norm(file).startsWith(`${norm(dir)}\\`)
+}
+
+/**
+ * The registration another copy could have left behind, seeded before the launch on a leg
+ * where the key is absent (the runner's first run) so the refresh the main process does is
+ * exercised on every leg: a `DisplayName` that is not the app's and an `IconUri` naming a file
+ * that exists (this module) and lies under no build's directory. The step after the launch
+ * requires both replaced by the running build's.
+ */
+export function staleAppIdSeed(file = fileURLToPath(import.meta.url)) {
+  return { DisplayName: 'Zenium (stale registration)', IconUri: file }
+}
+
+/**
+ * How the key moved across the launch, for the step's detail and the report: `before` and
+ * `after` are the key's values (`null` before when the key was absent), `changed` the value
+ * names that differ, `registered` when the key was absent before, `refreshed` when it was there
+ * with other values (a leg before's, or the seed) and holds the running build's now.
+ */
+export function appIdRefreshReading(beforeFacts, afterFacts) {
+  const pick = (facts) =>
+    facts?.class
+      ? { DisplayName: facts.class.DisplayName ?? null, IconUri: facts.class.IconUri ?? null }
+      : null
+  const before = pick(beforeFacts)
+  const after = pick(afterFacts)
+  const changed = before
+    ? ['DisplayName', 'IconUri'].filter((n) => before[n] !== (after ? after[n] : null))
+    : []
+  return {
+    before,
+    after,
+    seeded: beforeFacts?.seeded ? { ...beforeFacts.seeded } : null,
+    changed,
+    registered: before === null,
+    refreshed: before !== null && changed.length > 0
+  }
 }
 
 /**
@@ -350,7 +415,8 @@ function wrapWindowReveal({ BrowserWindow }, windowId) {
 /**
  * Runs the scenario. `h` is what the harness lends it: `freshProfile`, `runScenario`,
  * `waitFor`, `delay`, `log`, `writeJson`, `grabScreen`, `ps` (a PowerShell runner for the
- * scripts beside smoke.mjs), the fixture (`startBootFixture`'s result), the run's label,
+ * scripts beside smoke.mjs), the fixture (`startBootFixture`'s result), the run's label, the
+ * executable under test (`exe`: the class key's IconUri must be under its directory),
  * `expectShortcuts` (an installed build: the installer's shortcuts must be there) and the
  * platform flags.
  */
@@ -366,6 +432,7 @@ export async function scenarioNotifications(h) {
     ps,
     fixture,
     label,
+    exe = null,
     expectShortcuts = false,
     isWin
   } = h
@@ -377,10 +444,54 @@ export async function scenarioNotifications(h) {
   )
   const title = toastTitle(label)
   const body = `Fired by the desktop smoke's ${NOTIFICATIONS_SCENARIO} scenario from ${fixture.origin}.`
+  const readAppId = () => {
+    const r = ps('win-toast.ps1', ['-Action', 'app-id', '-Aumid', APP_USER_MODEL_ID], 60000)
+    return parseJson(r.stdout, r)
+  }
+  // The key as the launch finds it: a leg before's registration (the installed leg meets the
+  // unpacked build's icon path – the shape of W4-12's finding) or a real build's, left as it
+  // is; absent (the runner's first run), a stale registration seeded so the refresh is
+  // exercised on this leg too. Read before the launch: the main process writes the key right
+  // after browser.start.
+  let appIdBefore = null
+  if (isWin) {
+    appIdBefore = readAppId()
+    if (!appIdBefore.class) {
+      const seed = staleAppIdSeed()
+      const r = ps(
+        'win-toast.ps1',
+        [
+          '-Action',
+          'seed-app-id',
+          '-Aumid',
+          APP_USER_MODEL_ID,
+          '-DisplayName',
+          seed.DisplayName,
+          '-IconUri',
+          seed.IconUri
+        ],
+        60000
+      )
+      appIdBefore = parseJson(r.stdout, r)
+      if (!appIdBefore.class) {
+        throw new Error(`seeding a stale AppUserModelId class key failed: ${r.stdout || r.stderr}`)
+      }
+      log(
+        `${NOTIFICATIONS_SCENARIO}: no AppUserModelId class key before the launch; seeded a stale one (IconUri ${seed.IconUri})`
+      )
+    } else {
+      log(
+        `${NOTIFICATIONS_SCENARIO}: AppUserModelId class key before the launch: DisplayName ${shown(appIdBefore.class.DisplayName)}, IconUri ${shown(appIdBefore.class.IconUri)}`
+      )
+    }
+  }
+  // Both sides resolved (8.3 names, links), so the one comparison is of real paths.
+  const exeDir = exe ? realPath(path.dirname(exe)) : null
 
   return runScenario(NOTIFICATIONS_SCENARIO, userData, { env: TOAST_DEBUG_ENV }, async (s, out) => {
     out.title = title
     out.aumid = APP_USER_MODEL_ID
+    out.exeDir = exeDir
     const invoke = (name, args) =>
       s.chrome.evaluate(({ name, args }) => window.zen.invoke(name, args), { name, args })
     const inPage = (id, code, userGesture = false) =>
@@ -413,25 +524,33 @@ export async function scenarioNotifications(h) {
     await s.step('app-id-registered', async () => {
       if (!isWin) return { skipped: 'the AppUserModelId class key is Windows-only' }
       // Written by reg.exe after browser.start (ensureWindowsAppIdRegistered is asynchronous and
-      // silent), so the read is polled.
+      // silent), so the read is polled – until the key holds the running build's values: its
+      // DisplayName, an IconUri on disk and under this executable's directory (the one before
+      // the launch named another copy's file, or the seed's).
       let facts = null
       let problems = null
       await waitFor(
         async () => {
-          const r = ps('win-toast.ps1', ['-Action', 'app-id', '-Aumid', APP_USER_MODEL_ID], 60000)
-          facts = parseJson(r.stdout, r)
-          problems = appIdProblems(facts, { displayName: appName })
+          facts = readAppId()
+          if (facts.class?.IconUri && facts.iconExists === true) {
+            facts.iconRealPath = realPath(facts.class.IconUri)
+          }
+          problems = appIdProblems(facts, { displayName: appName, exeDir })
           return problems.length === 0
         },
         15000,
-        'the AppUserModelId class key complete',
+        'the AppUserModelId class key complete and the running build’s',
         1000
       ).catch((e) => {
         const err = new Error(`${problems ? problems.join('; ') : e.message}`)
-        err.detail = facts
+        err.detail = { ...facts, refresh: appIdRefreshReading(appIdBefore, facts) }
         throw err
       })
-      return facts
+      const refresh = appIdRefreshReading(appIdBefore, facts)
+      log(
+        `${NOTIFICATIONS_SCENARIO}: class key ${refresh.refreshed ? 'refreshed' : refresh.registered ? 'registered' : 'unchanged'}: IconUri ${shown(refresh.before?.IconUri)} → ${shown(refresh.after?.IconUri)}, DisplayName ${shown(refresh.before?.DisplayName)} → ${shown(refresh.after?.DisplayName)}`
+      )
+      return { ...facts, refresh }
     })
 
     await s.step('shortcut-aumid', async () => {
@@ -609,6 +728,15 @@ export async function scenarioNotifications(h) {
 
     await s.step('quit', async () => s.quitGracefully())
   })
+}
+
+/** The path as the file system has it (case, 8.3 names, links resolved), or `p` when it cannot say. */
+function realPath(p) {
+  try {
+    return fs.realpathSync.native(p)
+  } catch {
+    return p
+  }
 }
 
 /** The JSON a PowerShell helper printed, or an error naming what it printed instead. */

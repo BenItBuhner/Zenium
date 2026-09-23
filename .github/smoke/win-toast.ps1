@@ -7,6 +7,11 @@
 #       per-sender key (HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\<id>),
 #       which Windows creates once the app has shown a toast and which Settings > System >
 #       Notifications lists its senders from.
+#   -Action seed-app-id -Aumid <id> -DisplayName <name> -IconUri <path>
+#       Writes the class key with the given values – a stale registration another copy could
+#       have left, seeded before a launch on a leg where no build ran before, so the running
+#       build's refresh of the key (ensureWindowsAppIdRegistered) is asserted on every leg.
+#       Prints the app-id facts after the write, with `seeded` naming what was written.
 #   -Action shortcuts -Aumid <id> [-Match zenium]
 #       Every *.lnk under the user's Start menu Programs folder and Desktop whose name matches,
 #       with its target and the System.AppUserModel.ID the installer stamped on it
@@ -23,6 +28,8 @@ param(
   [string]$Aumid = 'io.github.benitbuhner.zenium',
   [string]$Title = '',
   [string]$Match = 'zenium',
+  [string]$DisplayName = '',
+  [string]$IconUri = '',
   [int]$WaitSeconds = 10,
   [switch]$Click
 )
@@ -244,6 +251,17 @@ function Invoke-ToastClick([string]$title) {
 switch ($Action) {
   'app-id' {
     Get-AppIdFacts | ConvertTo-Json -Depth 6
+  }
+  'seed-app-id' {
+    if (-not $DisplayName -or -not $IconUri) { throw 'seed-app-id needs -DisplayName and -IconUri' }
+    $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($AppIdClassKey)
+    try {
+      $k.SetValue('DisplayName', $DisplayName, [Microsoft.Win32.RegistryValueKind]::String)
+      $k.SetValue('IconUri', $IconUri, [Microsoft.Win32.RegistryValueKind]::String)
+    } finally { $k.Close() }
+    $facts = Get-AppIdFacts
+    $facts['seeded'] = [ordered]@{ DisplayName = $DisplayName; IconUri = $IconUri }
+    $facts | ConvertTo-Json -Depth 6
   }
   'shortcuts' {
     Get-ShortcutFacts | ConvertTo-Json -Depth 6

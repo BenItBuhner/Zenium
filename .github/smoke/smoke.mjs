@@ -6030,6 +6030,9 @@ async function main() {
           ps,
           fixture: bootSite,
           label: opts.label,
+          // The class key's IconUri has to be this build's (under the executable's directory),
+          // not what the leg before or the seed left in it.
+          exe: opts.exe,
           // The installed build's shortcuts carry the AUMID (the installer's WinShell); the
           // unpacked build has none and rides on the class key it registers for itself.
           expectShortcuts: IS_WIN && opts.label === 'installed',

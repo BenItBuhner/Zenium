@@ -14,7 +14,11 @@
 # it: after the install every key and value has to be there and point at the installed executable
 # ("registrationProblems" in the JSON, exit 1 when any); after the uninstall every one of them has
 # to be gone and no document type may still name the ProgID ("registrationLeftovers", exit 1 when
-# any). The user's own http/https choice (UserChoice) is Windows's and is neither written nor read.
+# any). The AppUserModelId class key the running app writes for its toasts
+# (HKCU\Software\Classes\AppUserModelId\<id>, src/main/platform/notifications.ts) is read along
+# for the record after the install (what the leg before left) and has to be gone after the
+# uninstall too (installer.nsh's customUnInstall deletes it). The user's own http/https choice
+# (UserChoice) is Windows's and is neither written nor read.
 param(
   [Parameter(Mandatory = $true)][string]$Action,
   [string]$Installer = '',
@@ -71,6 +75,7 @@ $AppUserModelId = 'io.github.benitbuhner.zenium'
 $ClientKey = "Software\Clients\StartMenuInternet\$ProductName"
 $CapabilitiesKey = "$ClientKey\Capabilities"
 $ProgIdKey = "Software\Classes\$ProgId"
+$AppIdClassKey = "Software\Classes\AppUserModelId\$AppUserModelId"
 $Extensions = @('.htm', '.html', '.shtml', '.xht', '.xhtml', '.mhtml', '.mht', '.svg', '.webp', '.avif', '.pdf')
 
 # The values named in `$names` under `$path` of the user's hive ('' for the key's default value),
@@ -94,11 +99,14 @@ function Read-UserKey([string]$path, [string[]]$names) {
 # The registration as it stands, read from HKCU (the per-user installer's SHELL_CONTEXT): what
 # RegisteredApplications says, the browser client key, its Capabilities, the ProgID, and every
 # document type's OpenWithProgids and default ProgID. HKLM's RegisteredApplications entry is read
-# too, for the record only (an /allusers install would write there; the smoke's does not).
+# too, for the record only (an /allusers install would write there; the smoke's does not), and
+# so is the app's AppUserModelId class key (the app writes it, not the installer; the uninstaller
+# removes it).
 function Get-BrowserRegistration {
   $reg = [ordered]@{
     registeredApplications = $null
     hklmRegisteredApplications = $null
+    appUserModelIdClass = Read-UserKey $AppIdClassKey @('DisplayName', 'IconUri')
     client = Read-UserKey $ClientKey @('')
     clientOpenCommand = Read-UserKey "$ClientKey\shell\open\command" @('')
     clientDefaultIcon = Read-UserKey "$ClientKey\DefaultIcon" @('')
@@ -172,11 +180,12 @@ function Test-BrowserRegistered($reg, [string]$exe) {
 }
 
 # What a removed registration still holds: one line per leftover, empty when the uninstaller took
-# everything installer.nsh's unregisterDefaultBrowser names and no document type still points at
-# the ProgID.
+# everything installer.nsh's unregisterDefaultBrowser names, no document type still points at
+# the ProgID, and the app's AppUserModelId class key is gone with it.
 function Test-BrowserUnregistered($reg) {
   $left = @()
   if ($null -ne $reg.registeredApplications) { $left += "RegisteredApplications\$ProductName is still '$($reg.registeredApplications)'" }
+  if ($reg.appUserModelIdClass) { $left += "HKCU\$AppIdClassKey is still there (DisplayName '$($reg.appUserModelIdClass['DisplayName'])', IconUri '$($reg.appUserModelIdClass['IconUri'])')" }
   foreach ($pair in @(@('client', $ClientKey), @('capabilities', $CapabilitiesKey), @('urlAssociations', "$CapabilitiesKey\URLAssociations"), @('progId', $ProgIdKey), @('progIdOpenCommand', "$ProgIdKey\shell\open\command"))) {
     if ($reg[$pair[0]]) { $left += "HKCU\$($pair[1]) is still there" }
   }
@@ -276,9 +285,19 @@ switch ($Action) {
     # Run in place, the uninstaller cannot delete its own executable; anything else left is a leak.
     if ($info.installDirExists) { $info.installDirLeftovers = @(Get-ChildItem -Path $installDir -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName | Select-Object -First 40) }
     $info.shortcutsLeft = @(Get-ChildItem -Path ([Environment]::GetFolderPath('Programs')), ([Environment]::GetFolderPath('Desktop')) -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -match $Match } | Select-Object -ExpandProperty FullName)
-    # The default-browser registration after the uninstall (ci-08): nothing of it left.
-    $info.registrationAfter = Get-BrowserRegistration
-    $info.registrationLeftovers = @(Test-BrowserUnregistered $info.registrationAfter)
+    # The default-browser registration and the app's AppUserModelId class key after the
+    # uninstall (ci-08): nothing of them left. Read until gone rather than once (the standing
+    # teardown rule): up to 10 s in half-second rounds, the last read and the round count kept.
+    $deadline = (Get-Date).AddSeconds(10)
+    $rounds = 0
+    do {
+      $rounds++
+      $info.registrationAfter = Get-BrowserRegistration
+      $info.registrationLeftovers = @(Test-BrowserUnregistered $info.registrationAfter)
+      if ($info.registrationLeftovers.Count -eq 0) { break }
+      Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    $info.registrationLeftoverRounds = $rounds
     $info | ConvertTo-Json -Depth 6 | Set-Content -Path $file -Encoding UTF8
     Write-Output ($info | ConvertTo-Json -Depth 6)
     if ($info.exitCode -ne 0 -or $info.registrationLeftovers.Count -gt 0) { exit 1 }
