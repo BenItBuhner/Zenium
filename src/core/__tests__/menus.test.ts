@@ -1713,11 +1713,16 @@ describe('the page context menu', () => {
     expect(menu).not.toContain('Inspect Element')
   })
 
-  it('inspects the clicked node, not the document corner', () => {
+  it('inspects the clicked node, not the document corner, at the remembered dock (§9.29)', () => {
     const h = pageHarness()
     h.menu(pageParams({ x: 333, y: 44 }))
     h.click('Inspect Element')
-    expect(h.viewCalls).toEqual(['inspectElementAt(333,44)'])
+    expect(h.viewCalls).toEqual(['inspectElementAt(333,44,"bottom")'])
+    h.browser.updateSettings({ devtoolsDock: 'right' }, h.win)
+    h.viewCalls.length = 0
+    h.menu(pageParams({ x: 1, y: 2 }))
+    h.click('Inspect Element')
+    expect(h.viewCalls).toEqual(['inspectElementAt(1,2,"right")'])
   })
 
   it('offers a way out of fullscreen while the page is in it', () => {

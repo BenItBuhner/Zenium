@@ -14,6 +14,7 @@ import type {
   ClipboardPeekKind,
   ColorScheme,
   ContentCover,
+  DevtoolsDock,
   DownloadItem,
   EventName,
   Events,
@@ -601,6 +602,13 @@ export interface TabViewEvents {
   onLeaveHtmlFullscreen(): void
   onDevtoolsOpened(): void
   onDevtoolsClosed(): void
+  /**
+   * The user moved the toolbox from inside it (its own dock buttons: bottom, right, left,
+   * undocked); the core remembers the dock as it remembers the app menu's choice (design
+   * language v2 §9.29: "the user's last choice remembered"). Hosts that cannot read the
+   * toolbox's dock need not call it.
+   */
+  onDevtoolsDockChanged?(dock: DevtoolsDock): void
   onFoundInPage(result: FindResultInfo): void
   onZoomChanged(direction: 'in' | 'out'): void
   /**
@@ -774,12 +782,24 @@ export interface TabView {
   setCover?(cover: ContentCover): void
 
   // Page operations.
-  openDevTools(mode: 'toggle' | 'inspect' | 'console'): void
+  /**
+   * Open the developer tools at `dock` – in the frame's box under or beside the page, or in a
+   * window of their own (design language v2 §9.29) – `toggle` closing them when they are open,
+   * `inspect` on the element picker, `console` as they stand. Hosts without an inspector do
+   * nothing (`capabilities.devtools` off; the setting is inert there).
+   */
+  openDevTools(mode: 'toggle' | 'inspect' | 'console', dock: DevtoolsDock): void
   /**
    * Open the developer tools on the element at (`x`, `y`) in the view's coordinates (the
-   * "Inspect Element" of the context menu). Hosts without an inspector leave it out.
+   * "Inspect Element" of the context menu), at `dock` when they were closed. Hosts without an
+   * inspector leave it out.
    */
-  inspectElementAt?(x: number, y: number): void
+  inspectElementAt?(x: number, y: number, dock: DevtoolsDock): void
+  /**
+   * Move developer tools that are open to `dock` (the app menu's dock rows while a toolbox is
+   * up). Hosts whose toolbox cannot move leave it out; the next opening honours the dock.
+   */
+  setDevtoolsDock?(dock: DevtoolsDock): void
   /**
    * Start a download of `url`. `saveAs` asks where to save first, whatever the download setting
    * says (Chrome's "Save link / image / video as…" always ask); hosts without a picker save to

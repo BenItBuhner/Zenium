@@ -455,10 +455,14 @@ export class Menus {
     this.popup(joinGroups([open, manage]), win, 'page', anchor)
   }
 
-  /** Chrome's "Inspect": the inspector opens on the node under the click, not the document. */
+  /**
+   * Chrome's "Inspect": the inspector opens on the node under the click, not the document, at
+   * the remembered dock (§9.29).
+   */
   private inspectElement(view: TabView, params: PageContextParams): void {
-    if (view.inspectElementAt) view.inspectElementAt(params.x, params.y)
-    else view.openDevTools('inspect')
+    const dock = this.browser.state.settings.devtoolsDock
+    if (view.inspectElementAt) view.inspectElementAt(params.x, params.y, dock)
+    else view.openDevTools('inspect', dock)
   }
 
   /** The link's open targets and its copy / save items, as two groups. */
