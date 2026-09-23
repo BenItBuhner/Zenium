@@ -317,6 +317,62 @@ describe('the ± rows coalesce (the Android performance gate’s ruling for #350
     expect(set).toHaveBeenLastCalledWith({ fonts: { ...DEFAULT_FONT_SETTINGS, size: 18 } })
   })
 
+  it('the blur of another row – the Font size button the focus was left on, as a finger lands on Minimum font size’s + – does not commit the sequence that finger begins (run 8’s fault): the seven presses still commit once', () => {
+    vi.useFakeTimers()
+    const set = vi.fn()
+    render(<Fonts fonts={{ ...DEFAULT_FONT_SETTINGS, size: 20 }} set={set} />)
+    const left = plusOf('fonts-size-phone')
+    act(() => left.focus())
+    const plus = plusOf('fonts-minimum-size-phone')
+    // The tap's down steps the row; the focus moves at the tap's end, the button left behind
+    // blurring towards the one under the finger.
+    act(() => pointer(plus, 'pointerdown'))
+    act(() => {
+      left.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: plus }))
+      plus.focus()
+    })
+    act(() => {
+      vi.advanceTimersByTime(60)
+      pointer(plus, 'pointerup')
+    })
+    expect(valueOf('fonts-minimum-size-phone')).toBe('6 px')
+    expect(set).not.toHaveBeenCalled()
+    for (let i = 1; i < 7; i++) {
+      act(() => {
+        vi.advanceTimersByTime(40)
+      })
+      tap(plus)
+    }
+    expect(valueOf('fonts-minimum-size-phone')).toBe('12 px')
+    expect(set).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(FONTS_COMMIT_QUIET_MS)
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith({
+      fonts: { ...DEFAULT_FONT_SETTINGS, size: 20, minimumSize: 12 }
+    })
+
+    // The Font size row's own blur still commits the Font size step it has pending – with the
+    // other row's, so no step is lost.
+    set.mockClear()
+    act(() =>
+      root?.render(
+        <Fonts fonts={{ ...DEFAULT_FONT_SETTINGS, size: 20, minimumSize: 12 }} set={set} />
+      )
+    )
+    tap(left)
+    tap(plus)
+    expect(set).not.toHaveBeenCalled()
+    act(() => {
+      left.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: plus }))
+    })
+    expect(set).toHaveBeenCalledTimes(1)
+    expect(set).toHaveBeenCalledWith({
+      fonts: { ...DEFAULT_FONT_SETTINGS, size: 22, minimumSize: 13 }
+    })
+  })
+
   it('a step back to the committed value inside the window commits nothing; a pick or Reset commits at once with the pending steps folded in; a change from outside ends what was committed', () => {
     vi.useFakeTimers()
     const set = vi.fn()

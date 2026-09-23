@@ -17,9 +17,10 @@ import type { Settings } from '@shared/types'
  * steps not yet committed over them (`fonts`), a `step` that moves it and arms the timer, a
  * `hold` that keeps the timer from running while a step button is down (the hold's repeats
  * are steps 100 ms apart, but the first of them comes 400 ms after the press), a `commit` for
- * what applies at once (a menulist's pick, a family's, Reset), a `flush` for the row's
- * leaving. What was committed stays shown until the settings come back changed, so the row
- * never falls back to the old value between the write and the core's broadcast.
+ * what applies at once (a menulist's pick, a family's, Reset), a `leave` for a row's blur (its
+ * own step commits; another row's keeps its window) and a `flush` for the page's leaving.
+ * What was committed stays shown until the settings come back changed, so the row never falls
+ * back to the old value between the write and the core's broadcast.
  */
 export interface FontsDraft {
   /** The committed fonts with the pending steps over them: what every row and the preview read. */
@@ -30,7 +31,15 @@ export interface FontsDraft {
   hold(held: boolean): void
   /** A pick or a reset: committed now, with whatever steps were pending. */
   commit(change: Partial<PageFontSettings>): void
-  /** The row is left (its focus goes, its sheet closes, its page is left): commit what is pending. */
+  /**
+   * The row for `key` loses focus: its own pending step is committed now. Another row's step
+   * is not – a finger landing on the Minimum font size row's + takes the focus off the Font
+   * size row's button it left on, and that blur is no end to the sequence just begun (#350's
+   * run 8 committed the first of seven presses that way). What is pending commits with the
+   * whole draft once the sequence is quiet, or at the page's leaving.
+   */
+  leave(key: keyof PageFontSettings): void
+  /** The page is left (its sheet closes, the drill-in is left): commit whatever is pending. */
   flush(): void
 }
 
@@ -52,7 +61,14 @@ export function immediateFontsDraft(
 ): FontsDraft {
   const commit = (change: Partial<PageFontSettings>): void =>
     set({ fonts: { ...fonts, ...change } })
-  return { fonts, step: commit, hold: () => undefined, commit, flush: () => undefined }
+  return {
+    fonts,
+    step: commit,
+    hold: () => undefined,
+    commit,
+    leave: () => undefined,
+    flush: () => undefined
+  }
 }
 
 interface Pending {
@@ -136,6 +152,13 @@ export function useFontsDraft(
     const current = latest.current.pending
     if (current && !current.sent) write(current.change)
   }, [clearTimer, write])
+  const leave = useCallback(
+    (key: keyof PageFontSettings): void => {
+      const current = latest.current.pending
+      if (current && !current.sent && key in current.change) flush()
+    },
+    [flush]
+  )
   // A step button is down: the sequence is not quiet until it is released.
   const held = useRef(false)
   /** The quiet window starts over – unless a button is down, when it starts at the release. */
@@ -177,6 +200,7 @@ export function useFontsDraft(
     step,
     hold,
     commit,
+    leave,
     flush
   }
 }

@@ -100,7 +100,7 @@ export function fontsGroups({
         const size = FONT_SIZE_STEPS[i]
         if (size !== undefined) stepSize(size)
       },
-      onLeave: draft.flush,
+      onLeave: () => draft.leave('size'),
       onHold: draft.hold
     },
     {
@@ -129,7 +129,7 @@ export function fontsGroups({
         const minimumSize = MINIMUM_FONT_SIZE_STEPS[i]
         if (minimumSize !== undefined) stepMinimumSize(minimumSize)
       },
-      onLeave: draft.flush,
+      onLeave: () => draft.leave('minimumSize'),
       onHold: draft.hold
     },
     {

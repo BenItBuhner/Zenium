@@ -229,7 +229,9 @@ export interface SliderRow extends RowBase {
   /**
    * The row is left: its focus moves out of the control (a finger on another row), or the
    * control goes (its sheet closes, its drill-in is left). A coalescing builder commits what
-   * its steps have pending, so no step is lost to a close inside the quiet window.
+   * this row's steps have pending, so no step is lost to a close inside the quiet window –
+   * and only this row's: the blur a finger on another row's button causes is no end to the
+   * sequence that finger begins.
    */
   onLeave?(): void
   /**
