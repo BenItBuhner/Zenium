@@ -40,6 +40,12 @@ name: Android new tab page morph demo
 # never failed: the HWUI numbers are the software GPU's, the trace columns provisional).
 on:
   workflow_dispatch:
+  # TEMPORARY (the coordinator's one authorised run, and one retry, of #404's harness repairs on
+  # the five drivers the PR touches – here the space act alone: FakeboxMorphDemo and
+  # FakeboxMorphReducedDemo under MORPH_ACT=space; no token in the project can dispatch); removed
+  # in the next commit.
+  push:
+    branches: [cursor/android-harness-nightly-repairs-h3-011b]
 
 permissions:
   contents: read
@@ -77,6 +83,9 @@ jobs:
 
   private:
     name: the private page in landscape (Chromium snapshot WebView on an AOSP image)
+    # TEMPORARY: the private act is not in the authorised run on this branch's push (the space act
+    # alone is); a dispatch runs it as ever. Removed with the push trigger in the next commit.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-ntp-morph-demo.sh
