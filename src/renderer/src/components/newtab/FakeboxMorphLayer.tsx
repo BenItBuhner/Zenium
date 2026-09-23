@@ -32,8 +32,9 @@ import { EngineFieldGlyph } from '../urlbar/EngineFieldGlyph'
  * height per frame) rather than a clip or a transform: the words inside must not scale. Nor
  * re-wrap: each content is laid out once, at the widest of the field's poses, and the moving box
  * clips it, so a long placeholder never re-truncates as the width passes through. The double
- * reads the value from its own pose (`--zen-ntp-morph` on the box), so that under reduced motion
- * it can hold a scrubbed field's look while it fades in place. At a bottom dock the layer is
+ * reads the value from its own pose (`--zen-ntp-morph` on the box; its looks and contents take
+ * the box's by name, main.css, the value not inheriting on its own), so that under reduced
+ * motion it can hold a scrubbed field's look while it fades in place. At a bottom dock the layer is
  * clipped at the frame's top edge, since there the field is content and rides out of the frame.
  * `will-change` is on the box only while a write moves it (`data-moving`, v1 §7 rule 4), never at
  * rest on the page. Mounted above the shell; it draws nothing while the field is at rest or has
