@@ -10,7 +10,9 @@ import { createRoot, type Root } from 'react-dom/client'
  * following the finger and leaving with it – and release on a row, which picks it without a
  * lift; or lift anywhere else and leave the surface for a tap, as Chrome Android's popup is
  * used. The click the release itself would produce is eaten either way, the light goes out with
- * the lift, and a touch the system takes away (pointercancel) picks nothing.
+ * the lift (and with the bar, should it unmount under the finger), and a touch the system takes
+ * away (pointercancel) picks nothing. The hit test is at the finger's own viewport point: the
+ * events target the button that captured the touch, so only their clientX / clientY place it.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -125,9 +127,11 @@ describe("the bar hold's finger (GN-08, §9.13 in both forms)", () => {
     under.mockReturnValue(back)
     pointer(back, 'pointermove', 30, 760)
     expect(lit()).toEqual([])
-    // Over the first row: lit, and only it.
+    // Over the first row: lit, and only it – found at the finger's own point, clientX then
+    // clientY (the event's target is the button that captured the touch, wherever the finger is).
     under.mockReturnValue(first)
     pointer(back, 'pointermove', 40, 720)
+    expect(under).toHaveBeenLastCalledWith(40, 720)
     expect(lit()).toEqual([first])
     // On to the second: the light moves with the finger, the first goes out.
     under.mockReturnValue(second)
@@ -185,6 +189,22 @@ describe("the bar hold's finger (GN-08, §9.13 in both forms)", () => {
     expect(scrolls(again)).toBe(true)
   })
 
+  it('puts the light out when the hook unmounts mid-hold with a row lit, nothing of the hold left behind', () => {
+    const back = holdBack()
+    const row = openRow()
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(row)
+    pointer(back, 'pointermove', 40, 700)
+    expect(lit()).toEqual([row])
+    // The bar goes with the finger still down: the light, the claim and the swallow go with it.
+    act(() => root!.unmount())
+    root = null
+    expect(lit()).toEqual([])
+    expect(scrolls(document.body)).toBe(true)
+    // A surface that outlives the bar is a tap's as any.
+    click(row)
+    expect(onRow).toHaveBeenCalledTimes(1)
+  })
+
   it("lights nothing for another pointer's movement, or before the hold has fired", () => {
     const back = render()
     const waiting = openRow()
@@ -215,10 +235,12 @@ describe("the bar hold's finger (GN-08, §9.13 in both forms)", () => {
     const back = holdBack()
     const picked = openRow()
     // The finger stands over the row when it lets go; the event's target is still the button.
-    vi.spyOn(document, 'elementFromPoint').mockReturnValue(picked)
+    const under = vi.spyOn(document, 'elementFromPoint').mockReturnValue(picked)
     pointer(back, 'pointermove', 40, 700)
     expect(lit()).toEqual([picked])
-    pointer(back, 'pointerup', 40, 700)
+    // The release's own read, where the finger let go (it drifted a little as it lifted).
+    pointer(back, 'pointerup', 44, 702)
+    expect(under).toHaveBeenLastCalledWith(44, 702)
     expect(onRow).toHaveBeenCalledTimes(1)
     expect(lit()).toEqual([])
     // The platform's click for the release, should one follow, is eaten: the pick is one pick.

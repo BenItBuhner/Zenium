@@ -10,8 +10,9 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
  * The Back button's hold (GN-08): the tab's history behind the current entry, nearest first,
  * eight rows at most, each a favicon and the title (the URL where the page had none), then
  * "Show full history" – left out on a private tab, as Chrome leaves it out of incognito. A row
- * jumps the tab to its entry; Escape and an empty stack close the popup. Rendered for real in
- * happy-dom through the chrome layer.
+ * jumps the tab to its entry; Escape and an empty stack close the popup; every row carries the
+ * bar hold's pick mark, so the finger that opened the popup may release on it. Rendered for
+ * real in happy-dom through the chrome layer.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
@@ -24,6 +25,7 @@ Object.assign(window, {
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { BackHistoryMenu, HISTORY_MENU_MAX } = await import('../BackHistoryMenu')
+const { HOLD_PICK_ATTR } = await import('../useBarHold')
 
 const SPACE = 'space'
 const ANCHOR = { x: 8, y: 700, width: 44, height: 44 }
@@ -167,6 +169,19 @@ describe('BackHistoryMenu', () => {
     expect(rows()).toHaveLength(3)
     expect(document.querySelector('[data-testid="back-history-full"]')).toBeNull()
     expect(popup()?.querySelector('[role="separator"]')).toBeNull()
+  })
+
+  it("marks every row, and nothing else, for the hold's finger to pick without a lift", async () => {
+    await show(STACK)
+    // §9.13's drag form (the lead's BOTH ruling): `useBarHold` clicks the row so marked under
+    // the finger when it lets go – the entries and Show full history alike, the JSX literal and
+    // the hook's constant one name.
+    const full = document.querySelector<HTMLElement>('[data-testid="back-history-full"]')
+    expect(full).not.toBeNull()
+    const pickable = [...rows(), full!]
+    expect(pickable).toHaveLength(4)
+    for (const row of pickable) expect(row.hasAttribute(HOLD_PICK_ATTR)).toBe(true)
+    expect(popup()!.querySelectorAll(`[${HOLD_PICK_ATTR}]`)).toHaveLength(4)
   })
 
   it('stays up when the held finger lifts on no row, and closes on the next press outside', async () => {
