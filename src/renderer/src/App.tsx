@@ -13,6 +13,7 @@ import { openNewTabPage } from '@renderer/lib/newtab'
 import { onboardingCovers } from '@renderer/lib/onboarding'
 import { activeTab } from '@renderer/lib/selectors'
 import {
+  browserStore,
   captureActiveTab,
   clearTabSelection,
   closeFindBar,
@@ -517,7 +518,21 @@ function useGlobalKeys(state: UIState): void {
         clearTabSelection()
         return
       }
-      if (ui.findOpen && ui.findTabId) closeFindBar('afterKey')
+      if (ui.findOpen && ui.findTabId) {
+        closeFindBar('afterKey')
+        return
+      }
+      // Nothing in the chrome claimed the key: Escape is Stop, as it is in Chrome and Firefox
+      // when the focus sits in the toolbar. The page handler (core/keys.ts) stops the load when
+      // the page has the focus; this rung covers the chrome, where the keyboard stays while a
+      // tab's first navigation has no document yet (window.ts focusContent) or after the URL bar
+      // has handed the key back.
+      const live = browserStore.get().state
+      const tab = live ? activeTab(live) : null
+      if (tab?.loading) {
+        e.preventDefault()
+        run('tab.stop', { tabId: tab.id })
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
