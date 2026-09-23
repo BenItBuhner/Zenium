@@ -4133,11 +4133,20 @@
   /*
    * Levels inside one sheet (site information): the panes slide past each other on a spring
    * while the sheet's own height follows its chassis; the one arriving is in flow and sizes the
-   * track, the one leaving is laid over it. Only transform and opacity move per frame.
+   * track, the one leaving is laid over it. Only transform and opacity move per frame. The
+   * deeper of the two (`data-over`) travels OVER the other, whole: it stands above in the
+   * stacking order whether it is the one in flow (a push) or the one laid over (a pop), and
+   * carries the sheet's own surface behind its rows for the frames it covers the other – the
+   * pane at rest has none, the sheet's showing through. A pane that is neither is `hidden`.
    */
   .zen-sheet-track {
     position: relative;
     overflow: hidden;
+  }
+  .zen-sheet-pane[data-over] {
+    position: relative;
+    z-index: 1;
+    background: var(--v2-panel);
   }
   .zen-sheet-pane[data-leaving] {
     position: absolute;
