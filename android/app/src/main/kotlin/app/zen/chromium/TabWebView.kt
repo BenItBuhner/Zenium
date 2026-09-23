@@ -1585,6 +1585,9 @@ class TabWebView(
 
     // A load the core asked for: the user agent follows the rules for the URL before it leaves.
     override fun loadUrl(requested: String) {
+        // A local document still being read for this view lands nowhere: the tab has moved on
+        // (the read's own guard reads the sequence; a second local load bumps it itself).
+        localDocumentSeq++
         // The core spells an extension page's URL as Chrome does; the WebView loads the served origin.
         val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
@@ -1623,6 +1626,7 @@ class TabWebView(
     }
 
     override fun loadUrl(requested: String, additionalHttpHeaders: MutableMap<String, String>) {
+        localDocumentSeq++
         val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
         reloadAskedAt = 0L
