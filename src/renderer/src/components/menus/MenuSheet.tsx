@@ -1,8 +1,18 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, House, Info } from 'lucide-react'
-import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
+import {
+  ArrowRight,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Globe,
+  House,
+  Info
+} from 'lucide-react'
+import type { MenuDescriptor, MenuGlyph, MenuHeader, MenuItemDescriptor } from '@shared/types'
 import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
+import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { APP_MENU_BUTTON } from '@renderer/lib/mediaHub'
@@ -34,6 +44,8 @@ import {
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ReloadStopGlyph, StarGlyph } from '../phone/BarGlyphs'
+import { RowFavicon } from '../phone/PhoneList'
+import { useLongPress } from '../phone/useLongPress'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { TabletMenu } from '../tablet/TabletMenu'
 
@@ -134,9 +146,13 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
               <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden />
             </button>
           )}
-          <h2 id={titleId} className="zen-sheet-title">
-            {title}
-          </h2>
+          {menu.header && path.length === 0 ? (
+            <LinkHeader header={menu.header} titleId={titleId} />
+          ) : (
+            <h2 id={titleId} className="zen-sheet-title">
+              {title}
+            </h2>
+          )}
         </>
       }
     >
@@ -210,6 +226,61 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
         )}
       </div>
     </BottomSheet>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The link's header (PUI-18; Chrome for Android's context-menu header)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a link's or an image's menu opens on: a §10.3 two-line row in the §9.16 header's place –
+ * the site's favicon at 20 (the globe at 69% when the cache holds none, as a list row's
+ * stand-in) or the image itself as a 40 thumbnail, the title 15/600 over the address 13 in the
+ * deemphasised ink, one line each. A tap expands the address to its full length (the row grows;
+ * the sheet measures its detents again); a long-press copies it, the host's toast or Android
+ * 13's clipboard chip saying so. The title names the sheet (`aria-labelledby`).
+ */
+function LinkHeader({ header, titleId }: { header: MenuHeader; titleId: string }): JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const press = useLongPress(() =>
+    run('clipboard.writeText', { text: header.url, confirmation: header.copied })
+  )
+  return (
+    <button
+      type="button"
+      className="zen-menu-link-header"
+      aria-expanded={expanded}
+      data-expanded={expanded || undefined}
+      {...press.handlers}
+      onClick={() => {
+        if (press.swallowsClick()) return
+        setExpanded((was) => !was)
+      }}
+    >
+      {header.thumbnail ? (
+        <img
+          src={header.thumbnail}
+          alt=""
+          className="zen-menu-link-thumbnail"
+          referrerPolicy="no-referrer"
+          draggable={false}
+        />
+      ) : (
+        <span className="zen-menu-link-favicon" aria-hidden>
+          <RowFavicon
+            src={header.favicon}
+            fallback={<Globe className="zen-list-standin h-5 w-5" strokeWidth={1.75} />}
+          />
+        </span>
+      )}
+      <span className="zen-menu-link-text">
+        <span id={titleId} className="zen-menu-link-title">
+          {header.title}
+        </span>
+        <span className="zen-menu-link-url">{header.url}</span>
+      </span>
+    </button>
   )
 }
 

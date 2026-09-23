@@ -2,6 +2,7 @@ import type { Browser } from './browser'
 import { surfaceMounted, type ZenWindow } from './window'
 import type {
   ChromeContextParams,
+  LinkAppTarget,
   MenuItemTemplate,
   MenuSource,
   PageContextParams,
@@ -17,6 +18,7 @@ import {
   NEW_TAB_URL,
   displayUrl,
   getDomain,
+  getHost,
   inputToUrl,
   isNavigableUrl,
   isWebPageUrl
@@ -29,6 +31,7 @@ import {
   type DownloadDeleteFileResult,
   type Folder,
   type MenuAnchor,
+  type MenuHeader,
   type MenuItemDescriptor,
   type NavigationDirection,
   type NavigationSnapshotEntry,
@@ -234,14 +237,25 @@ export class Menus {
     }, APPLICATION_MENU_DEBOUNCE_MS)
   }
 
-  private popup(template: Template, win: ZenWindow, source: MenuSource, anchor?: MenuAnchor): void {
+  private popup(
+    template: Template,
+    win: ZenWindow,
+    source: MenuSource,
+    anchor?: MenuAnchor,
+    header?: MenuHeader
+  ): void {
     const items = withAccelerators(
       tidySeparators(template),
       this.browser.state.shortcuts,
       (a) => this.browser.actions.run(a, { sourceTabId: null, win }),
       this.browser.platform.info.os
     )
-    this.browser.platform.menus.popup(items, { source, win, ...anchor })
+    this.browser.platform.menus.popup(items, {
+      source,
+      win,
+      ...anchor,
+      ...(header ? { header } : {})
+    })
   }
 
   /**
@@ -393,7 +407,62 @@ export class Menus {
       })
     }
     groups.push(developer)
-    this.popup(joinGroups(groups), win, 'page', this.pageAnchor(tabId, params, win))
+    // The phone's sheet opens a link's or an image's menu on what was held (PUI-18); the
+    // desktop's native menu and the tablet's popover carry no header.
+    const header =
+      win.formFactor === 'phone' ? this.linkHeader(tab, params, hasLink, isImage) : undefined
+    this.popup(joinGroups(groups), win, 'page', this.pageAnchor(tabId, params, win), header)
+  }
+
+  /**
+   * The phone sheet's header for a link or an image (Chrome for Android's context-menu header,
+   * PUI-18): the address held – the link's, or the image's own when there is no link – under a
+   * title: the link's text, or the address's host for a link without one. A `tel:` or `mailto:`
+   * link shows the number or the address bare, as its copy item copies it, under "Phone number"
+   * or "Email address". The favicon is the tab's own for a link within its site, else the last
+   * one history saw on the link's site (the favicon cache); an image is its own thumbnail.
+   */
+  private linkHeader(
+    tab: Tab,
+    params: PageContextParams,
+    hasLink: boolean,
+    isImage: boolean
+  ): MenuHeader | undefined {
+    const url = hasLink ? params.linkURL : isImage ? params.srcURL : ''
+    if (!url) return undefined
+    const scheme = url.slice(0, url.indexOf(':')).toLowerCase()
+    const linkText = params.linkText?.trim() ?? ''
+    const contact = scheme === 'tel' || scheme === 'mailto'
+    const copy = linkCopyItem(url)
+    const shown = contact ? copy.text : url
+    let title = linkText && linkText !== url && linkText !== shown ? linkText : ''
+    if (!title) {
+      if (scheme === 'tel') title = 'Phone number'
+      else if (scheme === 'mailto') title = 'Email address'
+      else title = getHost(hasLink ? url : tab.url) || (isImage ? 'Image' : 'Link')
+    }
+    const thumbnail =
+      isImage && /^(https?:|data:|blob:|file:)/i.test(params.srcURL) ? params.srcURL : null
+    return {
+      url: shown,
+      copied: copy.confirmation,
+      title,
+      favicon: thumbnail || contact ? null : this.linkFavicon(tab, url),
+      thumbnail
+    }
+  }
+
+  /** The tab's favicon for a link within its site, else what history last saw on the link's site. */
+  private linkFavicon(tab: Tab, url: string): string | null {
+    const host = getHost(url)
+      .toLowerCase()
+      .replace(/^www\./, '')
+    if (!host) return null
+    const tabHost = getHost(tab.url)
+      .toLowerCase()
+      .replace(/^www\./, '')
+    if (host === tabHost && tab.favicon) return tab.favicon
+    return this.browser.history.siteFaviconFor(url)
   }
 
   /**
@@ -490,6 +559,9 @@ export class Menus {
     const group =
       win.formFactor !== 'desktop' && tab.folderId ? state.model.folders[tab.folderId] : undefined
     // `mailto:` and `tel:` links have nowhere to open in a tab: only their copy items (Chrome).
+    // The phone hands them to the device's own apps as Chrome for Android does (PUI-22): a
+    // number to the dialer, the messaging app and the contacts form, an address to the mail app.
+    if (win.formFactor === 'phone') open.push(...this.contactLinkItems(url))
     if (navigable) {
       if (group) {
         open.push({
@@ -590,6 +662,31 @@ export class Menus {
       })
     }
     return [open, transfer]
+  }
+
+  /**
+   * Chrome for Android's items for a phone number or an email address (PUI-22): Call, Send
+   * message and Add to contacts for a `tel:` link; Send email for a `mailto:` one. Each hands
+   * the link to the device's app for it (`ShellHost.openLinkIn`); a host without those apps
+   * (the desktop, whose Chrome offers only the copy items) gets none.
+   */
+  private contactLinkItems(url: string): Template {
+    const shell = this.browser.platform.shell
+    if (!shell.openLinkIn) return []
+    const scheme = url.slice(0, url.indexOf(':')).toLowerCase()
+    const item = (label: string, target: LinkAppTarget): MenuItemTemplate => ({
+      label,
+      click: () => shell.openLinkIn?.(target, url)
+    })
+    if (scheme === 'tel') {
+      return [
+        item('Call', 'call'),
+        item('Send Message', 'message'),
+        item('Add to Contacts', 'addContact')
+      ]
+    }
+    if (scheme === 'mailto') return [item('Send Email', 'email')]
+    return []
   }
 
   private imageGroup(tab: Tab, view: TabView, params: PageContextParams, win: ZenWindow): Template {

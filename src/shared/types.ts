@@ -3734,9 +3734,31 @@ export interface MenuAnchor {
   keyboard?: boolean
 }
 
+/**
+ * What the phone's link and image menus open on (Chrome for Android's context-menu header,
+ * PUI-18): the address the hold landed on, a title over it – the link's text, the address's host
+ * for a link without text – and the site's favicon or, for an image, the picture itself as the
+ * thumbnail. The sheet draws it as a two-line row in the §9.16 header's place; a tap expands the
+ * address to its full length, a long-press copies it.
+ */
+export interface MenuHeader {
+  /** The address the header names; what a long-press copies. */
+  url: string
+  /** The toast's word for the copy ("Link copied", "Phone number copied"). */
+  copied: string
+  /** The line over the address: the link's text, or the address's host. */
+  title: string
+  /** The site's favicon (`data:` or remote URL); null draws the globe. */
+  favicon: string | null
+  /** An image's own source, drawn as the header's thumbnail in the favicon's place. */
+  thumbnail: string | null
+}
+
 export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
+  /** The link's or image's header on the phone's sheet (PUI-18); absent, the sheet opens on its title. */
+  header?: MenuHeader
   source:
     | 'page'
     | 'tab'

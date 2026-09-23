@@ -3666,6 +3666,76 @@
   .zen-sheet-header-control[data-side='trailing'] {
     right: 2px;
   }
+  /*
+   * A link's or an image's menu opens on what was held (PUI-18; Chrome for Android's header):
+   * a §10.3 two-line row in the header's place, left-aligned in the 16 gutter – the favicon's
+   * 20 box (or the image itself at 40, the card radius) at a 12 gap, the title 15/600 over the
+   * address 13 in the deemphasised ink, one line each until a tap expands the address
+   * (`data-expanded`), when the row grows with it (§9.2: rows grow, never clamp). The header's
+   * 46 side padding – room for a centred title's two controls – gives way to the row's gutter.
+   */
+  .zen-sheet-header:has(> .zen-menu-link-header) {
+    padding: 0;
+  }
+  .zen-menu-link-header {
+    display: flex;
+    width: 100%;
+    min-height: var(--v2-row-two-line);
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    color: var(--v2-text);
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-menu-link-header:active {
+    background: var(--v2-fill);
+  }
+  .zen-menu-link-favicon {
+    display: flex;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+  }
+  .zen-menu-link-favicon .zen-list-favicon {
+    border-radius: var(--v2-radius-checkbox);
+  }
+  .zen-menu-link-thumbnail {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-fill);
+    object-fit: cover;
+  }
+  .zen-menu-link-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  .zen-menu-link-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-menu-link-url {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-menu-link-header[data-expanded] .zen-menu-link-url {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
   .zen-sheet-grip {
     transition: box-shadow 120ms var(--zen-ease);
   }

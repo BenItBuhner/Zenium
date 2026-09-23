@@ -24,6 +24,7 @@ import type {
   MenuItemTemplate,
   MenuPopupOptions,
   Platform,
+  ShellHost,
   ShortcutHost,
   SpeechHost,
   SpellcheckHost,
@@ -191,6 +192,8 @@ interface Harness {
   viewCalls: string[]
   /** What the host's clipboard says on `readText`. */
   clipboardText: { value: string }
+  /** Every `tel:` / `mailto:` hand-off the shell was asked for, as `target url`. */
+  linkApps: string[]
   /** The names of the events sent to the window's chrome, in order. */
   sent: string[]
   /** The ids of the windows whose host was asked to come forward (`WindowHost.focus`), in order. */
@@ -220,6 +223,11 @@ interface HarnessOptions {
   files?: Record<string, string>
   /** The host has a speech engine (`Platform.speech`; `capabilities.readAloud` set too): read aloud's entry points show. */
   speech?: boolean
+  /**
+   * The host hands `tel:` and `mailto:` links to the device's apps (`ShellHost.openLinkIn`,
+   * Android); absent, the shell has no dialer or mail app to speak of (the desktop).
+   */
+  linkApps?: boolean
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -241,6 +249,7 @@ function harness(
   const clipboardText = { value: '' }
   const sent: string[] = []
   const focused: string[] = []
+  const linkApps: string[] = []
   const spellcheckApplied: SpellcheckApplied[] = []
   const spellcheckHost = (): SpellcheckHost => {
     const words = new Set<string>()
@@ -315,7 +324,11 @@ function harness(
       opts.confirm === undefined ? {} : { confirm: () => Promise.resolve(opts.confirm!) }
     ),
     clipboard: stub<ClipboardHost>({ readText: () => Promise.resolve(clipboardText.value) }),
-    shell: stub(),
+    shell: stub<ShellHost>({
+      openLinkIn: opts.linkApps
+        ? (target, url) => void linkApps.push(`${target} ${url}`)
+        : undefined
+    }),
     net: stub(),
     downloads: stub(),
     sessions: stub(),
@@ -359,6 +372,7 @@ function harness(
     clipboardText,
     sent,
     focused,
+    linkApps,
     spellcheckApplied
   }
 }
@@ -2059,6 +2073,115 @@ describe('the page context menu', () => {
     expect(pageHarness().menu(pageParams({ linkURL: 'tel:+1-555-0100' }))[0]).toBe(
       'Copy Phone Number'
     )
+  })
+
+  it('on the phone hands a tel: link to the dialer, the messaging app and the contacts form, and a mailto: link to the mail app (PUI-22)', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone', linkApps: true })
+    expect(h.menu(pageParams({ linkURL: 'tel:+1-555-0100' }))).toEqual([
+      'Call',
+      'Send Message',
+      'Add to Contacts',
+      '-',
+      'Copy Phone Number',
+      '-',
+      'Boosts'
+    ])
+    h.click('Call')
+    h.click('Send Message')
+    h.click('Add to Contacts')
+    expect(h.linkApps).toEqual([
+      'call tel:+1-555-0100',
+      'message tel:+1-555-0100',
+      'addContact tel:+1-555-0100'
+    ])
+    const mail = h.menu(
+      pageParams({ linkURL: 'mailto:hello@example.com?subject=Hi', linkText: 'Write to us' })
+    )
+    expect(mail).toEqual(['Send Email', '-', 'Copy Email Address', 'Copy Link Text', '-', 'Boosts'])
+    h.click('Send Email')
+    expect(h.linkApps.at(-1)).toBe('email mailto:hello@example.com?subject=Hi')
+    // A phone whose host has no such apps, and every other form factor, keep Chrome desktop's
+    // copy items alone; a web link gains nothing.
+    expect(
+      pageHarness(ANDROID, { formFactor: 'phone' }).menu(
+        pageParams({ linkURL: 'tel:+1-555-0100' })
+      )[0]
+    ).toBe('Copy Phone Number')
+    expect(
+      pageHarness(ANDROID, { formFactor: 'tablet', linkApps: true }).menu(
+        pageParams({ linkURL: 'tel:+1-555-0100' })
+      )[0]
+    ).toBe('Copy Phone Number')
+    expect(h.menu(pageParams({ linkURL: 'https://example.org/next' }))).not.toContain('Call')
+  })
+
+  it('opens the phone’s link and image menus on a header naming what was held (PUI-18); the desktop’s and the tablet’s carry none', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    h.browser.tabs.tab(h.tabId)!.favicon = 'data:image/png;base64,TAB'
+    // A link within the tab's site: its text over its address, the tab's own favicon.
+    h.menu(pageParams({ linkURL: `${PAGE_URL}next`, linkText: 'Next page' }))
+    expect(h.where()?.header).toEqual({
+      url: `${PAGE_URL}next`,
+      copied: 'Link copied',
+      title: 'Next page',
+      favicon: 'data:image/png;base64,TAB',
+      thumbnail: null
+    })
+    // A link without text names its host; another site's favicon comes from history's cache.
+    h.menu(pageParams({ linkURL: 'https://other.example/a/b' }))
+    expect(h.where()?.header).toMatchObject({
+      url: 'https://other.example/a/b',
+      title: 'other.example',
+      favicon: null
+    })
+    h.browser.history.visit('https://other.example/', 'Other', 'data:image/png;base64,OTHER')
+    h.menu(pageParams({ linkURL: 'https://www.other.example/a/b' }))
+    expect(h.where()?.header?.favicon).toBe('data:image/png;base64,OTHER')
+    // An image is its own thumbnail; a linked image keeps the link's address.
+    h.menu(pageParams({ mediaType: 'image', srcURL: 'https://example.com/a.png' }))
+    expect(h.where()?.header).toMatchObject({
+      url: 'https://example.com/a.png',
+      title: 'example.com',
+      favicon: null,
+      thumbnail: 'https://example.com/a.png'
+    })
+    h.menu(
+      pageParams({
+        linkURL: 'https://example.com/gallery',
+        mediaType: 'image',
+        srcURL: 'https://example.com/a.png'
+      })
+    )
+    expect(h.where()?.header).toMatchObject({
+      url: 'https://example.com/gallery',
+      thumbnail: 'https://example.com/a.png'
+    })
+    // A number or an address shows bare, as its copy item copies it, under the scheme's name.
+    h.menu(pageParams({ linkURL: 'tel:+1-555-0100' }))
+    expect(h.where()?.header).toEqual({
+      url: '+1-555-0100',
+      copied: 'Phone number copied',
+      title: 'Phone number',
+      favicon: null,
+      thumbnail: null
+    })
+    h.menu(pageParams({ linkURL: 'mailto:hello@example.com?subject=Hi', linkText: 'Write to us' }))
+    expect(h.where()?.header).toMatchObject({
+      url: 'hello@example.com',
+      copied: 'Email address copied',
+      title: 'Write to us'
+    })
+    // The plain page opens on its title; a javascript: link is no link.
+    h.menu(pageParams())
+    expect(h.where()?.header).toBeUndefined()
+    h.menu(pageParams({ linkURL: 'javascript:void(0)' }))
+    expect(h.where()?.header).toBeUndefined()
+    const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+    tablet.menu(pageParams({ linkURL: 'https://other.example/a/b' }))
+    expect(tablet.where()?.header).toBeUndefined()
+    const desktop = pageHarness()
+    desktop.menu(pageParams({ linkURL: 'https://other.example/a/b' }))
+    expect(desktop.where()?.header).toBeUndefined()
   })
 
   it('lists the image items in Chrome’s order and saves through the dialog', () => {

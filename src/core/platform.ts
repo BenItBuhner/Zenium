@@ -26,6 +26,7 @@ import type {
   LongCapture,
   LongCaptureCrop,
   MenuGlyph,
+  MenuHeader,
   NavigationSnapshot,
   NewTabPageAction,
   NewTabPageCommand,
@@ -1127,6 +1128,9 @@ export type MenuSource =
   | 'urlbar'
   | 'translate'
 
+/** The apps a `tel:` or `mailto:` link's menu items hand the link to (`ShellHost.openLinkIn`). */
+export type LinkAppTarget = 'call' | 'message' | 'addContact' | 'email'
+
 export interface MenuPopupOptions {
   source: MenuSource
   win: ZenWindow
@@ -1138,6 +1142,11 @@ export interface MenuPopupOptions {
   y?: number
   /** Opened by the keyboard: the first item starts selected so the arrow keys take over at once. */
   keyboard?: boolean
+  /**
+   * The link's or image's header (PUI-18) for the phone's sheet: the renderer-drawn host carries
+   * it to the sheet; hosts with native menus have no header to draw and leave it be.
+   */
+  header?: MenuHeader
 }
 
 export interface MenuHost {
@@ -1264,6 +1273,13 @@ export interface ShellHost {
   share?(payload: SharePayload): Promise<ShareOutcome | void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
+  /**
+   * A phone number's or an email address's own apps (Chrome for Android's link items, PUI-22):
+   * the dialer with the number filled in (`call`), a new text to it (`message`), the contacts
+   * app's new-contact form (`addContact`), a new mail to the address (`email`). `url` is the
+   * link's `tel:` or `mailto:` URL as it stands. Hosts without those apps leave it out.
+   */
+  openLinkIn?(target: LinkAppTarget, url: string): void
   /**
    * The OS screen for this app's notifications (Android's per-app notification settings, where
    * each channel is turned on or off); hosts whose notifications the OS does not manage leave it out.

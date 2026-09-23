@@ -867,10 +867,14 @@ class TabWebView(
                 val msg = Message.obtain(Handler(Looper.getMainLooper()) { m ->
                     val href = m.data.getString("url") ?: result.extra ?: ""
                     val src = m.data.getString("src") ?: ""
+                    // The anchor's text (`title` in the WebView's bundle): the link menu's
+                    // header title (PUI-18) and its Copy Link Text item.
+                    val text = m.data.getString("title")?.trim() ?: ""
                     host.viewEvent(
                         tabId, "contextMenu",
                         json(
                             "linkURL" to href,
+                            "linkText" to text,
                             "srcURL" to src,
                             "mediaType" to if (src.isNotEmpty()) "image" else "none",
                             "x" to anchorX, "y" to anchorY

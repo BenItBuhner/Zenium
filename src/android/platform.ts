@@ -1329,6 +1329,9 @@ export class AndroidPlatform implements Platform {
       share: (payload) => bridge.call('app.share', payload),
       openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
       openNotificationSettings: () => bridge.send('app.openNotificationSettings'),
+      // The link menu's Call / Send message / Add to contacts / Send email (PUI-22): the
+      // dialer, the messaging app, the contacts form and the mail app, by intent in Kotlin.
+      openLinkIn: (target, url) => bridge.send(`link.${target}`, { url }),
       openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings'),
       openKeyboardSettings: () => bridge.send('app.openKeyboardSettings')
     }
