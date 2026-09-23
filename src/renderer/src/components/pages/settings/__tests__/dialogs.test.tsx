@@ -197,6 +197,126 @@ describe('a desktop item dialog and its rows (§9.24)', () => {
     expect(prompt!.querySelector('[data-row], input')).toBeNull()
   })
 
+  describe('a form dialog over another dialog is §9.20’s 320 with its descriptions wrapping (“place beats content”, the #409 ruling)', () => {
+    // An item's Edit form (#409's stacked case): the item dialog's row opens a form whose title
+    // block and field carry descriptions long enough to need the lines.
+    const description =
+      'The shortcut is the word typed in the address bar before a space; the URL is the template with %s where the search terms go.'
+    const editRow: ActionRow = {
+      kind: 'action',
+      id: 'search-engine:custom:example-search:edit',
+      label: 'Edit',
+      form: {
+        title: 'Edit search engine',
+        description,
+        render: () => (
+          <div className="zen-settings-form">
+            <div className="zen-settings-field-block">
+              <label htmlFor="stacked-url" className="zen-settings-label">
+                URL with %s in place of query
+              </label>
+              <input id="stacked-url" className="zen-settings-input zen-v2-field" />
+              <span className="zen-settings-description">
+                Example: https://en.wikipedia.org/w/index.php?search=%s
+              </span>
+            </div>
+          </div>
+        )
+      }
+    }
+    const row: ItemRow = {
+      kind: 'item',
+      id: 'search-engine:custom:example-search',
+      label: 'Example Search',
+      sheet: {
+        title: 'Example Search',
+        groups: [
+          { id: 'search-engine:custom:example-search:actions', heading: null, rows: [editRow] }
+        ]
+      }
+    }
+    const groups: RowGroup[] = [{ id: 'search-engines', heading: 'Search engines', rows: [row] }]
+    const css = readFileSync(resolve(__dirname, '../../../../assets/main.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\s+/g, ' ')
+
+    it('at the stack’s second place the form is the 320 notice and wears data-stacked; the item dialog under it keeps the form’s 400', () => {
+      const h = render(
+        <FrameDialogHost>
+          <DialogStack
+            requests={[
+              { kind: 'item', rowId: row.id },
+              { kind: 'form', rowId: editRow.id }
+            ]}
+            groups={groups}
+            ctx={ctx}
+            closeTop={() => undefined}
+          />
+        </FrameDialogHost>
+      )
+      const dialogs = [...h.querySelectorAll<HTMLElement>('[role="dialog"]')]
+      expect(dialogs.map((d) => d.getAttribute('data-dialog'))).toEqual([
+        'item:search-engine:custom:example-search',
+        'form:search-engine:custom:example-search:edit'
+      ])
+      const [item, form] = dialogs
+      // The widths are the two of lib/portals' `POPOVER_WIDTH`, set inline as the prompt
+      // primitive sets its own: the item at the form's 400 (the first dialog keeps its width),
+      // the form over it at the notice's 320 – inside the lower dialog's edges.
+      expect(item!.style.width).toBe('400px')
+      expect(item!.hasAttribute('data-stacked')).toBe(false)
+      expect(form!.style.width).toBe('320px')
+      expect(form!.hasAttribute('data-stacked')).toBe(true)
+      expect(item!.hasAttribute('inert')).toBe(true)
+      expect(form!.hasAttribute('inert')).toBe(false)
+      // The descriptions the stacked rule reaches: the title block's, and the field's
+      // `.zen-settings-description` – the same element a row's description is.
+      expect(form!.querySelector('.zen-v2-title-block-description')?.textContent).toBe(description)
+      expect(form!.querySelector('.zen-settings-description')?.textContent).toContain(
+        'https://en.wikipedia.org/w/index.php?search=%s'
+      )
+    })
+
+    it('the stacked descriptions wrap – a rule assertion, since happy-dom lays nothing out: the row list’s two-line clamp lifted and a long token breaking', () => {
+      // The base rule a row list reads: two lines, then the clamp.
+      expect(css).toContain('.zen-settings-description { display: -webkit-box; overflow: hidden;')
+      expect(css).toMatch(/\.zen-settings-description \{[^}]*-webkit-line-clamp: 2; \}/)
+      // The stacked rule: the row's own `-full` declarations (block, no clamp) on the field's
+      // and the row's description and on the title block's, plus the break the title and the
+      // label already have, so a template URL wraps at 288 instead of being clipped.
+      const stacked =
+        '.zen-settings-dialog[data-stacked] .zen-v2-title-block-description, ' +
+        '.zen-settings-dialog[data-stacked] .zen-settings-description ' +
+        '{ display: block; overflow-wrap: anywhere; -webkit-line-clamp: none; }'
+      expect(css).toContain(stacked)
+      expect(css).toContain(
+        '.zen-settings-description-full { display: block; -webkit-line-clamp: none; }'
+      )
+      // After the base rule in the cascade, so the lift wins at equal weight.
+      expect(css.indexOf(stacked)).toBeGreaterThan(css.indexOf('.zen-settings-description {'))
+      // No width literal joins the rule: the 320 is `POPOVER_WIDTH.list`'s alone.
+      expect(css).not.toMatch(/\[data-stacked\][^{]*\{[^}]*width/)
+    })
+
+    it('at the stack’s first place, and on its own, the form keeps the form width', () => {
+      const h = render(
+        <FrameDialogHost>
+          <DialogStack
+            requests={[{ kind: 'form', rowId: editRow.id }]}
+            groups={groups}
+            ctx={ctx}
+            closeTop={() => undefined}
+          />
+        </FrameDialogHost>
+      )
+      const form = h.querySelector<HTMLElement>('[role="dialog"]')!
+      expect(form.getAttribute('data-dialog')).toBe('form:search-engine:custom:example-search:edit')
+      expect(form.style.width).toBe('400px')
+      expect(form.hasAttribute('data-stacked')).toBe(false)
+      expect(form.hasAttribute('inert')).toBe(false)
+    })
+  })
+
   it('the container carries the shared no-ring mark and its controls do not: role=dialog with tabindex=-1 (§1, §9.22)', () => {
     const row = itemRow(
       () => undefined,
