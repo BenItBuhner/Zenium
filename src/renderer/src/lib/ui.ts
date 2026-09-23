@@ -16,6 +16,7 @@ import type {
   LongCapture,
   LongCaptureCrop,
   MenuDescriptor,
+  MenuItemDescriptor,
   OverlayKind,
   Rect,
   ScreenshotSaved,
@@ -1689,12 +1690,29 @@ export function closeMenu(notifyHost = true, { keepKeyboard = false } = {}): voi
   if (!keepKeyboard) returnFocusToPage()
 }
 
+/** The descriptor item `itemId` names, at any depth of `items`; undefined when none. */
+function menuItemById(items: MenuItemDescriptor[], itemId: string): MenuItemDescriptor | undefined {
+  for (const item of items) {
+    if (item.id === itemId) return item
+    const inner = item.submenu ? menuItemById(item.submenu, itemId) : undefined
+    if (inner) return inner
+  }
+  return undefined
+}
+
+/**
+ * Pick an item of the open menu. The page gets the focus back as after any overlay – except for an
+ * item that says it keeps the keyboard (`keepsKeyboard`: Rename Group…, Rename Tab…), whose action
+ * mounts a field of the chrome's own: the host's focus move would land on the page while that
+ * field is mounting and blur it away before the user could type (the tablet's rename, nightly
+ * `tablet-groups` §6), so for it the focus stays where the field is about to take it.
+ */
 export function pickMenuItem(itemId: string): void {
   const menu = uiStore.get().menu
   if (!menu) return
   uiStore.set({ menu: null })
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!menuItemById(menu.items, itemId)?.keepsKeyboard) returnFocusToPage()
   const local = localMenus.get(menu.id)
   localMenus.delete(menu.id)
   // Run the action once the sheet has been unpainted: hosts that snapshot the window for the

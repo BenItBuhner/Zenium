@@ -56,19 +56,15 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
   }
 ]
 
-/** The vendor's default engine: the first shipped one, what a profile searches with untouched. */
-export const VENDOR_DEFAULT_ENGINE_ID = DEFAULT_SEARCH_ENGINES[0].id
-
 /**
  * The mark a field's leading slot shows for the engine it searches with (NTP-09; Chrome's
  * search engine logo at the start of its box, Edge's Bing logo): the engine's favicon from the
- * registry when the engine is not the vendor's default and has one, else null – the slot then
+ * registry when it has one – every shipped engine does, the vendor's default included, since
+ * v2 §6 makes the engine's favicon at 20 the field's leading glyph on the omnibox, the new tab
+ * page's resting field and the morph's double, whichever engine it is – else null, and the slot
  * keeps what it always showed (the omnibox field's letter tile, the new tab field's magnifier).
- * The vendor's default is not marked: it is where a search goes unless the user said otherwise,
- * and the mark is for the choice they made.
  */
-export function engineFieldFavicon(engine: Pick<SearchEngine, 'id' | 'favicon'>): string | null {
-  if (engine.id === VENDOR_DEFAULT_ENGINE_ID) return null
+export function engineFieldFavicon(engine: Pick<SearchEngine, 'favicon'>): string | null {
   return engine.favicon ?? null
 }
 

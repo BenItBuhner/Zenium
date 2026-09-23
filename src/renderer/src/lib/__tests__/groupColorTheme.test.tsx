@@ -38,13 +38,13 @@ function rule(selector: string): string {
   return css.slice(at, css.indexOf('}', at) + 1)
 }
 
-/** The rules under test, as written in main.css: the two picks and three readers. */
+/** The rules under test, as written in main.css: the two picks and three readers (the one group glyph's dot and ring among them, §9.37). */
 const RULES = [
   rule('[data-group-rgb]'),
   rule(":root[data-theme='dark'] [data-group-rgb]"),
   rule('.zen-group-editor-swatch-disc'),
-  rule('.zen-overview-group-glyph'),
-  rule('.zen-group-row-dot')
+  rule('.zen-group-row-dot'),
+  rule('.zen-group-row-glyph[data-saved] .zen-group-row-dot')
 ].join('\n')
 
 /**

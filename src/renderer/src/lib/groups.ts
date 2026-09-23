@@ -9,6 +9,8 @@ import { hexToRgb } from '@shared/theme'
 
 /** Folders are tab groups on the phone; this is the colour a group without one is painted in. */
 export const DEFAULT_GROUP_COLOR: FolderColor = 'grey'
+/** The icon folders get by default; a group wearing it shows its colour's glyph instead (`GroupGlyph`). */
+export const DEFAULT_FOLDER_ICON = '📁'
 
 /**
  * Chrome's nine group colours in Chrome's order (`FOLDER_COLOR_ORDER`, the order the core hands

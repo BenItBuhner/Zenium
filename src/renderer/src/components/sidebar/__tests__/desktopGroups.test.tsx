@@ -469,7 +469,7 @@ describe('the group’s colour (M2) and the count aside (M3)', () => {
   it('keeps the folder’s own icon in the glyph slot, in place of the dot', () => {
     panel([tab('home'), tab('a', { folderId: 'g' })], [folder({ icon: '🔬' })])
     const glyph = header().querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.querySelector('.zen-group-row-icon')?.textContent).toBe('🔬')
+    expect(glyph.querySelector('.zen-group-row-icon')?.getAttribute('data-icon')).toBe('🔬')
     expect(glyph.querySelector('.zen-group-row-dot')).toBeNull()
   })
 })
