@@ -37,9 +37,9 @@ export interface ConfirmKeyboard {
    */
   tab?: boolean
   /**
-   * The held container, when `ref` is not it: found up from the ref's element as the listener
-   * is placed (a sheet's body to the chassis's dialog root: `(body) => body.closest('[role="dialog"]')`).
-   * Default: the ref's element itself.
+   * The held container, when `ref` is not it: found up from the ref's element AS THE LISTENER
+   * IS PLACED (a sheet's body to the chassis's dialog root: `(body) => body.closest('[role="dialog"]')`),
+   * not at each key. Default: the ref's element itself.
    */
   container?: (el: HTMLElement) => HTMLElement | null
 }
@@ -58,9 +58,17 @@ export interface ConfirmKeyboard {
  * so the key is swallowed and confirms nothing; a focused button still answers its own Enter
  * and Space as any button does. Escape is not here: it is the surface's (`useEscape`, one hop).
  *
- * `destructive`, `confirm` and `container` are read at the key, never re-binding the listener;
- * `enabled` and `tab` re-place it. The one implementation: the primitive holds its root with it
- * (`ConfirmDialog.tsx`), and the phone's `ConfirmSheet` takes it in place of its own copy of the rule.
+ * What is read when: `destructive` and `confirm` are read AT THE KEY, through a latest-ref, so
+ * a prompt whose verb turns busy or destructive answers as it stands, never re-binding the
+ * listener. `container` – and `ref.current` under it – is read AT BINDING: once, as the
+ * listener is placed, in the effect that `enabled` and `tab` re-run. So a ref that attaches
+ * after the mount (a container rendered later, under a condition of its own) is NOT re-bound
+ * to, and a container found by `container` is the one found then; every host today has its
+ * element at mount – the primitive's root, a level's container, a sheet's body – and one that
+ * would not must toggle `enabled` (or `tab`) to bind again. The one implementation: the
+ * primitive holds its root with it (`ConfirmDialog.tsx`), the site-information popover's
+ * confirm levels their container, and the phone's `ConfirmSheet` takes it in place of its own
+ * copy of the rule.
  */
 export function useConfirmKeyboard(
   ref: RefObject<HTMLElement | null>,

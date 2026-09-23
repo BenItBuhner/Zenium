@@ -968,6 +968,38 @@ describe('the exported keyboard (useConfirmKeyboard, dialogs/confirmKeyboard.ts)
     expect(press(box(), 'Enter').defaultPrevented).toBe(true)
     expect(second).toHaveBeenCalledTimes(1)
   })
+
+  it('reads `container` at the binding, not at the key: once as the listener is placed, never at a press, again only as `enabled` or `tab` re-place it – so a ref attaching after the mount is not re-bound', async () => {
+    const confirm = vi.fn()
+    const container = vi.fn((el: HTMLElement) => el.closest<HTMLElement>('[data-bare]'))
+    render(<Bare inner confirm={confirm} container={container} />)
+    await settle()
+    expect(container).toHaveBeenCalledTimes(1)
+    expect(container).toHaveBeenCalledWith(part('body'))
+    act(() => box().focus())
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+    expect(press(box(), 'Tab').defaultPrevented).toBe(true)
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(container).toHaveBeenCalledTimes(1)
+    // A new `container` on a re-render is not consulted: the listener stands where it was placed.
+    const other = vi.fn(() => null)
+    render(<Bare inner confirm={confirm} container={other} />)
+    await settle()
+    expect(other).not.toHaveBeenCalled()
+    act(() => box().focus())
+    expect(press(box(), 'Enter').defaultPrevented).toBe(true)
+    expect(confirm).toHaveBeenCalledTimes(2)
+    // `enabled` off and on re-places the listener, reading `container` again – on the ref as it
+    // stands then; a container it yields nothing for binds nothing.
+    render(<Bare inner confirm={confirm} container={other} enabled={false} />)
+    await settle()
+    render(<Bare inner confirm={confirm} container={other} />)
+    await settle()
+    expect(other).toHaveBeenCalledTimes(1)
+    act(() => box().focus())
+    expect(press(box(), 'Enter').defaultPrevented).toBe(false)
+    expect(confirm).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('the way back (§9.5, §9.22)', () => {
