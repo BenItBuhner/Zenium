@@ -27,6 +27,7 @@ import {
 import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
+  INACTIVE_TAB_AUTO_CLOSE_DAYS,
   emptyAgentServerStatus,
   emptyAutofillUIState,
   emptyPasswordsStatus,
@@ -58,7 +59,7 @@ import { emptyUpdateStatus } from '@shared/updates'
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
 Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
-const { buildSection, buildSections } = await import('../sections')
+const { buildSection, buildSections, autoCloseDescription } = await import('../sections')
 const {
   allRows,
   currentOptionLabel,
@@ -112,6 +113,7 @@ const ANDROID: HostCapabilities = {
   pageControls: true,
   darkenSites: true,
   privateTabs: true,
+  inactiveTabs: true,
   secureDns: false,
   quitsThroughCore: false,
   newTabPage: false,
@@ -4705,6 +4707,81 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
       expect(excluded.value).toBe('mail.example.com')
       excluded.onCommit('Mail.example.com, notion.so')
       expect(c.patches.at(-1)).toEqual({ unloadExcludedDomains: ['mail.example.com', 'notion.so'] })
+    }
+  })
+})
+
+describe('TAB-20 / SET-34: inactive tabs in Tab Management on a phone, beside sleeping tabs, in Chrome’s words', () => {
+  it('is a group of its own after the sleeping-tabs groups: the threshold as a value row on Chrome’s ladder and the auto-close switch, off at .4 while the threshold is Never', () => {
+    const c = context()
+    const tabs = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      {
+        ...c.ctx,
+        formFactor: 'phone'
+      }
+    )
+    const ids = tabs.groups.map((g) => g.id)
+    expect(ids.indexOf('inactive-tabs')).toBe(ids.indexOf('never-sleep-add') + 1)
+    const group = tabs.groups.find((g) => g.id === 'inactive-tabs')
+    expect(group?.heading).toBe('Inactive tabs')
+    // The description tells the two apart: a sleeping tab keeps its place in the grid.
+    expect(group?.description).toContain('Sleeping tabs stay in the grid')
+    expect(group?.rows.map((r) => r.id)).toEqual([
+      'inactive-tabs-after',
+      'inactive-tabs-auto-close'
+    ])
+
+    const after = row(tabs, 'inactive-tabs-after')
+    if (after.kind !== 'value') throw new Error('not a choice')
+    expect(after.label).toBe('Move to inactive')
+    expect(after.options.map((o) => o.label)).toEqual([
+      'Never',
+      'After 7 days inactive',
+      'After 14 days inactive',
+      'After 21 days inactive'
+    ])
+    // Chrome 152's default.
+    expect(after.value).toBe('21')
+    after.onChange('7')
+    expect(c.patches.at(-1)).toEqual({ inactiveTabsArchiveDays: 7 })
+    after.onChange('0')
+    expect(c.patches.at(-1)).toEqual({ inactiveTabsArchiveDays: 0 })
+
+    const autoClose = row(tabs, 'inactive-tabs-auto-close')
+    if (autoClose.kind !== 'switch') throw new Error('not a switch')
+    expect(autoClose.label).toBe('Automatically close inactive tabs')
+    expect(autoClose.description).toBe('Inactive tabs are closed after 3 months')
+    // The period is the core's constant (Chrome 152's 90 days) read in months as Chrome counts
+    // them, not a second copy of the number.
+    expect(autoClose.description).toBe(autoCloseDescription(INACTIVE_TAB_AUTO_CLOSE_DAYS))
+    expect(autoCloseDescription(60)).toBe('Inactive tabs are closed after 2 months')
+    expect(autoCloseDescription(30)).toBe('Inactive tabs are closed after 1 month')
+    expect(autoClose.checked).toBe(true)
+    expect(autoClose.disabled).toBe(false)
+    autoClose.onChange(false)
+    expect(c.patches.at(-1)).toEqual({ inactiveTabsAutoClose: false })
+
+    // Never: nothing is archived, so the sweep's switch is a dependent row (§10.4), as Chrome
+    // greys it; the value row itself stays live, it is the way back.
+    const never = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      {
+        ...context(state({}, { inactiveTabsArchiveDays: 0 })).ctx,
+        formFactor: 'phone'
+      }
+    )
+    expect(row(never, 'inactive-tabs-after').disabled).toBeUndefined()
+    expect(row(never, 'inactive-tabs-auto-close').disabled).toBe(true)
+  })
+
+  it('exists only where the archive does (the capability), and only on the phone shell', () => {
+    const def = PAGE.sections.find((x) => x.id === 'tabs')!
+    const without = state({ capabilities: { ...ANDROID, inactiveTabs: false } })
+    expect(section('tabs', without).groups.map((g) => g.id)).not.toContain('inactive-tabs')
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const shell = buildSection(def, { ...context().ctx, formFactor: layout })
+      expect(shell.groups.map((g) => g.id)).not.toContain('inactive-tabs')
     }
   })
 })

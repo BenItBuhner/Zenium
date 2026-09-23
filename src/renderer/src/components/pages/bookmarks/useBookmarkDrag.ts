@@ -4,12 +4,17 @@ import { run } from '@renderer/lib/api'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
 import { forbiddenTargets } from '../../bookmarks/tree'
+import { HOLD_TO_OPEN_MS } from '../../bookmarks/useBarDrag'
+
+export { HOLD_TO_OPEN_MS }
 
 /**
  * Drop targets are DOM elements carrying `data-bm-drop`:
  *   row:<id>        a list row – before / after / into (folders) depending on the pointer's y
  *   into:<folderId> a folder (tree items, breadcrumb segments)
  *   list:<folderId> the list's empty space – append to that folder
+ * An `into:` element that also carries `data-bm-hold` folds (a tree folder whose branch is
+ * closed): a drag held over it for `HOLD_TO_OPEN_MS` asks `onHoldFolder` to open it.
  */
 export interface BookmarkDrag {
   ids: string[]
@@ -33,6 +38,8 @@ export interface DropTarget {
   /** The row being hovered, for the insertion line / folder highlight. */
   rowId: string | null
   position: 'before' | 'after' | 'into' | 'append'
+  /** The hovered element folds (`data-bm-hold`): a drag held over it opens the folder's branch. */
+  holdOpens?: boolean
 }
 
 interface Options {
@@ -41,6 +48,11 @@ interface Options {
   canReorder: boolean
   /** The scrolling list: it autoscrolls while the pointer drags within 32px of its edges. */
   scrollRef?: React.RefObject<HTMLElement | null>
+  /**
+   * The drag has rested on a closed tree folder for `HOLD_TO_OPEN_MS` (bookmarks-26, Chrome's
+   * manager): open its branch, so the drop can reach a folder inside it.
+   */
+  onHoldFolder?: (folderId: string) => void
 }
 
 const DRAG_THRESHOLD = 5
@@ -52,9 +64,11 @@ const AUTOSCROLL_MAX_STEP = 14
  * Pointer-driven drag and drop for the manager. Position follows the pointer directly (direct
  * manipulation); everything that is not under the finger – the ghost settling, the insertion
  * line gliding between slots, rows making room – runs on springs, so a new grab mid-flight simply
- * takes over the motion.
+ * takes over the motion. A drag that rests on a closed tree folder opens it after
+ * `HOLD_TO_OPEN_MS` – the bar's spring-open hold, one number for both surfaces – and the folder
+ * stays open once the drag is over, as Chrome's manager leaves it (bookmarks-26).
  */
-export function useBookmarkDrag({ tree, canReorder, scrollRef }: Options): {
+export function useBookmarkDrag({ tree, canReorder, scrollRef, onHoldFolder }: Options): {
   drag: BookmarkDrag | null
   target: DropTarget | null
   startDrag: (e: React.PointerEvent, ids: string[], rowEl: HTMLElement) => void
@@ -70,10 +84,24 @@ export function useBookmarkDrag({ tree, canReorder, scrollRef }: Options): {
   const dragRef = useRef<BookmarkDrag | null>(null)
   const treeRef = useRef(tree)
   const reorderRef = useRef(canReorder)
+  const holdRef = useRef(onHoldFolder)
   useLayoutEffect(() => {
     treeRef.current = tree
     reorderRef.current = canReorder
-  }, [tree, canReorder])
+    holdRef.current = onHoldFolder
+  }, [tree, canReorder, onHoldFolder])
+
+  // The hold is the target's, not the pointer's: the timer starts when the drag arrives on a
+  // folding folder and runs on through the pointer's jitter within its row (the target's key
+  // does not change), and is dropped when the drag leaves the row or lets go. The row stops
+  // folding once it is open (`data-bm-hold` goes), so a second hold over it asks nothing.
+  const holdKey = target?.holdOpens && drag && !drag.settling ? target.key : null
+  const holdId = holdKey && target ? target.parentId : null
+  useEffect(() => {
+    if (!holdKey || !holdId) return
+    const timer = setTimeout(() => holdRef.current?.(holdId), HOLD_TO_OPEN_MS)
+    return () => clearTimeout(timer)
+  }, [holdKey, holdId])
 
   const placeGhost = useCallback((x: number, y: number): void => {
     live.current = { x, y }
@@ -103,7 +131,8 @@ export function useBookmarkDrag({ tree, canReorder, scrollRef }: Options): {
         key,
         parentId: id,
         rowId: kind === 'into' ? id : null,
-        position: kind === 'into' ? 'into' : 'append'
+        position: kind === 'into' ? 'into' : 'append',
+        holdOpens: kind === 'into' && el.dataset.bmHold !== undefined
       }
     }
     if (kind !== 'row') return null
