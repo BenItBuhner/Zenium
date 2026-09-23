@@ -112,6 +112,9 @@ export function TabHoverCard({ state }: { state: UIState }): JSX.Element | null 
         id="zen-tab-hover-card"
         role="tooltip"
         className="zen-tab-hover-card zen-animate-pop"
+        // A §9.20 panel (§9.31): a page surface in either layout, as the popovers beside it
+        // in the chrome layer declare on their own roots (§9.29's two families).
+        data-surface="page"
         data-tab-id={tab.id}
         data-side={box?.side}
         style={{
