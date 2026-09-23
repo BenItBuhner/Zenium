@@ -152,6 +152,7 @@ afterEach(() => {
   root = null
   mount?.remove()
   mount = null
+  Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
   vi.unstubAllGlobals()
 })
 
@@ -307,5 +308,36 @@ describe('the menulist popup', () => {
     const el = list()!
     expect(el.classList.contains('zen-v2-menulist-popup')).toBe(true)
     expect(el.classList.contains('zen-reader-translate-popup')).toBe(true)
+  })
+
+  it('a list that fits its room is as wide as its rows; one taller than the room scrolls and is wider by the scrollbar, so the bar takes nothing from the rows (#350 lead check, the 25-stop size list)', () => {
+    // A fine pointer's bar: the probe's 200 offset against a 192 client width is the chassis's 8.
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get: () => 192
+    })
+    render()
+    open()
+    // 152 of rows under a 768 window: whole, no bar, the rows' own 200.
+    expect(list()!.style.width).toBe('200px')
+    expect(list()!.style.maxHeight).toBe('152px')
+    key('Escape')
+    // 700 of rows: capped at the room below the trigger (768 − 332 − 8), scrolling, 8 wider.
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 700
+    })
+    open()
+    expect(list()!.style.maxHeight).toBe('428px')
+    expect(list()!.style.width).toBe('208px')
+    key('Escape')
+    // Rows already at §5's 332 cannot grow past it: the bar takes its width there, the row's
+    // ellipsis is by design (the picker's longest family name).
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get: () => 330
+    })
+    open()
+    expect(list()!.style.width).toBe('332px')
   })
 })
