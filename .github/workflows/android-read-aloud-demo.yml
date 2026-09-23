@@ -18,8 +18,6 @@ name: Android read aloud demo
 # enabled.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/services-read-aloud-demo-reopen-24d1]
 
 permissions:
   contents: read
@@ -40,7 +38,6 @@ jobs:
         DEMO_DIR=read-aloud-demo
         DEMO_OUT=artifacts/android-read-aloud-demo
         DEMO_VIDEO=android-read-aloud-demo.mp4
-        DEMO_ARGS=-e loseSeededTab true
       artifact-name: android-read-aloud-demo
       artifact-path: artifacts/android-read-aloud-demo/
 
