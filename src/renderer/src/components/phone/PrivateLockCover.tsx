@@ -51,11 +51,16 @@ export const LOCK_BLUR_PX = 18
  */
 const SPRING_LIFT: SpringConfig = { ...SPRING_SNAPPY, restDelta: 0.004, restSpeed: 0.08 }
 
-/** What the last render had of the lock and the ask, and whether the cover is on its lift. */
+/**
+ * What the last render had of the lock and the ask, whether the cover is on its lift, and
+ * whether the page and the rows wait on that lift (`lifting`): a lift waited on ends with the
+ * wait.
+ */
 interface Phase {
   locked: boolean
   shown: boolean
   leaving: boolean
+  waited: boolean
 }
 
 /**
@@ -90,15 +95,23 @@ export function PrivateLockCover({
   // while the lock stands – the gesture stage or the omnibox taking the frame over – it goes at
   // once: a cover fading behind the shrinking hero card would show around it. State derived
   // during render (the React pattern for "what did the previous render have"), as `SheetPresence`.
-  const [phase, setPhase] = useState<Phase>({ locked, shown, leaving: false })
+  const [phase, setPhase] = useState<Phase>({ locked, shown, leaving: false, waited: false })
   if (locked) {
     // At rest – or back at rest: a lock again during a lift (Home right after the pass).
     if (phase.leaving || phase.locked !== locked || phase.shown !== shown)
-      setPhase({ locked, shown, leaving: false })
+      setPhase({ locked, shown, leaving: false, waited: false })
   } else if (phase.locked) {
     // The lock came off since the last render: under a cover at rest it lifts – whether the
     // cover is still asked for meanwhile (the frame's, through `lifting`) or not (the pane's).
-    setPhase({ locked, shown, leaving: phase.shown })
+    setPhase({ locked, shown, leaving: phase.shown, waited: lifting })
+  } else if (phase.leaving && phase.waited && !lifting) {
+    // The wait ended before this cover landed – `LIFT_MAX_MS` ran out (the spring steps at most
+    // 64 ms a frame, and on a device drawing a frame every 100 ms or more it lands after the
+    // deadline), or the cover beside it (the frame's, the sidebar's veil) landed a frame first:
+    // the cover goes with the wait, in the render that brings the page and the titles back, so
+    // neither ever shows under a cover still up. A lift nothing waited on (the pane's) runs its
+    // spring out.
+    setPhase({ locked, shown, leaving: false, waited: false })
   } else if (phase.shown !== shown) {
     setPhase({ ...phase, shown })
   }

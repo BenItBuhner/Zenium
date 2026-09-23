@@ -7457,6 +7457,19 @@
     animation: zen-fade 120ms var(--zen-ease) !important;
   }
 }
+/*
+ * The still of a pane that left (`PaneSlot`: the sidebar's pose, the overview's pane) is a
+ * picture of it under the window's polarity as it was taken (`data-still-theme`, the root's
+ * `data-theme` then). Its rows read the live tokens, and §11.6's blend cuts the ink (`--zen-fg`,
+ * `data-theme`) at its midpoint: a still still up past the cut – a slow frame, or reduced
+ * motion's cut at once – would draw the rows that left in the other pose's ink, the private
+ * titles in the regular ink. Once the window's polarity is not the still's, the still is not
+ * drawn (a cut, the polarity's own).
+ */
+:root[data-theme='light'] .zen-pane-still[data-still-theme='dark'],
+:root[data-theme='dark'] .zen-pane-still[data-still-theme='light'] {
+  visibility: hidden;
+}
 /* The sidebar's footer buttons (new space, the palette) at the tablet icon button. */
 :root[data-form-factor='tablet']
   .zen-tablet-sidebar

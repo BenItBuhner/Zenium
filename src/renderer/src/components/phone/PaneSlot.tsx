@@ -10,13 +10,15 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 
 /**
  * A pane on its way out: a still of it – its DOM, copied – drawn where it stood while the next
- * pane comes up in the slot; `scrollTop` is where the pane's grid was scrolled to.
+ * pane comes up in the slot; `scrollTop` is where the pane's grid was scrolled to; `theme` the
+ * window's polarity (the root's `data-theme`) as the still was taken, the one it is drawn under.
  */
 export interface PaneStill {
   key: number
   node: HTMLElement
   rect: Rect
   scrollTop: number
+  theme: string
 }
 
 interface SlotProps {
@@ -122,7 +124,8 @@ function takeStill(el: HTMLElement, root: HTMLElement): PaneStill {
       width: r.width / scale,
       height: r.height / scale
     },
-    scrollTop
+    scrollTop,
+    theme: el.ownerDocument.documentElement.dataset.theme ?? ''
   }
 }
 
@@ -175,13 +178,18 @@ function Still({
       if (timer !== null) clearTimeout(timer)
     }
   }, [still, onDone])
+  // A still is a picture of the pane under the polarity it left in: its rows read the window's
+  // live tokens, and §11.6's blend cuts the ink at its midpoint – a still outliving the cut (a
+  // slow frame, reduced motion's cut at once) would draw the rows that left in the other pose's
+  // ink. main.css draws no still whose `data-still-theme` is not the root's.
   return (
     <div
       ref={ref}
-      className="pointer-events-none absolute z-10 flex flex-col overflow-hidden"
+      className="zen-pane-still pointer-events-none absolute z-10 flex flex-col overflow-hidden"
       aria-hidden
       inert
       data-testid="pane-still"
+      data-still-theme={still.theme || undefined}
       style={{
         left: still.rect.x,
         top: still.rect.y,

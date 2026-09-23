@@ -295,6 +295,9 @@ describe('the private pose: a private tab in view', () => {
     const had = proto.animate
     proto.animate = undefined
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    // The window on the private theme while the private pose stands (`useTheme` paints the
+    // root's `data-theme`; the private surface is dark whatever the scheme).
+    document.documentElement.dataset.theme = 'dark'
     try {
       sidebar({ tabs: regularScene(), active: 'bank' })
       expect(aside().dataset.pose).toBe('private')
@@ -315,6 +318,16 @@ describe('the private pose: a private tab in view', () => {
         )
       ).toBeNull()
       expect(q('.zen-sidebar-pose')?.hasAttribute('data-switching')).toBe(true)
+      // The still is a picture of the private pose under the polarity it left in – the private
+      // theme's – and is not drawn once the window has flipped to the scheme's at the blend's
+      // midpoint (§11.6 cuts the ink there): never the private titles in the regular ink, on a
+      // slow frame or under reduced motion's cut.
+      expect(still.classList.contains('zen-pane-still')).toBe(true)
+      expect(still.dataset.stillTheme).toBe('dark')
+      expect(rule(":root[data-theme='dark'] .zen-pane-still[data-still-theme='light']")).toContain(
+        'visibility: hidden'
+      )
+      expect(css).toContain(":root[data-theme='light'] .zen-pane-still[data-still-theme='dark'],")
       act(() => vi.advanceTimersByTime(PANE_FADE_MS))
       expect(q('[data-testid="pane-still"]')).toBeNull()
       expect(q('.zen-sidebar-pose')?.hasAttribute('data-switching')).toBe(false)
@@ -323,6 +336,7 @@ describe('the private pose: a private tab in view', () => {
     } finally {
       vi.useRealTimers()
       proto.animate = had
+      delete document.documentElement.dataset.theme
     }
   })
 
@@ -380,9 +394,13 @@ describe('the private pose: a private tab in view', () => {
     expect(titles()).toEqual(['Private tab', 'Private tab'])
     expect(q('[data-tab-list="private"]')?.closest('[inert]')).not.toBeNull()
     expect(q('[data-testid="private-lock-cover"]')?.dataset.leaving).toBe('true')
+    // The wait ends before the veil's spring lands – `LIFT_MAX_MS` on a device drawing a frame
+    // every 100 ms or more, or the frame's cover landing a frame first: the veil goes with the
+    // wait, in the flush that brings the titles back, so no frame shows a title under it.
     act(() => privateLockStore.set({ lifting: false }))
     expect(titles()).toEqual(['BANK PAGE', 'MAIL PAGE'])
     expect(q('[data-tab-list="private"]')?.closest('[inert]')).toBeNull()
+    expect(q('[data-testid="private-lock-cover"]')).toBeNull()
   })
 
   it('in the rail shows the mask alone for the header and the rows’ favicons masked under the lock', () => {
