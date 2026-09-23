@@ -1693,9 +1693,9 @@ describe('the section model', () => {
 
     // One language left: Chrome keeps it, so Remove is disabled on the only row.
     const one = buildSection(def, context(state({}, { languages: ['en'] })).ctx)
-    expect(itemMenuItems(itemOf(one, 'languages-preferred:en')).map((i) => i.disabled ?? false)).toEqual(
-      [true, true, true]
-    )
+    expect(
+      itemMenuItems(itemOf(one, 'languages-preferred:en')).map((i) => i.disabled ?? false)
+    ).toEqual([true, true, true])
 
     // Add language: an action row with the desktop's button (§10.5) that on the phone leaves
     // for the section's find-and-pick page (§10.2, `?list=preferred`) and on a mouse opens the
@@ -2604,12 +2604,11 @@ describe('what a row does', () => {
       expect(findRow(look.groups, 'fonts-minimum-size-phone')).toBeNull()
 
       // A synced 19 is a stop of its own between 18 and 20, so the menulist shows "19 px".
-      expect(fontSizeOptions(FONT_SIZE_STEPS, 19).map((o) => o.label).slice(9, 13)).toEqual([
-        '18 px',
-        '19 px',
-        '20 px',
-        '22 px'
-      ])
+      expect(
+        fontSizeOptions(FONT_SIZE_STEPS, 19)
+          .map((o) => o.label)
+          .slice(9, 13)
+      ).toEqual(['18 px', '19 px', '20 px', '22 px'])
       expect(fontSizeOptions(FONT_SIZE_STEPS, 16)).toHaveLength(FONT_SIZE_STEPS.length)
       const odd = buildSection(PAGE.sections[0], {
         ...context(state({}, { fonts: { ...DEFAULT_SETTINGS.fonts, size: 19 } })).ctx,

@@ -254,8 +254,7 @@ export function translateLanguageChoices(codes: readonly string[]): LanguageChoi
       return {
         value: code,
         label,
-        description:
-          native && native.toLowerCase() !== label.toLowerCase() ? native : undefined
+        description: native && native.toLowerCase() !== label.toLowerCase() ? native : undefined
       }
     })
     .sort((a, b) => a.label.localeCompare(b.label, 'en'))

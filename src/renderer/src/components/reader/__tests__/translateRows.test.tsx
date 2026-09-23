@@ -286,7 +286,11 @@ describe('the Translate row', () => {
     const translate = row(el, 'translate')
     await open(translate)
     expect(optionLabel(checkedOption()!)).toBe('English')
-    act(() => options().find((o) => optionLabel(o) === 'German')!.click())
+    act(() =>
+      options()
+        .find((o) => optionLabel(o) === 'German')!
+        .click()
+    )
     expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'de' })
     // The row is still the row (the core has not answered yet); opened again, the pick is checked.
     await open(translate)
@@ -295,9 +299,7 @@ describe('the Translate row', () => {
 
   it('at work: the busy row with the progress as its second line, a press doing nothing', async () => {
     desktop()
-    const el = render(
-      <TranslateRow tabId="t1" translate={TRANSLATE} translation={translation()} />
-    )
+    const el = render(<TranslateRow tabId="t1" translate={TRANSLATE} translation={translation()} />)
     const translate = row(el, 'translate')
     expect(translate.getAttribute('aria-busy')).toBe('true')
     expect(translate.disabled).toBe(false)
@@ -326,7 +328,11 @@ describe('the Translate row', () => {
     expect(reason?.textContent).toBe('No model for German to Spanish.')
     await open(translate)
     expect(optionLabel(checkedOption()!)).toBe('Spanish')
-    act(() => options().find((o) => optionLabel(o) === 'English')!.click())
+    act(() =>
+      options()
+        .find((o) => optionLabel(o) === 'English')!
+        .click()
+    )
     expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'en' })
   })
 

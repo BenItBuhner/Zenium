@@ -102,11 +102,12 @@ describe('the language catalogue', () => {
     expect(nativeLanguageName('af')).toBeNull()
     expect(nativeLanguageName('zz')).toBeNull()
     // The runtime plays no part: a runtime naming nothing changes no own name.
-    const spy = vi
-      .spyOn(Intl.DisplayNames.prototype, 'of')
-      .mockImplementation(function (this: Intl.DisplayNames, code: string) {
-        return code
-      })
+    const spy = vi.spyOn(Intl.DisplayNames.prototype, 'of').mockImplementation(function (
+      this: Intl.DisplayNames,
+      code: string
+    ) {
+      return code
+    })
     try {
       expect(nativeLanguageName('de')).toBe('Deutsch')
       expect(nativeLanguageName('as')).toBe('অসমীয়া')

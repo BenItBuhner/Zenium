@@ -25,10 +25,7 @@ import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport, viewportStore } from '@renderer/lib/formFactor'
-import {
-  catalogueLanguageName,
-  translateLanguageChoices
-} from '@renderer/lib/languageCatalogue'
+import { catalogueLanguageName, translateLanguageChoices } from '@renderer/lib/languageCatalogue'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import {
   readerTranslateError,

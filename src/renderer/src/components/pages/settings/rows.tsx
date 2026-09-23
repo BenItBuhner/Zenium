@@ -405,7 +405,10 @@ function DesktopRowView({
             data-static=""
             data-tone={row.tone}
             data-control={!row.description && !caption ? '' : undefined}
-            className={cn('zen-settings-row zen-v2-row', row.disabled && 'zen-settings-row-disabled')}
+            className={cn(
+              'zen-settings-row zen-v2-row',
+              row.disabled && 'zen-settings-row-disabled'
+            )}
           >
             {row.leading && (
               <span className="zen-settings-leading" aria-hidden="true">

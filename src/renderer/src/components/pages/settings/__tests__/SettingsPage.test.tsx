@@ -726,9 +726,7 @@ describe('Languages’ Add language page (zen://settings/languages/add?list=<lis
 
   it('stands over Languages on the phone layout as the find-and-pick page for the list its address names', () => {
     viewport(TWO_PANE_MIN_WIDTH - 1, false)
-    const el = mountPage(
-      state(ANDROID, 'android', {}, 'zen://settings/languages/add?list=always')
-    )
+    const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/languages/add?list=always'))
     expect(el.querySelector('.zen-settings-phone')?.getAttribute('data-page')).toBe('add')
     const [section, page] = panes(el)
     expect(panes(el)).toHaveLength(2)

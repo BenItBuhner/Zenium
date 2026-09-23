@@ -192,7 +192,11 @@ describe('the Add language page', () => {
     )
     // The translator's languages less the list's own (Spanish is on it).
     expect(rows(page).map(labelOf)).toEqual(['English', 'French', 'German'])
-    act(() => rows(page).find((r) => labelOf(r) === 'French')!.click())
+    act(() =>
+      rows(page)
+        .find((r) => labelOf(r) === 'French')!
+        .click()
+    )
     expect(run).toHaveBeenCalledWith('translate.setLanguageRule', {
       language: 'fr',
       rule: 'always'
