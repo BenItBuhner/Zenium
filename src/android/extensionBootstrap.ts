@@ -39,6 +39,7 @@ import {
   importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  installWorkerScriptRescue,
   workerSelf,
   type ServiceWorkerEndpoint,
   type ServiceWorkerMessage
@@ -512,17 +513,28 @@ declare const __zenExtBoot: Boot
       // contract, so it is a synchronous XHR to the extension origin and a classic script
       // element of this page (the generated background page carries no CSP that would refuse it);
       // what the element throws, the page reports to `window` and the call throws to its caller.
+      const fetchText = (url: string): { status: number; text: string } => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('GET', url, false)
+        xhr.send()
+        return { status: xhr.status, text: xhr.responseText }
+      }
       pageWindow.importScripts = importScriptsFor({
         origin,
         base: location.href,
-        fetchText: (url) => {
-          const xhr = new XMLHttpRequest()
-          xhr.open('GET', url, false)
-          xhr.send()
-          return { status: xhr.status, text: xhr.responseText }
-        },
+        fetchText,
         document,
         errors: window
+      })
+      // A worker script that opens `let window = self` is this page's early SyntaxError (`window`
+      // is the global's unforgeable property) and ran not at all; it runs again as a block of the
+      // page, where a worker's declaration is legal (installWorkerScriptRescue).
+      installWorkerScriptRescue({
+        scriptUrl: workerScript,
+        fetchText,
+        document,
+        errors: window,
+        warn: (message) => console.warn(message)
       })
       const worker = installServiceWorkerGlobals(pageWindow, {
         origin,
