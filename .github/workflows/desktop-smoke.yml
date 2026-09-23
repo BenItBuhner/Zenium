@@ -5,8 +5,10 @@ name: Desktop smoke (Windows, macOS, Linux installers)
 # and onboarding, one visible window titled Zenium, a tab on a page of the harness's own fixture
 # server (127.0.0.1; the smoke needs no internet) through the URL bar, a graceful quit that marks
 # the profile cleanly exited, the profile coming back without a "Restore pages?" bar, plus 1.5x
-# DPI and OS dark mode screenshots. Windows additionally installs the NSIS
-# build silently, boots the installed executable and uninstalls it. The Linux job builds the two
+# DPI and OS dark mode screenshots. Windows additionally installs the NSIS build silently, checks
+# the default-browser registration it wrote (RegisteredApplications, the StartMenuInternet client
+# and Capabilities, the http/https associations, the ProgID), boots the installed executable,
+# uninstalls it and checks that the registration went with it. The Linux job builds the two
 # installers the Release workflow ships, boots the AppImage, installs the .deb, boots what it
 # installed, checks the desktop entry and icon it put down and removes it again. Every JS error,
 # crash and blocking dialog fails the run unless .github/smoke/known-failures.json names it.
@@ -105,7 +107,14 @@ jobs:
           $info = Get-Content "$env:SMOKE_OUT\installed-install.json" -Raw | ConvertFrom-Json
           # The expected path even when the installer did not write it: the smoke names the miss.
           "exe=$($info.exe)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          if ($installExit -ne 0) { throw "installer exited with code $installExit" }
+          if ($info.timedOut) { throw "installer did not finish in time and was killed" }
+          if ($info.exitCode -ne 0) { throw "installer exited with code $($info.exitCode)" }
+          # ci-08: the default-browser registration build/installer.nsh writes (RegisteredApplications,
+          # the StartMenuInternet client and its Capabilities with the http/https and document-type
+          # associations, the ZeniumHTML ProgID), complete and pointing at the installed executable.
+          $problems = @($info.registrationProblems | Where-Object { $_ })
+          if ($problems.Count -gt 0) { throw "default-browser registration after the install ($($problems.Count)): $($problems -join '; ')" }
+          if ($installExit -ne 0) { throw "win-install.ps1 exited with code $installExit" }
       - name: Boot the installed build and walk through it
         if: always() && steps.nsis.outputs.exe != ''
         timeout-minutes: 12
@@ -116,9 +125,16 @@ jobs:
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action dialogs | Tee-Object -FilePath "$env:SMOKE_OUT\installed-leftover-windows.json"
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action processes | Tee-Object -FilePath "$env:SMOKE_OUT\installed-leftover-processes.json"
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-session.ps1" -Action kill
-      - name: Uninstall silently
+      - name: Uninstall silently; nothing of the browser registration may stay behind
         if: always()
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-install.ps1" -Action uninstall -Out "$env:SMOKE_OUT" -Label installed
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:SMOKE\win-install.ps1" -Action uninstall -Out "$env:SMOKE_OUT" -Label installed
+          $uninstallExit = $LASTEXITCODE
+          $info = Get-Content "$env:SMOKE_OUT\installed-uninstall.json" -Raw | ConvertFrom-Json
+          # ci-08: every key of the registration gone, no document type still naming the ProgID.
+          $left = @($info.registrationLeftovers | Where-Object { $_ })
+          if ($left.Count -gt 0) { throw "default-browser registration left after the uninstall ($($left.Count)): $($left -join '; ')" }
+          if ($uninstallExit -ne 0) { throw "uninstaller exited with code $($info.exitCode) (win-install.ps1 exit $uninstallExit)" }
       - name: Verdict (log and step summary)
         if: always()
         run: node "$env:SMOKE\verdict.mjs" --out "$env:SMOKE_OUT" --expect unpacked,installed --title ${{ matrix.name }}

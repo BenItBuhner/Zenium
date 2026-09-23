@@ -17,7 +17,7 @@ export interface WindowPromptText {
   description: string
   /** The primary button. */
   verb: string
-  /** Whether the "Warn before closing a window with multiple tabs" checkbox belongs. */
+  /** Whether the "Confirm before closing multiple tabs" checkbox belongs. */
   tabsWarning: boolean
 }
 

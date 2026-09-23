@@ -1381,7 +1381,7 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         {
           kind: 'switch',
           id: 'warn-close-window',
-          label: 'Warn before closing a window with multiple tabs',
+          label: 'Confirm before closing multiple tabs',
           description: 'Also asks before quitting with more than one tab open.',
           checked: s.warnOnCloseWindow,
           onChange: (v) => set({ warnOnCloseWindow: v })
