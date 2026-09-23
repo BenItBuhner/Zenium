@@ -8,6 +8,7 @@ import {
   TOAST_DEBUG_ENV,
   appIdProblems,
   clickProblems,
+  deliveredEvent,
   fireProblems,
   notificationPermissionSeed,
   osToastReadings,
@@ -289,18 +290,69 @@ describe('senderProblems', () => {
   })
 })
 
+// The platform's operational log as win-toast.ps1 reads it (newest first).
+const platformEvents = [
+  {
+    time: '2026-09-23T09:33:59.9054917-07:00',
+    id: 3049,
+    message: 'Endpoint 0x0 is being cleanedup'
+  },
+  {
+    time: '2026-09-23T09:33:59.8549360-07:00',
+    id: 3153,
+    message: `Toast with notification tracking id 2 is delivered to ${APP_USER_MODEL_ID} on session 1.`
+  },
+  {
+    time: '2026-09-23T09:33:59.8379780-07:00',
+    id: 3052,
+    message: `Toast with notification tracking id 2 is being delivered to ${APP_USER_MODEL_ID} on session 1.`
+  },
+  {
+    time: '2026-09-23T09:33:59.8181375-07:00',
+    id: 2418,
+    message: `A local notification was submitted to threadpool: ${APP_USER_MODEL_ID} [AppUserModelId] toast [NotificationType] 2 [NotificationTrackingId] Local [NotificationSource].`
+  }
+]
+
+describe('deliveredEvent', () => {
+  it('finds the delivery to the app id with its tracking id', () => {
+    expect(deliveredEvent(platformEvents)).toEqual({
+      trackingId: 2,
+      time: '2026-09-23T09:33:59.8549360-07:00'
+    })
+  })
+
+  it('passes over deliveries to other apps, the other events and an empty log', () => {
+    expect(
+      deliveredEvent([
+        {
+          id: 3153,
+          message:
+            'Toast with notification tracking id 9 is delivered to Microsoft.Windows.Explorer on session 1.'
+        }
+      ])
+    ).toBeNull()
+    expect(deliveredEvent(platformEvents.filter((e) => e.id !== 3153))).toBeNull()
+    expect(deliveredEvent([])).toBeNull()
+    expect(deliveredEvent(undefined)).toBeNull()
+  })
+})
+
 describe('osToastReadings', () => {
   const store = (aumidFound, titleFound) => ({ files: [{ exists: true }], aumidFound, titleFound })
+  const platformLog = { enabled: true, error: null, events: platformEvents }
 
-  it('reads a banner, a store naming id and title, and a click that reached Electron', () => {
+  it('reads a banner, a store naming id and title, a delivery and a click that reached Electron', () => {
     const facts = {
       windows: [{ toast: true, title: 'New notification' }],
       store: store(true, true),
+      platformLog,
       click: { attempted: true, invoked: true }
     }
     expect(osToastReadings(facts, { log: { clicked: 1 }, pageEvents: [] })).toEqual({
       banner: 'confirmed',
       store: 'confirmed',
+      delivered: 'confirmed (tracking id 2 at 2026-09-23T09:33:59.8549360-07:00)',
       osClick: 'confirmed'
     })
     expect(
@@ -308,16 +360,18 @@ describe('osToastReadings', () => {
     ).toBe('confirmed')
   })
 
-  it('reads nothing on screen, an unreadable store and a click that was not possible', () => {
+  it('reads nothing on screen, an unreadable store and log, and a click that was not possible', () => {
     expect(
       osToastReadings({
         windows: [],
         store: { files: [{ exists: false }] },
+        platformLog: { enabled: false, events: [] },
         click: { attempted: true, invoked: false, error: 'no banner' }
       })
     ).toEqual({
       banner: 'not seen',
       store: 'unreadable',
+      delivered: 'unreadable',
       osClick: 'not automatable: no banner'
     })
     expect(osToastReadings({ store: store(true, false) }, {}).store).toBe('id only')
@@ -326,6 +380,21 @@ describe('osToastReadings', () => {
       osToastReadings({ store: { files: [{ exists: true, error: 'locked' }] } }, {}).store
     ).toBe('unreadable')
     expect(osToastReadings({}, {}).osClick).toBe('not attempted')
+    expect(osToastReadings({}, {}).delivered).toBe('unreadable')
+    expect(
+      osToastReadings({ platformLog: { enabled: true, error: 'access denied', events: [] } }, {})
+        .delivered
+    ).toBe('unreadable')
+  })
+
+  it('reads a log with no delivery to the app id as not seen', () => {
+    expect(
+      osToastReadings(
+        { platformLog: { ...platformLog, events: platformEvents.filter((e) => e.id !== 3153) } },
+        {}
+      ).delivered
+    ).toBe('not seen')
+    expect(osToastReadings({ aumid: 'other.app', platformLog }, {}).delivered).toBe('not seen')
   })
 
   it('tells an invoked click that reached nothing', () => {

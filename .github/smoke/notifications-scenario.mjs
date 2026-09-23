@@ -25,9 +25,9 @@
 //                        (HKCU\…\Notifications\Settings\<id>: created by Windows once the app has
 //                        shown a toast; what Settings lists senders from) – the OS; plus, for
 //                        the record, the banner windows on screen, the platform's store scanned
-//                        for the id and the title, the platform's event log, and a UI Automation
-//                        click on the banner when one is there (WIN-006: the runner's session
-//                        showed none)
+//                        for the id and the title, the platform's event log ("Toast … is
+//                        delivered to <id>"), and a UI Automation click on the banner when one
+//                        is there (WIN-006: the runner's session showed none)
 //   click-reveals-tab    with another tab active, the notification's `click` dispatched in the
 //                        page under a user gesture: `onclick` → `window.focus()` → the preload's
 //                        `zen:page {type:'focus'}` → the core's `revealTab` – the tab active
@@ -197,14 +197,18 @@ export function senderProblems(facts, aumid = APP_USER_MODEL_ID) {
 /**
  * How the OS side of a toast reads, for the step's detail and the report: `banner` when a "New
  * notification" window was on screen, `store` when the platform's database names the id and
- * the title, `osClick` when the UI Automation click reached Electron ("Notification clicked" in
- * the log or `click` in the page) – each 'confirmed', 'not seen' or 'unreadable'.
+ * the title, `delivered` when the platform's event log (Microsoft-Windows-PushNotification-
+ * Platform/Operational, event 3153) says a toast was delivered to the app id, `osClick` when
+ * the UI Automation click reached Electron ("Notification clicked" in the log or `click` in the
+ * page) – each 'confirmed', 'not seen' or 'unreadable'.
  */
 export function osToastReadings(facts, { log, pageEvents = [] } = {}) {
   const banner = (facts?.windows ?? []).some((w) => w.toast)
   const store = facts?.store
   const storeReadable = (store?.files ?? []).some((f) => f.exists && !f.error)
   const clicked = (log?.clicked ?? 0) > 0 || pageEvents.some((e) => e.type === 'click')
+  const platformLog = facts?.platformLog
+  const delivery = deliveredEvent(platformLog?.events, facts?.aumid ?? APP_USER_MODEL_ID)
   return {
     banner: banner ? 'confirmed' : 'not seen',
     store: !storeReadable
@@ -213,6 +217,12 @@ export function osToastReadings(facts, { log, pageEvents = [] } = {}) {
         ? 'confirmed'
         : store.aumidFound
           ? 'id only'
+          : 'not seen',
+    delivered:
+      !platformLog || platformLog.error || platformLog.enabled === false
+        ? 'unreadable'
+        : delivery
+          ? `confirmed (tracking id ${delivery.trackingId} at ${delivery.time})`
           : 'not seen',
     osClick: facts?.click?.invoked
       ? clicked
@@ -256,6 +266,22 @@ export function clickProblems({
   if (!(focusCalls > 0)) problems.push("the window's focus() was not called by the reveal")
   if (!(showCalls > 0)) problems.push("the window's show() was not called by the reveal")
   return problems
+}
+
+/**
+ * The platform's "Toast with notification tracking id N is delivered to <app id> on session S."
+ * event (id 3153) for `aumid` among the event log's records, as `{ trackingId, time }`, or null.
+ */
+export function deliveredEvent(events, aumid = APP_USER_MODEL_ID) {
+  const re = new RegExp(
+    `Toast with notification tracking id (\\d+) is delivered to ${aumid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} on session`,
+    'i'
+  )
+  for (const e of events ?? []) {
+    const m = re.exec(String(e?.message ?? ''))
+    if (m) return { trackingId: Number(m[1]), time: e.time ?? null }
+  }
+  return null
 }
 
 function shown(v) {
