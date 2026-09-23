@@ -132,8 +132,17 @@
   System::Call 'Shell32::SHChangeNotify(i 0x8000000, i 0, i 0, i 0)'
 !macroend
 
+; The AppUserModelId class key the running app writes for its toast notifications
+; (src/main/platform/notifications.ts: DisplayName and IconUri under the user's hive, whatever
+; the install mode – hence HKCU, not SHELL_CONTEXT). The per-sender key under
+; Software\Microsoft\Windows\CurrentVersion\Notifications\Settings is Windows's own record of the
+; app having notified and stays, as it does for any uninstalled app. An update's uninstall (the
+; --updated run) removes it too; the new build writes it again on its first start.
+!define ZENIUM_APP_USER_MODEL_ID_KEY "Software\Classes\AppUserModelId\${APP_ID}"
+
 !macro customUnInstall
   !insertmacro unregisterDefaultBrowser
+  DeleteRegKey HKCU "${ZENIUM_APP_USER_MODEL_ID_KEY}"
 !macroend
 
 !macro customInstall

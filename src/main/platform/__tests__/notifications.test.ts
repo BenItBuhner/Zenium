@@ -103,6 +103,16 @@ describe('Windows app id', () => {
     expect(builder).toMatch(new RegExp(`^appId: ${APP_USER_MODEL_ID.replace(/\./g, '\\.')}$`, 'm'))
   })
 
+  it('is the key the uninstaller deletes from the user’s hive (build/installer.nsh)', () => {
+    const nsh = readFileSync(join(process.cwd(), 'build', 'installer.nsh'), 'utf8')
+    // The installer's APP_ID is electron-builder's appId, held equal to the id above.
+    expect(nsh).toContain(
+      '!define ZENIUM_APP_USER_MODEL_ID_KEY "Software\\Classes\\AppUserModelId\\${APP_ID}"'
+    )
+    const uninstall = /!macro customUnInstall\n([\s\S]*?)!macroend/.exec(nsh)
+    expect(uninstall?.[1]).toContain('DeleteRegKey HKCU "${ZENIUM_APP_USER_MODEL_ID_KEY}"')
+  })
+
   it('reads the whole key in one query and parses reg.exe’s listing', () => {
     expect(WINDOWS_APP_ID_KEY).toBe(
       'HKCU\\Software\\Classes\\AppUserModelId\\io.github.benitbuhner.zenium'
