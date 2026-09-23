@@ -23,6 +23,11 @@ name: Android tablet layout demo
 # live in android-emulator-demo.yml; this file picks the driver, the profile, the display and the
 # colour scheme.
 on:
+  # TEMPORARY (the coordinator's one authorised run of the tablet layout demo on this head, for
+  # the drawer's spring – tablet-drawer-open – on the light theme under the soft gate, the
+  # inputs' defaults: no token in the project can dispatch); removed in the next commit.
+  push:
+    branches: [cursor/android-perf-tablet-drawer-render-cf22]
   workflow_dispatch:
     inputs:
       theme:
