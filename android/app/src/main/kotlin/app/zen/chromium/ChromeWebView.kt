@@ -228,10 +228,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
      * (`ext/BridgeForward.kt`).
      */
     fun hostEventJson(name: String, json: CharSequence) {
-        val script = StringBuilder(json.length + (json.length shr 3) + 96)
-        script.append("window.__zenHost&&__zenHost.hostEvent(").append(JSONObject.quote(name)).append(",\"")
-        script.appendJsQuoted(json)
-        js(script.append("\")").toString())
+        js(hostEventScript(name, json))
     }
 
     /** Forward a physical key; the promise-free path relies on Kotlin having matched it already. */
@@ -409,5 +406,17 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         const val PACKAGES_PATH = "/ext-packages/"
         /** Installed extension files, `<id>/<version>/<path>` (`extensionStoreIo.ts` FILES_PATH). */
         const val EXTENSION_FILES_PATH = "/ext-files/"
+
+        /**
+         * The script [hostEventJson] runs: `__zenHost.hostEvent(name, json)` with [json] as the
+         * body of one double-quoted literal (`Json.kt`'s `appendJsQuoted`), built in one pass
+         * into a builder sized for it. Pure, so `JsonTest` can read what reaches the WebView.
+         */
+        fun hostEventScript(name: String, json: CharSequence): String {
+            val script = StringBuilder(json.length + (json.length shr 3) + 96)
+            script.append("window.__zenHost&&__zenHost.hostEvent(").append(JSONObject.quote(name)).append(",\"")
+            script.appendJsQuoted(json)
+            return script.append("\")").toString()
+        }
     }
 }
