@@ -47,9 +47,10 @@ import kotlin.math.roundToInt
  *    in view, Home arms the lock and raises the veil; on the return the veil's view stands over
  *    the chrome from the window's first frame back – attached, visible, above the chrome, opaque
  *    and in the window's tone (the root's colour) – until the host lowers it for the masked frame
- *    (the host's own log line), within `LockVeil.DEADLINE_MS`; the lock's cover stands under it
- *    and the lock holds; the switch off releases it all. Sampled every 8 ms from the departure
- *    ([VeilWatch]), as `PrivateLockDemo` samples the page view's hide.
+ *    (the host's own log line), within `LockVeil.DEADLINE_MS`, its view out of `root` with it
+ *    (the first run's veil stuck: the state down, the view left over the chrome); the lock's
+ *    cover stands under it and the lock holds; the switch off releases it all. Sampled every
+ *    8 ms from the departure ([VeilWatch]), as `PrivateLockDemo` samples the page view's hide.
  *
  * The private tabs need `WebViewFeature.MULTI_PROFILE`, so the driver runs on the AOSP image
  * with the Chromium snapshot WebView (the `webview` shard; `android-primitives-5-demo.yml`) and
@@ -160,10 +161,9 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
 
     private fun seed43() {
         val before = trackOrder().map { it.first }.toSet()
-        coreInvoke("tab.new")
-        val opened = awaitCore { state -> activeTabId(state)?.let { it !in before } == true }
-        val ntpTab = activeTabId()
-        check("a new tab opens as the active one", opened && ntpTab != null, "active $ntpTab")
+        val opened = openNewTabPage(before)
+        val ntpTab = activeTabId()?.takeIf { it !in before }
+        check("the bar's New tab opens a new tab as the active one", opened && ntpTab != null, "active ${activeTabId()}")
         check("the new tab page's resting field is up", awaitDom(NTP_FIELD, 8_000), "field ${inDom(NTP_FIELD)}")
         // The favicon's arrival is the network's: waited for, recorded, never claimed.
         val loaded = awaitJs("(function(){var i=document.querySelector('$NTP_FAVICON');return !!i&&i.complete&&i.naturalWidth>0})()", true, 6_000)
@@ -194,6 +194,21 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
         }
         activateTab(HOME)
         SystemClock.sleep(600)
+    }
+
+    /**
+     * The phone's new tab page is the chrome's own over a blank tab (`lib/newtab.ts`
+     * `openNewTabPage`; the core's `tab.new` is the desktop's served page, or its bar in new-tab
+     * mode, and opens no tab here – `capabilities.newTabPage` is off on Android): the bar's New
+     * tab button is the way in (the MOT-03 grow), the core's blank tab the fallback when the
+     * touch did not take. Whether a tab not in `before` became the active one.
+     */
+    private fun openNewTabPage(before: Set<String>): Boolean {
+        val opened = { awaitCore(6_000) { state -> activeTabId(state)?.let { it !in before } == true } }
+        if (touchTapLabel("New tab") && opened()) return true
+        finding("  (the bar's New tab did not open one; asking the core for the blank tab)")
+        coreInvoke("tab.create", "{\"url\":\"zen://blank\",\"active\":true}")
+        return opened()
     }
 
     // --- seed 44: the icon row ---------------------------------------------------------------------
@@ -472,28 +487,40 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
         finding("  the screen over the chrome on the return: ${sampleScreen()} (the OS may show its task snapshot for the first frames: a finding, not a claim)")
         still("47-veil-on-return")
         val fell = awaitUntil(9_000) { !host.lockVeil.raised }
+        SystemClock.sleep(400)
         val r = watch.finish()
-        val why = veilLoweredWhy()
+        val log = veilLog()
+        val why = log.lastOrNull { "lowered: " in it }?.substringAfter("lowered: ")?.trim()
         finding("  veil watch: ${r.describe()}")
-        finding("  host log: veil lowered for '${why ?: "nothing logged"}'")
+        finding("  host log: $log")
         check("the veil stood from the window's first frame back", r.sawStop && r.raisedAtStart && r.raisedOnScreen > 0, "stop seen ${r.sawStop}, raised at the start ${r.raisedAtStart}, raised samples on screen ${r.raisedOnScreen}")
         check("no gap: whenever it was raised with the window on screen, its view was attached, visible and above the chrome", r.gaps == 0, "gaps ${r.gaps} (of ${r.raisedOnScreen}), not topmost ${r.notTopmost}")
         val veil = r.veilColour
         val root = r.rootColour
         check("the veil is opaque and in the window's tone (the root's colour, alpha 255)", veil != null && veil == root && Color.alpha(veil) == 255, "veil ${hex(veil)}, root ${hex(root)}")
-        val forMaskedFrame = why == "masked frame" || (why == null && fell && r.loweredAtMs in 1L until (LockVeil.DEADLINE_MS - 500L))
-        check("it fell for the masked frame, not the deadline", fell && forMaskedFrame, "fell $fell, host log '${why ?: "none"}', lowered ${r.loweredAtMs} ms after the first frame back")
+        check("it fell for the masked frame, not the deadline – the host's own word", fell && why == "masked frame", "fell $fell, host log '${why ?: "none"}', lowered ${r.loweredAtMs} ms after the first frame back")
         check("it fell within LockVeil.DEADLINE_MS of the window's start", r.loweredAtMs in 1L..LockVeil.DEADLINE_MS, "lowered at ${r.loweredAtMs} ms, the deadline ${LockVeil.DEADLINE_MS}")
+        // The first run's veil stuck here: the state lowered, the view left in root over the chrome.
+        check(
+            "the veil's view leaves root as the veil falls: nothing of it stays over the chrome",
+            r.detachedAtMs >= 0 && r.detachedAtMs - r.loweredAtMs <= 200 && onMain { host.lockVeilView?.parent == null },
+            "view detached ${if (r.detachedAtMs < 0) "never" else "${r.detachedAtMs} ms after the first frame back"} (lowered at ${r.loweredAtMs}), ${r.stale} stale samples, parent now ${onMain { host.lockVeilView?.parent?.javaClass?.simpleName ?: "none" }}"
+        )
         check("the lock's cover stands under it and the lock holds", awaitCover(8_000) && host.privateLock.locked, "cover ${coverUp()}, locked ${host.privateLock.locked}")
         ensureForeground()
         SystemClock.sleep(800)
+        finding("  the screen over the chrome with the cover up: ${sampleScreen()} (the veil's one colour gone: the cover's words and button in the grid)")
         still("47-cover-after-the-veil")
 
         // Nothing is locked with the switch off: the release, no veil for it.
         coreInvoke("private.setLockOnLeave", "{\"enabled\":false}")
         val released = awaitUntil(8_000) { !host.privateLock.locked }
         val coverGone = awaitDomGone(COVER, 8_000)
-        check("the switch off releases the lock; the cover leaves; no veil stands", released && coverGone && !host.lockVeil.raised, "locked ${host.privateLock.locked}, cover ${inDom(COVER)}, veil ${host.lockVeil.raised}")
+        check(
+            "the switch off releases the lock; the cover leaves; no veil stands, no view of it in root",
+            released && coverGone && !host.lockVeil.raised && onMain { host.lockVeilView?.parent == null },
+            "locked ${host.privateLock.locked}, cover ${inDom(COVER)}, veil ${host.lockVeil.raised}, view attached ${onMain { host.lockVeilView?.parent != null }}"
+        )
         SystemClock.sleep(600)
         coreInvoke("tab.closePrivate")
         check("the private tabs close", awaitNoPrivateTabs(), "private ${privateTabIds()}")
@@ -510,13 +537,18 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
         var gaps = 0
         var notTopmost = 0
         var loweredAtMs = -1L
+        /** The first sample after the lowering with the view out of root; -1 while it stays. */
+        var detachedAtMs = -1L
+        /** Samples after the lowering with the view still in root, on screen. */
+        var stale = 0
         var veilColour: Int? = null
         var rootColour: Int? = null
         val runs = ArrayList<String>()
 
         fun describe(): String =
             "$samples samples; stop seen $sawStop; raised at the window's start $raisedAtStart; $raisedOnScreen raised samples on screen, $gaps gaps, $notTopmost not topmost; " +
-                "lowered ${if (loweredAtMs < 0) "never" else "$loweredAtMs ms after the first frame back"}; veil ${hex(veilColour)}, root ${hex(rootColour)}; timeline ${runs.take(14)}"
+                "lowered ${if (loweredAtMs < 0) "never" else "$loweredAtMs ms after the first frame back"}, its view out of root ${if (detachedAtMs < 0) "never" else "at $detachedAtMs ms"} ($stale stale samples); " +
+                "veil ${hex(veilColour)}, root ${hex(rootColour)}; timeline ${runs.take(14)}"
 
         private fun hex(colour: Int?): String = colour?.let { "#%08x".format(it) } ?: "none"
     }
@@ -579,8 +611,10 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
                             report.rootColour = rootColour
                         }
                         wasRaisedOnScreen = true
-                    } else if (wasRaisedOnScreen && report.loweredAtMs < 0) {
-                        report.loweredAtMs = now - firstBackAt
+                    } else if (wasRaisedOnScreen) {
+                        if (report.loweredAtMs < 0) report.loweredAtMs = now - firstBackAt
+                        if (attached) report.stale++
+                        else if (report.detachedAtMs < 0) report.detachedAtMs = now - firstBackAt
                     }
                 }
                 val key = "${if (onScreen) "on" else "off"}/${if (raised) "veil" else "clear"}/${if (attached) (if (visible) "visible" else "hidden") else "detached"}"
@@ -603,11 +637,11 @@ class Primitives5Demo : GroupsDemoBase("android-primitives-5", "primitives-5-dem
 
     private fun hex(colour: Int?): String = colour?.let { "#%08x".format(it) } ?: "none"
 
-    /** The host's own word on why the veil fell (`Host.lowerVeil`'s log line), the last one; null when none is on record. */
-    private fun veilLoweredWhy(): String? =
+    /** The host's own words on the veil since the scene's `logcat -c` (`Host.raiseVeil` / `lowerVeil`), the tag and time stripped. */
+    private fun veilLog(): List<String> =
         shellCommand("logcat -d -s ZenHost:*").lines()
-            .filter { "private lock veil lowered: " in it }
-            .lastOrNull()?.substringAfter("private lock veil lowered: ")?.trim()
+            .filter { "private lock veil" in it }
+            .map { it.substringAfter("private lock veil").trim().trimStart(':').trim() }
 
     /**
      * What the screen shows over the chrome's box: the dominant colour of a 12 by 12 grid of

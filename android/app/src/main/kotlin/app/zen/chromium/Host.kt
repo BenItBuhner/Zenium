@@ -1366,11 +1366,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (lockVeil.windowVisible) main.postDelayed(veilDeadline, LockVeil.DEADLINE_MS)
     }
 
-    /** The veil falls (`why`: the masked frame, the release, the deadline); nothing when none is up. */
+    /**
+     * The veil falls (`why`: the masked frame, the release, the deadline); nothing when none is up.
+     * The view in `root` is what "up" means here: [LockVeil.frameDrawn] has lowered the state
+     * already when the masked frame's callback lands, so the state's `lower()` is not asked
+     * whether the veil was up – the first run's veil stuck on exactly that (`Primitives5Demo`).
+     */
     private fun lowerVeil(why: String) {
-        if (!lockVeil.lower()) return
+        lockVeil.lower()
+        val view = veilView?.takeIf { it.parent != null } ?: return
         main.removeCallbacks(veilDeadline)
-        veilView?.let(root::removeView)
+        root.removeView(view)
         Log.d(TAG, "private lock veil lowered: $why")
     }
 

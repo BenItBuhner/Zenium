@@ -99,7 +99,8 @@ class LockVeil {
 
     /**
      * The frame the wait `serial` was posted for is on the display. Answers whether the veil
-     * falls now: only for the wait in flight, on a veil still raised.
+     * falls now: only for the wait in flight, on a veil still raised. The state is down on a true
+     * answer: the host takes its view down on that answer, not on a second [lower].
      */
     fun frameDrawn(serial: Long): Boolean {
         if (!raised || !awaitingFrame || serial != waitSerial) return false
