@@ -267,11 +267,11 @@ describe('the row in the sidebar (a11y-31)', () => {
   it('keeps the hover card as its description too, after the states, while the card stands', () => {
     panel([tab('a'), tab('b', { muted: true })])
     const box = { x: 0, y: 0, width: 200, height: 32 }
-    act(() => uiStore.set({ hoverCard: { tabId: 'b', anchor: box, sidebar: box, by: 'keyboard' } }))
+    act(() => uiStore.set({ hoverCard: { tabId: 'b', anchor: box, sidebar: box, by: 'focus' } }))
     expect(row('b').getAttribute('aria-describedby')).toBe('zen-tab-desc-b zen-tab-hover-card')
     expect(describedBy(row('b'))[0]).toBe('muted')
     // A plain row's description is the card alone.
-    act(() => uiStore.set({ hoverCard: { tabId: 'a', anchor: box, sidebar: box, by: 'keyboard' } }))
+    act(() => uiStore.set({ hoverCard: { tabId: 'a', anchor: box, sidebar: box, by: 'focus' } }))
     expect(row('a').getAttribute('aria-describedby')).toBe('zen-tab-hover-card')
     expect(row('b').getAttribute('aria-describedby')).toBe('zen-tab-desc-b')
   })
