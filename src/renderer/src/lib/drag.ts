@@ -654,7 +654,7 @@ function resolve(x: number, y: number, s: Session): DropTarget {
   const own = s.list && s.motion ? resolveSlot(x, y, s, s.list, s.motion) : null
   if (own) return own
   // The list under the pointer; in the empty space under a panel's rows, its regular list.
-  const scroller = under?.closest<HTMLElement>('[data-tab-scroller]') ?? null
+  const scroller = scrollerAt(under)
   const listEl =
     under?.closest<HTMLElement>('[data-tab-list]') ??
     scroller?.querySelector<HTMLElement>('[data-tab-list="regular"]') ??
@@ -688,6 +688,26 @@ function resolve(x: number, y: number, s: Session): DropTarget {
 /** The page, or past the window: the tab leaves the window – except from a finger (TABLET-02). */
 function tearOff(s: Session): DropTarget {
   return s.touch ? { kind: 'none' } : { kind: 'tearoff' }
+}
+
+/**
+ * The list scroller the pointer is in – or the one whose panel it is in: a space panel's foot
+ * (the New Tab row, the empty room under it) stands outside the scroller so the row stays in
+ * view (tabs-28), and a pointer over it means the same as over the room under the rows.
+ */
+function scrollerAt(under: Element | null | undefined): HTMLElement | null {
+  return (
+    under?.closest<HTMLElement>('[data-tab-scroller]') ??
+    under
+      ?.closest<HTMLElement>('[data-tab-panel]')
+      ?.querySelector<HTMLElement>('[data-tab-scroller]') ??
+    null
+  )
+}
+
+/** The box the regular list's band runs down to: its panel's, foot included, else its scroller's. */
+function listColumn(scroller: HTMLElement): HTMLElement {
+  return scroller.closest<HTMLElement>('[data-tab-panel]') ?? scroller
 }
 
 /**
@@ -757,7 +777,7 @@ function resolveSlot(
   let last = Math.max(own.end, spans[spans.length - 1]?.end ?? own.end)
   const scroller = list.closest<HTMLElement>('[data-tab-scroller]')
   if (list.dataset.tabList === 'regular' && scroller)
-    last = Math.max(last, along(scroller.getBoundingClientRect(), axis).end)
+    last = Math.max(last, along(listColumn(scroller).getBoundingClientRect(), axis).end)
   if (across < band.cross || across > band.cross + band.size || pointer < first || pointer > last)
     return null
   const mids = others.map((r) => {

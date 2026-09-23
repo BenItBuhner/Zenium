@@ -1226,6 +1226,23 @@
   }
 
   /*
+   * The vertical list's column (tabs-28; `SpacePanel`): the rows' scroller, then outside it the
+   * list's foot – the New Tab row and the empty room under it – at the rows' inset
+   * (`--zen-list-inset`, the scroller's own `px-2`; the tablet's rail sets 6). While the rows
+   * overflow, §9.20's bar takes its 8 gutter from the rows (Chromium draws no true overlay bar
+   * for a mouse); the panel measures it (`--zen-list-gutter`, `watchGutter`) and the foot gives
+   * the same back on its right, so the New Tab row's box stays the rows' box and nothing steps
+   * out under the bar. The bar itself is the chassis rule's: nothing to state here.
+   */
+  [data-tab-panel] {
+    --zen-list-inset: 0.5rem;
+  }
+  .zen-list-foot {
+    padding-left: var(--zen-list-inset);
+    padding-right: calc(var(--zen-list-inset) + var(--zen-list-gutter, 0px));
+  }
+
+  /*
    * The sidebar's tab row (design language v2 §5, §6, §9.29; shell pass 7(a)): §5's 32 px row
    * at radius 8 in the window family – the theme's ink at `--zen-sidebar-font`, the hover fill
    * `--v2-window-fill-hover`, the active tab `--v2-window-fill` as one shape with no frame (the
@@ -7895,6 +7912,13 @@
   .zen-tablet-sidebar
   [data-tab-scroller] {
   padding-inline: 6px;
+}
+/* The list's foot outside the scroller (tabs-28) keeps the rail's inset with the rows. */
+:root[data-form-factor='tablet']
+  .zen-tablet[data-sidebar='rail']
+  .zen-tablet-sidebar
+  [data-tab-panel] {
+  --zen-list-inset: 6px;
 }
 :root[data-form-factor='tablet'] .zen-tab.justify-center {
   margin-left: 0;
