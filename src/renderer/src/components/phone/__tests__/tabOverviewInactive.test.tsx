@@ -361,7 +361,11 @@ describe('the segment row’s entry', () => {
 
   it('has no place on the private pane: a private tab is never archived', () => {
     const state = two(3, {
-      capabilities: { windowControls: false, inactiveTabs: true, privateTabs: true }
+      capabilities: {
+        windowControls: false,
+        inactiveTabs: true,
+        privateTabs: true
+      } as unknown as UIState['capabilities']
     })
     const priv = tab('p', 'https://one.example/', {
       title: 'One',

@@ -1,7 +1,7 @@
 /**
  * Inactive tabs (TAB-20): Chrome for Android's tab archive. A tab the user has not looked at
  * for `Settings.inactiveTabsArchiveDays` days (7, 14 or 21; 0 is Never) leaves the grid for the
- * Inactive tabs list the switcher reaches from the row above its grid – its document gone as a
+ * Inactive tabs list the switcher reaches from its segment row's entry – its document gone as a
  * sleeping tab's is, its entry kept whole (title, URL, favicon, last use, back/forward stack) so
  * a tap brings it back to the start of the grid with the page intact. An archived tab the user
  * never comes back for is closed after {@link INACTIVE_TAB_AUTO_CLOSE_DAYS} days in the archive
@@ -30,6 +30,7 @@ import type {
   InactiveTabsArchiveDays,
   Tab
 } from '../shared/types'
+import { INACTIVE_TABS_ARCHIVE_DAYS } from '../shared/defaults'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { closedTabIds } from './navigationState'
@@ -40,8 +41,6 @@ export const DAY_MS = 24 * 60 * 60 * 1000
 export const INACTIVE_TAB_AUTO_CLOSE_DAYS = 90
 /** Tabs one archive pass moves at most (Chrome: 150). */
 export const INACTIVE_TABS_MAX_PER_PASS = 150
-/** The thresholds the setting takes; 0 is Never. */
-export const INACTIVE_TABS_ARCHIVE_DAYS: readonly InactiveTabsArchiveDays[] = [0, 7, 14, 21]
 /**
  * The first pass of a run, from `start`: after the blocking (20 s) and Safe Browsing (35 s)
  * startup sweeps, so nothing new joins the first minute's work.

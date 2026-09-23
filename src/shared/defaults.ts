@@ -6,6 +6,7 @@ import type {
   CheckupState,
   Container,
   FolderColor,
+  InactiveTabsArchiveDays,
   PasswordSettings,
   PasswordsStatus,
   ResourceSettings,
@@ -178,6 +179,12 @@ export const DEFAULT_RESOURCE_SETTINGS: ResourceSettings = {
     v8OptimizeForSize: false
   }
 }
+
+/**
+ * The Inactive tabs threshold's ladder (TAB-20, SET-34), in days: Never, then Chrome's three
+ * (`ARCHIVE_TIME_DELTA_DAYS_OPTS`); the default is Chrome 152's 21.
+ */
+export const INACTIVE_TABS_ARCHIVE_DAYS: readonly InactiveTabsArchiveDays[] = [0, 7, 14, 21]
 
 export function emptyResourceSnapshot(): ResourceSnapshot {
   const gauge = { used: 0, budget: 0, configured: 0 }

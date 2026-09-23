@@ -4166,6 +4166,76 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
   })
 })
 
+describe('TAB-20 / SET-34: inactive tabs in Tab Management on a phone, beside sleeping tabs, in Chrome’s words', () => {
+  it('is a group of its own after the sleeping-tabs groups: the threshold as a value row on Chrome’s ladder and the auto-close switch, off at .4 while the threshold is Never', () => {
+    const c = context()
+    const tabs = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      {
+        ...c.ctx,
+        formFactor: 'phone'
+      }
+    )
+    const ids = tabs.groups.map((g) => g.id)
+    expect(ids.indexOf('inactive-tabs')).toBe(ids.indexOf('never-sleep-add') + 1)
+    const group = tabs.groups.find((g) => g.id === 'inactive-tabs')
+    expect(group?.heading).toBe('Inactive tabs')
+    // The description tells the two apart: a sleeping tab keeps its place in the grid.
+    expect(group?.description).toContain('Sleeping tabs stay in the grid')
+    expect(group?.rows.map((r) => r.id)).toEqual([
+      'inactive-tabs-after',
+      'inactive-tabs-auto-close'
+    ])
+
+    const after = row(tabs, 'inactive-tabs-after')
+    if (after.kind !== 'value') throw new Error('not a choice')
+    expect(after.label).toBe('Move to inactive')
+    expect(after.options.map((o) => o.label)).toEqual([
+      'Never',
+      'After 7 days inactive',
+      'After 14 days inactive',
+      'After 21 days inactive'
+    ])
+    // Chrome 152's default.
+    expect(after.value).toBe('21')
+    after.onChange('7')
+    expect(c.patches.at(-1)).toEqual({ inactiveTabsArchiveDays: 7 })
+    after.onChange('0')
+    expect(c.patches.at(-1)).toEqual({ inactiveTabsArchiveDays: 0 })
+
+    const autoClose = row(tabs, 'inactive-tabs-auto-close')
+    if (autoClose.kind !== 'switch') throw new Error('not a switch')
+    expect(autoClose.label).toBe('Automatically close inactive tabs')
+    expect(autoClose.description).toBe('Inactive tabs are closed after 3 months')
+    expect(autoClose.checked).toBe(true)
+    expect(autoClose.disabled).toBe(false)
+    autoClose.onChange(false)
+    expect(c.patches.at(-1)).toEqual({ inactiveTabsAutoClose: false })
+
+    // Never: nothing is archived, so the sweep's switch is a dependent row (§10.4), as Chrome
+    // greys it; the value row itself stays live, it is the way back.
+    const never = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      {
+        ...context(state({}, { inactiveTabsArchiveDays: 0 })).ctx,
+        formFactor: 'phone'
+      }
+    )
+    expect(row(never, 'inactive-tabs-after').disabled).toBeUndefined()
+    expect(row(never, 'inactive-tabs-auto-close').disabled).toBe(true)
+  })
+
+  it('exists only where the archive does (the capability), and only on the phone shell', () => {
+    const def = PAGE.sections.find((x) => x.id === 'tabs')!
+    const without = state({ capabilities: { ...ANDROID, inactiveTabs: false } })
+    expect(section('tabs', without).groups.map((g) => g.id)).not.toContain('inactive-tabs')
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const shell = buildSection(def, { ...context().ctx, formFactor: layout })
+      expect(shell.groups.map((g) => g.id)).not.toContain('inactive-tabs')
+    }
+  })
+})
+
 describe('ID-08’s Sync category on a phone', () => {
   const TREE = 'content://com.android.externalstorage.documents/tree/primary%3ADrive%2FZenium'
 
