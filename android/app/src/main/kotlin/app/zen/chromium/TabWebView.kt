@@ -566,11 +566,16 @@ class TabWebView(
     /**
      * The document-start script: the page-controls rules this tab lays pages out by (viewport
      * rewriting for zoom, desktop layout and force-zoom happens in the page, from the same rules
-     * the core and this host share) followed by the page script itself. Re-registered whenever
-     * the rules or the view's width change; the live page is told over the message channel too.
+     * the core and this host share) and the host's word on rotate-to-fullscreen – a phone's
+     * window's alone ([PageHost.rotateToFullscreen], MED-02) – followed by the page script itself.
+     * Re-registered whenever the rules or the view's width change (a window crossing the tablet
+     * line resizes, so the next document hears the new class; the live one keeps the word it was
+     * born with, as Chrome's device-level gate never changes at all); the live page is told the
+     * rules over the message channel too.
      */
     private fun startScriptSource(): String =
-        "window.__zenPageRules=" + host.pageRulesJson.toString() + ";window.__zenDeviceWidth=" + deviceWidth() + ";" + host.pageScript
+        "window.__zenPageRules=" + host.pageRulesJson.toString() + ";window.__zenDeviceWidth=" + deviceWidth() +
+            ";window.__zenRotateToFullscreen=" + host.rotateToFullscreen + ";" + host.pageScript
 
     private fun registerStartScript() {
         documentScript?.remove()

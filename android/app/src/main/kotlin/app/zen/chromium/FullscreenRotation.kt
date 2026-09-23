@@ -20,6 +20,11 @@ import kotlin.math.abs
  * A device that stays portrait while its user watches sideways keeps the hold: released at once,
  * the screen would turn back under the video and end the fullscreen just begun.
  *
+ * The hand-over is the phone's alone, as the page's rule is (§9.36, Chrome's `device_is_phone`):
+ * [handsOver] is the host's one word for both halves ([PageHost.rotateToFullscreen]), read at
+ * each word from the device, so a tablet's held screen stays held until the exit releases it –
+ * the hold itself (MED-01) is not gated here.
+ *
  * Pure: the device's word comes in as degrees ([deviceLandscape] reads them), the delay runs on
  * an injected scheduler, the activity's `requestedOrientation` is written through [apply]; the
  * JVM tests run the whole of it.
@@ -28,7 +33,9 @@ class FullscreenRotation(
     /** Run the block after the delay; returns what cancels it. */
     private val schedule: (delayMs: Long, block: () -> Unit) -> (() -> Unit),
     /** Write the activity's requested orientation. */
-    private val apply: (orientation: Int) -> Unit
+    private val apply: (orientation: Int) -> Unit,
+    /** Whether the held screen is handed to the device at all: a phone's window ([PageHost.rotateToFullscreen]). */
+    private val handsOver: () -> Boolean = { true }
 ) {
     enum class Phase {
         /** No fullscreen video holds the screen. */
@@ -65,10 +72,16 @@ class FullscreenRotation(
      * The device's orientation as the sensor reads it: landscape, portrait, or null for a device
      * flat or on a diagonal ([deviceLandscape]). While the screen is held, a device that has
      * turned to landscape starts the release's delay; one that turns away before it runs out
-     * cancels it.
+     * cancels it. Nothing in a window that is not a phone's ([handsOver]): the word is dropped, a
+     * delay under way with it – the window may have grown past the line since.
      */
     fun onDevice(landscape: Boolean?) {
         if (phase != Phase.HELD) return
+        if (!handsOver()) {
+            cancel?.invoke()
+            cancel = null
+            return
+        }
         if (landscape != true) {
             cancel?.invoke()
             cancel = null

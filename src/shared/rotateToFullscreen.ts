@@ -34,9 +34,13 @@
  * two exits are one `exitFullscreen()`; one transition either way. This script stays because
  * Blink's delegate is gated on the `deviceorientation` sensor as well, which a device without
  * one (the recipe's emulator among them) never satisfies, and because the decision is then
- * readable and testable here. Chrome runs neither on a tablet (`device_is_phone`); this script
- * is switched on by the Android page script for every form factor for now – the tablet's gate is
- * a lead ruling (parity says phone-only), a one-line flag from the host when it comes.
+ * readable and testable here. Chrome runs neither on a tablet (`device_is_phone`), and nor does
+ * this: the rule is the phone's alone (design language v2 §9.36 – a phone turned on its side with
+ * a video playing has one plausible intent, a tablet turned has many; the tablet keeps its layout
+ * through the turn and its video goes fullscreen by the player's own control). The host says
+ * which the window is at document start (`PageHost.rotateToFullscreen`: under 600 dp on the short
+ * side, the same line the tablet layout is picked on – `PHONE_MAX_WIDTH` in `formFactor.ts`) and
+ * holds its own half back on a tablet too (`FullscreenRotation`'s hand-over).
  */
 
 export type SimpleOrientation = 'portrait' | 'landscape' | 'unknown'

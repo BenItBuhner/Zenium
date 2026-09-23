@@ -15,17 +15,16 @@ class FullscreenRotationTest {
     private val applied = mutableListOf<Int>()
     private val scheduled = mutableListOf<Pair<Long, () -> Unit>>()
     private var cancelled = 0
-    private val rotation = FullscreenRotation(
-        schedule = { delay, block ->
-            val entry = delay to block
-            scheduled += entry
-            val cancel: () -> Unit = {
-                if (scheduled.remove(entry)) cancelled++
-            }
-            cancel
-        },
-        apply = { applied += it }
-    )
+    private val schedule: (Long, () -> Unit) -> (() -> Unit) = { delay, block ->
+        val entry = delay to block
+        scheduled += entry
+        val cancel: () -> Unit = {
+            if (scheduled.remove(entry)) cancelled++
+        }
+        cancel
+    }
+    /** A phone's window: the hold is handed over (the default). */
+    private val rotation = FullscreenRotation(schedule = schedule, apply = { applied += it })
 
     /** The delay runs out: every scheduled block runs. */
     private fun elapse() {
@@ -108,6 +107,57 @@ class FullscreenRotationTest {
         assertEquals(1, cancelled)
         assertTrue(scheduled.isEmpty())
         assertEquals(FullscreenRotation.Phase.HELD, rotation.phase)
+    }
+
+    /**
+     * A tablet's window (600 dp or more on the short side, [ScreenClass]; the host's word false):
+     * the hold itself stands (MED-01), but the turn of the device hands nothing over – the screen
+     * stays held until the exit releases it, as Chrome's phone-only lock leaves a tablet's alone.
+     */
+    @Test
+    fun inATabletsWindowTheHeldScreenIsNeverHandedToTheDevice() {
+        val tablet = FullscreenRotation(schedule = schedule, apply = { applied += it }, handsOver = { false })
+        tablet.hold(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
+        assertEquals(FullscreenRotation.Phase.HELD, tablet.phase)
+        assertEquals(listOf(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE), applied)
+        // The tablet turns to landscape and stays: no delay, no following.
+        tablet.onDevice(true)
+        assertTrue(scheduled.isEmpty())
+        tablet.onDevice(true)
+        elapse()
+        assertEquals(FullscreenRotation.Phase.HELD, tablet.phase)
+        assertEquals(1, applied.size)
+        // The exit releases the screen as on a phone.
+        tablet.release()
+        assertEquals(FullscreenRotation.Phase.OFF, tablet.phase)
+        assertEquals(listOf(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE, FullscreenOrientation.RELEASED), applied)
+    }
+
+    /**
+     * The word is the window's, read live: a phone's window grown past the line mid-hold (a fold
+     * opened, a split ended) drops the hand-over under way; narrowed back under it, the next word
+     * from the device starts it again.
+     */
+    @Test
+    fun aWindowGrownPastTheLineDropsAHandOverUnderWay() {
+        var phone = true
+        val window = FullscreenRotation(schedule = schedule, apply = { applied += it }, handsOver = { phone })
+        window.hold(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
+        window.onDevice(true)
+        assertEquals(1, scheduled.size)
+        phone = false
+        window.onDevice(true)
+        assertEquals(1, cancelled)
+        assertTrue(scheduled.isEmpty())
+        elapse()
+        assertEquals(FullscreenRotation.Phase.HELD, window.phase)
+        assertEquals(1, applied.size)
+        phone = true
+        window.onDevice(true)
+        assertEquals(1, scheduled.size)
+        elapse()
+        assertEquals(FullscreenRotation.Phase.FOLLOWING, window.phase)
+        assertEquals(ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR, applied.last())
     }
 
     @Test

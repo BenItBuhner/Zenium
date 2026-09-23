@@ -159,6 +159,7 @@ export interface PageScriptTransport {
    * Hosts whose device turns (Android): a video playing inline goes fullscreen as the screen turns
    * to its orientation and leaves as it turns away, Chrome's rule, asked for inside the turn's
    * own event – the one place Blink lets a page ask without a touch (`rotateToFullscreen.ts`).
+   * The phone's alone, as Chrome gates it (§9.36): the host sets it by the window's class.
    */
   rotateToFullscreen?: boolean
   /**

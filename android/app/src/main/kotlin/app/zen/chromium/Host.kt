@@ -151,6 +151,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override var pageRulesJson: JSONObject = JSONObject()
         private set
     /**
+     * Rotate-to-fullscreen is the phone's alone (§9.36, Chrome's `device_is_phone`): the window
+     * under Android's tablet line, the class the chrome lays itself out by too
+     * ([MainActivity.largeScreen], read live). The page script's half hears it at document start
+     * ([TabWebView]'s start script) and the host's half ([rotation]'s hand-over) reads it at each
+     * word from the device.
+     */
+    override val rotateToFullscreen: Boolean get() = !activity.largeScreen()
+    /**
      * The page fonts the core last pushed (`fonts.apply`, at its start and on every change of
      * `Settings.fonts`), every page WebView's `WebSettings`; from the last run's document until the
      * core's first push, so a tab restored ahead of it is laid out with the same fonts (PageFonts).
@@ -262,17 +270,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * The activity's orientation is the fullscreen video's ([FullscreenOrientation]) until the
      * device turns to match it, then the device's again ([FullscreenRotation], MED-02); given back
-     * on exit. The sensor speaks through [deviceTurned] while the screen is held. The apply lambda
-     * runs only from [FullscreenRotation]'s methods, after this initializer: its reads of
-     * [orientationSensor] (declared above) and of `rotation` itself are deferred, and the type is
-     * stated so the self-reference infers.
+     * on exit. The sensor speaks through [deviceTurned] while the screen is held in a phone's
+     * window ([rotateToFullscreen]: a tablet's hold never follows the device, so its sensor is
+     * never read). The apply lambda runs only from [FullscreenRotation]'s methods, after this
+     * initializer: its reads of [orientationSensor] (declared above) and of `rotation` itself are
+     * deferred, and the type is stated so the self-reference infers.
      */
     private val rotation: FullscreenRotation = FullscreenRotation(
         schedule = ::postDelayed,
         apply = { orientation ->
             activity.requestedOrientation = orientation
-            orientationSensor.follow(rotation.phase == FullscreenRotation.Phase.HELD)
-        }
+            orientationSensor.follow(rotateToFullscreen && rotation.phase == FullscreenRotation.Phase.HELD)
+        },
+        handsOver = { rotateToFullscreen }
     )
     /**
      * The exit hint's cue to the chrome (`fullscreen.entered`): after the view's reveal, with the

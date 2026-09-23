@@ -22,7 +22,9 @@ import { installViewportController, type PageRulesConfig } from './viewport'
  *
  * Kotlin prefixes the script with the page-controls rules (`window.__zenPageRules`) and the
  * view's width (`window.__zenDeviceWidth`), so zoom, the desktop layout and force-zoom are laid
- * out from the first viewport meta on; rule changes arrive live as `pageRules` messages.
+ * out from the first viewport meta on; rule changes arrive live as `pageRules` messages. It
+ * prefixes the host's word on rotate-to-fullscreen too (`window.__zenRotateToFullscreen`): the
+ * phone's window alone runs it, as Chrome gates it (`PageHost.rotateToFullscreen`, §9.36).
  */
 interface PageBridge {
   postMessage(message: string): void
@@ -75,6 +77,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     __zeniumDownloadNames?: DownloadNames
     __zenPageRules?: PageRules
     __zenDeviceWidth?: number
+    __zenRotateToFullscreen?: boolean
   }
   if (w.__zenPageInstalled) return
   w.__zenPageInstalled = true
@@ -94,9 +97,15 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
           deviceWidth: typeof w.__zenDeviceWidth === 'number' ? w.__zenDeviceWidth : 0
         })
       : null
+  // Rotate-to-fullscreen is the phone's alone (MED-02, §9.36: Chrome's `device_is_phone`); the
+  // host's word on this window's class comes with the rules (`PageHost.rotateToFullscreen`, from
+  // the same 600 dp line the tablet layout is picked on), and a host that says nothing turns
+  // nothing.
+  const rotateToFullscreen = w.__zenRotateToFullscreen === true
   // The rules were only ever for this script; pages keep no trace of them.
   delete w.__zenPageRules
   delete w.__zenDeviceWidth
+  delete w.__zenRotateToFullscreen
 
   const bridge = w.__zenPageBridge
   if (!bridge) return
@@ -249,7 +258,9 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     // Rotate-to-fullscreen (MED-02): the turn of the screen takes a playing video with native
     // controls fullscreen and the turn away brings it back, inside the page's own `change` event
     // (shared/rotateToFullscreen.ts); the host holds and releases the screen (FullscreenRotation.kt).
-    rotateToFullscreen: true,
+    // In a phone's window alone (the host's word, above): a tablet keeps its layout through the
+    // turn and its video goes fullscreen by the player's own control (§9.36).
+    rotateToFullscreen,
     send: (message) => up(message),
     // The fullscreen exit hint (GN-20): the chrome is under the fullscreen layer, so the hint
     // is drawn in the page's top layer, as the desktop's fullscreen hints are.

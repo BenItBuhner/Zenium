@@ -173,13 +173,21 @@ class MainActivity : BrowserActivity() {
             device != null && !device.isVirtual && device.supportsSource(InputDevice.SOURCE_MOUSE)
         }
         return json(
-            "largeScreen" to (c.smallestScreenWidthDp >= 600),
+            "largeScreen" to largeScreen(),
             "pointerAndKeyboard" to (keyboard && mouse),
             "fontScale" to c.fontScale.toDouble(),
             "textZoom" to ChromeTextScale.zoomFactor(ChromeTextScale.textZoomPercent(resources)),
             "fontWeightAdjustment" to ChromeTextScale.fontWeightAdjustment(c)
         )
     }
+
+    /**
+     * Whether the window is a large screen ([ScreenClass]: 600 dp or more on its short side, the
+     * tablet layout's line). The page controls' desktop default reads it ([environment]) and so does
+     * rotate-to-fullscreen's gate ([Host.rotateToFullscreen]); read live, so a fold or a split
+     * screen moves the class with the window.
+     */
+    fun largeScreen(): Boolean = ScreenClass.large(resources.configuration.smallestScreenWidthDp)
 
     /**
      * Tell the chrome how far the status bar, cutout, gesture bar and keyboard reach in CSS px,

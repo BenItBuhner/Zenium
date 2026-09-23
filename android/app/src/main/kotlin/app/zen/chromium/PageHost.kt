@@ -26,6 +26,16 @@ interface PageHost {
     val pageRules: PageRules get() = PageRules.NONE
     /** The same rules as the core sent them, handed to every page's document-start script. */
     val pageRulesJson: JSONObject get() = JSONObject()
+    /**
+     * Whether the turn of the device takes a playing video fullscreen and back (MED-02, Chrome's
+     * rule for the phone alone – design language v2 §9.36): the one word both halves of the rule
+     * read. The page script's half hears it at document start (`window.__zenRotateToFullscreen`,
+     * `shared/rotateToFullscreen.ts`) and the host's half – the held screen handed to the device so
+     * the turn back turns it ([FullscreenRotation]) – reads it live. A tablet's window keeps its
+     * layout through a turn and its video goes fullscreen by the player's own control
+     * ([ScreenClass]); a custom tab turns nothing.
+     */
+    val rotateToFullscreen: Boolean get() = false
     /** The page fonts every page WebView's `WebSettings` take (Settings › Appearance › Customize fonts, CT-25). */
     val pageFonts: PageFonts get() = PageFonts.DEFAULT
     /** The privacy policy the pages apply (cookies, signals, Safe Browsing's word ahead of the engine). */
