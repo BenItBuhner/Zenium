@@ -704,6 +704,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot(args.bool("fullPage")) { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
             "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), args.optInt("quality", -1), reply)
+            // The chrome's capture overlay maps its drag rectangle with this (`shared/capture.ts`).
+            "view.viewport" -> if (tab == null) reply(null) else tab.viewport(reply)
             "view.certificate" -> reply(tab?.certificateInfo())
 
             // --- site information (cookies and storage of a site, per container) -------------------
@@ -808,6 +810,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.exists" -> downloads.exists(args.str("savePath"), reply)
             "download.deleteFile" -> downloads.deleteFile(args.str("savePath"), reply)
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
+            // A web capture the core saves (`capture.save`): the bytes into the public Downloads
+            // collection, the path back for the downloads list – Take Screenshot's path.
+            "download.saveFile" -> saveToDownloads(args.str("name"), args.str("mimeType", "image/png"), runCatching { android.util.Base64.decode(args.str("data"), android.util.Base64.DEFAULT) }.getOrNull(), reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.openWith" -> { downloads.openWith(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.share" -> { downloads.share(args.str("savePath"), args.str("mimeType"), args.str("name")); reply(null) }

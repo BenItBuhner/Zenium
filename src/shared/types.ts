@@ -46,6 +46,7 @@ import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSetting
 import type { TabAlert } from './captureState'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 import type { ShareFile, ShareFileInfo } from './share'
+import type { PageCaptureRequest, PageCaptureResult, PageViewport } from './capture'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -4431,6 +4432,40 @@ export interface Commands {
    * page beyond the viewport (Edge's "Capture full page"; the visible area when the host cannot).
    */
   'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
+  // ---- Web capture (`core/capture.ts`, `shared/capture.ts`) ------------------------------------
+  /**
+   * The page's picture for the chrome's capture UI (Edge's Web capture): the visible area, the
+   * whole page or a region in CSS pixels relative to the document, as a data URL with its pixel
+   * size – PNG unless `format` says JPEG. Goes through the host's agent capture; a full page or
+   * region the host could not paint as asked comes back as the visible area with
+   * `fallback: 'viewport'`. Refuses a picture past `CAPTURE_MAX_PIXELS` with
+   * `CaptureTooLargeError` (a named error the UI shows), never with a silent null; null only
+   * for a page that cannot be captured at all (not painted yet, gone) or a region outside the
+   * document.
+   */
+  'page.capture': {
+    args: { tabId: string } & PageCaptureRequest
+    result: PageCaptureResult | null
+  }
+  /**
+   * The page's geometry for the overlay's drag rectangle (`regionFromChrome` in
+   * `shared/capture.ts`): scroll offset, viewport and document sizes, zoom and device pixel
+   * ratio; null when the host cannot read the page.
+   */
+  'page.viewport': { args: { tabId: string }; result: PageViewport | null }
+  /** Put a captured picture (an image data URL) on the clipboard as a PNG; false when the host could not. */
+  'capture.copy': { args: { dataUrl: string }; result: boolean }
+  /**
+   * Save a captured picture to the downloads location (Settings › Downloads, else the platform's
+   * folder) under `fileName` or the screenshot name rule, and list it as a completed download
+   * so the bubble and the Downloads page show it; `tabId` puts it in the tab's container (a
+   * private window's capture stays in the private list). Resolves with where it landed, null
+   * when the host could not write it.
+   */
+  'capture.save': {
+    args: { dataUrl: string; fileName?: string; tabId?: string }
+    result: { path: string } | null
+  }
   /** Print through the system dialog (Ctrl+Shift+P; Ctrl+P too on a host without the preview). */
   'page.print': { args: { tabId: string }; result: void }
   /**
