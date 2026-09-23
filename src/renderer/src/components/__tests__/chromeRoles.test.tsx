@@ -135,6 +135,7 @@ function fixture({
     downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 },
     shortcuts: defaultShortcuts('linux', 'chrome'),
     blockedPopups: {},
+    permissionRules: [],
     translate: { available: true, tabs: {} },
     securityPrompts: [],
     autofill: { prompts: [], picker: null },
