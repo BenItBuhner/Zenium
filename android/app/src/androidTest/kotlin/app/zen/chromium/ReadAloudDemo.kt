@@ -267,7 +267,8 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         if (survived) {
             finding("  seeded tab survived the relaunch: yes")
         } else {
-            finding("  seeded tab survived the relaunch: no (the outgoing core closed it on destroy — the wave-5 race); re-opening the article")
+            val why = if (loseSeededTab) "closed by the stand-in before the relaunch, -e loseSeededTab true" else "the outgoing core closed it on destroy — the wave-5 race"
+            finding("  seeded tab survived the relaunch: no ($why); re-opening the article")
             tabId = jsonString(coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/")},\"active\":true}"))
         }
         awaitLoaded("$ORIGIN/")
