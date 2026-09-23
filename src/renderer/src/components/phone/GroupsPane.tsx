@@ -2,9 +2,8 @@ import type { CSSProperties, JSX } from 'react'
 import { useRef } from 'react'
 import { Ellipsis, Trash2 } from 'lucide-react'
 import type { Folder } from '@shared/types'
-import { FOLDER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
-import { GROUP_PALETTE, groupColorHex } from '@renderer/lib/groups'
+import { GROUP_PALETTE, groupColorVars } from '@renderer/lib/groups'
 import {
   groupRowDescription,
   groupRowLabel,
@@ -160,13 +159,18 @@ function GroupRenameRow({ row }: { row: GroupRow }): JSX.Element {
   )
 }
 
-/** The group's colour in the row's 20 box: a 12 px dot for an open group, a 2 px ring for a saved one. */
+/**
+ * The group's colour in the row's 20 box: a 12 px dot for an open group, a 2 px ring for a
+ * saved one. The colour is §9.14's pair on the glyph (`groupColorVars`), so the theme's pick
+ * (`--zen-group-rgb`) follows a flip live.
+ */
 function GroupGlyph({ folder, saved }: { folder: Folder; saved: boolean }): JSX.Element {
   return (
     <span
       className="zen-overview-group-glyph"
       data-saved={saved || undefined}
-      style={{ '--zen-group-color': groupColorHex(folder.color) } as CSSProperties}
+      data-group-rgb=""
+      style={groupColorVars(folder.color) as CSSProperties}
     />
   )
 }
@@ -206,10 +210,11 @@ export function GroupColorPalette({ folder }: { folder: Folder }): JSX.Element {
               'zen-group-swatch flex h-8 w-8 items-center justify-center rounded-full',
               selected && 'zen-group-swatch-selected'
             )}
-            style={{ '--zen-swatch': FOLDER_COLORS[color] } as CSSProperties}
+            data-group-rgb=""
+            style={groupColorVars(color) as CSSProperties}
             onClick={() => run('folder.update', { folderId: folder.id, patch: { color } })}
           >
-            <span className="h-5 w-5 rounded-full" style={{ background: FOLDER_COLORS[color] }} />
+            <span className="h-5 w-5 rounded-full bg-[rgb(var(--zen-group-rgb))]" />
           </button>
         )
       })}

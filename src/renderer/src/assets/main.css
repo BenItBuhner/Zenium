@@ -365,6 +365,26 @@
 }
 
 /*
+ * A tab group's colour is a pair (design language v2 §9.14: one set a scheme, every value 3:1 on
+ * the window fill it sits on). The element that wears it carries both schemes' channels –
+ * `--zen-group-rgb-light` and `--zen-group-rgb-dark`, `lib/groups.ts`'s `groupColorVars` – and
+ * is marked `data-group-rgb`; these two rules pick the set the theme's fills are drawn for, so
+ * every rule below goes on reading `rgb(var(--zen-group-rgb) / α)` and a flip of the root's
+ * `data-theme` recolours every dot, ring, swatch, chip and line in the frame the tokens flip,
+ * with no component reading the theme. The pick has to stand on the carrier, not on the root: a
+ * `var()` is substituted on the element that declares it and inherits as what it resolved to,
+ * and `light-dark()` hands back a colour, never the channels the alphas need. The pair stands
+ * after the token blocks above, which `shared/newTabPage.ts` copies to the new tab page as one
+ * run and stops at the first rule that is not a token block.
+ */
+[data-group-rgb] {
+  --zen-group-rgb: var(--zen-group-rgb-light);
+}
+:root[data-theme='dark'] [data-group-rgb] {
+  --zen-group-rgb: var(--zen-group-rgb-dark);
+}
+
+/*
  * One focus ring for every v2 control (§1, §9.6): 2 px in `--v2-ring`, at `--v2-ring-offset`
  * from the control's edge, on any element whose class starts with zen-v2-. The offset is the
  * control's, the same in both themes (§1; the #247 chassis note): 2 outside – the token's
@@ -2793,7 +2813,7 @@
     transform: scale(0.92);
   }
   .zen-group-swatch-selected {
-    box-shadow: inset 0 0 0 2px var(--zen-swatch);
+    box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
   }
 
   /*
@@ -3361,6 +3381,16 @@
   }
   .zen-private-lock[data-leaving] {
     pointer-events: none;
+  }
+  /*
+   * The veil form (`variant="veil"`; the tablet sidebar's private pose under the lock, W4-11):
+   * the veil alone in the window's tone over rows that are masked already – each reading
+   * "Private tab" behind the mask, the list inert under it – with no opaque base (nothing under
+   * it can leak) and no second block: the one Unlock is the content frame's cover's beside it,
+   * and the veil lifts on the same spring (`--zen-lock-p`) as that cover.
+   */
+  .zen-private-lock[data-variant='veil'] {
+    background: transparent;
   }
 
   /*
@@ -6358,6 +6388,27 @@
       animation-play-state: paused !important;
     }
   }
+  /*
+   * A tile that has run its entrance keeps its place in the run: a cell React moves in the DOM
+   * (a drag's draft, a removal, a pin) would start the fade again, so the page marks the cells
+   * whose fade has ended and they run none (past the reduced-motion `!important` above).
+   */
+  :root[data-form-factor='phone'] .zen-ntp-site[data-entered] {
+    animation: none !important;
+  }
+  /*
+   * The tile in the hand (NTP-06, v2 §11.4): lifted over its neighbours, the tile's fill the
+   * pressed one under the panel's shadow, and the press's shrink undone – the lift's 1.02 scale
+   * and the drag's travel are written on the button by tileReorder.ts, per move.
+   */
+  :root[data-form-factor='phone'] .zen-ntp-site[data-held] {
+    z-index: 1;
+  }
+  :root[data-form-factor='phone'] .zen-ntp-site[data-held] .zen-ntp-tile {
+    background: var(--v2-control-fill-hover);
+    box-shadow: var(--v2-shadow-panel);
+    transform: none;
+  }
   /* The phone's tiles take the space's corner shape, as the Essentials tiles do. */
   :root[data-form-factor='phone'] .zen-ntp-tile {
     corner-shape: var(--zen-corner);
@@ -6957,10 +7008,13 @@
  * The phone's message layer is the content frame's box and clips to it: cards arrive from and
  * leave by its edges. Banners hang from the top edge, each on its slot by transform, touching
  * (§9.21); the toast sits at the bottom edge, a leaving one and its successor in the same cell.
- * The inset is from a card to the frame's edge; `messages/stack.ts` mirrors it.
+ * The inset is from a card to the frame's edge; `messages/stack.ts` mirrors it. A card spans the
+ * frame up to its cap and centres where the frame is wider (§9.33; `@shared/toastCard` carries
+ * both numbers for the page-drawn twin).
  */
 :root {
   --zen-message-inset: 8px;
+  --zen-message-max-width: 560px;
 }
 .zen-message-layer {
   position: absolute;
@@ -6974,6 +7028,8 @@
   top: var(--zen-message-inset);
   left: var(--zen-message-inset);
   right: var(--zen-message-inset);
+  max-width: var(--zen-message-max-width);
+  margin: 0 auto;
 }
 .zen-message-stack > .zen-message {
   position: absolute;
@@ -6987,6 +7043,8 @@
   bottom: var(--zen-message-inset);
   left: var(--zen-message-inset);
   right: var(--zen-message-inset);
+  max-width: var(--zen-message-max-width);
+  margin: 0 auto;
   display: grid;
 }
 .zen-message-toasts > * {
@@ -7056,8 +7114,23 @@
  * inside the bar element. At the hidden rest the root carries `data-bar-hidden`: the bar takes no
  * touches (the page has its band) but stays in the accessibility tree, where focus brings it
  * back. Under reduced motion the finger still moves the bar one to one; only the snap jumps.
+ *
+ * Around a page's fullscreen the same bar leaves by the same transform (MOT-32,
+ * lib/fullscreenMotion.ts): `--zen-fullscreen-away` is 0 with the bar in place and 1 with it
+ * off its edge by its own height – the box hangs its inset padding past the clip line, so 100 %
+ * of it is the whole bar past that line, whatever the inset stands at as the system bars go and
+ * come – written per frame on the bar element itself, registered here as its own property like
+ * the hide's, and added to the hide's travel in the one transform: a bar hidden on scroll when
+ * the page goes fullscreen comes home under the gate closing while it leaves for the edge, and
+ * the two springs sum in the layer's transform, never a layout. The bar itself stays mounted,
+ * with its state, under the fullscreen layer the host reveals over it at the same pace.
  */
 @property --zen-bar-hide {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+@property --zen-fullscreen-away {
   syntax: '<number>';
   inherits: false;
   initial-value: 0;
@@ -7087,10 +7160,18 @@
   will-change: transform;
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
-  transform: translate3d(0, calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0);
+  transform: translate3d(
+    0,
+    calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel) + var(--zen-fullscreen-away) * 100%),
+    0
+  );
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='top'] {
-  transform: translate3d(0, calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0);
+  transform: translate3d(
+    0,
+    calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel) - var(--zen-fullscreen-away) * 100%),
+    0
+  );
 }
 :root[data-bar-hidden] .zen-phone-bar,
 :root[data-form-factor='phone'] .zen-phone-bar[aria-hidden='true'] {
@@ -7419,11 +7500,46 @@
   margin-left: 0;
   padding: 0;
 }
-/* Section rows with a toggle – a space's pinned header – meet the 40 px target. */
+/*
+ * Section rows with a toggle – a space's pinned header – meet the 40 px target; the private
+ * pose's header (`PrivatePanel`, W4-11) stands on the same row.
+ */
 :root[data-form-factor='tablet'] .zen-tablet-sidebar button[data-strip-item^='header:'],
-:root[data-form-factor='tablet'] .zen-tablet-drawer button[data-strip-item^='header:'] {
+:root[data-form-factor='tablet'] .zen-tablet-drawer button[data-strip-item^='header:'],
+:root[data-form-factor='tablet'] .zen-tablet-sidebar .zen-sidebar-private-header,
+:root[data-form-factor='tablet'] .zen-tablet-drawer .zen-sidebar-private-header {
   height: 40px;
   font-size: 13px;
+}
+/*
+ * The sidebar's pose switch (`Sidebar`, `sidebarPose`; W4-11): the regular pose – the space's
+ * panels – and the private pose – the private session's rows under the mask – trade places as
+ * the tab in view changes mode, a pane switch (v2 §11.4, the overview's): the pose coming up
+ * fades in over 120 ms while a still of the one leaving fades out over the same slot for the
+ * same 120 ms (`PaneSlot`), the window surfaces blending to the pose's theme meanwhile (§11.6,
+ * 240 ms). The fade in is the switch's alone (`data-switching`, on while a still is up), not
+ * the sidebar's entrance; reduced motion keeps it (the rule past the global one at the foot).
+ */
+.zen-sidebar-pose[data-switching] {
+  animation: zen-fade 120ms var(--zen-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .zen-sidebar-pose[data-switching] {
+    animation: zen-fade 120ms var(--zen-ease) !important;
+  }
+}
+/*
+ * The still of a pane that left (`PaneSlot`: the sidebar's pose, the overview's pane) is a
+ * picture of it under the window's polarity as it was taken (`data-still-theme`, the root's
+ * `data-theme` then). Its rows read the live tokens, and §11.6's blend cuts the ink (`--zen-fg`,
+ * `data-theme`) at its midpoint: a still still up past the cut – a slow frame, or reduced
+ * motion's cut at once – would draw the rows that left in the other pose's ink, the private
+ * titles in the regular ink. Once the window's polarity is not the still's, the still is not
+ * drawn (a cut, the polarity's own).
+ */
+:root[data-theme='light'] .zen-pane-still[data-still-theme='dark'],
+:root[data-theme='dark'] .zen-pane-still[data-still-theme='light'] {
+  visibility: hidden;
 }
 /* The sidebar's footer buttons (new space, the palette) at the tablet icon button. */
 :root[data-form-factor='tablet']
@@ -8325,8 +8441,8 @@
  * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
  * gutter's end; the first heading stands under the segment (or the space strip), which already
  * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
- * open group, the same as a 2 px ring for a saved one, whose tabs are closed (`--zen-group-color`
- * on the glyph). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
+ * open group, the same as a 2 px ring for a saved one, whose tabs are closed (the §9.14 pair on
+ * the glyph, `--zen-group-rgb` the theme's pick). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
  * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
  * own 40 is for a list whose field carries 8 under it, and the segment carries none.
  */
@@ -8357,10 +8473,10 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--zen-group-color);
+  background: rgb(var(--zen-group-rgb));
 }
 .zen-overview-group-glyph[data-saved] {
-  border: 2px solid var(--zen-group-color);
+  border: 2px solid rgb(var(--zen-group-rgb));
   background: transparent;
 }
 /* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
@@ -8418,7 +8534,7 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--zen-swatch);
+  background: rgb(var(--zen-group-rgb));
   transition: box-shadow 120ms var(--zen-ease);
 }
 .zen-group-editor-swatch[aria-checked='true'] > .zen-group-editor-swatch-disc {

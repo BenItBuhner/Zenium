@@ -26,9 +26,11 @@ type Call = { keyframes: unknown; options: unknown }
 const calls: Call[] = []
 const cancel = vi.fn()
 
+const onFade = vi.fn()
+
 function Shell({ fullscreenTabId }: { fullscreenTabId: string | null }): JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null)
-  useFullscreenReturn(ref, fullscreenTabId)
+  useFullscreenReturn(ref, fullscreenTabId, onFade)
   if (fullscreenTabId) return <div data-black />
   return (
     <div
@@ -73,6 +75,7 @@ afterEach(() => {
   mountPoint = null
   calls.length = 0
   cancel.mockClear()
+  onFade.mockClear()
   vi.useRealTimers()
 })
 
@@ -234,6 +237,44 @@ describe('the chrome back from fullscreen on a host that reports landings', () =
     expect(chrome()?.style.opacity).toBe('0')
     act(() => void vi.advanceTimersByTime(LANDING_TIMEOUT_MS - 1))
     expect(calls).toEqual([])
+  })
+
+  it('what moves with the return (the bar sliding back, MOT-32) starts with the fade, never under the hold', () => {
+    // The bar's way back onto its edge runs from the landing with the fade: under the hold the
+    // chrome is at nothing and the bars are still settling, so a bar moving there would be a
+    // motion over the platform's shrink (§11.5) that nobody sees.
+    vi.useFakeTimers()
+    noteInsetsSettling(false)
+    notePlacements([{ tabId: 't1', rect: inline }], false)
+    noteViewSized('t1', 399, 756)
+    render('t1')
+    expect(onFade).not.toHaveBeenCalled()
+    act(() => noteInsetsSettling(true))
+    render(null)
+    expect(chrome()?.style.opacity).toBe('0')
+    expect(onFade).not.toHaveBeenCalled()
+    act(() => notePlacements([{ tabId: 't1', rect: { ...inline, height: 804 } }], true))
+    act(() => noteViewSized('t1', 399, 804))
+    expect(onFade).not.toHaveBeenCalled()
+    act(() => noteInsetsSettling(false))
+    act(() => notePlacements([{ tabId: 't1', rect: inline }], false))
+    act(() => noteViewSized('t1', 399, 756))
+    // The landing: the fade and the bar's return at once, one call for the one return.
+    expect(calls).toHaveLength(1)
+    expect(onFade).toHaveBeenCalledTimes(1)
+    act(() => void vi.advanceTimersByTime(LANDING_TIMEOUT_MS))
+    expect(onFade).toHaveBeenCalledTimes(1)
+  })
+
+  it('what moves with the return runs at the timeout too, once', () => {
+    vi.useFakeTimers()
+    noteInsetsSettling(true)
+    render('t1')
+    render(null)
+    expect(onFade).not.toHaveBeenCalled()
+    act(() => void vi.advanceTimersByTime(LANDING_TIMEOUT_MS))
+    expect(calls).toHaveLength(1)
+    expect(onFade).toHaveBeenCalledTimes(1)
   })
 
   it('releases the hold, fading nothing, when fullscreen comes again meanwhile', () => {

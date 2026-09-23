@@ -19,17 +19,19 @@ import kotlin.math.roundToInt
 
 /**
  * What the two tab-group drivers share (TAB-16, TAB-15, TABLET-04; the `android-tab-groups-demo`
- * workflow's phone and tablet acts, [TabGroupsDemo] and [TabletGroupsDemo]): the profile
- * `tab-groups-demo-state.json` – the Work space with the group Research [Alpha, Beta] and the
- * loose tabs Home (active), Gamma, Delta, every page served by the driver's own [DemoServer]
- * (Alpha carries the link the link menu is held on) – the findings file (one `OK` or `FAIL` per
- * claim; a claim that does not hold fails the run at the end, the sequence running on so the
- * recording shows the rest), reads of the chrome's DOM and stores and of the core's state, and
- * the real touches: every press in a sheet or menu flow is a finger ([Finger]) on a box read
- * from the chrome's DOM – CSS px scaled by the chrome's device pixel ratio and offset by one
- * calibration against the accessibility tree – never an accessibility click, which bypasses hit
- * testing (the real-touch rule). The accessibility tree itself trails the emulator's software
- * GPU by seconds, so no claim is read off it.
+ * workflow's phone and tablet acts, [TabGroupsDemo] and [TabletGroupsDemo]) and the tablet
+ * private mode's driver takes as its workspace ([TabletPrivateDemo]: the same seeded space with
+ * a group in it, for the sidebar's regular pose): the profile `tab-groups-demo-state.json` – the
+ * Work space with the group Research [Alpha, Beta] and the loose tabs Home (active), Gamma,
+ * Delta, every page served by the driver's own [DemoServer] (Alpha carries the link the link
+ * menu is held on; a driver adds pages of its own to [recordDemo]) – the findings file (one `OK`
+ * or `FAIL` per claim; a claim that does not hold fails the run at the end, the sequence running
+ * on so the recording shows the rest), reads of the chrome's DOM and stores and of the core's
+ * state, and the real touches: every press in a sheet or menu flow is a finger ([Finger]) on a
+ * box read from the chrome's DOM – CSS px scaled by the chrome's device pixel ratio and offset
+ * by one calibration against the accessibility tree – never an accessibility click, which
+ * bypasses hit testing (the real-touch rule). The accessibility tree itself trails the
+ * emulator's software GPU by seconds, so no claim is read off it.
  */
 abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
     DemoHarness("tab-groups-demo-state.json", shotPrefix, handshakeDir) {
@@ -48,9 +50,12 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
     protected abstract val findingsFile: String
     protected abstract val title: String
 
-    /** The concrete driver's `@Test`: the server up, the recorded run, the findings written, a FAIL failing the test. */
-    protected fun recordDemo() {
-        server = DemoServer(PORT, PAGES).also { it.start() }
+    /**
+     * The concrete driver's `@Test`: the server up (the seeded pages, and `pages` of the driver's
+     * own beside them), the recorded run, the findings written, a FAIL failing the test.
+     */
+    protected fun recordDemo(pages: Map<String, Pair<String, ByteArray>> = emptyMap()) {
+        server = DemoServer(PORT, PAGES + pages).also { it.start() }
         try {
             runDemo()
         } finally {
@@ -349,6 +354,17 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
 
     protected fun folderCollapsed(state: JSONObject = coreState()): Boolean = folder(state)?.optBoolean("collapsed") == true
 
+    // --- the group palette (§9.14's pair) ----------------------------------------------------------
+
+    /** The scheme the chrome's root carries (`data-theme`, `useTheme`'s paint): the set its group colours are drawn from. */
+    protected fun chromeScheme(): String = jsText("document.documentElement.getAttribute('data-theme')||'light'")
+
+    /** Blue of the set the chrome shows, as a computed `rgb(r, g, b)`. */
+    protected fun blueRgb(): String = if (chromeScheme() == "dark") BLUE_RGB_DARK else BLUE_RGB_LIGHT
+
+    /** Green of the set the chrome shows, as a computed `rgb(r, g, b)`. */
+    protected fun greenRgb(): String = if (chromeScheme() == "dark") GREEN_RGB_DARK else GREEN_RGB_LIGHT
+
     /** The kept pages of the (saved) group, in order; empty for an open group. */
     protected fun savedUrls(state: JSONObject = coreState()): List<String> {
         val saved = folder(state)?.optJSONArray("savedTabs") ?: return emptyList()
@@ -536,11 +552,18 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
         const val MENU_OPEN = "window.__zenStores.ui.get().menu!==null"
         const val RENAMING = "window.__zenStores.ui.get().renamingFolderId!==null"
 
-        /** The seeded group's colour, `FOLDER_COLORS.blue` (shared/defaults.ts), as the pane's glyph reads it and as the sidebar's dot paints it. */
-        const val BLUE_HEX = "#4c8dff"
-        const val BLUE_RGB = "rgb(76, 141, 255)"
-        /** `FOLDER_COLORS.green`, the swatch the drivers pick. */
-        const val GREEN_RGB = "rgb(52, 181, 111)"
+        /**
+         * The seeded group's colour, blue, and green, the swatch the drivers pick, as the §9.14 PAIR in
+         * shared/defaults.ts (`FOLDER_COLORS_LIGHT` / `FOLDER_COLORS_DARK`: one set a scheme, every value
+         * 3:1 on its scheme's window fill), the way the pane's glyph and the sidebar's dot paint them –
+         * `rgb(var(--zen-group-rgb))`, the set the chrome root's `data-theme` picks. The demos run on the
+         * scheme the device hands them, so a reading is judged against the set the chrome shows
+         * (`blueRgb()` / `greenRgb()`).
+         */
+        const val BLUE_RGB_LIGHT = "rgb(22, 108, 221)"
+        const val BLUE_RGB_DARK = "rgb(138, 180, 248)"
+        const val GREEN_RGB_LIGHT = "rgb(24, 128, 56)"
+        const val GREEN_RGB_DARK = "rgb(129, 201, 149)"
 
         /** The pages the seeded tabs point at. Alpha carries the link the link menu is held on. */
         val PAGES: Map<String, Pair<String, ByteArray>> = mapOf(

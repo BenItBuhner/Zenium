@@ -1,6 +1,7 @@
 import type { Boost, Container, Space } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { sanitizePhoneBar } from '../../shared/phoneBar'
+import { sanitizeHomepage } from '../../shared/homepage'
 import { migrateNewTabSettings, sanitizeNewTabSettings } from '../../shared/newTab'
 import { sanitizeSearchEngines } from '../../shared/search'
 import { sanitizeFontSettings } from '../../shared/fonts'
@@ -229,6 +230,8 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
           Object.assign(state.settings.compactMode, compactMode, { sidebarPersistent: false })
         // Another device's build may know bar items this one does not (or the other way round).
         if ('phoneBar' in rest) state.settings.phoneBar = sanitizePhoneBar(rest.phoneBar)
+        // A peer's homepage is read like a profile's own: a known mode, a web address or none.
+        if ('homepage' in rest) state.settings.homepage = sanitizeHomepage(rest.homepage)
         // A peer's engines (added by hand, discovered on its pages) are read like a profile's
         // own: complete entries only, capped, the default among them kept.
         if ('searchEngines' in rest)

@@ -90,14 +90,28 @@ export type PreviewReadAloudStatus = (typeof PREVIEW_READ_ALOUD_STATUSES)[number
  * `url=<page>` names it, example.com by default; `private=<url>` is that page as well), the tab
  * overview on its Private pane with that tab (`overview`), the overview on its Tabs pane while a
  * private tab is open elsewhere (`tabs`: the segment, and no private card among the regular
- * ones), and the Private pane with no private tab (`empty`: the explainer). `cookies=<mode>`
- * sets the third-party cookie setting first (`allow`, `block-private`, `block`), for the new tab
- * page's switch in each of its states; `then=<steps>` takes steps once the surface is up
- * (`tap:More` opens the overview's header menu, a second tap on its row the question).
+ * ones), the regular tab back in view with the private ones open behind it and no overview
+ * (`behind`: the tablet sidebar's regular pose beside a private session – no private row, no
+ * count), and the Private pane with no private tab (`empty`: the explainer). `count=<n>` opens
+ * n private tabs in all (the others first, on the stand-in site's pages; `empty` takes none),
+ * for a surface that lists the session: the tablet sidebar's private pose, the Private pane.
+ * `cookies=<mode>` sets the third-party cookie setting first (`allow`, `block-private`,
+ * `block`), for the new tab page's switch in each of its states; `then=<steps>` takes steps once
+ * the surface is up (`tap:More` opens the overview's header menu, a second tap on its row the
+ * question).
  */
-export const PREVIEW_PRIVATE_SURFACES = ['newtab', 'page', 'overview', 'tabs', 'empty'] as const
+export const PREVIEW_PRIVATE_SURFACES = [
+  'newtab',
+  'page',
+  'overview',
+  'tabs',
+  'behind',
+  'empty'
+] as const
 export type PreviewPrivateSurface = (typeof PREVIEW_PRIVATE_SURFACES)[number]
 const PREVIEW_COOKIE_MODES: readonly ThirdPartyCookieMode[] = ['allow', 'block-private', 'block']
+/** The most private tabs a `private=` surface opens (`count=<n>`): the sidebar's list is full by then. */
+export const PREVIEW_PRIVATE_MAX = 6
 
 /**
  * The phone new tab page's field on its way to the omnibox (`ntp=<pose>`; NTP-02 / MOT-08,
@@ -314,6 +328,18 @@ export type PreviewState =
       pose: PreviewNtpPose
       /** On the private new tab page rather than the space's. */
       private: boolean
+      /**
+       * Steps taken on the page once it is at its pose (`then=`): `press:<tile>` rests a finger
+       * on a tile and lifts it, so its hold menu comes up (NTP-06); `tap:Edit Shortcut…` after
+       * it opens the edit sheet.
+       */
+      then?: PreviewStep[]
+      /**
+       * A pinned tile held and carried (`drag=<tile>:<dx>,<dy>`, NTP-06): the finger rests on
+       * the tile for the long-press time, then travels that far in CSS px and stays down – the
+       * grid mid-reorder, the tile in the hand, its neighbours glided to their new slots.
+       */
+      drag?: { text: string; dx: number; dy: number }
     }
   | {
       /** The active page asks for a permission (`prompt=<permission>`; the security dialogs' `prompt=` values are `kind: 'prompt'`). */
@@ -326,6 +352,13 @@ export type PreviewState =
       surface: PreviewPrivateSurface
       /** The page the private tab is on (`page`, `overview`, `tabs`); null for the default. */
       url: string | null
+      /**
+       * How many private tabs the session holds once the surface is up (`count=<n>`, 2 to
+       * PREVIEW_PRIVATE_MAX; absent: the surface's one): the others open first, on the stand-in
+       * site's pages, so a surface that lists the session – the tablet sidebar's private pose,
+       * the Private pane – has rows to list.
+       */
+      count?: number
       /** The third-party cookie setting to put in place first; absent, the profile's stands. */
       cookies?: ThirdPartyCookieMode
       /** Steps taken once the surface is up (the overview's header menu, its question). */
@@ -616,7 +649,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `prompt=<permission>` for the active page asking for that permission (the prompt sheet),
  * `ntp=<pose>` for the phone new tab page with its field at a pose of its morph into the omnibox
  * (`rest`, `morph:<percent>`, `open`, `scroll:<px>`, `scrub:<percent>`, `docked`; `&private`
- * for the private page; see `PreviewNtpPose`),
+ * for the private page; see `PreviewNtpPose`; `then=<steps>` takes steps on the page at its
+ * pose – `press:<tile>` a tile's hold, for its menu – and `drag=<tile>:<dx>,<dy>` holds a
+ * pinned tile carried that far, the grid mid-reorder),
  * `private=<surface>` for one of PREVIEW_PRIVATE_SURFACES (a private tab on its new tab page or
  * a page, the overview's Tabs and Private panes and the empty Private pane; `url=<page>` names
  * the private tab's page; `private=new` is the new tab page and `private=<url>` that page, as
@@ -761,7 +796,16 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (prompt && !securityPrompt) return { kind: 'permission', permission: prompt }
   const ntp = params.get('ntp')
   if (ntp !== null) {
-    return { kind: 'ntp', pose: parsePreviewNtpPose(ntp), private: params.has('private') }
+    const state: Extract<PreviewState, { kind: 'ntp' }> = {
+      kind: 'ntp',
+      pose: parsePreviewNtpPose(ntp),
+      private: params.has('private')
+    }
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length) state.then = then
+    const drag = parsePreviewTileDrag(params.get('drag'))
+    if (drag) state.drag = drag
+    return state
   }
   const priv = params.get('private')
   if (priv !== null && priv !== '') return parsePrivate(priv, params)
@@ -925,7 +969,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
 /**
  * `private=<value>`: one of PREVIEW_PRIVATE_SURFACES, with `url=<page>` for the page the private
  * tab is on; a URL as the value is that page (`private=<url>`), and any other value – `new`,
- * `1` – is the private tab on its new tab page. `cookies=<mode>` rides along on any of them.
+ * `1` – is the private tab on its new tab page. `count=<n>` (2 to PREVIEW_PRIVATE_MAX; one, or
+ * anything else, is the surface's own tab alone) and `cookies=<mode>` ride along on any of them.
  */
 function parsePrivate(value: string, params: URLSearchParams): PreviewState {
   const state: Extract<PreviewState, { kind: 'private' }> = (
@@ -935,6 +980,8 @@ function parsePrivate(value: string, params: URLSearchParams): PreviewState {
     : /^https?:\/\//.test(value)
       ? { kind: 'private', surface: 'page', url: value }
       : { kind: 'private', surface: 'newtab', url: null }
+  const count = Number(params.get('count'))
+  if (Number.isInteger(count) && count > 1) state.count = Math.min(PREVIEW_PRIVATE_MAX, count)
   const cookies = params.get('cookies')
   if (cookies !== null && (PREVIEW_COOKIE_MODES as readonly string[]).includes(cookies)) {
     state.cookies = cookies as ThirdPartyCookieMode
@@ -1031,6 +1078,25 @@ export function parsePreviewSeed(spec: string): PreviewSeed {
     bar: bar === 'top' || bar === 'bottom' ? bar : null,
     siteData: parsePreviewSiteData(params.get('sitedata'))
   }
+}
+
+/**
+ * `drag=<tile>:<dx>,<dy>` on the new tab page: the tile's label (its caption), then how far the
+ * finger carries it in CSS px, `x,y` (either may be negative). Null for anything else.
+ */
+export function parsePreviewTileDrag(
+  value: string | null
+): { text: string; dx: number; dy: number } | null {
+  if (!value) return null
+  const at = value.lastIndexOf(':')
+  if (at <= 0) return null
+  const text = value.slice(0, at).trim()
+  const [dx, dy] = value
+    .slice(at + 1)
+    .split(',')
+    .map((n) => Number(n.trim()))
+  if (!text || !Number.isFinite(dx) || !Number.isFinite(dy)) return null
+  return { text, dx, dy }
 }
 
 /**

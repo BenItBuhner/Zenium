@@ -218,6 +218,9 @@ export const DEFAULT_SETTINGS: Settings = {
   urlbarBehavior: 'float-typing',
   phoneBarPosition: 'bottom',
   phoneBar: defaultPhoneBar(),
+  // Chrome's default: a homepage that is the new tab page, so a profile's optional Home button
+  // (#52) keeps working when the setting arrives; "Off" is a choice.
+  homepage: { mode: 'newtab', url: '' },
   pullToRefresh: true,
   hideToolbarOnScroll: true,
   glanceEnabled: true,
@@ -311,17 +314,49 @@ export const CONTAINER_COLORS: Record<Container['color'], string> = {
   toolbar: '#8f8f9d'
 }
 
-/** Tab group colours, in the order a new group picks the first one its space is not using yet. */
-export const FOLDER_COLORS: Record<FolderColor, string> = {
-  blue: '#4c8dff',
-  green: '#34b56f',
-  orange: '#f0913c',
-  purple: '#9b6bff',
-  pink: '#f26fa8',
-  cyan: '#2fb7c9',
-  yellow: '#e2b53a',
-  red: '#ee5f5b',
-  grey: '#8a8f9c'
+/*
+ * Tab group colours (design language v2 §9.14): a PAIR, one set a scheme, since the rule is that
+ * every group colour reads at least 3:1 against the window fill it sits on in its scheme – the
+ * light sidebar (`BASE_LIGHT`, 242 241 245) and the light window gradient's band (the Zenium
+ * Purple preset at the window's strength, #d0c2fb at its darkest), the dark sidebar (`BASE_DARK`,
+ * 28 28 32) and the dark gradient's band; `shared/__tests__/folderColors.test.ts` holds every
+ * value to it. One set for both themes could not: the old nine put eight under 3:1 on the light
+ * sidebar. The renderer carries both sets on every element that wears a group colour and the
+ * theme picks (`lib/groups.ts`, `groupColorVars`), so a reader never has to know the scheme.
+ *
+ * LIGHT is Chrome's light tab-group set (Chromium's classic palette in
+ * chrome/browser/ui/color/chrome_color_mixer.cc: kGoogleGrey700, Blue600, Red600, Yellow600,
+ * Green700, Pink700, Purple500, Cyan900, Orange400 of ui/gfx/color_palette.h) with the five that
+ * fail the rule deepened – the hue and the saturation kept, the lightness lowered until every
+ * fill reads 3:1: yellow #f9ab00 → #976700 and orange #fa903e → #b75305, too pale for either fill
+ * (1.7:1 and 2.1:1 on the sidebar); blue #1a73e8 → #166cdd, red #d93025 → #d52f24 and purple
+ * #a142f4 → #9c37f3, each over 4:1 on the sidebar but 2.7–2.9:1 on the band's darkest run.
+ * DARK is Chrome's dark set as it stands (the kGoogle*300 tints), 4.5:1 and up on both fills.
+ * Both records keep one key order: a new group on the phone takes the first key its space is not
+ * using yet (`nextGroupColor`); the core's order is `FOLDER_COLOR_ORDER`.
+ */
+export const FOLDER_COLORS_LIGHT: Record<FolderColor, string> = {
+  blue: '#166cdd',
+  green: '#188038',
+  orange: '#b75305',
+  purple: '#9c37f3',
+  pink: '#d01884',
+  cyan: '#007b83',
+  yellow: '#976700',
+  red: '#d52f24',
+  grey: '#5f6368'
+}
+
+export const FOLDER_COLORS_DARK: Record<FolderColor, string> = {
+  blue: '#8ab4f8',
+  green: '#81c995',
+  orange: '#fcad70',
+  purple: '#c58af9',
+  pink: '#ff8bcb',
+  cyan: '#78d9ec',
+  yellow: '#fdd663',
+  red: '#f28b82',
+  grey: '#dadce0'
 }
 
 /**

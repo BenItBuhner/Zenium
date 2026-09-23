@@ -334,11 +334,15 @@ requestAnimationFrame(function(){requestAnimationFrame(f)});setTimeout(f,400)})"
         /** The answer's `fallback` when the visible area stood in for a full page or region. */
         const val FALLBACK_VIEWPORT = "viewport"
 
-        /** The page's geometry as the stitcher plans with it; `TabWebView.viewport` reads it for the chrome too. */
+        /**
+         * The page's geometry as the stitcher plans with it; `TabWebView.viewport` reads it for the
+         * chrome too, with the document's direction (`rtl`, the desktop twin's `VIEWPORT_SCRIPT`).
+         */
         const val METRICS_SCRIPT = """(function(){var v=window.visualViewport,d=document.documentElement,b=document.body;
 return {sx:window.scrollX,sy:window.scrollY,px:v?v.pageLeft:window.scrollX,py:v?v.pageTop:window.scrollY,
 vw:v?v.width:window.innerWidth,vh:v?v.height:window.innerHeight,
-dw:Math.max(d?d.scrollWidth:0,b?b.scrollWidth:0,window.innerWidth),dh:Math.max(d?d.scrollHeight:0,b?b.scrollHeight:0,window.innerHeight)}})()"""
+dw:Math.max(d?d.scrollWidth:0,b?b.scrollWidth:0,window.innerWidth),dh:Math.max(d?d.scrollHeight:0,b?b.scrollHeight:0,window.innerHeight),
+rtl:!!d&&getComputedStyle(d).direction==='rtl'}})()"""
 
         private const val HIDE_FIXED_SCRIPT = """(function(){var all=document.querySelectorAll('body *'),n=0;
 for(var i=0;i<all.length&&i<30000;i++){var e=all[i];if(getComputedStyle(e).position==='fixed'&&!e.hasAttribute('data-zen-capture-hidden')){
@@ -359,7 +363,8 @@ for(var i=0;i<all.length;i++){var e=all[i];e.style.visibility=e.getAttribute('da
                 viewportWidth = vw,
                 viewportHeight = vh,
                 documentWidth = o.optDouble("dw", vw),
-                documentHeight = o.optDouble("dh", vh)
+                documentHeight = o.optDouble("dh", vh),
+                rtl = o.optBoolean("rtl", false)
             )
         }
 

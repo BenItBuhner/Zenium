@@ -90,6 +90,7 @@ import {
   PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
   PREVIEW_READ_ALOUD_EVENT,
+  PREVIEW_SAMPLE_ORIGIN,
   PREVIEW_SETTLE_LOADS_EVENT,
   PREVIEW_SLOW_LOAD_EVENT,
   PREVIEW_VOICE_EVENT,
@@ -761,7 +762,7 @@ function anyPrivateTab(state: UIState | null): boolean {
 function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAVE_MS): void {
   const top = topBackSurface()
   if (!top || !SHEET_SURFACE.test(top.name) || performance.now() > deadline) {
-    then()
+    whenSheetLanded(then, deadline)
     return
   }
   dispatchBackEvent('commit')
@@ -773,6 +774,27 @@ function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAV
     closeSheets(then, deadline)
   }
   setTimeout(gone, 50)
+}
+
+/**
+ * Runs `then` once the frame's sheet chassis has landed, or at the deadline: `FrameDialogHost`
+ * on a phone carries `data-sheet-up` while anything of a dialog's sheet shows, and keeps a
+ * panel its owner took out on the way down (`data-leaving`) until the spring rests, when the
+ * chrome stops being inert with it (the spring's last frames may sit at 0 before it rests, so
+ * the kept panel is what is waited for). A dialog the reset closed by other means than a back
+ * – the new tab page's shortcut sheet, which goes with its tab (`closeNewTabPage`) – is still
+ * on its way down when the next state's steps would press the page under it.
+ */
+function whenSheetLanded(then: () => void, deadline: number): void {
+  const host = document.querySelector('.zen-frame-dialogs')
+  const up =
+    host !== null &&
+    (host.hasAttribute('data-sheet-up') || host.querySelector('[data-leaving]') !== null)
+  if (!up || performance.now() > deadline) {
+    then()
+    return
+  }
+  setTimeout(() => whenSheetLanded(then, deadline), 50)
 }
 
 /**
@@ -984,8 +1006,12 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     const then = target.then ?? []
     const surface = (): void => {
       const now = browserStore.get().state ?? state
-      applyPrivate(target.surface, target.url ?? PRIVATE_PAGE, now, () =>
-        then.length ? steps(then, finish) : finish()
+      applyPrivate(
+        target.surface,
+        target.url ?? PRIVATE_PAGE,
+        now,
+        () => (then.length ? steps(then, finish) : finish()),
+        target.count ?? 1
       )
     }
     // The global cookie mode first, through the settings command as the Settings page writes it,
@@ -2568,11 +2594,70 @@ function applyNewTabPose(
       return
     }
     if (!target.private) previewNewTab = { tabId, activeId }
+    // At the pose: the steps (a tile's hold, its menu's Edit), then the held drag, if any.
+    const then = target.then ?? []
+    const drag = target.drag
+    const afterPose = (): void => {
+      const afterSteps = (): void => (drag ? dragTile(drag, finish) : finish())
+      if (then.length) setTimeout(() => steps(then, afterSteps), STEP_SETTLE_MS)
+      else afterSteps()
+    }
     whenMorph(
       () => fakeboxMorphStore.get().tabId === tabId,
-      () => afterFrames(2, () => takeNewTabPose(target.pose, finish))
+      () => afterFrames(2, () => takeNewTabPose(target.pose, afterPose))
     )
   })
+}
+
+/** How many moves the held finger's travel is dealt out in, and how long each takes. */
+const DRAG_MOVES = 8
+const DRAG_MOVE_MS = 40
+
+/**
+ * Hold a new tab page tile and carry it (`drag=<tile>:<dx>,<dy>`, NTP-06): the pointer's
+ * events as Chromium sends a touch's – down on the tile's button, the long-press time (its
+ * timer lifts the tile, `useLongPress` → `useTileReorder`), then the finger's moves in even
+ * steps to the destination, where it stays down. The grid is left mid-reorder: the tile in the
+ * hand over its neighbours, the draft order drawn and the others glided. `finish` runs once the
+ * moves are dealt out and the glide has had its frames.
+ */
+function dragTile(drag: { text: string; dx: number; dy: number }, finish: () => void): void {
+  const button = pressable(drag.text)
+  if (!button) {
+    finish()
+    return
+  }
+  const box = button.getBoundingClientRect()
+  const x0 = box.left + box.width / 2
+  const y0 = box.top + box.height / 2
+  const init: PointerEventInit = {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    pointerType: 'touch',
+    isPrimary: true,
+    clientX: x0,
+    clientY: y0,
+    button: 0,
+    buttons: 1
+  }
+  button.dispatchEvent(new PointerEvent('pointerdown', init))
+  let move = 0
+  const step = (): void => {
+    move += 1
+    const k = move / DRAG_MOVES
+    button.dispatchEvent(
+      new PointerEvent('pointermove', {
+        ...init,
+        button: -1,
+        clientX: x0 + drag.dx * k,
+        clientY: y0 + drag.dy * k
+      })
+    )
+    if (move < DRAG_MOVES) setTimeout(step, DRAG_MOVE_MS)
+    else afterFrames(3, finish)
+  }
+  setTimeout(step, PRESS_HOLD_MS)
 }
 
 /**
@@ -2640,6 +2725,20 @@ function takeNewTabPose(pose: PreviewNtpPose, finish: () => void): void {
 /** The page a private tab is put on when the state names none. */
 const PRIVATE_PAGE = 'https://example.com/'
 
+/**
+ * The pages the session's other private tabs open on (`count=<n>`, in this order, round again
+ * past the end): pages of the stand-in site (`PREVIEW_SAMPLE_ORIGIN`), which this host shows
+ * itself, so each row reads a page's title without the network, and none is the surface's own
+ * page (the root, or a `url=` of the spec's choosing).
+ */
+const PRIVATE_SITES = [
+  `${PREVIEW_SAMPLE_ORIGIN}/berths-on-the-north-quay`,
+  `${PREVIEW_SAMPLE_ORIGIN}/fuel-and-water`,
+  `${PREVIEW_SAMPLE_ORIGIN}/the-east-light`,
+  `${PREVIEW_SAMPLE_ORIGIN}/charts-and-corrections`,
+  `${PREVIEW_SAMPLE_ORIGIN}/visiting-boats`
+]
+
 /** The device's screen lock as the stand-in host reported it at boot, put back after a `screenlock=` spec. */
 let hostScreenLock: boolean | null = null
 
@@ -2691,13 +2790,18 @@ function lockPrivateTabs(then: () => void): void {
  * `tab.newPrivate` (the app menu's item, the quick menu's, the shortcut's), the overview through
  * the Tabs button, which lands on the active tab's pane; the Private pane over regular tabs is
  * the segment's pick. The theme blends to the private one as the tab becomes active (`useTheme`),
- * so a driver's settle covers the spring. `finish` marks the state reached.
+ * so a driver's settle covers the spring. `finish` marks the state reached. With `count` above
+ * one the session's other private tabs open first, on PRIVATE_SITES, each active in its turn as
+ * a new tab is, so the surface's own tab is the last and the one in view: a surface that lists
+ * the session (the tablet sidebar's private pose, the Private pane) has rows to list, in the
+ * order they were opened. `empty` opens none: its pane is empty.
  */
 function applyPrivate(
   surface: PreviewPrivateSurface,
   url: string,
   state: UIState,
-  finish: () => void
+  finish: () => void,
+  count = 1
 ): void {
   const from = activeTab(state)
   const onPrivateTab = (test: (tab: Tab) => boolean, then: () => void): void =>
@@ -2708,53 +2812,85 @@ function applyPrivate(
     // The grid mounts on the next render, the pane's fade after it.
     afterFrames(2, then)
   }
-  switch (surface) {
-    case 'newtab':
-      void run('tab.newPrivate', {})
-      onPrivateTab(
-        (tab) => isEmptyTabUrl(tab.url),
-        () => afterFrames(2, finish)
-      )
+  // The others first, in PRIVATE_SITES' order (PREVIEW_PRIVATE_MAX keeps them within the list,
+  // so no two wait on the same page); the surface's own tab comes after them.
+  const others = surface === 'empty' ? 0 : Math.max(0, count - 1)
+  const openOthers = (i: number, then: () => void): void => {
+    if (i >= others) {
+      then()
       return
-    case 'page':
-      void run('tab.newPrivate', { url })
-      onPrivateTab(
-        (tab) => tab.url === url,
-        () => afterFrames(2, finish)
-      )
-      return
-    case 'overview':
-      void run('tab.newPrivate', { url })
-      onPrivateTab(
-        (tab) => tab.url === url,
-        () => overviewUp(finish)
-      )
-      return
-    case 'tabs':
-      // A private tab open, the regular one active again: the overview opens on Tabs, with the
-      // segment offering Private and no private card among the regular ones.
-      void run('tab.newPrivate', { url })
-      onPrivateTab(
-        (tab) => tab.url === url,
-        () => {
-          if (!from) {
-            overviewUp(finish)
-            return
+    }
+    const site = PRIVATE_SITES[i % PRIVATE_SITES.length]
+    void run('tab.newPrivate', { url: site })
+    onPrivateTab(
+      (tab) => tab.url === site,
+      () => openOthers(i + 1, then)
+    )
+  }
+  openOthers(0, () => own())
+
+  function own(): void {
+    switch (surface) {
+      case 'newtab':
+        void run('tab.newPrivate', {})
+        onPrivateTab(
+          (tab) => isEmptyTabUrl(tab.url),
+          () => afterFrames(2, finish)
+        )
+        return
+      case 'page':
+        void run('tab.newPrivate', { url })
+        onPrivateTab(
+          (tab) => tab.url === url,
+          () => {
+            // The page loaded (the host's `stopLoading`, sent as the frame's document is complete)
+            // before the state is reached: a `then=` step that covers the page – the tablet's
+            // drawer over it – takes its picture first, and the picture of a frame still on its
+            // way is blank. Bounded: a page that never lands is still the state.
+            const loaded = (s: UIState): boolean => {
+              const now = activeTab(s)
+              return now !== null && now.url === url && !now.loading
+            }
+            untilState(loaded, () => afterFrames(2, finish))
           }
-          void run('tab.activate', { tabId: from.id })
-          whenActiveTabIs(
-            (tab) => tab.id === from.id,
-            () => overviewUp(finish)
-          )
-        }
-      )
-      return
-    case 'empty':
-      overviewUp(() => {
-        pickOverviewPane('private')
-        afterFrames(2, finish)
-      })
-      return
+        )
+        return
+      case 'overview':
+        void run('tab.newPrivate', { url })
+        onPrivateTab(
+          (tab) => tab.url === url,
+          () => overviewUp(finish)
+        )
+        return
+      case 'tabs':
+      case 'behind': {
+        // A private tab open, the regular one active again: on `tabs` the overview opens on Tabs,
+        // with the segment offering Private and no private card among the regular ones; on
+        // `behind` nothing opens – the regular tab in view, the session behind it, so the tablet
+        // sidebar stands in its regular pose beside a private session (W4-11).
+        const landed = (): void =>
+          surface === 'tabs' ? overviewUp(finish) : afterFrames(2, finish)
+        void run('tab.newPrivate', { url })
+        onPrivateTab(
+          (tab) => tab.url === url,
+          () => {
+            if (!from) {
+              landed()
+              return
+            }
+            void run('tab.activate', { tabId: from.id })
+            whenActiveTabIs((tab) => tab.id === from.id, landed)
+          }
+        )
+        return
+      }
+      case 'empty':
+        overviewUp(() => {
+          pickOverviewPane('private')
+          afterFrames(2, finish)
+        })
+        return
+    }
   }
 }
 

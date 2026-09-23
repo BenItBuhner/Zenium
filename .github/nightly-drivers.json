@@ -96,6 +96,22 @@
       "display": "1280x800@160",
       "timeout-minutes": 60,
       "budget-minutes": 45
+    },
+    "tablet-webview": {
+      "title": "Tablet on the AOSP image (-writable-system) with the Chromium snapshot WebView swapped in, pixel_tablet at 1280x800@160",
+      "api-level": "34",
+      "target": "default",
+      "profile": "pixel_tablet",
+      "emulator-gpu": "swiftshader_indirect",
+      "emulator-options": "-no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system",
+      "display": "1280x800@160",
+      "timeout-minutes": 60,
+      "budget-minutes": 45,
+      "setup": ["webview-snapshot"],
+      "env": {
+        "WEBVIEW_APK": "artifacts/webview/SystemWebView.apk"
+      },
+      "note": "The tablet layout on the private tabs demos' engine (android-tablet-private-demo.yml): private tabs need WebViewFeature.MULTI_PROFILE, which the Google APIs image's WebView 113 lacks, so the tablet's private mode runs on the AOSP image with the snapshot WebView, under swiftshader_indirect as the webview shard."
     }
   },
   "drivers": [
@@ -779,6 +795,15 @@
       "estimate": 2.5
     },
     {
+      "id": "homepage-ntp",
+      "class": "HomepageNtpDemo",
+      "shard": "phone-e",
+      "mirrors": "android-homepage-ntp-demo.yml",
+      "dir": "homepage-ntp-demo",
+      "estimate": 4,
+      "note": "The homepage in Settings and its Home actions, the new tab page for the bottom bar, a tile's Edit / Remove and the drag reorder (W4-8); the morph at both docks (the top dock's the bottom's same-run baseline) and the drag are measured scenes."
+    },
+    {
       "id": "page-dialogs",
       "class": "PageDialogsDemo",
       "shard": "phone-e",
@@ -1024,9 +1049,9 @@
       "env": {
         "DEMO_REVOKE": "android.permission.CAMERA"
       },
-      "timeout": 900,
-      "estimate": 5,
-      "note": "CAMERA revoked before the driver, granted back after."
+      "timeout": 1200,
+      "estimate": 8,
+      "note": "CAMERA revoked before the driver, granted back after. Thirteen scenes with the exit hint's touch, the chrome's motion pair and rotate-to-fullscreen's eight turns of the screen (MOT-32, MED-02, MED-03)."
     },
     {
       "id": "a11y-chrome-private",
@@ -1074,6 +1099,16 @@
       "mirrors": "android-tab-groups-demo.yml:tablet",
       "dir": "tablet-groups-demo",
       "estimate": 2
+    },
+    {
+      "id": "tablet-private",
+      "class": "TabletPrivateDemo",
+      "shard": "tablet-webview",
+      "mirrors": "android-tablet-private-demo.yml",
+      "dir": "tablet-private-demo",
+      "timeout": 1200,
+      "estimate": 7,
+      "note": "Sets a device PIN for the run (locksettings set-pin, cleared at the end) as the private lock demo does."
     }
   ],
   "skip": [

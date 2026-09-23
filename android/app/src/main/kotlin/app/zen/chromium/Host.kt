@@ -6,7 +6,9 @@ import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -20,6 +22,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Choreographer
 import android.view.HapticFeedbackConstants
+import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
@@ -155,6 +158,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override var pageRulesJson: JSONObject = JSONObject()
         private set
     /**
+     * Rotate-to-fullscreen is the phone's alone (§9.36, Chrome's `device_is_phone`): the screen
+     * under Android's tablet line ([ScreenClass.rotateToFullscreen], read live from the same
+     * configuration [MainActivity.largeScreen] gives the page controls' desktop default – the
+     * display's class through split screen, the window's through a fold or a floating window; the
+     * chrome's own layout classifies its window, `classifyViewport`, on the same number, pinned).
+     * The page script's half hears it at document start ([TabWebView]'s start script) and the
+     * host's half ([rotation]'s hand-over) reads it at each word from the device.
+     */
+    override val rotateToFullscreen: Boolean
+        get() = ScreenClass.rotateToFullscreen(activity.resources.configuration.smallestScreenWidthDp)
+    /**
      * The page fonts the core last pushed (`fonts.apply`, at its start and on every change of
      * `Settings.fonts`), every page WebView's `WebSettings`; from the last run's document until the
      * core's first push, so a tab restored ahead of it is laid out with the same fonts (PageFonts).
@@ -163,6 +177,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     private val io = Executors.newCachedThreadPool { r -> Thread(r, "zen-io") }
     private val main = Handler(Looper.getMainLooper())
+
+    /** Run `block` on the main thread after `delayMs`; what comes back cancels it ([FullscreenRotation], [FullscreenHintCue]). */
+    private fun postDelayed(delayMs: Long, block: () -> Unit): () -> Unit {
+        val run = Runnable { block() }
+        main.postDelayed(run, delayMs)
+        return { main.removeCallbacks(run) }
+    }
 
     init {
         // Spilled bodies the last chrome document never released (it, or the process, went away).
@@ -254,13 +275,47 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private var fullscreenVideoTab: TabWebView? = null
     private var fullscreenVideoSize: Pair<Int, Int>? = null
     private var fullscreenVideoFromFrame = false
-    /** The activity's orientation is the fullscreen video's ([FullscreenOrientation]); given back on exit. */
-    private var fullscreenOrientationHeld = false
+    /** The device's own orientation, read while the screen is held for a video ([rotation]); speaks through [deviceTurned]. */
+    private val orientationSensor = DeviceOrientationSensor(activity) { angle -> deviceTurned(angle) }
+    /**
+     * The activity's orientation is the fullscreen video's ([FullscreenOrientation]) until the
+     * device turns to match it, then the device's again ([FullscreenRotation], MED-02); given back
+     * on exit. The sensor speaks through [deviceTurned] while the screen is held in a phone's
+     * window ([rotateToFullscreen]: a tablet's hold never follows the device, so its sensor is
+     * never read). The sensor is switched at the hold, the hand-over and the release alone, so a
+     * hold begun on a tablet's screen never starts it: a screen that narrows under the line
+     * mid-hold (a fold closed on a fullscreen video) hands nothing over and stays held until the
+     * exit – the safe direction, MED-01's – while a phone's hold whose screen widens past the line
+     * keeps its sensor and drops every word ([FullscreenRotation.onDevice]), handing over again if
+     * it narrows back. The apply lambda runs only from [FullscreenRotation]'s methods, after this
+     * initializer: its reads of [orientationSensor] (declared above) and of `rotation` itself are
+     * deferred, and the type is stated so the self-reference infers.
+     */
+    private val rotation: FullscreenRotation = FullscreenRotation(
+        schedule = ::postDelayed,
+        apply = { orientation ->
+            activity.requestedOrientation = orientation
+            orientationSensor.follow(rotateToFullscreen && rotation.phase == FullscreenRotation.Phase.HELD)
+        },
+        handsOver = { rotateToFullscreen }
+    )
+    /**
+     * The exit hint's cue to the chrome (`fullscreen.entered`): after the view's reveal, with the
+     * page's word on whether the fullscreen element shows a video – the first time for a video
+     * (GN-20), every time for an element without one (MED-03; [FullscreenHintCue]) – and again,
+     * `late`, when a `false` trails a cue that went out without the word.
+     */
+    private val hintCue = FullscreenHintCue(
+        schedule = ::postDelayed,
+        cue = { tabId, video, late -> chrome.hostEvent("fullscreen.entered", json("tabId" to tabId, "video" to video, "late" to late)) }
+    )
     /**
      * The bars' way back after a fullscreen: the chrome holds its return fade while they settle
      * (MED-01, v2 §11.5). [MainActivity] carries its word on every `insets`.
      */
     val landing = FullscreenLanding()
+    /** The fullscreen layer's way up over the chrome: its clip grows from the page's frame as the chrome's bar leaves (MOT-32). */
+    private val reveal = FullscreenReveal(fullscreenLayer)
     override var immersive = false
         private set
     /**
@@ -1032,10 +1087,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     override fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback) {
         if (fullscreenTab != null) exitFullscreen(fullscreenTab!!)
+        // Where the page stood inline, before the core lays its view over the window: the
+        // layer's reveal starts there (MOT-32), and the view draws nothing of its own meanwhile
+        // ([TabWebView.onDraw]) – the reveal uncovers the chrome under it, whose bar is leaving.
+        val inline = tabs.frameOf(tab.tabId)
         fullscreenTab = tab
         fullscreenCallback = callback
+        // A fullscreen entered while the last one's exit is still landing ends that landing's
+        // hold on the chrome's frames ([TabHost.landingOn]); the layer is over the page anyway.
+        tabs.landed()
+        tab.invalidate()
         fullscreenLayer.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         fullscreenLayer.visibility = View.VISIBLE
+        reveal.begin(inline, Rect(0, 0, root.width, root.height))
         // The window the exit comes back to: the bars as they stand before they hide.
         landing.onEnter(activity.landingWindow())
         setSystemBarsHidden(true)
@@ -1043,9 +1107,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (tabs.filling == tab.tabId) tabs.fillWindow(null)
         // The page's size report came ahead of the engine's view: the screen turns now.
         if (fullscreenVideoTab === tab) fullscreenVideoSize?.let { (width, height) -> turnForVideo(width, height) }
-        // The first-time exit hint's cue (GN-20): every fullscreen is left the same way, a
-        // canvas's or an embed's as much as a video's, so the cue is the layer's, not the size's.
-        chrome.hostEvent("fullscreen.entered", json("tabId" to tab.tabId))
+        // The exit hint's cue (GN-20, MED-03): the layer's, after its reveal, with the page's word
+        // on whether a video is what went fullscreen ([fullscreenVideo]).
+        hintCue.entered(tab.tabId)
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
         back.refresh()
         media.onFullscreenChanged()
@@ -1053,22 +1117,44 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     override fun exitFullscreen(tab: TabWebView) {
         if (fullscreenTab !== tab) return
+        // The screen the exit lands on is the fullscreen's own ([landing]'s window) when the host
+        // turned the screen for the video and the release turns it back: the device still the
+        // other way (HELD), or followed under the user's rotation lock (FOLLOWING, auto-rotate
+        // off). The system's turn comes some hundred ms after the release, and the chrome's
+        // frames until then – its layout under the layer, its first inline one – are the turned
+        // screen's and fit the container as it still stands: the tab host holds them to the
+        // landing's screen while the bars settle (BH-32, [TabHost.landingOn]). One edge: HELD with
+        // auto-rotate on and the device already turned landscape for less than the hand-over's
+        // 400 ms – the screen stays landscape, so the held landscape frame waits for the settle's
+        // quiet (500 ms) before [TabHost.landed] applies it; bounded and cosmetic, no frame lost.
+        val turnsBack = rotation.phase == FullscreenRotation.Phase.HELD ||
+            (rotation.phase == FullscreenRotation.Phase.FOLLOWING && !autoRotate())
+        val landsOnPortrait = landing.landsOnPortrait()
+        if (turnsBack && landsOnPortrait != null) {
+            val short = minOf(root.width, root.height)
+            val long = maxOf(root.width, root.height)
+            tabs.landingOn(if (landsOnPortrait) PageFrameFit.Screen(short, long) else PageFrameFit.Screen(long, short))
+        }
         // The orientation goes back to the system's as the layer goes, so the chrome that returns
         // is laid out for the screen the system settles on.
         releaseFullscreenOrientation()
+        reveal.end()
         fullscreenLayer.removeAllViews()
         fullscreenLayer.visibility = View.GONE
         fullscreenCallback?.onCustomViewHidden()
         fullscreenCallback = null
         fullscreenTab = null
+        // The page draws in its own view again ([TabWebView.onDraw]).
+        tab.invalidate()
         // The size was this fullscreen's. A navigation, a renderer crash or a close ends fullscreen
         // without the page's `active: false`; a size kept past that would turn the tab's next
         // fullscreen before its own report and hold a destroyed view.
         if (fullscreenVideoTab === tab) clearFullscreenVideo()
+        hintCue.exited(tab.tabId)
         if (!immersive) setSystemBarsHidden(false)
         // Out of fullscreen while the window is the small one: the tab's own view takes it over.
         if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
-        // A hint standing over the page (the first-time exit hint, GN-20) leaves with the fullscreen.
+        // A hint standing over the page (the exit hint, GN-20 / MED-03) leaves with the fullscreen.
         tab.postToPage(json("type" to "hint", "hint" to null).toString())
         // The bars are on their way back: said before the exit itself, so the chrome's return
         // fade waits for the page's landing rather than starting over its first inline layout.
@@ -1092,8 +1178,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * video of its own: a frame that lies about a video can at most turn a screen that is
      * already fullscreen on an element without one. Its `active: false` says nothing the main
      * document's `fullscreenchange` does not say too.
+     *
+     * Whether the element shows a video at all (`video`) is the exit hint's word ([hintCue]):
+     * told every time for an element without one (MED-03), once for a video (GN-20).
      */
-    override fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {
+    override fun fullscreenVideo(tab: TabWebView, active: Boolean, video: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {
+        hintCue.reported(tab.tabId, active, video, mainFrame)
         if (!active) {
             if (mainFrame && fullscreenVideoTab === tab) clearFullscreenVideo()
             return
@@ -1118,22 +1208,44 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     private fun turnForVideo(videoWidth: Int, videoHeight: Int) {
         val orientation = FullscreenOrientation.forVideo(videoWidth, videoHeight)
-        if (orientation == FullscreenOrientation.RELEASED) {
-            releaseFullscreenOrientation()
+        if (orientation == FullscreenOrientation.RELEASED) releaseFullscreenOrientation()
+        else rotation.hold(orientation)
+    }
+
+    private fun releaseFullscreenOrientation() = rotation.release()
+
+    /**
+     * The device's way up in the sensor's degrees ([DeviceOrientationSensor]; -1 flat): while a
+     * fullscreen video holds the screen, the device turning to match releases the screen to the
+     * device, so a turn back turns the screen and the page leaves the fullscreen (MED-02,
+     * [FullscreenRotation]). A demo stands in for the sensor here: an emulator never turns.
+     */
+    fun deviceTurned(angle: Int) {
+        rotation.onDevice(FullscreenRotation.deviceLandscape(angle, naturalLandscape()))
+    }
+
+    /** Whether the screen follows the device (the system's auto-rotate on); off, an orientation given back goes to the user's rotation. */
+    private fun autoRotate(): Boolean =
+        runCatching { Settings.System.getInt(activity.contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1 }.getOrDefault(false)
+
+    /** Whether the device's natural way up is landscape (a tablet's): the display's rotation against the configuration. */
+    private fun naturalLandscape(): Boolean {
+        val displayRotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { activity.display?.rotation }.getOrNull() ?: Surface.ROTATION_0
         } else {
-            fullscreenOrientationHeld = true
-            activity.requestedOrientation = orientation
+            @Suppress("DEPRECATION")
+            activity.windowManager.defaultDisplay.rotation
         }
+        val upright = displayRotation == Surface.ROTATION_0 || displayRotation == Surface.ROTATION_180
+        val landscapeNow = activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        return if (upright) landscapeNow else !landscapeNow
     }
 
-    private fun releaseFullscreenOrientation() {
-        if (!fullscreenOrientationHeld) return
-        fullscreenOrientationHeld = false
-        activity.requestedOrientation = FullscreenOrientation.RELEASED
-    }
+    /** Whether the fullscreen video holds the screen in landscape right now – or has handed it to the device (the demos read it). */
+    val fullscreenLandscape: Boolean get() = rotation.phase != FullscreenRotation.Phase.OFF
 
-    /** Whether the fullscreen video holds the screen in landscape right now (the demos read it). */
-    val fullscreenLandscape: Boolean get() = fullscreenOrientationHeld
+    /** Whether the screen, turned for the fullscreen video, follows the device again (the demos read it). */
+    val fullscreenFollowsDevice: Boolean get() = rotation.phase == FullscreenRotation.Phase.FOLLOWING
 
     /** The user is leaving for Home or Recents ([MainActivity.onUserLeaveHint]): Android 8-11's way into picture-in-picture. */
     fun onUserLeaveHint() = media.onUserLeaveHint()
@@ -1932,6 +2044,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         security.shutdown()
         translate.shutdown()
         tabs.destroyAll()
+        orientationSensor.follow(false)
         // Not the request engine: it is the process's, and a custom tab may still be using it.
         // The chrome too: a WebView that outlives its activity keeps its document – and the
         // browser core inside it – running against a host that is gone, and would even rebuild

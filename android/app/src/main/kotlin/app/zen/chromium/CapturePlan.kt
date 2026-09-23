@@ -41,7 +41,9 @@ data class PageMetrics(
     val viewportHeight: Double,
     /** The document's scrollable size. */
     val documentWidth: Double,
-    val documentHeight: Double
+    val documentHeight: Double,
+    /** The document runs right-to-left (`direction: rtl` on the root); only the chrome's geometry reads it. */
+    val rtl: Boolean = false
 ) {
     /** The part of the page currently on screen. */
     val visible: Box get() = Box(pageLeft, pageTop, viewportWidth, viewportHeight)
@@ -90,6 +92,12 @@ object CapturePlan {
      * how many of the chrome's CSS px (dp) one page px takes: that scale over the display
      * density. A desktop-layout page squeezed into the screen is below 1, a pinch zoom above.
      * With no laid-out view (`viewWidthPx` 0) the density is the scale and the zoom 1.
+     *
+     * `clientWidth` / `clientHeight` – the visible area minus the scrollbar gutters, what a
+     * visible-area capture paints (the desktop's twin cuts a classic scrollbar's column off) –
+     * are the visible area itself here: a WebView's scrollbars overlay the page and take no room
+     * of it, so `PageCapture`'s viewport copy is all page. `rtl` is the document's direction, for
+     * the chrome's information (it does not move a gutter on either platform).
      */
     fun viewportJson(metrics: PageMetrics, viewWidthPx: Int, density: Double): JSONObject {
         val dp = if (density > 0) density else 1.0
@@ -99,6 +107,9 @@ object CapturePlan {
             "scrollY" to metrics.pageTop,
             "width" to metrics.viewportWidth,
             "height" to metrics.viewportHeight,
+            "clientWidth" to metrics.viewportWidth,
+            "clientHeight" to metrics.viewportHeight,
+            "rtl" to metrics.rtl,
             "zoom" to scale / dp,
             "devicePixelRatio" to scale,
             "documentWidth" to max(metrics.documentWidth, metrics.viewportWidth),

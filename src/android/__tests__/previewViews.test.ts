@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TabViewEvents } from '@core/platform'
 import { Bridge } from '../bridge'
-import { createPreviewBridge } from '../preview'
+import { createPreviewBridge, PREVIEW_SAMPLE_ORIGIN, samplePageDocument } from '../preview'
 import { AndroidTabView } from '../views'
 
 /*
@@ -243,5 +243,21 @@ describe('the preview host without the navigation snapshot messages', () => {
     expect(host.reject).not.toHaveBeenCalled()
     // The stand-in's `navigated` came through the host global, which the fake here only records.
     expect(host.viewEvent).toHaveBeenCalledWith('t1', 'navigated', expect.any(String))
+  })
+})
+
+describe('the preview host’s stand-in site', () => {
+  it('titles each page after its path, the root after the tide tables', () => {
+    expect(samplePageDocument()).toContain('<title>Tide tables for the outer harbour</title>')
+    expect(samplePageDocument(`${PREVIEW_SAMPLE_ORIGIN}/`)).toContain(
+      '<h1>Tide tables for the outer harbour</h1>'
+    )
+    const page = samplePageDocument(`${PREVIEW_SAMPLE_ORIGIN}/notices/fuel-and-water`)
+    expect(page).toContain('<title>Fuel and water</title>')
+    expect(page).toContain('<h1>Fuel and water</h1>')
+    // The path is text of the page, never markup.
+    expect(samplePageDocument(`${PREVIEW_SAMPLE_ORIGIN}/%3Cb%3Ebold`)).toContain(
+      '<title>&lt;b&gt;bold</title>'
+    )
   })
 })

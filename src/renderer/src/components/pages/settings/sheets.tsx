@@ -4,7 +4,7 @@ import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { cn } from '@renderer/lib/utils'
 import { PhoneSheet, type SheetFocus, type SheetTitle } from '../../phone/PhoneSheet'
 import type { BottomSheetHandle } from '../../sheet/BottomSheet'
-import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
+import { RadioOption, SheetActions, ValidationMessage } from './blocks'
 import type {
   ActionRow,
   DetailRow,
@@ -162,6 +162,8 @@ interface SheetProps {
    * landing on Cancel would announce the way out first.
    */
   focus?: SheetFocus
+  /** The title element's id, for a field the header labels (§9.12's one-field sheet). */
+  titleId?: string
   /**
    * The body is a list of rows (a picker's options, an item's rows, a list form): the sheet
    * stands at most 80 % of the frame and the list scrolls under the title (§9.20); a form or a
@@ -193,6 +195,7 @@ export function SettingsSheet({
   children,
   contentKey,
   focus,
+  titleId,
   body,
   sheetRef
 }: SheetProps): JSX.Element {
@@ -226,6 +229,7 @@ export function SettingsSheet({
       name={name}
       title={pose}
       focus={focus}
+      titleId={titleId}
       body={body}
       under={under}
       onClose={onClose}
@@ -336,6 +340,10 @@ export function OptionsSheet({
 
 /**
  * A desktop input as a sheet: the one field (§9.12), its validation message, Cancel and Save.
+ * The sheet's header reads the field's name, so the field draws no label of its own (§9.12: a
+ * one-field sheet whose title is the field's name – the title is the label, `aria-labelledby`
+ * on the field – and the field starts at §9.16's 68, straight under the header); the row's
+ * description, or the validation message, keeps its place under the field.
  * A commit that takes time (a key tried against its API, a resolver asked a question) makes it
  * the §9.30 busy form: the field read-only with the typed value at full opacity, Save busy with
  * the spinner in place of its label, Cancel at .4; a refusal clears the field, gives it the
@@ -356,6 +364,11 @@ function FieldSheet({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const id = `settings-field-${row.id.replace(/[^a-z0-9-]/gi, '-')}`
+  const titleId = `${id}-title`
+  // The line under the field – the error while one shows, the row's description otherwise – is
+  // the field's description (`aria-describedby`), so a reader on the field hears it.
+  const errorId = `${id}-error`
+  const descriptionId = `${id}-description`
   const refuse = (message: string): void => {
     setError(message)
     setValue('')
@@ -386,18 +399,19 @@ function FieldSheet({
     <SettingsSheet
       name={`settings-field:${row.id}`}
       title={row.label}
+      titleId={titleId}
       under={under}
       onClose={close}
       sheetRef={sheet}
     >
       <div className="zen-settings-form" aria-busy={busy || undefined}>
-        <Field id={id} label={row.label} description={error ? undefined : row.description}>
+        <div className="zen-settings-field-block">
           <input
             ref={input}
             id={id}
             className={cn('zen-settings-input zen-v2-field', row.secret && 'zen-settings-secret')}
             type={row.input === 'number' ? 'number' : 'text'}
-            inputMode={row.input === 'number' ? 'numeric' : 'text'}
+            inputMode={row.input === 'number' ? 'numeric' : row.input === 'url' ? 'url' : 'text'}
             min={row.min}
             max={row.max}
             placeholder={row.placeholder}
@@ -406,7 +420,9 @@ function FieldSheet({
             autoComplete="off"
             spellCheck={false}
             readOnly={busy}
+            aria-labelledby={titleId}
             aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : row.description ? descriptionId : undefined}
             value={value}
             onChange={(e) => {
               setValue(e.target.value)
@@ -416,8 +432,16 @@ function FieldSheet({
               if (e.key === 'Enter') save()
             }}
           />
-          {error && <ValidationMessage message={error} />}
-        </Field>
+          {error ? (
+            <ValidationMessage id={errorId} message={error} />
+          ) : (
+            row.description && (
+              <span id={descriptionId} className="zen-settings-description">
+                {row.description}
+              </span>
+            )
+          )}
+        </div>
         <SheetActions
           action="Save"
           busy={busy}

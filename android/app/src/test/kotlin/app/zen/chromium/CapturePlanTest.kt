@@ -164,6 +164,28 @@ class CapturePlanTest {
     }
 
     @Test
+    fun viewportJsonReportsTheWholeVisibleAreaAsCapturable() {
+        // A WebView's scrollbars overlay the page: no gutter, so the area minus the gutters is the
+        // visible area itself – under a pinch zoom the visual viewport's, not the layout viewport's.
+        val json = CapturePlan.viewportJson(phone, viewWidthPx, 2.625)
+        assertEquals(json.getDouble("width"), json.getDouble("clientWidth"), 0.0)
+        assertEquals(json.getDouble("height"), json.getDouble("clientHeight"), 0.0)
+        assertEquals(false, json.getBoolean("rtl"))
+        val pinched = phone.copy(viewportWidth = 205.5, viewportHeight = 350.0, rtl = true)
+        val pinchedJson = CapturePlan.viewportJson(pinched, viewWidthPx, 2.625)
+        assertEquals(205.5, pinchedJson.getDouble("clientWidth"), 0.0)
+        assertEquals(350.0, pinchedJson.getDouble("clientHeight"), 0.0)
+        // The direction travels as the page reports it (`METRICS_SCRIPT`'s `rtl`).
+        assertEquals(true, pinchedJson.getBoolean("rtl"))
+        val parsed = PageCapture.parseMetrics(
+            org.json.JSONObject("""{"sx":0,"sy":0,"px":0,"py":0,"vw":411,"vh":700,"dw":411,"dh":3000,"rtl":true}""")
+        )
+        assertNotNull(parsed)
+        assertEquals(true, parsed!!.rtl)
+        assertEquals(false, PageCapture.parseMetrics(org.json.JSONObject("""{"vw":411,"vh":700}"""))!!.rtl)
+    }
+
+    @Test
     fun viewportJsonWithoutALaidOutViewFallsBackToTheDensity() {
         val json = CapturePlan.viewportJson(phone, 0, 2.625)
         assertEquals(2.625, json.getDouble("devicePixelRatio"), 0.0)
