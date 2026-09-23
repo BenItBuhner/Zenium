@@ -441,7 +441,8 @@ function switchCrossFades(): void {
   layChips(['a', 'b'])
   render(twoGroups('a'))
   expect(members()).toEqual(['a', 'b'])
-  const research = tray().style.getPropertyValue('--zen-group-rgb')
+  const research = tray().style.getPropertyValue('--zen-group-rgb-light')
+  expect(research).not.toBe('')
   const writes = vi.spyOn(document.documentElement.style, 'setProperty')
   layChips(['p', 'q', 'r'])
   render(twoGroups('p'))
@@ -465,13 +466,13 @@ function switchCrossFades(): void {
   expect(dot.frames).toEqual([{ opacity: 0 }, { opacity: 1 }])
   expect(dot.options).toMatchObject({ duration: GROUP_SWITCH_FADE_MS })
   expect(showChip().getAttribute('aria-label')).toBe('Show group, Reading')
-  expect(tray().style.getPropertyValue('--zen-group-rgb')).not.toBe(research)
+  expect(tray().style.getPropertyValue('--zen-group-rgb-light')).not.toBe(research)
   // Research's set is still mounted: its dot and a and b where they stood, out of the flow and
   // out of reach, fading out as one over the same 120 ms and held at nothing until they go.
   const ghosts = host!.querySelector<HTMLElement>('[data-strip-ghosts]')!
   expect(ghosts.dataset.stripGhosts).toBe(GROUP)
   expect(ghosts.getAttribute('aria-hidden')).toBe('true')
-  expect(ghosts.style.getPropertyValue('--zen-group-rgb')).toBe(research)
+  expect(ghosts.style.getPropertyValue('--zen-group-rgb-light')).toBe(research)
   expect(ghostsOf()).toEqual(['a', 'b'])
   expect(ghostOf('a').style.left).toBe('0px')
   expect(ghostOf('b').style.left).toBe(`${PITCH}px`)

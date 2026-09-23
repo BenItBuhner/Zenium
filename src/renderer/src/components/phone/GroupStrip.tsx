@@ -4,7 +4,7 @@ import { Plus } from 'lucide-react'
 import type { Folder, PhoneBarPosition, Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { closeOverview, overviewIsOpen, toggleOverview } from '@renderer/lib/gestures/stage'
-import { groupColorChannels } from '@renderer/lib/groups'
+import { groupColorVars } from '@renderer/lib/groups'
 import {
   GROUP_STRIP_HEIGHT,
   GROUP_SWITCH_FADE_MS,
@@ -402,7 +402,8 @@ export const GroupStrip = memo(function GroupStrip({
         role={inert ? undefined : 'group'}
         aria-label={inert ? undefined : `Tab group, ${label}`}
         className="zen-group-tray"
-        style={{ '--zen-group-rgb': groupColorChannels(group.color) } as CSSProperties}
+        data-group-rgb=""
+        style={groupColorVars(group.color) as CSSProperties}
       >
         <button
           ref={showRef}
@@ -504,8 +505,9 @@ function GhostLayer({
       ref={layer}
       className="zen-group-ghosts"
       data-strip-ghosts={ghosts.group.id}
+      data-group-rgb=""
       aria-hidden
-      style={{ '--zen-group-rgb': groupColorChannels(ghosts.group.color) } as CSSProperties}
+      style={groupColorVars(ghosts.group.color) as CSSProperties}
     >
       <span className="zen-group-chip zen-group-chip-exit" style={{ left: ghosts.show }}>
         <span className="zen-group-chip-face">

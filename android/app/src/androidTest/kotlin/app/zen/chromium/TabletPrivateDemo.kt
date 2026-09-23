@@ -166,7 +166,7 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
 
     private fun regularPose() {
         section("1. The regular pose: the space's rows, nothing private (§9.36)")
-        regularTheme = chromeScheme()
+        regularTheme = themeAttr()
         check("the sidebar stands in its regular pose", pose() == "regular", "pose '${pose()}'")
         check("the seeded rows are there: Home, Alpha, Beta, Gamma, Delta under the group", SEEDED.all { inDom(row(it)) } && inDom(GROUP_ROW), "rows ${sidebarTabIds()}")
         check("no private header, no private row", !inDom(PRIVATE_HEADER) && !inDom(PRIVATE_LIST) && privateTabIds().isEmpty(), "header ${inDom(PRIVATE_HEADER)}, private tabs ${privateTabIds()}")
@@ -191,7 +191,7 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         check("a touch on New Private Tab opens a private tab in front", opened, "active ${activeCoreTab()?.optString("containerId")}")
         check("the sidebar turns to its private pose", awaitJs("$POSE==='private'", true, 6_000), "pose '${pose()}'")
         awaitDomGone(POSE_STILL, 3_000)
-        check("the window re-inks private: dark whatever the scheme (§9.19)", awaitJs("document.documentElement.dataset.theme==='dark'", true, 4_000) && privateInk(), "theme '${chromeScheme()}', data-private ${privateInk()}")
+        check("the window re-inks private: dark whatever the scheme (§9.19)", awaitJs("document.documentElement.dataset.theme==='dark'", true, 4_000) && privateInk(), "theme '${themeAttr()}', data-private ${privateInk()}")
         SystemClock.sleep(600)
         readPoseSwitch("regular → private", from = "regular", to = "private", privateTitles = emptyList())
         check("the header reads Private with the mask, counting one", awaitDom(PRIVATE_HEADER, 3_000) && textOf(PRIVATE_HEADER).startsWith("Private") && headerCount() == "1" && inDom("$PRIVATE_HEADER svg"), "header '${textOf(PRIVATE_HEADER)}'")
@@ -244,7 +244,7 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         check("a touch on Home's card brings the regular tab to the front", toHome && awaitJs("$OVERVIEW_PHASE==='closed'", true, 8_000), "active ${activeTabId()}, overview ${jsText(OVERVIEW_PHASE)}")
         check("the sidebar is back in its regular pose", awaitJs("$POSE==='regular'", true, 6_000), "pose '${pose()}'")
         awaitDomGone(POSE_STILL, 3_000)
-        check("the window is back on the scheme's ink", awaitJs("document.documentElement.dataset.theme==='$regularTheme'", true, 4_000) && !privateInk(), "theme '${chromeScheme()}', data-private ${privateInk()}")
+        check("the window is back on the scheme's ink", awaitJs("document.documentElement.dataset.theme==='$regularTheme'", true, 4_000) && !privateInk(), "theme '${themeAttr()}', data-private ${privateInk()}")
         val ids = sidebarTabIds()
         val text = sidebarText()
         val privateIds = privateTabIds()
@@ -276,7 +276,7 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         check("the sidebar turns private again", awaitJs("$POSE==='private'", true, 6_000), "pose '${pose()}'")
         awaitDomGone(POSE_STILL, 3_000)
         check("both rows, the ledger's active", awaitJs("document.querySelectorAll('$SIDEBAR [data-tab-id]').length===2", true, 4_000) && sidebarTabIds() == listOf(ledgerId, receiptsId) && attrOf(row(id), "aria-selected") == "true", "rows ${sidebarTabIds()}")
-        check("the private ink again", privateInk() && chromeScheme() == "dark", "theme '${chromeScheme()}'")
+        check("the private ink again", privateInk() && themeAttr() == "dark", "theme '${themeAttr()}'")
         SystemClock.sleep(1_200)
         still("private-pose-again")
     }
@@ -445,7 +445,7 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
         check("a touch on Close Private Tabs ends the session", closed, "private tabs ${privateTabIds()}")
         check("the sidebar is back in its regular pose", awaitJs("$POSE==='regular'", true, 6_000), "pose '${pose()}'")
         awaitDomGone(POSE_STILL, 3_000)
-        check("the window is back on the scheme's ink", awaitJs("document.documentElement.dataset.theme==='$regularTheme'", true, 4_000) && !privateInk(), "theme '${chromeScheme()}'")
+        check("the window is back on the scheme's ink", awaitJs("document.documentElement.dataset.theme==='$regularTheme'", true, 4_000) && !privateInk(), "theme '${themeAttr()}'")
         SystemClock.sleep(600)
         readPoseSwitch("private → regular", from = "private", to = "regular", privateTitles = listOf(LEDGER_TITLE, RECEIPTS_TITLE))
         check("the seeded rows and nothing else", sidebarTabIds().containsAll(SEEDED) && sidebarTabIds().none { it == ledgerId || it == receiptsId } && !inDom(PRIVATE_HEADER), "rows ${sidebarTabIds()}")
@@ -709,7 +709,13 @@ class TabletPrivateDemo : GroupsDemoBase("tablet-private", "tablet-private-demo"
 
     private fun sidebarMode(): String = jsText("(document.querySelector('$CHROME_ROOT')||{dataset:{}}).dataset.sidebar")
 
-    private fun chromeScheme(): String = jsString("document.documentElement.dataset.theme||''")
+    /**
+     * The root's `data-theme` as it stands – "" while unset. Not the base's `chromeScheme()`, which
+     * reads an unset attribute as 'light' for its palette pick: the claims here compare the
+     * attribute literally (`regularTheme`, the `==='dark'` waits), so an unset root must read as
+     * unset, not as a scheme.
+     */
+    private fun themeAttr(): String = jsString("document.documentElement.dataset.theme||''")
 
     /** The window on the private theme: the chrome root's `data-private` (`usePrivateSurface`). */
     private fun privateInk(): Boolean = jsBoolean("(function(){var r=document.querySelector('$CHROME_ROOT');return !!r&&r.hasAttribute('data-private')})()")

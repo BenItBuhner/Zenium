@@ -2,12 +2,11 @@ import type { CSSProperties, JSX, KeyboardEvent as ReactKeyboardEvent } from 're
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { FolderOpen, Plus, Trash2, Ungroup, X } from 'lucide-react'
 import type { Folder, FolderColor, UIState } from '@shared/types'
-import { FOLDER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { requestFolderDelete } from '@renderer/lib/folderDelete'
 import { closeGroupEditor } from '@renderer/lib/groupEditor'
-import { GROUP_PALETTE } from '@renderer/lib/groups'
+import { GROUP_PALETTE, groupColorVars } from '@renderer/lib/groups'
 import { measureRow, placeHoverCard } from '@renderer/lib/hoverCard'
 import { openedFromKeyboard } from '@renderer/lib/popover'
 import {
@@ -398,9 +397,10 @@ function ColorSwatches({
             aria-label={entry.name}
             title={entry.name}
             data-color={entry.color}
+            data-group-rgb=""
             tabIndex={index === pickedIndex ? 0 : -1}
             className={cn('zen-v2-card-radio zen-group-editor-swatch')}
-            style={{ '--zen-swatch': FOLDER_COLORS[entry.color] } as CSSProperties}
+            style={groupColorVars(entry.color) as CSSProperties}
             onClick={() => onPick(entry.color)}
           >
             <span className="zen-group-editor-swatch-disc" aria-hidden />

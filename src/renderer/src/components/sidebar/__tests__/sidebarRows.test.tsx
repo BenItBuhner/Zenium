@@ -245,8 +245,14 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     const block = header.parentElement!
     expect(block.hasAttribute('data-group-bar')).toBe(false)
     expect(block.style.getPropertyValue('--zen-group-rgb')).toBe('')
+    expect(block.style.getPropertyValue('--zen-group-rgb-light')).toBe('')
+    // The glyph carries the colour as §9.14's pair, both schemes' channels, and the marker the
+    // stylesheet picks `--zen-group-rgb` from by the root's theme; it writes no pick of its own.
     const glyph = header.querySelector<HTMLElement>('.zen-group-row-glyph')!
-    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('76 141 255')
+    expect(glyph.hasAttribute('data-group-rgb')).toBe(true)
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-light')).toBe('22 108 221')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-dark')).toBe('138 180 248')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('')
     expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
   })
 

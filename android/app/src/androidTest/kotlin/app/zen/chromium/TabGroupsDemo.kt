@@ -92,7 +92,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         check("Research is listed under Open with two tabs", awaitJs(rowUnder("open", "Research", "2 tabs")), "rows ${textsOf("$GROUPS_PANE .zen-list-title")} / ${textsOf("$GROUPS_PANE .zen-list-subtitle")}")
         check("no Saved section yet", !inDom(SAVED_SECTION))
         val glyph = glyphColour() + (if (inDom("$GROUPS_PANE .zen-overview-group-glyph[data-saved]")) " ring" else " dot")
-        check("the row's glyph is a dot of the group's colour", glyph.endsWith(" dot") && glyph.startsWith(BLUE_HEX, ignoreCase = true), "glyph '$glyph'")
+        check("the row's glyph is a dot of the group's colour (the ${chromeScheme()} set)", glyph.endsWith(" dot") && glyph.startsWith(blueRgb()), "glyph '$glyph', expected ${blueRgb()}")
         check("the row is 64 tall (a two-line row)", domRect(ROW)?.let { abs(it.height() - 64) <= 1 } == true, "row ${domRect(ROW)}")
         SystemClock.sleep(800)
         still("groups-pane")
@@ -122,7 +122,7 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         still("group-sheet-green")
         dismissSheet()
         val glyph = glyphColour()
-        check("the row's glyph follows the colour", glyph.isNotBlank() && !glyph.equals(BLUE_HEX, ignoreCase = true), "glyph '$glyph'")
+        check("the row's glyph follows the colour", glyph == greenRgb(), "glyph '$glyph', expected ${greenRgb()}")
     }
 
     // --- 3. rename ---------------------------------------------------------------------------------
@@ -421,9 +421,13 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
             "var dc=getComputedStyle(probe).color;probe.remove();return getComputedStyle(e).color===dc?'danger':'plain'})()"
     )
 
-    /** The first Groups row's glyph colour (`--zen-group-color`, the group's hex). */
+    /**
+     * The first Groups row's glyph colour: the theme's pick of the §9.14 pair, `--zen-group-rgb`'s
+     * channels as the glyph computes them, read back as `rgb(r, g, b)` – the form a computed
+     * background takes, so it compares to `blueRgb()` / `greenRgb()`.
+     */
     private fun glyphColour(): String =
-        jsText("(function(){var g=document.querySelector('$GROUPS_PANE .zen-overview-group-glyph');return g?getComputedStyle(g).getPropertyValue('--zen-group-color').trim():''})()")
+        jsText("(function(){var g=document.querySelector('$GROUPS_PANE .zen-overview-group-glyph');if(!g)return '';var c=getComputedStyle(g).getPropertyValue('--zen-group-rgb').trim();return c?'rgb('+c.split(/\\s+/).join(', ')+')':''})()")
 
     private fun card(tabId: String) = ".zen-overview-grid [data-tab-id=\"$tabId\"]"
 

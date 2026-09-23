@@ -12,7 +12,7 @@ import {
   Settings,
   VenetianMask
 } from 'lucide-react'
-import type { Tab, UIState } from '@shared/types'
+import type { PhoneBarPosition, Tab, UIState } from '@shared/types'
 import { defaultSearchEngineOf } from '@shared/search'
 import { getHost } from '@shared/url'
 import { MAX_NEW_TAB_SHORTCUTS, newTabSections } from '@shared/newTab'
@@ -44,6 +44,7 @@ import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { useLongPress } from '../phone/useLongPress'
 import { EngineFieldGlyph } from '../urlbar/EngineFieldGlyph'
+import { useTileFlip, useTileReorder, type TileReorder } from './tileReorder'
 
 interface Props {
   state: UIState
@@ -86,10 +87,23 @@ function useWindowBackdrop(): CSSProperties | undefined {
  * Essentials-style tiles. What the page shows is the preset's (or the customise sheet's) choice,
  * and the wallpaper presets put the space's colours – or a picked image under a legibility scrim
  * – behind it all.
+ *
+ * The page has one geometry, measured from the bar's edge (NTP-29, v2 §9.29, keyed on
+ * `phoneBarPosition`): the column's free height splits 3 : 5 with the block – the field, 24, the
+ * tiles – on the bar's side, so the field's centre sits on the frame's third nearest the bar
+ * (224 from the bar at 920 tall) and the tiles stand 24 beyond it on the side away from the
+ * bar; the customise gear is 12 into the corner opposite the bar. With the bar at the top that
+ * is the field high and the tiles under it, as Chrome's page has them; with the bar at the
+ * bottom the same picture upside down – the tiles above, the field's centre on the two-thirds
+ * line, inside the thumb's reach – never the block huddled against the bar, where the field and
+ * the bar's empty well read as two boxes for the one control (§11.8). The field is the morph's
+ * origin wherever it rests (#243: `registerFakebox` measures it there), so a tap at either dock
+ * is the same travel into the bar's slot.
  */
 function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
   const settings = state.settings.newTab
   const sections = newTabSections(settings)
+  const dock: PhoneBarPosition = state.settings.phoneBarPosition
   const growPhase = newTabGrowStore.use((s) => s.phase)
   const image = wallpaperImageStore.use()
   const backdrop = useWindowBackdrop()
@@ -118,6 +132,7 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
       className="zen-ntp absolute inset-0 flex flex-col"
       data-surface="window"
       data-wallpaper={wallpaper}
+      data-dock={dock}
       data-hidden={hidden || undefined}
       data-grow={growPhase !== 'idle' ? growPhase : undefined}
       style={style}
@@ -131,15 +146,27 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
         style={{ overscrollBehavior: 'contain' }}
         onScroll={onNewTabScroll}
       >
-        <div className="min-h-6" style={{ flex: 3 }} />
-        {sections.searchBox && <SearchField state={state} tab={tab} />}
-        {sections.shortcuts && <TopSites state={state} tab={tab} />}
-        <div className="min-h-6" style={{ flex: 5 }} />
+        {dock === 'bottom' ? (
+          // The top layout's spacers the other way round: 5 parts above the block, 3 below it.
+          <>
+            <div className="min-h-6" style={{ flex: 5 }} />
+            {sections.shortcuts && <TopSites state={state} tab={tab} dock={dock} />}
+            {sections.searchBox && <SearchField state={state} tab={tab} dock={dock} />}
+            <div className="min-h-6" style={{ flex: 3 }} />
+          </>
+        ) : (
+          <>
+            <div className="min-h-6" style={{ flex: 3 }} />
+            {sections.searchBox && <SearchField state={state} tab={tab} dock={dock} />}
+            {sections.shortcuts && <TopSites state={state} tab={tab} dock={dock} />}
+            <div className="min-h-6" style={{ flex: 5 }} />
+          </>
+        )}
       </div>
       <button
         type="button"
         className="zen-ntp-fades zen-toolbar-button absolute h-11 w-11"
-        style={{ right: 12, bottom: 12 }}
+        style={dock === 'bottom' ? { right: 12, top: 12 } : { right: 12, bottom: 12 }}
         aria-label="Customise the new tab page"
         onClick={openCustomize}
       >
@@ -308,16 +335,27 @@ function onNewTabScroll(e: UIEvent<HTMLDivElement>): void {
  * this tab – the field itself never takes input, so what is typed goes where every other
  * address does. The field does not cut to the omnibox: it morphs into it (NTP-02 / MOT-08,
  * lib/fakeboxMorph.ts), which registers the field here and paints its double while it is on
- * its way (`data-away`: the page's own field yields to the double).
+ * its way (`data-away`: the page's own field yields to the double). The field is registered
+ * again when the page lays out for the other bar edge (`dock`, NTP-29): its resting rectangle is
+ * the morph's origin, read at the registration, and the bar can be carried to the other edge
+ * with this page in view (lib/gestures/dock.ts).
  */
-function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
+function SearchField({
+  state,
+  tab,
+  dock
+}: {
+  state: UIState
+  tab: Tab
+  dock?: PhoneBarPosition
+}): JSX.Element {
   const fieldRef = useRef<HTMLDivElement>(null)
   const away = fakeboxMorphStore.use((s) => s.tabId === tab.id && !s.pageField)
   useLayoutEffect(() => {
     const field = fieldRef.current
     if (!field) return
     return registerFakebox(tab.id, field, field.closest<HTMLElement>('.zen-ntp-scroll'))
-  }, [tab.id])
+  }, [tab.id, dock])
   const voice = voiceSearchAvailable(state.capabilities)
   const camera = qrScanAvailable(state.capabilities)
   const trailing = voice || camera
@@ -385,12 +423,31 @@ function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element 
  * the hosts the user removed. The list is fetched when the page comes up and again when a pin or
  * a removal changes it; until then the page shows the field alone, and nothing at all when the
  * history is empty.
+ *
+ * The grid is one FLIP set (`useTileFlip`): a tile whose slot changes – a pin, a removal, a
+ * drag's draft – glides there on the one spring rather than jumping. The pinned tiles can be
+ * reordered by hold-and-drag (`useTileReorder`, NTP-06): the tile in the hand is drawn by its
+ * own transform and is out of the set while held (its cell is the hole the others glide round),
+ * and the pins are composed in the drag's draft order until the core's list has it. A tile that
+ * has run its entrance fade is marked (`data-entered`), since a cell React moves in the DOM
+ * would run the fade again.
  */
-function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | null {
+function TopSites({
+  state,
+  tab,
+  dock
+}: {
+  state: UIState
+  tab: Tab
+  dock: PhoneBarPosition
+}): JSX.Element | null {
   const { mode } = state.settings.newTab
   const { newTabShortcuts: pinned, newTabHiddenHosts: hiddenHosts } = state
   const [ranked, setRanked] = useState<TopSite[] | null>(null)
   const hiddenKey = hiddenHosts.join('\n')
+  const gridRef = useRef<HTMLUListElement>(null)
+  const flip = useTileFlip(gridRef)
+  const reorder = useTileReorder(pinned, flip)
 
   useEffect(() => {
     let cancelled = false
@@ -416,20 +473,48 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
     return map
   }, [state.tabs])
 
+  // The pins in the order drawn: a drag's draft while one stands, the list's own otherwise (a
+  // pin the draft does not know – added meanwhile – follows the ones it does).
+  const drawnPinned = useMemo(() => {
+    const draft = reorder.order
+    if (!draft) return pinned
+    const byUrl = new Map(pinned.map((s) => [s.url, s]))
+    const ordered = draft.flatMap((url) => byUrl.get(url) ?? [])
+    return [...ordered, ...pinned.filter((s) => !draft.includes(s.url))]
+  }, [pinned, reorder.order])
+
   const tiles = useMemo(
     () =>
       ranked
-        ? composeTiles({ pinned, ranked, style: mode, n: MAX_NEW_TAB_SHORTCUTS, favicons })
+        ? composeTiles({
+            pinned: drawnPinned,
+            ranked,
+            style: mode,
+            n: MAX_NEW_TAB_SHORTCUTS,
+            favicons
+          })
         : [],
-    [ranked, pinned, mode, favicons]
+    [ranked, drawnPinned, mode, favicons]
   )
+  // The slots a drag may aim at are the pinned tiles as drawn this commit.
+  const pinnedUrls = tiles.filter((t) => t.pinned).map((t) => t.url)
+  useLayoutEffect(() => {
+    reorder.observe(pinnedUrls)
+  })
 
   // Nothing until the history has answered; once it has and there is nothing to show, the empty
-  // state (v2 section 9.17): one sentence, top-anchored where the tiles would be, no next step.
+  // state (v2 section 9.17): one sentence, anchored where the tiles would be – above the field
+  // at a bottom dock, under it at a top dock – no next step.
   if (ranked === null) return null
   if (tiles.length === 0) {
     return (
-      <p className="zen-ntp-empty mt-12 w-full px-8 text-center" role="status">
+      <p
+        className={cn(
+          'zen-ntp-empty w-full px-8 text-center',
+          dock === 'bottom' ? 'mb-12' : 'mt-12'
+        )}
+        role="status"
+      >
         {mode === 'my-shortcuts'
           ? 'Shortcuts you pin will appear here'
           : 'Sites you visit often will appear here'}
@@ -437,31 +522,67 @@ function TopSites({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | n
     )
   }
   return (
-    <ul className="mt-6 grid w-full max-w-[420px] grid-cols-4 gap-3" aria-label="Most visited">
-      {tiles.map((site, index) => (
-        <li
-          key={site.url}
-          className="zen-ntp-site flex min-w-0 justify-center"
-          style={{ '--zen-ntp-i': index } as CSSProperties}
-        >
-          <TopSiteTile site={site} tabId={tab.id} />
-        </li>
-      ))}
+    <ul
+      ref={gridRef}
+      className={cn(
+        'grid w-full max-w-[420px] grid-cols-4 gap-3',
+        dock === 'bottom' ? 'mb-6' : 'mt-6'
+      )}
+      aria-label="Most visited"
+    >
+      {tiles.map((site, index) => {
+        const held = reorder.held === site.url
+        return (
+          <li
+            key={site.url}
+            className="zen-ntp-site relative flex min-w-0 justify-center"
+            data-cell={held ? undefined : site.url}
+            data-held={held || undefined}
+            style={{ '--zen-ntp-i': index } as CSSProperties}
+            // The mark is the node's own, written as its fade ends: it travels with the node
+            // when React moves it, and React (which does not know the attribute) leaves it be.
+            onAnimationEnd={(e) => {
+              if (e.target === e.currentTarget) e.currentTarget.dataset.entered = ''
+            }}
+          >
+            <TopSiteTile site={site} tabId={tab.id} reorder={reorder} />
+          </li>
+        )
+      })}
     </ul>
   )
 }
 
 /**
  * A 56 tile at radius 8 with the site's icon and, 8 below, its name (§9.29's phone sizes; the
- * look is the shared `zen-ntp-*` rules'); a hold opens the tile's menu.
+ * look is the shared `zen-ntp-*` rules'). A hold lifts a pinned tile and the finger then carries
+ * it to another slot (`TileReorder`); a hold that lifts without moving opens the tile's menu
+ * (Open in New Tab, Copy Link, Edit Shortcut, Pin / Unpin, Remove) as the finger comes off.
  */
-function TopSiteTile({ site, tabId }: { site: TopSiteTile; tabId: string }): JSX.Element {
+function TopSiteTile({
+  site,
+  tabId,
+  reorder
+}: {
+  site: TopSiteTile
+  tabId: string
+  reorder: TileReorder
+}): JSX.Element {
   const label = tileLabel(site.title, site.url)
-  const hold = useLongPress(() =>
-    run('newtab.tileContextMenu', { url: site.url, title: site.title })
+  const ref = useRef<HTMLButtonElement>(null)
+  const hold = useLongPress(
+    () => run('newtab.tileContextMenu', { url: site.url, title: site.title, tabId }),
+    {
+      onHold: () => {
+        if (ref.current) reorder.hold(site.url, ref.current)
+      },
+      onDrag: (e) => (ref.current ? reorder.drag(site.url, ref.current, e) : null),
+      onHoldEnd: () => reorder.unhold()
+    }
   )
   return (
     <button
+      ref={ref}
       type="button"
       className="zen-v2-shortcut flex w-full min-w-0 flex-col items-center gap-2"
       aria-label={label}

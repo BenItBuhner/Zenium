@@ -32,7 +32,12 @@ import {
   splitPlacement,
   type Model
 } from '../model'
-import { DEFAULT_CONTAINERS, FOLDER_COLOR_ORDER, FOLDER_COLORS } from '../../shared/defaults'
+import {
+  DEFAULT_CONTAINERS,
+  FOLDER_COLOR_ORDER,
+  FOLDER_COLORS_DARK,
+  FOLDER_COLORS_LIGHT
+} from '../../shared/defaults'
 import type { Tab } from '../../shared/types'
 
 function makeModel(): Model {
@@ -363,7 +368,8 @@ describe('spaces & folders', () => {
     const palette = FOLDER_COLOR_ORDER
     // Chrome's order, grey first, every colour once.
     expect(palette[0]).toBe('grey')
-    expect([...palette].sort()).toEqual(Object.keys(FOLDER_COLORS).sort())
+    expect([...palette].sort()).toEqual(Object.keys(FOLDER_COLORS_LIGHT).sort())
+    expect([...palette].sort()).toEqual(Object.keys(FOLDER_COLORS_DARK).sort())
     expect(nextFolderColor(m, space)).toBe('grey')
     createFolder(m, space, 'A', '📁', palette[0])
     createFolder(m, space, 'B', '📁', palette[1])

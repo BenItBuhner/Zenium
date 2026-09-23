@@ -227,8 +227,19 @@ describe('the colour row (§9.14’s swatch form)', () => {
       expect(s.getAttribute('aria-label')).toMatch(/^[A-Z][a-z]+$/)
       expect(s.classList.contains('zen-group-editor-swatch')).toBe(true)
       expect(s.querySelector('.zen-group-editor-swatch-disc')).not.toBeNull()
-      expect(s.style.getPropertyValue('--zen-swatch')).not.toBe('')
+      // Each swatch carries its colour as §9.14's pair, both schemes' channels, and the marker
+      // the stylesheet picks `--zen-group-rgb` from by the root's theme – the disc follows a
+      // theme flip live. No single-set value, no pick of its own.
+      expect(s.hasAttribute('data-group-rgb')).toBe(true)
+      expect(s.style.getPropertyValue('--zen-group-rgb-light')).toMatch(/^\d+ \d+ \d+$/)
+      expect(s.style.getPropertyValue('--zen-group-rgb-dark')).toMatch(/^\d+ \d+ \d+$/)
+      expect(s.style.getPropertyValue('--zen-group-rgb')).toBe('')
+      expect(s.style.getPropertyValue('--zen-swatch')).toBe('')
     }
+    // The light set for the light scheme, the dark set for the dark: two different values.
+    const blue = swatches.find((s) => s.dataset.color === 'blue')!
+    expect(blue.style.getPropertyValue('--zen-group-rgb-light')).toBe('22 108 221')
+    expect(blue.style.getPropertyValue('--zen-group-rgb-dark')).toBe('138 180 248')
     click(swatches.find((s) => s.dataset.color === 'green')!)
     expect(run).toHaveBeenCalledWith('folder.update', { folderId: 'g', patch: { color: 'green' } })
     // A saved folder's row is the same: its colour is its header's ring's.
@@ -257,7 +268,9 @@ describe('the colour row (§9.14’s swatch form)', () => {
     expect(disc).toContain('width: 20px')
     expect(disc).toContain('height: 20px')
     expect(disc).toContain('border-radius: 50%')
-    expect(disc).toContain('background: var(--zen-swatch)')
+    // The disc's fill is the theme's pick of the swatch's pair (§9.14), never a single value.
+    expect(disc).toContain('background: rgb(var(--zen-group-rgb))')
+    expect(disc).not.toContain('--zen-swatch')
     const ring = rule(
       ".zen-group-editor-swatch[aria-checked='true'] > .zen-group-editor-swatch-disc"
     )

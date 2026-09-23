@@ -11,10 +11,11 @@ name: Android motion perf
 # fling open, the system's back gesture over it; on six tabs and on thirty), a group folded
 # and unfolded in the open overview (the cells below hold for the group's height and then glide;
 # six and thirty) and a group's leave when a search drops its every card and when its last card
-# is closed (the frame's way out against its cards' exits, as it stands: v2 §11.4's ruling 3;
-# the group made and gone within its scenes), each group picked by the `scenes` input
-# (`DEMO_SCENES`; a run without the input – an audit branch's temporary push trigger, when one
-# is on – runs every group). The shared workflow renders the record into the job summary and the
+# is closed (the frame's way out against its cards' exits – one exit fading in place while the
+# cells glide up once, v2 §11.4's ruling 3; the group made and gone within its scenes), each
+# group picked by the `scenes` input (`DEMO_SCENES`; a run without the input – an audit
+# branch's temporary push trigger, when one is on – runs every group). The shared workflow
+# renders the record into the job summary and the
 # `jank-report-*` artifact; the driver's `perf-motion.json` and `findings.txt` in the demo
 # artifact carry its in-chrome probe (what each scene wrote to the DOM) beside the traces
 # (`trace-<scene>.json.gz`, for chrome://tracing or the Perfetto UI). The measured scenes run

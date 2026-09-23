@@ -241,6 +241,8 @@ class CustomTabHost(
         fullscreenCallback?.onCustomViewHidden()
         fullscreenCallback = null
         fullscreenTab = null
+        // The page draws in its own view again ([TabWebView.onDraw] drew nothing under the layer).
+        tab.invalidate()
         setSystemBarsHidden(false)
         backChanged()
     }

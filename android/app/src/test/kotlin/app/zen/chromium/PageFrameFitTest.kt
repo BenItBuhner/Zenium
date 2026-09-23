@@ -1,5 +1,8 @@
 package app.zen.chromium
 
+import app.zen.chromium.PageFrameFit.Screen
+import app.zen.chromium.PageFrameFit.Verdict
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,5 +58,38 @@ class PageFrameFitTest {
     fun anEmptyFrameFitsAnywhere() {
         assertTrue(fits(0, 0))
         assertTrue(fits(0, 0, containerWidth = 1, containerHeight = 1))
+    }
+
+    private fun judge(width: Int, height: Int, containerWidth: Int, containerHeight: Int, landing: Screen?): Verdict =
+        PageFrameFit.judge(width, height, containerWidth, containerHeight, landing, density)
+
+    @Test
+    fun outsideALandingTheContainerAloneJudges() {
+        assertEquals(Verdict.APPLY, judge(px(399), px(756), 1080, 2400, landing = null))
+        assertEquals(Verdict.REFUSE, judge(px(806), px(324), 1080, 2400, landing = null))
+    }
+
+    @Test
+    fun aLandscapeFrameCaughtBeforeTheTurnBackIsHeldToThePortraitLanding() {
+        // The retry run's exit from a landscape video: back pressed, the orientation released,
+        // and the chrome's report from under the layer (854 x 349 CSS px, the landscape screen's)
+        // reached the host 125 ms before the system turned the screen. The container still
+        // landscape, the frame fit it – and laid the page out landscape on the portrait screen
+        // the exit lands on. Held back instead.
+        val portrait = Screen(1080, 2400)
+        assertEquals(Verdict.HOLD, judge(px(854), px(349), 2400, 1080, landing = portrait))
+        assertEquals(Verdict.HOLD, judge(px(806), px(324), 2400, 1080, landing = portrait))
+        // A frame of the landing's own screen is applied, whichever way the container stands.
+        assertEquals(Verdict.APPLY, judge(px(399), px(756), 1080, 2400, landing = portrait))
+        assertEquals(Verdict.APPLY, judge(px(411), px(914), 1080, 2400, landing = portrait))
+        // One that fits neither is refused as before: the hold is for the frames the turn back undoes.
+        assertEquals(Verdict.REFUSE, judge(px(806), px(324), 1080, 2400, landing = portrait))
+    }
+
+    @Test
+    fun aLandscapeLandingHoldsThePortraitFrames() {
+        val landscape = Screen(2400, 1080)
+        assertEquals(Verdict.HOLD, judge(px(399), px(756), 1080, 2400, landing = landscape))
+        assertEquals(Verdict.APPLY, judge(px(806), px(324), 2400, 1080, landing = landscape))
     }
 }

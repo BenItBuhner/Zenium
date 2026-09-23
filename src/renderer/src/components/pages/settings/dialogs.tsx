@@ -455,7 +455,7 @@ function FieldDialog({
             id={id}
             className={cn('zen-settings-input zen-v2-field', row.secret && 'zen-settings-secret')}
             type={row.input === 'number' ? 'number' : 'text'}
-            inputMode={row.input === 'number' ? 'numeric' : 'text'}
+            inputMode={row.input === 'number' ? 'numeric' : row.input === 'url' ? 'url' : 'text'}
             min={row.min}
             max={row.max}
             placeholder={row.placeholder}

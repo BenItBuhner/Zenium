@@ -328,6 +328,18 @@ export type PreviewState =
       pose: PreviewNtpPose
       /** On the private new tab page rather than the space's. */
       private: boolean
+      /**
+       * Steps taken on the page once it is at its pose (`then=`): `press:<tile>` rests a finger
+       * on a tile and lifts it, so its hold menu comes up (NTP-06); `tap:Edit Shortcut…` after
+       * it opens the edit sheet.
+       */
+      then?: PreviewStep[]
+      /**
+       * A pinned tile held and carried (`drag=<tile>:<dx>,<dy>`, NTP-06): the finger rests on
+       * the tile for the long-press time, then travels that far in CSS px and stays down – the
+       * grid mid-reorder, the tile in the hand, its neighbours glided to their new slots.
+       */
+      drag?: { text: string; dx: number; dy: number }
     }
   | {
       /** The active page asks for a permission (`prompt=<permission>`; the security dialogs' `prompt=` values are `kind: 'prompt'`). */
@@ -637,7 +649,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `prompt=<permission>` for the active page asking for that permission (the prompt sheet),
  * `ntp=<pose>` for the phone new tab page with its field at a pose of its morph into the omnibox
  * (`rest`, `morph:<percent>`, `open`, `scroll:<px>`, `scrub:<percent>`, `docked`; `&private`
- * for the private page; see `PreviewNtpPose`),
+ * for the private page; see `PreviewNtpPose`; `then=<steps>` takes steps on the page at its
+ * pose – `press:<tile>` a tile's hold, for its menu – and `drag=<tile>:<dx>,<dy>` holds a
+ * pinned tile carried that far, the grid mid-reorder),
  * `private=<surface>` for one of PREVIEW_PRIVATE_SURFACES (a private tab on its new tab page or
  * a page, the overview's Tabs and Private panes and the empty Private pane; `url=<page>` names
  * the private tab's page; `private=new` is the new tab page and `private=<url>` that page, as
@@ -782,7 +796,16 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (prompt && !securityPrompt) return { kind: 'permission', permission: prompt }
   const ntp = params.get('ntp')
   if (ntp !== null) {
-    return { kind: 'ntp', pose: parsePreviewNtpPose(ntp), private: params.has('private') }
+    const state: Extract<PreviewState, { kind: 'ntp' }> = {
+      kind: 'ntp',
+      pose: parsePreviewNtpPose(ntp),
+      private: params.has('private')
+    }
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length) state.then = then
+    const drag = parsePreviewTileDrag(params.get('drag'))
+    if (drag) state.drag = drag
+    return state
   }
   const priv = params.get('private')
   if (priv !== null && priv !== '') return parsePrivate(priv, params)
@@ -1055,6 +1078,25 @@ export function parsePreviewSeed(spec: string): PreviewSeed {
     bar: bar === 'top' || bar === 'bottom' ? bar : null,
     siteData: parsePreviewSiteData(params.get('sitedata'))
   }
+}
+
+/**
+ * `drag=<tile>:<dx>,<dy>` on the new tab page: the tile's label (its caption), then how far the
+ * finger carries it in CSS px, `x,y` (either may be negative). Null for anything else.
+ */
+export function parsePreviewTileDrag(
+  value: string | null
+): { text: string; dx: number; dy: number } | null {
+  if (!value) return null
+  const at = value.lastIndexOf(':')
+  if (at <= 0) return null
+  const text = value.slice(0, at).trim()
+  const [dx, dy] = value
+    .slice(at + 1)
+    .split(',')
+    .map((n) => Number(n.trim()))
+  if (!text || !Number.isFinite(dx) || !Number.isFinite(dy)) return null
+  return { text, dx, dy }
 }
 
 /**

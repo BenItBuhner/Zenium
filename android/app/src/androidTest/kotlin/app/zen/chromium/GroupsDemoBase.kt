@@ -354,6 +354,17 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
 
     protected fun folderCollapsed(state: JSONObject = coreState()): Boolean = folder(state)?.optBoolean("collapsed") == true
 
+    // --- the group palette (§9.14's pair) ----------------------------------------------------------
+
+    /** The scheme the chrome's root carries (`data-theme`, `useTheme`'s paint): the set its group colours are drawn from. */
+    protected fun chromeScheme(): String = jsText("document.documentElement.getAttribute('data-theme')||'light'")
+
+    /** Blue of the set the chrome shows, as a computed `rgb(r, g, b)`. */
+    protected fun blueRgb(): String = if (chromeScheme() == "dark") BLUE_RGB_DARK else BLUE_RGB_LIGHT
+
+    /** Green of the set the chrome shows, as a computed `rgb(r, g, b)`. */
+    protected fun greenRgb(): String = if (chromeScheme() == "dark") GREEN_RGB_DARK else GREEN_RGB_LIGHT
+
     /** The kept pages of the (saved) group, in order; empty for an open group. */
     protected fun savedUrls(state: JSONObject = coreState()): List<String> {
         val saved = folder(state)?.optJSONArray("savedTabs") ?: return emptyList()
@@ -541,11 +552,18 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
         const val MENU_OPEN = "window.__zenStores.ui.get().menu!==null"
         const val RENAMING = "window.__zenStores.ui.get().renamingFolderId!==null"
 
-        /** The seeded group's colour, `FOLDER_COLORS.blue` (shared/defaults.ts), as the pane's glyph reads it and as the sidebar's dot paints it. */
-        const val BLUE_HEX = "#4c8dff"
-        const val BLUE_RGB = "rgb(76, 141, 255)"
-        /** `FOLDER_COLORS.green`, the swatch the drivers pick. */
-        const val GREEN_RGB = "rgb(52, 181, 111)"
+        /**
+         * The seeded group's colour, blue, and green, the swatch the drivers pick, as the §9.14 PAIR in
+         * shared/defaults.ts (`FOLDER_COLORS_LIGHT` / `FOLDER_COLORS_DARK`: one set a scheme, every value
+         * 3:1 on its scheme's window fill), the way the pane's glyph and the sidebar's dot paint them –
+         * `rgb(var(--zen-group-rgb))`, the set the chrome root's `data-theme` picks. The demos run on the
+         * scheme the device hands them, so a reading is judged against the set the chrome shows
+         * (`blueRgb()` / `greenRgb()`).
+         */
+        const val BLUE_RGB_LIGHT = "rgb(22, 108, 221)"
+        const val BLUE_RGB_DARK = "rgb(138, 180, 248)"
+        const val GREEN_RGB_LIGHT = "rgb(24, 128, 56)"
+        const val GREEN_RGB_DARK = "rgb(129, 201, 149)"
 
         /** The pages the seeded tabs point at. Alpha carries the link the link menu is held on. */
         val PAGES: Map<String, Pair<String, ByteArray>> = mapOf(

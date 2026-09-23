@@ -13,7 +13,9 @@ import java.io.FileInputStream
 
 /**
  * Records the phone app menu's icon row (matrix TB-08, TB-16's row half): Chrome's Forward,
- * star, Download Page, Page Info and Reload / Stop as the sheet's first group. Every press on the
+ * Home (NTP-30, #348: the row's second glyph while a homepage is set – the default is the new
+ * tab page, so a fresh profile shows it), star, Download Page, Page Info and Reload / Stop as
+ * the sheet's first group. Every press on the
  * row is a real touch (the REAL TOUCH RULE), and each outcome is read off the core's state or the
  * chrome's DOM: the disabled Forward (opacity .4, its node disabled, a touch on it doing nothing),
  * Forward enabled after a navigation and a system back, the touch going forward; Stop while a
@@ -117,7 +119,7 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         val row = readRow()
         still("row-idle")
         val labels = row.map { it.getString("label") }
-        record("five buttons in Chrome's order: ${labels.joinToString(" | ")}", labels == EXPECTED_LABELS)
+        record("six buttons in Chrome's order, Home second (§9.13): ${labels.joinToString(" | ")}", labels == EXPECTED_LABELS)
         val boxes = row.map { "${it.optDouble("w")}x${it.optDouble("h")}/${it.optDouble("glyph")}" }
         record(
             "each a 44 x 44 box with a 20 px glyph (CSS px): ${boxes.joinToString(" ")}",
@@ -129,10 +131,10 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
             "Forward disabled at opacity .4 with no forward entry (disabled ${forward?.optBoolean("disabled")}, opacity ${forward?.optString("opacity")})",
             forward != null && forward.optBoolean("disabled") && forward.optString("opacity") == "0.4"
         )
-        record("the other four enabled at opacity 1", row.drop(1).all { !it.optBoolean("disabled") && it.optString("opacity") == "1" })
+        record("the other five enabled at opacity 1", row.drop(1).all { !it.optBoolean("disabled") && it.optString("opacity") == "1" })
         val forwardNode = findNode { it == LABEL_FORWARD }
         record("Forward's accessibility node reports disabled", forwardNode != null && !forwardNode.isEnabled)
-        val star = row.getOrNull(1)
+        val star = row.star()
         record(
             "the star opens unfilled (data-filled ${star?.optString("filled")}, fill opacity ${star?.optString("fill")})",
             star != null && star.optString("filled") == "false" && star.optString("fill") == "0"
@@ -300,7 +302,7 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         record("the sheet left after the pick", awaitSurface(false))
         SystemClock.sleep(4_500)
         record("the menu opened", openMenu())
-        val filled = readRow().getOrNull(1)
+        val filled = readRow().star()
         still("row-star-filled")
         record(
             "the star reopens filled as '$LABEL_EDIT' (label '${filled?.optString("label")}', data-filled ${filled?.optString("filled")}, fill opacity ${filled?.optString("fill")})",
@@ -355,10 +357,10 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         val row = readRow()
         still("row-dark")
         record(
-            "the chrome is dark (data-theme '${row.firstOrNull()?.optString("theme")}') and the row still five buttons",
-            row.firstOrNull()?.optString("theme") == "dark" && row.size == 5
+            "the chrome is dark (data-theme '${row.firstOrNull()?.optString("theme")}') and the row still six buttons",
+            row.firstOrNull()?.optString("theme") == "dark" && row.size == 6
         )
-        record("the star is still filled in dark", row.getOrNull(1)?.optString("filled") == "true")
+        record("the star is still filled in dark", row.star()?.optString("filled") == "true")
         closeMenu()
         coreInvoke("settings.update", "{\"colorScheme\":\"system\"}")
         shell("cmd uimode night no")
@@ -393,9 +395,9 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
     private fun menuOpen(): Boolean = chromeJs("!!document.querySelector('.zen-menu-icon-row')") == "true"
 
     /**
-     * The row's buttons as the chrome's DOM has them: label, disabled, the computed opacity and
-     * background, the box and glyph sizes in CSS px, the star's fill state, the surface family
-     * and the theme the root is painted in.
+     * The row's buttons as the chrome's DOM has them: label, the glyph's name (`data-glyph`),
+     * disabled, the computed opacity and background, the box and glyph sizes in CSS px, the
+     * star's fill state, the surface family and the theme the root is painted in.
      */
     private fun readRow(): List<JSONObject> {
         val raw = chromeJs(
@@ -403,7 +405,7 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
                 "var r=b.getBoundingClientRect();var s=b.querySelector('svg');var g=s?s.getBoundingClientRect():null;" +
                 "var cs=getComputedStyle(b);var f=b.querySelector('.zen-star-glyph > span:last-child');" +
                 "var sf=b.closest('[data-surface]');" +
-                "return {label:b.getAttribute('aria-label'),disabled:b.disabled,opacity:cs.opacity,background:cs.backgroundColor," +
+                "return {label:b.getAttribute('aria-label'),glyphId:b.getAttribute('data-glyph'),disabled:b.disabled,opacity:cs.opacity,background:cs.backgroundColor," +
                 "active:b.matches(':active'),w:r.width,h:r.height,glyph:g?g.width:0,filled:b.getAttribute('data-filled')," +
                 "fill:f?f.style.opacity:null,surface:sf?sf.getAttribute('data-surface'):null," +
                 "theme:document.documentElement.dataset.theme||null}}))"
@@ -412,6 +414,12 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         val arr = runCatching { JSONArray(text) }.getOrDefault(JSONArray())
         return (0 until arr.length()).map { arr.getJSONObject(it) }
     }
+
+    /**
+     * The star, found by its glyph rather than its place: its label is the page's state
+     * ("Bookmark" / "Edit Bookmark") and its index moves with the Home glyph before it.
+     */
+    private fun List<JSONObject>.star(): JSONObject? = firstOrNull { it.optString("glyphId") == GLYPH_STAR }
 
     private fun fillSamples(): JSONArray {
         val raw = chromeJs("window.__rowFillStop()")
@@ -481,15 +489,20 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         private const val SLOW_MS = 9_000L
 
         // The row's labels (v2 §9.1 Title Case for menu items; the star reads by the page's state,
-        // §9.13's words: "Bookmark" outlined, "Edit Bookmark" filled).
+        // §9.13's words: "Bookmark" outlined, "Edit Bookmark" filled). Home stands second while a
+        // homepage is set (`settings.homepage`, default `newtab`; NTP-30, #348): a profile with it
+        // Off shows five, which this driver's seed does not do.
         private const val LABEL_FORWARD = "Forward"
+        private const val LABEL_HOME = "Home"
         private const val LABEL_STAR = "Bookmark"
         private const val LABEL_EDIT = "Edit Bookmark"
         private const val LABEL_DOWNLOAD = "Download Page"
         private const val LABEL_INFO = "Page Info"
         private const val LABEL_RELOAD = "Reload"
         private const val LABEL_STOP = "Stop"
-        private val EXPECTED_LABELS = listOf(LABEL_FORWARD, LABEL_STAR, LABEL_DOWNLOAD, LABEL_INFO, LABEL_RELOAD)
+        /** The star's `data-glyph` (`MenuGlyph`), the same filled or not. */
+        private const val GLYPH_STAR = "star"
+        private val EXPECTED_LABELS = listOf(LABEL_FORWARD, LABEL_HOME, LABEL_STAR, LABEL_DOWNLOAD, LABEL_INFO, LABEL_RELOAD)
         private const val TOAST_SAVED = "Saved to Bookmarks"
         private const val TOAST_PAGE_SAVED = "Page saved"
         /** The site-info sheet's grip (`SiteInfoDemo`). */

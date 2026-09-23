@@ -2,7 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { Rect, UIState } from '@shared/types'
-import { groupColorChannels } from '@renderer/lib/groups'
+import { groupColorVars } from '@renderer/lib/groups'
 import { REDUCED_FADE_MS } from '@renderer/lib/motion/flip'
 import { reducedMotion, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { departed, departStore, releaseDepartures, type Departure } from './departureStore'
@@ -26,9 +26,14 @@ const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
  * so the collapse and the neighbours' glide start on the same frame (v2 §11.4). Under reduced
  * motion a card fades out in place over 120 ms, without the shrink (v2 §11.3). A card the tab
  * search drops (`filtered`), and the New Tab card a query takes with it (`new-tab`), leave the
- * same way, released by the grid's own commit (`TabOverview`). A card whose close is still in
- * flight (`closingTabIds`: its page's `beforeunload` may be asking "Leave site?", PUI-28) stands
- * as long as it is, and stands unmoved when the user stays.
+ * same way, released by the grid's own commit (`TabOverview`) – as is a group's exit whatever
+ * took its cards: the group's folder stays (saved on a close, open when a query hides the cards
+ * it has left), so the commit that takes its card off the grid is the one that releases it (the
+ * one whose glide closes the gap, §11.4's leave). A card whose close is still in flight
+ * (`closingTabIds`: its page's `beforeunload` may be asking "Leave site?", PUI-28) stands as long
+ * as it is, and stands unmoved when the user stays – a tab's own close, or a group's whose last
+ * shown card was swiped or closed under a query (`tab.close`); a whole group's X, Close Group and
+ * a close-all go through `folder.close`, which closes its members without the ask.
  */
 export function Departures({
   state,
@@ -147,11 +152,12 @@ function Exit({
     <div
       ref={ref}
       className="zen-group pointer-events-none fixed z-30 flex flex-col overflow-hidden"
+      data-group-rgb=""
       style={
         {
           ...place(item.rect),
           willChange: 'transform, opacity',
-          '--zen-group-rgb': groupColorChannels(item.folder.color)
+          ...groupColorVars(item.folder.color)
         } as CSSProperties
       }
     >
@@ -164,7 +170,7 @@ function Exit({
           style={{ transform: item.folder.collapsed ? 'rotate(-90deg)' : 'none' }}
         />
       </div>
-      {!item.folder.collapsed && (
+      {!item.folder.collapsed && !item.flown && (
         <div
           className="grid gap-3"
           style={{
