@@ -305,6 +305,83 @@ describe('a renderer that goes away in front of the user', () => {
     expect(view.loads.length).toBe(loads)
   })
 
+  it('keeps the crash mark through a load that commits ahead of the crash page, so Show tabs still works', () => {
+    // Android rebuilds a crashed view from its saved list: the list's current entry starts
+    // loading before the host's word that the renderer went, and can commit first. The sad tab
+    // is what the user ends up seeing, so that commit does not read as the next load.
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+    view.events.onTitleUpdated('The article')
+    const overviews = (): number => f.sent.filter((e) => e.name === 'overview.open').length
+
+    view.events.onCrashed('crashed', undefined, { repeat: true })
+    const page = view.loads.at(-1)!
+    view.events.onNavigated(PAGE, false)
+    expect(f.browser.tabs.tab(tab.id)!.errorCode).toBe(CRASH_ERROR_CODE)
+
+    view.events.onNavigated(page, false)
+    view.events.onTitleUpdated('crashed.example')
+    const shown = f.browser.tabs.tab(tab.id)!
+    expect(shown.errorCode).toBe(CRASH_ERROR_CODE)
+    expect(f.browser.tabs.isSadTab(shown)).toBe(true)
+    expect(shown.title).toBe('The article')
+    view.events.onPageMessage({ type: 'interstitial', action: 'show-tabs', url: PAGE })
+    expect(overviews()).toBe(1)
+
+    // The next load is the next load: Reload commits the page and the mark goes.
+    view.events.onNavigated(PAGE, false)
+    expect(f.browser.tabs.tab(tab.id)!.errorCode).toBeNull()
+  })
+
+  it('sets the crash mark again whenever the crash page commits, however it was cleared', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+
+    view.events.onCrashed('crashed', 11)
+    const page = view.loads.at(-1)!
+    // Two commits get ahead of the crash page: the second is past the held mark and clears it.
+    view.events.onNavigated(PAGE, false)
+    view.events.onNavigated(`${PAGE}#part`, true)
+    expect(f.browser.tabs.tab(tab.id)!.errorCode).toBeNull()
+    view.events.onNavigated(page, false)
+    expect(f.browser.tabs.isSadTab(f.browser.tabs.tab(tab.id)!)).toBe(true)
+
+    // Back to the page and forward to the crash page's entry: the sad tab again.
+    view.events.onNavigated(PAGE, false)
+    expect(f.browser.tabs.tab(tab.id)!.errorCode).toBeNull()
+    // Only the crash page is: another error page committing sets no crash mark of its own
+    // (its code is the failed load's, `onLoadFailed`'s to set).
+    view.events.onNavigated(errorPageUrl(-105, 'ERR_NAME_NOT_RESOLVED', PAGE), false)
+    expect(f.browser.tabs.tab(tab.id)!.errorCode).toBeNull()
+    view.events.onNavigated(page, false)
+    expect(f.browser.tabs.isSadTab(f.browser.tabs.tab(tab.id)!)).toBe(true)
+  })
+
+  it('forgets a pending crash page with its view, so the next view starts clean', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    f.browser.tabs.createTab({ url: 'https://other.example/', active: true }, win)
+    const tab = f.browser.tabs.createTab({ url: PAGE, active: true }, win)
+    const view = viewOf(f, tab)
+    view.events.onNavigated(PAGE, false)
+    view.events.onCrashed('crashed', 11)
+    expect(f.browser.tabs.tab(tab.id)!.errorCode).toBe(CRASH_ERROR_CODE)
+
+    // Unloaded before the crash page committed: the view goes, and with it the pending page.
+    f.browser.tabs.discard(tab.id)
+    expect(view.destroyed).toBe(true)
+    f.browser.tabs.load(tab.id, win)
+    const fresh = viewOf(f, tab)
+    fresh.events.onNavigated(PAGE, false)
+    expect(f.browser.tabs.tab(tab.id)!.errorCode).toBeNull()
+  })
+
   it("writes the tab's own theme accent into the page's URL, and the private window's in a private tab (§9.11)", () => {
     const f = fixture()
     const win = f.browser.focusedWindow()

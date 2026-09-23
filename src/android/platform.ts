@@ -2,6 +2,8 @@ import type {
   DownloadItem,
   EventName,
   Events,
+  ExtensionErrorLevel,
+  ExtensionErrorSource,
   HapticKind,
   HostCapabilities,
   LongCapture,
@@ -606,6 +608,18 @@ export interface HostEventPayloads {
   'ext.message': ExtMessageEvent
   /** Endpoints whose frame or page went away. */
   'ext.gone': { eps: string[] }
+  /**
+   * A line for an extension's error console from the Android runtime: a bridge message refused
+   * under the flood guard (`ext/BridgeForward.kt`), attributed to the kind of context it came from.
+   */
+  'ext.console': {
+    id: string
+    level: ExtensionErrorLevel
+    source: ExtensionErrorSource
+    message: string
+    url?: string | null
+    context?: string | null
+  }
   /** The popup / options sheet was dismissed (back gesture, a tap outside, `window.close()`). */
   'ext.popupClosed': { id: string }
   /** The host asks for an extension's stopped background to run (instrumentation; `wakeBackground`). */
@@ -1896,6 +1910,17 @@ export class AndroidPlatform implements Platform {
       case 'ext.gone':
         this.extensionRuntime?.onGone((payload as HostEventPayloads['ext.gone']).eps)
         return
+      case 'ext.console': {
+        const line = payload as HostEventPayloads['ext.console']
+        this.extensions?.consoleLine(line.id, {
+          level: line.level,
+          source: line.source,
+          message: line.message,
+          url: line.url ?? null,
+          context: line.context ?? null
+        })
+        return
+      }
       case 'ext.popupClosed':
         this.extensionRuntime?.onPopupClosed()
         return

@@ -9,6 +9,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.Choreographer
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -285,10 +286,65 @@ class Extensions(private val host: Host) {
     /** A copy of the bridge counters (see [bridgeCounters]): frames to host, host to chrome, host to frames. */
     fun bridgeCounts(): LongArray = bridgeCounters.copyOf()
 
+    /**
+     * The flood guard's counters ([BridgeForward]): messages forwarded to the core, action updates
+     * folded into a newer one, action updates dropped at the pending bound, messages refused there.
+     */
+    fun floodGuardCounts(): LongArray = longArrayOf(forward.forwarded, forward.superseded, forward.dropped, forward.refused)
+
     /** An `ext.*` event into the chrome's core, counted ([bridgeCounters]). */
     private fun chromeEvent(name: String, payload: Any?) {
         bridgeCounters[1]++
         host.chrome.hostEvent(name, payload)
+    }
+
+    /**
+     * The page-to-host flood guard in front of `ext.message` ([BridgeForward]): action state
+     * coalesced per frame, the forward paced by a frame budget, what waits bounded. Frames come
+     * from the Choreographer; nothing goes while the chrome is not ready for events (it is
+     * rebuilding). `setIcon` pixels are scaled here ([ActionCalls], [IconScaling]) before they
+     * cross; a bound hit puts a line on the extension's error console ([consoleLine]).
+     */
+    private val forward = BridgeForward(
+        frames = { tick -> Choreographer.getInstance().postFrameCallback { tick.run() } },
+        ready = { host.chrome.ready },
+        sink = object : BridgeForward.Sink {
+            override fun forward(ep: String, tabId: String?, top: Boolean, origin: String, text: CharSequence) {
+                // The message goes to the core as the frame wrote it (one copy, no rebuild); the
+                // core drops the token it carries (`extensionRuntime.onMessage`).
+                val event = StringBuilder(text.length + 128)
+                    .append("{\"ep\":").append(JSONObject.quote(ep))
+                    .append(",\"tabId\":").append(if (tabId == null) "null" else JSONObject.quote(tabId))
+                    .append(",\"top\":").append(top)
+                    .append(",\"origin\":").append(JSONObject.quote(origin))
+                    .append(",\"message\":").append(text)
+                    .append('}')
+                bridgeCounters[1]++
+                host.chrome.hostEventJson("ext.message", event)
+            }
+
+            override fun rewrite(message: JSONObject, text: String): String? = ActionCalls.rewriteIcon(message, text, IconScaling)
+
+            override fun warn(source: BridgeForward.Source, message: String) = consoleLine(source, message)
+        }
+    )
+
+    /**
+     * A warning on an extension's error console (`ExtensionInfo.errors`, the extensions page's
+     * "Errors"), through the core (`ext.console`): attributed to the endpoint's kind of context
+     * as Chrome's console sources go – its background as the worker's, a content script's as
+     * `content`, any page of its own as `page`.
+     */
+    private fun consoleLine(source: BridgeForward.Source, message: String) {
+        val kind = when (source.context) {
+            "background", "offscreen" -> "worker"
+            "content" -> "content"
+            else -> "page"
+        }
+        chromeEvent(
+            "ext.console",
+            json("id" to source.extensionId, "level" to "warning", "source" to kind, "message" to message, "url" to source.url.ifEmpty { null }, "context" to source.context)
+        )
     }
 
     val origin = ORIGIN_SUFFIX
@@ -567,6 +623,7 @@ class Extensions(private val host: Host) {
         if (popup?.extensionId == id) closePopup()
         // The core dropped these endpoints already; the frames keep running what was injected.
         endpoints.entries.removeAll { it.value.extensionId == id }
+        forward.forgetExtension(id)
         // Its world slots are free for the next extension; a straggling hello from a document
         // that still runs the old world's script claims this id and is refused by the slot check.
         worldSlots.releaseAll(id)
@@ -992,6 +1049,7 @@ class Extensions(private val host: Host) {
 
     private fun gone(eps: List<String>) {
         for (ep in eps) endpoints.remove(ep)
+        forward.forget(eps)
         chromeEvent("ext.gone", json("eps" to JSONArray(eps)))
     }
 
@@ -1060,16 +1118,19 @@ class Extensions(private val host: Host) {
             }
         }
         val tabId = (view as? TabWebView)?.tabId
-        // The message goes to the core as the frame wrote it (one copy, no rebuild); the core
-        // drops the token it carries (`extensionRuntime.onMessage`).
-        val event = StringBuilder(text.length + 128)
-            .append("{\"ep\":").append(JSONObject.quote(ep))
-            .append(",\"tabId\":").append(if (tabId == null) "null" else JSONObject.quote(tabId))
-            .append(",\"top\":").append(isMainFrame)
-            .append(",\"origin\":").append(JSONObject.quote(origin.toString()))
-            .append(",\"message\":").append(text)
-            .append('}')
-        chromeEvent("ext.message", Host.RawJson(event.toString()))
+        // To the core through the flood guard: now, at a later frame, folded into a newer action
+        // update, or refused with an answer to the frame (see BridgeForward).
+        val endpoint = endpoints[ep]
+        val source = BridgeForward.Source(
+            ep,
+            endpoint?.extensionId ?: message.str("ext"),
+            endpoint?.context ?: kind,
+            endpoint?.url ?: message.str("url")
+        ) { reply ->
+            if (debug) recordReply(ep, reply)
+            runCatching { proxy.postMessage(reply) }
+        }
+        forward.offer(source, message, text, tabId, isMainFrame, origin.toString())
     }
 
     /**

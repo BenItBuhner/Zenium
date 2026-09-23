@@ -806,8 +806,8 @@
         "DEMO_THEME": "light"
       },
       "timeout": 900,
-      "estimate": 3.5,
-      "note": "The workflow runs light and dark; the nightly runs light. The driver turns the radios off and on (svc wifi / svc data; back on in its finally) and ends the renderer through the debug hook; the hung scenes wait out WebView's ~5 s and the prompt's 15 s grace."
+      "estimate": 4.5,
+      "note": "The workflow runs light and dark; the nightly runs light. The driver turns the radios off and on (svc wifi / svc data; back on in its finally) and ends the renderer through the debug hook; the hung scenes wait out WebView's ~5 s and the prompt's 15 s grace; the forced-race scene (9) adds two more renderer ends, the saved list's 3 s write and a 3.5 s hold on the crash page's document."
     },
     {
       "id": "passwords-engine",
