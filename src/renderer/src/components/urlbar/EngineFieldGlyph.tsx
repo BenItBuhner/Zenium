@@ -14,10 +14,11 @@ const loaded = new Set<string>()
 
 /**
  * The mark at the start of a field for the engine it searches with (NTP-09; Chrome's search
- * engine logo, Edge's Bing mark): the engine's favicon at 20 – v2 §9.29's field glyph – where
- * `engineFieldFavicon` gives one, which is when the engine is not the vendor's default; else the
- * slot's own fallback, the one it always showed: the omnibox field's 28 px letter tile (`tile`)
- * or the new tab field's magnifier (`magnifier`). The favicon takes the slot once it has loaded
+ * engine logo, Edge's Bing mark): the engine's favicon at 20 – v2 §6's leading glyph on the
+ * omnibox, the new tab page's resting field and the morph's double, whichever engine it is, the
+ * vendor's default included – where `engineFieldFavicon` gives one; else the slot's own
+ * fallback, the one it always showed: the omnibox field's 28 px letter tile (`tile`) or the new
+ * tab field's magnifier (`magnifier`). The favicon takes the slot once it has loaded
  * – the fallback is painted until then and stays if the image never comes, so the slot is never
  * blank (as a broken favicon leaves Chrome's globe) – arriving on a 120 ms opacity fade in place
  * (§11.4); an address that loaded once this session shows at once. The favicon keeps its own

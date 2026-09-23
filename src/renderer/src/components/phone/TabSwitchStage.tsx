@@ -1,10 +1,11 @@
 import type { CSSProperties, JSX } from 'react'
 import { useLayoutEffect, useRef } from 'react'
-import type { Rect, UIState } from '@shared/types'
+import type { Folder, Rect, UIState } from '@shared/types'
 import { stageStore } from '@renderer/lib/gestures/stage'
 import type { TabSwitchState } from '@renderer/lib/gestures/stage'
-import { type GroupColorVars, groupColorVars, groupOf } from '@renderer/lib/groups'
+import { groupColorVars, groupOf } from '@renderer/lib/groups'
 import { activeTab } from '@renderer/lib/selectors'
+import { GroupGlyph } from '../GroupGlyph'
 import { TabPreview } from './TabPreview'
 
 interface Props {
@@ -48,12 +49,7 @@ export function TabSwitchStage({ state, area }: Props): JSX.Element {
     if (!tab) continue
     const group = groupOf(state, tab)
     cards.push(
-      <StageCard
-        key={tab.id}
-        index={index}
-        area={area}
-        group={group ? { name: group.name, colorVars: groupColorVars(group.color) } : null}
-      >
+      <StageCard key={tab.id} index={index} area={area} group={group}>
         <TabPreview tab={tab} cover={tab.id === current} sharp />
       </StageCard>
     )
@@ -90,7 +86,7 @@ function StageCard({
 }: {
   index: number
   area: Rect
-  group: { name: string; colorVars: GroupColorVars } | null
+  group: Folder | null
   children: JSX.Element
 }): JSX.Element {
   const card = useRef<HTMLDivElement>(null)
@@ -135,9 +131,9 @@ function StageCard({
           ref={ribbon}
           className="zen-group-ribbon absolute inset-x-0 top-0 flex h-7 items-center gap-2 px-3 text-[12px] font-semibold"
           data-group-rgb=""
-          style={{ opacity: at.ribbon, ...group.colorVars } as CSSProperties}
+          style={{ opacity: at.ribbon, ...groupColorVars(group.color) } as CSSProperties}
         >
-          <span className="zen-group-dot h-2 w-2 shrink-0 rounded-full" />
+          <GroupGlyph folder={group} />
           <span className="min-w-0 truncate">{group.name}</span>
         </div>
       )}

@@ -2354,12 +2354,17 @@ class ChromeA11yDemo : DemoHarness(
             })()
         """.trimIndent()
 
-        /** A group card's emoji badge: its computed font-size (px, after the text zoom), its box width, its spill (scroll - client) in width and height. */
+        /**
+         * A group card's own-icon glyph (the one group glyph, `.zen-group-row-glyph`, its emoji in
+         * `.zen-group-row-icon`): the icon's computed font-size (px, after the text zoom), the
+         * glyph's 16 box width, and the box's spill (scroll - client) in width and height.
+         */
         val BADGE_JS = """
             (function () {
-              var e = document.querySelector('.zen-group-badge');
+              var e = document.querySelector('.zen-group-header .zen-group-row-icon');
               if (!e) return '';
-              return [parseFloat(getComputedStyle(e).fontSize), e.getBoundingClientRect().width, e.scrollWidth - e.clientWidth, e.scrollHeight - e.clientHeight].join(',');
+              var box = e.parentElement;
+              return [parseFloat(getComputedStyle(e).fontSize), box.getBoundingClientRect().width, box.scrollWidth - box.clientWidth, box.scrollHeight - box.clientHeight].join(',');
             })()
         """.trimIndent()
 
