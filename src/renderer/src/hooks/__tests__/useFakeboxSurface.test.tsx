@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, useRef, type JSX } from 'react'
+import { act, createRef, useLayoutEffect, useRef, type JSX, type RefObject } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 vi.mock('@renderer/lib/api', () => ({ cmd: vi.fn(async () => null), run: vi.fn() }))
@@ -17,8 +17,9 @@ const { useFakeboxSurface } = await import('../useFakeboxSurface')
  * runtime, are `lib/__tests__/fakeboxSurfaces.test.ts`'s.
  */
 
-function Surface(): JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
+function Surface({ surfaceRef }: { surfaceRef?: RefObject<HTMLDivElement | null> }): JSX.Element {
+  const own = useRef<HTMLDivElement>(null)
+  const ref = surfaceRef ?? own
   useFakeboxSurface(ref)
   return <div ref={ref} className="surface" />
 }
@@ -27,11 +28,11 @@ let root: Root | null = null
 let mount: HTMLElement | null = null
 const releases: Array<() => void> = []
 
-function render(): HTMLElement {
+function render(tree: JSX.Element = <Surface />): HTMLElement {
   mount = document.createElement('div')
   document.body.appendChild(mount)
   root = createRoot(mount)
-  act(() => root!.render(<Surface />))
+  act(() => root!.render(tree))
   return mount.querySelector<HTMLElement>('.surface')!
 }
 
@@ -73,6 +74,25 @@ const values = (el: HTMLElement): [string, string] => [
   el.style.getPropertyValue(FAKEBOX_PILL_VAR)
 ]
 
+/**
+ * Mounted after a surface in the same commit: reports what a layout effect of its own finds on
+ * the surface – React runs the layout effects of one commit in tree order, the surface's before
+ * this one's, and every one of them before the browser paints, while a passive effect (`useEffect`)
+ * runs after the commit, after this reads, and may run after the paint.
+ */
+function Probe({
+  of,
+  seen
+}: {
+  of: RefObject<HTMLElement | null>
+  seen: (found: [string, string]) => void
+}): null {
+  useLayoutEffect(() => {
+    seen(values(of.current!))
+  }, [of, seen])
+  return null
+}
+
 afterEach(() => {
   if (root) act(() => root!.unmount())
   root = null
@@ -95,10 +115,21 @@ describe('useFakeboxSurface', () => {
     expect(values(el)).toEqual(['', ''])
   })
 
-  it('an element mounting under a page part way through the scrub carries the pose before it paints (a layout effect)', () => {
+  it('an element mounting under a page part way through the scrub carries the pose before it paints (a layout effect): a layout effect mounted beside it in the same commit already reads the values', () => {
     const p = page()
     p.scrub(0.85)
-    const el = render()
+    const surface = createRef<HTMLDivElement>()
+    const seen: Array<[string, string]> = []
+    const el = render(
+      <>
+        <Surface surfaceRef={surface} />
+        <Probe of={surface} seen={(found) => seen.push(found)} />
+      </>
+    )
+    // Were the hook a passive effect, the probe's layout effect would find the element bare
+    // ('' / '') and the values would arrive only after the commit – a frame of 0 on the surface.
+    expect(seen).toEqual([['0.0000', '0.5000']])
+    expect(surface.current).toBe(el)
     expect(values(el)).toEqual(['0.0000', '0.5000'])
   })
 

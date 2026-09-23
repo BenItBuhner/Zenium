@@ -254,9 +254,11 @@ describe('the readers (the stylesheets) and the writer (the controller)', () => 
  * controller's, the box the layer's) – carries a `ref` its component passes to
  * `useFakeboxSurface`, an identifier or a callback assigning the element to it (`(el) => {
  * barRef.current = el; … }`, inline or through `useCallback`: the bar's shape, with its other
- * bindings); and each call of the hook is on such an element. The pairing is per component.
+ * bindings); and each call of the hook is on such an element. The pairing is per component,
+ * over every `.tsx` of the renderer (`src/renderer/src`, its tests aside) – not the components'
+ * directory alone, so an element rendered elsewhere later fails the audit rather than escapes it.
  */
-const COMPONENTS = resolve(__dirname, '../../components')
+const RENDERER = resolve(__dirname, '../..')
 /**
  * The readers' subjects by the class tokens an element must render, all of them: the pill's
  * slot reads only as the well (`.zen-phone-pill.zen-pill-away`; the carried pill's ghost is a
@@ -430,10 +432,17 @@ function inspect(path: string): { elements: Element[]; calls: Call[] } {
 }
 
 describe('the components register the elements the stylesheets read the values on', () => {
-  const files = sourceFiles(COMPONENTS).map((path) => ({
-    path: relative(COMPONENTS, path),
+  const files = sourceFiles(RENDERER).map((path) => ({
+    path: relative(RENDERER, path),
     ...inspect(path)
   }))
+
+  it('the audit covers the whole renderer tree, the components and what is rendered outside them', () => {
+    expect(files.length).toBeGreaterThan(200)
+    expect(files.some((f) => f.path.startsWith('components/'))).toBe(true)
+    expect(files.some((f) => !f.path.startsWith('components/'))).toBe(true)
+    expect(files.some((f) => f.path.includes('__tests__'))).toBe(false)
+  })
 
   it('every element by one of the classes carries a ref its component passes to useFakeboxSurface, and every call is on one', () => {
     const faults: string[] = []

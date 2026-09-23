@@ -232,6 +232,10 @@ export function registerFakebox(
   paint()
   watch()
   return () => {
+    // Released before the guard, whichever registration stands: React runs an effect's cleanup
+    // before its next setup, so a page re-registering the same field and column (its tab or dock
+    // changed) releases them here and registers them again at once, written by the new paint();
+    // a registration another has replaced releases only its own, gone elements.
     releaseField()
     releaseScroller?.()
     if (registration !== mine) return
