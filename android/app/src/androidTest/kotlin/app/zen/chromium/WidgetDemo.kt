@@ -2,7 +2,9 @@ package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
 import android.app.Activity
+import android.app.ActivityOptions
 import android.app.Application
+import android.app.PendingIntent
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
@@ -286,6 +288,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             val cells = FrameLayout(activity)
             val frameWidth = dp(FRAME_WIDTH_DP)
             val frameHeight = dp(FRAME_HEIGHT_DP)
+            val frameTop = (this@WidgetDemo.height * FRAME_TOP_SHARE).roundToInt()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 hostView?.updateAppWidgetSize(Bundle(), listOf(SizeF(FRAME_WIDTH_DP.toFloat(), FRAME_HEIGHT_DP.toFloat())))
             } else {
@@ -297,7 +300,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
             backdrop.addView(
                 cells,
                 FrameLayout.LayoutParams(frameWidth, frameHeight, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
-                    topMargin = (height * FRAME_TOP_SHARE).roundToInt()
+                    topMargin = frameTop
                 }
             )
             content.addView(backdrop, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -468,7 +471,7 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     private fun coldLanding(
         face: Face,
         landing: String,
-        send: () -> Unit = { SearchWidgetProvider.pendingIntent(app, face).send() },
+        send: () -> Unit = { sendAsTheLauncher(SearchWidgetProvider.pendingIntent(app, face)) },
         landed: () -> String?
     ) {
         finding("\ncold $landing landing: preparing the previous tab")
@@ -488,33 +491,60 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
         started.send()
         val created = started.awaitMain(20_000)
         expect("the intent creates one MainActivity (a cold start)", created is MainActivity)
-        (created as? MainActivity)?.let { activity = it }
-        expect("the new activity brings a host of its own: the core boots anew", created != null && host !== hostBefore)
-        val result = if (created != null) landed() else null
+        if (created !is MainActivity) {
+            // Nothing came up: the scenes after this one need a browser, so launch it plainly.
+            grabber.halt()
+            finding("  cold $landing: no MainActivity within 20 s of the send (${grabber.frames().size} frames read); relaunching for the next scene")
+            launch()
+            ensureForeground()
+            backToThePrevious(null)
+            return
+        }
+        activity = created
+        expect("the new activity brings a host of its own: the core boots anew", host !== hostBefore)
+        val result = landed()
         val landedAt = SystemClock.uptimeMillis() - t0
         val cpuAfter = mainThreadCpuMs()
         SystemClock.sleep(700)
         grabber.halt()
         val frames = grabber.frames()
         expect("the $landing landing is up after the cold start ($result)", result != null)
+        if (!awaitChromeUp(15_000)) {
+            // The core never answered in the new activity: nothing below can be read.
+            finding("  cold $landing: the chrome never came up in the new activity (${frames.size} frames read)")
+            grabber.sheet("frames-cold-$landing", frames, "cold $landing landing: send at 0 ms, the chrome never came up")
+            ensureForeground()
+            return
+        }
         val tab = activeCoreTab()
         val state = coreState()
         val previous = state.optJSONObject("tabs")?.optJSONObject(PREVIOUS_TAB)
-        expect("the active tab is the landing's own, not the restored one", tab != null && tab.optString("id") != PREVIOUS_TAB && tab.optBoolean("fromIntent"))
-        expect("the previous tab is restored behind it, not closed", previous != null && previous.optString("url").endsWith(PREVIOUS_PATH))
         val flashes = frames.filter { it.orange >= FLASH_SHARE }
-        expect("no frame from the send to the landing shows the previous tab's page (${frames.size} frames read)", frames.isNotEmpty() && flashes.isEmpty())
         val previousView = onMain { host.tabs.get(PREVIOUS_TAB) }
         val previousShown = onMain { previousView?.isShown == true && previousView.visibility == View.VISIBLE }
-        expect("the previous tab's view is not the one shown at the landing", !previousShown)
+        if (result == PRIVATE_TOAST) {
+            // No profiles on this WebView: there is nothing private to land in, so the restored tab
+            // is the right page to paint, under the toast that says why (the same as the warm mask).
+            expect("with no profiles the cold private landing stays on the restored tab and says so", tab != null && tab.optString("id") == PREVIOUS_TAB)
+            finding("  the frame read is not applied to this landing: the restored tab is the page to paint here")
+        } else {
+            expect("the active tab is the landing's own, not the restored one", tab != null && tab.optString("id") != PREVIOUS_TAB && tab.optBoolean("fromIntent"))
+            expect("no frame from the send to the landing shows the previous tab's page (${frames.size} frames read)", frames.isNotEmpty() && flashes.isEmpty())
+            expect("the previous tab's view is not the one shown at the landing", !previousShown)
+        }
+        expect("the previous tab is restored behind it, not closed", previous != null && previous.optString("url").endsWith(PREVIOUS_PATH))
         finding(
-            "  cold $landing: created ${created != null}, landed ${result ?: "no"} at +$landedAt ms wall, main thread CPU over it ${cpuMs(cpuBefore, cpuAfter)}, " +
+            "  cold $landing: landed ${result ?: "no"} at +$landedAt ms wall, main thread CPU over it ${cpuMs(cpuBefore, cpuAfter)}, " +
                 "frames ${frames.size} (first at +${frames.firstOrNull()?.at ?: "-"} ms, last at +${frames.lastOrNull()?.at ?: "-"} ms, max orange ${"%.2f".format(frames.maxOfOrNull { it.orange } ?: 0f)}), " +
                 "tabs ${tabsBefore} -> ${state.optJSONObject("tabs")?.length() ?: 0}, active ${describeActive()}, previous view ${describeView(previousView)}, " +
                 "previous page requests since the send ${server.hits(PREVIOUS_PATH) - hitsBefore}"
         )
-        for (flash in flashes) finding("    FLASH at +${flash.at} ms: orange ${"%.2f".format(flash.orange)}")
-        grabber.sheet("frames-cold-$landing", frames, "cold $landing landing: send at 0 ms, landed at +$landedAt ms")
+        for (flash in flashes) finding("    ${if (result == PRIVATE_TOAST) "restored page" else "FLASH"} at +${flash.at} ms: orange ${"%.2f".format(flash.orange)}")
+        grabber.sheet(
+            "frames-cold-$landing",
+            frames,
+            "cold $landing landing: send at 0 ms, landed at +$landedAt ms" + (if (result == PRIVATE_TOAST) " (no profiles: the restored tab under the toast)" else "")
+        )
         shot("0${5 + COLD_ORDER.indexOf(landing)}-cold-$landing")
         leaveLanding(result)
         backToThePrevious(tab?.optString("id"))
@@ -538,10 +568,11 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     /** A private tab active, or the toast on a WebView without profiles: the private landing's word. */
     private fun privateLanded(timeoutMs: Long): String? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
+        if (!awaitChromeUp(timeoutMs)) return null
         while (SystemClock.uptimeMillis() < deadline) {
             if (activeCoreTab()?.optString("containerId") == Profiles.PRIVATE_CONTAINER) return PRIVATE_TAB
             if (toastSeen(PRIVATE_UNAVAILABLE_TOAST)) return PRIVATE_TOAST
-            SystemClock.sleep(200)
+            SystemClock.sleep(100)
         }
         return null
     }
@@ -665,6 +696,23 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     /** The system stamps a manifest shortcut's intent with CLEAR_TASK and TASK_ON_HOME (ShortcutParser); the same here. */
     private fun fireAsTheLauncher(template: Intent) {
         app.startActivity(Intent(template).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_TASK_ON_HOME))
+    }
+
+    /**
+     * The widget's PendingIntent sent as a launcher sends it. Since Android 14 the SENDER's own
+     * standing counts towards a background start only when its send says so
+     * (`setPendingIntentBackgroundActivityStartMode`, as Launcher3's does); the driver's is the
+     * instrumentation's, the launcher's its visible window. The first run sent it bare and the
+     * platform logged 'Background activity launch blocked … without BAL hardening this activity
+     * start would be allowed'.
+     */
+    private fun sendAsTheLauncher(pendingIntent: PendingIntent) {
+        val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ActivityOptions.makeBasic()
+                .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                .toBundle()
+        } else null
+        pendingIntent.send(app, 0, null, null, null, null, options)
     }
 
     // --- what an intent started ------------------------------------------------------------------
@@ -967,6 +1015,12 @@ class WidgetDemo : DemoHarness("widget-demo-state.json", "widget-$THEME", "widge
     private fun qrPhase(): String = jsString("(function(){var s=document.querySelector('[data-testid=qr-sheet]');return s?(s.dataset.qrPhase||''):''})()")
 
     private fun awaitQrPhase(phases: Set<String>, timeoutMs: Long): Boolean = awaitTrue(timeoutMs) { qrPhase() in phases }
+
+    /** The chrome answers with its bridge and its stores up: a core read ([coreInvoke]) can be made without a 15 s timeout. */
+    private fun chromeUp(): Boolean =
+        jsString("(function(){return (window.zen&&window.zen.invoke&&window.__zenStores)?'up':''})()") == "up"
+
+    private fun awaitChromeUp(timeoutMs: Long): Boolean = awaitTrue(timeoutMs) { chromeUp() }
 
     private fun privateTabsCapability(): Boolean =
         runCatching { coreState().getJSONObject("capabilities").optBoolean("privateTabs") }.getOrDefault(false)
