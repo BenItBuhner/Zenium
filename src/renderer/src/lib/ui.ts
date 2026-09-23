@@ -2243,8 +2243,9 @@ export function closePrintPreview(): void {
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
  * blocked pop-ups popover, an autofill prompt in its popover form, a menu the renderer draws,
- * or a sign-in or certificate dialog. The page behind them is captured all the same (they
- * overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
+ * the collapsed rail's flyout (`useRailFlyout` – the sidebar itself, §9.20's cascade beside
+ * the rail), or a sign-in or certificate dialog. The page behind them is captured all the same
+ * (they overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
  * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5),
  * so the same holds under the site-information sheet and the prompt sheet on a phone, and the
  * security prompt's dim is the frame dialog host's scrim alone (v2 §9.5, §11.5: one dim layer),
@@ -2276,6 +2277,11 @@ export function panelAloneOverContent(ui: UiState): boolean {
       // it undimmed), a host's context menu – is the `.zen-v2-menu` popover on a mouse and a
       // bottom sheet with its own scrim on touch: no dim of the frame's either way.
       ui.menu !== null ||
+      // The rail's flyout stands over the page's picture as the sidebar stands beside the
+      // page: no scrim (Edge's and Zen's hover reveals leave the page as it was). The flag is
+      // `pageHidden`'s, not `overlayCoversContent`'s, so the reduced check below needs no
+      // clearing of it.
+      ui.railFlyout ||
       popover) &&
     !overlayCoversContent({
       ...ui,
