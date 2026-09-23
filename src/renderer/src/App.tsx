@@ -483,8 +483,11 @@ function fullscreenBinding(state: UIState): string {
   return formatBinding(shortcut?.binding ?? shortcut?.extraBindings[0] ?? null, state.platform)
 }
 
-/** Keys the renderer handles itself (main handles the shortcut table). */
-function useGlobalKeys(state: UIState): void {
+/**
+ * Keys the renderer handles itself (main handles the shortcut table): the chrome's Escape stack.
+ * Exported for its test (`__tests__/escapeStack.test.tsx`).
+ */
+export function useGlobalKeys(state: UIState): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
