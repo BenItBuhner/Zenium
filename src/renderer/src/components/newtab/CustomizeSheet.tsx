@@ -120,7 +120,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
       title={{ pose: 'header', text: 'New tab page' }}
       onClose={closeCustomize}
     >
-      <div className="zen-ntp-customize flex flex-col pb-4">
+      <div className="zen-ntp-customize flex flex-col pb-1">
         <Section title="Layout">
           <div role="radiogroup" aria-label="Layout" className="zen-ntp-preset-grid">
             {NEW_TAB_PRESETS.map((preset) => (

@@ -863,8 +863,11 @@ describe('removing a suggestion by touch (OMN-17)', () => {
       ['Remove', true]
     ])
     expect(sheet.querySelector('.zen-sheet-item')).toBeNull()
-    // Cancel takes the focus as the sheet opens, so a stray Enter removes nothing (§9.22).
-    expect(document.activeElement).toBe(promptButton('Cancel'))
+    // The sheet itself takes the focus as it opens – a title-and-notice sheet holds its
+    // container, named by the question and described by the entry; Cancel first is §9.22's
+    // named failure – so a stray Enter removes nothing.
+    expect(document.activeElement).toBe(sheet)
+    expect(sheet.getAttribute('aria-describedby')).toBe(block.querySelector('p')!.id)
     // The omnibox under the prompt is inert while it stands (§9.22).
     expect(omnibox(el).hasAttribute('inert')).toBe(true)
     expect(commands()).not.toContain('urlbar.submit')

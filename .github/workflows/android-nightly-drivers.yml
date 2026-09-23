@@ -26,10 +26,20 @@ name: Android nightly drivers
 # carry the run attempt so a re-run of a failed shard never uploads a name twice, and the summary
 # keeps the latest attempt of each). The run fails when any driver failed or left no result: red is
 # the signal. Nothing here touches the per-PR demo workflows.
+#
+# The slot is 03:17 UTC, off the hour on purpose. The schedule's first slot, 03:00 UTC on
+# 2026-09-23 with the workflow active on main since 15:25 the day before (#332), never fired: no
+# schedule run exists for it. GitHub's own note on the event: it "can be delayed during periods of
+# high loads of GitHub Actions workflow runs. High load times include the start of every hour. If
+# the load is sufficiently high enough, some queued jobs may be dropped. To decrease the chance of
+# delay, schedule your workflow to run at a different time of the hour." A sweep outside the
+# schedule goes through workflow_dispatch below (the shard choice, the ref); that door opens only
+# to a token with write access on the repository – the agents' integration token is answered
+# 403 – so the repository owner dispatches, nothing else does.
 on:
   schedule:
-    # 03:00 UTC, once.
-    - cron: '0 3 * * *'
+    # 03:17 UTC, once – off the hour; the header says why.
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       shard:

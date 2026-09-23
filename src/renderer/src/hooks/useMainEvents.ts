@@ -4,6 +4,7 @@ import { announce, startAnnouncer, zoomAnnouncement } from '@renderer/lib/announ
 import { installedMessage } from '@shared/webApp'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
+import { bookmarkEditUndone, showBookmarkDeleted } from '@renderer/lib/bookmarkUndo'
 import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
@@ -13,7 +14,7 @@ import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
-import { focusPane, pageTookKeyboard } from '@renderer/lib/panes'
+import { focusPane, pageHandedKeyboard, pageTookKeyboard } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
@@ -276,6 +277,12 @@ export function useMainEvents(): void {
         void openReaderPreferences(tabId)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
+      // A delete's toast with Undo (bookmarks-31), on every layout – the phone's tab row's Remove
+      // Bookmark speaks through it too. The phone's panels keep their own: the delete itself
+      // waits out the toast there (`removeWithUndo`) and commits `quiet`, so the core says nothing.
+      onEvent('bookmark.deleted', (removal) => showBookmarkDeleted(removal)),
+      // The delete undone from the manager (Ctrl+Z) or another window: its toast goes down.
+      onEvent('bookmark.undone', (undone) => bookmarkEditUndone(undone)),
       // Take Screenshot's picture is in the gallery (SH-07): the preview card in the toast's slot
       // on the layouts with the message layer; the sidebar layout's narrow well takes a toast
       // with Share for its one action.
@@ -410,6 +417,9 @@ export function useMainEvents(): void {
       onEvent('view.drawn', ({ tabId, visible }) => {
         if (followsCover()) onViewDrawn(tabId, visible)
       }),
+      // A hardware keyboard's Tab past the page's end (Shift+Tab past its start) came to the
+      // chrome: the focus lands on its first (last) control, ringed as the keyboard's (A11Y-09).
+      onEvent('focus.fromPage', ({ direction }) => pageHandedKeyboard(direction)),
       // The host drew a page view at a new size: the return from a fullscreen lands on it.
       onEvent('view.sized', ({ tabId, width, height }) => noteViewSized(tabId, width, height)),
       // Tab card pictures (lib/thumbnails.ts): the host's captures, the tabs' navigations and

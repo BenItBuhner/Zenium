@@ -189,7 +189,7 @@ function SheetMenu({ items, title, onClose }: Props): JSX.Element {
         ) : undefined
       }
     >
-      <div className="zen-v2 flex flex-col pb-1">
+      <div className="zen-v2 flex flex-col pb-2">
         {items.map((entry) =>
           isSeparator(entry) ? (
             <div key={entry.id} className="zen-sheet-sep" role="separator" />

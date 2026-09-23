@@ -163,6 +163,24 @@ class V2TokensPinTest {
         // §9.7: the hairline under a scrolled title block – the border ink, the same dp, on the grip's 120 ms.
         assertTrue(css.text.contains("box-shadow: 0 ${PromptSheetSpec.HAIRLINE_DP}px 0 var(--v2-border);"))
         assertTrue(css.rule(".zen-sheet-grip").contains("transition: box-shadow ${PromptSheetSpec.HAIRLINE_FADE_MS}ms var(--zen-ease);"))
+        // §9.7 in the native chassis: its two dividers are one rule on the body scroller's state – the
+        // block's line while content has scrolled under it, the footer's mirror while content remains
+        // beneath (the platform's `canScrollVertically`, read on every scroll and layout) – each a
+        // `Hairline` at [PromptSheetSpec.hairlinePx] in the border ink on the same 120 ms, a body that
+        // fits drawing neither. (The web chassis fades the body's end instead – `BottomSheet.tsx`'s
+        // `useFadeEdges`, `edges: 'end'` – the line its footer owes when it takes §9.7's amendment.)
+        val chassis = File(root, "android/app/src/main/kotlin/app/zen/chromium/NativePromptSheet.kt").readText()
+        val lines = Regex("""val scroller = BodyScroller \{ scroller ->\s*underBlock\.show\(scroller\.canScrollVertically\(-1\)\)\s*overFooter\.show\(scroller\.canScrollVertically\(1\)\)\s*\}""")
+        assertTrue("both dividers read the scroller's state, the block's at -1 and the footer's at 1", lines.containsMatchIn(chassis))
+        for (edge in listOf("underBlock" to "Gravity.TOP", "overFooter" to "Gravity.BOTTOM"))
+            assertTrue("${edge.first} is a hairline over the body's edge", chassis.contains("frame.addView(${edge.first}, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline, ${edge.second}))"))
+        val hairlineView = Regex("""private inner class Hairline : View\(context\) \{([\s\S]*?)\n    \}""").find(chassis)?.groupValues?.get(1) ?: error("NativePromptSheet.kt has no Hairline view")
+        assertTrue("the lines are the border ink", hairlineView.contains("setBackgroundColor(ink.border)"))
+        assertTrue("the lines come and go on the hairline's fade", hairlineView.contains("setDuration(PromptSheetSpec.HAIRLINE_FADE_MS.toLong())"))
+        val scroller = Regex("""private inner class BodyScroller\(([\s\S]*?)\n    \}""").find(chassis)?.groupValues?.get(1) ?: error("NativePromptSheet.kt has no BodyScroller")
+        for (hook in listOf("onScrollChanged", "onLayout"))
+            assertTrue("the scroller reports its edges after $hook", scroller.contains("override fun $hook(") && scroller.contains("onEdges(this)"))
+        assertEquals("the hairline is one dp on this chassis, as the chrome's 1 CSS px", "private val hairline = PromptSheetSpec.hairlinePx(density)", Regex("""private val hairline = [^\n]+""").find(chassis)!!.value)
         // §9.12: the label 4 above its field (`.zen-bm-label`, the one §9.12 label rule in main.css).
         assertEquals(PromptSheetSpec.LABEL_GAP_DP, px(css.rule(".zen-bm-label"), "gap"))
         // §9.11 / §9.25: the footer's 16 above the peers, the peers' gap, the gutter at its sides;
@@ -249,17 +267,38 @@ class V2TokensPinTest {
     }
 
     /**
-     * §9.25's formula, not the CSS as it stands: the footer's buttons stand 16 above the host's
+     * The native sheets draw the one edge: the prompt chassis and the custom tab's menu stroke
+     * their sheet with [SheetEdge] at [PromptSheetSpec.hairlinePx] – one dp round the top and the
+     * sides, none along the bottom, as `.zen-sheet`'s border – and their separators stand the same
+     * dp tall; never a `GradientDrawable.setStroke(1, …)`, one physical pixel on all four sides
+     * (0.38 dp on the CI emulator, a run along the screen's edge). Read from the sources, as the
+     * CSS is; a sheet that leaves the chassis's edge fails here.
+     */
+    @Test
+    fun theNativeSheetsStrokeTheChassisHairline() {
+        for (name in listOf("NativePromptSheet", "CustomTabMenuSheet")) {
+            val source = File(root, "android/app/src/main/kotlin/app/zen/chromium/$name.kt").readText()
+                .replace(Regex("""/\*[\s\S]*?\*/"""), "")
+                .replace(Regex("""//[^\n]*"""), "")
+            assertTrue("$name reads its hairline from PromptSheetSpec.hairlinePx", source.contains("private val hairline = PromptSheetSpec.hairlinePx(density)"))
+            assertTrue("$name draws SheetEdge at the hairline and the sheet's radius", source.contains("SheetEdge(hairline, dp(PromptSheetSpec.SHEET_RADIUS_DP),"))
+            assertTrue("$name strokes no one-physical-pixel edge", !Regex("""setStroke\(1,""").containsMatchIn(source))
+            assertTrue("$name draws no one-physical-pixel line", !Regex("""LayoutParams\([A-Za-z.]*MATCH_PARENT, 1\)""").containsMatchIn(source))
+        }
+    }
+
+    /**
+     * §9.25's formula, and the CSS with it: the footer's buttons stand 16 above the host's
      * safe-area inset – the gutter plus the inset the host reports, with its three hosts: 16 where
      * it reports none (the preview host), 40 over a 24 dp gesture bar, 64 over a 48 dp three-button
      * bar. The one native constant is the gutter; the sheet's column pads the inset under it,
      * through its edge, so the hairline's sides run through the bar to the screen's bottom.
      *
-     * KNOWN DRIFT, the web chassis's: `.zen-sheet-footer` stands 8 over `BottomSheet.tsx`'s
-     * `Math.max(8, insets.bottom)` – `8 + max(8, inset)`, the inset in place of the 8 floor rather
-     * than added to the 16 – equal to the formula only where the host reports none (16) and 8
-     * short over a real inset (32 over a 24 bar). Android primitives pass 4 corrects that line; the
-     * drift assertions below fail when it lands, and this pin flips to equality with the CSS then.
+     * The web chassis draws the same: `.zen-sheet-footer`'s 8 under the buttons over
+     * `BottomSheet.tsx`'s own 8 (`SHEET_EDGE_PAD`) make the 16, and the sheet pads the inset in
+     * full on top of it (`SHEET_EDGE_PAD + insets.bottom`) – Android primitives pass 4's line, in
+     * place of the `8 + max(8, inset)` that put the inset where the 8 stood (32 over a 24 bar).
+     * Read from the CSS and BottomSheet.tsx, and held equal to the formula on every host.
      */
     @Test
     fun theFooterStandsSixteenAboveTheHostsInset() {
@@ -267,16 +306,26 @@ class V2TokensPinTest {
         for ((inset, edge) in listOf(0 to 16, 24 to 40, 48 to 64)) {
             assertEquals("inset $inset: §9.25's 16 + inset", edge, PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, inset))
         }
-        // The web chassis as it stands, read from the CSS and BottomSheet.tsx.
+        // The web chassis, read from the CSS and BottomSheet.tsx: the footer's bottom padding over the
+        // sheet's own pad, the inset added to both.
         val footer = css.rule(".zen-sheet-footer")
         val cssPadding = Regex("""^(\d+)px (\d+)px (\d+)px$""").find(declaration(footer, "padding"))!!.groupValues[3].toInt()
         val bottomSheet = File(root, "src/renderer/src/components/sheet/BottomSheet.tsx").readText()
-        val cssFloor = Regex("""paddingBottom: Math\.max\((\d+), insets\.bottom\)""").find(bottomSheet)?.groupValues?.get(1)?.toInt()
-            ?: error("BottomSheet.tsx no longer pads Math.max(floor, insets.bottom): primitives pass 4 has landed – flip this pin to equality with the CSS")
-        val web = { inset: Int -> cssPadding + maxOf(cssFloor, inset) }
-        assertEquals("known drift: the web chassis's 8 over an 8 floor", 8 to 8, cssPadding to cssFloor)
-        assertEquals("no inset: the web chassis meets the formula", PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, 0), web(0))
-        assertEquals("a 24 bar: the web chassis 8 short – primitives pass 4's line", PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, 24) - 8, web(24))
+        val edgePad = Regex("""export const SHEET_EDGE_PAD = (\d+)""").find(bottomSheet)?.groupValues?.get(1)?.toInt()
+            ?: error("BottomSheet.tsx no longer names SHEET_EDGE_PAD: read the sheet's own bottom padding from wherever it moved to")
+        assertTrue(
+            "BottomSheet.tsx pads the sheet SHEET_EDGE_PAD + insets.bottom, the inset added to the 16 (§9.25), not in place of a floor",
+            Regex("""paddingBottom: SHEET_EDGE_PAD \+ insets\.bottom""").containsMatchIn(bottomSheet)
+        )
+        assertEquals("the footer's 8 over the sheet's 8 is the gutter", PromptSheetSpec.FOOTER_BOTTOM_DP, cssPadding + edgePad)
+        for ((inset, edge) in listOf(0 to 16, 24 to 40, 48 to 64)) {
+            assertEquals("inset $inset: the web chassis meets §9.25's formula", PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, inset), cssPadding + edgePad + inset)
+            assertEquals("inset $inset: the two chassis agree", edge, cssPadding + edgePad + inset)
+        }
+        // The two Settings sheets whose actions draw inline in the body (a prompt's, a field sheet's)
+        // stand on the body's own padding over the chassis's pad: the same 16 + inset, not a second 8.
+        val settingsBody = px(css.rule(".zen-settings-sheet-body"), "padding-bottom")
+        assertEquals("a Settings sheet's inline actions meet the formula", PromptSheetSpec.FOOTER_BOTTOM_DP, settingsBody + edgePad)
     }
 
     // --- the stylesheet, read ------------------------------------------------------------------
