@@ -1,0 +1,1097 @@
+package app.zen.chromium
+
+import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Notification
+import android.app.NotificationManager
+import android.content.Intent
+import android.graphics.Rect
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.service.notification.StatusBarNotification
+import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.webkit.WebViewCompat
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+
+/**
+ * Records the private and security surfaces of W5-7 on the phone (ERR-09, TAB-03, INC-03,
+ * NOT-07), in both colour schemes: the pill's one glyph over a plain http page – the open lock
+ * in the warn ink, "Not secure", in the lock's own room (Bennett's OMN-02 ruling: the chip room
+ * is neither moved nor widened) – and the site-information sheet it opens, whose title block
+ * says the same word and whose Connection level explains what "not secure" means and what not
+ * to enter (a certificate error's triangle and its sheet as well, when the network lets the
+ * expired-certificate page load); the Private pane with nothing in it, Chrome's words about what
+ * private does and does not do on a §9.33 message card; the private new tab page's Block
+ * third-party cookies switch under a finger, then the engine's answer read per WebView – the
+ * private views' switch alone moves, a regular tab's WebView is never asked – and a tracker's
+ * cookie kept out of the private jar while the default jar has it; the session's card (its
+ * secret visibility, the low channel, the count) and the dark grid of two private cards; the
+ * lock cover from the first frame of the pane's own entry (the segment tapped with the lock on,
+ * a frame watch in the chrome's document over the whole way in); and the card's press closing
+ * every private tab through the core's close-all, the card and the lock going with them.
+ *
+ * The http page is served on the device's own network address (`DemoServer.siteAddress`), which
+ * Chromium's rules call insecure where the loopback is as trustworthy as https; nothing of the
+ * chip's scene touches the network. The tracker is a second server on the loopback: a different
+ * host, so its frame in the page is a third party's.
+ *
+ * Driven by the `android-private-security-demo` workflow. See [DemoHarness] for the plumbing.
+ * The recorder sees the private surface because `PrivateBrowsing.captureForRecording` is on for
+ * the run (a debug-build override, as the other private drivers set). A device PIN is set for
+ * the run (`locksettings set-pin`, cleared at the end): the private lock arms only on a device
+ * with a screen lock. Findings land in `private-security-findings.txt` next to the screenshots;
+ * a check that fails there fails the run.
+ */
+@RunWith(AndroidJUnit4::class)
+class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "private-security", "private-security-demo") {
+    override val tag = "PrivateSecurityDemo"
+    private lateinit var site: DemoServer
+    private lateinit var tracker: DemoServer
+    private lateinit var siteOrigin: String
+    private lateinit var findings: File
+    private val failures = ArrayList<String>()
+    private val host get() = (activity as MainActivity).host
+    private var pinSet = false
+
+    @Test
+    fun record() {
+        val address = DemoServer.siteAddress()
+            ?: error("the device has no network address besides the loopback: no insecure origin to serve the http page from")
+        siteOrigin = "http://$address:$SITE_PORT"
+        site = DemoServer(SITE_PORT, siteRoutes(), address = "0.0.0.0").also { it.start() }
+        tracker = DemoServer(TRACKER_PORT, trackerRoutes()).also { it.start() }
+        var fault: Throwable? = null
+        try {
+            runDemo()
+        } catch (e: Throwable) {
+            fault = e
+        } finally {
+            site.close()
+            tracker.close()
+            PrivateBrowsing.captureForRecording = false
+            if (pinSet) shell("locksettings clear --old $PIN")
+        }
+        if (failures.isNotEmpty() || fault != null) {
+            throw AssertionError(
+                "${failures.size} check(s) failed: ${failures.joinToString("; ")}" +
+                    (fault?.let { "; and: ${it.message}" } ?: "")
+            )
+        }
+    }
+
+    /** The seeded tabs point at the device's own address (the seed names the emulator's); the boot scheme is the run's. */
+    override fun patchState(json: String): String =
+        json.replace("http://10.0.2.15:$SITE_PORT", siteOrigin)
+            .replace("\"colorScheme\": \"light\"", "\"colorScheme\": \"$THEME\"")
+
+    /** The recording must show the private surface; the PIN is the screen lock the private lock needs. */
+    override fun beforeLaunch() {
+        PrivateBrowsing.captureForRecording = true
+        val info = ui.serviceInfo
+        info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        ui.serviceInfo = info
+        Log.i(tag, "set-pin: ${shell("locksettings set-pin $PIN").trim()}")
+        pinSet = true
+        shell("wm dismiss-keyguard")
+    }
+
+    // --- the pages -------------------------------------------------------------------------------
+
+    /**
+     * The http site: a page that bakes a first-party cookie of its own and embeds the tracker's
+     * frame (a third party's document, which tries to bake one in its own jar), and a second
+     * page for the other regular tab.
+     */
+    private fun siteRoutes(): Map<String, Pair<String, ByteArray>> = mapOf(
+        "/" to ("text/html; charset=utf-8" to (
+            "<!doctype html><html><head><meta charset=utf-8>" +
+                "<meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Plain http site</title>" +
+                "<style>body{margin:0;font-family:sans-serif;color:#15141a;background:#fff}main{padding:36px 24px}" +
+                "h1{font-size:28px;margin:0 0 16px}p{font-size:18px;line-height:1.5;color:#3b3a44;margin:0 0 20px}" +
+                "iframe{width:100%;height:96px;border:1px solid #d9d8df;border-radius:12px}</style></head>" +
+                "<body><main><h1>Plain http site</h1>" +
+                "<p>This page is served over plain http on the device's own network address, so the address is not secure.</p>" +
+                "<p>Below is a frame from another site: a third party that tries to set a cookie of its own.</p>" +
+                "<iframe src=\"$TRACKER_ORIGIN/tracker.html\" title=\"Tracker frame\"></iframe>" +
+                "</main><script>document.cookie='first=here; path=/; max-age=86400';</script></body></html>"
+            ).toByteArray()),
+        "/notes.html" to DemoServer.page("Notes", "<p>A second regular tab, so the Tabs pane has two cards.</p>")
+    )
+
+    /** The tracker's frame: bakes a cookie in its own jar from script, the way a third party would. */
+    private fun trackerRoutes(): Map<String, Pair<String, ByteArray>> = mapOf(
+        "/tracker.html" to ("text/html; charset=utf-8" to (
+            "<!doctype html><html><head><meta charset=utf-8><style>body{margin:0;padding:16px;font-family:sans-serif;" +
+                "font-size:15px;color:#5b5a63;background:#f2f1f5}</style></head><body>" +
+                "<div id=t>Tracker frame</div><script>" +
+                "document.cookie='trk='+Math.random().toString(36).slice(2,8)+'; path=/; max-age=86400';" +
+                "document.getElementById('t').textContent='Tracker frame: cookie '+(document.cookie?'set':'refused');" +
+                "</script></body></html>"
+            ).toByteArray())
+    )
+
+    // --- sequence --------------------------------------------------------------------------------
+
+    /** Both regular pages loaded (the cards' thumbnails), the overview opened once off camera. */
+    override fun warmUp() {
+        findings = File(out, "private-security-findings.txt")
+        findings.writeText(
+            "Zenium Android private and security surfaces (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density, " +
+                "WebView ${WebViewCompat.getCurrentWebViewPackage(app)?.versionName ?: "?"}, boot scheme $THEME)\n\n"
+        )
+        finding("site server: ${site.selfCheck()} (pages on $siteOrigin, the device's own address: an insecure origin)")
+        finding("tracker server: ${tracker.selfCheck()} (frames on $TRACKER_ORIGIN, a third party to the site)")
+        finding(
+            "multi-profile WebView: ${onMain { Profiles.supported }}; capabilities.privateTabs per the core: ${privateTabsCapability()}; " +
+                "device PIN set: $pinSet; screen lock per the host (reauth.available): ${onMain { host.reauth.available() }}"
+        )
+        awaitLoaded(SITE_TAB, "$siteOrigin/")
+        coreInvoke("tab.activate", json("tabId" to NOTES_TAB).toString())
+        awaitLoaded(NOTES_TAB, "$siteOrigin/notes.html")
+        SystemClock.sleep(800)
+        coreInvoke("tab.activate", json("tabId" to SITE_TAB).toString())
+        awaitActiveTab(SITE_TAB)
+        SystemClock.sleep(1_000)
+        if (openOverview()) {
+            SystemClock.sleep(1_200)
+            back()
+            awaitOverviewGone()
+        }
+        closeSheets()
+        SystemClock.sleep(1_200)
+        Log.i(tag, "warm-up done")
+    }
+
+    override fun demo() {
+        ensureForeground()
+        setScheme("light")
+
+        // 1. ERR-09: the open lock in the lock's room over the plain http page, and its words.
+        scene("1. The Not secure chip over a plain http page (ERR-09)") {
+            expect("set-up: the regular tab shows the http page", awaitLoaded(SITE_TAB, "$siteOrigin/") && awaitActiveTab(SITE_TAB))
+            settle()
+            val bar = readPill()
+            val chip = readChip("not-secure")
+            val chips = bar.optJSONArray("chips").toStringList()
+            finding("  pill: ${bar.toString().take(600)}")
+            finding("  chip: $chip")
+            expect("the glyph slot draws the not-secure chip first", chips.firstOrNull() == "not-secure")
+            expect("no lock chip stands beside it (one glyph per state)", "lock" !in chips)
+            expect("the chip's name is Not secure", chip.optString("label") == "Not secure")
+            expect("the chip draws the open lock", chip.optString("glyph").contains("lucide-lock-open"))
+            expect("the chip's ink is the warn tone", chip.optString("verdict") == "warn")
+            expect("the chip takes the lock's 44 x 44 room, not a text chip's", nearly(chip.optDouble("w"), 44.0) && nearly(chip.optDouble("h"), 44.0))
+            expect("the chip opens a dialog (the site-information sheet)", chip.optString("popup") == "dialog")
+            val hostBox = bar.optDouble("hostBox", 0.0)
+            expect("the host keeps at least its 150 px floor beside the chip", hostBox >= 150.0)
+            expect("the address speaks the verdict last", bar.optString("address").endsWith(", Not secure"))
+            expect("the chip is in the accessibility tree by its name", findByLabel("Not secure") != null)
+            finding("  host box ${fmt(hostBox)} px, address '${bar.optString("address")}', buttons ${bar.optJSONArray("buttons").toStringList()}")
+            shot("01-chip-http-light")
+            setScheme("dark")
+            val dark = readChip("not-secure")
+            expect("the chip stands in the dark scheme too", dark.optString("label") == "Not secure" && dark.optString("verdict") == "warn")
+            shot("02-chip-http-dark")
+            setScheme("light")
+        }
+
+        // 2. The sheet the chip opens: the same word on the title block, the Connection row, and
+        //    the level that explains what not secure means and what not to enter.
+        scene("2. The site-information sheet explains Not secure (ERR-09)") {
+            expect("a finger on the chip brings the sheet up", openSheetFromChip("Not secure"))
+            val title = readSheetTitle()
+            finding("  title block: $title")
+            expect("the title block says Not secure", title.optString("text").contains("Not secure"))
+            expect("the title block draws the open lock in the warn ink", title.optString("glyph").contains("lucide-lock-open") && title.optString("glyph").contains("--v2-warn"))
+            val row = chromeRect(CONNECTION_ROW)
+            expect("the Connection row reads Not secure and leads on", row != null)
+            finding("  Connection row: ${jsString("(function(){var b=document.querySelector('$CONNECTION_ROW');return b?(b.getAttribute('aria-label')||''):''})()")}")
+            shot("03-sheet-http-light")
+            setScheme("dark")
+            shot("04-sheet-http-dark")
+            setScheme("light")
+            if (row != null) {
+                val point = touchPoint(row)
+                if (point != null) Finger().tap(point.x, point.y) else finding("  the Connection row is outside the touchable window: $row")
+            }
+            expect("a finger on Connection opens the level", awaitChrome(LEVEL_SHOWN_JS, 8_000))
+            SystemClock.sleep(1_200)
+            val level = readConnectionLevel()
+            finding("  Connection level: $level")
+            expect("the level's headline is Connection is not secure", level.optString("label") == "Connection is not secure")
+            expect("the level says what not secure means and what not to enter", level.optString("description") == NOT_SECURE_DETAIL)
+            expect("the level's glyph is in the warn tone", level.optString("tone") == "warn")
+            expect("the explanation fits its two lines, nothing cut", level.optInt("lines", 0) in 1..2 && !level.optBoolean("cut", true))
+            expect("the level's row is spoken whole by its parts", findNode { it.startsWith("Connection is not secure") } != null || findNode { it == NOT_SECURE_DETAIL } != null)
+            shot("05-sheet-connection-light")
+            setScheme("dark")
+            shot("06-sheet-connection-dark")
+            setScheme("light")
+            closeSheets()
+            expect("back leaves the sheet", awaitChrome("!document.querySelector('.zen-sheet')", 6_000))
+        }
+
+        // 3. Best effort, over the network: a certificate that fails verification puts the triangle
+        //    in the danger ink in the same room, and the sheet's title block says Not secure with it.
+        scene("3. The certificate-error chip (ERR-09, over the network)") {
+            coreInvoke("tab.activate", json("tabId" to NOTES_TAB).toString())
+            awaitActiveTab(NOTES_TAB)
+            coreInvoke("tab.navigate", json("tabId" to NOTES_TAB, "input" to EXPIRED_CERT_URL).toString())
+            val reached = poll(20_000) { "certificate-error" in readPill().optJSONArray("chips").toStringList() }
+            if (!reached) {
+                finding("  skipped: no certificate error reached the pill within 20 s (the network, or the page): the vitest pins the state")
+            } else {
+                SystemClock.sleep(1_500)
+                val chip = readChip("certificate-error")
+                finding("  chip: $chip")
+                expect("the certificate error draws the triangle in the danger ink", chip.optString("glyph").contains("lucide-triangle-alert") && chip.optString("verdict") == "danger")
+                expect("the certificate error's chip is named Not secure", chip.optString("label") == "Not secure")
+                expect("the triangle takes the same 44 x 44 room", nearly(chip.optDouble("w"), 44.0) && nearly(chip.optDouble("h"), 44.0))
+                shot("07-chip-cert-light")
+                setScheme("dark")
+                shot("08-chip-cert-dark")
+                setScheme("light")
+                if (openSheetFromChip("Not secure")) {
+                    val title = readSheetTitle()
+                    finding("  title block: $title")
+                    expect("the sheet's title block draws the triangle in the danger ink with Not secure", title.optString("glyph").contains("lucide-triangle-alert") && title.optString("text").contains("Not secure"))
+                    shot("09-sheet-cert-light")
+                    setScheme("dark")
+                    shot("10-sheet-cert-dark")
+                    setScheme("light")
+                    closeSheets()
+                } else {
+                    finding("  the sheet did not open from the certificate-error chip")
+                }
+            }
+            coreInvoke("tab.navigate", json("tabId" to NOTES_TAB, "input" to "$siteOrigin/notes.html").toString())
+            awaitLoaded(NOTES_TAB, "$siteOrigin/notes.html", 15_000)
+            coreInvoke("tab.activate", json("tabId" to SITE_TAB).toString())
+            awaitActiveTab(SITE_TAB)
+            closeSheets()
+        }
+
+        // 4. TAB-03: the Private pane with nothing in it – Chrome's words on the message card.
+        scene("4. The empty Private pane's explainer (TAB-03)") {
+            expect("set-up: no private tab is open", !anyPrivateTab())
+            expect("the overview opens from the regular tab", openOverview())
+            expect("the overview opens on the Tabs pane", awaitPane("tabs"))
+            tapSegment("private")
+            expect("a finger on Private shows the Private pane", awaitPane("private"))
+            SystemClock.sleep(1_500)
+            val card = readExplainer()
+            finding("  explainer: $card")
+            expect("the explainer stands on a page-surface message card", card.optBoolean("card"))
+            expect("the card's title is the pane's fact, No private tabs", card.optString("title") == EMPTY_TITLE)
+            expect("the card's detail is Chrome's words on what private does and does not do", card.optString("detail") == PRIVATE_EXPLAINER_DETAIL)
+            expect("the card is capped at 560 and centred in the pane", card.optDouble("width", 0.0) <= 560.5 && card.optDouble("offCentre", 99.0) <= 2.0)
+            expect("the detail runs to its length, nothing cut", !card.optBoolean("cut", true))
+            expect("the pane's one button is New private tab", card.optString("button") == "New private tab")
+            expect("the title and the button are in the accessibility tree", findByLabel(EMPTY_TITLE) != null && findByLabel("New private tab") != null)
+            shot("11-pane-empty-light")
+            setScheme("dark")
+            shot("12-pane-empty-dark")
+            setScheme("light")
+            tapSegment("tabs")
+            awaitPane("tabs")
+            back()
+            expect("back leaves the overview", awaitOverviewGone())
+        }
+
+        // 5. INC-03: the private new tab page's switch under a finger, then the engine's answer per
+        //    WebView – the private views alone move, and a tracker's cookie stays out of the private jar.
+        var private1 = ""
+        scene("5. Block third-party cookies for private tabs only (INC-03)") {
+            coreInvoke("tab.newPrivate", "{}")
+            expect("a private tab opens on the private new tab page", awaitPrivateActive())
+            private1 = activeCoreTab()?.optString("id").orEmpty()
+            expect("the private new tab page explains itself", waitFor(PRIVATE_TITLE, 8_000) != null)
+            settle()
+            finding("  private tab $private1; at rest: ${cookieSwitchState(private1)}")
+            expect("the switch is on by default (block-private, Chrome's default)", awaitCookieSwitch(blocked = true, mode = "default"))
+            expect("a finger on the row turns the switch off", touchCookieSwitch() && awaitCookieSwitch(blocked = false, mode = "allow"))
+            expect("the engine's flags follow: private tabs accept third-party cookies", awaitEngineBlocks(false))
+            finding("  after the first finger: ${cookieSwitchState(private1)}")
+            SystemClock.sleep(1_000)
+            expect("a second finger turns it on again", touchCookieSwitch() && awaitCookieSwitch(blocked = true, mode = "block"))
+            expect("the engine's flags follow: private tabs block third-party cookies", awaitEngineBlocks(true))
+            finding("  after the second finger: ${cookieSwitchState(private1)}")
+            SystemClock.sleep(1_000)
+            shot("13-ntp-switch-light")
+            setScheme("dark")
+            shot("14-ntp-switch-dark")
+            setScheme("light")
+
+            // The private tab visits the site: the tracker's frame is refused a cookie, the
+            // site's own is kept; the regular tab's views were never asked.
+            val regularBefore = viewAccepts(SITE_TAB)
+            coreInvoke("tab.navigate", json("tabId" to private1, "input" to "$siteOrigin/").toString())
+            expect("the private tab loads the http page", awaitLoaded(private1, "$siteOrigin/"))
+            SystemClock.sleep(1_500)
+            expect("the private view refuses third-party cookies", viewAccepts(private1) == false)
+            expect("the regular views accept them, unchanged", viewAccepts(SITE_TAB) == true && viewAccepts(NOTES_TAB) == true && regularBefore == true)
+            val privateTracker = jarOf(Profiles.PRIVATE_CONTAINER, TRACKER_ORIGIN)
+            val privateSite = jarOf(Profiles.PRIVATE_CONTAINER, siteOrigin)
+            val defaultTracker = jarOf(Profiles.DEFAULT_CONTAINER, TRACKER_ORIGIN)
+            expect("the tracker's cookie never reaches the private jar", !privateTracker.contains("trk="))
+            expect("the site's own cookie is in the private jar (first party is not blocked)", privateSite.contains("first="))
+            expect("the default jar has the tracker's cookie (the regular tab's third parties are allowed)", defaultTracker.contains("trk="))
+            finding("  private jar: tracker '$privateTracker', site '$privateSite'; default jar: tracker '$defaultTracker', site '${jarOf(Profiles.DEFAULT_CONTAINER, siteOrigin)}'")
+            finding("  pill on the private page: ${readPill().toString().take(400)}")
+            shot("15-private-page-blocked")
+
+            // The switch off through the core (the page is in front, not the new tab page): the
+            // private view's answer moves alone, and a reload lets the tracker's cookie in.
+            coreInvoke("privacy.setThirdPartyCookiesPrivate", """{"mode":"allow"}""")
+            expect("the private view accepts third-party cookies once the switch is off", poll(8_000) { viewAccepts(private1) == true })
+            expect("the regular views are untouched by the private switch", viewAccepts(SITE_TAB) == true && viewAccepts(NOTES_TAB) == true)
+            coreInvoke("tab.navigate", json("tabId" to private1, "input" to "$siteOrigin/").toString())
+            expect("the private tab reloads the page", awaitLoaded(private1, "$siteOrigin/"))
+            expect("with the switch off the tracker's cookie lands in the private jar", poll(6_000) { jarOf(Profiles.PRIVATE_CONTAINER, TRACKER_ORIGIN).contains("trk=") })
+            finding("  switch off: private jar tracker '${jarOf(Profiles.PRIVATE_CONTAINER, TRACKER_ORIGIN)}', default jar tracker '${jarOf(Profiles.DEFAULT_CONTAINER, TRACKER_ORIGIN)}'")
+            coreInvoke("privacy.setThirdPartyCookiesPrivate", """{"mode":"block"}""")
+            expect("the switch on again: the private view refuses, the regular views still accept", poll(8_000) { viewAccepts(private1) == false } && viewAccepts(SITE_TAB) == true && viewAccepts(NOTES_TAB) == true)
+            finding("  switch on again: ${cookieSwitchState(private1)}")
+        }
+
+        // 6. NOT-07: the session's card while private tabs are open.
+        var private2 = ""
+        scene("6. The Close all private tabs card (NOT-07)") {
+            val card = awaitCard(8_000)
+            finding("  card with one private tab: ${describeCard(card)}")
+            expect("the card is posted while a private tab is open", card != null)
+            expect("the card is Close all private tabs, counting one tab", cardTitle(card) == PrivateSession.TITLE && cardText(card) == "1 private tab is open")
+            expect("the card is secret: nothing of it on the lock screen", card?.notification?.visibility == Notification.VISIBILITY_SECRET)
+            expect("the card is ongoing and this device's alone", cardOngoing(card) && (card?.notification?.flags ?: 0) and Notification.FLAG_LOCAL_ONLY != 0)
+            expect("the card is on the private channel", card?.notification?.channelId == PrivateSession.CHANNEL_ID)
+            val channel = notifications.getNotificationChannel(PrivateSession.CHANNEL_ID)
+            finding("  channel: id ${channel?.id} name '${channel?.name}' importance ${channel?.importance} badge ${channel?.canShowBadge()}")
+            expect("the channel is named and low-importance", channel != null && channel.name?.toString() == PrivateSession.CHANNEL_NAME && channel.importance == NotificationManager.IMPORTANCE_LOW)
+            expect("the card's press is wired", card?.notification?.contentIntent != null)
+
+            coreInvoke("tab.newPrivate", json("url" to "$siteOrigin/notes.html").toString())
+            expect("a second private tab opens", poll(8_000) { privateTabIds().size == 2 })
+            private2 = privateTabIds().firstOrNull { it != private1 }.orEmpty()
+            awaitLoaded(private2, "$siteOrigin/notes.html", 15_000)
+            val two = awaitCard(8_000) { cardText(it) == "2 private tabs are open" }
+            expect("the card counts the second private tab", two != null)
+            finding("  card with two: ${describeCard(two)}")
+            expect("the card stays secret with the count", two?.notification?.visibility == Notification.VISIBILITY_SECRET)
+
+            // The shade, for the record: the card among the system's.
+            val inShade = openShade(10_000) { it == PrivateSession.TITLE || it.startsWith(PrivateSession.TITLE) }
+            finding("  the card in the shade: ${if (inShade != null) "shown" else "not found by its title"}")
+            SystemClock.sleep(1_200)
+            shot("16-card-shade")
+            closeShade()
+            ensureForeground()
+        }
+
+        // 7. TAB-03: the dark grid of two private cards.
+        scene("7. The Private pane's grid (TAB-03)") {
+            expect("set-up: two private tabs", privateTabIds().size == 2)
+            coreInvoke("tab.activate", json("tabId" to private1).toString())
+            awaitActiveTab(private1)
+            expect("the overview opens from the private tab", openOverview())
+            expect("the overview opens on the Private pane", awaitPane("private"))
+            SystemClock.sleep(1_500)
+            val shown = cards()
+            expect("the pane shows the two private cards and no regular one", shown.containsAll(setOf(private1, private2)) && SITE_TAB !in shown && NOTES_TAB !in shown)
+            expect("the chrome is on the private (dark) theme", host.themeDark && chromeScheme() == "dark")
+            expect("no cover stands without the lock", !paneCoverUp())
+            finding("  cards $shown; chrome scheme ${chromeScheme()}; private surface ${host.privateSurface}")
+            shot("17-pane-grid-light")
+            setScheme("dark")
+            shot("18-pane-grid-dark")
+            setScheme("light")
+            tapSegment("tabs")
+            expect("a finger on Tabs shows the regular cards", awaitPane("tabs") && poll(3_000) { cards().containsAll(setOf(SITE_TAB, NOTES_TAB)) })
+            back()
+            expect("back leaves the overview", awaitOverviewGone())
+        }
+
+        // 8. TAB-03 / #250: the lock on, Home and back from a regular tab, then the pane's own
+        //    entry – the segment tapped – shows the cover from its first frame, never the cards.
+        scene("8. The lock cover on the pane's own entry (TAB-03, #250)") {
+            coreInvoke("private.setLockOnLeave", """{"enabled":true}""")
+            expect("set-up: the lock-on-leave switch is on", poll(6_000) { lockOnLeave() && host.privateLock.enabled })
+            coreInvoke("tab.activate", json("tabId" to SITE_TAB).toString())
+            expect("set-up: a regular tab is in front", awaitActiveTab(SITE_TAB))
+            SystemClock.sleep(1_000)
+            home()
+            expect("Home puts Zenium in the background", awaitFront(ours = false))
+            val lockedAway = awaitLocked(4_000)
+            SystemClock.sleep(1_500)
+            returnToApp()
+            expect("Zenium is back in front", awaitFront(ours = true))
+            ensureForeground()
+            SystemClock.sleep(1_500)
+            expect("the lock armed as the window left, and holds on return", lockedAway && host.privateLock.locked && storeLocked())
+            expect("no cover over the regular tab", !coverUp())
+            expect("the overview opens from the regular tab", openOverview())
+            expect("the overview opens on the Tabs pane", awaitPane("tabs"))
+            SystemClock.sleep(800)
+            expect("the frame watch is armed in the chrome's document", jsString(PANE_WATCH_JS) == "armed")
+            tapSegment("private")
+            expect("a finger on Private shows the Private pane", awaitPane("private"))
+            expect("the cover is over the pane", poll(4_000) { paneCoverUp() })
+            SystemClock.sleep(1_500)
+            val watch = readPaneWatch()
+            finding("  frame watch over the way in: $watch")
+            val leaks = watch.optInt("bare", 99) + watch.optInt("unmasked", 99) + watch.optInt("live", 99)
+            expect("the pane was covered on every frame of its entry, its grid inert, every card masked", watch.optInt("frames", 0) > 0 && watch.optInt("panes", 0) > 0 && leaks == 0)
+            expect("the covered grid is inert and hidden from accessibility", gridInert())
+            // The covered grid is aria-hidden: no card (a masked one reads "Private tab, tab 1 of 2",
+            // its close "Close Private tab") and nothing of the pages reaches the tree.
+            val labels = a11yLabels()
+            expect("no card and no card control reaches the accessibility tree under the cover", labels.none { it.startsWith("Private tab") || it == "Close Private tab" || it.contains(siteOrigin) })
+            finding("  a11y labels (${labels.size}): ${labels.take(30)}")
+            shot("19-pane-locked-light")
+            setScheme("dark")
+            shot("20-pane-locked-dark")
+            setScheme("light")
+            jsString("(function(){if(window.__paneWatch)window.__paneWatch.stopped=true;return 'stopped'})()")
+        }
+
+        // 9. NOT-07 / INC-07: the card's press closes every private tab through the core's
+        //    close-all; the card and the lock go with them, the overview returns to Tabs.
+        scene("9. The card's press closes every private tab (NOT-07, INC-07)") {
+            val card = awaitCard(4_000)
+            expect("the card stands with the overview on the covered Private pane", card != null && cardText(card) == "2 private tabs are open")
+            val sent = runCatching { card?.notification?.contentIntent?.send() }.isSuccess && card?.notification?.contentIntent != null
+            expect("the card's press is sent (its PendingIntent, as the shade sends it)", sent)
+            expect("every private tab closes", awaitNoPrivateTabs(10_000))
+            expect("the card comes down with the last private tab", awaitCardGone(8_000))
+            expect("the lock is released with the count", awaitUnlocked(6_000) && host.privateLock.openTabs == 0)
+            expect("the overview returns to the Tabs pane, no cover", poll(6_000) { pane() == "tabs" } && !paneCoverUp())
+            expect("the chrome blends back off the private theme", poll(6_000) { !host.themeDark })
+            finding("  after the press: private tabs ${privateTabIds()}, card ${describeCard(privateCard())}, lock ${host.privateLock.locked}, pane ${pane()}, chrome dark ${host.themeDark}")
+            SystemClock.sleep(1_200)
+            shot("21-after-close-all")
+            back()
+            awaitOverviewGone()
+            coreInvoke("private.setLockOnLeave", """{"enabled":false}""")
+        }
+
+        finding("\n${failures.size} check(s) failed${if (failures.isEmpty()) "" else ": " + failures.joinToString("; ")}")
+    }
+
+    // --- scenes ----------------------------------------------------------------------------------
+
+    private fun scene(title: String, block: () -> Unit) {
+        finding("\n$title")
+        try {
+            block()
+        } catch (e: Throwable) {
+            Log.e(tag, "$title threw", e)
+            expect("$title ran through (${e.javaClass.simpleName}: ${e.message})", false)
+        }
+        recover()
+    }
+
+    /** Whatever a scene left standing goes: the shade, a chrome surface, the light scheme back. */
+    private fun recover() {
+        if (frontPackage() == SYSTEM_UI) closeShade()
+        closeSheets()
+        if (chromeSchemeSetting() != "light") setScheme("light")
+    }
+
+    // --- the pill and the sheet, through the chrome's document ---------------------------------
+
+    /** The pill as the chrome's document has it (the fold demo's reading): the chips in the run, the host box, the address's label. */
+    private fun readPill(): JSONObject {
+        val raw = chromeJs(READ_PILL_JS)
+        val text = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: return JSONObject()
+        return runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+    }
+
+    /** The chip `id` in the live pill's run: its box in CSS px, its name, its verdict ink, its glyph's classes. */
+    private fun readChip(id: String): JSONObject {
+        val raw = jsString(
+            "(function(){var c=document.querySelector('.zen-phone-pill:not(.zen-pill-ghost) [data-chip=\"$id\"] button[data-site-info]');" +
+                "if(!c)return '';var r=c.getBoundingClientRect();var s=c.querySelector('svg');" +
+                "return JSON.stringify({w:Math.round(r.width*10)/10,h:Math.round(r.height*10)/10,verdict:c.getAttribute('data-verdict')||''," +
+                "label:c.getAttribute('aria-label')||'',glyph:s?(s.getAttribute('class')||''):'',popup:c.getAttribute('aria-haspopup')||''," +
+                "expanded:c.getAttribute('aria-expanded')||''})})()"
+        )
+        return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+    }
+
+    /** The sheet's title block: its second line's text and the classes of the glyph ahead of it. */
+    private fun readSheetTitle(): JSONObject {
+        val raw = jsString(
+            "(function(){var p=document.querySelector('.zen-sheet-title-block p');if(!p)return '';var s=p.querySelector('svg');" +
+                "return JSON.stringify({text:p.textContent.trim(),glyph:s?(s.getAttribute('class')||''):''})})()"
+        )
+        return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+    }
+
+    /** The Connection level's status row: headline, description, tone, and whether the description fits its lines whole. */
+    private fun readConnectionLevel(): JSONObject {
+        val raw = jsString(
+            "(function(){var row=document.querySelector('$LEVEL_ROW');if(!row)return '';" +
+                "var g=row.querySelector('.zen-sheet-item-glyph');var d=row.querySelector('.zen-sheet-item-secondary');" +
+                "var spans=row.querySelectorAll('span.block');var label='';for(var i=0;i<spans.length;i++){if(!spans[i].classList.contains('zen-sheet-item-secondary')){label=spans[i].textContent.trim();break}}" +
+                "var lines=0;var cut=false;if(d){var lh=parseFloat(getComputedStyle(d).lineHeight)||1;lines=Math.round(d.getBoundingClientRect().height/lh);cut=d.scrollHeight>d.clientHeight+1}" +
+                "return JSON.stringify({label:label,description:d?d.textContent.trim():'',tone:g?(g.getAttribute('data-tone')||''):'',lines:lines,cut:cut})})()"
+        )
+        return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+    }
+
+    /**
+     * A finger on the pill's chip named `label` (the site-information glyph), then the sheet
+     * up: the host's word on a surface and the sheet's rows group in the chrome's document.
+     * The chip is read in the pill's row ([pillControl]): a page reading the same words – the
+     * certificate interstitial says "not secure" too – answers before the pill in the tree.
+     */
+    private fun openSheetFromChip(label: String): Boolean {
+        val chip = pillControl(label, 8_000)
+        if (chip == null) {
+            finding("  (no '$label' chip in the pill's row of the accessibility tree)")
+            return false
+        }
+        if (!touchTap(chip)) return false
+        val up = poll(10_000) { chromeSurfaceUp() && awaitChrome("document.querySelector('[data-testid=\"siteinfo-pill-chips\"]')", 500) }
+        if (!up) touchFault("a finger on '$label' did not bring the site-information sheet up")
+        SystemClock.sleep(1_500)
+        return up
+    }
+
+    /** Back while the chrome reports a surface, so nothing of a step's is left over the page. */
+    private fun closeSheets() {
+        var count = 0
+        while (chromeSurfaceUp() && count < 4) {
+            back()
+            count++
+            SystemClock.sleep(900)
+        }
+    }
+
+    // --- the overview, through the chrome's DOM --------------------------------------------------
+
+    /** The empty Private pane's explainer: the card, its texts, its width and centring in the pane, the button under it. */
+    private fun readExplainer(): JSONObject {
+        val raw = jsString(
+            "(function(){var pane=document.querySelector('.zen-overview-pane [data-testid=\"overview-private-empty\"]');" +
+                "var c=pane&&pane.querySelector('.zen-private-explainer[data-surface=\"page\"]');if(!c)return '';" +
+                "var t=c.querySelector('.zen-private-explainer-title');var d=c.querySelector('.zen-private-explainer-detail');" +
+                "var b=pane.querySelector('[data-testid=\"overview-private-empty-new\"]');" +
+                "var pr=pane.getBoundingClientRect();var cr=c.getBoundingClientRect();" +
+                "return JSON.stringify({card:true,title:t?t.textContent.trim():'',detail:d?d.textContent.trim():''," +
+                "width:Math.round(cr.width*10)/10,offCentre:Math.round(Math.abs((cr.left-pr.left)-(pr.right-cr.right))*10)/10," +
+                "cut:d?d.scrollHeight>d.clientHeight+1:true,button:b?b.textContent.trim():''})})()"
+        )
+        return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+    }
+
+    /** The frame watch's counts (`PANE_WATCH_JS`), as the chrome's document holds them. */
+    private fun readPaneWatch(): JSONObject {
+        val raw = jsString("JSON.stringify(window.__paneWatch||{})")
+        return runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+    }
+
+    /**
+     * Open the overview from the bar's Tabs button. The emulator's input pipeline can hand the
+     * release over late, so the bar reads a hold and opens the quick menu instead: dismissed and
+     * tried again.
+     */
+    private fun openOverview(): Boolean {
+        if (overviewOpen()) return true
+        repeat(3) {
+            val tabs = tabsButton()
+            if (tabs != null) {
+                Finger().tap(tabs.exactCenterX(), tabs.exactCenterY())
+            } else {
+                val f = Finger()
+                f.down(pillCenterX, pillY)
+                f.settleIn(0f, -NUDGE)
+                f.moveBy(0f, -0.75f * overviewTravel + NUDGE, 400)
+                f.up()
+            }
+            val deadline = SystemClock.uptimeMillis() + 8_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (overviewOpen()) {
+                    SystemClock.sleep(1_500)
+                    return true
+                }
+                if (heldInstead()) {
+                    Log.w(tag, "the tap on Tabs was read as a hold; dismissing and trying again")
+                    back()
+                    SystemClock.sleep(1_500)
+                    break
+                }
+                SystemClock.sleep(200)
+            }
+        }
+        return overviewOpen()
+    }
+
+    private fun heldInstead(): Boolean =
+        jsString("(function(){return document.querySelector('.zen-quick-menu, .zen-sheet') ? 'held' : ''})()") == "held"
+
+    private fun overviewOpen(): Boolean =
+        jsString("(function(){var e=document.querySelector('.zen-overview');return e?e.style.transform:''})()") == "scale(1)"
+
+    private fun awaitOverviewGone(timeoutMs: Long = 8_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (jsString("document.querySelector('.zen-overview')?'up':''") == "") return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
+    /** The pane the overview shows: the `data-pane` of its grid, or of its empty explainer, inside the live slot. */
+    private fun pane(): String =
+        jsString("(function(){var p=document.querySelector('.zen-overview-pane [data-pane]');return p?(p.getAttribute('data-pane')||''):''})()")
+
+    private fun awaitPane(pane: String, timeoutMs: Long = 6_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (pane() == pane) return true
+            SystemClock.sleep(150)
+        }
+        return pane() == pane
+    }
+
+    /** The tab ids of the cards on the pane shown, in grid order. */
+    private fun cards(): List<String> {
+        val raw = jsString(
+            "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-overview-pane [data-tab-id]')," +
+                "function(e){return e.getAttribute('data-tab-id')}))"
+        )
+        return runCatching { JSONArray(raw) }.getOrNull().toStringList()
+    }
+
+    /** A real touch on the segment's tab `id` (`tabs` or `private`). */
+    private fun tapSegment(id: String) {
+        val r = chromeRect("[data-testid=\"overview-pane-$id\"]") ?: run {
+            finding("  no segment tab for $id on screen")
+            return
+        }
+        Finger().tap(r.exactCenterX(), r.exactCenterY())
+    }
+
+    /** The on-screen box of the first chrome element `selector` matches (device px); null when none does. */
+    private fun chromeRect(selector: String): Rect? {
+        val raw = jsString(
+            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';" +
+                "var r=e.getBoundingClientRect();return JSON.stringify([r.left,r.top,r.right,r.bottom])})()"
+        )
+        val box = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 4 } ?: return null
+        val origin = onMain { IntArray(2).also(host.chrome::getLocationOnScreen) }
+        return Rect(
+            (origin[0] + box.getDouble(0) * density).toInt(),
+            (origin[1] + box.getDouble(1) * density).toInt(),
+            (origin[0] + box.getDouble(2) * density).toInt(),
+            (origin[1] + box.getDouble(3) * density).toInt()
+        )
+    }
+
+    /** A lock cover at rest is in the chrome's DOM (the frame's or the pane's), not one on its way out. */
+    private fun coverUp(): Boolean =
+        jsString("(function(){var e=document.querySelector('$COVER');return e&&!e.hasAttribute('data-leaving')?'up':''})()") == "up"
+
+    private fun paneCoverUp(): Boolean =
+        jsString("(function(){var e=document.querySelector('.zen-overview-pane $COVER');return e&&!e.hasAttribute('data-leaving')?'up':''})()") == "up"
+
+    /** The covered Private pane's grid is out of reach: `inert` and `aria-hidden`. */
+    private fun gridInert(): Boolean =
+        jsString("(function(){var g=document.querySelector('.zen-overview-pane .zen-overview-grid');return g&&g.hasAttribute('inert')&&g.getAttribute('aria-hidden')==='true'?'inert':''})()") == "inert"
+
+    /** Every label and text in the app's own windows, breadth first (capped). */
+    private fun a11yLabels(): List<String> {
+        val found = ArrayList<String>()
+        for (window in ui.windows) {
+            val root = window.root ?: continue
+            if (root.packageName?.toString() != app.packageName) continue
+            val queue = ArrayDeque(listOf(root))
+            var visited = 0
+            while (queue.isNotEmpty() && visited < 4_000) {
+                val node = queue.removeFirst()
+                visited++
+                node.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let { found += it }
+                node.text?.toString()?.takeIf { it.isNotBlank() }?.let { found += it }
+                for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it) }
+            }
+        }
+        return found
+    }
+
+    // --- the private tabs, the lock, the cookies -----------------------------------------------
+
+    private fun privateTabsCapability(): Boolean =
+        coreState().optJSONObject("capabilities")?.optBoolean("privateTabs") ?: false
+
+    private fun privateActive(): Boolean = activeCoreTab()?.optString("containerId") == Profiles.PRIVATE_CONTAINER
+
+    private fun awaitPrivateActive(timeoutMs: Long = 10_000): Boolean = poll(timeoutMs) { privateActive() }
+
+    private fun privateTabIds(state: JSONObject = coreState()): List<String> {
+        val tabs = state.optJSONObject("tabs") ?: return emptyList()
+        return tabs.keys().asSequence()
+            .filter { tabs.optJSONObject(it)?.optString("containerId") == Profiles.PRIVATE_CONTAINER }
+            .sorted()
+            .toList()
+    }
+
+    private fun anyPrivateTab(): Boolean = privateTabIds().isNotEmpty()
+
+    private fun awaitNoPrivateTabs(timeoutMs: Long = 8_000): Boolean = poll(timeoutMs) { !anyPrivateTab() }
+
+    private fun awaitActiveTab(tabId: String, timeoutMs: Long = 8_000): Boolean =
+        poll(timeoutMs) { activeCoreTab()?.optString("id") == tabId }
+
+    private fun awaitLoaded(tabId: String, url: String, timeoutMs: Long = 20_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val view = host.tabs.get(tabId)
+            val loaded = view != null && onMain { view.url == url && view.progress == 100 }
+            if (loaded) return true
+            SystemClock.sleep(300)
+        }
+        Log.w(tag, "$tabId never finished loading $url: ${host.tabs.get(tabId)?.let { onMain { "${it.url} ${it.progress}%" } }}")
+        return false
+    }
+
+    private fun lockOnLeave(): Boolean = coreState().optBoolean("privateLockOnLeave")
+
+    /** A field of the chrome's `privateLockStore` (`window.__zenStores['private-lock']`), as text. */
+    private fun storeField(name: String): String =
+        jsString("(function(){var s=(window.__zenStores||{})['private-lock'];return s?String(s.get()[${JSONObject.quote(name)}]):'?'})()")
+
+    private fun storeLocked(): Boolean = storeField("locked") == "true"
+
+    private fun awaitLocked(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (host.privateLock.locked) return true
+            SystemClock.sleep(50)
+        }
+        return host.privateLock.locked
+    }
+
+    private fun awaitUnlocked(timeoutMs: Long): Boolean = poll(timeoutMs) { !host.privateLock.locked && !storeLocked() }
+
+    /** Whether the tab's WebView accepts third-party cookies, per the engine (`CookieManager.acceptThirdPartyCookies`); null without a view. */
+    private fun viewAccepts(tabId: String): Boolean? {
+        val view = host.tabs.get(tabId) ?: return null
+        return onMain { runCatching { Profiles.cookieManager(view.containerId).acceptThirdPartyCookies(view) }.getOrNull() }
+    }
+
+    /** The cookies a container's jar holds for `origin`; "" without a jar (or a cookie). */
+    private fun jarOf(containerId: String, origin: String): String = onMain {
+        runCatching { Profiles.cookieManager(containerId).getCookie(origin) }.getOrNull().orEmpty()
+    }
+
+    /** A real touch on the middle of the Block third-party cookies row (the whole row is the switch), scrolled into view first. */
+    private fun touchCookieSwitch(): Boolean {
+        chromeJs("(function(){var e=document.querySelector('$COOKIES_ROW');if(e)e.scrollIntoView({block:'center'})})()")
+        SystemClock.sleep(800)
+        val row = chromeRect(COOKIES_ROW) ?: run {
+            finding("  no Block third-party cookies row on the private new tab page")
+            return false
+        }
+        val point = touchPoint(row) ?: run {
+            finding("  the Block third-party cookies row is outside the touchable window: $row")
+            return false
+        }
+        Log.i(tag, "touch at ${point.x},${point.y} on the cookie switch row $row")
+        Finger().tap(point.x, point.y)
+        return true
+    }
+
+    /** The row's `aria-checked` ("true" / "false"; "" without the row). */
+    private fun cookieRowChecked(): String =
+        jsString("(function(){var e=document.querySelector('$COOKIES_ROW');return e?(e.getAttribute('aria-checked')||''):''})()")
+
+    /** Poll until the core's status reads `blocked`, the private setting `mode` and the row's `aria-checked` follows – all three. */
+    private fun awaitCookieSwitch(blocked: Boolean, mode: String, timeoutMs: Long = 8_000): Boolean = poll(timeoutMs) {
+        val state = coreState()
+        val status = state.optJSONObject("privacy")?.optJSONObject("privateThirdPartyCookies")
+        val setting = state.optJSONObject("settings")?.optJSONObject("privacy")?.optString("thirdPartyCookiesPrivate")
+        status?.optBoolean("blocked") == blocked && setting == mode && cookieRowChecked() == blocked.toString()
+    }
+
+    /** Poll until the engine's flags (the policy the core pushed, `privacy.apply`) block, or not, third-party cookies in private tabs. */
+    private fun awaitEngineBlocks(blocks: Boolean, timeoutMs: Long = 6_000): Boolean =
+        poll(timeoutMs) { host.privacy.flags.blocksThirdPartyCookiesIn(true) == blocks }
+
+    /** The switch's state read every way: the core's status, the setting, the row, the engine's flags, the views. */
+    private fun cookieSwitchState(privateTab: String): String {
+        val state = coreState()
+        val status = state.optJSONObject("privacy")?.optJSONObject("privateThirdPartyCookies")
+        val setting = state.optJSONObject("settings")?.optJSONObject("privacy")
+        val flags = host.privacy.flags
+        return "status blocked ${status?.optBoolean("blocked")} locked ${status?.optBoolean("locked")}; " +
+            "settings thirdPartyCookies '${setting?.optString("thirdPartyCookies")}' thirdPartyCookiesPrivate '${setting?.optString("thirdPartyCookiesPrivate")}'; " +
+            "row aria-checked '${cookieRowChecked()}'; engine flags private '${flags.thirdPartyCookiesPrivate}', blocks in private ${flags.blocksThirdPartyCookiesIn(true)}, " +
+            "in regular ${flags.blocksThirdPartyCookiesIn(false)}; views accept third-party cookies: private $privateTab ${viewAccepts(privateTab)}, " +
+            "regular $SITE_TAB ${viewAccepts(SITE_TAB)}, $NOTES_TAB ${viewAccepts(NOTES_TAB)}"
+    }
+
+    // --- the session's card ----------------------------------------------------------------------
+
+    private val notifications: NotificationManager by lazy { app.getSystemService(NotificationManager::class.java) }
+
+    /** The session's card as the system holds it (the app's own notifications), null when none is posted. */
+    private fun privateCard(): StatusBarNotification? =
+        runCatching { notifications.activeNotifications.firstOrNull { it.id == PrivateSession.NOTIFICATION_ID } }.getOrNull()
+
+    /** Poll up to `timeoutMs` for the card, one `accept`s; null when none came. */
+    private fun awaitCard(timeoutMs: Long, accept: (StatusBarNotification) -> Boolean = { true }): StatusBarNotification? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            privateCard()?.takeIf(accept)?.let { return it }
+            SystemClock.sleep(250)
+        }
+        return privateCard()?.takeIf(accept)
+    }
+
+    private fun awaitCardGone(timeoutMs: Long): Boolean = poll(timeoutMs) { privateCard() == null }
+
+    private fun cardTitle(sbn: StatusBarNotification?): String? =
+        sbn?.notification?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+
+    private fun cardText(sbn: StatusBarNotification?): String? =
+        sbn?.notification?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+
+    private fun cardOngoing(sbn: StatusBarNotification?): Boolean =
+        sbn != null && sbn.notification.flags and Notification.FLAG_ONGOING_EVENT != 0
+
+    private fun describeCard(sbn: StatusBarNotification?): String {
+        if (sbn == null) return "none"
+        val n = sbn.notification
+        return "id=${sbn.id} channel=${n.channelId} title=\"${cardTitle(sbn)}\" text=\"${cardText(sbn)}\" ongoing=${cardOngoing(sbn)} " +
+            "press=${n.contentIntent != null} visibility=${n.visibility} (secret ${n.visibility == Notification.VISIBILITY_SECRET}) " +
+            "localOnly=${n.flags and Notification.FLAG_LOCAL_ONLY != 0} category=${n.category}"
+    }
+
+    /** Pull the shade down and wait for a node of the system UI whose label `matches`; null when none came in time. */
+    private fun openShade(timeoutMs: Long, matches: (String) -> Boolean): AccessibilityNodeInfo? {
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            findInWindows(SYSTEM_UI, matches)?.let { return it }
+            SystemClock.sleep(250)
+        }
+        return null
+    }
+
+    private fun closeShade() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+        } else {
+            back()
+        }
+        SystemClock.sleep(1_500)
+    }
+
+    // --- Home and back ---------------------------------------------------------------------------
+
+    private fun home() {
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+    }
+
+    /**
+     * Zenium back in front: the running activity's task comes forward, no relaunch. Through the
+     * shell, as the private lock demo does (an activity start from this process while the app
+     * stands behind the launcher is a background start the system may refuse); the in-process
+     * start is the fallback when the shell's answer is not ok.
+     */
+    private fun returnToApp() {
+        val started = shell("am start -W -a android.intent.action.MAIN -f 0x20000000 -n ${app.packageName}/${MainActivity::class.java.name}")
+        if (!started.contains("Status: ok")) {
+            finding("  am start: ${started.trim().lines().joinToString(" | ")}; starting from the process instead")
+            app.startActivity(Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    private fun frontPackage(): String? = ui.rootInActiveWindow?.packageName?.toString()
+
+    /** Poll until Zenium is (`ours`) or is not in front; false when it does not come to that in time. */
+    private fun awaitFront(ours: Boolean, timeoutMs: Long = 10_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val front = frontPackage()
+            if (front != null && (front == app.packageName) == ours) return true
+            SystemClock.sleep(250)
+        }
+        return (frontPackage() == app.packageName) == ours
+    }
+
+    // --- the scheme ------------------------------------------------------------------------------
+
+    private fun setScheme(scheme: String) {
+        coreInvoke("settings.update", """{"colorScheme":"$scheme"}""")
+        // The theme blends over 240 ms (v2 §11.6); the emulator's software GPU takes its time.
+        SystemClock.sleep(2_500)
+    }
+
+    private fun chromeSchemeSetting(): String = coreState().optJSONObject("settings")?.optString("colorScheme", "light") ?: "light"
+
+    /** The colour scheme the chrome's root carries (`data-theme`): `dark` on the private theme whatever the setting. */
+    private fun chromeScheme(): String = jsString("document.documentElement.dataset.theme||''")
+
+    // --- plumbing --------------------------------------------------------------------------------
+
+    private fun chromeValue(code: String): String =
+        runCatching { JSONTokener(chromeJs(code)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
+
+    private fun awaitChrome(code: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (chromeValue("String(!!($code))") == "true") return true
+            SystemClock.sleep(200)
+        }
+        return chromeValue("String(!!($code))") == "true"
+    }
+
+    /** A JS expression's string result in the chrome ("" when it never answered or returned nothing). */
+    private fun jsString(code: String): String =
+        runCatching { JSONTokener(chromeJs(code)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
+
+    /** A core command's arguments as JSON text. */
+    private fun json(vararg pairs: Pair<String, Any?>): JSONObject =
+        JSONObject().also { for ((key, value) in pairs) it.put(key, value ?: JSONObject.NULL) }
+
+    private fun <T> onMain(block: () -> T): T {
+        var result: T? = null
+        instrumentation.runOnMainSync { result = block() }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
+    }
+
+    private fun shell(command: String): String =
+        ParcelFileDescriptor.AutoCloseInputStream(ui.executeShellCommand(command)).use { it.bufferedReader().readText() }
+
+    private fun poll(timeoutMs: Long, condition: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (condition()) return true
+            SystemClock.sleep(200)
+        }
+        return condition()
+    }
+
+    private fun nearly(value: Double, expected: Double, tolerance: Double = 1.0): Boolean =
+        !value.isNaN() && kotlin.math.abs(value - expected) <= tolerance
+
+    private fun JSONArray?.toStringList(): List<String> =
+        if (this == null) emptyList() else (0 until length()).map { optString(it) }
+
+    private fun fmt(value: Double): String = "%.1f".format(value)
+
+    private fun expect(name: String, ok: Boolean) {
+        Log.i(tag, "check \"$name\": ${if (ok) "ok" else "FAILED"}")
+        finding("  $name ${verdict(ok)}")
+        if (!ok) failures.add(name)
+    }
+
+    private fun verdict(ok: Boolean) = if (ok) "PASS" else "FAIL"
+
+    private fun finding(line: String) {
+        Log.i(tag, line.trim())
+        findings.appendText(line + "\n")
+    }
+
+    private companion object {
+        val THEME: String = InstrumentationRegistry.getArguments().getString("theme").let { if (it == "dark") "dark" else "light" }
+
+        /** The http site, on every interface: the device's own address is the one the seeded tabs name. */
+        const val SITE_PORT = 18175
+        /** The tracker, on the loopback: another host, so its frame is a third party's. */
+        const val TRACKER_PORT = 18176
+        const val TRACKER_ORIGIN = "http://127.0.0.1:$TRACKER_PORT"
+        /** The seeded regular tabs (`private-security-demo-state.json`). */
+        const val SITE_TAB = "tab_site"
+        const val NOTES_TAB = "tab_notes"
+        /** Set with `locksettings set-pin` before the app starts; cleared at the end. */
+        const val PIN = "1234"
+        /** A certificate that failed verification, for the triangle (best effort: the network). */
+        const val EXPIRED_CERT_URL = "https://expired.badssl.com/"
+        const val SYSTEM_UI = "com.android.systemui"
+
+        // The chrome's words, pinned by the vitests as well.
+        const val PRIVATE_TITLE = "You're browsing privately"
+        const val EMPTY_TITLE = "No private tabs"
+        const val NOT_SECURE_DETAIL = "Anyone on the way can read what you send to this site. Don't enter passwords or card details here."
+        const val PRIVATE_EXPLAINER_DETAIL =
+            "Zenium won't save your browsing history, cookies, site data or what you enter in forms. Websites you visit, your employer or school and your internet service provider can still see your activity."
+
+        // The chrome's hooks.
+        const val COOKIES_ROW = "[data-testid=\"private-ntp-cookies\"]"
+        const val COVER = "[data-testid=\"private-lock-cover\"]"
+        /** The sheet's root Connection row (a `SheetRow` button named by its parts). */
+        const val CONNECTION_ROW = "button.zen-sheet-item[aria-label^=\"Connection, \"]"
+        /** The Connection level's status row: its pane's two-line static row with the headline and the explanation (every level's pane is mounted in the track). */
+        const val LEVEL_ROW = "section[data-level=\"connection\"] .zen-sheet-item.zen-sheet-item-two-line"
+        /** The Connection level is the one on screen: the sheet's header reads its title. */
+        const val LEVEL_SHOWN_JS = "(function(){var h=document.querySelector('.zen-sheet-title');return h&&h.textContent.trim()==='Connection'})()"
+        const val NUDGE = 12f
+
+        /** The pill as the chrome's document has it (the fold demo's reading); the widths in CSS px. */
+        val READ_PILL_JS = """
+            (function () {
+              var pill = document.querySelector('.zen-phone-pill:not(.zen-pill-ghost)');
+              var host = pill && pill.querySelector('[data-testid="pill-host"]');
+              var address = pill && pill.querySelector('[data-testid="pill-address"]');
+              var run = pill && pill.querySelector('[data-testid="pill-chips"]');
+              var box = host ? host.getBoundingClientRect() : null;
+              return JSON.stringify({
+                pillWidth: pill ? Math.round(pill.getBoundingClientRect().width * 10) / 10 : null,
+                hostBox: box ? Math.round(box.width * 10) / 10 : null,
+                hostText: host ? host.textContent : null,
+                chips: run ? Array.from(run.querySelectorAll(':scope > [data-chip]')).map(function (c) { return c.dataset.chip; }) : [],
+                buttons: pill ? Array.from(pill.querySelectorAll('button')).map(function (b) { return b.getAttribute('aria-label'); }) : [],
+                address: address ? address.getAttribute('aria-label') : null,
+                dpr: window.devicePixelRatio
+              });
+            })()
+        """.trimIndent()
+
+        /**
+         * A frame watch in the chrome's document for the pane's entry under the lock: on every
+         * animation frame, each private grid in the document (the live slot's and a still's) is
+         * read for its cover beside it, its `inert`, and its cards' masks; the counts go to
+         * `window.__paneWatch`. `bare`, `unmasked` and `live` are leaks; `pictures` is on record.
+         */
+        val PANE_WATCH_JS = """
+            (function () {
+              if (window.__paneWatch) window.__paneWatch.stopped = true;
+              var w = { frames: 0, panes: 0, bare: 0, unmasked: 0, live: 0, pictures: 0, stopped: false, notes: [] };
+              window.__paneWatch = w;
+              function sample() {
+                if (w.stopped) return;
+                w.frames++;
+                var grids = document.querySelectorAll('.zen-overview-grid[data-pane="private"]');
+                for (var i = 0; i < grids.length; i++) {
+                  var g = grids[i];
+                  w.panes++;
+                  var slot = g.parentElement;
+                  if (!slot || !slot.querySelector('[data-testid="private-lock-cover"]')) {
+                    w.bare++;
+                    if (w.notes.length < 4) w.notes.push('frame ' + w.frames + ': a private grid without its cover');
+                  }
+                  if (!g.hasAttribute('inert')) w.live++;
+                  var cards = g.querySelectorAll('.zen-overview-card');
+                  for (var j = 0; j < cards.length; j++) { if (!cards[j].hasAttribute('data-masked')) w.unmasked++; }
+                  if (g.querySelector('.zen-overview-card-preview img')) w.pictures++;
+                }
+                requestAnimationFrame(sample);
+              }
+              requestAnimationFrame(sample);
+              return 'armed';
+            })()
+        """.trimIndent()
+    }
+}

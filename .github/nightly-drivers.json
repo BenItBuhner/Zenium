@@ -1023,6 +1023,16 @@
       "estimate": 7
     },
     {
+      "id": "private-security",
+      "class": "PrivateSecurityDemo",
+      "shard": "webview",
+      "mirrors": "android-private-security-demo.yml",
+      "dir": "private-security-demo",
+      "timeout": 1200,
+      "estimate": 7,
+      "note": "W5-7's private and security surfaces (ERR-09, TAB-03, INC-03, NOT-07) in both schemes. Sets a device PIN for the run (locksettings set-pin, cleared at the end) as the private lock demo does; the certificate-error scene is best effort over the network and skips without failing."
+    },
+    {
       "id": "media",
       "class": "MediaDemo",
       "shard": "webview",

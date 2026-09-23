@@ -1,0 +1,116 @@
+name: Android private security demo
+
+# Records W5-7's private and security surfaces on the phone (ERR-09, TAB-03, INC-03, NOT-07) on
+# an Android emulator and uploads the video, the screenshots in both colour schemes and the
+# findings: the pill's Not secure chip – the open lock in the warn ink in the lock's own room –
+# over a plain http page served on the device's own network address (never the network) and the
+# site-information sheet it opens, whose Connection level explains what "not secure" means and
+# what not to enter; the certificate error's triangle, best effort over the network; the empty
+# Private pane's explainer (Chrome's words on a message card); the private new tab page's Block
+# third-party cookies switch under a finger and the engine's answer per WebView (the private
+# views alone move; a tracker's cookie stays out of the private jar); the session's card (secret,
+# ongoing, the low channel, the count); the dark grid of two private cards; the lock cover from
+# the first frame of the pane's own entry with the lock on (a frame watch over the way in); and
+# the card's press closing every private tab through the core's close-all. A check that fails in
+# the driver fails the run (private-security-findings.txt in the artifact).
+#
+# The engine: private tabs run on a WebView profile of their own, which needs
+# WebViewFeature.MULTI_PROFILE – absent from the API 34 images' WebView 113 – so the demo runs on
+# an AOSP image with a Chromium snapshot SystemWebView.apk swapped in and asks for
+# swiftshader_indirect, exactly as android-private-demo.yml does (see its header for the
+# measurements behind both choices). The driver sets a device PIN for the run (locksettings
+# set-pin, cleared at the end): the private lock arms only on a device with a screen lock.
+# Dispatch-only, like the other demos: it takes about a quarter of an hour and says nothing about
+# a change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file picks the driver and the engine.
+on:
+  # TEMPORARY: one push-triggered run on W5-7's branch (the run budget is one run and one
+  # retry); removed in the next commit, dispatch-only again.
+  push:
+    branches:
+      - cursor/android-private-security-9921
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme the profile boots in (the driver records both; this one comes first, on the video)
+        required: false
+        type: choice
+        options:
+          - light
+          - dark
+        default: light
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-private-security-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: private security demo (Chromium snapshot WebView on an AOSP image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PrivateSecurityDemo
+        DEMO_DIR=private-security-demo
+        DEMO_OUT=artifacts/android-private-security-demo
+        DEMO_VIDEO=android-private-security-demo.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-private-security-demo
+      artifact-path: artifacts/android-private-security-demo/
+      timeout-minutes: 60
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: private security demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PrivateSecurityDemo
+        DEMO_DIR=private-security-demo
+        DEMO_OUT=artifacts/android-private-security-demo
+        DEMO_VIDEO=android-private-security-demo.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-private-security-demo-second-boot
+      artifact-path: artifacts/android-private-security-demo/
+      timeout-minutes: 60
