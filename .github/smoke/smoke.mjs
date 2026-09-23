@@ -3,8 +3,17 @@
 // blocking dialog, takes OS-level screenshots at each step and writes one JSON result per step.
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
-//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark]
+//        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark,mv3-worker]
 //        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
+//        [--sandbox]             (the run is a sandboxed leg: Chromium's sandbox stays on, so
+//                                 --no-sandbox in --extra-args is refused; on Linux the build's
+//                                 chrome-sandbox helper has to be setuid root where the kernel
+//                                 denies unprivileged user namespaces – ci.yml's step does that
+//                                 to the unpacked build. What the leg is for: Electron runs
+//                                 service-worker preload scripts in sandboxed renderers only, so
+//                                 a --no-sandbox leg cannot observe Zenium's chrome.* layer in an
+//                                 MV3 worker; the mv3-worker scenario expects it present here and
+//                                 absent under --no-sandbox)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
@@ -60,9 +69,21 @@
 //                clear-on-exit-owed-launch)
 //   scale        --force-device-scale-factor=1.5 renders at devicePixelRatio 1.5
 //   dark         OS dark mode (or nativeTheme where the OS has no switch) reaches the chrome
+//   mv3-worker   Zenium's chrome.* layer for MV3 background workers (the service-worker preload
+//                of src/preload/extension.ts): a profile past onboarding installs the unpacked
+//                fixture extension under fixtures/mv3-worker through the management page's drop
+//                path (the install prompt accepted), whose worker logs the `chrome` surface it
+//                starts with; the line is read off the session's ServiceWorkers console events.
+//                Under --sandbox the layer must be there (`chrome.permissions`, `windows`,
+//                `contextMenus` defined); under --no-sandbox it must be absent – Electron evaluates
+//                service-worker preloads in sandboxed renderers only – which is what makes the
+//                sandboxed leg necessary. The run has to say which it is (--sandbox, or
+//                --no-sandbox among the extra args); a worker console error from an extension
+//                is a failure (Linux job: one leg each way)
 //
 // Windows and macOS run boot, restore, scale and dark (the installed Windows build boot and
-// restore); the walkthrough, the crash pair and clear-on-exit run on Linux under Xvfb only.
+// restore); the walkthrough, the crash pair, clear-on-exit and the two mv3-worker legs run on
+// Linux under Xvfb only.
 //
 // Zero tolerated JS errors: a chrome console error, a chrome page error, a preload or Electron-side
 // error in a tab view, a main-process exception, a crashed process, a blocking native dialog or a
@@ -140,6 +161,21 @@ const scenarios = String(opts.scenarios ?? 'boot,restore')
   .filter(Boolean)
 const EXTRA_ARGS =
   typeof opts['extra-args'] === 'string' ? opts['extra-args'].split(' ').filter(Boolean) : []
+// The run is a sandboxed leg (--sandbox): Chromium's sandbox stays on for every launch. The lib
+// of the store's drives has the same opt-in (`sandbox: true`, which leaves --no-sandbox out of
+// the launch); here the caller keeps --no-sandbox out of --extra-args, and the flag says so.
+const SANDBOX = opts.sandbox === true
+const NO_SANDBOX_ARG = EXTRA_ARGS.includes('--no-sandbox')
+if (SANDBOX && NO_SANDBOX_ARG) {
+  console.error('--sandbox contradicts --no-sandbox in --extra-args: pick one')
+  process.exit(2)
+}
+if (scenarios.includes('mv3-worker') && !SANDBOX && !NO_SANDBOX_ARG) {
+  // The scenario's expectation follows the sandbox (present under it, absent without): a run
+  // that says neither could pass by accident on a machine whose kernel sandboxes the renderers.
+  console.error('mv3-worker needs --sandbox or --no-sandbox in --extra-args to know what to expect')
+  process.exit(2)
+}
 const RENDER_BUDGET_MS = Number(opts['render-budget-ms'] ?? 10000)
 // The first time this run launches the executable is a cold launch: the build was packaged (or
 // installed) moments ago and nothing has mapped its pages yet. On macos-15-intel that first
@@ -194,6 +230,33 @@ const isolationEnv = IS_LINUX
 for (const dir of Object.values(isolationEnv)) fs.mkdirSync(dir, { recursive: true })
 
 const context = { platform: process.platform, arch: process.arch, label: opts.label }
+
+/**
+ * The sandbox the run launches with, for the result: whether the leg is sandboxed and, on Linux,
+ * the state of the build's `chrome-sandbox` helper beside the executable – Chromium's way into
+ * the sandbox where the kernel denies unprivileged user namespaces (ubuntu-24.04's AppArmor
+ * default) is that helper, root-owned and setuid (mode 4755); electron-builder's installers
+ * leave it so, an unpacked build does not. A sandboxed leg without it is left to the launch:
+ * Chromium refuses to start and says why, which the launch step reports.
+ */
+function sandboxFacts() {
+  const facts = { sandboxed: !NO_SANDBOX_ARG, requested: SANDBOX }
+  if (!IS_LINUX) return facts
+  const helper = path.join(path.dirname(path.resolve(opts.exe)), 'chrome-sandbox')
+  try {
+    const st = fs.statSync(helper)
+    facts.helper = {
+      path: helper,
+      uid: st.uid,
+      mode: (st.mode & 0o7777).toString(8),
+      setuidRoot: st.uid === 0 && (st.mode & 0o4000) !== 0
+    }
+  } catch (e) {
+    facts.helper = { path: helper, error: String(e.message) }
+  }
+  return facts
+}
+
 const result = {
   label: opts.label,
   exe: opts.exe,
@@ -206,6 +269,7 @@ const result = {
     firstLaunchRenderMs: FIRST_LAUNCH_RENDER_BUDGET_MS,
     quitMs: QUIT_BUDGET_MS
   },
+  sandbox: sandboxFacts(),
   scenarios: {},
   screenshots: [],
   failures: [],
@@ -613,6 +677,41 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
     }
     sessionProto.__smokeWrapped = true
   }
+  // What service workers log, per session: an MV3 background worker's console has no
+  // webContents, so its lines come through the session's ServiceWorkers `console-message`
+  // (the mv3-worker scenario reads its fixture's probe off these; a worker error from an
+  // extension is a failure). Wired for the partitions named in the options – the default
+  // container's, which exists from the app's start (src/main/platform/sessions.ts partitionFor)
+  // – and for every session created from here on. Electron 44's details: `message`, `level`
+  // (0–3: verbose, info, warning, error), `sourceUrl`, `lineNumber`, `versionId`.
+  const workerPartitions = []
+  const hookWorkers = (ses, partition) => {
+    const workers = safe(() => ses.serviceWorkers, null)
+    if (!workers || workers.__smokeHooked) return
+    workers.__smokeHooked = true
+    workerPartitions.push(partition)
+    workers.on('console-message', (_e, d) => {
+      const detail = d && typeof d === 'object' ? d : {}
+      emit({
+        type: 'worker-console',
+        partition,
+        level: detail.level,
+        message: clip(detail.message),
+        sourceUrl: detail.sourceUrl,
+        line: detail.lineNumber,
+        versionId: detail.versionId
+      })
+    })
+  }
+  for (const partition of options.workerPartitions || []) {
+    hookWorkers(
+      safe(() => session.fromPartition(partition), null),
+      partition
+    )
+  }
+  app.on('session-created', (ses) =>
+    hookWorkers(ses, safe(() => ses.storagePath, null) || `session-${workerPartitions.length}`)
+  )
   app.on('browser-window-created', (_e, w) =>
     emit({ type: 'window-created', window: w.id, windows: BrowserWindow.getAllWindows().length })
   )
@@ -718,8 +817,12 @@ function hookMain({ app, webContents, BrowserWindow, Menu, dialog, session }, op
   wrapDialog('showOpenDialogSync', 'file-sync')
   wrapDialog('showSaveDialog', 'file')
   wrapDialog('showSaveDialogSync', 'file-sync')
-  return { hooked: true, transport: smoke.transport, sessionClears }
+  return { hooked: true, transport: smoke.transport, sessionClears, workerPartitions }
 }
+
+// The persistent session every extension loads into (src/main/platform/sessions.ts partitionFor:
+// the default container's), whose service workers' console the hook listens to.
+const DEFAULT_CONTAINER_PARTITION = 'persist:zen-default'
 
 // ---------------------------------------------------------------------------------------------
 // Event classification: every hook event that counts as a failure becomes a failure record
@@ -750,6 +853,20 @@ function failureFromEvent(e, scenario) {
         source,
         url: e.url,
         info: true
+      }
+    }
+    case 'worker-console': {
+      // An extension's background worker logging an error (Zenium's own layer failing to
+      // install says so here, as `[zenium] …`) gates; a site's worker is the site's business.
+      if (e.level !== 3) return null
+      const source = [e.sourceUrl, e.line].filter((v) => v !== undefined && v !== '').join(':')
+      return {
+        ...base,
+        kind: 'worker-console-error',
+        message: e.message,
+        source,
+        url: e.sourceUrl,
+        info: !/^chrome-extension:\/\//.test(e.sourceUrl || '')
       }
     }
     case 'render-process-gone':
@@ -850,7 +967,10 @@ class Session {
     })
     this.app.on('window', (page) => this.attachPage(page))
     for (const p of this.app.windows()) this.attachPage(p)
-    this.hookResult = await this.app.evaluate(hookMain, { eventsFile: this.eventsFile })
+    this.hookResult = await this.app.evaluate(hookMain, {
+      eventsFile: this.eventsFile,
+      workerPartitions: [DEFAULT_CONTAINER_PARTITION]
+    })
     this.timings.launchMs = Date.now() - t0
     this.chrome = await this.waitForChromePage(RENDER_WAIT_MS)
     await this.chrome.locator('[data-testid="chrome-root"]').waitFor({
@@ -1874,8 +1994,17 @@ async function runScenario(name, userData, sessionOptions, body) {
           name: app.getName(),
           userData: app.getPath('userData'),
           electron: process.versions.electron,
-          chrome: process.versions.chrome
+          chrome: process.versions.chrome,
+          // Whether the renderers run without Chromium's sandbox (the mv3-worker scenario's
+          // expectation turns on it; a --sandbox leg must read false here).
+          noSandbox: app.commandLine.hasSwitch('no-sandbox')
         }))
+        if (SANDBOX && facts.noSandbox) {
+          throw new Error('the app runs with --no-sandbox on a --sandbox leg')
+        }
+        if (NO_SANDBOX_ARG && !facts.noSandbox) {
+          throw new Error('the app does not see the --no-sandbox the leg passed')
+        }
         // Resolved on both sides: macOS reports /private/var/... for the /var/... tmpdir.
         if (!realPath(facts.userData).startsWith(realPath(profileRoot))) {
           throw new Error(`profile not isolated: userData is ${facts.userData}`)
@@ -4325,6 +4454,131 @@ async function scenarioDark() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// mv3-worker: Zenium's chrome.* layer in an MV3 background worker – present under the sandbox,
+// absent without it (the sandboxed leg's reason to exist).
+// ---------------------------------------------------------------------------------------------
+
+const MV3_FIXTURE_DIR = path.join(here, 'fixtures', 'mv3-worker')
+const MV3_FIXTURE_NAME = 'Smoke: MV3 worker probe'
+const WORKER_PROBE_PREFIX = 'ZENIUM_SMOKE_WORKER_PROBE '
+// What the fixture's worker finds under the sandbox – the preload's namespaces: `permissions`
+// and `windows` for every extension, `contextMenus` for the permission the manifest holds – and
+// must not find without it: Electron's engine defines none of the three in a worker (its own
+// set there is alarms, dom, extension, i18n, management, runtime, storage, tabs).
+const WORKER_LAYER_NAMESPACES = ['permissions', 'windows', 'contextMenus']
+
+/** The fixture's probe, once its worker has logged it: the parsed line and the event it came in. */
+async function workerProbe(s, timeoutMs) {
+  const event = await waitFor(
+    () =>
+      s
+        .readEvents()
+        .find(
+          (e) =>
+            e.type === 'worker-console' &&
+            typeof e.message === 'string' &&
+            e.message.startsWith(WORKER_PROBE_PREFIX)
+        ) || null,
+    timeoutMs,
+    "the fixture worker's probe line on the session's ServiceWorkers console",
+    200
+  )
+  return { event, probe: JSON.parse(event.message.slice(WORKER_PROBE_PREFIX.length)) }
+}
+
+async function scenarioMv3Worker() {
+  const userData = freshProfile('profile-mv3-worker', { onboardingDone: true })
+  return runScenario('mv3-worker', userData, {}, async (s, out) => {
+    out.sandboxed = SANDBOX
+    out.hookedPartitions = s.hookResult?.workerPartitions ?? []
+    await s.step('install-fixture', async () => {
+      // The management page's drop path (extension.installFromDrop) from the chrome page: an
+      // unpacked folder is confirmed like a store install, so the prompt's accepting button is
+      // clicked; the engine then loads the folder into every persistent session and starts the
+      // worker for runtime.onInstalled. The fixture's name is read back from the app state.
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(MV3_FIXTURE_DIR, 'manifest.json'), 'utf8')
+      )
+      if (manifest.name !== MV3_FIXTURE_NAME) {
+        throw new Error(`fixtures/mv3-worker/manifest.json names "${manifest.name}"`)
+      }
+      if (!out.hookedPartitions.includes(DEFAULT_CONTAINER_PARTITION)) {
+        throw new Error(
+          `the hook listens to no ${DEFAULT_CONTAINER_PARTITION} service workers (${JSON.stringify(out.hookedPartitions)})`
+        )
+      }
+      await s.chrome.evaluate(
+        ([name, args]) => {
+          void window.zen.invoke(name, args)
+          return true
+        },
+        ['extension.installFromDrop', { paths: [MV3_FIXTURE_DIR] }]
+      )
+      const accept = s.chrome.locator('.zen-ext-dialog [data-accept]').first()
+      await accept.waitFor({ state: 'visible', timeout: 10000 })
+      const t0 = Date.now()
+      await accept.click({ timeout: 5000 })
+      const ext = await waitFor(
+        async () => {
+          const state = await s.chrome.evaluate(() => window.zen.invoke('app.getState'))
+          return (state.extensions || []).find((e) => e.name === MV3_FIXTURE_NAME) || null
+        },
+        15000,
+        'the fixture extension in the app state',
+        200
+      )
+      if (!ext.enabled || ext.error) {
+        throw new Error(
+          `the fixture loaded ${ext.error ? `with an error: ${ext.error}` : 'but is disabled'}`
+        )
+      }
+      await s.shot('01-mv3-fixture-installed')
+      return { id: ext.id, version: ext.version, loadedMs: Date.now() - t0 }
+    })
+    await s.step('worker-probe', async () => {
+      const { event, probe } = await workerProbe(s, 20000)
+      const defined = WORKER_LAYER_NAMESPACES.filter((ns) => probe[ns] === 'object')
+      const missing = WORKER_LAYER_NAMESPACES.filter((ns) => probe[ns] !== 'object')
+      const running = await s.app.evaluate(
+        ({ session }, partition) =>
+          Object.values(session.fromPartition(partition).serviceWorkers.getAllRunning()).map(
+            (w) => ({ scriptUrl: w.scriptUrl, versionId: w.versionId })
+          ),
+        DEFAULT_CONTAINER_PARTITION
+      )
+      const detail = {
+        sandboxed: SANDBOX,
+        probe,
+        source: event.sourceUrl,
+        partition: event.partition,
+        running
+      }
+      if (SANDBOX) {
+        if (missing.length || probe.getAll !== 'function') {
+          throw Object.assign(
+            new Error(
+              `the worker preload's layer is missing from the sandboxed worker: ${missing.length ? missing.join(', ') : 'permissions.getAll'} undefined (chrome keys: ${probe.keys.join(', ')})`
+            ),
+            { detail }
+          )
+        }
+      } else if (defined.length) {
+        // The negative leg: were this to fail, Electron would be running service-worker
+        // preloads in unsandboxed renderers, and the sandboxed leg would have lost its reason.
+        throw Object.assign(
+          new Error(
+            `the worker preload's layer is present under --no-sandbox (${defined.join(', ')} defined): this Electron runs service-worker preloads without the sandbox`
+          ),
+          { detail }
+        )
+      }
+      return detail
+    })
+    await s.step('quit', async () => s.quitGracefully())
+  })
+}
+
+// ---------------------------------------------------------------------------------------------
 
 function finish(exitCode) {
   const failures = []
@@ -4389,6 +4643,7 @@ function finish(exitCode) {
 async function main() {
   log(`smoke ${opts.label}: exe=${opts.exe} scenarios=${scenarios.join(',')} out=${outDir}`)
   log(`allowlist ${allowlistFile}; profiles under ${profileRoot}`)
+  log(`sandbox ${JSON.stringify(result.sandbox)}`)
   const watchdog = setTimeout(() => {
     const where = `${currentSession?.scenario ?? '-'}/${currentSession?.steps.at(-1)?.name ?? '-'}`
     result.fatal = `watchdog: run exceeded ${WATCHDOG_MS / 60000} min (at ${where})`
@@ -4432,7 +4687,8 @@ async function main() {
       crash: scenarioCrash,
       'clear-on-exit': scenarioClearOnExit,
       scale: scenarioScale,
-      dark: scenarioDark
+      dark: scenarioDark,
+      'mv3-worker': scenarioMv3Worker
     }[name]
     if (!run) {
       result.scenarios[name] = { fatal: `unknown scenario ${name}` }
