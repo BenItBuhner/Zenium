@@ -12,6 +12,7 @@ import java.io.Writer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -34,13 +35,37 @@ import java.util.concurrent.atomic.AtomicLong
  * one bridge call carrying it whole keeps several copies of the text on the Java heap at once
  * (the call's JSON, the tokenizer's buffer, the parsed value) – past the debug heap's limit.
  *
+ * An instance lives as long as its host: the browser window's `Host` [close]s its own when the
+ * Activity is destroyed, and nothing is written through it after that – not from the storage
+ * thread (stopped), not from a caller's thread (refused). A `Host` also holds the profile's
+ * [Lease] while it is the latest: two browser hosts share the process for a moment when the
+ * Activity is relaunched or recreated, and the core running in the old one may still have a
+ * write in it when the new one's core has read the profile; every [publish] checks, under the
+ * lease's lock, that its host is the latest before the rename, so a write from a superseded host
+ * is refused (the temp file deleted, the caller told) and the profile the new core read is the
+ * profile it has. Instances without a lease (the request engine's, a custom tab's) publish
+ * unconditionally.
+ *
  * The directory is a constructor argument so the JUnit tests can point an instance at a
- * temporary folder; the app passes its `files/zen/`.
+ * temporary folder; the app passes its `files/zen/`. `log` hears the refusals (`ZenStorage`).
  */
-class Storage(private val dir: File) {
-    constructor(context: Context) : this(File(context.filesDir, "zen"))
+class Storage(private val dir: File, private val lease: Lease? = null, private val log: (String) -> Unit = {}) {
+    constructor(context: Context, lease: Lease? = null, log: (String) -> Unit = {}) : this(File(context.filesDir, "zen"), lease, log)
 
     private val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "zen-storage") }
+
+    /** This instance's claim on [lease] ([Lease.claim]); 0 without one. */
+    private val holder: Long = lease?.claim() ?: 0L
+
+    /** Set by [close]: the host this instance served is destroyed; every write is refused from then on. */
+    @Volatile private var closed = false
+
+    /**
+     * Held around every rename of [publish] and around [close]'s setting of [closed]: a close
+     * waits for a rename under way and no rename begins after it, so once `close()` has returned
+     * nothing this instance was asked to write reaches the profile.
+     */
+    private val publishLock = Any()
 
     private class PendingWrite(val name: String, val tmp: File, val writer: Writer, val backup: Boolean)
 
@@ -202,20 +227,56 @@ class Storage(private val dir: File) {
      * was there is kept as `<name>.bak` (see [writeAtomic]).
      */
     fun write(name: String, text: String, backup: Boolean = false, done: (Throwable?) -> Unit) {
-        executor.execute {
-            val failure = runCatching { writeAtomic(name, text, backup) }.exceptionOrNull()
-            if (failure == null) notifyChanged(name)
-            done(failure)
+        if (closed) return done(refused(name, CLOSED))
+        try {
+            executor.execute {
+                val failure = runCatching { writeAtomic(name, text, backup) }.exceptionOrNull()
+                if (failure == null) notifyChanged(name)
+                done(failure)
+            }
+        } catch (_: RejectedExecutionException) {
+            done(refused(name, CLOSED))
         }
     }
 
     /**
      * Called on the bridge thread when the app is being backgrounded; must finish before
-     * returning. Throws when the document could not be replaced (the file is as it was).
+     * returning. Throws when the document could not be replaced (the file is as it was), and
+     * when the write is refused – the host is [close]d, or a newer host holds the profile.
      */
     fun writeSync(name: String, text: String, backup: Boolean = false) {
+        if (closed) throw refused(name, CLOSED)
         writeAtomic(name, text, backup)
         notifyChanged(name)
+    }
+
+    /**
+     * The host this instance served is destroyed: stop the storage thread (a write queued and
+     * not begun never runs) and refuse every write from here on – one that had begun on the
+     * thread is refused at its rename ([publish]), and a caller's own thread is told at once. A
+     * rename under way when the close comes finishes first (the [publishLock]): what has landed
+     * when this returns is all that ever will. A write in pieces still open is dropped with its
+     * temp file. Reads are unaffected. Idempotent.
+     *
+     * Why nothing may land after this: the profile the next host's core boots from is the one
+     * `pause` flushed before the Activity went; a document this host still had in it – the
+     * debounced write of a state the teardown itself made – would land over that boot's read.
+     */
+    fun close() {
+        if (closed) return
+        synchronized(publishLock) { closed = true }
+        executor.shutdownNow()
+        val open = pendingWrites.keys.toList()
+        for (token in open) abortWrite(token)
+        log("closed: writes from this host are refused from here${if (open.isEmpty()) "" else " (${open.size} in pieces dropped)"}")
+    }
+
+    /** Whether [close] has been called (for the host's diagnostics and the tests). */
+    val isClosed: Boolean get() = closed
+
+    private fun refused(name: String, why: String): RefusedWrite {
+        log("refused $name: $why")
+        return RefusedWrite(name, why)
     }
 
     /**
@@ -252,17 +313,31 @@ class Storage(private val dir: File) {
         return runCatching { !file.exists() || file.delete() }.getOrDefault(false)
     }
 
-    fun remove(name: String, done: () -> Unit) {
-        executor.execute {
-            runCatching { fileFor(name)?.delete() }
-            notifyChanged(name)
-            done()
+    /** Delete a document on the storage thread; `done` hears the refusal, if any (a [close]d instance removes nothing). */
+    fun remove(name: String, done: (Throwable?) -> Unit) {
+        if (closed) return done(refused(name, CLOSED))
+        try {
+            executor.execute {
+                val failure = if (closed) refused(name, CLOSED) else runCatching { fileFor(name)?.delete() }.exceptionOrNull()
+                if (failure == null) notifyChanged(name)
+                done(failure)
+            }
+        } catch (_: RejectedExecutionException) {
+            done(refused(name, CLOSED))
         }
     }
 
-    /** Run `work` on the storage thread, after every write queued so far has landed. */
+    /**
+     * Run `work` on the storage thread, after every write queued so far has landed. Nothing runs
+     * once the instance is [close]d: a caller waiting on an answer is one whose host is gone.
+     */
     fun execute(work: () -> Unit) {
-        executor.execute(work)
+        if (closed) return
+        try {
+            executor.execute(work)
+        } catch (_: RejectedExecutionException) {
+            // Closed between the check and the hand-over: the same as closed before it.
+        }
     }
 
     // --- documents in pieces -------------------------------------------------------------------
@@ -276,6 +351,10 @@ class Storage(private val dir: File) {
      * the write ends, as [write] keeps it. Runs on the caller's thread.
      */
     fun beginWrite(name: String, backup: Boolean = false): Long? {
+        if (closed) {
+            refused(name, CLOSED)
+            return null
+        }
         val target = fileFor(name) ?: return null
         target.parentFile?.mkdirs()
         val token = tokens.incrementAndGet()
@@ -392,19 +471,72 @@ class Storage(private val dir: File) {
      * landing within the modification time's millisecond (a filesystem's clock is coarser than
      * that) get a modification time one millisecond past the old file's, on the temp file, so
      * the rename publishes bytes and tag together.
+     *
+     * Refused – the temp file deleted, a [RefusedWrite] thrown – when the instance was [close]d
+     * while the text was being written, or when another host has claimed the [lease] since this
+     * one did: the check and the rename run under the lease's lock, which [Lease.claim] takes
+     * too, so a write either lands before a new host exists (and before its core reads) or not
+     * at all.
      */
     private fun publish(tmp: File, target: File, name: String, backup: Boolean) {
         val before = target.takeIf { it.isFile }?.let { it.length() to it.lastModified() }
         if (before != null && tmp.length() == before.first && tmp.lastModified() <= before.second) {
             tmp.setLastModified(before.second + 1)
         }
-        if (backup && target.isFile) target.renameTo(File(target.parentFile, "${target.name}.bak"))
-        if (!tmp.renameTo(target)) {
-            target.delete()
+        val rename: () -> Unit = {
+            if (backup && target.isFile) target.renameTo(File(target.parentFile, "${target.name}.bak"))
             if (!tmp.renameTo(target)) {
-                tmp.delete()
-                throw IOException("could not replace $name")
+                target.delete()
+                if (!tmp.renameTo(target)) {
+                    tmp.delete()
+                    throw IOException("could not replace $name")
+                }
             }
+        }
+        var refusal: String? = null
+        // The closed check and the rename are one step under the publish lock (see `close`); with
+        // a lease, that step is under the lease's lock too, so a claim and a rename never straddle.
+        val attempt: () -> Unit = {
+            synchronized(publishLock) {
+                if (closed) refusal = CLOSED else rename()
+            }
+        }
+        if (lease == null) attempt() else if (!lease.whileHeld(holder, attempt)) refusal = SUPERSEDED
+        refusal?.let {
+            tmp.delete()
+            throw refused(name, it)
+        }
+    }
+
+    /**
+     * A write this instance would not make: its host is destroyed ([close]), or a newer host
+     * holds the profile's [Lease]. The document is as it was.
+     */
+    class RefusedWrite(name: String, why: String) : IOException("$name not written: $why")
+
+    /**
+     * Who may write a profile: the latest holder. The browser `Host` claims it as it is built –
+     * before the core it hosts reads a document – so a host that has been relaunched or
+     * recreated under it is superseded from that moment, and every rename of its [publish] is
+     * refused. A claim and a publish exclude each other (the lock), so no write straddles the
+     * hand-over. In-process by design: the two hosts of a relaunch share the process, and a
+     * process that died writes nothing.
+     */
+    class Lease {
+        private val latest = AtomicLong()
+        private val lock = Any()
+
+        /** Become the latest holder; the number names the holder to [whileHeld]. */
+        fun claim(): Long = synchronized(lock) { latest.incrementAndGet() }
+
+        /** Whether `holder` is still the latest claim. */
+        fun holds(holder: Long): Boolean = latest.get() == holder
+
+        /** Run `publish` with the lease held by `holder`, or not at all: false when `holder` has been superseded. */
+        fun whileHeld(holder: Long, publish: () -> Unit): Boolean = synchronized(lock) {
+            if (latest.get() != holder) return@synchronized false
+            publish()
+            true
         }
     }
 
@@ -435,6 +567,11 @@ class Storage(private val dir: File) {
         const val MAX_CHUNK_CHARS = 4 shl 20
         private val UNSAFE = Regex("[^A-Za-z0-9._-]")
         private val changeListeners = CopyOnWriteArraySet<(String) -> Unit>()
+        /** The one profile's lease, claimed by every browser `Host` of the process as it is built. */
+        val hostLease = Lease()
+        /** Why a write was refused, as [RefusedWrite]'s message and the log say it. */
+        const val CLOSED = "the host is destroyed"
+        const val SUPERSEDED = "a newer host holds the profile"
 
         /**
          * Hear every write or removal under `files/zen/`, by any instance in the process (the

@@ -419,7 +419,11 @@ export function windowInsetsOf(payload: unknown): WindowInsets {
   return insets
 }
 
-/** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
+/**
+ * Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). Beside `pause`,
+ * `teardown` is sent by Android alone: the desktop's quit destroys its views itself and never
+ * sends it.
+ */
 export interface HostEventPayloads {
   /**
    * The window's safe-area insets, and whether the system bars are still on their way back from
@@ -459,6 +463,14 @@ export interface HostEventPayloads {
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
+  /**
+   * The Activity is being destroyed under the running browser (`Host.destroy`: a relaunch, a
+   * configuration change the manifest does not handle) and its page views are going with it,
+   * without a word. The core that boots in the next Activity reads the profile `pause` wrote;
+   * this one must write nothing more, and must not read its views' going as page closes. Sent
+   * after `pause`, always; the last event this core hears.
+   */
+  teardown: void
   /**
    * The demo harness's scenes are over (`Host.releaseBackgroundWork`): the startup sweeps held
    * by `BootInfo.holdBackgroundWork` may run – the same as the `performance.releaseBackgroundWork`
@@ -1718,6 +1730,9 @@ export class AndroidPlatform implements Platform {
         // Re-apply the last layout, so every page view is placed and shown for the window the
         // chrome returns to; Kotlin asks its WebViews for a fresh frame alongside.
         this.zenWindow?.relayout()
+        return
+      case 'teardown':
+        browser.onHostTeardown()
         return
       case 'memoryPressure': {
         const p = payload as HostEventPayloads['memoryPressure']

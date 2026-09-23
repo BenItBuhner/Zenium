@@ -136,8 +136,11 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     /**
      * Every view, without a word to the chrome: for a chrome whose renderer is gone or whose
-     * document is being replaced. The core that boots next recreates the tabs from the persisted
-     * state, so nothing here must survive under a tab id it will ask for.
+     * document is being replaced, and for the host's own teardown (`Host.destroy`), where the
+     * core still running in the chrome must not hear a `destroyed` – a page-initiated close, to
+     * it – for views that go with their host ([destroyAll] is the custom tab's, which has no core
+     * behind it). The core that boots next recreates the tabs from the persisted state, so
+     * nothing here must survive under a tab id it will ask for.
      */
     fun dropAll() {
         for (view in views.values.toList()) drop(view)
