@@ -319,6 +319,8 @@ class TabWebView(
     }
 
     override fun destroy() {
+        // A local document still being read lands nowhere.
+        localDocumentSeq++
         // A page gone in one of its dialogs: its sheet goes, the renderer is released from the
         // call (it goes anyway), and a check still waiting on it hears that the page went.
         dialog?.let { up ->
@@ -1588,6 +1590,10 @@ class TabWebView(
         rememberCurrentPage()
         // A load supersedes a reload asked just before: an objection now is to leaving.
         reloadAskedAt = 0L
+        if (LocalDocuments.isLocal(url)) {
+            loadLocalDocument(url)
+            return
+        }
         if (url.startsWith("http", ignoreCase = true)) currentDocument = url
         switchDesktopModeFor(url)
         if (url.startsWith("http", ignoreCase = true)) {
@@ -1623,6 +1629,65 @@ class TabWebView(
         switchDesktopModeFor(url)
         if (url.startsWith("http", ignoreCase = true)) applyMixedContentPolicy(host.privacy.flags, url)
         super.loadUrl(url, additionalHttpHeaders)
+    }
+
+    /** Local documents read for this view: a read that ends after the tab moved on lands nowhere. */
+    private var localDocumentSeq = 0
+
+    /**
+     * A `content:` or `file:` document another app handed the browser (LocalDocuments; the
+     * WebView loads neither scheme itself, see the settings above). A PDF goes the way of one
+     * the tab navigates to: a download the core's viewer opens in this tab once complete (the
+     * DownloadListener's `navigation`). A page or an SVG is read off the main thread and put in
+     * the view under its own address, its entry and [getUrl] the address itself. A document that
+     * is not one of the kinds, is refused (the app's own files) or cannot be read fails the load
+     * as WebView fails a missing file, and the core's error page stands in.
+     */
+    private fun loadLocalDocument(url: String) {
+        val seq = ++localDocumentSeq
+        val resolver = context.contentResolver
+        val uri = Uri.parse(url)
+        val refused = LocalDocuments.refused(url, LocalDocuments.privateDirs(context))
+        val userAgent = settings.userAgentString
+        Thread({
+            val name = if (refused) "" else LocalDocuments.nameOf(resolver, uri)
+            val kind = if (refused) null else LocalDocuments.kindOf(runCatching { resolver.getType(uri) }.getOrNull(), name)
+            val outcome: () -> Unit = when (kind) {
+                null -> ({ failLocalDocument(url) })
+                LocalDocuments.Kind.PDF -> {
+                    val size = LocalDocuments.sizeOf(resolver, uri)
+                    val disposition = "inline; filename=\"${name.replace('"', '\'')}\""
+                    ({ host.downloads.start(url, userAgent, disposition, kind.mimeType, size, tabId, navigation = true) })
+                }
+                else -> {
+                    val bytes = runCatching {
+                        resolver.openInputStream(uri)?.use { readUpTo(it, LocalDocuments.MAX_TEXT_BYTES) }
+                    }.getOrNull()
+                    if (bytes == null) ({ failLocalDocument(url) })
+                    else ({ loadDataWithBaseURL(url, LocalDocuments.decode(bytes), kind.mimeType, "utf-8", url) })
+                }
+            }
+            post { if (seq == localDocumentSeq) outcome() }
+        }, "zen-local-document").start()
+    }
+
+    /** The load of a local document failed before the view saw a byte: the core hears as of a missing file. */
+    private fun failLocalDocument(url: String) {
+        loading = false
+        val code = NetErrors.FILE_NOT_FOUND
+        host.viewEvent(tabId, "failLoad", json("code" to code, "description" to (NetErrors.name(code) ?: "ERR_FILE_NOT_FOUND"), "url" to url))
+    }
+
+    /** The stream's bytes, or null past `max` (a document too large to show from memory). */
+    private fun readUpTo(input: java.io.InputStream, max: Long): ByteArray? {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) return out.toByteArray()
+            if (out.size() + n > max) return null
+            out.write(buffer, 0, n)
+        }
     }
 
     /**
