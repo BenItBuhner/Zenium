@@ -164,13 +164,14 @@ describe('the bubble’s actions', () => {
     expect(uiStore.get().groupEditor).toBeNull()
   })
 
-  it('for a saved folder: Open folder with its page count, New tab in folder (the core opens the folder first, then adds) and Delete – no Unpack or Close; Open brings the pages back', async () => {
+  it('for a saved folder: Open folder with its count in the menu’s noun (N tabs), New tab in folder (the core opens the folder first, then adds) and Delete – no Unpack or Close; Open brings the pages back', async () => {
     let el = await bubble([tab('home', null)], folder({ savedTabs: PAGES, collapsed: true }))
     let rows = actions(el)
     expect(rows.map((r) => r.dataset.action)).toEqual(['open', 'new-tab', 'delete'])
     const open = rows[0]!
     expect(open.querySelector('.zen-v2-label')!.textContent).toBe('Open folder')
-    expect(open.querySelector('.zen-group-editor-count')!.textContent).toBe('3 pages')
+    // One noun for one number: the menu's Open Folder (3 Tabs), the bubble's "3 tabs".
+    expect(open.querySelector('.zen-group-editor-count')!.textContent).toBe('3 tabs')
     expect(open.hasAttribute('data-danger')).toBe(false)
     expect(open.querySelector('svg.lucide-folder-open')).not.toBeNull()
     // New tab in folder in the plain ink, with no count of its own: the core's `folder.newTab`
@@ -189,6 +190,12 @@ describe('the bubble’s actions', () => {
     click(rows[0]!)
     expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
     expect(uiStore.get().groupEditor).toBeNull()
+    // The singular, as the menu's Open Folder (1 Tab).
+    el = await bubble(
+      [tab('home', null)],
+      folder({ savedTabs: PAGES.slice(0, 1), collapsed: true })
+    )
+    expect(actions(el)[0]!.querySelector('.zen-group-editor-count')!.textContent).toBe('1 tab')
   })
 
   it('Delete asks first for a folder holding tabs or pages – the prompt taking the bubble’s place – and deletes an empty one outright', async () => {
