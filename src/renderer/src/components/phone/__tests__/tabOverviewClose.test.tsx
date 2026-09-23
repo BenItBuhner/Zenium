@@ -11,11 +11,13 @@ import { BLANK_URL } from '@shared/url'
  * §11.4): a card's X closes at once and departs, and the toast that follows the core's filing
  * offers Undo; the header's menu carries "Recently Closed" and "Close All Tabs"; Close all asks
  * first on a prompt sheet with a "Don't ask again" row bound to `settings.confirmCloseAll`, and
- * then departs every unpinned card through `space.closeUnpinned` with one toast for the lot;
- * the recently closed sheet lists the contract's entries and a tap restores one. On a host with
- * private tabs each pane closes its own (TAB-02, TAB-03): the regular pane its cards one by one,
- * the private pane through `tab.closePrivate` from a menu of that one row. Rendered for real in
- * happy-dom with the sheets on the frame's dialog host, the frame loop cranked by hand.
+ * then departs every unpinned card through `tab.closeMany` – the core closing them one after
+ * the other, each page's `beforeunload` heard in its turn (PUI-28) – with one toast for the
+ * lot; the recently closed sheet lists the contract's entries and a tap restores one. On a host
+ * with private tabs each pane closes its own (TAB-02, TAB-03): the regular pane its cards
+ * through the same `tab.closeMany`, the private pane through `tab.closePrivate` from a menu of
+ * that one row. Rendered for real in happy-dom with the sheets on the frame's dialog host, the
+ * frame loop cranked by hand.
  */
 
 const SPACE = 'space'
@@ -42,6 +44,7 @@ Object.assign(window, {
 const { TabOverview } = await import('../TabOverview')
 const { cancelLift } = await import('../useCardLift')
 const { clearDepartures, departStore } = await import('../departureStore')
+const { EXIT_WAIT_MS } = await import('../Departures')
 const { layoutAnimations } = await import('@renderer/lib/motion/flip')
 const { FrameDialogHost } = await import('@renderer/lib/portals')
 const { viewportStore } = await import('@renderer/lib/formFactor')
@@ -116,6 +119,7 @@ function stateOf(tabs: Tab[], settings: Partial<UIState['settings']> = {}): UISt
     extensions: [],
     bookmarks: [],
     recentlyClosed: [],
+    closingTabIds: [],
     // Sync off: the tab search's reach has no other devices to look through (TAB-21).
     sync: { enabled: false, scope: { openTabs: false } }
   } as unknown as UIState
@@ -392,15 +396,17 @@ describe('Close all tabs', () => {
     expect(departStore.get().items).toEqual([])
   })
 
-  it('Close all departs every unpinned card, closes them through the space, and one toast offers to undo the lot', async () => {
+  it('Close all departs every unpinned card, closes them one after the other, and one toast offers to undo the lot', async () => {
     show(three())
     await openMenu()
     await pick('Close All Tabs (3)')
     await pick('Close all')
-    // The question is gone; the cards depart where they stand – the pinned one stays.
+    // The question is gone; the cards depart where they stand – the pinned one stays. The core
+    // closes the three in turn (`tab.closeMany`, PUI-28): a page that objects asks "Leave
+    // site?" on its own tab; `space.closeUnpinned` would ask no page.
     expect(dialogTitle()).toBeUndefined()
     expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'b', 'c'])
-    expect(commands()).toEqual([['space.closeUnpinned', { spaceId: SPACE }]])
+    expect(commands()).toEqual([['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]])
     // The setting is untouched: the row was not ticked.
     expect(of('settings.update')).toEqual([])
     // The core closes the three in order and files each; the one toast counts them.
@@ -432,7 +438,7 @@ describe('Close all tabs', () => {
     await pick('Close all')
     expect(commands()).toEqual([
       ['settings.update', { confirmCloseAll: false }],
-      ['space.closeUnpinned', { spaceId: SPACE }]
+      ['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]
     ])
 
     // The setting is off: the next Close all goes straight through, no question asked.
@@ -442,7 +448,7 @@ describe('Close all tabs', () => {
     await openMenu()
     await pick('Close All Tabs (3)')
     expect(dialogTitle()).toBeUndefined()
-    expect(commands()).toEqual([['space.closeUnpinned', { spaceId: SPACE }]])
+    expect(commands()).toEqual([['tab.closeMany', { tabIds: ['a', 'b', 'c'] }]])
     expect(departStore.get().items.map((i) => i.key)).toEqual(['a', 'b', 'c'])
   })
 })
@@ -541,6 +547,51 @@ describe('closing one card', () => {
     expect(of('tab.activate')).toEqual([{ tabId: 'a' }])
   })
 
+  it('a close in flight (its page asking "Leave site?") holds its card in place; Cancel puts the card back with no exit, Leave lets the exit run (PUI-28)', async () => {
+    // The core lists the tab in `closingTabIds` from the close until its page's unload check
+    // is through – a page that objects asking "Leave site?" (on Android as the host's own
+    // sheet, which the chrome never sees) for as long as the user takes.
+    const asking = (state: UIState, tabId: string): UIState => ({
+      ...state,
+      closingTabIds: [tabId]
+    })
+    show(three())
+    const close = document.querySelector<HTMLElement>('[data-cell="b"] [aria-label^="Close "]')!
+    act(() => close.click())
+    expect(commands()).toEqual([['tab.close', { tabId: 'b' }]])
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['b'])
+    // The page objects: the core asks on the tab, and the exit that would run 900 ms after a
+    // close the browser never showed waits with it – well past its wait, the card still stands.
+    show(asking(three(), 'b'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(EXIT_WAIT_MS * 3)
+    })
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['b'])
+    expect([...departStore.get().released]).toEqual([])
+    // Cancel: the question goes, the tab stays. After the same wait the card is back as it
+    // was – the departure gone without its exit ever being released.
+    show(three())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(EXIT_WAIT_MS + 1)
+    })
+    expect(departStore.get().items).toEqual([])
+    expect([...departStore.get().released]).toEqual([])
+    expect(toasts()).toEqual([])
+
+    // Leave: the question goes and the tab with it; the exit runs on the commit that shows the gap.
+    act(() => close.click())
+    show(asking(three(), 'b'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(EXIT_WAIT_MS * 2)
+    })
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['b'])
+    const left = three()
+    delete (left.tabs as Record<string, Tab>).b
+    left.spaces[0].tabIds = left.spaces[0].tabIds.filter((id) => id !== 'b')
+    show(left)
+    expect([...departStore.get().released]).toEqual(['b'])
+  })
+
   it('a blank tab never visited closes with no toast: there is nothing to bring back', async () => {
     show(stateOf([tab('a', 'https://a.example/'), tab('blank', BLANK_URL)]))
     const close = document.querySelector<HTMLElement>('[data-cell="blank"] [aria-label^="Close "]')!
@@ -588,7 +639,7 @@ describe('on a host with private tabs', () => {
     act(() => resetOverviewPane())
   })
 
-  it("the regular pane's Close All closes the space's regular tabs one by one and leaves the private session be", async () => {
+  it("the regular pane's Close All closes the space's regular tabs in turn and leaves the private session be", async () => {
     show(mixed())
     closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
     await openMenu()
@@ -601,12 +652,10 @@ describe('on a host with private tabs', () => {
     await pick('Close All Tabs (2)')
     expect(dialogTitle()).toBe('Close 2 tabs?')
     await pick('Close all')
-    // The regular cards depart; not `space.closeUnpinned`, which would take One and Two too.
+    // The regular cards depart, named one by one; not `space.closeUnpinned`, which would take
+    // One and Two too.
     expect(departStore.get().items.map((i) => i.key)).toEqual(['r1', 'r2'])
-    expect(commands()).toEqual([
-      ['tab.close', { tabId: 'r1' }],
-      ['tab.close', { tabId: 'r2' }]
-    ])
+    expect(commands()).toEqual([['tab.closeMany', { tabIds: ['r1', 'r2'] }]])
     // One toast for the two once the core files them, with Undo.
     const state = mixed()
     file(entry(state.tabs.r1, NOW), entry(state.tabs.r2, NOW))

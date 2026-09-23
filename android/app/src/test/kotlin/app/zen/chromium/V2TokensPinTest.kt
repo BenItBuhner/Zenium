@@ -163,6 +163,24 @@ class V2TokensPinTest {
         // §9.7: the hairline under a scrolled title block – the border ink, the same dp, on the grip's 120 ms.
         assertTrue(css.text.contains("box-shadow: 0 ${PromptSheetSpec.HAIRLINE_DP}px 0 var(--v2-border);"))
         assertTrue(css.rule(".zen-sheet-grip").contains("transition: box-shadow ${PromptSheetSpec.HAIRLINE_FADE_MS}ms var(--zen-ease);"))
+        // §9.7 in the native chassis: its two dividers are one rule on the body scroller's state – the
+        // block's line while content has scrolled under it, the footer's mirror while content remains
+        // beneath (the platform's `canScrollVertically`, read on every scroll and layout) – each a
+        // `Hairline` at [PromptSheetSpec.hairlinePx] in the border ink on the same 120 ms, a body that
+        // fits drawing neither. (The web chassis fades the body's end instead – `BottomSheet.tsx`'s
+        // `useFadeEdges`, `edges: 'end'` – the line its footer owes when it takes §9.7's amendment.)
+        val chassis = File(root, "android/app/src/main/kotlin/app/zen/chromium/NativePromptSheet.kt").readText()
+        val lines = Regex("""val scroller = BodyScroller \{ scroller ->\s*underBlock\.show\(scroller\.canScrollVertically\(-1\)\)\s*overFooter\.show\(scroller\.canScrollVertically\(1\)\)\s*\}""")
+        assertTrue("both dividers read the scroller's state, the block's at -1 and the footer's at 1", lines.containsMatchIn(chassis))
+        for (edge in listOf("underBlock" to "Gravity.TOP", "overFooter" to "Gravity.BOTTOM"))
+            assertTrue("${edge.first} is a hairline over the body's edge", chassis.contains("frame.addView(${edge.first}, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline, ${edge.second}))"))
+        val hairlineView = Regex("""private inner class Hairline : View\(context\) \{([\s\S]*?)\n    \}""").find(chassis)?.groupValues?.get(1) ?: error("NativePromptSheet.kt has no Hairline view")
+        assertTrue("the lines are the border ink", hairlineView.contains("setBackgroundColor(ink.border)"))
+        assertTrue("the lines come and go on the hairline's fade", hairlineView.contains("setDuration(PromptSheetSpec.HAIRLINE_FADE_MS.toLong())"))
+        val scroller = Regex("""private inner class BodyScroller\(([\s\S]*?)\n    \}""").find(chassis)?.groupValues?.get(1) ?: error("NativePromptSheet.kt has no BodyScroller")
+        for (hook in listOf("onScrollChanged", "onLayout"))
+            assertTrue("the scroller reports its edges after $hook", scroller.contains("override fun $hook(") && scroller.contains("onEdges(this)"))
+        assertEquals("the hairline is one dp on this chassis, as the chrome's 1 CSS px", "private val hairline = PromptSheetSpec.hairlinePx(density)", Regex("""private val hairline = [^\n]+""").find(chassis)!!.value)
         // §9.12: the label 4 above its field (`.zen-bm-label`, the one §9.12 label rule in main.css).
         assertEquals(PromptSheetSpec.LABEL_GAP_DP, px(css.rule(".zen-bm-label"), "gap"))
         // §9.11 / §9.25: the footer's 16 above the peers, the peers' gap, the gutter at its sides;
