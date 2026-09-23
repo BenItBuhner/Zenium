@@ -40,11 +40,6 @@ name: Android new tab page morph demo
 # never failed: the HWUI numbers are the software GPU's, the trace columns provisional).
 on:
   workflow_dispatch:
-  # TEMPORARY (the coordinator's one authorised retry of both acts on the retuned head – the
-  # scrub's ntp-scrub-<edge> on the private act, the morph's ntp-morph-open / close-<edge> and
-  # the turn on the space act: no token in the project can dispatch); removed in the next commit.
-  push:
-    branches: [cursor/android-perf-ntp-root-vars-cf22]
 
 permissions:
   contents: read
