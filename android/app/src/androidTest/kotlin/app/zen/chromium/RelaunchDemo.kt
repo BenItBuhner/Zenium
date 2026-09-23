@@ -11,6 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -26,8 +27,8 @@ import java.util.Locale
  * The driver seeds one tab on a loopback page and relaunches [relaunches] times in a row. Per
  * relaunch it notes, as findings that fail nothing: whether the seeded tab is in the new core's
  * session and its page live again, whether `state.json` on disk still holds it once the old
- * core's straggle window has passed, when the old activity was destroyed and whether its
- * storage closed with it, and every `ZenStorage` line the run logged since the launch (the old
+ * core's straggle window has passed, when the old host closed its storage and whether the old
+ * activity was destroyed, and every `ZenStorage` line the run logged since the launch (the old
  * host's close marker; each write it refused as coming from a destroyed or superseded host – the
  * writes that used to be the late ones). The claims over the set: the tab survived every
  * relaunch, the disk held it after every relaunch, and every relaunch closed the old host's
@@ -109,7 +110,10 @@ class RelaunchDemo : MediaDemoBase("android-relaunch-race") {
         check("the seeded tab survived every relaunch ($survived of $relaunches)", survived == relaunches)
         check("state.json on disk held the seeded tab after every relaunch ($onDisk of $relaunches)", onDisk == relaunches)
         check("every relaunch closed the old host's storage with it ($closed of $relaunches)", closed == relaunches)
-        note("  writes refused as a destroyed or superseded host's over the run: $refusals (each one a write that would have been late)")
+        note(
+            "  writes refused as a destroyed or superseded host's over the run: $refusals " +
+                "(each one a write that would have been the late one; with the teardown signal the old core normally asks for none)"
+        )
         note("\nend: $checks checks, $failures failed")
     }
 
@@ -117,28 +121,18 @@ class RelaunchDemo : MediaDemoBase("android-relaunch-race") {
 
     /**
      * One relaunch over the running activity, then the findings: the old activity's destroy
-     * timed from the launch, the new core's session and page, the profile on disk once the old
-     * core's straggle window (a write 1.4 s after DESTROYED in H-2's log) has passed, and the
-     * storage log since the launch.
+     * timed by its storage's close marker in the log (logged from `Host.destroy`, 2 ms before
+     * the activity's DESTROYED in the record run), the new core's session and page, the profile
+     * on disk once the old core's straggle window (a write 1.4 s after DESTROYED in H-2's log)
+     * has passed, and the storage log since the launch.
      */
     private fun relaunchOnce(i: Int): Outcome {
         note("\n[relaunch $i]")
         val old = activity as MainActivity
         val oldHost = old.host
-        val logLinesBefore = storageLog().size
-        val launchedAt = SystemClock.uptimeMillis()
+        val launchedWall = System.currentTimeMillis()
         launch()
-        var destroyedAt = -1L
-        var destroyedWall = 0L
-        val deadline = SystemClock.uptimeMillis() + 15_000
-        while (SystemClock.uptimeMillis() < deadline) {
-            if (old.isDestroyed) {
-                destroyedAt = SystemClock.uptimeMillis()
-                destroyedWall = System.currentTimeMillis()
-                break
-            }
-            SystemClock.sleep(20)
-        }
+        val destroyed = poll(15_000) { old.isDestroyed }
         ensureForeground()
         val chromeUp = poll(20_000) { chromeJs("typeof window.zen") == "\"object\"" }
         // The old core's last word came 1.4 s after DESTROYED in H-2's log; give it twice that,
@@ -149,21 +143,24 @@ class RelaunchDemo : MediaDemoBase("android-relaunch-race") {
         val state = File(app.filesDir, "zen/state.json")
         val diskHasTab = tabOnDisk(state)
         val storageClosed = oldHost.storage.isClosed
-        val lines = storageLog().drop(logLinesBefore)
-        val refusals = lines.count { it.contains("refused ") }
+        val lines = storageLogSince(launchedWall)
+        // A refusal reads `refused <name>: <why>`; the close marker says "are refused from here" and is not one.
+        val refusals = lines.count { REFUSAL.containsMatchIn(it) }
+        val closedAt = lines.firstOrNull { CLOSE_MARKER.containsMatchIn(it) }?.let(::logTime)
         note(
-            "  old activity destroyed: ${if (destroyedAt >= 0) "${destroyedAt - launchedAt} ms after the launch, at ${clock.format(Date(destroyedWall))}" else "not within 15 s of the launch"}; " +
-                "its storage closed: $storageClosed; new chrome up: $chromeUp"
+            "  old activity destroyed: $destroyed; its storage closed: $storageClosed" +
+                (if (closedAt != null) " at ${clock.format(Date(closedAt))}, ${closedAt - launchedWall} ms after the launch" else " (no close marker in the log since the launch)") +
+                "; new chrome up: $chromeUp"
         )
         note("  finding: seeded tab survived relaunch $i: ${if (tab != null) "yes" else "no"} (${describeTab(TAB)}; page ${if (live) "live" else "not live"})")
         note(
             "  finding: state.json on disk holds the seeded tab: ${if (diskHasTab) "yes" else "no"} " +
                 "(${state.length()} B, modified at ${clock.format(Date(state.lastModified()))}" +
-                (if (destroyedAt >= 0) ", ${state.lastModified() - destroyedWall} ms after the destroy" else "") +
-                "; a write landing after the destroy is the new host's by the lease)"
+                (if (closedAt != null) ", ${state.lastModified() - closedAt} ms after the old host closed its storage" else "") +
+                "; a write landing after the close is the new host's by the lease)"
         )
         note(
-            "  storage log since the launch: ${lines.size} line(s), $refusals refused" +
+            "  storage log since the launch: ${lines.size} line(s), $refusals write(s) refused" +
                 (if (lines.isEmpty()) "" else "\n" + lines.joinToString("\n") { "    $it" })
         )
         return Outcome(tab != null, diskHasTab, storageClosed, refusals)
@@ -175,9 +172,24 @@ class RelaunchDemo : MediaDemoBase("android-relaunch-race") {
         (0 until tabs.length()).any { tabs.getJSONObject(it).optString("id") == TAB }
     }.getOrDefault(false)
 
-    /** Every `ZenStorage` line in the log buffer (the storage's close marker and its refusals), oldest first. */
-    private fun storageLog(): List<String> =
-        shellCommand("logcat -d -v time -s ZenStorage:*").lines().map { it.trim() }.filter { it.contains("ZenStorage") }
+    /**
+     * Every `ZenStorage` line (the storage's close marker and its refusals) logged since `wall`
+     * (epoch ms, a second's slack for the log's clock), oldest first. Chosen by the line's own
+     * time rather than by a count of lines, so a log buffer that turned over under the run
+     * loses nothing but old lines.
+     */
+    private fun storageLogSince(wall: Long): List<String> =
+        shellCommand("logcat -d -v time -s ZenStorage:*").lines().map { it.trim() }
+            .filter { it.contains("ZenStorage") && (logTime(it) ?: Long.MAX_VALUE) >= wall - 1_000 }
+
+    /** The epoch ms of a `logcat -v time` line's stamp (`MM-dd HH:mm:ss.SSS`, the device's zone, this year), or null. */
+    private fun logTime(line: String): Long? {
+        if (line.length < 18) return null
+        val year = Calendar.getInstance().get(Calendar.YEAR)
+        return runCatching { logStamp.parse("$year-${line.substring(0, 18)}")?.time }.getOrNull()
+    }
+
+    private val logStamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
     private fun check(claim: String, holds: Boolean) {
         checks++
@@ -188,6 +200,10 @@ class RelaunchDemo : MediaDemoBase("android-relaunch-race") {
     companion object {
         /** Relaunches per run: enough for a race that used to take one boot in ten (the status-bar nightly) to show. */
         const val RELAUNCHES = 8
+        /** A `ZenStorage` refusal: `W/ZenStorage( pid): refused <name>: <why>` (`Storage.refused`). */
+        private val REFUSAL = Regex("""ZenStorage\(\s*\d+\): refused \S+: """)
+        /** A `ZenStorage` close marker: `W/ZenStorage( pid): closed: writes from this host are refused from here` (`Storage.close`). */
+        private val CLOSE_MARKER = Regex("""ZenStorage\(\s*\d+\): closed: """)
         private val THEME = InstrumentationRegistry.getArguments().getString("theme").let {
             if (it == "dark") "dark" else "light"
         }
