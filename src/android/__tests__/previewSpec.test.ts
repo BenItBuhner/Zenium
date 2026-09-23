@@ -241,6 +241,12 @@ describe('parsePreviewSpec', () => {
     })
     expect(parsePreviewSpec('sheet=customise')).toEqual({ kind: 'sheet', sheet: 'customise' })
     expect(parsePreviewSpec('sheet=promo')).toEqual({ kind: 'sheet', sheet: 'promo' })
+    // "Bookmark all tabs" through the core, its folder picker opened by the folder's name.
+    expect(parsePreviewSpec('sheet=bookmark-all-tabs&then=tap:Work')).toEqual({
+      kind: 'sheet',
+      sheet: 'bookmark-all-tabs',
+      then: [{ kind: 'tap', text: 'Work' }]
+    })
     expect(parsePreviewSpec('menu=app&sheet=extensions')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('sheet=extensions&prompt=camera')).toEqual({
       kind: 'sheet',

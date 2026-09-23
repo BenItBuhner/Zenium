@@ -48,10 +48,18 @@ export type PreviewStep =
  * The chrome's own sheets a preview state may open by name (`sheet=<name>`): the Extensions
  * sheet, the new tab page's customise sheet (`customise`), which mounts above whichever page
  * is up, the default-browser promo (`promo`: the core's campaign made due over the active
- * page, as the third session raises it) and the Send to your devices picker (`send-tab`, the
- * menu's row on a phone with several devices; `sync=tabs` gives it the devices to list).
+ * page, as the third session raises it), the Send to your devices picker (`send-tab`, the
+ * menu's row on a phone with several devices; `sync=tabs` gives it the devices to list) and
+ * "Bookmark all tabs" (`bookmark-all-tabs`: the app menu's Bookmarks item, through the core as
+ * the item goes; `then=tap:<the folder's name>` opens its folder picker over it).
  */
-export const PREVIEW_SHEETS = ['extensions', 'customise', 'promo', 'send-tab'] as const
+export const PREVIEW_SHEETS = [
+  'extensions',
+  'customise',
+  'promo',
+  'send-tab',
+  'bookmark-all-tabs'
+] as const
 export type PreviewSheet = (typeof PREVIEW_SHEETS)[number]
 
 /** An extension id as Chrome forms them: 32 letters a–p. */
