@@ -31,12 +31,14 @@ import {
   closeMenu,
   closeUrlbar,
   openBookmarkChrome,
+  openClearBrowsingData,
   openExtensionsSheet,
   openFindBar,
   onboardingUp,
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   openInstallSheet,
+  openNameWindow,
   openOverlay,
   openPrintPreview,
   openReaderPreferences,
@@ -168,6 +170,17 @@ export function useMainEvents(): void {
         // over it (the category alone on a phone, whose rows import from files).
         closeUrlbar()
         void openImportSurface(currentActiveTabId())
+      }),
+      // Ctrl+Shift+Delete and the app menu's Delete Browsing Data… row: the dialog the History
+      // page's button opens, over whatever is up.
+      onEvent('clearBrowsingData.open', () => {
+        closeUrlbar()
+        void openClearBrowsingData(currentActiveTabId())
+      }),
+      // More Tools › Name Window… and the tab strip's row: Chrome's prompt over the page.
+      onEvent('windowName.open', () => {
+        closeUrlbar()
+        void openNameWindow(currentActiveTabId())
       }),
       // Edge's Web capture (Ctrl+Shift+S in the Chrome preset, the ⋯ menu's row, the palette):
       // the desktop's overlay over the page's picture (`components/capture/CaptureOverlay.tsx`).
