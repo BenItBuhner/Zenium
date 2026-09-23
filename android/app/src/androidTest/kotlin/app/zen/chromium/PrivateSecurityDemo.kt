@@ -513,7 +513,7 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
         }
 
         // 9. NOT-07 / INC-07: the card's press closes every private tab through the core's
-        //    close-all; the card and the lock go with them, the overview returns to Tabs.
+        //    close-all; the card and the lock go with them, the private surface too.
         scene("9. The card's press closes every private tab (NOT-07, INC-07)") {
             val card = awaitCard(4_000)
             expect("the card stands with the overview on the covered Private pane", card != null && cardText(card) == "2 private tabs are open")
@@ -522,13 +522,21 @@ class PrivateSecurityDemo : DemoHarness("private-security-demo-state.json", "pri
             expect("every private tab closes", awaitNoPrivateTabs(10_000))
             expect("the card comes down with the last private tab", awaitCardGone(8_000))
             expect("the lock is released with the count", awaitUnlocked(6_000) && host.privateLock.openTabs == 0)
-            expect("the overview returns to the Tabs pane, no cover", poll(6_000) { pane() == "tabs" } && !paneCoverUp())
+            // The private surface goes with its tabs: the overview either stands on the Tabs pane
+            // or is dismissed onto the regular tab (run 2: dismissed), and no cover stands anywhere.
+            val landed = poll(6_000) { pane() == "tabs" || (!overviewOpen() && !privateActive()) }
+            expect("the overview leaves the private pane – on Tabs, or dismissed onto the regular tab – with no cover", landed && !coverUp())
             expect("the chrome blends back off the private theme", poll(6_000) { !host.themeDark })
-            finding("  after the press: private tabs ${privateTabIds()}, card ${describeCard(privateCard())}, lock ${host.privateLock.locked}, pane ${pane()}, chrome dark ${host.themeDark}")
+            finding(
+                "  after the press: private tabs ${privateTabIds()}, card ${describeCard(privateCard())}, lock ${host.privateLock.locked}, " +
+                    "overview ${if (overviewOpen()) "open on '${pane()}'" else "dismissed"}, active tab ${activeCoreTab()?.optString("id")}, chrome dark ${host.themeDark}"
+            )
             SystemClock.sleep(1_200)
             shot("21-after-close-all")
-            back()
-            awaitOverviewGone()
+            if (overviewOpen()) {
+                back()
+                awaitOverviewGone()
+            }
             coreInvoke("private.setLockOnLeave", """{"enabled":false}""")
         }
 
