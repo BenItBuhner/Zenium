@@ -17,6 +17,7 @@ import type {
   LongCaptureCrop,
   MenuDescriptor,
   MenuItemDescriptor,
+  NavigationDirection,
   OverlayKind,
   Rect,
   ScreenshotSaved,
@@ -355,11 +356,6 @@ export interface UiState {
    */
   newTabShortcutDialog: { tabId: string; id: string | null; title: string; url: string } | null
   /**
-   * The site-information confirmation on a mouse ("Clear site data?", "Clear cookies?"): a frame
-   * dialog over the page in `tabId`, opened from the popover, which closes when it does (§9.20).
-   */
-  siteDataConfirm: { tabId: string; kind: 'cookies' | 'data'; site: string; count: number } | null
-  /**
    * "Delete <folder>?" (the desktop sidebar's folder menu and editor bubble; TAB-16's desktop
    * half): a §9.23 frame dialog over the page, asked before a folder that holds tabs or saved
    * pages goes. `keyboard`: the folder's header had the keyboard, so Cancel hands it back there.
@@ -451,6 +447,11 @@ export interface UiState {
   frameSheetOpen: boolean
   /** Phone layout: the Tabs button's quick menu is up, anchored to the button (window px). */
   tabsMenu: Rect | null
+  /**
+   * Phone layout: the Back (or Forward) button's hold has its history popup up, anchored to the
+   * button (window px), listing the stack in `direction` (GN-08).
+   */
+  historyMenu: { anchor: Rect; direction: NavigationDirection } | null
   /** The downloads bubble (anchored under the toolbar button) is up. */
   downloadsOpen: boolean
   /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
@@ -587,7 +588,6 @@ export const uiStore = createStore<UiState>(
     bookmarkEdit: null,
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
-    siteDataConfirm: null,
     folderDeleteConfirm: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
@@ -617,6 +617,7 @@ export const uiStore = createStore<UiState>(
     sendTabSheet: null,
     frameSheetOpen: false,
     tabsMenu: null,
+    historyMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     capture: null,
@@ -1118,6 +1119,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.extensionsSheetOpen &&
     !ui.sendTabSheet &&
     !ui.tabsMenu &&
+    !ui.historyMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.credentialLeakOpen &&
@@ -1140,7 +1142,6 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.zoomBubble &&
     !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
-    !ui.siteDataConfirm &&
     !ui.folderDeleteConfirm &&
     !bookmarkChromeOpen(ui)
   )
@@ -1183,6 +1184,7 @@ export function invalidateSnapshot(): void {
     !ui.sendTabSheet &&
     !ui.frameSheetOpen &&
     !ui.tabsMenu &&
+    !ui.historyMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.credentialLeakOpen &&
@@ -1204,7 +1206,6 @@ export function invalidateSnapshot(): void {
     !ui.readerPreferences &&
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
-    !ui.siteDataConfirm &&
     !ui.folderDeleteConfirm &&
     !bookmarkChromeOpen(ui) &&
     ui.frameDialogCover === 0
@@ -1903,6 +1904,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.barEditorOpen ||
     ui.frameSheetOpen ||
     ui.tabsMenu !== null ||
+    ui.historyMenu !== null ||
     ui.blockedPopupsPanel !== null ||
     ui.securityPromptOpen ||
     ui.credentialLeakOpen ||
@@ -1925,7 +1927,6 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.readerPreferences !== null ||
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
-    ui.siteDataConfirm !== null ||
     ui.folderDeleteConfirm !== null ||
     // The star bubble and the bookmark editor are sheets over the page (design review of #38, item 1).
     bookmarkChromeOpen(ui)
@@ -1989,30 +1990,6 @@ export async function openNewTabShortcutDialog(
 export function closeNewTabShortcutDialog(): void {
   if (!uiStore.get().newTabShortcutDialog) return
   uiStore.set({ newTabShortcutDialog: null })
-  invalidateSnapshot()
-  returnFocusToPage()
-}
-
-// ---------------------------------------------------------------------------
-// The site-information confirmation over the page (desktop)
-// ---------------------------------------------------------------------------
-
-/**
- * "Clear site data?" or "Clear cookies?" from the site-information popover: a frame dialog
- * (design language v2 §9.23, §9.5). The page is captured first and gives way to its picture
- * under the frame's scrim; the popover it came from closes as the dialog opens (§9.20).
- */
-export async function openSiteDataConfirm(
-  request: NonNullable<UiState['siteDataConfirm']>
-): Promise<void> {
-  await captureActiveTab(request.tabId)
-  run('focus.chrome', undefined)
-  uiStore.set({ siteDataConfirm: request })
-}
-
-export function closeSiteDataConfirm(): void {
-  if (!uiStore.get().siteDataConfirm) return
-  uiStore.set({ siteDataConfirm: null })
   invalidateSnapshot()
   returnFocusToPage()
 }
@@ -2125,6 +2102,28 @@ export async function openTabsMenu(anchor: Rect, activeTabId: string | null): Pr
 export function closeTabsMenu(): void {
   if (!uiStore.get().tabsMenu) return
   uiStore.set({ tabsMenu: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The Back (or Forward) button's hold: the tab's history popup, anchored to the button (GN-08;
+ * Chrome's `NavigationPopup` on its tablet toolbar's Back). It overhangs the content area like
+ * the Tabs button's menu, so the page gives way to its snapshot while the popup is up.
+ */
+export async function openHistoryMenu(
+  anchor: Rect,
+  direction: NavigationDirection,
+  activeTabId: string | null
+): Promise<void> {
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ historyMenu: { anchor, direction } })
+}
+
+export function closeHistoryMenu(): void {
+  if (!uiStore.get().historyMenu) return
+  uiStore.set({ historyMenu: null })
   invalidateSnapshot()
   returnFocusToPage()
 }

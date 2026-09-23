@@ -4003,6 +4003,15 @@ export interface Commands {
   'tab.switchTo': { args: { tabId: string }; result: void }
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
   'tab.navigationEntries': { args: { tabId: string }; result: NavigationSnapshot }
+  /**
+   * The entries behind (or ahead of) the tab's current one, nearest first, at most `limit`, each
+   * with the favicon history knows for its URL: the phone's Back-hold popup (Chrome's
+   * `getDirectedNavigationHistory`).
+   */
+  'tab.navigationHistory': {
+    args: { tabId: string; direction: NavigationDirection; limit: number }
+    result: NavigationHistoryEntry[]
+  }
   'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
   /** The back/forward list as a menu (long press / right click on the back and forward buttons). */
   'tab.navigationMenu': { args: { tabId: string }; result: void }
@@ -5750,6 +5759,18 @@ export interface NavigationSnapshotEntry {
   url: string
   title: string
   pageState?: string
+}
+
+/** Which way along the tab's stack a directed history list looks. */
+export type NavigationDirection = 'back' | 'forward'
+
+/** One row of a directed history list (`tab.navigationHistory`): the entry and where it sits. */
+export interface NavigationHistoryEntry {
+  /** The entry's index in the stack, what `tab.goToIndex` takes. */
+  index: number
+  url: string
+  title: string
+  favicon: string | null
 }
 
 export interface ClosedTabEntry {

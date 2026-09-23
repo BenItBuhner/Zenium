@@ -129,9 +129,23 @@ class LockVeilTest {
         // the veil's own. A sibling of the veil in `root` that a later change lifts goes under
         // `LockVeil.Z_PX`, or the veil is re-fronted while raised; a view outside `root` is
         // listed here with its reason.
+        //
+        // Outside `root`: the history navigation disc (GN-04, `HistoryNavBubbleView`), whose
+        // 3 dp is its shadow (v2 §11.9's `--v2-shadow-panel`), not an order. Its layer sits in
+        // the activity's shell above `root` (`MainActivity`: the pages appended to `root` would
+        // cover it), so it is over the veil by parent, whatever its height; it draws an arrow on
+        // the panel token and nothing of a page, only during a live edge drag – a stop's
+        // ACTION_CANCEL ends the drag (`HistoryNavGesture` → the chrome's `retract`) and the disc
+        // goes down – and it takes no touch.
         val sources = File(repoRoot(), "android/app/src/main/kotlin").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
         val lifts = sources.flatMap { file -> code(file).lines().filter { LIFT.containsMatchIn(it) }.map { "${file.name}: ${it.trim()}" } }.sorted()
-        assertEquals(listOf("Host.kt: it.elevation = LockVeil.Z_PX"), lifts)
+        assertEquals(
+            listOf(
+                "HistoryNavBubbleView.kt: elevation = SHADOW_ELEVATION_DP * density",
+                "Host.kt: it.elevation = LockVeil.Z_PX"
+            ),
+            lifts
+        )
     }
 
     private companion object {
