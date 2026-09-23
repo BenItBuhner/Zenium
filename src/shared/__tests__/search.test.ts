@@ -4,14 +4,23 @@ import {
   DEFAULT_SEARCH_ENGINES,
   buildSearchUrl,
   completeWwwCom,
+  customSearchEngine,
+  editedSearchEngine,
   engineFieldFavicon,
+  engineKeywordProblem,
   engineKeywords,
+  isActiveSearchEngine,
   matchEngineKeyword,
+  matchEngineWord,
   matchKeyword,
   matchKeywordWord,
+  normalizeEngineKeyword,
   parseSuggestPayload,
   parseSuggestResponse,
-  searchTermsFromUrl
+  sanitizeSearchEngines,
+  searchTermsFromUrl,
+  withDefaultSearchEngineActive,
+  withSearchEngineActive
 } from '../search'
 import { searchCommands } from '../commands'
 import type { FormFactor, HostCapabilities } from '../types'
@@ -168,6 +177,160 @@ describe('search engines', () => {
         'https://example.com/find/cats'
       )
     ).toBeNull()
+  })
+})
+
+describe('search engines: the shortcut and the active flag (omnibox-09, settings-43)', () => {
+  const own = customSearchEngine(
+    'Marginalia',
+    'https://marginalia.example/?q=%s',
+    DEFAULT_SEARCH_ENGINES
+  )
+  const all = [...DEFAULT_SEARCH_ENGINES, own]
+
+  it('normalises a typed shortcut to one lower-case @word, or none', () => {
+    expect(normalizeEngineKeyword('wiki')).toBe('@wiki')
+    expect(normalizeEngineKeyword(' @Wiki ')).toBe('@wiki')
+    expect(normalizeEngineKeyword('')).toBeNull()
+    expect(normalizeEngineKeyword('   ')).toBeNull()
+    expect(normalizeEngineKeyword('two words')).toBeNull()
+    expect(normalizeEngineKeyword('@')).toBeNull()
+    expect(normalizeEngineKeyword('x'.repeat(65))).toBeNull()
+    expect(normalizeEngineKeyword('x'.repeat(64))).toBe(`@${'x'.repeat(64)}`)
+  })
+
+  it('names why a shortcut cannot be an engine’s: spaces, length, Zenium’s scopes, another engine’s word', () => {
+    // Empty is no problem: the derived shortcut stands in.
+    expect(engineKeywordProblem('', own.id, all)).toBeNull()
+    expect(engineKeywordProblem('mg', own.id, all)).toBeNull()
+    // The engine's own current shortcut is fine for itself.
+    expect(engineKeywordProblem(own.keyword, own.id, all)).toBeNull()
+    expect(engineKeywordProblem('two words', own.id, all)).toBe(
+      'A shortcut is one word, with no spaces'
+    )
+    expect(engineKeywordProblem('x'.repeat(65), own.id, all)).toBe('The shortcut is too long')
+    expect(engineKeywordProblem('@tabs', own.id, all)).toBe(
+      '@tabs is one of Zenium’s own shortcuts'
+    )
+    expect(engineKeywordProblem('bookmarks', own.id, all)).toBe(
+      '@bookmarks is one of Zenium’s own shortcuts'
+    )
+    // Another engine's keyword, id and name are all its words.
+    expect(engineKeywordProblem('ddg', own.id, all)).toBe('DuckDuckGo already answers to @ddg')
+    expect(engineKeywordProblem('@DuckDuckGo', own.id, all)).toBe(
+      'DuckDuckGo already answers to @duckduckgo'
+    )
+  })
+
+  it('edits name, shortcut and template; an empty shortcut derives from the new name, unique', () => {
+    const edited = editedSearchEngine(
+      own,
+      {
+        name: '  Marginalia Search  ',
+        searchUrl: ' https://search.marginalia.nu/search?query=%s ',
+        keyword: 'MS'
+      },
+      all
+    )
+    expect(edited).toMatchObject({
+      id: own.id,
+      name: 'Marginalia Search',
+      searchUrl: 'https://search.marginalia.nu/search?query=%s',
+      keyword: '@ms',
+      glyph: 'M',
+      source: 'custom'
+    })
+    // An empty shortcut derives one from the name; `@google` is the shipped engine's, so `2`.
+    const derived = editedSearchEngine(
+      own,
+      { name: 'Google', searchUrl: own.searchUrl, keyword: '' },
+      all
+    )
+    expect(derived.keyword).toBe('@google2')
+    // The engine's own current shortcut never counts against itself.
+    const same = editedSearchEngine(
+      own,
+      { name: 'Marginalia', searchUrl: own.searchUrl, keyword: '' },
+      all
+    )
+    expect(same.keyword).toBe('@marginalia')
+  })
+
+  it('an edited discovered engine becomes the user’s own, its visit stamp gone', () => {
+    const discovered = {
+      ...own,
+      id: 'discovered:marginalia.example',
+      source: 'discovered' as const,
+      visitedAt: 1234
+    }
+    const edited = editedSearchEngine(
+      discovered,
+      { name: 'Marginalia', searchUrl: discovered.searchUrl, keyword: 'mg' },
+      [...DEFAULT_SEARCH_ENGINES, discovered]
+    )
+    expect(edited.source).toBe('custom')
+    expect(edited.visitedAt).toBeUndefined()
+    expect(edited.id).toBe('discovered:marginalia.example')
+  })
+
+  it('deactivates and activates by the flag alone: absent is active, `false` is not', () => {
+    expect(isActiveSearchEngine(own)).toBe(true)
+    expect(isActiveSearchEngine({ active: true })).toBe(true)
+    expect(isActiveSearchEngine({ active: false })).toBe(false)
+    const off = withSearchEngineActive([own], own.id, false)
+    expect(off[0].active).toBe(false)
+    const on = withSearchEngineActive(off, own.id, true)
+    expect('active' in on[0]).toBe(false)
+    // Another id leaves the list as it was.
+    expect(withSearchEngineActive([own], 'nope', false)).toEqual([own])
+  })
+
+  it('a deactivated engine answers to no keyword, host or name until activated', () => {
+    const inactive = { ...own, active: false }
+    const engines = [...DEFAULT_SEARCH_ENGINES, inactive]
+    expect(matchKeywordWord('@marginalia', engines)).toBeNull()
+    expect(matchKeyword('@marginalia cats', engines)).toBeNull()
+    expect(matchEngineKeyword('@marginalia cats', engines)).toBeNull()
+    expect(matchEngineWord('marginalia.example', engines)).toBeNull()
+    expect(matchEngineWord('marginalia', engines, true)).toBeNull()
+    // The shipped engines beside it still answer.
+    expect(matchKeywordWord('@ddg', engines)).toMatchObject({ kind: 'engine' })
+    // Activated, it answers again.
+    const active = withSearchEngineActive([inactive], own.id, true)
+    expect(matchKeywordWord('@marginalia', [...DEFAULT_SEARCH_ENGINES, ...active])).toMatchObject({
+      kind: 'engine',
+      keyword: '@marginalia'
+    })
+  })
+
+  it('an engine made the default while deactivated comes back active, the flag deleted; the other engines keep theirs; nothing to do leaves the same list (A7)', () => {
+    const other = { ...own, id: 'custom:other', name: 'Other', keyword: '@other', active: false }
+    const list = [{ ...own, active: false }, other]
+    const made = withDefaultSearchEngineActive(list, own.id)
+    expect(made).not.toBe(list)
+    expect('active' in made[0]).toBe(false)
+    expect(isActiveSearchEngine(made[0])).toBe(true)
+    expect(made[1]).toEqual(other)
+    // Its shortcut answers again.
+    expect(matchKeywordWord('@marginalia', [...DEFAULT_SEARCH_ENGINES, ...made])).toMatchObject({
+      kind: 'engine',
+      keyword: '@marginalia'
+    })
+    // The default active already, or a shipped engine (not one of the user's): the same list.
+    expect(withDefaultSearchEngineActive(made, own.id)).toBe(made)
+    expect(withDefaultSearchEngineActive(list, 'google')).toBe(list)
+  })
+
+  it('the sanitiser keeps `active: false` and drops any other value of the flag', () => {
+    const stored = JSON.parse(
+      JSON.stringify([
+        { ...own, active: false },
+        { ...own, id: 'custom:2', keyword: '@two', active: true },
+        { ...own, id: 'custom:3', keyword: '@three', active: 'yes' }
+      ])
+    )
+    const read = sanitizeSearchEngines(stored)
+    expect(read.map((e) => e.active)).toEqual([false, undefined, undefined])
   })
 })
 

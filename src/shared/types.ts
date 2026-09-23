@@ -12,6 +12,7 @@ import type {
 } from './translate'
 import type { EngineRelayRequest, EngineRelayResponse } from './translateEngine'
 import type { UpdateSettings, UpdateStatus } from './updates'
+import type { ToolbarPins } from './toolbarPins'
 import type { BlockingSettings, BlockingStatus } from './blocking'
 import type {
   PrivacySettings,
@@ -449,9 +450,11 @@ export interface Tab {
   muted: boolean
   /**
    * The tab's alert indicator above audio (tabs-43, Chrome's priority): the page uses the camera
-   * or microphone (`recording`), shares a screen, window or tab (`capturing`), or plays
-   * picture-in-picture (`pip`). Folded from every frame's `capture-state` report; a session's
-   * own (not persisted, cleared on load). Absent on records older than the field.
+   * or microphone (`recording`), shares a screen, window or tab (`capturing`), holds a device
+   * session – a connected Bluetooth device (`bluetooth`), a USB device (`usb`), a HID device
+   * (`hid`), a serial port (`serial`) – plays picture-in-picture (`pip`), or presents to a VR
+   * headset (`vr`). Folded from every frame's `capture-state` report; a session's own (not
+   * persisted, cleared on load). Absent on records older than the field.
    */
   alert?: TabAlert | null
   /**
@@ -1823,9 +1826,22 @@ export interface SearchEngine {
   /** `%s` is replaced with the encoded query. */
   searchUrl: string
   suggestUrl: string | null
+  /**
+   * The engine's shortcut (Chrome's Shortcut column, omnibox-09): `@` and one lower-case word
+   * (`@wiki`), typed before a space or Tab to search with the engine. Derived from the name when
+   * an engine is added or discovered (`uniqueEngineKeyword`); the user's to edit on their own
+   * engines (Settings › Search › Edit, `editedSearchEngine`).
+   */
   keyword: string
   /** Simple glyph shown in the URL bar. */
   glyph: string
+  /**
+   * Whether the omnibox offers the engine (settings-43, Chrome's Activate / Deactivate in Site
+   * search): absent or true, its shortcut and tab-to-search work; `false`, the engine is kept
+   * in the list under an Inactive heading and offered nowhere until activated. The user's own
+   * engines carry it; a shipped engine is always active.
+   */
+  active?: boolean
   /** Absent on the shipped engines (read as `default`). */
   source?: SearchEngineSource
   /** The site's icon, for the engine picker's rows; null when the site offered none. */
@@ -2295,6 +2311,14 @@ export interface Settings {
   /** Colour of the app icon (launcher alias on Android, window / Dock icon on desktop). */
   appIcon: AppIconId
   toolbarLayout: ToolbarLayout
+  /**
+   * The desktop toolbar's optional controls that are folded into the app menu (Look and Feel ›
+   * Customize toolbar, `shared/toolbarPins.ts`): the departures from the default bar alone, a
+   * key absent reading pinned. Read by the desktop chrome's toolbar row and the desktop app
+   * menu; inert on the phone and the tablet, which keep their own bars. Absent in profiles from
+   * before it existed.
+   */
+  toolbarPins?: ToolbarPins
   sidebarSide: SidebarSide
   /**
    * Desktop: where the developer tools open – the last dock chosen, from the app menu's rows or
@@ -4482,11 +4506,19 @@ export interface Commands {
   'clipboard.read': { args: void; result: ClipboardContent }
   'clipboard.markUsed': { args: void; result: void }
   /**
-   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), forget one
-   * the user added or a page offered, or make one the default. The shipped engines cannot be
-   * removed; `search.remove` on the default falls back to the shipped default.
+   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), edit one of
+   * the user's (name, template, shortcut – empty for one derived from the name; omnibox-09),
+   * take one out of the omnibox or bring it back (`active`, settings-43; the default engine
+   * stays active), forget one the user added or a page offered, or make one the default. The
+   * shipped engines cannot be edited or removed; `search.remove` on the default falls back to
+   * the shipped default.
    */
   'search.addEngine': { args: { name: string; url: string }; result: string }
+  'search.updateEngine': {
+    args: { id: string; name: string; searchUrl: string; keyword: string }
+    result: void
+  }
+  'search.setEngineActive': { args: { id: string; active: boolean }; result: void }
   'search.removeEngine': { args: { id: string }; result: void }
 
   /**

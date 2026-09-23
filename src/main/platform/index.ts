@@ -64,6 +64,7 @@ import { FileStoreIO } from './storeIo'
 import { SessionManager, buildUserAgent, systemLocales } from './sessions'
 import { acceptLanguageList } from '../../shared/languages'
 import { installZenProtocol } from './protocol'
+import { chromiumLicencesResponder } from './licences'
 import { ElectronDownloads } from './downloads'
 import { ElectronDownloadsShell } from './downloadsShell'
 import { ElectronMenus } from './menus'
@@ -613,11 +614,13 @@ export class ElectronPlatform implements Platform {
     // observer and the page preload's signals IPC.
     this.privacy.attach(this.requestBlocking)
     this.downloadsShell = new ElectronDownloadsShell(browser)
+    const chromiumLicences = chromiumLicencesResponder()
     this.sessions.configure((ses: Session, containerId: string) => {
       installZenProtocol(
         ses,
         (id) => browser.reader.pageHtml(id),
-        () => this.newTabBackground.response()
+        () => this.newTabBackground.response(),
+        chromiumLicences
       )
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.

@@ -152,7 +152,7 @@ afterEach(() => {
 describe('a double-click on the strip’s empty room', () => {
   it('asks the core for the title bar’s double-click from the room below the rows', () => {
     sidebar([tab('home'), tab('docs')])
-    dblclick(q('[data-tab-scroller][data-active="true"] [data-strip-empty]'))
+    dblclick(q('[data-tab-panel][data-active="true"] [data-strip-empty]'))
     expect(ran()).toEqual(['window.captionDoubleClick'])
     expect(newTabRequests).toBe(0)
   })

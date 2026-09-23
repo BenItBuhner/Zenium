@@ -54,6 +54,7 @@ const state = {
   tabs: { t1: page },
   containers: [],
   extensions: [],
+  deviceGrants: [],
   siteData: { clearsAtNextLaunch: false },
   settings: {},
   blocking: { enabled: true, siteExceptions: [] }
