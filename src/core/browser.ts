@@ -2922,7 +2922,7 @@ export class Browser {
 
       'session.recentlyClosed': () => this.session.summaries(),
       'session.restoreClosed': ({ id, background }, win) =>
-        this.session.restoreClosed(id, win, Boolean(background)),
+        void this.session.restoreClosed(id, win, Boolean(background)),
       'session.clearRecentlyClosed': () => this.session.clearRecentlyClosed(),
 
       'clipboard.writeText': ({ text, sensitive, confirmation }, win) => {
