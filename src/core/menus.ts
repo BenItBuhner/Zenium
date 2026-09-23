@@ -1885,11 +1885,16 @@ export class Menus {
     )
   }
 
-  /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
-  showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
+  /**
+   * Long-press on a new tab page tile: open it elsewhere, pin it, edit it (a shortcut's name and
+   * address, NTP-06: the chrome's edit sheet over the page in `tabId`), move it a slot along the
+   * grid, or take it off the page.
+   */
+  showTopSiteContextMenu(url: string, title: string, tabId: string | null, win: ZenWindow): void {
     if (!isNavigableUrl(url)) return
     const { tabs, state, newTab } = this.browser
-    const pinned = state.newTabDevice.shortcuts.some((s) => s.url === url)
+    const shortcut = state.newTabDevice.shortcuts.find((s) => s.url === url)
+    const pageTab = tabId ?? tabs.activeTabFor(win)?.id ?? null
     this.popup(
       [
         {
@@ -1901,15 +1906,49 @@ export class Menus {
           click: () => this.browser.platform.clipboard.writeText(url)
         },
         { type: 'separator' },
+        ...(shortcut && pageTab
+          ? [
+              {
+                label: 'Edit Shortcut…',
+                click: () => newTab.openShortcutDialog(pageTab, shortcut.id, win)
+              }
+            ]
+          : []),
+        ...(shortcut ? this.moveShortcutItems(shortcut.id) : []),
         {
-          label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
-          click: () => (pinned ? newTab.unpin(url) : newTab.pin(url, title))
+          label: shortcut ? 'Unpin Shortcut' : 'Pin Shortcut',
+          click: () => (shortcut ? newTab.unpin(url) : newTab.pin(url, title))
         },
         { label: 'Remove', click: () => newTab.remove(url) }
       ],
       win,
       'topsite'
     )
+  }
+
+  /**
+   * Move Left / Move Right for a pinned tile (NTP-06; the #348 design gate's addendum): the
+   * hold-and-drag's accessible path – a screen reader's, a keyboard's – one slot at a time in
+   * the grid's order, the space menu's two rows, greyed at the ends (§9.17: disabled, not
+   * hidden), writing the same `newtab.reorderShortcuts` the drop does.
+   */
+  private moveShortcutItems(id: string): MenuItemTemplate[] {
+    const { state, newTab } = this.browser
+    const ids = state.newTabDevice.shortcuts.map((s) => s.id)
+    const idx = ids.indexOf(id)
+    const moveTo = (to: number): void => {
+      const next = ids.filter((other) => other !== id)
+      next.splice(to, 0, id)
+      newTab.reorderShortcuts(next)
+    }
+    return [
+      { label: 'Move Left', enabled: idx > 0, click: () => moveTo(idx - 1) },
+      {
+        label: 'Move Right',
+        enabled: idx >= 0 && idx < ids.length - 1,
+        click: () => moveTo(idx + 1)
+      }
+    ]
   }
 
   // ---------------------------------------------------------------------------
@@ -1985,78 +2024,94 @@ export class Menus {
       return
     }
     const live = this.browser.liveFolders.get(folderId)
-    const count = folderTabs(state.model, folderId).length
-    this.popup(
-      [
-        // Chrome's group editor bubble (tabs-13): name, colour and the group's actions in one
-        // surface beside the header; the desktop chrome draws it, the phone its group sheet.
-        {
-          label: 'Edit Folder…',
-          click: () => this.browser.emit('folder.edit', { folderId }, win)
-        },
-        {
-          label: 'Rename Folder…',
-          click: () => this.browser.emit('folder.startRename', { folderId }, win)
-        },
-        {
-          label: 'New Tab in Folder',
-          click: () => this.browser.newTabInFolder(folderId, win)
-        },
-        {
-          label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
-          click: () => this.browser.updateFolder(folderId, { collapsed: !folder.collapsed })
-        },
-        { type: 'separator' },
-        ...((live
-          ? [
-              {
-                label: 'Refresh Live Folder',
-                click: () => void this.browser.liveFolders.refresh(folderId, true)
-              },
-              {
-                label: 'Refresh Every',
-                submenu: [15, 30, 60, 120, 240, 480].map((minutes) => ({
-                  label:
-                    minutes < 60
-                      ? `${minutes} minutes`
-                      : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`,
-                  type: 'radio' as const,
-                  checked: live.intervalMinutes === minutes,
-                  click: () => this.browser.liveFolders.setInterval(folderId, minutes)
-                }))
-              },
-              {
-                label: 'Live Folder Settings…',
-                click: () =>
-                  this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
-              },
-              {
-                label: 'Stop Updating (make static)',
-                click: () => this.browser.liveFolders.remove(folderId)
-              }
-            ]
-          : [
-              {
-                label: 'Make Live Folder…',
-                click: () =>
-                  this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
-              }
-            ]) as Template),
-        { type: 'separator' },
-        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list)
-        // with the folder. A touch host's group is saved instead, by `groupMenu` above.
-        { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
-        {
-          label: count
-            ? `Close Folder (${count} ${count === 1 ? 'Tab' : 'Tabs'})`
-            : 'Delete Folder',
-          click: () => this.browser.deleteFolder(folderId, false)
-        }
-      ],
-      win,
-      'folder',
-      anchor
-    )
+    // The desktop's folder is the sidebar's tab group, saved when its tabs close (TAB-16, the
+    // desktop half of the shared groups). Its menu runs act / change / destroy in four groups:
+    // what the folder does (Open Folder while it is saved, New Tab in Folder while it is open),
+    // what changes it (Edit Folder… – Chrome's group editor bubble, tabs-13: name, colour and
+    // the group's actions in one surface beside the header – and the live folder's items or
+    // Make Live Folder…), what ends one half of an open folder and can be undone (Unpack Folder
+    // leaves the tabs loose to regroup, Close Folder closes them and the folder stays SAVED with
+    // their pages, Open Folder brings them back), then Delete Folder alone – Chrome's for a saved
+    // group – which forgets what the folder holds, or closes its tabs with it, and so asks first
+    // through the chrome's prompt when there is anything to lose (`folder.confirmDelete`). New
+    // Tab in Folder is an open folder's alone: on a saved one the first tab it holds again
+    // forgets the pages it kept (the model's `folderOpened` rule), a loss no plain-ink verb may
+    // carry (§5, §9.1); Open Folder brings them back first. No Rename Folder… and no Expand or
+    // Collapse Folder: each duplicates a control the row already has (the editor's Name field,
+    // the header's own click). Zen's word is Folder; the touch hosts say Group.
+    const saved = isSavedFolder(state.model, folder)
+    const count = saved ? (folder.savedTabs?.length ?? 0) : folderTabs(state.model, folderId).length
+    const tabs = `${count} ${count === 1 ? 'Tab' : 'Tabs'}`
+    const act: Template = saved
+      ? [{ label: `Open Folder (${tabs})`, click: () => this.browser.openFolder(folderId, win) }]
+      : [{ label: 'New Tab in Folder', click: () => this.browser.newTabInFolder(folderId, win) }]
+    const change: Template = [
+      {
+        label: 'Edit Folder…',
+        click: () => this.browser.emit('folder.edit', { folderId }, win)
+      },
+      ...((live
+        ? [
+            {
+              label: 'Refresh Live Folder',
+              click: () => void this.browser.liveFolders.refresh(folderId, true)
+            },
+            {
+              label: 'Refresh Every',
+              submenu: [15, 30, 60, 120, 240, 480].map((minutes) => ({
+                label:
+                  minutes < 60
+                    ? `${minutes} minutes`
+                    : `${minutes / 60} hour${minutes > 60 ? 's' : ''}`,
+                type: 'radio' as const,
+                checked: live.intervalMinutes === minutes,
+                click: () => this.browser.liveFolders.setInterval(folderId, minutes)
+              }))
+            },
+            {
+              label: 'Live Folder Settings…',
+              click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
+            },
+            {
+              label: 'Stop Updating (make static)',
+              click: () => this.browser.liveFolders.remove(folderId)
+            }
+          ]
+        : [
+            {
+              label: 'Make Live Folder…',
+              click: () => this.browser.emit('overlay.open', { kind: 'live-folder', folderId }, win)
+            }
+          ]) as Template)
+    ]
+    const end: Template =
+      count && !saved
+        ? [
+            { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
+            {
+              label: `Close Folder (${tabs})`,
+              click: () => this.browser.closeFolder(folderId, win)
+            }
+          ]
+        : []
+    const destroy: Template = [
+      { label: 'Delete Folder', danger: true, click: () => this.deleteFolderAsking(folderId, win) }
+    ]
+    this.popup(joinGroups([act, change, end, destroy]), win, 'folder', anchor)
+  }
+
+  /**
+   * The desktop's "Delete Folder": a folder with tabs or saved pages is deleted only once the
+   * chrome's prompt (`folder.confirmDelete`, a §9.23 dialog) is answered – the answer runs
+   * `folder.delete` – and an empty one goes at once.
+   */
+  private deleteFolderAsking(folderId: string, win: ZenWindow): void {
+    const { model } = this.browser.state
+    const folder = model.folders[folderId]
+    if (!folder) return
+    const holds = folderTabs(model, folderId).length > 0 || Boolean(folder.savedTabs?.length)
+    if (holds) this.browser.emit('folder.confirmDelete', { folderId }, win)
+    else this.browser.deleteFolder(folderId, false)
   }
 
   /**
@@ -3006,9 +3061,9 @@ export class Menus {
     if (phone) {
       this.popup(
         [
-          // Chrome's icon row heads the phone's menu: Forward, the star, Download page, Page
-          // info and Reload / Stop, which the chrome draws as a row of icon buttons from each
-          // item's glyph.
+          // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set,
+          // the star, Download page, Page info and Reload / Stop, which the chrome draws as a
+          // row of icon buttons from each item's glyph.
           ...this.phoneIconRow(active, win),
           separator,
           newTab,
@@ -3222,6 +3277,22 @@ export class Menus {
         enabled: Boolean(active?.canGoForward),
         click: () => active && tabs.goForward(active.id)
       },
+      // Home (TB-15 / NTP-30, v2 §9.13): a button wherever it lives – the bar's item when the
+      // user adds it, this glyph otherwise, never a text row among New Tab and New Private Tab
+      // (a row reads as a destination). The tab goes to the homepage; with the homepage off
+      // there is no Home anywhere, as Chrome's button leaves the toolbar. Not repeating it here
+      // while the bar carries it is §9.13's rule for the whole row, a follow-up once the menu
+      // model can see the bar as the chrome draws it.
+      ...(this.browser.newTab.homepageUrl() !== null
+        ? [
+            {
+              label: 'Home',
+              glyph: 'home',
+              enabled: Boolean(active),
+              click: () => active && this.browser.goHome(active.id, win)
+            } satisfies MenuItemTemplate
+          ]
+        : []),
       // The star (TB-16), with Chrome's flow as the phone's Bookmarks submenu ran it before: a
       // page that is not bookmarked is saved and toasted with Edit, a bookmarked one opens its
       // editor. `checked` is the fill; the label says which of the two a press does (§9.13's

@@ -1,16 +1,17 @@
 import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus } from 'lucide-react'
-import type { Folder, Space, Tab, UIState } from '@shared/types'
-import { FOLDER_COLORS } from '@shared/defaults'
+import type { Folder, SavedGroupTab, Space, Tab, UIState } from '@shared/types'
+import { DEFAULT_CONTAINER_ID } from '@shared/types'
+import { getHost } from '@shared/url'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
-import { groupColorChannels, groupsOf } from '@renderer/lib/groups'
-import { isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
+import { groupColorVars, groupsOf } from '@renderer/lib/groups'
+import { groupRowOf, isPrivateGroup, regularMembers } from '@renderer/lib/groupRows'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import {
@@ -28,6 +29,7 @@ import { SpaceGlyph } from '../SpaceGlyph'
 import { DEFAULT_FOLDER_ICON } from '../phone/GroupCard'
 import { useLongPress } from '../phone/useLongPress'
 import { V2_TRAILING_GLYPH } from '../v2/controls'
+import { Favicon, type FaviconSource } from './Favicon'
 import { ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
 import { TabItem } from './TabItem'
@@ -442,10 +444,19 @@ function FolderRow({
   // the colour dot or the saved ring in the glyph slot, the name, the count as a 13 aside, the
   // chevron trailing, the tabs indented beneath while open – the phone overview's own group
   // header on the sidebar's grid; the fold on a spring (`useGroupFold`); a SAVED group – its
-  // tabs closed, its pages kept (TAB-16) – as a row whose tap opens it. The desktop's row is as
-  // it was.
+  // tabs closed, its pages kept (TAB-16) – as a row whose tap opens it.
+  //
+  // The desktop's row (TAB-16's desktop half, tabs-15): Zen's folder header on §5's 32 row, the
+  // group's colour in the glyph slot alone – the same dot, saved ring or own icon as the tablet's
+  // (`GroupRowGlyph`) – and the rows' 20 px indent as the bracket that says which rows are the
+  // folder's (§9.36: no group line down the block, no fill across the row); the count as the
+  // tablet row's 13 tabular aside at 69%, folded and open alike – the tabs it holds, or the
+  // pages a saved one keeps; a SAVED folder stays in the strip as a saved group, a disclosure
+  // like any folder whose rows, while it is unfolded, are the pages it kept (`SavedPageRow`),
+  // and whose menu and editor open it.
   const tablet = viewportStore.use((v) => v.formFactor === 'tablet')
-  const saved = tablet && tabs.length === 0 && Boolean(folder.savedTabs?.length)
+  const row = groupRowOf(folder, tabs)
+  const saved = row.kind === 'saved'
   const lastClick = useRef(0)
   const collapsedBeforeClick = useRef(folder.collapsed)
   const containsActive = tabs.some((t) => t.id === activeTabId)
@@ -457,17 +468,22 @@ function FolderRow({
   // does the folder menu's Edit Folder… (the tablet's tap always folds: its menu, on the hold,
   // has the group's name and colour). It is a strip item (lib/tabStrip.ts) – Chrome's group
   // header: Enter, Space, Left and Right fold it, the arrows reach it from the rows (§9.22) – and
-  // the strip's tab stop while it stands for the active tab (folded around it).
+  // the strip's tab stop while it stands for the active tab (folded around it). Shift+F10 and
+  // the Menu key raise its `contextmenu` on the focused header, so the folder's menu opens
+  // there in keyboard mode (`contextMenuAnchor`).
   const key = `folder:${folder.id}`
   const tabIndex = useStripTabIndex(key, containsActive && folder.collapsed)
   const shell = useRef<HTMLDivElement>(null)
   const header = useRef<HTMLDivElement>(null)
   const drawn = useGroupFold(shell, header, folder.collapsed, tabs, tablet)
-  const count = saved ? (folder.savedTabs?.length ?? 0) : tabs.length
+  // The desktop lists a saved folder's pages under its header while it is unfolded; the tablet's
+  // saved row has nothing to fold (its tap opens the group).
+  const savedPages = !tablet && saved && !folder.collapsed ? (folder.savedTabs ?? []) : []
+  const count = row.count
   const unit = count === 1 ? 'tab' : 'tabs'
   const description = tablet
     ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
-    : `${live ? 'Live folder' : 'Folder'}, ${count} ${unit}`
+    : `${live ? 'Live folder' : 'Folder'}, ${saved ? 'saved, ' : ''}${count} ${unit}`
   // The tablet row's hold (the phone's group card's, `useLongPress`: a haptic tick at 380 ms, the
   // menu on the release, the click after it swallowed): the group's menu as a §9.36 popover at
   // the finger.
@@ -476,14 +492,14 @@ function FolderRow({
   )
   const { onContextMenu: holdMenu, ...hold } = press.handlers
   return (
-    <div ref={shell} className="zen-group-fold flex flex-col gap-0.5">
+    <div ref={shell} className="zen-group-fold flex flex-col gap-0.5" data-group-kind={row.kind}>
       <div
         ref={header}
         className={cn('zen-tab', compact && 'justify-center px-0', tablet && 'zen-group-row')}
         role="button"
         aria-label={folder.name}
         aria-description={description}
-        aria-expanded={saved ? undefined : !folder.collapsed}
+        aria-expanded={tablet && saved ? undefined : !folder.collapsed}
         data-strip-item={key}
         tabIndex={tabIndex}
         data-active={containsActive && folder.collapsed}
@@ -556,21 +572,18 @@ function FolderRow({
           </>
         ) : (
           <>
-            <span className="text-sm leading-none">{folder.icon}</span>
-            {folder.color && !compact && (
-              // The folder's colour as a swatch with the ink's 20 % hairline (a11y-30, §9.14; the
-              // space glyph's rule), so it keeps an edge on a like-coloured window.
-              <span
-                className="h-2 w-2 shrink-0 rounded-full border border-[rgb(var(--zen-fg-rgb)/0.2)]"
-                style={{ background: FOLDER_COLORS[folder.color] }}
-              />
-            )}
+            {/* The group's mark in the glyph slot – the 10 dot of its colour, the 2 px ring for
+                a saved one, the folder's own icon where it has one – the tablet row's and the
+                phone card's (Chrome's saved-group mark is the hollow one). */}
+            <GroupRowGlyph folder={folder} saved={saved} />
             {!compact &&
               (renaming ? (
                 <FolderRename folder={folder} />
               ) : (
                 <>
-                  <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+                  <span className="min-w-0 flex-1 truncate" data-testid="folder-row-name">
+                    {folder.name}
+                  </span>
                   {live && (
                     <span
                       className={cn(
@@ -582,9 +595,13 @@ function FolderRow({
                       title={liveError ?? 'Live folder – updates automatically'}
                     />
                   )}
-                  {/* The count and the chevron are supplementary: the deemphasised ink (§9.29). */}
-                  <span className="text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]">
-                    {tabs.length}
+                  {/* The count as the tablet row's 13 tabular aside at 69% (§9.36), folded and
+                      open alike: the tabs the folder holds, or the pages a saved one keeps. */}
+                  <span
+                    className="text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]"
+                    data-testid="group-count"
+                  >
+                    {count}
                   </span>
                   {folder.collapsed ? (
                     <ChevronRight
@@ -626,15 +643,104 @@ function FolderRow({
           ))}
         </div>
       )}
+      {/* A saved folder's pages, unfolded: buttons that open the folder, not tabs – so a run of
+          their own under the header, outside any tablist (a tablist holds tabs alone). */}
+      {savedPages.length > 0 && (
+        <div className="zen-group-rows flex flex-col gap-0.5" data-saved-pages={folder.id}>
+          {savedPages.map((page, index) => (
+            <SavedPageRow
+              key={`${index}:${page.url}`}
+              folder={folder}
+              page={page}
+              index={index}
+              count={savedPages.length}
+              compact={compact}
+              parent={key}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 /**
- * What stands for a group in the tablet row's glyph slot (the favicon's 16 box): a 10 px dot of
- * its colour for an open group, a 2 px ring of it for a saved one – the Groups pane's two
- * states – or the folder's own icon where the desktop gave it one, as the phone card's
- * `GroupBadge` keeps it. `.zen-group-row-glyph` in main.css draws it.
+ * A page a saved folder keeps (TAB-16's desktop half), listed under the unfolded header as a
+ * row of the folder: §5's 32 row, indented as the folder's tabs are, with the page's favicon at
+ * 16 and its title in the deemphasised 69% (the sleeping row's fade: a page, not a live tab – no
+ * close, no audio, no drag). The live row's trailing slot – the 24 px its close control takes –
+ * stays reserved and empty, so the title's edge holds as the folder closes and opens again and
+ * a name truncates the same way in both rows. A press, Enter or Space opens the folder, which
+ * brings every page back as its tabs (`folder.open`); the row is a strip item in the tab order
+ * (`saved:<id>:<n>`, lib/tabStrip.ts) and its context menu is the folder's.
+ */
+function SavedPageRow({
+  folder,
+  page,
+  index,
+  count,
+  compact,
+  parent
+}: {
+  folder: Folder
+  page: SavedGroupTab
+  index: number
+  count: number
+  compact: boolean
+  parent: string
+}): JSX.Element {
+  const key = `saved:${folder.id}:${index}`
+  const tabIndex = useStripTabIndex(key, false)
+  const title = page.title.trim() || getHost(page.url) || page.url
+  const source: FaviconSource = {
+    url: page.url,
+    title,
+    favicon: page.favicon ?? null,
+    customIcon: null,
+    customTitle: null,
+    loading: false,
+    discarded: false,
+    containerId: DEFAULT_CONTAINER_ID
+  }
+  return (
+    <div
+      className={cn('zen-tab zen-saved-page', compact && 'justify-center px-0', 'ml-5')}
+      role="button"
+      aria-label={title}
+      aria-description={`Saved page ${index + 1} of ${count}, opens the folder`}
+      data-saved-page={index}
+      data-strip-item={key}
+      data-strip-parent={parent}
+      tabIndex={tabIndex}
+      title={compact ? title : undefined}
+      onFocus={stripFocusIn}
+      onBlur={stripFocusOut}
+      onKeyDown={stripKeyDown}
+      onClick={() => run('folder.open', { folderId: folder.id })}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        run('folder.contextMenu', { folderId: folder.id, ...contextMenuAnchor(e) })
+      }}
+    >
+      <Favicon tab={source} />
+      {!compact && (
+        <>
+          <span className="zen-tab-title min-w-0 flex-1 truncate" data-testid="saved-page-title">
+            {title}
+          </span>
+          <span className="h-6 w-6 shrink-0" data-testid="saved-page-slot" aria-hidden />
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * What stands for a group in the row's glyph slot (the favicon's 16 box), on the tablet and the
+ * desktop alike: a 10 px dot of its colour for an open group, a 2 px ring of it for a saved one
+ * – the Groups pane's two states, Chrome's filled and hollow group marks – or the folder's own
+ * icon where the desktop gave it one, as the phone card's `GroupBadge` keeps it.
+ * `.zen-group-row-glyph` in main.css draws it.
  */
 function GroupRowGlyph({ folder, saved }: { folder: Folder; saved: boolean }): JSX.Element {
   const own = folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? folder.icon : null
@@ -643,7 +749,8 @@ function GroupRowGlyph({ folder, saved }: { folder: Folder; saved: boolean }): J
       className="zen-group-row-glyph"
       data-saved={saved || undefined}
       data-testid="group-row-glyph"
-      style={{ '--zen-group-rgb': groupColorChannels(folder.color) } as CSSProperties}
+      data-group-rgb=""
+      style={groupColorVars(folder.color) as CSSProperties}
       aria-hidden
     >
       {own ? (

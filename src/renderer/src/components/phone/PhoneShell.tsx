@@ -35,6 +35,7 @@ import { barFade } from '@renderer/lib/motion/recede'
 import { focusHoldsChrome, focusOmnibox, omniboxFocusStore } from '@renderer/lib/omniboxFocus'
 import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
+import { openSettings } from '@renderer/lib/pages'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
 import { holdChromeInert } from '@renderer/lib/portals'
 import { privateLockStore, privateTabLocked, unlockPrivateTabs } from '@renderer/lib/privateLock'
@@ -155,10 +156,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // The device offline: "No internet connection" in the banner stack; back: a "Back online" toast (ERR-07).
   useConnectivityMessages(state.network.online)
 
-  // A hold on the Tabs button: its quick menu, anchored to the button; any other hold, the editor.
+  // A hold on the Tabs button: its quick menu, anchored to the button; on Home, the homepage
+  // setting (TB-15: Chrome's long-press on its Home button); any other hold, the editor.
   const hold = useBarHold({
     onHold: (item, rect) => {
       if (item === 'tabs') void openTabsMenu(rect, activeTabId)
+      else if (item === 'home') openSettings('look')
       else void openBarEditor(activeTabId)
     }
   })

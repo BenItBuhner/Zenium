@@ -219,7 +219,7 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     expect(header.querySelector('svg[data-space-dot]')).not.toBeNull()
   })
 
-  it('makes the folder header a row with its count and chevron deemphasised and its colour a hairlined swatch', () => {
+  it('makes the folder header a row with its count and chevron deemphasised and its colour the group’s bar and dot', () => {
     const folder: Folder = {
       id: 'f1',
       spaceId: 'space',
@@ -239,8 +239,21 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     const chevron = header.querySelector('svg.lucide-chevron-down')!
     expect(chevron.getAttribute('class')).toContain('text-[var(--v2-control-text-deemphasized)]')
     expect(chevron.getAttribute('class')).not.toContain('opacity-60')
-    const dot = header.querySelector<HTMLElement>('span.h-2.w-2')!
-    expect(dot.className).toContain('border-[rgb(var(--zen-fg-rgb)/0.2)]')
+    // The colour is the group's (TAB-16's desktop half): the 10 dot in the glyph slot, in place
+    // of the 8 px hairlined swatch – and nowhere else on the block (§9.36: no bar).
+    expect(header.querySelector('span.h-2.w-2')).toBeNull()
+    const block = header.parentElement!
+    expect(block.hasAttribute('data-group-bar')).toBe(false)
+    expect(block.style.getPropertyValue('--zen-group-rgb')).toBe('')
+    expect(block.style.getPropertyValue('--zen-group-rgb-light')).toBe('')
+    // The glyph carries the colour as §9.14's pair, both schemes' channels, and the marker the
+    // stylesheet picks `--zen-group-rgb` from by the root's theme; it writes no pick of its own.
+    const glyph = header.querySelector<HTMLElement>('.zen-group-row-glyph')!
+    expect(glyph.hasAttribute('data-group-rgb')).toBe(true)
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-light')).toBe('22 108 221')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb-dark')).toBe('138 180 248')
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('')
+    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
   })
 
   it('gives the New Tab row the row’s height and font in full ink', () => {

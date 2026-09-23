@@ -144,6 +144,7 @@ import {
 } from '../shared/defaults'
 import { sanitizeNewTabSettings } from '../shared/newTab'
 import { sanitizePhoneBar } from '../shared/phoneBar'
+import { sanitizeHomepage } from '../shared/homepage'
 import { PRIVATE_THEME, captionColors, resolveTheme, rgbToHex } from '../shared/theme'
 import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
@@ -193,6 +194,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'tab.startRename',
   'folder.startRename',
   'folder.edit',
+  'folder.confirmDelete',
   'tab.editPinnedUrl',
   'tab.pickIcon',
   'menu.show',
@@ -1170,6 +1172,22 @@ export class Browser {
       return
     }
     this.newTab.open(win)
+  }
+
+  /**
+   * The Home button (TB-15: the phone bar's optional item, the app menu's icon-row glyph): the
+   * tab goes to the homepage (`NewTabService.homepageUrl`) – the user's page, or the new tab
+   * page at rest, Chrome's Home showing it without the keyboard (the page's own field is the
+   * way in). Nothing runs with the homepage off, where no Home button is drawn. The desktop's
+   * Alt+Home (`nav.home`) keeps its own destination: the setting has no desktop row yet.
+   */
+  goHome(tabId: string, win: ZenWindow): void {
+    const url = this.newTab.homepageUrl()
+    const tab = this.tabs.tab(tabId)
+    if (!url || !tab) return
+    this.emit('urlbar.close', undefined, win)
+    if (tab.url === url && isEmptyTabUrl(url)) return
+    this.tabs.navigate(tabId, url)
   }
 
   /**
@@ -2633,6 +2651,7 @@ export class Browser {
       'tab.closeBelow': ({ tabId }, win) => tabs.closeBelow(tabId, win),
       'tab.closeAbove': ({ tabId }, win) => tabs.closeAbove(tabId, win),
       'tab.navigate': ({ tabId, input }, win) => this.submitUrlbar(input, false, tabId, false, win),
+      'tab.home': ({ tabId }, win) => this.goHome(tabId, win),
       'tab.back': ({ tabId }) => tabs.goBack(tabId),
       'tab.forward': ({ tabId }) => tabs.goForward(tabId),
       'tab.reload': ({ tabId, skipCache }) => tabs.reload(tabId, skipCache),
@@ -2750,8 +2769,8 @@ export class Browser {
         this.menus.showFolderContextMenu(folderId, win, anchor),
       'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),
       'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
-      'newtab.tileContextMenu': ({ url, title }, win) =>
-        this.menus.showTopSiteContextMenu(url, title, win),
+      'newtab.tileContextMenu': ({ url, title, tabId }, win) =>
+        this.menus.showTopSiteContextMenu(url, title, tabId ?? null, win),
       'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) =>
         this.menus.showAppMenu(win, {
           anchor,
@@ -2809,7 +2828,7 @@ export class Browser {
       'screenshot.discardLong': ({ id }) => this.platform.screenshots?.discardLong(id),
       'media.action': ({ tabId, action, seekTime, seekOffset }) =>
         this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
-      'media.pictureInPicture': ({ tabId }) => this.mediaSession.enterPictureInPicture(tabId),
+      'media.pictureInPicture': ({ tabId }, win) => this.mediaSession.pictureInPicture(tabId, win),
 
       'split.create': ({ tabIds, layout }, win) => tabs.createSplit(tabIds, layout, win),
       'split.toggleLayout': ({ layout }, win) => tabs.toggleSplitLayout(layout, win),
@@ -3434,6 +3453,12 @@ export class Browser {
         s.appIcon = sanitizeAppIcon(value)
       } else if (key === 'phoneBar') {
         s.phoneBar = sanitizePhoneBar(value)
+      } else if (key === 'homepage' && value && typeof value === 'object') {
+        // A one-key patch (the picker's `mode`) keeps the address; the address is normalised.
+        s.homepage = sanitizeHomepage({
+          ...s.homepage,
+          ...(value as Partial<Settings['homepage']>)
+        })
       } else if (key === 'passwords' && value && typeof value === 'object') {
         s.passwords = sanitizePasswordSettings({
           ...s.passwords,

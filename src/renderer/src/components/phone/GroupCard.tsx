@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { Folder, Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
-import { groupColorChannels } from '@renderer/lib/groups'
+import { groupColorVars } from '@renderer/lib/groups'
 import { CELL_ATTR, layoutAnimations } from '@renderer/lib/motion/flip'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { groupCardLabel } from '@renderer/lib/overviewLabels'
@@ -227,7 +227,7 @@ export function GroupCard({
   // Closing: the exit drawn over the card takes its place until the browser removes the tabs.
   const departing = departStore.use((s) => s.items.some((i) => i.key === `group:${folder.id}`))
   const style = {
-    '--zen-group-rgb': groupColorChannels(folder.color),
+    ...groupColorVars(folder.color),
     opacity: departing ? 0 : undefined
   } as CSSProperties
   // A group of one takes a single column, like the card it holds; two or more span the row,
@@ -240,6 +240,7 @@ export function GroupCard({
       ref={shellRef}
       className={cn('zen-group flex flex-col', single ? 'col-span-1' : 'col-span-full')}
       style={style}
+      data-group-rgb=""
       data-cell={key}
       data-targeted={targeted || undefined}
       data-collapsed={collapsed || undefined}

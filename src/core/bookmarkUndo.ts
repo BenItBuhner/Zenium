@@ -2,12 +2,13 @@
  * Undo for the user's bookmark edits (bookmarks-31): a bounded stack of what a delete, a move
  * or a rename put aside, enough to put it back – Chrome's `BookmarkUndoService` behind the
  * manager's Ctrl+Z and the "Undo" of the toast a delete leaves. The stack lives over services'
- * `BookmarkService` and its public verbs alone: a deleted node comes back through `create`, so
- * it returns under a new id (the model mints ids itself); the stack remembers the old id's new
- * name (`aliases`) so an older entry about the same node – a move or a rename made before the
- * delete – still finds it. What `create` cannot carry (`dateLastUsed`, a folder's
- * `dateGroupModified`) is lost with the delete; the seam for a restore that keeps ids is
- * services' to add.
+ * `BookmarkService` and its public verbs alone: a deleted node comes back through `restore` as
+ * itself – under its own id, with its `dateAdded`, `dateLastUsed` and a folder's
+ * `dateGroupModified`, the whole delete in one write – so the other devices see the same record
+ * live again rather than a tombstone and a stranger, and an older entry about the node (a move
+ * or a rename made before the delete) finds it by the id it always had. Only a node whose id was
+ * taken meanwhile (a sync brought it back, or a race with a new node) comes back under a new id,
+ * which the stack remembers (`aliases`) so those older entries still find it.
  *
  * A node goes back before the sibling that followed it (its old index when that sibling is
  * gone; the end when it was last), so a delete undone from its toast after other edits still
@@ -67,7 +68,11 @@ export interface BookmarkUndone {
 
 export class BookmarkUndoStack {
   private readonly entries: BookmarkUndoEntry[] = []
-  /** A restored node's old id → its new one (chains when a node was restored more than once). */
+  /**
+   * A restored node's old id → the new one it came back under, for the node whose id was taken
+   * meanwhile alone (chains when that befell it more than once); empty otherwise, a node coming
+   * back as itself.
+   */
   private readonly aliases = new Map<string, string>()
   private seq = 0
 
@@ -193,48 +198,82 @@ export class BookmarkUndoStack {
     return current
   }
 
-  /**
-   * The index a node goes back to in `parentId` today: before the sibling that followed it when
-   * that sibling is still there (`movingId` names the node itself when it is in the folder
-   * already, since the service counts the index with the moved node taken out), else its old
-   * index, or the end for a node that was last.
-   */
-  private slot(p: Placement, parentId: string, movingId?: string): number | undefined {
-    if (p.nextId === null) return undefined
-    const anchor = this.bookmarks.get(this.resolve(p.nextId))
-    if (!anchor || anchor.parentId !== parentId) return p.index
-    const moving = movingId ? this.bookmarks.get(movingId) : null
-    const before = moving && moving.parentId === parentId && moving.index < anchor.index ? 1 : 0
-    return anchor.index - before
+  /** A folder's children by id, in order, as they stand now. */
+  private childIds(parentId: string): string[] {
+    return this.bookmarks.tree.children(parentId).map((n) => n.id)
   }
 
   /**
-   * Put removed subtrees back where they stood: every parent before its children, siblings by
-   * their old index, so each `create` lands on its old place among the survivors.
+   * The index a node goes back to among `siblings` (its folder's children, by id, in order):
+   * before the sibling that followed it when that sibling is still there (`movingId` names the
+   * node itself when it is among them already, since the service counts the index with the
+   * moved node taken out), else its old index, or the end for a node that was last.
+   */
+  private slot(p: Placement, siblings: readonly string[], movingId?: string): number | undefined {
+    if (p.nextId === null) return undefined
+    const anchor = siblings.indexOf(this.resolve(p.nextId))
+    if (anchor < 0) return p.index
+    const moving = movingId ? siblings.indexOf(movingId) : -1
+    return moving >= 0 && moving < anchor ? anchor - 1 : anchor
+  }
+
+  /**
+   * Put removed subtrees back as they were, in one `restore` (services', #370): each top-level
+   * node under the folder it was in, on the index it goes back to there today; every descendant
+   * on the index it was captured with, under the folder that comes back with it. The service
+   * lands the batch parents first and each node on the index it is handed, the lowest first,
+   * and a node whose id was taken meanwhile under a new one, reported in its slot – that pair
+   * is remembered for the older entries about it.
    */
   private restore(
     nodes: readonly BookmarkNode[],
     placements: readonly Placement[]
   ): Omit<BookmarkUndone, 'token'> | null {
-    const placement = new Map(placements.map((p) => [p.id, p]))
+    const places = this.places(placements)
+    const batch = nodes.map((node) => {
+      const place = places.get(node.id)
+      return place ? { ...node, ...place } : node
+    })
+    const back = this.bookmarks.restore(batch)
     const restored: string[] = []
-    for (const node of nodes) {
-      const parentId = this.resolve(node.parentId ?? '')
-      const top = placement.get(node.id)
-      const created = this.bookmarks.create({
-        parentId,
-        index: top ? this.slot(top, parentId) : node.index,
-        title: node.title,
-        url: node.url,
-        type: node.type,
-        favicon: node.favicon ?? null,
-        dateAdded: node.dateAdded
-      })
-      if (!created) continue
-      this.aliases.set(node.id, created.id)
-      if (top) restored.push(created.id)
-    }
+    back.forEach((now, i) => {
+      if (!now) return
+      const was = nodes[i].id
+      if (now.id !== was) this.aliases.set(was, now.id)
+      if (places.has(was)) restored.push(now.id)
+    })
     return restored.length ? this.undone('remove', restored) : null
+  }
+
+  /**
+   * Where each removed top-level node goes back to: its folder (under the id it stands under
+   * now) and its index there once the whole batch is in. The anchors are resolved one node
+   * after another, lowest old index first, against the folder's children as they would stand
+   * with the nodes before it back – the way one `create` after another saw them – and each
+   * node is handed its place in that final order, which is where the service, landing the
+   * lowest index first among survivors, puts it.
+   */
+  private places(
+    placements: readonly Placement[]
+  ): Map<string, Pick<Placement, 'parentId' | 'index'>> {
+    const folders = new Map<string, string[]>()
+    const siblings = (parentId: string): string[] => {
+      let ids = folders.get(parentId)
+      if (!ids) folders.set(parentId, (ids = this.childIds(parentId)))
+      return ids
+    }
+    const homes = new Map<string, string>()
+    for (const p of placements) {
+      const parentId = this.resolve(p.parentId)
+      const ids = siblings(parentId)
+      ids.splice(this.slot(p, ids) ?? ids.length, 0, p.id)
+      homes.set(p.id, parentId)
+    }
+    const out = new Map<string, Pick<Placement, 'parentId' | 'index'>>()
+    for (const [id, parentId] of homes) {
+      out.set(id, { parentId, index: siblings(parentId).indexOf(id) })
+    }
+    return out
   }
 
   /** Move nodes back to where they stood, the lowest old index first, so each lands on its place. */
@@ -243,7 +282,8 @@ export class BookmarkUndoStack {
     for (const p of [...placements].sort((a, b) => a.index - b.index)) {
       const id = this.resolve(p.id)
       const parentId = this.resolve(p.parentId)
-      if (this.bookmarks.move([id], parentId, this.slot(p, parentId, id))) moved.push(id)
+      const slot = this.slot(p, this.childIds(parentId), id)
+      if (this.bookmarks.move([id], parentId, slot)) moved.push(id)
     }
     return moved.length ? this.undone('move', moved) : null
   }

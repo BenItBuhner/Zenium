@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { HostCapabilities } from '../../shared/types'
 import { BOOKMARKS_BAR_ID, OTHER_BOOKMARKS_ID } from '../../shared/bookmarks'
 import type { StoreIO } from '../platform'
@@ -9,8 +9,10 @@ import { BrowserState } from '../state'
 /*
  * The undo stack over services' BookmarkService (bookmarks-31): a delete, a move or a rename
  * put aside and taken back, in the manager's order (the newest first) or by a delete's own
- * token (its toast), the nodes back where they stood – under new ids, which the stack keeps
- * track of for the edits made before the delete.
+ * token (its toast), the nodes back where they stood – as themselves, through services'
+ * `restore` (#370): under their own ids, with their dates. Only a node whose id was taken
+ * meanwhile comes back under a new one, which the stack keeps track of for the edits made
+ * before the delete.
  */
 
 function fakeIo(): StoreIO {
@@ -21,11 +23,11 @@ function fakeIo(): StoreIO {
   }
 }
 
-function setup(): { service: BookmarkService; undo: BookmarkUndoStack } {
+function setup(): { state: BrowserState; service: BookmarkService; undo: BookmarkUndoStack } {
   const state = new BrowserState(fakeIo(), 'linux', {} as HostCapabilities, '0.0')
   state.load()
   const service = new BookmarkService(state)
-  return { service, undo: new BookmarkUndoStack(service) }
+  return { state, service, undo: new BookmarkUndoStack(service) }
 }
 
 /** The bar's children as `title` (or `title/…` for a folder), in order. */
@@ -46,34 +48,39 @@ function seed(service: BookmarkService): Record<string, string> {
 }
 
 describe('BookmarkUndoStack', () => {
-  it('puts a deleted bookmark back where it stood, with its title, address, icon and date', () => {
+  it('puts a deleted bookmark back as itself: its id, title, address, icon and dates, where it stood', () => {
     const { service, undo } = setup()
     const ids = seed(service)
     service.update(ids.b, { favicon: 'https://b.example/icon.png' })
+    service.touch(ids.b)
     const before = service.get(ids.b)!
+    expect(before.dateLastUsed).toBeGreaterThan(0)
 
     const removal = undo.remove([ids.b])
     expect(removal).toEqual({ token: 1, count: 1, kind: 'bookmark' })
     expect(bar(service)).toEqual(['a', 'c', 'd'])
+    expect(service.get(ids.b)).toBeNull()
 
     const undone = undo.undo()
     expect(undone?.kind).toBe('remove')
     expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
-    const restored = service.get(undone!.ids[0])!
+    // Services' `restore` (#370): the node is back under its own id, its history with it – and
+    // the undo names that id, so the manager selects the row the user knew.
+    expect(undone?.ids).toEqual([ids.b])
     expect(undone?.parentId).toBe(BOOKMARKS_BAR_ID)
-    expect(restored).toMatchObject({
+    expect(service.get(ids.b)).toEqual(before)
+    expect(service.get(ids.b)).toMatchObject({
       title: 'b',
       url: 'https://b.example/',
       favicon: 'https://b.example/icon.png',
       dateAdded: before.dateAdded,
+      dateLastUsed: before.dateLastUsed,
       index: 1
     })
-    // The model mints ids: the node is back under a new one (the seam services could close).
-    expect(restored.id).not.toBe(ids.b)
     expect(undo.depth).toBe(0)
   })
 
-  it('restores a deleted folder with everything below it, in order', () => {
+  it('restores a deleted folder with everything below it, in order, every node under its id', () => {
     const { service, undo } = setup()
     seed(service)
     const folder = service.create({
@@ -85,19 +92,91 @@ describe('BookmarkUndoStack', () => {
     for (const t of ['x', 'y'])
       service.create({ parentId: folder.id, title: t, url: `https://${t}.test/` })
     const sub = service.create({ parentId: folder.id, title: 'g', type: 'folder' })!
-    service.create({ parentId: sub.id, title: 'z', url: 'https://z.test/' })
+    const z = service.create({ parentId: sub.id, title: 'z', url: 'https://z.test/' })!
+    service.touch(z.id)
     expect(bar(service)).toEqual(['a', 'f/', 'b', 'c', 'd'])
+    const before = [folder.id, ...service.tree.descendants(folder.id).map((n) => n.id)].map((id) =>
+      service.get(id)!
+    )
+    expect(before.map((n) => n.title)).toEqual(['f', 'x', 'y', 'g', 'z'])
+    expect(before[0].dateGroupModified).toBeGreaterThan(0)
+    expect(before[3].dateGroupModified).toBeGreaterThan(0)
 
     expect(undo.remove([folder.id])).toMatchObject({ count: 1, kind: 'folder' })
     expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+    for (const node of before) expect(service.get(node.id)).toBeNull()
 
     const undone = undo.undo()!
+    expect(undone.ids).toEqual([folder.id])
     expect(bar(service)).toEqual(['a', 'f/', 'b', 'c', 'd'])
-    const back = service.get(undone.ids[0])!
-    expect(back.type).toBe('folder')
-    expect(bar(service, back.id)).toEqual(['x', 'y', 'g/'])
-    const g = service.getChildren(back.id).find((n) => n.title === 'g')!
-    expect(bar(service, g.id)).toEqual(['z'])
+    expect(bar(service, folder.id)).toEqual(['x', 'y', 'g/'])
+    expect(bar(service, sub.id)).toEqual(['z'])
+    // The folders keep the `dateGroupModified` they had, the bookmark its `dateLastUsed`: the
+    // subtree is back exactly as it was put aside.
+    for (const node of before) expect(service.get(node.id)).toEqual(node)
+  })
+
+  it('puts several deleted siblings back in their order, each before the sibling that followed it', () => {
+    const { service, undo } = setup()
+    const ids = seed(service)
+    // a's anchor is b, c's is d: with a back before b, c goes before d – not on the bare index
+    // d stood on before a returned (that would put c before b).
+    expect(undo.remove([ids.a, ids.c])).toMatchObject({ count: 2, kind: 'bookmark' })
+    expect(bar(service)).toEqual(['b', 'd'])
+    const undone = undo.undo()!
+    expect(undone.ids).toEqual([ids.a, ids.c])
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+    expect(service.getChildren(BOOKMARKS_BAR_ID).map((n) => n.id)).toEqual([
+      ids.a,
+      ids.b,
+      ids.c,
+      ids.d
+    ])
+  })
+
+  it('lands a row by its sibling anchor: before its old next sibling, else on its old index, or at the end', () => {
+    // A neighbour before it went meanwhile: the row still lands before the sibling that followed.
+    {
+      const { service, undo } = setup()
+      const ids = seed(service)
+      undo.remove([ids.b])
+      service.removeTree(ids.a)
+      expect(bar(service)).toEqual(['c', 'd'])
+      expect(undo.undo()?.ids).toEqual([ids.b])
+      expect(bar(service)).toEqual(['b', 'c', 'd'])
+    }
+    // The sibling that followed is gone: the row takes its old index.
+    {
+      const { service, undo } = setup()
+      const ids = seed(service)
+      undo.remove([ids.b])
+      service.removeTree(ids.c)
+      expect(bar(service)).toEqual(['a', 'd'])
+      expect(undo.undo()?.ids).toEqual([ids.b])
+      expect(bar(service)).toEqual(['a', 'b', 'd'])
+    }
+    // It was the last: it goes to the end, after a row added there since.
+    {
+      const { service, undo } = setup()
+      const ids = seed(service)
+      undo.remove([ids.d])
+      service.create({ parentId: BOOKMARKS_BAR_ID, title: 'e', url: 'https://e.example/' })
+      expect(bar(service)).toEqual(['a', 'b', 'c', 'e'])
+      expect(undo.undo()?.ids).toEqual([ids.d])
+      expect(bar(service)).toEqual(['a', 'b', 'c', 'e', 'd'])
+    }
+  })
+
+  it('is one write for the whole delete, however many rows and folders it holds', () => {
+    const { state, service, undo } = setup()
+    const ids = seed(service)
+    const folder = service.create({ parentId: BOOKMARKS_BAR_ID, title: 'f', type: 'folder' })!
+    service.create({ parentId: folder.id, title: 'x', url: 'https://x.test/' })
+    undo.remove([ids.a, ids.c, folder.id])
+    const commits = vi.spyOn(state, 'commit')
+    expect(undo.undo()?.ids).toEqual([ids.a, ids.c, folder.id])
+    expect(commits).toHaveBeenCalledTimes(1)
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd', 'f/'])
   })
 
   it('restores several deleted rows to their own places and names the mix', () => {
@@ -171,14 +250,87 @@ describe('BookmarkUndoStack', () => {
     expect(bar(service)).toEqual(['a', 'c', 'd'])
 
     // Ctrl+Z (no token) takes the newest edit back and says which: the delete the toast holds.
-    expect(undo.undo()).toMatchObject({ kind: 'remove', token: removal?.token })
+    expect(undo.undo()).toMatchObject({ kind: 'remove', token: removal?.token, ids: [ids.b] })
     expect(bar(service)).toEqual(['a', 'c', 'd', 'B'])
-    // The move and the rename were made on the old id; the stack follows it to the new one.
-    expect(undo.undo()?.kind).toBe('move')
+    // The move and the rename were made on the same id the node is back under.
+    expect(undo.undo()).toMatchObject({ kind: 'move', ids: [ids.b] })
     expect(bar(service)).toEqual(['a', 'B', 'c', 'd'])
-    expect(undo.undo()?.kind).toBe('update')
+    expect(undo.undo()).toMatchObject({ kind: 'update', ids: [ids.b] })
     expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
     expect(undo.undo()).toBeNull()
+  })
+
+  it('a node whose id was taken meanwhile comes back under a new one, which the older edits about it follow', () => {
+    const { service, undo } = setup()
+    const ids = seed(service)
+    undo.update(ids.b, { title: 'B' })
+    undo.move([ids.b], BOOKMARKS_BAR_ID, 3)
+    const before = service.get(ids.b)!
+    undo.remove([ids.b])
+    expect(bar(service)).toEqual(['a', 'c', 'd'])
+
+    // A sync brings a stranger in under b's id before the undo runs (ids being minted, a race
+    // with a new node is the other way there).
+    service.applySynced(ids.b, {
+      parentId: OTHER_BOOKMARKS_ID,
+      index: 0,
+      type: 'url',
+      title: 'Stranger',
+      url: 'https://stranger.example/',
+      dateAdded: 1
+    })
+    service.syncTabs()
+
+    // The delete undone: b is back at the end, where it stood, as itself but for the id – the
+    // service's fallback, reported positionally, which the stack takes down as an alias.
+    const undone = undo.undo()!
+    expect(undone.kind).toBe('remove')
+    expect(bar(service)).toEqual(['a', 'c', 'd', 'B'])
+    const [newId] = undone.ids
+    expect(newId).not.toBe(ids.b)
+    expect(service.get(newId)).toEqual({ ...before, id: newId })
+    expect(service.get(ids.b)).toMatchObject({ title: 'Stranger', parentId: OTHER_BOOKMARKS_ID })
+
+    // The move and the rename were made on the old id: the stack follows it to the new one, and
+    // the stranger holding the old id is left alone.
+    expect(undo.undo()).toMatchObject({ kind: 'move', ids: [newId] })
+    expect(bar(service)).toEqual(['a', 'B', 'c', 'd'])
+    expect(undo.undo()).toMatchObject({ kind: 'update', ids: [newId] })
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+    expect(service.get(ids.b)).toMatchObject({ title: 'Stranger', parentId: OTHER_BOOKMARKS_ID })
+    expect(bar(service, OTHER_BOOKMARKS_ID)).toEqual(['Stranger'])
+  })
+
+  it('follows a node through two fallbacks in a row (the aliases chain)', () => {
+    const { service, undo } = setup()
+    const ids = seed(service)
+    undo.update(ids.b, { title: 'B' })
+    const stranger = (id: string, title: string): void => {
+      service.applySynced(id, {
+        parentId: OTHER_BOOKMARKS_ID,
+        index: 0,
+        type: 'url',
+        title,
+        url: `https://${title.toLowerCase()}.example/`,
+        dateAdded: 1
+      })
+      service.syncTabs()
+    }
+
+    undo.remove([ids.b])
+    stranger(ids.b, 'One')
+    const [second] = undo.undo()!.ids
+    expect(second).not.toBe(ids.b)
+    undo.remove([second])
+    stranger(second, 'Two')
+    const [third] = undo.undo()!.ids
+    expect(third).not.toBe(second)
+    expect(bar(service)).toEqual(['a', 'B', 'c', 'd'])
+
+    // The rename was made on the first id; two hops on, the stack still finds the node.
+    expect(undo.undo()).toMatchObject({ kind: 'update', ids: [third] })
+    expect(bar(service)).toEqual(['a', 'b', 'c', 'd'])
+    expect(bar(service, OTHER_BOOKMARKS_ID).sort()).toEqual(['One', 'Two'])
   })
 
   it("undoes the one delete its token names, leaving a later move in place (the toast's Undo)", () => {

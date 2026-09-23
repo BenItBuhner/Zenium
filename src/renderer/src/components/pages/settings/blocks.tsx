@@ -198,10 +198,13 @@ export function ZoomBlock({
   )
 }
 
-/** §9.12's validation text: 13 in the danger ink with a 16 px glyph, under the field. */
-export function ValidationMessage({ message }: { message: string }): JSX.Element {
+/**
+ * §9.12's validation text: 13 in the danger ink with a 16 px glyph, under the field. `id` lets
+ * the field it belongs to name it (`aria-describedby`), so a reader on the field hears the error.
+ */
+export function ValidationMessage({ message, id }: { message: string; id?: string }): JSX.Element {
   return (
-    <span className="zen-settings-validation" role="alert">
+    <span className="zen-settings-validation" role="alert" id={id}>
       <CircleAlert aria-hidden="true" />
       {message}
     </span>

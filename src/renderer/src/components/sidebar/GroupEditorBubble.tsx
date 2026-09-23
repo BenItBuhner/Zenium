@@ -1,13 +1,14 @@
 import type { CSSProperties, JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Plus, Ungroup, X } from 'lucide-react'
+import { FolderOpen, Plus, Trash2, Ungroup, X } from 'lucide-react'
 import type { Folder, FolderColor, UIState } from '@shared/types'
-import { FOLDER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import { requestFolderDelete } from '@renderer/lib/folderDelete'
 import { closeGroupEditor } from '@renderer/lib/groupEditor'
-import { GROUP_PALETTE } from '@renderer/lib/groups'
+import { GROUP_PALETTE, groupColorVars } from '@renderer/lib/groups'
 import { measureRow, placeHoverCard } from '@renderer/lib/hoverCard'
+import { openedFromKeyboard } from '@renderer/lib/popover'
 import {
   ChromePortal,
   POPOVER_MARGIN,
@@ -62,8 +63,12 @@ export function GroupEditorLayer(): JSX.Element | null {
  * header follows every keystroke as Chrome's group chip does – and the nine colours as a row of
  * round swatches, a radio group (§9.14's swatch form: the picked one wears the 2 px accent
  * outline 2 px outside its edge). Under a hairline, the group's actions as `.zen-v2-row` rows
- * with a leading 16 px glyph (§9.34): New tab in folder, Unpack folder (Chrome's Ungroup) and
- * Close folder with its tab count (Chrome's Close group) in the danger ink. It renders through
+ * with a leading 16 px glyph (§9.34): New tab in folder, Unpack folder (Chrome's Ungroup), Close
+ * folder with its tab count (Chrome's Close group – the tabs close and the folder stays SAVED
+ * with their pages, TAB-16, so the plain ink) and Delete folder in the danger ink, which asks
+ * first when the folder holds anything (`requestFolderDelete`); a saved folder – its tabs
+ * closed, its pages kept – has Open folder with its page count and Delete folder alone (New
+ * tab in folder would forget its pages, so it waits for Open). It renders through
  * the chrome layer (`ChromePortal`) over a picture of the page (`holdFloatingChrome`) and the
  * layer's light dismiss puts it away: a press anywhere else closes it on `pointerdown` and
  * reaches nothing beneath – the header's own press closes it and does not fold the folder – and
@@ -197,7 +202,23 @@ function GroupEditorBubble({
   useBackSurface({ name: 'group-editor', onCommit: close })
 
   if (!ready) return null
+  // A SAVED folder (TAB-16's desktop half): its tabs closed, its pages kept. Its actions are
+  // Open folder – the pages come back as its tabs – and Delete folder; an open folder's are
+  // New tab, Unpack, Close (the tabs close, the folder stays saved with their pages) and
+  // Delete. New tab in folder is the open folder's alone: on a saved one the first tab it
+  // holds again forgets its pages (the model's `folderOpened` rule), a loss no plain-ink row
+  // may carry (§5, §9.1) – Open folder brings them back first.
+  const saved = count === 0 && Boolean(folder.savedTabs?.length)
+  const pages = folder.savedTabs?.length ?? 0
   const tabsLabel = `${count} ${count === 1 ? 'tab' : 'tabs'}`
+  const pagesLabel = `${pages} ${pages === 1 ? 'page' : 'pages'}`
+  const deleteFolder = (): void => {
+    // The prompt's Cancel hands the keyboard back to the header when the bubble had it (§9.22);
+    // read before the bubble goes, since the prompt takes its place (§9.20).
+    const fromKeyboard = keyboard || openedFromKeyboard()
+    close()
+    requestFolderDelete(folder.id, fromKeyboard)
+  }
   return (
     <ChromePortal>
       {/* A page surface (§9.29): the field, the swatches and the rows draw in the page family. */}
@@ -252,36 +273,66 @@ function GroupEditorBubble({
             </div>
           </div>
           <div className="zen-group-editor-actions" role="group" aria-label="Folder actions">
+            {saved && (
+              <button
+                type="button"
+                className="zen-v2-row zen-group-editor-action"
+                data-action="open"
+                onClick={() => act(() => run('folder.open', { folderId: folder.id }))}
+              >
+                <FolderOpen className={V2_GLYPH} aria-hidden />
+                <span className="zen-v2-label truncate">Open folder</span>
+                <span className="zen-v2-description zen-group-editor-count">{pagesLabel}</span>
+              </button>
+            )}
+            {!saved && (
+              <button
+                type="button"
+                className="zen-v2-row zen-group-editor-action"
+                data-action="new-tab"
+                onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
+              >
+                <Plus className={V2_GLYPH} aria-hidden />
+                <span className="zen-v2-label truncate">New tab in folder</span>
+              </button>
+            )}
+            {count > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="zen-v2-row zen-group-editor-action"
+                  data-action="unpack"
+                  onClick={() =>
+                    act(() => run('folder.delete', { folderId: folder.id, unpack: true }))
+                  }
+                >
+                  <Ungroup className={V2_GLYPH} aria-hidden />
+                  <span className="zen-v2-label truncate">Unpack folder</span>
+                </button>
+                {/* Chrome's Close group: the tabs close, the folder stays saved with their
+                    pages – it destroys nothing the saved folder does not keep, so the plain
+                    ink (§6); Delete alone takes the danger ink. */}
+                <button
+                  type="button"
+                  className="zen-v2-row zen-group-editor-action"
+                  data-action="close"
+                  onClick={() => act(() => run('folder.close', { folderId: folder.id }))}
+                >
+                  <X className={V2_GLYPH} aria-hidden />
+                  <span className="zen-v2-label truncate">Close folder</span>
+                  <span className="zen-v2-description zen-group-editor-count">{tabsLabel}</span>
+                </button>
+              </>
+            )}
             <button
               type="button"
               className="zen-v2-row zen-group-editor-action"
-              data-action="new-tab"
-              onClick={() => act(() => run('folder.newTab', { folderId: folder.id }))}
-            >
-              <Plus className={V2_GLYPH} aria-hidden />
-              <span className="zen-v2-label truncate">New tab in folder</span>
-            </button>
-            <button
-              type="button"
-              className="zen-v2-row zen-group-editor-action"
-              data-action="unpack"
-              onClick={() => act(() => run('folder.delete', { folderId: folder.id, unpack: true }))}
-            >
-              <Ungroup className={V2_GLYPH} aria-hidden />
-              <span className="zen-v2-label truncate">Unpack folder</span>
-            </button>
-            <button
-              type="button"
-              className="zen-v2-row zen-group-editor-action"
-              data-action="close"
+              data-action="delete"
               data-danger=""
-              onClick={() =>
-                act(() => run('folder.delete', { folderId: folder.id, unpack: false }))
-              }
+              onClick={deleteFolder}
             >
-              <X className={V2_GLYPH} aria-hidden />
-              <span className="zen-v2-label truncate">Close folder</span>
-              <span className="zen-v2-description zen-group-editor-count">{tabsLabel}</span>
+              <Trash2 className={V2_GLYPH} aria-hidden />
+              <span className="zen-v2-label truncate">Delete folder</span>
             </button>
           </div>
         </div>
@@ -291,10 +342,12 @@ function GroupEditorBubble({
 }
 
 /**
- * The nine colours as a radio group of round swatches (§9.14's swatch form): 28 px targets in a
- * row at an 8 px gap, the colour a 20 px disc inside, the picked one with the 2 px accent
- * outline 2 px outside its edge. One swatch is in the tab order (the picked one); Left, Right,
- * Up and Down move and pick, Home and End jump, as native radios do.
+ * The nine colours as a radio group of round swatches (§9.14's swatch form): 28 px targets
+ * touching in a row – the 20 px discs 8 apart on a 28 pitch, the nine discs 244 wide from the
+ * first's left edge to the ninth's right (the targets 252) – the colour the disc inside, the
+ * picked one with the 2 px accent outline 2 px outside its edge. One swatch is
+ * in the tab order (the picked one); Left, Right, Up and Down move and pick, Home and End jump,
+ * as native radios do.
  */
 function ColorSwatches({
   labelledBy,
@@ -344,9 +397,10 @@ function ColorSwatches({
             aria-label={entry.name}
             title={entry.name}
             data-color={entry.color}
+            data-group-rgb=""
             tabIndex={index === pickedIndex ? 0 : -1}
             className={cn('zen-v2-card-radio zen-group-editor-swatch')}
-            style={{ '--zen-swatch': FOLDER_COLORS[entry.color] } as CSSProperties}
+            style={groupColorVars(entry.color) as CSSProperties}
             onClick={() => onPick(entry.color)}
           >
             <span className="zen-group-editor-swatch-disc" aria-hidden />
