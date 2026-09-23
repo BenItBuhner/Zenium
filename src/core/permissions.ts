@@ -82,6 +82,15 @@ export interface PermissionRequestDetails {
    * the file the engine emptied on the spot), which is the user's permission to write it.
    */
   pickedForSaving?: boolean
+  /**
+   * The request comes from a private window or tab, named by its container. Chrome's Incognito
+   * rule: the site's stored decisions and the defaults are read as they are (a block stands), but
+   * nothing the user answers in private is written to the store – an Allow lasts the private
+   * session, a Block the same, and a dismissed prompt never earns the site a stored block. The
+   * hosts set it from the request's session (`PRIVATE_CONTAINER_ID`); the session's end calls
+   * `forgetContainer`.
+   */
+  privateContainerId?: string
 }
 
 export interface PermissionPromptCopy {
@@ -134,6 +143,13 @@ export class PermissionService {
   private readonly savedFiles = new Set<string>()
   /** "Allow once" grants: decision keys per tab, dropped when the tab leaves the site or closes. */
   private readonly sessionAllows = new Map<string, Set<string>>()
+  /**
+   * Answers given in private (Chrome's Incognito rule): decision keys to decisions, per private
+   * container, never written to the store; a container's map goes with its session
+   * (`forgetContainer`). Read after the store, so a stored block is inherited and a stored allow
+   * too, and a private answer speaks only where the store is silent.
+   */
+  private readonly privateDecisions = new Map<string, Map<string, PermissionDecision>>()
   /** Prompts dismissed without an answer, per decision key (reset by an answer). */
   private readonly dismissals = new Map<string, number>()
   /** Requests answered from a stored allow this session, per key (the notification review). */
@@ -297,6 +313,10 @@ export class PermissionService {
     const key = decisionKey(origin, permission, details)
     const stored = this.decisions[key]
     if (stored) return stored
+    if (details?.privateContainerId) {
+      const answered = this.privateDecisions.get(details.privateContainerId)?.get(key)
+      if (answered) return answered
+    }
     if (details?.tabId && this.sessionAllows.get(details.tabId)?.has(key)) return 'allow'
     return this.effectiveDefault(permission)
   }
@@ -363,8 +383,7 @@ export class PermissionService {
   ): void {
     const origin = permissionSite(requestingUrl)
     if (!origin) return
-    const key = decisionKey(origin, permission, details)
-    this.update(key, decision, changeFor(key))
+    this.keep(decisionKey(origin, permission, details), decision, details ?? {})
   }
 
   /** Forget one origin's answer for a permission: the site is asked (or blocked) again. */
@@ -412,7 +431,7 @@ export class PermissionService {
     const outcome = this.resolve(permission, requestingUrl, details)
     const key = decisionKey(origin, permission, details)
     if (outcome !== 'ask') {
-      if (outcome === 'allow') this.recordHit(key)
+      if (outcome === 'allow') this.recordHit(key, details)
       return outcome === 'allow'
     }
     if (promptLabelFor(permission) === null) return false
@@ -430,7 +449,7 @@ export class PermissionService {
     if (outcomes.some((outcome) => outcome === 'deny')) return false
     const open = rows.filter((_row, i) => outcomes[i] === 'ask')
     if (open.length === 0) {
-      for (const row of rows) this.recordHit(decisionKey(origin, row, details))
+      for (const row of rows) this.recordHit(decisionKey(origin, row, details), details)
       return true
     }
     const keys = open.map((row) => decisionKey(origin, row, details))
@@ -474,7 +493,7 @@ export class PermissionService {
       case 'allow':
         for (const key of keys) {
           this.dismissals.delete(key)
-          this.update(key, 'allow', changeFor(key))
+          this.keep(key, 'allow', details)
         }
         return true
       case 'allow-once':
@@ -488,7 +507,7 @@ export class PermissionService {
       case 'block':
         for (const key of keys) {
           this.dismissals.delete(key)
-          if (!ONE_SHOT_DENY.has(permission)) this.update(key, 'deny', changeFor(key))
+          if (!ONE_SHOT_DENY.has(permission)) this.keep(key, 'deny', details)
         }
         return false
       case 'dismiss':
@@ -496,14 +515,47 @@ export class PermissionService {
           const count = (this.dismissals.get(key) ?? 0) + 1
           if (count >= DISMISSALS_BEFORE_BLOCK && !ONE_SHOT_DENY.has(permission)) {
             this.dismissals.delete(key)
-            this.update(key, 'deny', changeFor(key))
+            this.keep(key, 'deny', details)
           } else this.dismissals.set(key, count)
         }
         return false
     }
   }
 
-  private recordHit(key: string): void {
+  /**
+   * An answer, kept where the request came from: the store for a regular window; the
+   * private container's own memory for a private one, which the store never sees (Chrome's
+   * Incognito rule – the regular profile's decisions are read in private, nothing is written
+   * back, and the memory ends with the session). The three-dismissals block takes the same path,
+   * so a site dismissed in private is not blocked for the regular profile.
+   */
+  private keep(key: string, decision: PermissionDecision, details: PermissionRequestDetails): void {
+    const container = details.privateContainerId
+    if (!container) {
+      this.update(key, decision, changeFor(key))
+      return
+    }
+    const answers = this.privateDecisions.get(container) ?? new Map<string, PermissionDecision>()
+    answers.set(key, decision)
+    this.privateDecisions.set(container, answers)
+    // The site-information sheet of a private tab reads `resolve`, so it hears of the change too.
+    this.notify(changeFor(key))
+  }
+
+  /**
+   * The private session of `containerId` ended (no private window or tab is left): every answer
+   * given in it is forgotten, as Chrome forgets Incognito's on its last window closing.
+   */
+  forgetContainer(containerId: string): void {
+    const answers = this.privateDecisions.get(containerId)
+    if (!answers) return
+    this.privateDecisions.delete(containerId)
+    for (const key of answers.keys()) this.notify(changeFor(key))
+  }
+
+  /** A stored allow answered a request. Private windows leave no trace in the activity either. */
+  private recordHit(key: string, details: PermissionRequestDetails): void {
+    if (details.privateContainerId) return
     this.hits.set(key, (this.hits.get(key) ?? 0) + 1)
   }
 
@@ -529,6 +581,7 @@ export class PermissionService {
     this.devices = []
     this.savedFiles.clear()
     this.sessionAllows.clear()
+    this.privateDecisions.clear()
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of keys) this.notify(changeFor(key))
@@ -549,13 +602,15 @@ export class PermissionService {
       removed.length === 0 &&
       grants.length === 0 &&
       this.savedFiles.size === 0 &&
-      this.sessionAllows.size === 0
+      this.sessionAllows.size === 0 &&
+      this.privateDecisions.size === 0
     )
       return
     for (const key of removed) delete this.decisions[key]
     this.devices = []
     this.savedFiles.clear()
     this.sessionAllows.clear()
+    this.privateDecisions.clear()
     this.dismissals.clear()
     this.store.write(this.persisted())
     for (const key of removed) this.notify(changeFor(key))
