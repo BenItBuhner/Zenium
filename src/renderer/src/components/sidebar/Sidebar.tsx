@@ -43,7 +43,8 @@ interface Props {
    * The horizontal layout's rail (design language v2 §9.37): the 56 column beside the frame from
    * the toolbar row down – Essentials as 44 tiles, the spaces' 32 glyphs with the current on
    * `--v2-window-fill`, + and palette, the compact player – with no navigation row and no tab
-   * rows, which the strip along the caption band carries. It starts level with the frame at 82.
+   * rows, which the strip along the caption band carries. It starts level with the frame at 82
+   * and ends level with the frame's bottom, its last box 8 above.
    */
   rail?: boolean
 }
@@ -74,13 +75,20 @@ export function Sidebar({
   const { coarse } = useViewport()
 
   if (rail) {
+    // Docked, the rail is a stretched item of the columns row with the window's 8 gutter above
+    // and below it: it starts level with the frame at 82 and ends level with the frame's bottom,
+    // its last box 8 above that (SidebarBottom's padding). Floating, it fills its p-2 box.
     return (
       <aside
         className={cn(
-          'relative flex h-full shrink-0 flex-col',
-          floating && 'zen-panel zen-animate-in'
+          'relative flex shrink-0 flex-col',
+          floating && 'zen-panel zen-animate-in h-full'
         )}
-        style={{ width: COLLAPSED_WIDTH, marginTop: floating ? 0 : 'var(--zen-padding)' }}
+        style={{
+          width: COLLAPSED_WIDTH,
+          marginTop: floating ? 0 : 'var(--zen-padding)',
+          marginBottom: floating ? 0 : 'var(--zen-padding)'
+        }}
         onPointerLeave={onPointerLeave}
         data-side={side}
         data-surface="window"
