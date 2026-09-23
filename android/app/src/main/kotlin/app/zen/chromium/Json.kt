@@ -26,6 +26,33 @@ fun JSONObject.obj(key: String): JSONObject = optJSONObject(key) ?: JSONObject()
 
 fun JSONObject.arr(key: String): JSONArray = optJSONArray(key) ?: JSONArray()
 
+/**
+ * Appends [text] as the body of a double-quoted JavaScript string literal (the quotes are the
+ * caller's), escaping what `JSONObject.quote` escapes – the quote, the backslash, the control
+ * characters – plus U+2028 and U+2029, in one pass and without an intermediate string.
+ */
+fun StringBuilder.appendJsQuoted(text: CharSequence): StringBuilder {
+    var from = 0
+    val n = text.length
+    for (i in 0 until n) {
+        val c = text[i]
+        val escaped = when {
+            c == '"' -> "\\\""
+            c == '\\' -> "\\\\"
+            c == '\n' -> "\\n"
+            c == '\r' -> "\\r"
+            c == '\t' -> "\\t"
+            c == '\b' -> "\\b"
+            c == '\u000C' -> "\\f"
+            c < ' ' || c == '\u2028' || c == '\u2029' -> String.format("\\u%04x", c.code)
+            else -> continue
+        }
+        append(text, from, i).append(escaped)
+        from = i + 1
+    }
+    return append(text, from, n)
+}
+
 /** Encode any bridge result as JSON text (the JS side `JSON.parse`s it). */
 fun encodeResult(value: Any?): String = when (value) {
     null -> "null"

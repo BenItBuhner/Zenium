@@ -7932,7 +7932,8 @@
  * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
  * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
  * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
- * = the X's 2 + 22); a saved row, with nothing to fold, keeps the chevron's box empty so the
+ * = the X's 2 + 22), turned with the fold (`.zen-group-row-chevron` below); a saved row, with
+ * nothing to fold, keeps the chevron's box empty so the
  * counts share one edge. The name being edited takes the name's slot at the same 14. The rail
  * shows the glyph alone, centred. The rows of an open group – their own tablist under the
  * header (`.zen-group-rows`) – sit 24 in (§9.36), where the desktop's indent is 20 and the
@@ -7968,8 +7969,35 @@
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
+/*
+ * The disclosure's chevron turns with the fold (§9.36 as amended – the lead's #398 ruling – and
+ * §11.1's one value): ONE glyph, `ChevronRight`, rotated 90° on the fold's progress – 0 folded
+ * (›), 1 open (⌄), every angle between as the rows fold – by the same value that drives the
+ * block's height, so the folded state reads no earlier than the container rests (a swap of
+ * glyphs at the folding commit read it 250 ms before). The REST value is the header's state –
+ * `aria-expanded` on the header – declared on the SHELL, since an element's own declaration
+ * beats an inherited one and the in-flight value is the shell's: `useGroupFold` writes
+ * `--zen-fold-progress` inline on the shell every spring frame, (extent − alone) / (whole −
+ * alone), and inline beats the stylesheet there; at rest the hook takes it off and the state
+ * binds. No `transition`: the spring is the one clock (§11), and under reduced motion the hook
+ * writes nothing, so the rest value binds in the commit – the cut (§11.3). §11.4's "chrome
+ * switches at the end of the glide" is about properties that cannot animate; an angle is not
+ * one of them. The strip's chip draws no chevron (§9.37); the property stands on its shell
+ * unread.
+ */
+.zen-group-fold:has(> [aria-expanded='true']) {
+  --zen-fold-progress: 1;
+}
+.zen-group-fold:has(> [aria-expanded='false']) {
+  --zen-fold-progress: 0;
+}
 .zen-group-row-chevron {
   flex-shrink: 0;
+  transform: rotate(calc(var(--zen-fold-progress) * 90deg));
+  transform-origin: center;
+}
+/* The tablet row's chevron box: 16 on the close X's column, at the row's 69 % (§9.36). */
+.zen-group-row .zen-group-row-chevron {
   width: 16px;
   height: 16px;
   margin-right: 14px;
@@ -7981,8 +8009,21 @@
 :root[data-form-factor='tablet'] .zen-group-fold > .zen-group-rows > .zen-tab:not(.justify-center) {
   margin-left: 24px;
 }
+/*
+ * While the block's extent runs on the fold's spring (`useGroupFold`) the shell clips, and
+ * nothing in it shrinks to the extent: a flex child squeezes to its min-content under a shell
+ * held shorter than its content – the header from 32 to its glyph's 21, the rows with it, and
+ * back with a pop at rest – where the fold means the rows folding up under a header that stands
+ * 32 in its place, cut by the shell's edge (the strip's chip and members the same way along x).
+ * `clip`, not `hidden` (§9.36): `hidden` makes the shell a scroll container for the flight, and
+ * a focus landing on a row already under the edge would scroll the block beneath the spring;
+ * `clip` cuts at the edge and scrolls nothing.
+ */
 .zen-group-fold[data-folding] {
-  overflow: hidden;
+  overflow: clip;
+}
+.zen-group-fold[data-folding] > * {
+  flex-shrink: 0;
 }
 
 /*
@@ -9886,14 +9927,47 @@
   stroke-width: var(--v2-icon-stroke);
 }
 /*
- * Three text lines (§9.18): the control leaves the row's centre for the label's line. The row
- * measures where that line starts in its text block (`rows.tsx`); the control's box is then the
- * label's line box, so its content centres on it – (line − control) / 2 without stating either.
+ * Three text lines (§9.18): the control leaves the row's centre for the label. The row measures
+ * where the label starts in its text block (`lineCount.ts`) and the trailing box sits there,
+ * the label's box tall (`--zen-settings-label-box`), the control centred in it. A control
+ * never leaves its row's box (the lead's #391 ruling 4: §5 measures box to box, and a control
+ * 2 px into the row above sits under that row's hover fill), so the box is not always the
+ * line: a control taller than the line – the desktop's 32 menulist, button, field or slider
+ * in a control row, an item row's 28 ⋯ – keeps §9.21's 4 above, and the label's line box
+ * grows to the control's box with the label centred in it (Firefox's `align="center"` of
+ * label and control), the description following the control's box – 4 + 32 + 20 + 20 + 4 = 80
+ * on the desktop, the next row's control 8 below the box as on every control row. A control
+ * that fits the line – the phone's 20 switch, a 16 glyph – grows nothing: the box is the line
+ * and the phone's row stays 84. Which box a row's control is, the row says by its class
+ * (`--zen-settings-control-box`, set with the desktop rows below): a stylesheet cannot measure
+ * a sibling's height, and a measured px would restate the token the row renders its control at.
  */
+.zen-settings-row[data-lines='3'] {
+  --zen-settings-label-box: var(--zen-settings-control-box, var(--v2-line-body-box));
+}
 .zen-settings-row[data-lines='3'] > .zen-settings-trailing {
   align-self: flex-start;
-  min-height: var(--v2-line-body-box);
+  height: var(--zen-settings-label-box);
   margin-top: var(--zen-settings-label-top, 0px);
+}
+/* The label grown to its box, its line centred – padding `lineCount.ts` discounts when it counts again. */
+.zen-settings-row[data-lines='3'] > .zen-settings-row-text > .zen-settings-label {
+  padding-block: calc((var(--zen-settings-label-box) - var(--v2-line-body-box)) / 2);
+}
+/*
+ * The one trailing content taller than its control: an inline field with the message of a
+ * commit the row refused (`rows.tsx`'s `InlineField` – the field and its `role="alert"` line in
+ * one column). Centred as a pair in the box, the 32 field and its two-line message would start
+ * 18 over the row above and put the message beside the description (#391's independent pass
+ * found the pair centred). The column starts at the box's top instead: the box is the field's
+ * own (the control row's `--zen-settings-control-box`), so the field sits on the control's
+ * line and the message follows under it (§9.12: validation text below the field), inside the
+ * row's 80 for two lines of message.
+ */
+.zen-settings-row[data-lines='3']
+  > .zen-settings-trailing
+  > .zen-settings-inline-field:has(.zen-settings-inline-error) {
+  align-self: flex-start;
 }
 /* A detail row's summary (§10.4): what its sheet holds, 13 at 69 % on the trailing side, before the chevron. */
 .zen-settings-summary {
@@ -10408,6 +10482,27 @@
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* The find field's padding above and below its control (`.zen-settings-find` reads these): the
+     column's top for anything scrolled into view is the field's bottom edge – its whole box,
+     16 + the control + 8 – so a landed group's heading shows under the field, and the two
+     rules cannot drift apart. */
+  --zen-settings-find-pad-top: 16px;
+  --zen-settings-find-pad-bottom: 8px;
+  scroll-padding-top: calc(
+    var(--v2-control) + var(--zen-settings-find-pad-top) + var(--zen-settings-find-pad-bottom)
+  );
+}
+/*
+ * A landing (`?row=` / `?site=`, `SettingsPage`'s `landingPad`): the column pads its end by what
+ * the landed group lacks to reach the top – a group near a section's end otherwise stops where
+ * the content under it runs out (the desktop's #356: Sync's Open tabs group mid-page at a 1000 px
+ * window) – as Chrome's settings pages pad the page for a deep link. The page measures the pad
+ * and carries `data-landing` only while a landing is asked, so an ordinary section keeps its
+ * end: the phone's 24 under the rows, the pane's 40.
+ */
+.zen-settings-page[data-landing] .zen-settings-scroll > .zen-settings-body,
+.zen-settings-page[data-landing] .zen-settings-pane > .zen-settings-body {
+  padding-bottom: var(--zen-settings-landing-pad, 0px);
 }
 /*
  * "Find in Settings" (§10.5, §9.12): the column opens with the shared field – 32 tall on the
@@ -10420,7 +10515,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 16px 16px 8px;
+  padding: var(--zen-settings-find-pad-top) 16px var(--zen-settings-find-pad-bottom);
   background: var(--v2-page);
 }
 .zen-settings-find > .zen-settings-search {
@@ -10475,25 +10570,33 @@
 /*
  * Sub-headings in a pane (§9.27): the 15/600 heading's box ends 8 above the first row's box
  * (14 to its text through the row's 6 padding, Zen's Vertical Tabs group); one that carries a
- * description keeps the phone's 4 to the description and the description's 8 to the row.
+ * description keeps the phone's 4 to the description and the description's 8 to the row. A
+ * desktop dialog's body is the same desktop surface (the lead's #314 ruling: the 8 below, not
+ * the primitive's phone 4), so its headings take the one rule – the phone sheet's keep the 4.
  */
-.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
+.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)),
+.zen-settings-dialog-body .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
   margin-bottom: 8px;
 }
 /*
  * Desktop rows (§10.5, `rows.tsx`'s desktop variant), every one the shared `.zen-v2-row`:
  * - a control row (§9.21) is static text trailing its 32 px control, the row grown to the
  *   control plus 8 – the 4 above and below its own padding – so rows still touch; with a
- *   description it is the two-line row's 52;
+ *   description it is the two-line row's 52; the row names its control's box for the
+ *   three-line seat (§9.18 above), as the item row trailing its 28 ⋯ names that;
  * - a check row is Zen's 16 px checkbox left of its label, the box on the first text line (§9.2),
  *   the whole row its label;
  * - an inline field (§9.12) is the one short field the desktop keeps beside its label: 96 for a
  *   number, 160 at most for text; its validation message takes the line under the field.
  */
 .zen-settings-control-row {
+  --zen-settings-control-box: var(--v2-control);
   min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
   padding-top: 4px;
   padding-bottom: 4px;
+}
+.zen-settings-menu-row {
+  --zen-settings-control-box: var(--v2-icon-button);
 }
 .zen-settings-control-row:has(.zen-settings-description) {
   min-height: max(var(--v2-row-two-line), calc(var(--v2-control) + 8px));

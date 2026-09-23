@@ -176,6 +176,8 @@ export class FullscreenService {
     this.windowFullscreen.set(win.id, fullscreen)
     // Its pages' `display-mode` is `fullscreen` now (or no longer), as in Chrome.
     this.browser.pushDisplayMode(win)
+    // A kiosk has no way out to hint at (Chrome's kiosk mode shows no exit bubble either).
+    if (win.host.kiosk) return
     const active = this.browser.tabs.activeTabFor(win)
     if (!fullscreen) {
       if (this.holdWindow === win) {
@@ -233,6 +235,8 @@ export class FullscreenService {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return false
     if (input.alt || input.control || input.meta || input.shift) return false
     if (!win.alive || !win.host.isFullScreen() || win.htmlFullscreenTabId) return false
+    // Esc held leaves a kiosk no more than F11 does.
+    if (win.host.kiosk) return false
     if (this.holdWindow && this.holdWindow !== win) this.hold.cancel()
     this.holdWindow = win
     this.hold.down()

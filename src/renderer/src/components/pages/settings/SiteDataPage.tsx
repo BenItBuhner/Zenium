@@ -89,6 +89,7 @@ export function SiteDataPage(): JSX.Element {
         <RowView row={clearAll} ctx={sheets.ctx} />
       </section>
       <section
+        role="group"
         className="zen-settings-group"
         data-group="site-data-origins"
         aria-label={t.sites}

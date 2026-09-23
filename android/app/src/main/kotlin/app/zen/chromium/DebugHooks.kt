@@ -5,7 +5,9 @@ package app.zen.chromium
  * [Host.debugEndRenderer] (the plan's `zen.debug.endRenderer`), which ends the shared renderer
  * process the way a crash would so the `OfflineHungDemo` run can show the crash page – a WebView
  * has no `chrome://crash`, and `WebViewRenderProcess.terminate()` alone reads as the system's
- * kill (the memory page), so the hook records the exit's word first.
+ * kill (the memory page), so the hook records the exit's word first; and [Host.debugHoldLoadHtml],
+ * which holds a tab's next `view.loadHtml` back so the run can force the order in which a load
+ * set up ahead of the crash page commits before it.
  *
  * Reach: a hook is a Kotlin method on [Host], called in-process by the instrumentation (the
  * harness shares the app's process); none is a bridge method, none is on `window`, and the
