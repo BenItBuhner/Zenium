@@ -70,7 +70,7 @@ export function HistoryNavBubble(): JSX.Element | null {
       }
       const disc = discRef.current
       if (!disc) return
-      const { x, scale, opacity } = bubbleVisuals(frame)
+      const { x, scale, opacity } = bubbleVisuals(frame, reducedMotion())
       disc.style.transform = `translate3d(${state.edge === 'left' ? x : -x}px, -50%, 0) scale(${scale})`
       disc.style.opacity = String(opacity)
       if (state.armed) disc.dataset.armed = ''

@@ -113,18 +113,27 @@ export interface BubbleVisuals {
    * page's side (a whole disc out, `-BUBBLE_SIZE`); its leading edge is `offset` in.
    */
   x: number
-  /** About the disc's centre: {@link BUBBLE_MIN_SCALE} → 1 by the growth, a tenth less by the end of the hide. */
+  /**
+   * About the disc's centre: {@link BUBBLE_MIN_SCALE} → 1 by the growth, a tenth less by the end
+   * of the hide – except under reduced motion, where the hide is a fade alone (v2 §11.9) and the
+   * disc keeps its size while it goes.
+   */
   scale: number
   /** Up over the first {@link BUBBLE_FADE_IN} px of offset, taken to nothing by the hide. */
   opacity: number
 }
 
-/** Transform and opacity for a frame of the machine – the one mapping the DOM disc and a host's share. */
-export function bubbleVisuals(frame: HistoryNavFrame): BubbleVisuals {
+/**
+ * Transform and opacity for a frame of the machine – the one mapping the DOM disc and a host's
+ * share. Under reduced motion (`reduced`) the machine's hide arrives whole in one frame, so the
+ * exit's shrink would be a snap to ×0.9 the frame the disc starts to fade: the fade is the
+ * whole of the leave then, and the scale is the growth's alone.
+ */
+export function bubbleVisuals(frame: HistoryNavFrame, reduced = false): BubbleVisuals {
+  const shrink = reduced ? 1 : 1 - HIDE_SHRINK * frame.hide
   return {
     x: frame.offset - BUBBLE_SIZE,
-    scale:
-      (BUBBLE_MIN_SCALE + (1 - BUBBLE_MIN_SCALE) * frame.grow) * (1 - HIDE_SHRINK * frame.hide),
+    scale: (BUBBLE_MIN_SCALE + (1 - BUBBLE_MIN_SCALE) * frame.grow) * shrink,
     opacity: Math.min(1, frame.offset / BUBBLE_FADE_IN) * (1 - frame.hide)
   }
 }
@@ -441,7 +450,10 @@ export interface HistoryNavHostFrame {
    * mark of its own for it: v2 §11.9's threshold shows as the full disc and the haptic.
    */
   armed: boolean
-  /** Motion is reduced: an opacity change fades over 120 ms; the box still follows the finger. */
+  /**
+   * Motion is reduced: the leave (the frame that takes the disc to nothing) fades over 120 ms
+   * and nothing else animates – the scale carries no exit shrink; the box still follows the finger.
+   */
   reduced: boolean
   /**
    * The page frame's box the disc is clipped to, as the DOM disc is by the frame's
@@ -493,7 +505,7 @@ export function bubbleHostFrame(
   anchor: BubbleAnchor,
   reduced: boolean
 ): HistoryNavHostFrame {
-  const { x, scale, opacity } = bubbleVisuals(frame)
+  const { x, scale, opacity } = bubbleVisuals(frame, reduced)
   return {
     edge: state.edge,
     // The DOM disc sits with its far side on the anchor and shifts by `x` into the page.

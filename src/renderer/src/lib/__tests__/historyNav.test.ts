@@ -120,6 +120,21 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
     expect(gone.opacity).toBe(0)
   })
 
+  it('under reduced motion the leave is the fade alone: no shrink on the hide, which arrives whole', () => {
+    // The machine's reduced-motion release: `hide` 1 in one frame, the disc at its full size.
+    const gone = bubbleVisuals({ offset: 96, hide: 1, grow: 1 }, true)
+    expect(gone).toEqual({ x: 52, scale: 1, opacity: 0 })
+    // A drag short of the commit lets go the same way, at the size it had.
+    expect(bubbleVisuals({ offset: 30, hide: 1, grow: 1 }, true).scale).toBe(1)
+    // Growth and fade-in are untouched by the flag; only the exit's shrink is.
+    expect(bubbleVisuals({ offset: 8, hide: 0, grow: 0.5 }, true)).toEqual(
+      bubbleVisuals({ offset: 8, hide: 0, grow: 0.5 })
+    )
+    expect(bubbleVisuals({ offset: 96, hide: 0.5, grow: 1 }).scale).toBeLessThan(
+      bubbleVisuals({ offset: 96, hide: 0.5, grow: 1 }, true).scale
+    )
+  })
+
   it("lays a host's disc against the page's side: a whole disc out at rest, its leading edge `offset` in", () => {
     // The page frame: 360 wide from x 6 (the phone's gutter), 100 to 700 tall.
     const clip = { left: 6, top: 100, right: 366, bottom: 700 }
@@ -176,6 +191,23 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
     // The leading (left) edge stands 96 in from the right side.
     expect(rightIn.left).toBe(366 - 96)
     expect(rightIn.edge).toBe('right')
+
+    // The reduced-motion release's frame reaches the host at the disc's full size: its leave is
+    // the host's 120 ms fade, no snap to ×0.9 on the way.
+    const reducedLeave = bubbleHostFrame(
+      { offset: 96, hide: 1, grow: 1 },
+      state('left', true),
+      anchorLeft,
+      true
+    )
+    expect(reducedLeave.scale).toBe(1)
+    expect(reducedLeave.opacity).toBe(0)
+    expect(reducedLeave.reduced).toBe(true)
+    // Not so with motion on: the same frame carries the exit's tenth of shrink.
+    expect(
+      bubbleHostFrame({ offset: 96, hide: 1, grow: 1 }, state('left', true), anchorLeft, false)
+        .scale
+    ).toBeCloseTo(1 - HIDE_SHRINK, 9)
   })
 })
 
