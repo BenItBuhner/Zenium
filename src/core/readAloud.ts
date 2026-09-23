@@ -39,7 +39,10 @@ export const EXTRACT_TIMEOUT_MS = 8000
 /**
  * How long a start waits for a host that has listed no voices yet before failing `no-voice`: an
  * engine lists its voices a moment after it comes up (Chromium over speech-dispatcher lists
- * thousands), and the first start of a session is often that moment.
+ * thousands), and the first start of a session is often that moment. The wait holds through a
+ * `voicesChanged` whose list is still empty: Android's engine lists its voices before their data
+ * is on a fresh device (its first bind downloads the locale's voice pack, seconds), and the host
+ * says `voicesChanged` again once they are installed.
  */
 export const VOICES_GRACE_MS = 4000
 
@@ -118,9 +121,7 @@ export class ReadAloudService {
     this.host?.onEvent((utteranceId, event) => this.onHostEvent(utteranceId, event))
     this.host?.onVoicesChanged(() => {
       this.voiceList = null
-      const waiting = this.voicesWaiters
-      this.voicesWaiters = []
-      for (const wake of waiting) wake()
+      this.wakeVoicesWaiters()
     })
   }
 
@@ -205,18 +206,21 @@ export class ReadAloudService {
     session.state.lang = text.lang
     session.state.sentenceCount = text.sentences.length
 
-    let voices = await this.voices()
-    if (this.session !== session) return
-    if (voices.length === 0) {
-      // The host may still be listing: give it a moment, then ask it to list again.
-      await this.voicesChangedWithin(VOICES_GRACE_MS)
-      if (this.session !== session) return
-      voices = await this.voices(true)
-      if (this.session !== session) return
-    }
+    if (!(await this.chooseVoice(session))) return
+    this.speak(session, this.startIndex(text, from))
+  }
+
+  /**
+   * The voice the session's text speaks with: the host's voices, waited for while it lists none
+   * (`VOICES_GRACE_MS`), resolved for the text's language. False when the session is over by
+   * then (another start, a stop) or no voice came: the session has failed `no-voice`.
+   */
+  private async chooseVoice(session: Session): Promise<boolean> {
+    const voices = await this.voicesWithin(VOICES_GRACE_MS)
+    if (this.session !== session) return false
     const resolved = resolveReadAloudVoice(
       voices,
-      text.lang,
+      session.text.lang,
       this.settings().voiceByLanguage,
       this.uiLanguage()
     )
@@ -224,9 +228,9 @@ export class ReadAloudService {
     session.state.voiceId = resolved.voiceId
     if (resolved.voiceId === null) {
       this.fail(session, 'no-voice')
-      return
+      return false
     }
-    this.speak(session, this.startIndex(text, from))
+    return true
   }
 
   /** Pause a playing session, resume a paused one, restart an ended (or failed) one. */
@@ -272,12 +276,26 @@ export class ReadAloudService {
         this.speak(session, 0)
         return
       case 'error':
-        if (session.text.sentences.length > 0 && session.voiceId !== null)
-          this.speak(session, Math.max(0, session.state.sentenceIndex))
+        if (session.text.sentences.length === 0) return
+        if (session.voiceId === null) void this.retryVoice(session)
+        else this.speak(session, Math.max(0, session.state.sentenceIndex))
         return
       default:
         return
     }
+  }
+
+  /**
+   * Play after `no-voice`: the engine may have its voices by now (a fresh device's voice pack
+   * landed, a voice was installed), so the session chooses again – loading meanwhile, as a start
+   * is – and speaks from where it stood; still none, and the state says `no-voice` again.
+   */
+  private async retryVoice(session: Session): Promise<void> {
+    session.state.status = 'loading'
+    delete session.state.error
+    this.changed()
+    if (await this.chooseVoice(session))
+      this.speak(session, Math.max(0, session.state.sentenceIndex))
   }
 
   /** End the session: speech stops, the highlight clears, the OS controls let go, the state is idle. */
@@ -379,11 +397,7 @@ export class ReadAloudService {
    * and a host that can list again (`refreshVoices`) is asked to.
    */
   async voicesResult(): Promise<ReadAloudVoicesResult> {
-    let voices = await this.voices()
-    if (voices.length === 0 && this.host) {
-      await this.voicesChangedWithin(VOICES_QUERY_GRACE_MS)
-      voices = await this.voices(true)
-    }
+    const voices = await this.voicesWithin(VOICES_QUERY_GRACE_MS)
     const extra = [this.uiLanguage(), this.session?.text.lang ?? '']
     return {
       voices,
@@ -761,19 +775,40 @@ export class ReadAloudService {
     return voices
   }
 
-  /** Resolves when the host says its voices changed, or after `ms`, whichever comes first. */
-  private voicesChangedWithin(ms: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-      let done = false
-      const finish = (): void => {
-        if (done) return
-        done = true
-        clearTimeout(timer)
-        resolve()
-      }
-      const timer = setTimeout(finish, ms)
-      this.voicesWaiters.push(finish)
-    })
+  /**
+   * The host's voices, waited for up to `ms` while it lists none: every `voicesChanged` inside
+   * the window re-asks (`voices(true)`), an answer that is still empty waits on – an engine says
+   * its voices changed when it has bound, before their data is on the device – and the window's
+   * end asks one last time. The answer is empty only when nothing came by then.
+   */
+  private async voicesWithin(ms: number): Promise<ReadAloudVoice[]> {
+    let voices = await this.voices()
+    if (voices.length > 0 || !this.host) return voices
+    let expired = false
+    const deadline = setTimeout(() => {
+      expired = true
+      this.wakeVoicesWaiters()
+    }, ms)
+    try {
+      do {
+        await this.voicesChanged()
+        voices = await this.voices(true)
+      } while (voices.length === 0 && !expired)
+    } finally {
+      clearTimeout(deadline)
+    }
+    return voices
+  }
+
+  /** Resolves when the host says its voices changed (or a `voicesWithin` window ends). */
+  private voicesChanged(): Promise<void> {
+    return new Promise<void>((resolve) => this.voicesWaiters.push(resolve))
+  }
+
+  private wakeVoicesWaiters(): void {
+    const waiting = this.voicesWaiters
+    this.voicesWaiters = []
+    for (const wake of waiting) wake()
   }
 
   /** The page's language as the translate engine detected it ('' when it has not). */

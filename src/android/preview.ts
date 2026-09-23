@@ -1,5 +1,5 @@
 import type { ContentCover, Rect, ThumbnailPicture } from '@shared/types'
-import type { NativeBridge, NativeCall } from './bridge'
+import type { NativeBridge, NativeCall, NativeCommand } from './bridge'
 import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
@@ -18,6 +18,12 @@ import { previewRangeAnswer } from './previewRange'
 import { createPreviewDownloads } from './previewDownloads'
 import { createPreviewScreenshots } from './previewScreenshots'
 import { previewPdfVariantOf } from './previewPdf'
+import {
+  PREVIEW_SITE_DATA_EVENT,
+  previewCookies,
+  previewOrigins,
+  type PreviewSiteDataOrigins
+} from './previewSiteData'
 import { emulateTextZoom } from './previewTextZoom'
 import { CHUNK_CHARS } from './storeIo'
 import { isProbablyUrl } from '@shared/url'
@@ -371,10 +377,10 @@ export function createPreviewBridge(): NativeBridge {
     if (e.origin !== location.origin) return
     const report = pdfReportOf(e.data)
     if (!report) return
-    const token = pdfReportTokenOf(e.data) ?? undefined
+    const pdfToken = pdfReportTokenOf(e.data) ?? undefined
     for (const [tabId, frame] of views) {
       if (frame.contentWindow === e.source) {
-        viewEvent(tabId, 'pageMessage', { type: 'pdf', pdf: report, token })
+        viewEvent(tabId, 'pageMessage', { type: 'pdf', pdf: report, pdfToken })
         return
       }
     }
@@ -415,6 +421,14 @@ export function createPreviewBridge(): NativeBridge {
   let voiceScript = params.get('voice') ?? 'heard'
   window.addEventListener(PREVIEW_VOICE_EVENT, (e) => {
     voiceScript = (e as CustomEvent<string>).detail
+  })
+  // `sitedata=` (previewStates.ts) names the sample the site-data stand-ins answer from; the
+  // origins a state's Clear took out stay out until the next sample is named.
+  let siteDataSample: PreviewSiteDataOrigins = 'none'
+  const clearedOrigins = new Set<string>()
+  window.addEventListener(PREVIEW_SITE_DATA_EVENT, (e) => {
+    siteDataSample = (e as CustomEvent<PreviewSiteDataOrigins>).detail
+    clearedOrigins.clear()
   })
   let voiceRun = 0
   const voice = {
@@ -963,11 +977,39 @@ export function createPreviewBridge(): NativeBridge {
     'view.savePage': () => null,
     'view.screenshot': () => null,
     'view.certificate': () => null,
-    // The preview has no cookie jar of its own to look into; the sheet shows the connection only.
-    'site.cookies': () => [],
+    // The preview has no cookie jar of its own to look into: without a `sitedata=` state the
+    // sheet shows the connection only; with one, the sample it names (previewSiteData.ts) stands
+    // for the profile – the viewer's origins and the active site's cookies – and a clear takes
+    // the origin out of the sample, so a Clear in a still leaves the row gone.
+    // A site whose cookies a state's Clear (or the never list's sweep) took out answers none,
+    // as the engine's jar would.
+    'site.cookies': ({ url }) => {
+      let origin = ''
+      try {
+        origin = new URL(String(url)).origin
+      } catch {
+        // Not an origin: the sample answers as it stands.
+      }
+      return clearedOrigins.has(origin) ? [] : previewCookies(siteDataSample, String(url))
+    },
     'site.storage': () => ({ usageBytes: null, quotaBytes: null, origins: [] }),
-    'site.clearCookies': () => ({ removed: 0, remaining: 0 }),
-    'site.clearStorage': () => ({ ok: true, scope: 'origins' }),
+    'site.listOrigins': ({ containerId }) =>
+      previewOrigins(siteDataSample, String(containerId)).filter(
+        (row) => !clearedOrigins.has(row.origin)
+      ),
+    'site.clearCookies': ({ url }) => {
+      const removed = previewCookies(siteDataSample, String(url)).length
+      try {
+        clearedOrigins.add(new URL(String(url)).origin)
+      } catch {
+        // Not an origin: nothing to take out of the sample.
+      }
+      return { removed, remaining: 0 }
+    },
+    'site.clearStorage': ({ origins }) => {
+      for (const origin of Array.isArray(origins) ? origins : []) clearedOrigins.add(String(origin))
+      return { ok: true, scope: 'origins' }
+    },
     'dialog.confirm': ({ message, detail }) => window.confirm(`${message}\n\n${detail ?? ''}`),
     'dialog.openText': ({ extensions }) =>
       new Promise<Array<{ name: string; text: string }>>((resolve) => {
@@ -1335,6 +1377,24 @@ export function createPreviewBridge(): NativeBridge {
           (error: unknown) =>
             host().reject(call.id, error instanceof Error ? error.message : String(error))
         )
+    },
+    // One way, in order, off the caller's task like the Kotlin host's one main-thread task; a
+    // failure is logged where the host logs its own (`JsBridge.batch`).
+    batch(json) {
+      const commands = JSON.parse(json) as NativeCommand[]
+      void Promise.resolve().then(() => {
+        for (const command of commands) {
+          const warn = (error: unknown): void =>
+            console.warn(`[zen preview] native ${command.method} failed`, error)
+          try {
+            // A handler answering with a promise (none of the view ops does) fails here too, not
+            // out of the batch: as forgiving as `JsBridge.dispatchOneWay`.
+            void Promise.resolve(run({ id: 0, ...command })).catch(warn)
+          } catch (error) {
+            warn(error)
+          }
+        }
+      })
     },
     callSync(json) {
       const result = run(JSON.parse(json) as NativeCall)

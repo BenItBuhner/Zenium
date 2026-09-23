@@ -176,8 +176,9 @@ describe('page script: the PDF viewer relay', () => {
   it('relays the viewer’s report with the document’s token, from whatever origin the document runs under', () => {
     const messages = install(false)
     post({ zeniumPdf: report, zeniumPdfToken: 'tok-1' })
+    // The document's token under its own name: `token` is the Android bridge's session token.
     expect(messages.filter((m) => m.type === 'pdf')).toEqual([
-      { type: 'pdf', pdf: report, token: 'tok-1' }
+      { type: 'pdf', pdf: report, pdfToken: 'tok-1' }
     ])
   })
 

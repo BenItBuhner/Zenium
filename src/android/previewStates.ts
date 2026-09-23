@@ -15,10 +15,12 @@ import type {
 import type { Browser } from '@core/browser'
 import { fileSources } from '@core/import/sources'
 import { READER_URL_PREFIX } from '@core/reader'
+import type { ClearOnExitType, SiteDataList } from '@shared/siteData'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview, overviewIsOpen } from '@renderer/lib/gestures/stage'
+import { chromeInertHeld } from '@renderer/lib/portals'
 import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
 import { applyPrivateLock, liftLanded, privateLockStore } from '@renderer/lib/privateLock'
 import { rememberThumbnail } from '@renderer/lib/thumbnails'
@@ -105,11 +107,14 @@ import type { TranslateStatus, TranslateTabState } from '@shared/translate'
 import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import { PREVIEW_PDF_FILES, previewPdf } from './previewPdf'
+import { PREVIEW_SITE_DATA_EVENT } from './previewSiteData'
 import {
   parsePreviewSeed,
   parsePreviewSpec,
+  parsePreviewSteps,
   type PreviewCrashVariant,
   type PreviewDownloadSpec,
+  type PreviewSiteDataSeed,
   type PreviewMediaVariant,
   type PreviewNetworkVariant,
   type PreviewNtpPose,
@@ -161,7 +166,12 @@ const QR_EVENT_MARGIN_MS = 250
  * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
- * sheet on its expanded detent, `then=hold:<row>;tap:<row>` takes steps on it once it is up),
+ * sheet on its expanded detent, `then=hold:<row>;tap:<row>` takes steps on it once it is up;
+ * History's other devices are the `sync=tabs` fixture's, each its own group, and
+ * `hold:<device name>` opens a device's sheet – with `sync=off` the From your other devices
+ * group is the prompt to turn sync on, with `sync=on` (the core's scope, Open tabs off) the
+ * prompt to put Open tabs in it; the seed's `recentlyClosed` fills the Recently closed group
+ * over them),
  * `menu=app` (the app menu sheet; `show=<text>` scrolls an item
  * into view), `menu=tabs` (the Tabs button's quick menu), `sheet=extensions` (the Extensions
  * sheet the app menu's row opens, over the active page; `then=tap:<row>;hold:<row>` taps a row
@@ -198,8 +208,10 @@ const QR_EVENT_MARGIN_MS = 250
  * `denied`, …; see `previewQrScript`), `overview` (the tab overview open over the active
  * page, its cards with whatever pictures the stand-in host has of the tabs; `then=` presses
  * its header and cards once it is up: `tap:More;tap:Select Tabs` enters the select-tabs mode,
- * `tap:<card's label>` picks a card in it, `press:<card title>` opens a card's hold sheet) or
- * `urlbar=<text>` (the pill's editor over the active tab with that text typed; `newtab` opens
+ * `tap:<card's label>` picks a card in it, `press:<card title>` opens a card's hold sheet,
+ * `tap:Search tabs;type:overview-search=<text>` opens the tab search and types the query – the
+ * seed's `recentlyClosed` and, with `sync=tabs`, the other devices' tabs are in its reach, as
+ * rows under the cards) or `urlbar=<text>` (the pill's editor over the active tab with that text typed; `newtab` opens
  * it over a new tab, `clip=<text>` seeds the stand-in clipboard for the clipboard row, `then=`
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
  * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
@@ -251,6 +263,8 @@ function apply(browser: Browser, spec: string): void {
     unseedTranslate()
     unseedFavicon()
     unseedMedia()
+    unseedSiteData(browser)
+    siteInfoSteps = null
     dismissSiteInfo()
     closeOverlay()
     closeMenu()
@@ -288,6 +302,7 @@ function apply(browser: Browser, spec: string): void {
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
+    if (seed.siteData) seedSiteData(browser, seed.siteData, tab)
     // The private tabs' lock a previous spec put on comes off at once (no lift: the cover goes
     // with the private tab, below), and the device's screen lock is as the spec says or as the
     // stand-in host reported it at boot.
@@ -875,6 +890,10 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       else setTimeout(() => steps(then, end), STEP_SETTLE_MS)
     })
   } else if (target.kind === 'overlay') {
+    // A seeded engine state stands before the overlay opens: the History page's From your other
+    // devices group reads the sync status and asks for the devices' tabs as it mounts (TAB-02),
+    // so its rows are up with the page rather than a round trip after it.
+    if (sync) seedSync(sync, browser)
     // The steps, if any, once the overlay is up and settled: a row held for selection mode.
     const then = target.then ?? []
     const settled = (): void => {
@@ -1128,11 +1147,14 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     }
   } else if (target.kind === 'overview' && state) {
     // The grid mounts on the next render and its cards read their pictures then; the steps, if
-    // any, press its header and its cards once it is up (the select-tabs mode, a card's sheet).
+    // any, press its header and its cards once it is up (the select-tabs mode, a card's sheet,
+    // the tab search). A seeded engine state stands before the overview opens: the search's
+    // reach reads the sync status and asks for the other devices' tabs with the query (TAB-21).
+    seed()
     openOverview(state)
     const then = target.then ?? []
     if (then.length === 0) requestAnimationFrame(() => done(spec))
-    else afterFrames(2, () => steps(then, finish))
+    else whenOverviewUp(() => afterFrames(2, () => steps(then, finish)))
   } else if (target.kind === 'urlbar') {
     applyUrlbar(target, tab?.id ?? null, finish)
   } else {
@@ -1444,12 +1466,13 @@ const SYNC_FIXTURE_TREE =
  * sync is live and its sheet has a folder to set up), `busy` (`chosen`, with the engine's
  * `sync.setup` held open so the passphrase sheet stays on its §9.30 busy form once sent), `on`
  * (connected: two other devices, last synced five minutes ago), `tabs` (`on` with Open tabs
- * syncing and the two devices' open tabs published: Tabs from other devices is live, the menus
- * carry Send to your devices, and the core's sync stands in for the engine so they act; see
- * `standInEngine`), `empty` (connected, no other device yet), `syncing` (a sync running),
- * `error` (the last sync failed), `lost` (the folder's permission is gone) and `merge` (the
- * first sync waits on the merge question). The scope stays the core's, so a tapped toggle shows
- * its new state.
+ * syncing and the two devices' open tabs published: Tabs from other devices, History's From your
+ * other devices group and the tab search's reach (TAB-02, TAB-21) are live, the menus carry
+ * Send to your devices, and the core's sync stands in for the engine so they act; see
+ * `standInEngine`), `empty` (connected, no other
+ * device yet), `syncing` (a sync running), `error` (the last sync failed), `lost` (the folder's
+ * permission is gone) and `merge` (the first sync waits on the merge question). The scope stays
+ * the core's, so a tapped toggle shows its new state.
  */
 function seedSync(variant: string, browser: Browser): void {
   unseedSync()
@@ -1640,7 +1663,8 @@ export function syncFixture(state: UIState, variant: string, now: number): UISta
           { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000 }
         ]
   // `tabs`: `on` with Open tabs among what syncs and the devices' lists published (ID-28), so
-  // Tabs from other devices is live and the menus carry Send to your devices (ID-27).
+  // Tabs from other devices, History's From your other devices group (TAB-02) and the menus'
+  // Send to your devices (ID-27) are live.
   const tabs = variant === 'tabs'
   return {
     ...state,
@@ -2475,6 +2499,23 @@ function whenPageRendered(fn: () => void, deadline = performance.now() + PAGE_RE
   setTimeout(() => whenPageRendered(fn, deadline), 50)
 }
 
+/**
+ * Runs `fn` once the overview is on the stage and takes a press, or after {@link PAGE_RENDER_MS}:
+ * `openOverview` mounts it only once the page's picture is captured (`showOverview`), a round
+ * trip through the host that outlasts a couple of frames when a previous state's overlay or
+ * sheet invalidated the picture; and a sheet the reset dismissed (a menu, `closeMenu`) holds the
+ * window chrome – the overview's root among it – inert until it has landed (`holdChromeInert`).
+ * A step taken before the header exists, or while it is inert, would find nothing to press.
+ */
+function whenOverviewUp(fn: () => void, deadline = performance.now() + PAGE_RENDER_MS): void {
+  const up = document.querySelector('.zen-overview header') && !chromeInertHeld()
+  if (up || performance.now() > deadline) {
+    fn()
+    return
+  }
+  setTimeout(() => whenOverviewUp(fn, deadline), 50)
+}
+
 /** Runs `fn` once the active tab satisfies `test` (at once when it already does). */
 function whenActiveTabIs(test: (tab: Tab) => boolean, fn: () => void): void {
   whenState((state) => {
@@ -3303,6 +3344,51 @@ function seedRules(browser: Browser, count: number): void {
   }
 }
 
+/**
+ * The three lists of Cookies and site data (Chrome's grammar: a host, `[*.]host`, a scheme, a
+ * port) as a Settings still shows them, most specific first once the core has sorted them.
+ */
+const DEMO_SITE_DATA: Record<SiteDataList, readonly string[]> = {
+  allow: ['[*.]mail.example', 'https://bank.example', 'docs.example'],
+  clearOnExit: ['[*.]news.example', 'shop.example:8443'],
+  block: ['[*.]tracker.example', 'ads.example', 'http://legacy.example']
+}
+
+/** The on-exit types an `exit` seed turns on: cookies and the cache, as a cautious profile might. */
+const DEMO_CLEAR_ON_EXIT: ClearOnExitType[] = ['cookies', 'cache']
+
+/**
+ * Cookies and site data as a spec seeds it: the sample patterns on their lists (through the
+ * core, as Settings adds them), the active tab's site on the list named, the default and the
+ * on-exit types, and the stand-in profile told which sample of stored origins to answer with.
+ */
+function seedSiteData(browser: Browser, seed: PreviewSiteDataSeed, tab: Tab | null): void {
+  for (const list of ['allow', 'clearOnExit', 'block'] as const)
+    for (const pattern of DEMO_SITE_DATA[list]) browser.siteData.add(list, pattern)
+  if (seed.site && tab) browser.siteData.addSite(seed.site, tab.url)
+  if (seed.blockAll) browser.siteData.setDefault('block-all')
+  if (seed.exit) {
+    const privacy = browserStore.get().state?.settings.privacy
+    if (privacy)
+      run('settings.update', {
+        privacy: { ...privacy, clearOnExit: { types: DEMO_CLEAR_ON_EXIT } }
+      })
+  }
+  window.dispatchEvent(new CustomEvent(PREVIEW_SITE_DATA_EVENT, { detail: seed.origins }))
+}
+
+/** The policy back to nothing on any list and Chrome's default, the stand-in profile back to empty. */
+function unseedSiteData(browser: Browser): void {
+  const status = browser.siteData.status()
+  for (const list of ['allow', 'clearOnExit', 'block'] as const)
+    for (const pattern of status[list]) browser.siteData.remove(pattern)
+  if (status.default !== 'block-third-party') browser.siteData.setDefault('block-third-party')
+  const privacy = browserStore.get().state?.settings.privacy
+  if (privacy && status.clearOnExitTypes.length > 0)
+    run('settings.update', { privacy: { ...privacy, clearOnExit: { types: [] } } })
+  window.dispatchEvent(new CustomEvent(PREVIEW_SITE_DATA_EVENT, { detail: 'none' }))
+}
+
 /** Pages (and, for the third and every sixth entry, app launches) the blocker refused. */
 function seedPopups(
   browser: Browser,
@@ -3408,17 +3494,37 @@ function safeHost(url: string): string {
   }
 }
 
+/** The spec whose `siteinfo=` steps have been taken (once per applied spec). */
+let siteInfoSteps: string | null = null
+
 function done(spec: string): void {
   // `siteinfo` on any spec: the state named is reached, then the site-information sheet goes up
   // on the active tab (the pill's folded chips are listed in it), and the spec is reported
   // reached once the sheet is – a still after the settle catches it risen.
+  // `siteinfo=<steps>` takes steps on the sheet (or the desktop's popover) once it is up: `tap:Cookies
+  // and site data` drills into a level, a second tap opens the row's picker over it.
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
-  if (params.has('siteinfo') && !uiStore.get().siteInfoOpen) {
-    const state = browserStore.get().state
-    const tab = state ? activeTab(state) : null
-    if (tab) {
-      void openSiteInfo(tab).then(() => whenStore(() => uiStore.get().siteInfoOpen, spec))
-      return
+  if (params.has('siteinfo')) {
+    if (!uiStore.get().siteInfoOpen) {
+      const state = browserStore.get().state
+      const tab = state ? activeTab(state) : null
+      if (tab) {
+        // The desktop popover a previous spec left plays its exit after `apply`'s
+        // `dismissSiteInfo` and, once gone, dismisses whatever the store names by then
+        // (`SiteInfoDesktopLayer.onClosed`): a popover opened over it would go with it, so the
+        // next one opens once the document has none.
+        whenGone('[data-testid="site-info"]', () => {
+          void openSiteInfo(tab).then(() => whenStore(() => uiStore.get().siteInfoOpen, spec))
+        })
+        return
+      }
+    } else if (siteInfoSteps !== spec) {
+      siteInfoSteps = spec
+      const then = parsePreviewSteps(params.get('siteinfo'))
+      if (then.length > 0) {
+        afterFrames(2, () => steps(then, () => done(spec)))
+        return
+      }
     }
   }
   document.documentElement.dataset.previewState = spec
@@ -3427,6 +3533,16 @@ function done(spec: string): void {
 function afterFrames(count: number, fn: () => void): void {
   if (count <= 0) fn()
   else requestAnimationFrame(() => afterFrames(count - 1, fn))
+}
+
+/** Runs `fn` once nothing in the document matches `selector`, or after a second either way. */
+function whenGone(selector: string, fn: () => void): void {
+  const deadline = performance.now() + 1000
+  const check = (): void => {
+    if (!document.querySelector(selector) || performance.now() > deadline) fn()
+    else requestAnimationFrame(check)
+  }
+  check()
 }
 
 /** Runs `fn` once the browser state satisfies `test`, or once waiting stops being worth it. */

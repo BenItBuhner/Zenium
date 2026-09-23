@@ -26,12 +26,17 @@ let asked = -1
 /**
  * Keep the store at the status's version: ask the core when the version moved (or the toggle came
  * back on), clear the list when the tabs are not wanted. Called by the Settings pages beside their
- * other page-level state, so the rows built from the store are current on the next render.
+ * other page-level state, so the rows built from the store are current on the next render; the
+ * History page's group does the same. A surface that reads the list only now and then – the
+ * overview's tab search, whose reach takes the list in while a query stands – passes `active`
+ * false the rest of the time: the store is then neither asked for nor cleared, and stays whatever
+ * the last reader left it at.
  */
-export function useRemoteTabs(sync: SyncStatus): void {
+export function useRemoteTabs(sync: SyncStatus, active = true): void {
   const wanted = remoteTabsWanted(sync)
   const version = sync.remoteTabsVersion
   useEffect(() => {
+    if (!active) return
     if (!wanted) {
       asked = -1
       if (remoteTabsStore.get().devices.length > 0) remoteTabsStore.set({ version, devices: [] })
@@ -42,7 +47,7 @@ export function useRemoteTabs(sync: SyncStatus): void {
     void cmd('sync.tabsFromDevices', undefined).then((devices) => {
       remoteTabsStore.set({ version, devices })
     })
-  }, [wanted, version])
+  }, [active, wanted, version])
   remoteTabsStore.use((s) => s.version)
 }
 

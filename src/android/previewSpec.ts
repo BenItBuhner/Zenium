@@ -1,7 +1,9 @@
 import type { OverlayKind, PhoneBarPosition } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
 import type { ThirdPartyCookieMode } from '@shared/privacy'
+import type { SiteDataList } from '@shared/siteData'
 import { isPreviewPdfVariant, type PreviewPdfVariant } from './previewPdf'
+import { isPreviewSiteDataOrigins, type PreviewSiteDataOrigins } from './previewSiteData'
 
 /**
  * The overlays a preview state may open by name. Settings (with the Shortcuts and Sync overlays,
@@ -532,6 +534,44 @@ export interface PreviewSeed {
   screenLock: boolean | null
   /** Where the phone bar docks (`bar=top` / `bar=bottom`; the setting `phoneBarPosition`). */
   bar: PhoneBarPosition | null
+  /**
+   * Cookies and site data (`sitedata=<sample>[,<site>][,blockall][,exit]`): the three lists
+   * seeded with sample patterns and the stand-in profile answering with the `sample` of stored
+   * origins named (`none`, `some`, `many`; see `previewSiteData.ts`); `never`, `allow` or
+   * `clear` puts the active tab's site on that list, so the site-information sheet shows the
+   * state; `blockall` sets the default to "Block all cookies"; `exit` turns on a few
+   * clear-on-exit types. `null` leaves the policy as it is.
+   */
+  siteData: PreviewSiteDataSeed | null
+}
+
+export interface PreviewSiteDataSeed {
+  origins: PreviewSiteDataOrigins
+  /** The list the active tab's site goes on; null for none. */
+  site: SiteDataList | null
+  blockAll: boolean
+  exit: boolean
+}
+
+const PREVIEW_SITE_LISTS: Record<string, SiteDataList> = {
+  never: 'block',
+  block: 'block',
+  allow: 'allow',
+  clear: 'clearOnExit'
+}
+
+/** `sitedata=<sample>[,<site>][,blockall][,exit]`, in any order; null when absent. */
+export function parsePreviewSiteData(value: string | null): PreviewSiteDataSeed | null {
+  if (value === null) return null
+  const seed: PreviewSiteDataSeed = { origins: 'some', site: null, blockAll: false, exit: false }
+  for (const raw of value.split(',')) {
+    const part = raw.trim().toLowerCase()
+    if (isPreviewSiteDataOrigins(part)) seed.origins = part
+    else if (part in PREVIEW_SITE_LISTS) seed.site = PREVIEW_SITE_LISTS[part]
+    else if (part === 'blockall') seed.blockAll = true
+    else if (part === 'exit') seed.exit = true
+  }
+  return seed
 }
 
 /** Types for the stand-in downloader to report, by extension; anything else is a plain stream. */
@@ -969,7 +1009,9 @@ function parseDownload(filename: string, params: URLSearchParams): PreviewDownlo
 /**
  * The seeding a spec asks for on top of its state: `rules=<n>` remembered site permissions,
  * `lock=on` the private tabs' lock, `screenlock=off` (or `on`) the device's screen lock,
- * `bar=top` / `bar=bottom` the phone bar's dock (the setting; left as it is without one).
+ * `bar=top` / `bar=bottom` the phone bar's dock (the setting; left as it is without one),
+ * `sitedata=<sample>[,<site>][,blockall][,exit]` the cookie and site-data policy with the
+ * stand-in profile's sample of stored origins (see `PreviewSiteDataSeed`).
  */
 export function parsePreviewSeed(spec: string): PreviewSeed {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -984,7 +1026,8 @@ export function parsePreviewSeed(spec: string): PreviewSeed {
         : null,
     lock: onOff(params.get('lock')) === true,
     screenLock: onOff(params.get('screenlock')),
-    bar: bar === 'top' || bar === 'bottom' ? bar : null
+    bar: bar === 'top' || bar === 'bottom' ? bar : null,
+    siteData: parsePreviewSiteData(params.get('sitedata'))
   }
 }
 

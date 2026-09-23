@@ -126,6 +126,13 @@ describe('createEmulatedEngine', () => {
     expect((h.chrome.extension.getURL as Fn)('a.png')).toBe(`${ORIGIN}/a.png`)
     expect((h.chrome.i18n.getMessage as Fn)('hello', 'Ada')).toBe('Hallo Ada')
     expect((h.chrome.i18n.getUILanguage as Fn)()).toBe('de')
+    // Chrome's predefined messages: the id, the locale as a `_locales` directory spells it, the
+    // UI language's direction.
+    expect((h.chrome.i18n.getMessage as Fn)('@@extension_id')).toBe(EXT)
+    expect((h.chrome.i18n.getMessage as Fn)('@@ui_locale')).toBe('de')
+    expect((h.chrome.i18n.getMessage as Fn)('@@bidi_dir')).toBe('ltr')
+    expect((h.chrome.i18n.getMessage as Fn)('@@bidi_start_edge')).toBe('left')
+    expect((h.chrome.i18n.getMessage as Fn)('@@no_such')).toBe('')
     expect(h.engine.diagnostics).toMatchObject({ installed: true, browserAliased: true })
   })
 

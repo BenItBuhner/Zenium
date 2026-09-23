@@ -79,8 +79,13 @@ export interface PageScriptMessage {
   notification?: NotificationPageRequest
   /** `pdf`: the PDF viewer document's report (`pdfViewerProtocol.ts`). */
   pdf?: PdfViewerReport
-  /** `pdf`: the document's token posted beside the report, for the core to check. */
-  token?: string
+  /**
+   * `pdf`: the document's token posted beside the report, for the core to check. Under its own
+   * name, never `token`: that field is the Android transport's session token, the one Kotlin's
+   * router gates every message on and strips (`routePageMessage`); a message that carried its
+   * own `token` displaced it and was dropped as a forgery (#332's PDF viewer never "ready").
+   */
+  pdfToken?: string
   /** `readAloud`: the answer to a `readAloud.extract` request (`readAloudScript.ts`). */
   readAloud?: ReadAloudExtraction
   /**
@@ -480,15 +485,16 @@ function installInterstitialRelay(transport: PageScriptTransport): void {
  * document's token beside it, and this relays both. The document runs under the PDF's own URL
  * (`pdfViewerBaseUrl`), an origin no script here can tell from a web page's, so the token is
  * what keeps a page from posing as the viewer to the chrome's PDF controls: the core takes the
- * report only with the token it wrote into that document (`PdfViewerService.onReport`).
+ * report only with the token it wrote into that document (`PdfViewerService.onReport`). It
+ * rides as `pdfToken`: `token` is the Android transport's own field (`PageScriptMessage`).
  */
 function installPdfViewerRelay(transport: PageScriptTransport): void {
   window.addEventListener('message', (e: MessageEvent) => {
     if (e.source !== window) return
     const report = pdfReportOf(e.data)
     if (!report) return
-    const token = pdfReportTokenOf(e.data)
-    if (token) transport.send({ type: 'pdf', pdf: report, token })
+    const pdfToken = pdfReportTokenOf(e.data)
+    if (pdfToken) transport.send({ type: 'pdf', pdf: report, pdfToken })
   })
 }
 

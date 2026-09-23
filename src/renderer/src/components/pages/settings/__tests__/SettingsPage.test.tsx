@@ -18,6 +18,7 @@ import {
 } from '@shared/defaults'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { emptyPrivacyStatus } from '@shared/privacy'
+import { emptySiteDataStatus } from '@shared/siteData'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
 import type { TranslateUIState } from '@shared/translate'
@@ -248,6 +249,7 @@ function state(
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
+    siteData: emptySiteDataStatus(),
     newTabShortcuts: [],
     newTabBackground: { image: false, canPick: false },
     translate: TRANSLATE,
@@ -661,6 +663,63 @@ describe('below the two-pane width', () => {
   })
 })
 
+describe('a section’s drill-in page (zen://settings/<section>/<page>, §10.2)', () => {
+  const panes = (el: ParentNode): HTMLElement[] =>
+    Array.from(el.querySelectorAll<HTMLElement>('.zen-settings-drill-in'))
+
+  it('stands over its section on the phone layout: a second pane with the page’s title and "Back to <section>", the section’s pane inert under it and the landing under both', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/privacy/site-data'))
+    expect(el.querySelector('.zen-settings-phone')?.getAttribute('data-section')).toBe('privacy')
+    expect(el.querySelector('.zen-settings-phone')?.getAttribute('data-page')).toBe('site-data')
+    const [section, page] = panes(el)
+    expect(panes(el)).toHaveLength(2)
+    expect(section?.getAttribute('aria-label')).toBe('Privacy and Security')
+    expect(section?.hasAttribute('inert')).toBe(true)
+    expect(page?.getAttribute('aria-label')).toBe('Site data')
+    expect(page?.hasAttribute('inert')).toBe(false)
+    expect(page?.querySelector('.zen-settings-bar-title')?.textContent).toBe('Site data')
+    expect(page?.querySelector('.zen-settings-back')?.getAttribute('aria-label')).toBe(
+      'Back to Privacy and Security'
+    )
+    expect(page?.querySelector('[data-testid="site-data-page"]')).not.toBeNull()
+    expect(el.querySelector('.zen-settings-landing')?.hasAttribute('inert')).toBe(true)
+  })
+
+  it('is reached from the section’s row: "See all site data and permissions" navigates the tab to the page rather than opening a sheet', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/privacy'))
+    expect(panes(el)).toHaveLength(1)
+    const row = el.querySelector<HTMLButtonElement>('[data-row="site-data-see-all"]')!
+    expect(row.getAttribute('aria-haspopup')).toBeNull()
+    act(() => row.click())
+    expect(invoke).toHaveBeenCalledWith('page.navigate', {
+      tabId: 'settings',
+      section: 'privacy',
+      subpage: 'site-data'
+    })
+    expect(el.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('shows the section for the page’s address on the two-pane layout, where the row opens the viewer as a dialog (§10.5)', () => {
+    viewport(TWO_PANE_MIN_WIDTH)
+    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/privacy/site-data'))
+    expect(markup).toContain('data-layout="two-pane"')
+    expect(markup).not.toContain('zen-settings-drill-in')
+    expect(markup).not.toContain('data-testid="site-data-page"')
+    // The row's control opens the dialog: the desktop row carries "See all…" as its button.
+    expect(markup).toMatch(/data-row="site-data-see-all"[\s\S]*?aria-haspopup="dialog"/)
+  })
+
+  it('draws nothing over the section for a page its section does not name', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const el = mountPage(state(ANDROID, 'android', {}, 'zen://settings/privacy/no-such-page'))
+    expect(panes(el)).toHaveLength(1)
+    expect(panes(el)[0]?.hasAttribute('inert')).toBe(false)
+    expect(el.querySelector('.zen-settings-phone')?.hasAttribute('data-page')).toBe(false)
+  })
+})
+
 describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () => {
   /** Settings opened from a site's information sheet: the site's tab is the opener. */
   function fromSheet(url: string): UIState {
@@ -698,6 +757,39 @@ describe('Privacy asked for a site (zen://settings/privacy?site=<origin>)', () =
     // The section reached from the landing or the nav (no `site`): nothing is scrolled to.
     mountPage(fromSheet('zen://settings/privacy'))
     expect(scrolled).toHaveBeenCalledTimes(1)
+    scrolled.mockRestore()
+  })
+})
+
+describe('a section asked for one of its rows (zen://settings/<section>?row=<id>)', () => {
+  /** A phone that syncs (`ANDROID` has no sync engine; the row asked for is Sync's). */
+  const SYNCING_PHONE: HostCapabilities = { ...ANDROID, sync: true }
+
+  it("opens Sync with the row's group on screen: the History page's Open sync settings row lands on the Open tabs switch", () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    const el = mountPage(
+      state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=sync-scope%3AopenTabs')
+    )
+    const row = el.querySelector('[data-row="sync-scope:openTabs"]')!
+    expect(row.textContent).toContain('Open tabs')
+    expect(scrolled).toHaveBeenCalledTimes(1)
+    const target = scrolled.mock.instances[0] as Element
+    expect(target).toBe(row.closest('[data-group]'))
+    expect(target.getAttribute('data-group')).toBe('sync-scope')
+    expect(scrolled).toHaveBeenCalledWith({ block: 'start' })
+    scrolled.mockRestore()
+  })
+
+  it('a row the section does not have, or an id that is not one, opens the section at the top', () => {
+    viewport(TWO_PANE_MIN_WIDTH - 1, false)
+    const scrolled = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+    mountPage(state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=no-such-row'))
+    expect(scrolled).not.toHaveBeenCalled()
+    act(() => root!.unmount())
+    root = null
+    mountPage(state(SYNCING_PHONE, 'android', {}, 'zen://settings/sync?row=%22%5D%2C%20*'))
+    expect(scrolled).not.toHaveBeenCalled()
     scrolled.mockRestore()
   })
 })

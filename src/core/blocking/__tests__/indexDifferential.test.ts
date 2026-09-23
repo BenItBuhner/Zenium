@@ -36,6 +36,44 @@ const FIXTURE = new URL(
   '../../../../android/app/src/test/resources/blocking/connectivity-probes.json',
   import.meta.url
 )
+/** The `modifyHeaders` golden fixture both engines decide alike (the Kotlin `IndexDifferentialTest` reads the same file). */
+const HEADERS_FIXTURE = new URL(
+  '../../../../android/app/src/test/resources/blocking/modify-headers.json',
+  import.meta.url
+)
+
+interface HeadersFixture {
+  sets: RuleSet[]
+  probes: Array<{
+    name: string
+    request: {
+      url: string
+      type: ResourceType
+      documentUrl?: string
+      method: string
+      thirdParty?: boolean
+      partition?: string
+    }
+    /** The request stage's decision, when the fixture pins it. */
+    expected?: unknown
+    /** The response headers the header stage is decided with, and its decision. */
+    responseHeaders?: Record<string, string[]>
+    expectedWithHeaders?: unknown
+  }>
+}
+
+/** A decision in the fixture's shape: empty edit lists written for `modifyHeaders`, `needsHeaders` only when true. */
+function fixtureShape(d: Decision): unknown {
+  const out: Record<string, unknown> = { action: d.action }
+  if (d.redirectUrl !== undefined) out.redirectUrl = d.redirectUrl
+  if (d.matched) out.matched = d.matched
+  if (d.action === 'modifyHeaders') {
+    out.requestHeaders = d.requestHeaders ?? []
+    out.responseHeaders = d.responseHeaders ?? []
+  }
+  if (d.needsHeaders) out.needsHeaders = true
+  return out
+}
 
 function readGz(name: string): string {
   return gunzipSync(readFileSync(new URL(`${name}.txt.gz`, LIST_DIR))).toString('utf8')
@@ -781,6 +819,61 @@ describe('RuleEngine.decide against decideLinear', () => {
     expect(linear3.matched?.setId).toBe('ext:w:_session')
     expect(linear3.redirectUrl).toBe('https://safe.example/w')
     expect(onlyRedirects.decide(req)).toEqual(linear3)
+  })
+
+  /**
+   * The `modifyHeaders` golden fixture: User-Agent Switcher's session rule, two more extensions'
+   * header edits (stacked across sets, capped by allows of both stages, a header-conditioned
+   * edit joining at the header stage, its request edit dropped), the user's set and the site
+   * exceptions below the band. Every probe must decide as the fixture says – action, match, the
+   * edits in order, `needsHeaders` – at the request stage and, where the fixture gives response
+   * headers, at the header stage; the Kotlin engine asserts the same file
+   * (`IndexDifferentialTest.bothEnginesProduceTheSameEditsForTheModifyHeadersFixture`), so the
+   * two engines produce the same edits for the same rules.
+   */
+  it('produces the edits the modifyHeaders golden fixture pins, as the Kotlin engine does', () => {
+    const fixture = JSON.parse(readFileSync(HEADERS_FIXTURE, 'utf8')) as HeadersFixture
+    const engine = new RuleEngine()
+    for (const set of fixture.sets) engine.setRuleSet(set)
+    expect(fixture.probes.length).toBeGreaterThanOrEqual(15)
+    const failures: string[] = []
+    let stages = 0
+    const stage = (name: string, ctx: RequestContext, expected: unknown): void => {
+      stages++
+      const linear = engine.decideLinear(ctx)
+      const indexed = engine.decide(ctx)
+      if (!same(indexed, linear))
+        failures.push(`${name}: index ${show(indexed)} / linear ${show(linear)}`)
+      const actual = fixtureShape(linear)
+      if (JSON.stringify(actual) !== JSON.stringify(expected))
+        failures.push(
+          `${name}:\n    expected ${JSON.stringify(expected)}\n    actual   ${JSON.stringify(actual)}`
+        )
+    }
+    // Before the deferred index (the small sets are indexed inline) and after it.
+    for (const pass of ['inline', 'built'] as const) {
+      if (pass === 'built') engine.buildIndexes()
+      for (const probe of fixture.probes) {
+        const r = probe.request
+        const ctx: RequestContext = { url: r.url, type: r.type, method: r.method }
+        if (r.documentUrl) {
+          ctx.documentUrl = r.documentUrl
+          ctx.initiator = r.documentUrl
+        }
+        if (r.thirdParty !== undefined) ctx.isThirdParty = r.thirdParty
+        if (r.partition) ctx.partition = r.partition
+        if (probe.expected !== undefined) stage(`${probe.name} (${pass})`, ctx, probe.expected)
+        if (probe.responseHeaders) {
+          stage(
+            `${probe.name} (${pass}, with headers)`,
+            { ...ctx, responseHeaders: probe.responseHeaders },
+            probe.expectedWithHeaders
+          )
+        }
+      }
+    }
+    expect(stages).toBeGreaterThanOrEqual(40)
+    expect(failures, failures.join('\n')).toEqual([])
   })
 
   it('stacks the header operations of tied modifyHeaders rules in scan order however the index meets them', () => {

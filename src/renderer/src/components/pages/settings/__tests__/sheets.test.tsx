@@ -6,7 +6,8 @@ import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { FrameDialogHost } from '@renderer/lib/portals'
-import type { DetailRow, ItemRow, RowGroup, ValueRow } from '../model'
+import { SheetFooter } from '../blocks'
+import type { ActionRow, DetailRow, ItemRow, RowGroup, ValueRow } from '../model'
 import { SheetStack } from '../sheets'
 
 /*
@@ -360,5 +361,125 @@ describe('a hosted Settings sheet under a finger', () => {
     expect(tap(clear!)).toBe(clear)
     expect(onClear).toHaveBeenCalledTimes(1)
     expect(open).not.toHaveBeenCalled()
+  })
+})
+
+/*
+ * The footer slot's measure (#322's review, Required 3): the chassis draws the footer element
+ * on `SheetFooter`'s claim and the portal fills it a render later, so the detents the sheet
+ * takes on the claim are measured over an empty footer and come out short by the buttons – the
+ * viewer's empty line clipped to a sliver under Clear all. The sheet has to ask for its detents
+ * again once the footer has its content.
+ */
+describe('a Settings sheet whose form claims the footer', () => {
+  /** A form whose only content is a line and the footer it claims, as the site-data viewer's was. */
+  function formGroups(): RowGroup[] {
+    const row: ActionRow = {
+      kind: 'action',
+      id: 'viewer',
+      label: 'See all site data',
+      form: {
+        title: 'Site data',
+        render: () => (
+          <div className="zen-settings-sheet-rows">
+            <p className="zen-settings-empty">No site has stored data</p>
+            <SheetFooter>
+              <button type="button">Clear all</button>
+            </SheetFooter>
+          </div>
+        )
+      }
+    }
+    return [{ id: 'site-data', heading: null, rows: [row] }]
+  }
+
+  /** The stack with the form's sheet open. */
+  function renderForm(): void {
+    render(
+      <FrameDialogHost>
+        <SheetStack
+          requests={[{ kind: 'form', rowId: 'viewer' }]}
+          groups={formGroups()}
+          ctx={{ open: () => undefined }}
+          closeTop={() => undefined}
+        />
+      </FrameDialogHost>
+    )
+  }
+
+  /**
+   * Counts the sheet's detent measures – `BottomSheet.measure` lets the sheet size itself
+   * (`height: auto`) for one read of its `offsetHeight` – and gives the footer element the
+   * height the test says it has.
+   */
+  function measureCounter(): { measures(): number; footer: { height: number } } {
+    let measures = 0
+    const footer = { height: 0 }
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.classList.contains('zen-sheet') && this.style.height === 'auto') measures++
+        if (this.classList.contains('zen-settings-sheet-footer')) return footer.height
+        return 300
+      }
+    })
+    return { measures: () => measures, footer }
+  }
+
+  it('watches the footer element and measures again when its content has filled it', async () => {
+    const observers: FakeResizeObserver[] = []
+    class FakeResizeObserver {
+      targets: Element[] = []
+      disconnected = false
+      constructor(private readonly callback: () => void) {
+        observers.push(this)
+      }
+      observe(target: Element): void {
+        this.targets.push(target)
+      }
+      disconnect(): void {
+        this.disconnected = true
+      }
+      fire(): void {
+        this.callback()
+      }
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    const counter = measureCounter()
+    renderForm()
+    await settle()
+    rest()
+    const footer = mount!.querySelector<HTMLElement>('[data-testid="settings-sheet-footer"]')
+    expect(footer).not.toBeNull()
+    // The portal has filled the footer the chassis drew on the claim.
+    expect(footer!.querySelector('button')?.textContent).toBe('Clear all')
+    // The footer element itself is what the sheet watches.
+    const watcher = observers.find((o) => o.targets.includes(footer!))
+    expect(watcher).toBeDefined()
+    // It grows as the buttons land: the sheet takes its detents again …
+    const before = counter.measures()
+    counter.footer.height = 72
+    act(() => watcher!.fire())
+    expect(counter.measures()).toBeGreaterThan(before)
+    // … and not for a report that changed nothing.
+    const after = counter.measures()
+    act(() => watcher!.fire())
+    expect(counter.measures()).toBe(after)
+    // Closing the sheet stops the watch.
+    act(() => root!.unmount())
+    root = null
+    expect(watcher!.disconnected).toBe(true)
+  })
+
+  it('without a ResizeObserver, measures again one frame after the footer is drawn', async () => {
+    vi.stubGlobal('ResizeObserver', undefined)
+    const counter = measureCounter()
+    renderForm()
+    await settle()
+    // The claim's measure has run over the empty footer; the frame's relayout is queued.
+    const before = counter.measures()
+    expect(frames.scheduled).toBe(true)
+    rest()
+    expect(counter.measures()).toBeGreaterThan(before)
   })
 })

@@ -27,6 +27,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { Urlbar } = await import('../Urlbar')
 const { uiStore } = await import('@renderer/lib/ui')
+const { pageTookKeyboard } = await import('@renderer/lib/panes')
 
 const PAGE = 'https://example.com/some/path'
 
@@ -502,10 +503,15 @@ describe('keyword mode and search mode (omnibox-08, -26)', () => {
   it('an engine\u2019s keyword then Tab: the chip, the engine\u2019s glyph, the field emptied; Backspace brings the keyword back', async () => {
     const el = await render(desktop())
     expect(glyph(el)).toBe('G')
+    // The letter is an image named for the engine (a11y-02), not a word a screen reader spells.
+    const mark = el.querySelector('.zen-omnibox-engine')!
+    expect(mark.getAttribute('role')).toBe('img')
+    expect(mark.getAttribute('aria-label')).toBe('Search engine: Google')
     await type(input(el), '@ddg')
     await key(input(el), 'Tab')
     expect(chip(el)?.textContent).toBe('Search DuckDuckGo')
     expect(glyph(el)).toBe('D')
+    expect(mark.getAttribute('aria-label')).toBe('Search engine: DuckDuckGo')
     expect(input(el).value).toBe('')
     expect(callsTo<{ engineId?: string }>('urlbar.suggest').at(-1)?.engineId).toBe('duckduckgo')
 
@@ -695,5 +701,72 @@ describe('the rows and the field at §6 (the lead\u2019s ruling on #289)', () =>
     expect(inputRow.textContent).not.toContain('Current tab')
     expect(inputRow.querySelector('.zen-omnibox-badge')).toBeNull()
     expect(input(el).nextElementSibling).toBeNull()
+  })
+})
+
+/*
+ * The new tab's bar and the page taking the keyboard (lib/panes.ts `pageTookKeyboard`): the
+ * `zen://newtab` view takes the keyboard as it is shown, racing the bar's mount. A fast machine
+ * has the field's focus land after and win; a slow one had the blur land after the focus and
+ * the bar stood with no caret (#342 met it in CI). The rule: a chrome field the user types in is
+ * never blurred by a page taking the keyboard – the bar keeps its field and takes the keyboard
+ * back.
+ */
+describe("the keyboard, when the page's view takes it", () => {
+  /** The `focus.page` event as `useMainEvents` hands it on, after the bar has rendered. */
+  async function pageTakesKeyboard(tabId: string): Promise<string> {
+    let outcome = ''
+    await act(async () => {
+      outcome = pageTookKeyboard(tabId)
+      await Promise.resolve()
+    })
+    return outcome
+  }
+
+  it("the new tab's bar has its field focused whichever came first – the field's focus or the page's view taking the keyboard", async () => {
+    const el = await render(desktop(tab('zen://newtab'), 'new-tab'))
+    expect(document.activeElement).toBe(input(el))
+    invoke.mockClear()
+    // The slow machine's order: the field had the focus, then the view took the keyboard – the
+    // blur the old rule applied (and the CI harness's --force-urlbar-blur still applies)…
+    ;(document.activeElement as HTMLElement).blur()
+    expect(document.activeElement).toBe(document.body)
+    // …and the event itself: the bar takes the keyboard back and the caret is in the field.
+    expect(await pageTakesKeyboard('t1')).toBe('kept')
+    expect(document.activeElement).toBe(input(el))
+    expect(commands()).toEqual(['focus.chrome'])
+    // The event alone, the field still focused: the chrome's keyboard is asked back all the
+    // same (the page's view holds it), the field is left as it is.
+    invoke.mockClear()
+    expect(await pageTakesKeyboard('t1')).toBe('kept')
+    expect(document.activeElement).toBe(input(el))
+    expect(commands()).toEqual(['focus.chrome'])
+  })
+
+  it("leaves the keyboard on a row's X the user tabbed to, asking the chrome's keyboard back all the same", async () => {
+    suggestions = (q) => (q ? [history(1)] : [])
+    const el = await render(desktop())
+    await typeAndList(el, 'pa', 1)
+    await key(input(el), 'Tab')
+    await key(input(el), 'Tab')
+    const x = removeX(rows(el)[0])!
+    expect(document.activeElement).toBe(x)
+    invoke.mockClear()
+    expect(await pageTakesKeyboard('t1')).toBe('kept')
+    expect(document.activeElement).toBe(x)
+    expect(commands()).toEqual(['focus.chrome'])
+  })
+
+  it('a bar that has closed is not told anything: the stale control is let go as before', async () => {
+    const el = await render(desktop())
+    await key(input(el), 'Escape')
+    expect(uiStore.get().urlbar.open).toBe(false)
+    // The bar's field would be gone with the bar; here the test DOM keeps it, so the release
+    // shows on it as on any control.
+    input(el).focus()
+    invoke.mockClear()
+    expect(await pageTakesKeyboard('t1')).toBe('released')
+    expect(document.activeElement).toBe(document.body)
+    expect(commands()).toEqual([])
   })
 })

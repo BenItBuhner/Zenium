@@ -126,6 +126,28 @@ class PageMessagesTest {
     }
 
     @Test
+    fun thePdfViewersReportReachesTheCoreWithTheDocumentsTokenUnderItsOwnName() {
+        // The viewer document's report (src/shared/pageScript.ts, installPdfViewerRelay) carries
+        // the document's token as `pdfToken`: `token` is this session's, checked here and
+        // stripped, and the core takes the report only with the document's (PdfViewerService.onReport).
+        val report = JSONObject().put("state", "ready").put("pageCount", 3).put("page", 1)
+        val route = routePageMessage(message("type" to "pdf", "pdf" to report, "pdfToken" to "doc-1"), token)
+        assertTrue(route is PageMessageRoute.Forward)
+        val forwarded = (route as PageMessageRoute.Forward).message
+        assertEquals("pdf", forwarded.getString("type"))
+        assertEquals("doc-1", forwarded.getString("pdfToken"))
+        assertEquals("ready", forwarded.getJSONObject("pdf").getString("state"))
+        assertFalse(forwarded.has("token"))
+        // A report whose own token took the `token` field (the shape #258 relayed, which the
+        // page script's spread let displace the session's) is a forgery to this router: dropped,
+        // and the viewer never reported ready (#332's nightly).
+        assertEquals(
+            PageMessageRoute.Ignore,
+            routePageMessage(json("token" to "doc-1", "type" to "pdf", "pdf" to report).toString(), token)
+        )
+    }
+
+    @Test
     fun forwardedMessagesKeepTheirPayloadIntact() {
         val payload = JSONObject().put("a", 1).put("b", JSONObject().put("c", "d"))
         val route = routePageMessage(message("type" to "custom", "payload" to payload), token)

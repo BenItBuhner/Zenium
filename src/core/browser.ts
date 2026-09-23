@@ -2393,7 +2393,7 @@ export class Browser {
     }
     if (message.type === 'pdf') {
       if (message.pdf && typeof message.pdf === 'object')
-        this.pdf.onReport(tabId, message.pdf, message.token)
+        this.pdf.onReport(tabId, message.pdf, message.pdfToken)
       return
     }
     if (message.type === 'forms') {
@@ -2860,8 +2860,8 @@ export class Browser {
 
       'page.open': ({ id, section, openerTabId, query }, win) =>
         this.pages.open(id, section, win, openerTabId, { query }),
-      'page.navigate': ({ tabId, section, replace, query }) =>
-        this.pages.navigate(tabId, section, replace ?? false, query),
+      'page.navigate': ({ tabId, section, subpage, replace, query }) =>
+        this.pages.navigate(tabId, section, replace ?? false, query, subpage),
 
       'history.contextMenu': ({ visitId, url, ...anchor }, win) =>
         this.menus.showHistoryContextMenu(visitId, url, win, anchor),

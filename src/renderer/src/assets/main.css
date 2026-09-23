@@ -383,6 +383,22 @@
   outline-offset: var(--v2-ring-offset);
 }
 
+/*
+ * A container that holds the focus by design draws no ring (§1, §9.22): a dialog's root – the
+ * settings dialogs, a prompt, a popover or a sheet with `role="dialog"` – takes the focus as it
+ * opens when it has no field to hand it to, and gives it up to the first Tab. It is not a
+ * control, and a ring round a whole panel with nothing tabbable inside marked nothing. The mark
+ * is `tabindex="-1"`: a container the keyboard is sent to and cannot reach by Tab – so the
+ * dialog's own controls keep their ring, and no dialog states `outline: none` for itself. The
+ * `:root` carries the weight over the coarse-pointer form of the v2 ring rule above (0,4,0),
+ * which a phone's `data-pointer` would otherwise put ahead; the rule sits under it so it wins
+ * the tie, and beats the base floor and the plain form outright.
+ */
+:root [role='dialog'][tabindex='-1']:focus-visible,
+:root [role='alertdialog'][tabindex='-1']:focus-visible {
+  outline: none;
+}
+
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
 @supports (color: oklch(from red clamp(0.3, l, 0.6) c h)) {
   :root {
@@ -882,8 +898,10 @@
  * bookmarks strip's clip or a bar the control fills to the edge cannot cut it, and a control
  * scrolled flush to a scroller's edge keeps the whole ring. The base layer is the floor: a
  * component's own rule wins – the `zen-v2-` primitives' shared ring, a field's, a chip whose ring
- * its pill or face carries – and so does `outline-none` on a container that focuses itself by
- * design (a popover, a dialog, a listbox, a menu whose cursor is its row's fill) and shows no ring.
+ * its pill or face carries – and so does the shared no-ring rule for a container that focuses
+ * itself by design (`[role='dialog'][tabindex='-1']:focus-visible` beside the v2 ring rule: a
+ * dialog, a popover or a sheet), or `outline-none` on a listbox or a menu whose cursor is its
+ * row's fill.
  *
  * The ring snaps on whole, as Chrome's does. At rest every element already holds the ring's
  * colour, width and offset – with the style at `none` nothing shows – so a control's own
@@ -3371,10 +3389,6 @@
     corner-shape: var(--zen-corner);
     transform-origin: 50% 100%;
     will-change: transform;
-  }
-  /* The dialog takes the focus itself when its first control must not (BottomSheet); no ring. */
-  .zen-sheet:focus {
-    outline: none;
   }
   /*
    * The header after the grip strip: 48 tall, the title 17/600 at line-height 22 centred over
@@ -7459,10 +7473,11 @@
  * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
  * = the X's 2 + 22); a saved row, with nothing to fold, keeps the chevron's box empty so the
  * counts share one edge. The name being edited takes the name's slot at the same 14. The rail
- * shows the glyph alone, centred. The rows of an open group sit 24 in (§9.36), where the
- * desktop's indent is 20 and the rail's none. The block of header and rows (`.zen-group-fold`)
- * is clipped while its height runs on the fold's spring (`useGroupFold`) and left alone at
- * rest, so a lifted row's ghost and a focus ring are never cut.
+ * shows the glyph alone, centred. The rows of an open group – their own tablist under the
+ * header (`.zen-group-rows`) – sit 24 in (§9.36), where the desktop's indent is 20 and the
+ * rail's none. The block of header and rows (`.zen-group-fold`) is clipped while its height
+ * runs on the fold's spring (`useGroupFold`) and left alone at rest, so a lifted row's ghost
+ * and a focus ring are never cut.
  */
 .zen-group-row-glyph {
   display: inline-flex;
@@ -7502,7 +7517,7 @@
 :root[data-form-factor='tablet'] .zen-tab.zen-group-row input {
   font-size: 14px;
 }
-:root[data-form-factor='tablet'] .zen-group-fold > .zen-tab:not(.zen-group-row, .justify-center) {
+:root[data-form-factor='tablet'] .zen-group-fold > .zen-group-rows > .zen-tab:not(.justify-center) {
   margin-left: 24px;
 }
 .zen-group-fold[data-folding] {
@@ -8177,6 +8192,129 @@
   .zen-v2-segment > [role='tab']::after {
     transition: opacity 120ms var(--zen-ease) !important;
   }
+}
+
+/*
+ * The overview's tab search (TAB-21, `components/phone/OverviewSearch.tsx`): the phone panels'
+ * §9.12 field (`.zen-phone-field`, 40 tall with its glyph and its clear, phonePanels.css)
+ * pinned under the overview's header in the grid's 12 gutter, 8 to the segment. A field is a
+ * page surface; standing on the window backdrop (§9.29) it takes the new tab page's resting
+ * field's treatment (`.zen-ntp-field`): the `--v2-urlbar` fill and the panel's shadow for its
+ * edge in place of the hairline, the page's ink inside as the primitive gives it; the control's
+ * own radius, not the URL bar pill's. A modifier on the primitive, unlayered beside it (§9.34).
+ * The ring on focus is the primitive's, inside the edge. Under it, when a query drops every
+ * card – the New Tab card leaves with them (§9.34) – the grid's one line (§9.17's sentence at
+ * 15 and 69% in the window's ink, centred in the 32 gutter, its first line 48 below the
+ * segment) stands where the grid was, over the reach's lists when they have rows.
+ */
+.zen-phone-field.zen-overview-search-field {
+  background: var(--v2-urlbar);
+  box-shadow: var(--v2-shadow-panel);
+}
+.zen-overview-search-empty {
+  padding: 40px 32px 24px;
+  text-align: center;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  color: var(--v2-control-text-deemphasized);
+}
+
+/*
+ * The tab search's reach (TAB-21, `OverviewSearchReach` in components/phone/OverviewSearch.tsx):
+ * the recently closed tabs and the other devices' tabs a query finds, as the phone panels' rows
+ * and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
+ * `.zen-v2-heading` with the panels' modifiers) under the grid on the overview's window
+ * backdrop, so they draw in the window family (§9.29) through the control roles the overview
+ * root's `data-surface="window"` resolves: the theme's ink, its 69% for a row's second line, the
+ * window fill for the press – where the panels' own draw in the page's. A modifier by context on
+ * the primitives, unlayered beside them (§9.34), each rule outranking the primitive's by
+ * specificity; the press and hover fills are not restated (the row's own rule set is the one
+ * place that gates on `data-static`): the list redefines the page fill token the row reads,
+ * `--v2-fill`, as the window fill, so the primitive's own press and hover draw the window
+ * family. The first heading keeps the primitive's 20 above (§10.3: a heading that follows rows –
+ * the cards – keeps its space): the rule names the list class too, to outrank the panels'
+ * first-heading rule (phonePanels.css, the 0 under a pinned field) on specificity, since the two
+ * sheets' order is the bundle's.
+ */
+.zen-overview-search-reach {
+  --v2-fill: var(--v2-window-fill);
+}
+.zen-overview-search-reach .zen-v2-row {
+  color: var(--v2-control-text);
+}
+.zen-overview-search-reach .zen-list-subtitle {
+  color: var(--v2-control-text-deemphasized);
+}
+.zen-overview-search-reach .zen-v2-heading {
+  color: var(--v2-control-text);
+}
+.zen-overview-search-reach.zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {
+  margin-top: 20px;
+}
+/* Under the grid's "no match" sentence (§9.34; the emptied grid stands between them), whose own
+   bottom padding is the gap. */
+.zen-overview-search-empty
+  ~ .zen-overview-search-reach.zen-phone-list
+  > :first-child
+  > .zen-v2-heading.zen-list-heading {
+  margin-top: 0;
+}
+
+/*
+ * A phone list's group with nothing in it, and the group's follow-up (§9.17's group form, §10.4;
+ * the History page's "From your other devices", `OtherDevicesGroup`): the empty sentence is one
+ * plain row at the gutter – the row primitive for its geometry, `data-static` for no fill and no
+ * role – 15 at 69% left-aligned like a row's label; the follow-up ("Turn on sync") is the
+ * group's next row, a target like any row, so it adds nothing to the primitive.
+ */
+.zen-v2-row.zen-list-empty-row {
+  color: var(--v2-text-deemphasized);
+}
+
+/*
+ * A device's heading in a phone list (§10.3; the History page's other devices, `DeviceGroup`) is
+ * the group's one control: the `<h3>` keeps the primitive's beat and gutter and the button inside
+ * it lays the name and the "Last active …" aside (13 at 69%, tabular) out on the heading's line,
+ * then takes §9.3's 44 target around that 20 line – 12 above and below, folded into the heading's
+ * 20 / 4 beat by its margins, so the text stays where the beat put it (the rows below are
+ * positioned and win the 8 the box reaches under them). The box is 44 by declaration, not by its
+ * content: the two sizes on one baseline would otherwise grow the line by a fraction and the
+ * heading with it. Pressed, it shows the page fill as a row does.
+ */
+.zen-v2-heading.zen-device-heading {
+  display: flex;
+  padding: 0;
+}
+.zen-device-heading-button {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -12px 0;
+  padding: 12px 16px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-device-heading-button:active {
+  background: var(--v2-fill);
+}
+@media (hover: hover) {
+  .zen-device-heading-button:hover {
+    background: var(--v2-fill);
+  }
+}
+.zen-device-heading-aside {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
 }
 
 /*
@@ -9032,6 +9170,11 @@
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
 }
+/* The one line that reports a failure where the rows would be (the viewer's listing refused): §1 status ink. */
+.zen-settings-empty[data-tone='danger'],
+.zen-settings-group-description[data-tone='danger'] {
+  color: var(--v2-danger);
+}
 /* The page's own empty state (§9.17): one sentence, centred in a 32 gutter, 48 under the field. */
 .zen-settings-empty-page {
   padding: 48px 32px 0;
@@ -9505,9 +9648,10 @@
   stroke-width: var(--v2-icon-stroke);
 }
 /*
- * Footer actions (§9.11): two peers split the width, 8 apart, the primary trailing. In a form
- * the form's 16 gap and gutter place them; straight in a sheet's body (a prompt, §9.23) they
- * sit at the sheet's 16 (§9.25), 16 under the title block's own padding.
+ * Footer actions (§9.11): on the phone's sheet two peers split the width, 8 apart, the primary
+ * trailing (the desktop dialog's hug is with the dialog rules below). In a form the form's 16
+ * gap and gutter place them; straight in a sheet's body (a prompt, §9.23) they sit at the
+ * sheet's 16 (§9.25), 16 under the title block's own padding.
  */
 .zen-settings-sheet-actions {
   display: flex;
@@ -9958,7 +10102,10 @@
  * The dialogs a desktop row opens (`dialogs.tsx`, §9.5, §9.23): the shared `.zen-v2-dialog`
  * chassis at the form width in the frame's dialog host, a title block over a body that scrolls
  * between the title and its footer, 16 under the last control (§9.25). The layer sits outside
- * the page host, so it states the page's type itself, as the phone sheets do.
+ * the page host, so it states the page's type itself, as the phone sheets do. Two stacked
+ * dialogs (§9.24 – a prompt over a form) are static siblings in the slot's one grid cell; the
+ * slot closes each root as a stacking context of its own and ranks them
+ * (`.zen-frame-dialogs-slot > *`, lib/portals.tsx), so the dialog carries no stacking rule itself.
  */
 .zen-settings-dialog {
   display: flex;
@@ -9968,6 +10115,15 @@
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
   user-select: none;
+}
+/*
+ * A dialog whose body is a list of rows (`data-body="list"`: the site-data viewer) stands at
+ * most 80% of the frame's height and its list scrolls under the title block (§9.20, #314 (c)):
+ * a dialog 16 from the frame's top and bottom reads as a page. Only the list body takes the cap;
+ * a form or a prompt keeps standing as tall as its content, to the frame's 16.
+ */
+.zen-settings-dialog[data-body='list'] {
+  max-height: 80%;
 }
 .zen-settings-dialog-body {
   display: flex;
@@ -9979,6 +10135,56 @@
 }
 .zen-settings-dialog-body > .zen-settings-sheet-actions {
   padding: 0 16px;
+}
+/*
+ * §9.11's desktop footer: in a dialog the actions hug their labels and right-align at the 8
+ * gap, primary last – a prompt's Cancel | Delete, a form's Cancel | Create or Add a site alike –
+ * and hug no narrower than the button's own 96 at the 32 control height (§9.20: a notice's two
+ * buttons are 96 + 8 + 96 inside its 288, a form's the same at the end of its 366). The equal
+ * split and its `min-width: 0` (`.zen-settings-sheet-actions > *` above) are the phone sheet's:
+ * a dialog is never the phone's – a phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`)
+ * – so the pose is the surface's, not a pointer query's, and the phone's rule is not touched.
+ * The busy state keeps the button's width: the label stays in the flow unpainted under the
+ * spinner (§9.30, extensions.css).
+ */
+.zen-settings-dialog .zen-settings-sheet-actions {
+  justify-content: flex-end;
+}
+.zen-settings-dialog .zen-settings-sheet-actions > * {
+  flex: 0 0 auto;
+  min-width: 96px;
+}
+/*
+ * The footer slot a form claims through `SheetFooter` (blocks.tsx; §9.11) for actions that
+ * belong to the whole sheet and must stay in reach while a long body scrolls – the site-data
+ * viewer's Clear all at the foot of its list. The dialog's is its last block under the body,
+ * 16 under the body's own 16 and 16 to the edge, the buttons hugging and right-aligned at the
+ * 8 gap (§9.11's desktop footer); the phone's is the chassis's `.zen-sheet-footer` under the
+ * body, where one action spans the row and two split it, as the chassis's rule has it.
+ */
+.zen-settings-dialog-footer {
+  flex-shrink: 0;
+  justify-content: flex-end;
+  padding: 0 16px 16px;
+}
+.zen-settings-dialog-footer > * {
+  flex: 0 0 auto;
+}
+/*
+ * §9.20's second footer form, for a dialog whose body is a row list and ends in buttons (the
+ * site-data viewer's Clear all under its list): a hairline in the gutter with the list's 4
+ * inset above it (§6's separator margin) and the buttons at 12 above and below, 16 at the sides
+ * – the site-information popover's form (`.zen-siteinfo-footer`). The list's own end inset is
+ * the 4 above the line, so the body's 16 goes; the prompt form's 16 stays for a form's footer.
+ */
+.zen-settings-dialog[data-body='list']
+  > .zen-settings-dialog-body:has(+ .zen-settings-dialog-footer) {
+  padding-bottom: 4px;
+}
+.zen-settings-dialog[data-body='list'] > .zen-settings-dialog-footer {
+  margin: 0 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--v2-border);
 }
 
 /*
@@ -10259,12 +10465,10 @@
 }
 /*
  * Its `aria-expanded` says which way the rows are, not that a popover is up: the shared icon
- * button's lit fill for an open anchor (§9.20, `extensions.css`) does not reach the disclosure
- * at rest – the chevron's turn is the state – while the hover and press fills stay its own.
+ * button's lit fill is the popover anchor's alone (`[aria-haspopup][aria-expanded]`, §9.20,
+ * `extensions.css`), so a disclosure – which carries no `aria-haspopup` – takes none at rest
+ * without a rule of its own; the chevron's turn is the state, the hover and press fills its own.
  */
-.zen-page-heading > .zen-page-heading-twisty[aria-expanded='true']:not(:hover, :active) {
-  background: none;
-}
 /* The heading's 8 is to its rows; folded, there are none, and the next group's 20 beat is from the heading's line. */
 .zen-page-group[data-collapsed] > .zen-page-heading {
   margin-bottom: 0;
