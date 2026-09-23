@@ -92,6 +92,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private val dialogsDismissed = JSONArray()
     /** Each time something else had the screen when a finger was due (the launcher, Overview) and the browser was brought back. */
     private val screenRestored = JSONArray()
+    /** Each row boundary a native sheet was still up at, with the sheet's texts and what a back left ([dismissSheets]). */
+    private val sheetsDismissed = JSONArray()
 
     private class Grade(val verdict: String, val note: String, val extra: JSONObject? = null)
 
@@ -128,6 +130,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             results.put("appProcessMemory", memory.report())
             results.put("promptsAnsweredByCommand", promptsAnsweredByCommand)
             results.put("screenRestored", screenRestored)
+            results.put("sheetsDismissed", sheetsDismissed)
             write()
         }
     }
@@ -199,8 +202,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             val refusedBefore = host.chrome.bridge.refused.get()
             val guardBefore = host.extensions.floodGuardCounts()
             try {
-                // A row's core check is read off a page on screen: the browser back in front first.
+                // A row's core check is read off a page on screen: the browser back in front first,
+                // and no sheet of another extension's over it (the boundary after the last row
+                // took them down; this is the check that nothing came up since).
                 onScreen("before ${row.name}")
+                dismissSheets(entry, "before ${row.name}")
                 sweep(index + 1, row, entry)
             } catch (e: Throwable) {
                 Log.e(TAG, "${row.name}: the sweep threw", e)
@@ -850,7 +856,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * place. Each step stands on its own, the disable first among what the chrome has to answer:
      * a row whose command timed out (Tampermonkey's popup close on the 156 job) left its
      * extension enabled when the tab close before the disable threw, and its install page and
-     * tampermonkey.net tabs stood in Violentmonkey's row.
+     * tampermonkey.net tabs stood in Violentmonkey's row. Last, every native sheet still over
+     * the browser goes ([dismissSheets]): the extension is detached by then, so nothing of its
+     * can put one back, and the next row's captures start from the browser alone.
      */
     private fun cleanup(row: Row, entry: JSONObject) {
         if (!chromeAnswers()) Log.w(TAG, "${row.name} cleanup: the chrome is not answering")
@@ -873,6 +881,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
         runCatching { closeExtraTabs() }.onFailure { entry.put("closeTabsError", it.toString()) }
         runCatching { showTab(fixtureTab) }
+        runCatching { dismissSheets(entry, "after ${row.name}") }.onFailure { entry.put("dismissSheetsError", it.toString()) }
         SystemClock.sleep(1_000)
     }
 
@@ -6609,6 +6618,72 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return text
         }
         return null
+    }
+
+    /**
+     * The app's windows over its activity's: the native sheets – an extension's popup, options
+     * page or side panel in an `ExtensionSheet`, an install or permission prompt
+     * (`NativePromptSheet`), a page dialog, an auth sheet – each a `BottomSheetDialog` whose
+     * window covers the screen behind its scrim, so [dismissDialog]'s height test never meets
+     * one. The activity's own window is the lowest of the app's; every window of the app's
+     * above it is a surface the back gesture dismisses. Empty with the activity alone up.
+     */
+    private fun extraWindows(): List<AccessibilityWindowInfo> {
+        val own = ui.windows.filter {
+            it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.root?.packageName?.toString() == app.packageName
+        }
+        if (own.size < 2) return emptyList()
+        val lowest = own.minByOrNull { it.layer } ?: return emptyList()
+        return own.filter { it !== lowest }
+    }
+
+    /** A window's first texts (labels and descriptions, breadth first) behind its layer: the evidence of what was up. */
+    private fun windowTexts(window: AccessibilityWindowInfo): String {
+        val root = window.root ?: return "layer ${window.layer}: (no root)"
+        val texts = ArrayList<String>()
+        val queue = ArrayDeque(listOf(root))
+        var visited = 0
+        while (queue.isNotEmpty() && visited++ < 1_000 && texts.size < 12) {
+            val node = queue.removeFirst()
+            (node.text ?: node.contentDescription)?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(texts::add)
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return "layer ${window.layer}: ${texts.joinToString(" | ").take(240)}"
+    }
+
+    /**
+     * Every native sheet over the browser down at a row boundary, before the next capture: the
+     * core's close for the extension sheet it tracks, then one back per window of the app's
+     * still over the activity's, until none is (four at most). Round 12's UltraSurf row left
+     * its welcome popup up – its worker opens it at install with `action.openPopup()`, and the
+     * row's own close found nothing tracked – and the rows after it graded under the sheet,
+     * their stills carrying UltraSurf's surface over Fonts Ninja's and ZeroOmega's pages
+     * (`ext-android-16-webview156-22-fonts-ninja-core.png` and its 113 twin). What was up is
+     * kept as evidence on the row and in the run (`sheetsDismissed`: the moment, each window's
+     * texts, the backs pressed, what they left), with one still of it. A back is pressed only
+     * with such a window on screen, never at the activity itself; a boundary with nothing up
+     * costs one read of the window list.
+     */
+    private fun dismissSheets(entry: JSONObject?, moment: String) {
+        val up = extraWindows()
+        if (up.isEmpty()) return
+        val texts = JSONArray(up.map { windowTexts(it) })
+        Log.w(TAG, "$moment: ${up.size} window(s) of the app's over the browser: ${texts.join(" || ")}")
+        snap("sheets-up")
+        runCatching { coreCall("extension.closePopup", "null") }
+        SystemClock.sleep(500)
+        var backs = 0
+        while (backs < 4 && extraWindows().isNotEmpty()) {
+            back()
+            backs++
+            SystemClock.sleep(700)
+        }
+        val left = JSONArray(extraWindows().map { windowTexts(it) })
+        val report = JSONObject().put("at", moment).put("windows", texts).put("backs", backs).put("left", left)
+        sheetsDismissed.put(report)
+        entry?.let { (it.optJSONArray("sheetsDismissed") ?: JSONArray().also { list -> it.put("sheetsDismissed", list) }).put(report) }
+        if (left.length() > 0) Log.e(TAG, "$moment: ${left.length()} window(s) still up after $backs back(s): ${left.join(" || ")}")
+        else Log.w(TAG, "$moment: the browser alone on screen after $backs back(s)")
     }
 
     /** The Java heap in use after a full collection, in KB: what the process keeps at this point. */
