@@ -133,6 +133,12 @@ export class TabManager {
    * these, so a close from the keyboard in the tab strip keeps the keyboard there.
    */
   private readonly closeIntents = new Map<string, TabFocusOptions>()
+  /**
+   * Set by `onHostTeardown`: the host is going away with the tabs still open, so a view that
+   * goes from here on went with the host, not with its page – never a close. Only a mobile host
+   * sets it (Android's `teardown`); the desktop destroys its views itself before they report.
+   */
+  private hostGone = false
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
   /**
@@ -1432,7 +1438,9 @@ export class TabManager {
    * The page went away underneath its tab – a popup called `window.close()`, or the host tore
    * the view down on its own. The dead view is dropped without being touched again and the tab
    * closes as if the user had closed it. Views the core destroys itself are already forgotten
-   * by the time the host reports them, so this only ever acts on page-initiated closes.
+   * by the time the host reports them, so this only ever acts on page-initiated closes – and,
+   * once the host itself is going (`onHostTeardown`), on nothing: its views die with it, and the
+   * tabs stay for the core that boots next.
    */
   private onViewGone(tabId: string): void {
     const view = this.views.get(tabId)
@@ -1448,6 +1456,7 @@ export class TabManager {
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.governor.onViewDestroyed(tabId, view)
     this.browser.state.devtoolsOpenFor.delete(tabId)
+    if (this.hostGone) return
     const tab = this.tab(tabId)
     if (!tab) return
     if (tab.pinned || tab.essential || this.unloadChecks.has(tabId)) {
@@ -3577,6 +3586,17 @@ export class TabManager {
 
   destroyAll(): void {
     for (const id of [...this.views.keys()]) this.destroyView(id)
+  }
+
+  /**
+   * The host is tearing itself down with the tabs still open – Android's Activity destroyed
+   * under a relaunch or a configuration change, the process and this core living on for a
+   * moment. Its views go with it, silently or not: a `destroyed` that still arrives is not a
+   * page close (`onViewGone`), and no tab leaves the model. Nothing is destroyed from here –
+   * the host has already dropped its views, and a dead host hears no `view.destroy`.
+   */
+  onHostTeardown(): void {
+    this.hostGone = true
   }
 }
 
