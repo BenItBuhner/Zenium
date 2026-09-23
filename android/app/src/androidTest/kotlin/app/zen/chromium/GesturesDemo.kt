@@ -25,7 +25,9 @@ import kotlin.math.abs
  * every gesture a real touch, Chrome's behaviour the reference:
  *
  * - GN-08: a hold on the bar's Back opens the tab's history popup (the back entries, "Show full
- *   history"); a row is a jump straight to its entry (`NavigationPopup.java`).
+ *   history"); a row is a jump straight to its entry (`NavigationPopup.java`), in both of v2
+ *   §9.13's forms as the lead ruled them: the held finger drags to the row – lit under it as it
+ *   passes – and releases, or lets go on no row, the list waiting for its tap.
  * - GN-04: in 3-button navigation mode a drag in from the page's left edge pulls Chrome's arrow
  *   bubble out (`SideSlideLayout.java`); the disc rides the finger, arms past the threshold, and
  *   a release past it goes back; a release short of it springs the disc away and navigates nothing.
@@ -127,6 +129,8 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         returnToThird()
         backHistoryDragRelease()
         returnToThird()
+        backHistoryReleaseNoRow()
+        returnToThird()
         edgeDragArmed()
         edgeDragShort()
         paneSwipes()
@@ -178,13 +182,16 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
     }
 
     /**
-     * At `third` again, the other reading of v2 §9.13's popover exception ("the finger never
-     * lifts – it drags to a row and releases"): the finger that opened the popup drags to the
-     * row for `second` and lets go there, and the release is the pick (`useBarHold` hit-tests its
-     * pointerup for a `data-hold-pick` row) – a jump of one entry, the popup gone with it.
+     * At `third` again, the first of v2 §9.13's two forms as the lead ruled them for GN-08 ("the
+     * finger never lifts – it drags to a row and releases"): the finger that opened the popup
+     * drags through it – the row under it lit as it passes (`useBarHold` sets `data-hold-lit`
+     * on the `data-hold-pick` row it stands over; the rows' pressed tone), the light following
+     * the finger from the row for `first` to the row for `second` – and lets go there, and the
+     * release is the pick (the hold hit-tests its pointerup for the row) – a jump of one entry,
+     * the popup gone with it.
      */
     private fun backHistoryDragRelease() {
-        section("GN-08: the held finger drags to a row and releases on it")
+        section("GN-08: the held finger drags through the popup, the row under it lit, and releases on a row")
         val target = backButtonPoint() ?: run {
             touchFault("the bar's Back button was not found")
             return
@@ -192,16 +199,25 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         val f = Finger()
         f.press(target.x, target.y)
         claim("the popup opened with the finger still down", awaitTrue(3_000) { popupRows() > 0 })
-        val row = domBox("document.querySelector('[data-testid=\"back-history-entry\"][data-index=\"1\"]')")?.let { touchPoint(it) }
-        if (row == null) {
-            touchFault("the popup's row for the second stop was not touchable")
+        val first = domBox(entryRow(0))?.let { touchPoint(it) }
+        val second = domBox(entryRow(1))?.let { touchPoint(it) }
+        if (first == null || second == null) {
+            touchFault("the popup's rows for the first and second stops were not both touchable")
             f.up()
             back()
             return
         }
-        // The finger travels from the button to the row over the bar's edge and lets go on it.
-        f.moveBy(row.x - target.x, row.y - target.y, 400)
-        f.hold(120)
+        // The finger travels from the button over the bar's edge to the row for the first stop ...
+        f.moveBy(first.x - target.x, first.y - target.y, 400)
+        f.hold(200)
+        claim("the row under the finger lit as it passed (data-hold-lit on the row for the first stop; lit: '${litRows()}')", litRows() == "0")
+        // ... and on to the row for the second: the light follows it, and the first row's goes out.
+        f.moveBy(second.x - first.x, second.y - first.y, 300)
+        f.hold(200)
+        val tones = rowTones()
+        claim("the light followed the finger to the row for the second stop (lit: '${litRows()}')", litRows() == "1")
+        claim("the lit row shows the pressed tone (lit ${tones.first}, unlit ${tones.second})", tones.first.isNotEmpty() && tones.first != tones.second)
+        shot("02a-hold-drag-lit-row")
         f.up()
         val jumped = awaitTrue(8_000) { activeUrl() == url("second") }
         claim("the held finger released over the row for the second stop jumped one entry back to it (now at ${activeUrl()})", jumped)
@@ -209,6 +225,52 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         awaitLoaded(url("second"))
         settle()
         shot("02b-after-drag-release-jump")
+    }
+
+    /**
+     * At `third` once more, §9.13's second form: the held finger wanders off the popup – to the
+     * page beside or above it, wherever the screen has the room – and lets go on no row. The list
+     * stays up (the chrome layer dismisses a popover on a press outside, never on a release, and
+     * the hold eats the release's click), and a tap on the row for `second` then jumps as any
+     * tap does.
+     */
+    private fun backHistoryReleaseNoRow() {
+        section("GN-08: the held finger releases on no row, and the list waits for a tap")
+        val target = backButtonPoint() ?: run {
+            touchFault("the bar's Back button was not found")
+            return
+        }
+        val f = Finger()
+        f.press(target.x, target.y)
+        claim("the popup opened with the finger still down", awaitTrue(3_000) { popupRows() > 0 })
+        val popup = domBox("document.querySelector('[data-testid=\"back-history-popup\"]')")
+        val row = domBox(entryRow(1))?.let { touchPoint(it) }
+        if (popup == null || row == null) {
+            touchFault("the popup and its row for the second stop were not both found")
+            f.up()
+            back()
+            return
+        }
+        // Off the popup onto the page: beside it when the screen leaves 64 dp there, else above it.
+        val roomRight = touchable.right - popup.right
+        val aside = if (roomRight >= 64 * density) PointF(popup.right + roomRight / 2f, popup.exactCenterY())
+        else PointF(popup.exactCenterX(), popup.top - 48 * density)
+        finding("  (the finger lets go ${if (roomRight >= 64 * density) "beside" else "above"} the popup, at ${aside.x.toInt()},${aside.y.toInt()} px)")
+        f.moveBy(aside.x - target.x, aside.y - target.y, 400)
+        f.hold(200)
+        claim("no row is lit with the finger off the popup (lit: '${litRows()}')", litRows().isEmpty())
+        f.up()
+        SystemClock.sleep(600)
+        claim("the popup stayed up after a release on no row", popupRows() > 0)
+        settle()
+        shot("02c-hold-release-no-row")
+        Finger().tap(row.x, row.y)
+        val jumped = awaitTrue(8_000) { activeUrl() == url("second") }
+        claim("a following tap on the row for the second stop jumped to it (now at ${activeUrl()})", jumped)
+        claim("the popup closed on the tap's pick", awaitTrue(3_000) { popupRows() == 0 })
+        awaitLoaded(url("second"))
+        settle()
+        shot("02d-after-no-row-release-tap")
     }
 
     /** Back to the end of the history for the drags, by the core (no gesture of the matrix). */
@@ -553,6 +615,25 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
 
     private fun popupRows(): Int =
         js("(function(){return String(document.querySelectorAll('[data-testid=\"back-history-entry\"]').length)})()").toIntOrNull() ?: 0
+
+    /** The popup's row for the history entry at `index`, as a DOM expression. */
+    private fun entryRow(index: Int): String =
+        "document.querySelector('[data-testid=\"back-history-entry\"][data-index=\"$index\"]')"
+
+    /** The `data-index` of every popup row lit under the held finger (`data-hold-lit`, `useBarHold`), joined by commas. */
+    private fun litRows(): String =
+        js("(function(){return Array.prototype.map.call(document.querySelectorAll('[data-testid=\"back-history-entry\"][data-hold-lit]'),function(e){return e.getAttribute('data-index')}).join(',')})()")
+
+    /** The lit row's computed background against an unlit row's: the pressed tone (`--v2-fill`) over the panel's. */
+    private fun rowTones(): Pair<String, String> {
+        val text = js(
+            "(function(){var l=document.querySelector('[data-testid=\"back-history-entry\"][data-hold-lit]');" +
+                "var u=document.querySelector('[data-testid=\"back-history-entry\"]:not([data-hold-lit])');" +
+                "return (l?getComputedStyle(l).backgroundColor:'')+'|'+(u?getComputedStyle(u).backgroundColor:'')})()"
+        )
+        val parts = text.split('|')
+        return (parts.getOrNull(0) ?: "") to (parts.getOrNull(1) ?: "")
+    }
 
     private fun clipboardRowText(): String =
         js("(function(){var e=document.querySelector('li.zen-suggestion[data-kind=\"clipboard\"]');return e?e.textContent||'':''})()")
