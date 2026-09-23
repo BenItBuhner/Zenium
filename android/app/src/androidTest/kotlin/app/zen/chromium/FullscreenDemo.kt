@@ -474,9 +474,20 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         note("\n7. the capture input with the camera allowed")
         check("Take a photo (capture) is touched again", tapPageButton("cap-label", "Take a photo (capture)", "the prompt comes up again", 12_000) { permissionPromptUp() })
         check("While using the app is touched", touchDialog(ALLOW_LABELS, "the permission is granted") { cameraGranted() })
-        val camera = poll(20_000) { frontPackage() == cameraApp || (foreignInFront() && !permissionPromptUp()) }
-        note("  after the grant: in front ${frontPackage()} (capture-only: no chooser expected)")
-        check("the camera app opens straight away (capture-only skips the picker)", camera && frontPackage() == cameraApp)
+        // Two checks, once one: the camera app comes to the front (its window, polled: the read
+        // of the nightly's retry came between the prompt's leaving and the camera's arrival and saw
+        // "?", no window in front yet, and the camera up a second later), and nothing else foreign
+        // – a chooser – stood in front on the way to it.
+        var otherInFront: String? = null
+        val camera = poll(20_000) {
+            val front = frontPackage()
+            val system = front == "?" || front == app.packageName || front.contains("permissioncontroller") || front.contains("systemui")
+            if (front != cameraApp && !system && !permissionPromptUp()) otherInFront = front
+            front == cameraApp
+        }
+        note("  after the grant: in front ${frontPackage()}; on the way there: ${otherInFront ?: "nothing else"} (capture-only: no chooser expected)")
+        check("the camera app opens (capture-only)", camera)
+        check("straight away: no chooser stood in front on the way to the camera app", otherInFront == null)
         SystemClock.sleep(3_000)
         settleCameraApp()
         dumpWindows("the camera app")

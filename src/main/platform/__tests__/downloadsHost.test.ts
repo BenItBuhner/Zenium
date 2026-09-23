@@ -1275,3 +1275,52 @@ describe('ElectronDownloads automatic resume (HB-43)', () => {
     expect(refused.resumed).toBe(0)
   })
 })
+
+/**
+ * A web capture's Save (`capture.save`): the core hands the host the bytes and a name, the host
+ * writes them where downloads go and hands the path back for the downloads list – the file shows
+ * up in the bubble and on the Downloads page as Take Screenshot's does.
+ */
+describe('ElectronDownloads saveFile', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])
+
+  it('writes the bytes under the name into the downloads folder and numbers a taken name', async () => {
+    const h = harness()
+    const file = {
+      name: 'Screenshot 2026-09-23 at 14.05.09.png',
+      mimeType: 'image/png',
+      data: png.toString('base64')
+    }
+    const first = await h.host.saveFile(file)
+    expect(first).toBe(join(h.dir, 'Screenshot 2026-09-23 at 14.05.09.png'))
+    expect(readFileSync(first!)).toEqual(png)
+    // Two saves in one second keep both files, as two downloads of one name would.
+    const second = await h.host.saveFile(file)
+    expect(second).toBe(join(h.dir, 'Screenshot 2026-09-23 at 14.05.09(1).png'))
+    expect(existsSync(second!)).toBe(true)
+    // The core lists what came back as a completed download, so the panel shows it.
+    const listed = h.service.addCompleted(first!, 'image/png')
+    expect(listed).toMatchObject({
+      state: 'completed',
+      filename: 'Screenshot 2026-09-23 at 14.05.09.png',
+      savePath: first,
+      mimeType: 'image/png'
+    })
+    await expect(h.host.exists(listed)).resolves.toBe(true)
+  })
+
+  it('keeps the name a leaf name of the folder and refuses one that is nothing', async () => {
+    const h = harness()
+    const data = png.toString('base64')
+    const escaped = await h.host.saveFile({
+      name: '../../escaped.png',
+      mimeType: 'image/png',
+      data
+    })
+    expect(escaped).toBe(join(h.dir, 'escaped.png'))
+    const odd = await h.host.saveFile({ name: 'shot:2026?.png', mimeType: 'image/png', data })
+    expect(odd).toBe(join(h.dir, 'shot_2026_.png'))
+    await expect(h.host.saveFile({ name: '..', mimeType: 'image/png', data })).resolves.toBeNull()
+    await expect(h.host.saveFile({ name: '   ', mimeType: 'image/png', data })).resolves.toBeNull()
+  })
+})

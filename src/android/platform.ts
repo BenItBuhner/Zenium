@@ -1380,7 +1380,10 @@ export class AndroidPlatform implements Platform {
           name: item.finalName || item.filename
         }),
       showInFolder: () => bridge.send('download.showAll'),
-      chooseDirectory: () => bridge.call<string | null>('download.chooseDirectory')
+      chooseDirectory: () => bridge.call<string | null>('download.chooseDirectory'),
+      // A web capture into the public Downloads collection (`Host.saveToDownloads`, Take
+      // Screenshot's path); the core lists the path it gets back as a completed download.
+      saveFile: (file) => bridge.call<string | null>('download.saveFile', file)
     }
     this.sessions = {
       clearContainerData: (containerId) => bridge.call('profile.clear', { containerId }),

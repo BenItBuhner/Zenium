@@ -25,6 +25,39 @@ export const FILES_PATH = '/ext-files/'
 /** Larger downloads are refused before they fill the cache (Adblock Plus, the largest, is 75 MB). */
 export const MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 
+/**
+ * The install, update and `permissions.request` prompt as the Kotlin side draws it when no live
+ * window can show the renderer's sheet (`ext/ExtensionPromptFallback.kt` on the native chassis,
+ * `NativePromptSheet`): the v2 §9.23 composition, composed by `extensionPromptPlan.ts` so the
+ * words and the rows are the renderer's (`ExtensionPromptDialog`) on both paths and Kotlin
+ * decides nothing. (Declared here, away from the renderer imports the composer needs, because
+ * this module is reached by the node project through `handoff.ts`.)
+ */
+export interface NativePromptPlan {
+  /** The title line, 17/600: `Add "Dark Reader"?`, `"Bitwarden" needs new permissions`. */
+  title: string
+  /** The description at 69 % under it: the source line, or the reason ("It was updated…"); none for a runtime request. */
+  description: string | null
+  /** The requester's identity as the title block's glyph (#330's §9.23 rule): the icon's data URL, or null for the puzzle glyph. */
+  icon: string | null
+  /** The caption over the rows, "It can:", when there are warnings; none over the one line that says there are none. */
+  caption: string | null
+  /** One §9.21 row per warning with its kind's glyph, or the one deemphasised line when there is nothing to warn of. */
+  rows: NativePromptRow[]
+  /** The leading peer, Cancel. */
+  secondary: string
+  /** The trailing peer: the verb and its tone (§6: an install, an update and a grant are accent; a destructive verb would be danger). */
+  primary: { label: string; tone: 'accent' | 'danger' }
+}
+
+export interface NativePromptRow {
+  /** The Lucide name of the warning's glyph (`warningGlyph.ts`'s `WarningGlyph`), a drawable of the same name on the Kotlin side; null for a line without one. */
+  glyph: string | null
+  label: string
+  /** The label in the deemphasised ink: the "requires no special permissions" line. */
+  deemphasized: boolean
+}
+
 /** A package file Kotlin holds for the host: a download, a picked file or a sideload intent. */
 export interface PackageHandle {
   token: string
@@ -209,6 +242,15 @@ export class AndroidExtensionStoreIo {
    */
   takeSideloads(): Promise<PackageHandle[]> {
     return this.bridge.call<PackageHandle[]>('extStore.takeSideloads')
+  }
+
+  /**
+   * The install or permission prompt on the native chassis (`ext/ExtensionPromptFallback.kt`, a
+   * `NativePromptSheet`), for a question no live window can show the renderer's sheet for; true
+   * when the user took the verb, false for Cancel, the scrim, the system back or the grabber.
+   */
+  prompt(plan: NativePromptPlan): Promise<boolean> {
+    return this.bridge.call<boolean>('extStore.prompt', plan)
   }
 
   /** An installed file by its directory (a registry path) and relative name; null when unreadable. */

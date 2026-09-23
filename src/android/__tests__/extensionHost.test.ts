@@ -26,6 +26,7 @@ import {
   packageFileName,
   storeChromiumVersion
 } from '../extensionHost'
+import type { NativePromptPlan } from '../extensionPromptPlan'
 import type { ExtensionRuntimeHooks } from '../extensionRuntimeHooks'
 import {
   AndroidExtensionStoreIo,
@@ -53,6 +54,9 @@ class FakeKotlinStore {
   readonly sideloads: PackageHandle[] = []
   /** What the document picker answers, one handle per call. */
   readonly picked: Array<PackageHandle | null> = []
+  /** The plans `extStore.prompt` drew on the native chassis, and the answer it gives. */
+  readonly prompted: NativePromptPlan[] = []
+  promptAnswer = true
   route: Route = () => undefined
   private seq = 0
 
@@ -114,6 +118,9 @@ class FakeKotlinStore {
         return this.picked.shift() ?? null
       case 'extStore.takeSideloads':
         return this.sideloads.splice(0)
+      case 'extStore.prompt':
+        this.prompted.push(args as NativePromptPlan)
+        return this.promptAnswer
       default:
         throw new Error(`no such bridge method ${method}`)
     }
@@ -215,7 +222,8 @@ interface Harness {
   runtime: FakeRuntime
   toasts: Array<{ message: string; kind: string }>
   opened: string[]
-  dialogs: string[]
+  /** The prompts the native chassis drew (`extStore.prompt`), when no live window could show the sheet. */
+  dialogs: NativePromptPlan[]
   /** Events sent to the chrome (the prompts `confirmInstall` raises through its sheet). */
   emitted: Array<{ name: string; payload: { requestId: string; kind: string; name: string } }>
   prompts: InstallConfirmation[]
@@ -248,15 +256,14 @@ function harness(
   }
   const toasts: Harness['toasts'] = []
   const opened: string[] = []
-  const dialogs: string[] = []
+  const dialogs = kt.prompted
   const emitted: Harness['emitted'] = []
   const browser = {
     platform: {
       io: storeIo,
       dialogs: {
-        confirm: async (opts: { message: string; detail?: string }) => {
-          dialogs.push(`${opts.message}\n${opts.detail ?? ''}`)
-          return true
+        confirm: async () => {
+          throw new Error('the Android host no longer asks through a native message box')
         }
       }
     },
@@ -566,13 +573,30 @@ describe('AndroidExtensions: installing from a store', () => {
     expect(h.toasts.at(-1)).toEqual({ message: 'Sample is already installed.', kind: 'info' })
   })
 
-  it('uses the native confirm dialog unless the chrome replaces the prompt', async () => {
+  it('puts the prompt on the native chassis when no live window can show the sheet', async () => {
     const h = harness({ nativeConfirm: true })
     await storeFront(h.kt, { cws: crx1 })
     await h.ext.installFromStore(ID, null)
     expect(h.dialogs).toHaveLength(1)
-    expect(h.dialogs[0]).toContain('Sample')
+    // The plan is the renderer's composition: the title with the name, the source as the
+    // description, the icon as the requester glyph, one row per warning, Cancel and the verb.
+    expect(h.dialogs[0]).toMatchObject({
+      title: 'Add "Sample"?',
+      description: 'From the Chrome Web Store',
+      secondary: 'Cancel',
+      primary: { label: 'Add extension', tone: 'accent' }
+    })
+    expect(h.dialogs[0].rows.length).toBeGreaterThan(0)
     expect(h.ext.record(ID)).toBeDefined()
+  })
+
+  it('does not install when the native chassis prompt is cancelled', async () => {
+    const h = harness({ nativeConfirm: true })
+    h.kt.promptAnswer = false
+    await storeFront(h.kt, { cws: crx1 })
+    await h.ext.installFromStore(ID, null)
+    expect(h.dialogs).toHaveLength(1)
+    expect(h.ext.record(ID)).toBeUndefined()
   })
 
   it("puts the prompt to the chrome's sheet when a live window can show it", async () => {

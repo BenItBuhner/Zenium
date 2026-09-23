@@ -400,6 +400,57 @@ describe('design language v2 tokens', () => {
     expect(darkBlock).toContain('--v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.2);')
   })
 
+  // §1: the danger ink is ink only, and §9.11 draws the destructive verb as a secondary – the
+  // ink on `--v2-fill` over the panel (221 221 222 in light), where `#c43434` measured 3.98:1.
+  // The lead's value is `#b02a2a` (4.82 on the fill, 5.95 on the panel; the hue kept); dark stays
+  // `#ff8080` (5.05). The triple is the same colour, for tints; `--v2-danger` aliases the ink.
+  it('inks danger #b02a2a / 176 42 42 in light and #ff8080 / 255 128 128 in dark, reading on the secondary fill', () => {
+    const v1Start = css.lastIndexOf(':root {', css.indexOf('--zen-danger:'))
+    const lightBlock = block(':root', v1Start)
+    const darkBlock = block(":root[data-theme='dark']", v1Start)
+    expect(lightBlock).toContain('--zen-danger: #b02a2a;')
+    expect(lightBlock).toContain('--zen-danger-rgb: 176 42 42;')
+    expect(darkBlock).toContain('--zen-danger: #ff8080;')
+    expect(darkBlock).toContain('--zen-danger-rgb: 255 128 128;')
+    expect(block(':root', lightBlockStart)).toContain('--v2-danger: var(--zen-danger);')
+    expect(block(":root[data-theme='dark']", lightStart)).not.toMatch(/--v2-danger:/)
+    // Measured, not asserted: the ink over the fill it is drawn on – `--v2-fill`'s alpha at the
+    // 8 bits Skia paints it, over `--v2-panel` – and over the panel itself, both at least 4.5:1.
+    const hex = (v: string): number[] => [0, 2, 4].map((i) => parseInt(v.slice(1 + i, 3 + i), 16))
+    const alpha = (v: string): { rgb: number[]; a: number } => {
+      const m = /^rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)$/.exec(v)
+      expect(m, v).not.toBeNull()
+      return { rgb: [Number(m![1]), Number(m![2]), Number(m![3])], a: Number(m![4]) }
+    }
+    const luminance = (rgb: number[]): number =>
+      [0.2126, 0.7152, 0.0722].reduce((sum, w, i) => {
+        const c = rgb[i] / 255
+        return sum + w * (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+      }, 0)
+    const contrast = (a: number[], b: number[]): number => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+      return (hi + 0.05) / (lo + 0.05)
+    }
+    const value = (body: string, name: string): string => {
+      const m = new RegExp(`${name}: ([^;]+);`).exec(body)
+      expect(m, name).not.toBeNull()
+      return m![1]
+    }
+    for (const [ink, v2] of [
+      [lightBlock, block(':root', lightBlockStart)],
+      [darkBlock, block(":root[data-theme='dark']", lightStart)]
+    ]) {
+      const danger = hex(value(ink, '--zen-danger'))
+      expect(value(ink, '--zen-danger-rgb')).toBe(danger.join(' '))
+      const panel = hex(value(v2, '--v2-panel'))
+      const fill = alpha(value(v2, '--v2-fill'))
+      const a = Math.round(fill.a * 255) / 255
+      const onPanel = fill.rgb.map((c, i) => Math.round(c * a + panel[i] * (1 - a)))
+      expect(contrast(danger, onPanel)).toBeGreaterThanOrEqual(4.5)
+      expect(contrast(danger, panel)).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
   it('scales hit targets on phones without touching the vocabulary', () => {
     for (const name of [
       '--v2-row',

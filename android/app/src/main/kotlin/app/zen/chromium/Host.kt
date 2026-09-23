@@ -43,6 +43,7 @@ import androidx.webkit.WebViewRenderProcess
 import androidx.webkit.WebViewRenderProcessClient
 import app.zen.chromium.ext.Extensions
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.ext.ExtensionPromptFallback
 import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.privacy.Privacy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -229,6 +230,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     @Volatile var syncTreeOverride: ((String) -> SyncTree)? = null
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
+    /** The store's install and permission prompt when no live window can show the chrome's sheet (the native chassis). */
+    val extPrompt = ExtensionPromptFallback(this)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
     val shortcuts = Shortcuts(activity, io)
     /** Voice search: the device's speech recogniser behind the chrome's mic buttons (OMN-19). */
@@ -728,6 +731,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
             "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot(args.bool("fullPage")) { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
             "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), args.optInt("quality", -1), reply)
+            // The chrome's capture overlay maps its drag rectangle with this (`shared/capture.ts`).
+            "view.viewport" -> if (tab == null) reply(null) else tab.viewport(reply)
             "view.certificate" -> reply(tab?.certificateInfo())
 
             // --- site information (cookies and storage of a site, per container) -------------------
@@ -832,6 +837,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.exists" -> downloads.exists(args.str("savePath"), reply)
             "download.deleteFile" -> downloads.deleteFile(args.str("savePath"), reply)
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
+            // A web capture the core saves (`capture.save`): the bytes into the public Downloads
+            // collection, the path back for the downloads list – Take Screenshot's path.
+            "download.saveFile" -> saveToDownloads(args.str("name"), args.str("mimeType", "image/png"), runCatching { android.util.Base64.decode(args.str("data"), android.util.Base64.DEFAULT) }.getOrNull(), reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.openWith" -> { downloads.openWith(args.str("savePath"), args.str("mimeType")); reply(null) }
             "download.share" -> { downloads.share(args.str("savePath"), args.str("mimeType"), args.str("name")); reply(null) }
@@ -945,7 +953,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "extStore.prune" -> extStore.prune(args.str("id"), args.str("keep"), reply)
             "extStore.sweep" -> extStore.sweep(reply)
             "extStore.pick" -> extStore.pick(reply)
-            "extStore.takeSideloads" -> reply(extStore.takeSideloads())
+            "extStore.takeSideloads" -> extStore.takeSideloads(reply)
+            "extStore.prompt" -> extPrompt.show(args, reply)
             // --- end of the extension store block -------------------------------------------------------
 
             // --- page translation models ----------------------------------------------------------
