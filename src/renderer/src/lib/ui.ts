@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import type { PageViewport } from '@shared/capture'
 import {
   INTERNAL_PAGES,
   pageForOverlayKind,
@@ -441,6 +442,14 @@ export interface UiState {
   /** The default-browser promo (sheet or dialog) is up over a capture of the page. */
   defaultBrowserPrompt: boolean
   /**
+   * The desktop's Web capture overlay (`components/capture/CaptureOverlay.tsx`) is up over the
+   * page's picture for `tabId`: the §9.5 scrim with the marquee's cut-out, the toolbar, then the
+   * result card. `viewport` is the page's geometry as the overlay opened (`page.viewport`), null
+   * when the host had none – the marquee is off then and only the visible area and the full
+   * page are offered. `seq` tells one opening from the next.
+   */
+  capture: { tabId: string; viewport: PageViewport | null; seq: number } | null
+  /**
    * The desktop's default-browser prompt has been asked for – "Make default" on the strip – and
    * says what the OS will do before the hand-off (`DefaultBrowserPrompt.tsx`): where it was
    * asked from, or null. `defaultBrowserPrompt` goes true once it is up over the page's picture.
@@ -592,6 +601,7 @@ export const uiStore = createStore<UiState>(
     tabsMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
+    capture: null,
     defaultBrowserAsk: null,
     install: null,
     mediaSheet: null,
@@ -1097,6 +1107,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
+    !ui.capture &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
     !ui.importDialog &&
@@ -1159,6 +1170,7 @@ export function invalidateSnapshot(): void {
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
+    !ui.capture &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
     !ui.importDialog &&
@@ -1859,6 +1871,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
+    ui.capture !== null ||
     ui.install !== null ||
     ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||

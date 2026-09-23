@@ -5944,6 +5944,147 @@
 
 @layer components {
   /*
+   * Web capture (`capture/CaptureOverlay.tsx`, Edge's Web capture over services' capture
+   * engine). The overlay fills the frame dialog host's slot, so it is the content frame's box:
+   * the page's picture stands in under it (`CoverImage`), and the overlay draws the frame's
+   * one §9.5 dim itself (`--v2-scrim-modal`, the host's colour, the host asked to draw none:
+   * `ownScrim`) because the marquee is a hole in it – an even-odd `clip-path` polygon – through
+   * which the selected part of the page shows undimmed. The marquee's 2 px accent outline sits
+   * outside its box, on the dimmed part, so the hole is exactly what the engine gets; its size
+   * label is a 13 px pill (`--v2-panel`, the hairline, the control radius) at the marquee's
+   * bottom-right corner, placed by `labelPlacement`. The cursor is a crosshair over the page
+   * while a drag would draw. The toolbar is a §9.20 panel at 4 padding holding §9.3 32 px
+   * buttons with 16 glyphs (`.zen-capture-mode`, unlayered below), a hairline, and a §9.3 icon
+   * button; it hangs from the page's top edge at its centre (`translateX(-50%)`). A stage is
+   * the page's own box laid over the overlay for what centres on the page (the cards) or sits
+   * at its bottom edge (the toast): it takes no pointer of its own.
+   */
+  .zen-capture {
+    position: absolute;
+    inset: 0;
+    outline: none;
+    user-select: none;
+  }
+  .zen-capture[data-selecting] {
+    cursor: crosshair;
+  }
+  .zen-capture-scrim {
+    position: absolute;
+    inset: 0;
+    background: var(--v2-scrim-modal);
+  }
+  .zen-capture-marquee {
+    position: absolute;
+    /* Just outside the cut-out, over the dimmed part: the picture under the marquee is whole. */
+    outline: 2px solid var(--v2-accent);
+    outline-offset: 0;
+    pointer-events: none;
+  }
+  .zen-capture-size {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 0 6px;
+    border-radius: var(--v2-radius-control);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .zen-capture-toolbar {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    transform: translateX(-50%);
+    cursor: default;
+  }
+  .zen-capture-toolbar-sep {
+    width: 1px;
+    height: 20px;
+    margin: 0 4px;
+    background: var(--v2-border);
+  }
+  .zen-capture-stage {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .zen-capture-card {
+    pointer-events: auto;
+    outline: none;
+  }
+  /*
+   * The result card's picture: centred in the card's 16 gutter on an inner box (§2: the inner
+   * radius, the hairline, the fill behind a picture that is not the box's shape), sized by
+   * `fitPicture` – the picture at its own CSS size at most, scaled down to the card's column and
+   * half the page's height, never up. The fallback row follows on the row primitive (§9.33's
+   * status anatomy in the warn ink) 8 under it.
+   */
+  .zen-capture-picture {
+    display: flex;
+    justify-content: center;
+    padding: 0 16px;
+  }
+  .zen-capture-picture-box {
+    box-sizing: content-box;
+    overflow: hidden;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-fill);
+  }
+  .zen-capture-picture-box > img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .zen-capture-note {
+    margin-top: 8px;
+  }
+  /*
+   * The toast (§9.33): the message card 8 px inside the page's bottom edge, centred, at the
+   * notice width on a mouse (320: "Copied" across a 1600 px frame would be a bar, not a card),
+   * up from the edge on the toast's own rise; under reduced motion the 120 ms fade in place
+   * (§11.3), `!important` past the global rule at the foot.
+   */
+  .zen-capture-toast {
+    position: absolute;
+    bottom: var(--zen-message-inset);
+    left: 50%;
+    width: min(320px, 100% - 16px);
+    transform: translateX(-50%);
+    animation: zen-toast-in 160ms var(--zen-ease);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-capture-toast {
+      animation: zen-fade 120ms var(--zen-ease) !important;
+    }
+  }
+}
+
+/*
+ * What the capture toolbar's buttons add to the shared v2 button (§9.34: a modifier beside the
+ * primitive, unlayered like the scan sheet's torch chip above it): the 8 px between glyph and
+ * label, and Free select's on state (`aria-pressed`) as §9.6 has a toggle that is on –
+ * `--v2-selected` with the glyph and the label in the accent – while a drag would draw the
+ * marquee; off and disabled (§9.30's .4, the primitive's) where the host cannot say where the
+ * page is scrolled to.
+ */
+.zen-v2-button.zen-capture-mode {
+  gap: 8px;
+}
+.zen-v2-button.zen-capture-mode[aria-pressed='true'] {
+  background: var(--v2-selected);
+  color: var(--v2-accent);
+}
+
+@layer components {
+  /*
    * The desktop's media hub (`media/MediaHubPopover.tsx`, MW-16: Chrome's global media
    * controls) as a §9.20 popover at 400 under the toolbar row. It opens on its cards with no
    * title block, like a menu (§9.7: the cards name themselves; the hub's name is the toolbar

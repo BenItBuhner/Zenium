@@ -4,6 +4,7 @@ import { announce, startAnnouncer, zoomAnnouncement } from '@renderer/lib/announ
 import { installedMessage } from '@shared/webApp'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
+import { openCapture } from '@renderer/lib/captureOverlay'
 import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
@@ -165,6 +166,12 @@ export function useMainEvents(): void {
         // over it (the category alone on a phone, whose rows import from files).
         closeUrlbar()
         void openImportSurface(currentActiveTabId())
+      }),
+      // Edge's Web capture (Ctrl+Shift+S in the Chrome preset, the ⋯ menu's row, the palette):
+      // the desktop's overlay over the page's picture (`components/capture/CaptureOverlay.tsx`).
+      onEvent('capture.start', ({ tabId }) => {
+        closeUrlbar()
+        void openCapture(tabId)
       }),
       onEvent('theme.open', ({ spaceId }) => {
         closeUrlbar()
