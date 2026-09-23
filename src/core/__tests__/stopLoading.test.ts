@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Tab } from '../../shared/types'
 import { Browser } from '../browser'
-import type { KeyEventInput, Platform, StoreIO, TabView, TabViewEvents, TabViewHost, WindowHost } from '../platform'
+import type {
+  KeyEventInput,
+  Platform,
+  StoreIO,
+  TabView,
+  TabViewEvents,
+  TabViewHost,
+  WindowHost
+} from '../platform'
 
 /*
  * Stopping a page that never answers (BUG-009, shortcuts-menus-73): the server accepts the
@@ -259,9 +267,9 @@ describe.each(shapes)('stopping a page that never answers: %s', (_shape, hang) =
     }
     const linux = fixture('linux')
     const { tab, page } = hang(linux)
-    expect(linux.browser.keys.handle(commandPeriod(), tab().id, linux.browser.focusedWindow())).toBe(
-      false
-    )
+    expect(
+      linux.browser.keys.handle(commandPeriod(), tab().id, linux.browser.focusedWindow())
+    ).toBe(false)
     expect(page.stops).toBe(0)
     expect(tab().loading).toBe(true)
   })
