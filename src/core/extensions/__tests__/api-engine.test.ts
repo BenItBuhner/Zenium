@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  FLOW_IN_FLIGHT_CHARS,
   MAX_MESSAGE_LENGTH,
+  MESSAGE_REFUSED,
   MESSAGE_TOO_LONG,
+  WARN_FLOW_DROPPED,
   createEmulatedEngine,
   type EmulatedEngine,
   type EngineConfig,
@@ -36,7 +39,11 @@ interface Harness {
   fail(id: unknown, error: string): void
 }
 
-function harness(over: Partial<EngineConfig> = {}, engineOptions: EngineOptions = {}): Harness {
+function harness(
+  over: Partial<EngineConfig> = {},
+  engineOptions: EngineOptions = {},
+  prim: Partial<Primordials> = {}
+): Harness {
   const sent: Record<string, unknown>[] = []
   const root: Record<string, unknown> = {}
   const { manifest: manifestOver, ...rest } = over
@@ -67,7 +74,7 @@ function harness(over: Partial<EngineConfig> = {}, engineOptions: EngineOptions 
   const engine = createEmulatedEngine(
     config,
     { post: (m) => void sent.push(JSON.parse(m) as Record<string, unknown>) },
-    primordials,
+    { ...primordials, ...prim },
     { root, ...engineOptions }
   )
   return {
@@ -763,5 +770,269 @@ describe('createEmulatedEngine', () => {
     expect(drawn).toBe(1)
     void (scaled.chrome.action.setBadgeText as Fn)({ text: '1' })
     expect(scaled.last()).toMatchObject({ method: 'setBadgeText', args: [{ text: '1' }] })
+  })
+})
+
+describe('the flow bound (a page bursting messages at the bridge faster than the host reads them)', () => {
+  const snapshot = (seq: number): Record<string, unknown> => ({
+    type: 'STORE_SNAPSHOT',
+    seq,
+    state: 'x'.repeat(140_000)
+  })
+  const seqs = (messages: Record<string, unknown>[]): number[] =>
+    messages
+      .filter((m) => m.t === 'portMsg' && (m.data as { type?: string }).type === 'STORE_SNAPSHOT')
+      .map((m) => (m.data as { seq: number }).seq)
+  const isFence = (m: Record<string, unknown>): boolean =>
+    m.t === 'call' && m.ns === 'runtime' && m.method === 'getContexts'
+
+  it("holds a burst of store snapshots at the page past a megabyte unread, drops past the ceiling with one console line, and lets what waited go as the host's replies fence what it read (Trust Wallet's popup on WebView 156)", async () => {
+    const warnings: unknown[][] = []
+    const h = harness(
+      { context: 'popup', url: `${ORIGIN}/popup.html` },
+      {},
+      { warn: (...args) => void warnings.push(args) }
+    )
+    const port = (h.chrome.runtime.connect as Fn)({ name: 'store' }) as Record<string, unknown>
+    const portId = h.last().portId
+    const before = h.sent.length
+    for (let seq = 0; seq < 1000; seq += 1) (port.postMessage as Fn)(snapshot(seq))
+    const flow = h.engine.flow
+
+    // Seven snapshots (a megabyte of chars) crossed to the host; the eighth waited at the page,
+    // and behind the seven went the engine's fence, a call the host answers and nothing else.
+    const burst = h.sent.slice(before)
+    expect(seqs(burst)).toEqual([0, 1, 2, 3, 4, 5, 6])
+    const fences = burst.filter(isFence)
+    expect(fences).toHaveLength(1)
+    expect(fences[0]).toMatchObject({
+      ns: 'runtime',
+      method: 'getContexts',
+      args: [{ contextIds: [] }]
+    })
+    expect(flow.inFlightPeak).toBeLessThanOrEqual(FLOW_IN_FLIGHT_CHARS)
+    expect(flow.fences).toBe(1)
+
+    // Four megabytes wait (29 snapshots); the 964 behind them were dropped, the newest each time,
+    // silently as Chrome's port has no error to carry, and the episode got one console line:
+    // the page's console and one `console` post for the extension's error console.
+    expect(flow.held).toBe(29)
+    expect(flow.heldPeak).toBe(29)
+    expect(flow.delayed).toBe(29)
+    expect(flow.dropped).toBe(964)
+    expect(flow.droppedChars).toBeGreaterThan(964 * 140_000)
+    expect(burst.filter((m) => m.t === 'console')).toEqual([
+      { t: 'console', level: 'warning', message: WARN_FLOW_DROPPED, token: 'tok', ep: 'ep1' }
+    ])
+    expect(warnings).toHaveLength(1)
+    expect(String(warnings[0][0])).toContain(WARN_FLOW_DROPPED)
+    expect(flow.warnings).toBe(1)
+    // Nothing waiting is on the host's side of the bridge: the transport saw 7 snapshots.
+    expect(burst.filter((m) => m.t === 'portMsg')).toHaveLength(7)
+    // The port is still connected and usable; a small message keeps its place behind the wait
+    // (under the ceiling by chars, it is held, not dropped: the order the page posted stands).
+    expect(() => (port.postMessage as Fn)({ type: 'PING' })).not.toThrow()
+    expect(flow.dropped).toBe(964)
+    expect(flow.held).toBe(30)
+
+    // The host's reply to the fence says the seven were read: seven more go, a new fence behind
+    // them, the rest still waiting. Replies fence what was posted before them, and each reply
+    // frees the next megabyte, in the order the page posted.
+    h.reply(fences[0].id, [])
+    expect(seqs(h.sent.slice(before))).toEqual([...Array(14).keys()])
+    expect(flow.fences).toBe(2)
+    expect(flow.held).toBe(23)
+    expect(flow.read).toBeGreaterThanOrEqual(9)
+    let guard = 0
+    while (flow.held > 0 && guard < 10) {
+      const fence = h.sent.filter(isFence).pop() as Record<string, unknown>
+      h.reply(fence.id, [])
+      guard += 1
+    }
+    // 36 snapshots crossed in order (7 + the 29 that waited), the PING behind them; the dropped
+    // were the newest.
+    expect(seqs(h.sent.slice(before))).toEqual([...Array(36).keys()])
+    expect(h.last()).toMatchObject({ t: 'portMsg', portId, data: { type: 'PING' } })
+    expect(flow.fences).toBe(5)
+    expect(flow.held).toBe(0)
+    expect(flow.heldChars).toBe(0)
+    expect(flow.posted).toBe(h.sent.length)
+    // A new episode after the wait drained gets its own console line, not before.
+    for (let seq = 0; seq < 100; seq += 1) (port.postMessage as Fn)(snapshot(seq))
+    expect(flow.warnings).toBe(2)
+    expect(h.sent.filter((m) => m.t === 'console')).toHaveLength(2)
+    await flush()
+  })
+
+  it('a port disconnect keeps its place behind the port messages waiting, and small calls pass and fence', () => {
+    const h = harness({
+      flow: { inFlightChars: 2500, inFlightCount: 8, heldChars: 20000, heldCount: 8 }
+    })
+    const port = (h.chrome.runtime.connect as Fn)({ name: 'p' }) as Record<string, unknown>
+    const portId = h.last().portId
+    const big = { fill: 'y'.repeat(900) }
+    ;(port.postMessage as Fn)({ ...big, n: 1 })
+    ;(port.postMessage as Fn)({ ...big, n: 2 })
+    ;(port.postMessage as Fn)({ ...big, n: 3 })
+    // Two fit under 2500 chars unread (with the hello and the connect); the third waits and a
+    // fence goes.
+    expect(h.sent.filter((m) => m.t === 'portMsg')).toHaveLength(2)
+    expect(h.engine.flow.held).toBe(1)
+    const fence = h.last()
+    expect(isFence(fence)).toBe(true)
+    // The disconnect is not overtaking the message: it waits behind it.
+    ;(port.disconnect as Fn)()
+    expect(h.sent.some((m) => m.t === 'portDisconnect')).toBe(false)
+    expect(h.engine.flow.held).toBe(2)
+    // A storage call passes at once (calls are not bounded), and its reply fences the wait too.
+    void ((h.chrome.storage.local as Ns).get as Fn)('k')
+    const call = h.last()
+    expect(call).toMatchObject({ t: 'call', ns: 'storage', method: 'get' })
+    h.reply(call.id, { k: 1 })
+    const tail = h.sent.slice(-2)
+    expect(tail[0]).toMatchObject({ t: 'portMsg', portId, data: { n: 3 } })
+    expect(tail[1]).toEqual({ t: 'portDisconnect', portId, token: 'tok', ep: 'ep1' })
+    expect(h.engine.flow.held).toBe(0)
+    // The fence's own reply, late, is nobody's business: no pending promise, nothing thrown.
+    h.reply(fence.id, [])
+    expect(h.engine.flow.fences).toBe(1)
+  })
+
+  it("runtime.sendMessage past the ceiling rejects with the host guard's error (callback: runtime.lastError), while those that waited still settle", async () => {
+    // Three posts unread at most, the hello among them: two messages cross, the third waits.
+    const h = harness({
+      flow: { inFlightChars: 2000, inFlightCount: 3, heldChars: 5000, heldCount: 3 }
+    })
+    const send = (n: number): Promise<unknown> =>
+      (h.chrome.runtime.sendMessage as Fn)({ n, fill: 'z'.repeat(600) }) as Promise<unknown>
+    const posted = (): number[] =>
+      h.sent.filter((m) => m.t === 'msg').map((m) => (m.data as { n: number }).n)
+    const msg = (n: number): Record<string, unknown> =>
+      h.sent.find((m) => m.t === 'msg' && (m.data as { n: number }).n === n) as Record<
+        string,
+        unknown
+      >
+    const a = send(1)
+    const b = send(2)
+    const c = send(3)
+    // The count bound holds the third; the fence goes behind the two that crossed.
+    const fence1 = h.last()
+    expect(isFence(fence1)).toBe(true)
+    const d = send(4)
+    const e = send(5)
+    expect(h.engine.flow.held).toBe(3)
+    expect(posted()).toEqual([1, 2])
+    // At the ceiling of three waiting: dropped, rejected as the host's guard rejects, one line.
+    const f = send(6)
+    await expect(f).rejects.toThrow(MESSAGE_REFUSED)
+    await expect(f).rejects.toBeInstanceOf(Error)
+    let lastError: unknown = 'unset'
+    ;(h.chrome.runtime.sendMessage as Fn)({ n: 7, fill: 'z'.repeat(600) }, () => {
+      lastError = h.chrome.runtime.lastError
+    })
+    await flush()
+    expect(lastError).toEqual({ message: MESSAGE_REFUSED })
+    expect(h.chrome.runtime.lastError).toBeUndefined()
+    expect(h.engine.flow.dropped).toBe(2)
+    expect(h.sent.filter((m) => m.t === 'console')).toHaveLength(1)
+    expect(posted()).toEqual([1, 2])
+
+    // The receivers answer the two that crossed: each answer frees a place for one that waited,
+    // and the fence's answer the last; the three that waited settle as any message does.
+    h.reply(msg(1).id, 'one')
+    await expect(a).resolves.toBe('one')
+    // The console line is a post too, unread behind the fence: three still unread, the third waits.
+    expect(posted()).toEqual([1, 2])
+    h.reply(msg(2).id, 'two')
+    await expect(b).resolves.toBe('two')
+    expect(posted()).toEqual([1, 2, 3])
+    h.reply(fence1.id, [])
+    expect(posted()).toEqual([1, 2, 3, 4])
+    // The fifth waits behind a second fence; a receiver's error answer frees its place as well.
+    expect(h.engine.flow.held).toBe(1)
+    expect(h.engine.flow.fences).toBe(2)
+    h.fail(msg(3).id, 'Could not establish connection. Receiving end does not exist.')
+    await expect(c).rejects.toThrow('Receiving end does not exist')
+    expect(posted()).toEqual([1, 2, 3, 4, 5])
+    expect(h.engine.flow.held).toBe(0)
+    h.reply(msg(4).id, 'four')
+    await expect(d).resolves.toBe('four')
+    h.reply(msg(5).id, 'five')
+    await expect(e).resolves.toBe('five')
+    expect(h.engine.flow.delayed).toBe(3)
+    expect(h.engine.flow.dropped).toBe(2)
+  })
+
+  it('stamps token and endpoint at the head of every post, before the payload', () => {
+    const h = harness()
+    void (h.chrome.runtime.sendMessage as Fn)({ big: 'x'.repeat(10_000) })
+    const port = (h.chrome.runtime.connect as Fn)({ name: 'p' }) as Record<string, unknown>
+    ;(port.postMessage as Fn)({ big: 'x'.repeat(10_000) })
+    void (h.chrome.tabs.query as Fn)({})
+    h.engine.ready()
+    for (const message of h.sent)
+      expect(Object.keys(message).slice(0, 3)).toEqual(['token', 'ep', 't'])
+  })
+})
+
+describe('the receiver of API callbacks and event listeners', () => {
+  // Strict-mode functions (this module is one) keep the receiver they are called with; Chrome
+  // runs a frame's callbacks with an undefined one and a service worker's with the worker's
+  // global (`ScriptContext::SafeCallFunction`).
+  it("calls them with undefined by default, as Chrome calls a frame's", async () => {
+    const h = harness()
+    const seen: unknown[] = []
+    ;(h.chrome.tabs.get as Fn)(4, function (this: unknown) {
+      seen.push(this)
+    })
+    h.reply(h.last().id, { id: 4 })
+    await flush()
+    ;(h.chrome.alarms.onAlarm as Listenable).addListener(function (this: unknown) {
+      seen.push(this)
+    })
+    h.engine.receive({ t: 'event', ns: 'alarms', name: 'onAlarm', args: [{ name: 'a' }] })
+    expect(seen).toEqual([undefined, undefined])
+  })
+
+  it("calls them with the receiver given, as Chrome calls a service worker's (ZeroOmega's unbound _proxyChangeListener)", async () => {
+    // ZeroOmega's worker, an ES module: `chrome.proxy.settings.get({}, impl._proxyChangeListener)`
+    // and the listener reads `this._proxyChangeWatchers`; with `this` the worker's global that
+    // is undefined and the loop runs over nothing, with `this` undefined it is a TypeError.
+    const self = { _proxyChangeWatchers: null }
+    const h = harness({}, { receiver: self })
+    const seen: unknown[] = []
+    // A routed method's callback (the shim's settle), on success and on failure.
+    ;(h.chrome.tabs.get as Fn)(4, function (this: unknown) {
+      seen.push(this)
+    })
+    h.reply(h.last().id, { id: 4 })
+    await flush()
+    ;(h.chrome.tabs.get as Fn)(5, function (this: unknown) {
+      seen.push(this)
+    })
+    h.fail(h.last().id, 'No tab with id: 5.')
+    await flush()
+    // An engine-owned event (runtime.onMessage) and a shim event (alarms.onAlarm).
+    ;(h.chrome.runtime.onMessage as Listenable).addListener(function (this: unknown) {
+      seen.push(this)
+    })
+    h.engine.receive({ t: 'deliver', id: 9, data: 'x', sender: { id: EXT } })
+    ;(h.chrome.alarms.onAlarm as Listenable).addListener(function (this: unknown) {
+      seen.push(this)
+    })
+    h.engine.receive({ t: 'event', ns: 'alarms', name: 'onAlarm', args: [{ name: 'a' }] })
+    expect(seen).toEqual([self, self, self, self])
+    // The listener as ZeroOmega spells it, unbound, run through the API: no throw.
+    const impl = {
+      _proxyChangeWatchers: null as null | Array<() => void>,
+      _proxyChangeListener(this: { _proxyChangeWatchers: null | Array<() => void> }) {
+        const watchers = this._proxyChangeWatchers != null ? this._proxyChangeWatchers : []
+        return watchers.length
+      }
+    }
+    let result: unknown = 'unset'
+    ;(h.chrome.alarms.onAlarm as Listenable).addListener(impl._proxyChangeListener as Fn)
+    result = (h.chrome.alarms.onAlarm as unknown as { dispatch: Fn }).dispatch({ name: 'b' })
+    expect(result).toEqual(expect.arrayContaining([0]))
   })
 })

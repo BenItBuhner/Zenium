@@ -895,6 +895,18 @@ export class ExtensionApi {
           this.host.browser.tabs.createTab({ url, active: false }, this.host.window())
           return this.tabs.peekNext()
         }
+        // Chrome's download shelf (`setShelfEnabled`, `downloads.shelf`) and bubble
+        // (`setUiOptions`, `downloads.ui`) are the desktop's; the phone has neither to hide, so
+        // the call is done with nothing, as Chrome's is. Chrono Download Manager sets the UI off
+        // from its worker's startup (round 12, row 31): the refusal was its uncaught rejection.
+        if (method === 'setUiOptions' && this.holdsPermission(ext, 'downloads.ui')) {
+          const enabled = asRecord(args[0]).enabled
+          if (typeof enabled !== 'boolean')
+            throw new Error("Error at parameter 'options': Missing required property 'enabled'.")
+          return undefined
+        }
+        if (method === 'setShelfEnabled' && this.holdsPermission(ext, 'downloads.shelf'))
+          return undefined
         break
       case 'tabCapture':
         // The WebView has no tab capture to source a stream from (no `getDisplayMedia`, no tab

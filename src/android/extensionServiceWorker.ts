@@ -568,7 +568,8 @@ export function installWorkerScriptRescue(options: WorkerScriptRescueOptions): (
  * scripts and their libraries test for or polyfill (`window`, `document`, `localStorage`, the
  * frame tree), and the page-only schedulers a hidden page never runs (`requestAnimationFrame`).
  * Constructors (`DOMParser`, `XMLHttpRequest`, `Image`) are left visible: they are writable, a
- * polyfill replaces them, and the real ones work on the page.
+ * polyfill replaces them, and the real ones work on the page. `Worker` and `SharedWorker` are
+ * not: a service worker's global has neither, and a script branches on them (JSONVue).
  */
 export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey>([
   'window',
@@ -595,6 +596,8 @@ export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey
   'alert',
   'confirm',
   'prompt',
+  'Worker',
+  'SharedWorker',
   'print',
   'open',
   'find',
@@ -686,6 +689,16 @@ export function platformOperations(global: object): ReadonlySet<PropertyKey> {
  *   native, then calls `GLOBAL_OBJ.addEventListener(…)`; the wrapper has a `prototype` as any
  *   plain function does, and unbound it would hand the native this proxy, an Illegal invocation
  *   that took MetaMask's and Malwarebytes' workers down.
+ * - `constructor` and the tag `Object.prototype.toString` reads are the interface a worker's
+ *   global is an instance of, `ServiceWorkerGlobalScope`, once `installWorkerScopeInterfaces`
+ *   has defined it on the global (it runs after this proxy is made, so the read is at call
+ *   time); the global's own `Window` until then. uVPN's store-sync library
+ *   (vuex-extension-sync) gives the background the master role on
+ *   `globalThis.constructor.name === 'ServiceWorkerGlobalScope'` and every other context a
+ *   client's: through a Window's `constructor` the worker joined its own popup as a client, no
+ *   `onConnect` answered the popup's connect, and the popup waited for a state it was never
+ *   sent, on both WebViews. The prototype stays the global's (`instanceof` is answered by the
+ *   interfaces' `Symbol.hasInstance`).
  *
  * The proxy's target is an empty object, not the global: a proxy over the global itself would
  * be held to the global's own invariants, and refusing a write to a getter-only `window` is
@@ -722,11 +735,20 @@ export function workerSelf(global: object): object {
     }
     return false
   }
+  /** The worker's interface, once defined on the global; the read is at call time. */
+  const scopeInterface = (): (new () => never) | undefined => {
+    const scope: unknown = Reflect.get(global, 'ServiceWorkerGlobalScope', global)
+    return typeof scope === 'function' ? (scope as new () => never) : undefined
+  }
   const proxy: object = new Proxy(held, {
     get(target, key) {
       if (key === 'self' || key === 'globalThis') return proxy
       if (holds(key)) return Reflect.get(target, key, proxy)
       if (WINDOW_ONLY_MEMBERS.has(key)) return undefined
+      if (key === 'constructor' || key === Symbol.toStringTag) {
+        const scope = scopeInterface()
+        if (scope) return key === 'constructor' ? scope : scope.name
+      }
       return forCall(key, Reflect.get(global, key, global))
     },
     set(target, key, value) {
@@ -932,7 +954,14 @@ export function installServiceWorkerGlobals(
     // finger pressed it away (Tampermonkey's internal-error confirm did, in the sweep).
     alert: undefined,
     confirm: undefined,
-    prompt: undefined
+    prompt: undefined,
+    // Nor does a `ServiceWorkerGlobalScope` have `Worker` or `SharedWorker` (Chrome nests no
+    // worker in a service worker). A script that reads `typeof Worker` as a bare identifier
+    // sees the page's global, not `self`, so the page's constructors go too: JSONVue's
+    // `WORKER_API_AVAILABLE` picks the branch that spawns `js/workers/formatter.js` and dies
+    // on the error event, where Chrome runs its inline formatter.
+    Worker: undefined,
+    SharedWorker: undefined
   })
   installWorkerScopeInterfaces(target)
 
