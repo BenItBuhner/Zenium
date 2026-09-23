@@ -6093,10 +6093,11 @@
     /* The toast's rise, the one number the sidebar's `.zen-toast` runs it at. */
     animation: zen-toast-in 180ms var(--zen-ease);
   }
-  /* One line (§9.33): a file's name is cut to the line by `ToastText`; the line never breaks. */
+  /* One line (§9.33): the line never breaks; a folder's long name ends in an ellipsis. */
   .zen-capture-toast .zen-message-text {
     white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
   }
   @media (prefers-reduced-motion: reduce) {
     .zen-capture-toast {

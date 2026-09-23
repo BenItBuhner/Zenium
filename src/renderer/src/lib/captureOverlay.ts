@@ -157,40 +157,15 @@ export function fileNameOf(path: string): string {
 }
 
 /**
- * A file's name cut to `max` characters with its middle gone to one ellipsis: the extension
- * stays whole, and before it the end of the stem – three tenths of what is kept, four
- * characters at least, since the end is what tells one capture from the next (the time in the
- * engine's "Screenshot 2026-09-23 at 05.21.40.png") – and the head fills the rest:
- * "Screenshot 2026-09…05.21.40.png" at 31. A name within `max` is itself.
+ * The folder a saved file sits in, by its own name – "Downloads", or the name of the folder
+ * the user chose instead (§9.33: a toast that reports a save names the destination, which is
+ * what its Show in folder acts on, not the file). A file at a root has no folder to name.
  */
-export function middleEllipsis(name: string, max: number): string {
-  if (name.length <= max) return name
-  const dot = name.lastIndexOf('.')
-  const extension = dot > 0 && name.length - dot <= 6 ? name.slice(dot) : ''
-  const stem = name.slice(0, name.length - extension.length)
-  const room = Math.max(2, max - 1 - extension.length)
-  const tail = Math.min(stem.length - 1, Math.max(4, Math.round(room * 0.3)))
-  const head = Math.max(1, room - tail)
-  // No space left standing against the ellipsis.
-  return `${stem.slice(0, head).trimEnd()}…${stem.slice(stem.length - tail).trimStart()}${extension}`
-}
-
-/**
- * The longest cut of `name` (`middleEllipsis`) that `fits` – one line of the toast (§9.33) –
- * or the name itself when it fits whole. `fits` is the caller's measure of the whole line, the
- * words around the name in the toast's own font; the search is over the characters kept, and
- * every cut it settles on has been measured to fit. Nothing fitting, the shortest cut.
- */
-export function fitName(name: string, fits: (cut: string) => boolean): string {
-  if (fits(name)) return name
-  let low = 0
-  let high = name.length - 1
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2)
-    if (fits(middleEllipsis(name, mid))) low = mid
-    else high = mid - 1
-  }
-  return middleEllipsis(name, Math.max(low, 1))
+export function folderNameOf(path: string): string {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  if (at <= 0) return ''
+  const parent = path.slice(0, at)
+  return fileNameOf(parent) || parent
 }
 
 export interface Point {

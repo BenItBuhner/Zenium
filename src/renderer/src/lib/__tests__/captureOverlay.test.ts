@@ -17,13 +17,12 @@ import {
   dragRect,
   FAILED_TITLE,
   fileNameOf,
-  fitName,
   fitPicture,
+  folderNameOf,
   LABEL_GAP,
   labelPlacement,
   marqueeOf,
   marqueeSize,
-  middleEllipsis,
   NOTHING_TO_CAPTURE,
   NUDGE_AFTER_MS,
   NUDGE_EVERY_MS,
@@ -436,41 +435,21 @@ describe('a saved file’s name', () => {
     expect(fileNameOf('Screenshot.png')).toBe('Screenshot.png')
   })
 
-  const NAME = 'Screenshot 2026-09-23 at 05.21.40.png'
-
-  it('is cut in the middle to a budget, the extension and the end of the stem kept (§9.33)', () => {
-    expect(middleEllipsis(NAME, 31)).toBe('Screenshot 2026-09…05.21.40.png')
-    expect(middleEllipsis(NAME, 31)).toHaveLength(31)
-    // A space at the cut's edge is not left standing against the ellipsis.
-    expect(middleEllipsis(NAME, 34)).toBe('Screenshot 2026-09-2…05.21.40.png')
-    // The host's unique name keeps its counter at the end.
-    expect(middleEllipsis('Screenshot 2026-09-23 at 05.21.40 (1).png', 31)).toBe(
-      'Screenshot 2026-09…1.40 (1).png'
+  it('names the folder the file sits in, on either separator – what the save toast reports (§9.33)', () => {
+    expect(folderNameOf('/home/b/Downloads/Screenshot 2026-09-23 at 14.05.09.png')).toBe(
+      'Downloads'
     )
-    // Within the budget, the name itself.
-    expect(middleEllipsis(NAME, NAME.length)).toBe(NAME)
-    expect(middleEllipsis('short.png', 31)).toBe('short.png')
+    expect(folderNameOf('C:\\Users\\b\\Downloads\\Screenshot.png')).toBe('Downloads')
+    // The folder the user chose instead of Downloads, by its own name.
+    expect(folderNameOf('/home/b/Pictures/Captures/Screenshot.png')).toBe('Captures')
+    expect(folderNameOf('D:\\captures\\Screenshot.png')).toBe('captures')
   })
 
-  it('a name without an extension, or with a long one, is cut the same way', () => {
-    expect(middleEllipsis('a name with nothing after the stem at all', 20)).toBe(
-      'a name with n…at all'
-    )
-    expect(middleEllipsis('archive.tar.gzipped-long', 16)).toBe('archive.ta…-long')
-    // A dot at the start is no extension.
-    expect(middleEllipsis('.hidden-file-name-that-runs-on', 12)).toBe('.hidden…s-on')
-  })
-
-  it('fitName keeps the longest cut that fits, the whole name when it does, the shortest when none does', () => {
-    const upTo = (n: number) => (s: string) => s.length <= n
-    expect(fitName(NAME, upTo(NAME.length))).toBe(NAME)
-    expect(fitName(NAME, upTo(31))).toBe('Screenshot 2026-09…05.21.40.png')
-    const twenty = fitName(NAME, upTo(20))
-    expect(twenty.length).toBeLessThanOrEqual(20)
-    expect(twenty.length).toBeGreaterThanOrEqual(19)
-    expect(twenty).toMatch(/^Screenshot…\d\d\.40\.png$/)
-    expect(fitName(NAME, () => false)).toBe(middleEllipsis(NAME, 1))
-    expect(fitName(NAME, () => false)).toBe('S…1.40.png')
+  it('has no folder to name for a file at a root or a bare name', () => {
+    expect(folderNameOf('/Screenshot.png')).toBe('')
+    expect(folderNameOf('Screenshot.png')).toBe('')
+    // A drive's root is the drive.
+    expect(folderNameOf('C:\\Screenshot.png')).toBe('C:')
   })
 })
 

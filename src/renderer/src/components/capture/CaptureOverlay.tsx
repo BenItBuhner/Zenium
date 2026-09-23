@@ -11,9 +11,8 @@ import {
   capturePage,
   captureReducer,
   closeCapture,
-  fileNameOf,
-  fitName,
   fitPicture,
+  folderNameOf,
   labelPlacement,
   marqueeOf,
   marqueeSize,
@@ -25,11 +24,18 @@ import {
   sizeText,
   type Point
 } from '@renderer/lib/captureOverlay'
+import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH } from '@renderer/lib/layout'
 import { holdChromeInert, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
-import { browserStore, contentAreaStore, uiStore, type UiState } from '@renderer/lib/ui'
+import {
+  browserStore,
+  contentAreaStore,
+  TOAST_ACTION_DURATION,
+  uiStore,
+  type UiState
+} from '@renderer/lib/ui'
 import { V2Button, V2IconButton, V2Row, V2TitleBlock } from '../extensions/v2'
 
 const HINT_ID = 'zen-capture-hint'
@@ -247,16 +253,27 @@ function CaptureOverlay({
     el.style.top = `${y}px`
   }, [marquee, frame])
 
-  // A toast stands §9.33's 2.8 s, a newer one restarting the clock.
+  // A toast stands §9.33's 2.8 s – 5 s with an action to reach – a newer one restarting the clock.
   useEffect(() => {
     if (!toast) return
-    const timer = setTimeout(() => setToast(null), TOAST_SHOW_MS)
+    const stands = toast.action ? TOAST_ACTION_DURATION : TOAST_SHOW_MS
+    const timer = setTimeout(() => setToast(null), stands)
     return () => clearTimeout(timer)
   }, [toast])
   const toastSeq = useRef(0)
   const say = (text: string, more: Omit<Toast, 'id' | 'text'> = {}): void => {
     if (gone.current) return
     setToast({ id: ++toastSeq.current, text, ...more })
+  }
+  // The save toast's one action: the engine's reveal of the saved file – found by its path in
+  // the downloads the host lists (the engine added it as a finished download), read when the
+  // action is picked rather than when the toast rose, the list's update trailing the save's
+  // reply; the folder itself where the list has no such file yet. The toast leaves with it.
+  const reveal = (path: string): void => {
+    const item = browserStore.get().state?.downloads.find((d) => d.savePath === path)
+    if (item) downloadsEngine.showInFolder(item.id)
+    else downloadsEngine.openFolder()
+    setToast(null)
   }
 
   const toRoot = (e: ReactPointerEvent): Point => {
@@ -300,8 +317,11 @@ function CaptureOverlay({
     setBusy('save')
     try {
       const saved = await cmd('capture.save', { dataUrl: result.dataUrl, tabId })
-      if (saved) say('Saved', { name: fileNameOf(saved.path) })
-      else say('Couldn’t save the picture', { error: true })
+      if (saved) {
+        say(`Saved to ${folderNameOf(saved.path) || 'Downloads'}`, {
+          action: { label: 'Show in folder', run: () => reveal(saved.path) }
+        })
+      } else say('Couldn’t save the picture', { error: true })
     } catch {
       say('Couldn’t save the picture', { error: true })
     } finally {
@@ -437,11 +457,13 @@ function CaptureOverlay({
             role="status"
             data-capture-toast
           >
-            <ToastText text={toast.text} name={toast.name ?? null} />
+            <span className="zen-message-text">{toast.text}</span>
             {toast.action && (
+              // The `zen-v2-` alias is how main.css's shared focus ring reaches the action on a
+              // coarse pointer, as on the chrome's own toast card.
               <button
                 type="button"
-                className="zen-message-button"
+                className="zen-message-button zen-v2-message-action"
                 onClick={toast.action.run}
                 data-capture-toast-action
               >
@@ -456,45 +478,15 @@ function CaptureOverlay({
 }
 
 /**
- * What a toast says (§9.33): its words, a file's name to fit after them on the one line
- * (`ToastText`), the error ink, and the slot for one action at its trailing edge – empty for
- * now; the shared message card's `data-action` form is what fills it.
+ * What a toast says (§9.33): its one line of words, the error ink, and at most one action at
+ * its trailing edge in the shared message card's `data-action` form – the save toast's "Show in
+ * folder", which also puts the toast on the 5 s action clock.
  */
 interface Toast {
   id: number
   text: string
-  name?: string
   error?: boolean
   action?: { label: string; run: () => void }
-}
-
-/**
- * The toast's words on one line. A file's name after them is cut to what the line has room
- * for (`fitName`, `middleEllipsis`: the middle to an ellipsis, the extension and the end of
- * the stem kept – "Saved Screenshot 2026-09…05.21.40.png") by measuring the whole line in the
- * text's own font on a canvas, before the first paint; the whole name is the span's title.
- * Where nothing can measure (no canvas), the name stands as it is and the line clips.
- */
-function ToastText({ text, name }: { text: string; name: string | null }): JSX.Element {
-  const ref = useRef<HTMLSpanElement>(null)
-  const [shown, setShown] = useState(name)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el || name === null) return
-    const context = document.createElement('canvas').getContext('2d')
-    if (!context) return
-    const style = getComputedStyle(el)
-    context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
-    // One pixel in hand for the difference between the canvas's line and the layout's.
-    const room = el.clientWidth - 1
-    setShown(fitName(name, (cut) => context.measureText(`${text} ${cut}`).width <= room))
-  }, [text, name])
-  const whole = name === null ? text : `${text} ${name}`
-  return (
-    <span ref={ref} className="zen-message-text" title={shown !== name ? whole : undefined}>
-      {name === null ? text : `${text} ${shown}`}
-    </span>
-  )
 }
 
 /**
@@ -505,8 +497,10 @@ function ToastText({ text, name }: { text: string; name: string | null }): JSX.E
  * only the visible area (§9.33's anatomy in the warn ink: the user asked for more than they
  * got), then the §9.11 footer: Close, Copy, and Save as the primary. Copy and Save keep the
  * card up and say what they did on a §9.33 toast 8 px inside the page's bottom edge ("Copied";
- * "Saved" with the file's name); the host's downloads bubble shows the file as it would any
- * finished download. Focus lands on the card's container – a `role="dialog"` at `tabIndex`
+ * "Saved to Downloads" – the folder's own name where the user moved it – with Show in folder,
+ * the engine's reveal of the file, as its one action on the 5 s clock); the host's downloads
+ * bubble shows the file as it would any finished download. Focus lands on the card's
+ * container – a `role="dialog"` at `tabIndex`
  * −1, §9.22's form for a container that holds the keyboard, which the chassis paints no ring
  * around (the whole-card ring the `zen-v2-*` rule would give a group) – and Tab reaches Close,
  * Copy, Save.

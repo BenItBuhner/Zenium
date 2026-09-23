@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { CaptureTooLargeError, type PageCaptureResult, type PageViewport } from '@shared/capture'
+import { TOAST_SHOW_MS } from '@shared/toastCard'
 import type { Rect, UIState } from '@shared/types'
 
 vi.mock('@renderer/lib/api', () => ({
@@ -19,7 +20,7 @@ import {
   TOO_LARGE_TITLE
 } from '@renderer/lib/captureOverlay'
 import { closeAllPopovers, FrameDialogHost } from '@renderer/lib/portals'
-import { browserStore, contentAreaStore, uiStore } from '@renderer/lib/ui'
+import { browserStore, contentAreaStore, TOAST_ACTION_DURATION, uiStore } from '@renderer/lib/ui'
 import { CaptureLayer } from '../CaptureOverlay'
 
 /*
@@ -73,7 +74,8 @@ function stateWith(activeTabId = 't1'): UIState {
     splitGroups: {},
     essentialTabIds: [],
     foreignTabIds: [],
-    glance: null
+    glance: null,
+    downloads: []
   } as unknown as UIState
 }
 
@@ -423,6 +425,9 @@ describe('the result card (capture-21)', () => {
     expect(toast.dataset.kind).toBe('info')
     expect(toast.dataset.surface).toBe('page')
     expect(toast.getAttribute('role')).toBe('status')
+    // Nothing to act on: the message card's `data-action` form stays unfilled.
+    expect(toast.hasAttribute('data-action')).toBe(false)
+    expect(toast.querySelector('button')).toBeNull()
     expect(el.querySelector('[data-capture-result]')).not.toBeNull()
     expect(uiStore.get().capture).not.toBeNull()
   })
@@ -437,67 +442,99 @@ describe('the result card (capture-21)', () => {
     expect(toast.dataset.kind).toBe('error')
   })
 
-  it('Save hands the picture to the engine’s downloads and names the file on the toast', async () => {
+  const SAVED = '/home/b/Downloads/Screenshot 2026-09-23 at 14.05.09.png'
+
+  /** The card up and Save picked, the engine having written the picture at `path`. */
+  async function saved(path = SAVED): Promise<HTMLElement> {
     vi.mocked(cmd).mockImplementation(async (name: string) =>
-      name === 'capture.save'
-        ? { path: '/home/b/Downloads/Screenshot 2026-09-23 at 14.05.09.png' }
-        : null
+      name === 'capture.save' ? { path } : null
     )
     const el = await captured()
     click(el.querySelector('[data-capture-save]'))
     await settle()
+    return el
+  }
+
+  it('Save hands the picture to the engine’s downloads; the toast names the destination – "Saved to Downloads" – with Show in folder as its one action, in the message card’s form (§9.33)', async () => {
+    const el = await saved()
     expect(cmd).toHaveBeenCalledWith('capture.save', { dataUrl: RESULT.dataUrl, tabId: 't1' })
-    expect(el.querySelector('[data-capture-toast]')?.textContent).toBe(
-      'Saved Screenshot 2026-09-23 at 14.05.09.png'
-    )
+    const toast = el.querySelector<HTMLElement>('[data-capture-toast]')!
+    expect(toast.querySelector('.zen-message-text')?.textContent).toBe('Saved to Downloads')
+    expect(toast.dataset.kind).toBe('info')
+    expect(toast.hasAttribute('data-action')).toBe(true)
+    const actions = toast.querySelectorAll('button')
+    expect(actions).toHaveLength(1)
+    const action = actions[0]!
+    expect(action.textContent).toBe('Show in folder')
+    expect(action.hasAttribute('data-capture-toast-action')).toBe(true)
+    expect(action.classList.contains('zen-message-button')).toBe(true)
+    expect(action.classList.contains('zen-v2-message-action')).toBe(true)
     expect(el.querySelector('[data-capture-result]')).not.toBeNull()
   })
 
-  it('the Save toast is one line (§9.33): the name is cut in the middle to what the line measures, the extension kept, the whole name its title; the action slot is empty', async () => {
-    // The line measured in the toast's font: 7.7 px a character on a 292 px line.
-    const context = { font: '', measureText: (s: string) => ({ width: s.length * 7.7 }) }
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      context as unknown as CanvasRenderingContext2D
+  it('a downloads folder the user moved is named by its own name', async () => {
+    const el = await saved('/home/b/Pictures/Captures/Screenshot 2026-09-23 at 14.05.09.png')
+    expect(el.querySelector('[data-capture-toast] .zen-message-text')?.textContent).toBe(
+      'Saved to Captures'
     )
-    const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
-    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.classList.contains('zen-message-text') ? 292 : 0
-      }
-    })
-    try {
-      vi.mocked(cmd).mockImplementation(async (name: string) =>
-        name === 'capture.save'
-          ? { path: '/home/b/Downloads/Screenshot 2026-09-23 at 14.05.09.png' }
-          : null
-      )
-      const el = await captured()
-      click(el.querySelector('[data-capture-save]'))
-      await settle()
-      const toast = el.querySelector<HTMLElement>('[data-capture-toast]')!
-      const text = toast.querySelector<HTMLElement>('.zen-message-text')!
-      expect(text.textContent).toBe('Saved Screenshot 2026-09…14.05.09.png')
-      expect(text.title).toBe('Saved Screenshot 2026-09-23 at 14.05.09.png')
-      // No action yet: the slot is the message card's `data-action` form, unfilled.
-      expect(toast.hasAttribute('data-action')).toBe(false)
-      expect(toast.querySelector('button')).toBeNull()
-    } finally {
-      if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth)
-      else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
-    }
   })
 
-  it('a short toast ("Copied") carries no title and no cut', async () => {
+  it('Show in folder is the engine’s reveal of the saved file, found by its path among the host’s downloads; the toast leaves with it', async () => {
+    const el = await saved()
+    act(() => {
+      browserStore.set({
+        state: {
+          ...stateWith(),
+          downloads: [{ id: 'd1', savePath: SAVED, filename: 'Screenshot.png', state: 'completed' }]
+        } as unknown as UIState
+      })
+    })
+    click(el.querySelector('[data-capture-toast-action]'))
+    expect(run).toHaveBeenCalledWith('download.showInFolder', { id: 'd1' })
+    expect(run).not.toHaveBeenCalledWith('download.openFolder', undefined)
+    expect(el.querySelector('[data-capture-toast]')).toBeNull()
+    // The card stays; the reveal is the toast's business alone.
+    expect(el.querySelector('[data-capture-result]')).not.toBeNull()
+  })
+
+  it('a file the host’s downloads do not list yet opens the folder itself', async () => {
+    const el = await saved()
+    click(el.querySelector('[data-capture-toast-action]'))
+    expect(run).toHaveBeenCalledWith('download.openFolder', undefined)
+    expect(run).not.toHaveBeenCalledWith('download.showInFolder', expect.anything())
+    expect(el.querySelector('[data-capture-toast]')).toBeNull()
+  })
+
+  it('the save toast stands the 5 s action clock; a toast with no action, the 2.8 s (§9.33)', async () => {
     vi.mocked(cmd).mockImplementation(async (name: string) =>
-      name === 'capture.copy' ? true : null
+      name === 'capture.save' ? { path: SAVED } : name === 'capture.copy' ? true : null
     )
     const el = await captured()
+    vi.useFakeTimers()
+    const flush = (): Promise<void> =>
+      act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    click(el.querySelector('[data-capture-save]'))
+    await flush()
+    expect(el.querySelector('[data-capture-toast] .zen-message-text')?.textContent).toBe(
+      'Saved to Downloads'
+    )
+    act(() => vi.advanceTimersByTime(TOAST_SHOW_MS))
+    expect(el.querySelector('[data-capture-toast]')).not.toBeNull()
+    act(() => vi.advanceTimersByTime(TOAST_ACTION_DURATION - TOAST_SHOW_MS - 1))
+    expect(el.querySelector('[data-capture-toast]')).not.toBeNull()
+    act(() => vi.advanceTimersByTime(1))
+    expect(el.querySelector('[data-capture-toast]')).toBeNull()
+
     click(el.querySelector('[data-capture-copy]'))
-    await settle()
-    const text = el.querySelector<HTMLElement>('[data-capture-toast] .zen-message-text')!
-    expect(text.textContent).toBe('Copied')
-    expect(text.hasAttribute('title')).toBe(false)
+    await flush()
+    expect(el.querySelector('[data-capture-toast] .zen-message-text')?.textContent).toBe('Copied')
+    act(() => vi.advanceTimersByTime(TOAST_SHOW_MS - 1))
+    expect(el.querySelector('[data-capture-toast]')).not.toBeNull()
+    act(() => vi.advanceTimersByTime(1))
+    expect(el.querySelector('[data-capture-toast]')).toBeNull()
   })
 
   it('a save the engine could not make is an error toast', async () => {
