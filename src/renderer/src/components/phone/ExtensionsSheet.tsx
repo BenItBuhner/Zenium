@@ -354,7 +354,9 @@ function ActionMenuSheet({
  * The menu's Remove asks first (§10.4, the wording of Settings › Extensions' Remove row): a prompt
  * sheet in the menu's place – title block with the glyph, the one paragraph, the §9.11 footer –
  * whose Remove, in the danger ink, runs once the sheet is gone; Cancel, the scrim, Escape and the
- * back gesture keep the extension. Focus starts on Cancel so a stray Enter does no harm.
+ * back gesture keep the extension. The focus starts on the sheet itself (§9.22: a title-and-notice
+ * sheet holds its container; Cancel first is the failure the section names), so a stray Enter
+ * does no harm.
  */
 function RemoveSheet({
   ext,
