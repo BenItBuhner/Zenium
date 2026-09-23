@@ -36,7 +36,7 @@ vi.mock('@renderer/lib/gestures/dock', () => ({
     dockStore.set({ phase: 'lifted', from: 'bottom', target: null })
     return true
   }),
-  catchDock: () => false,
+  catchDock: vi.fn(() => false),
   dockAlong: () => 0,
   dragDock: vi.fn((_dx: number, dy: number) => {
     carried = dy
@@ -64,6 +64,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 
 const { usePillGestures } = await import('../usePillGestures')
 const { browserStore } = await import('@renderer/lib/ui')
+const { catchDock } = await import('@renderer/lib/gestures/dock')
 
 const onTap = vi.fn()
 const onHold = vi.fn()
@@ -207,5 +208,31 @@ describe('the pill hold (GN-10)', () => {
     pointer(pill, 'pointerdown', 200, 800, 600)
     act(() => dockStore.set({ phase: 'idle', target: null }))
     expect(onHold).not.toHaveBeenCalled()
+  })
+
+  it('a finger that catches the put-back pill and carries it to the other edge opens nothing where it lands', () => {
+    const pill = render()
+    pointer(pill, 'pointerdown', 200, 800, 0)
+    act(() => vi.advanceTimersByTime(400))
+    pointer(pill, 'pointerup', 200, 800, 450)
+    expect(dockState.phase).toBe('settling')
+    expect(dockState.target).toBe('bottom')
+    // The catch: the pill on its way back down is taken by a new finger, which lifts it again.
+    vi.mocked(catchDock).mockImplementationOnce(() => {
+      dockStore.set({ phase: 'lifted', target: null })
+      return true
+    })
+    pointer(pill, 'pointerdown', 200, 800, 600)
+    expect(dockState.phase).toBe('lifted')
+    // ... and carries it to the top: the finger has lifted before the pill lands there.
+    pointer(pill, 'pointermove', 200, 500, 700)
+    pointer(pill, 'pointerup', 200, 400, 800)
+    expect(dockState.phase).toBe('settling')
+    expect(dockState.target).toBe('top')
+    act(() => dockStore.set({ phase: 'landing' }))
+    act(() => dockStore.set({ phase: 'idle', target: null }))
+    // The hold's landing was taken from it; the pill at the edge the user just moved it to opens nothing.
+    expect(onHold).not.toHaveBeenCalled()
+    expect(onTap).not.toHaveBeenCalled()
   })
 })

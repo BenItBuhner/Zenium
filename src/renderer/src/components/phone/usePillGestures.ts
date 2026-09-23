@@ -127,9 +127,17 @@ export function usePillGestures({ edge, onTap, onHold }: PillGestureOptions): Pi
   const holdAfterLanding = (): void => {
     if (!onHold) return
     const unsubscribe = dockStore.subscribe(() => {
-      if (dockStore.get().phase !== 'idle') return
+      const { phase } = dockStore.get()
+      // A finger that caught the pill on its way down owns it now, wherever it carries it: the
+      // hold is over, and the pill's landing – at this edge or the one the finger took it to –
+      // opens nothing.
+      if (phase === 'lifted') {
+        unsubscribe()
+        return
+      }
+      if (phase !== 'idle') return
       unsubscribe()
-      // A finger that caught the pill on its way down owns it now: no surface opens under it.
+      // A finger down on the landing pill that did not catch it still owns the moment.
       if (!touch.current) onHold()
     })
   }
