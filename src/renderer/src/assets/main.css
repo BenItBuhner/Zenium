@@ -5993,13 +5993,19 @@
     white-space: nowrap;
     pointer-events: none;
   }
+  /*
+   * Centred on the page's frame from an inline `left` at its middle: on `translate`, not
+   * `transform`, since the pop's keyframes own `transform` and would hold the toolbar off-centre
+   * by half its width for the animation's 180 ms (the harness's first run: 225 px right, then
+   * the jump). The two compose; the pop scales about the centred box.
+   */
   .zen-capture-toolbar {
     position: absolute;
     display: flex;
     align-items: center;
     gap: 4px;
     padding: 4px;
-    transform: translateX(-50%);
+    translate: -50% 0;
     cursor: default;
   }
   .zen-capture-toolbar-sep {
@@ -6050,15 +6056,16 @@
   /*
    * The toast (§9.33): the message card 8 px inside the page's bottom edge, centred, at the
    * notice width on a mouse (320: "Copied" across a 1600 px frame would be a bar, not a card),
-   * up from the edge on the toast's own rise; under reduced motion the 120 ms fade in place
-   * (§11.3), `!important` past the global rule at the foot.
+   * up from the edge on the toast's own rise (the rise's keyframes own `transform`, so the
+   * centring is on `translate`, as the toolbar's); under reduced motion the 120 ms fade in
+   * place (§11.3), `!important` past the global rule at the foot.
    */
   .zen-capture-toast {
     position: absolute;
     bottom: var(--zen-message-inset);
     left: 50%;
     width: min(320px, 100% - 16px);
-    transform: translateX(-50%);
+    translate: -50% 0;
     animation: zen-toast-in 160ms var(--zen-ease);
   }
   @media (prefers-reduced-motion: reduce) {
