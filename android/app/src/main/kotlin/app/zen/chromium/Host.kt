@@ -61,7 +61,13 @@ import java.util.concurrent.Executors
  * platform services the tab WebViews report into. One instance per activity.
  */
 class Host(override val activity: MainActivity, private val root: FrameLayout, private val fullscreenLayer: FrameLayout) : PageHost {
-    val storage = Storage(activity)
+    /**
+     * This host's documents, and the process's one profile lease with them: claimed here, before
+     * anything of this host reads a document, so a host this one replaces (the Activity
+     * relaunched or recreated while its core still runs) cannot publish a write over what this
+     * host's core boots from; closed in [destroy], after which this host writes nothing either.
+     */
+    val storage = Storage(activity, Storage.hostLease) { Log.w(STORAGE_TAG, it) }
     /** The file-backed handoffs to the chrome: the big boot documents and the big fetched bodies (`BootHandoff.kt`). */
     val handoff = BootHandoff(storage, File(activity.cacheDir, BootHandoff.SPILL_DIR))
     /** The process's request engine, built from the rule sets the core persists, before any tab exists. */
@@ -643,7 +649,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "storage.write" -> storage.write(args.str("name"), args.str("text"), args.bool("backup")) { failure ->
                 main.post { reply(if (failure == null) null else Rejection(failure.message ?: failure.javaClass.simpleName)) }
             }
-            "storage.remove" -> storage.remove(args.str("name")) { main.post { reply(null) } }
+            "storage.remove" -> storage.remove(args.str("name")) { failure ->
+                main.post { reply(if (failure == null) null else Rejection(failure.message ?: failure.javaClass.simpleName)) }
+            }
             // A large document in pieces, each landing on the storage thread before the next is sent.
             "storage.writeBegin" -> {
                 val name = args.str("name")
@@ -2127,7 +2135,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         updates.shutdown()
         security.shutdown()
         translate.shutdown()
-        tabs.destroyAll()
+        // The core in the chrome runs on for a moment after the WebView is destroyed (its replies
+        // still arrive here, on a destroyed view, a second later), and the Activity that replaces
+        // this one – a relaunch while this one finishes, a configuration change the manifest
+        // does not handle – boots its own core in the same process meanwhile. So the pages go
+        // without a word: a `destroyed` per tab would read, in that core, as a page closing
+        // itself, and it would close every tab and write the tab-less state over the profile the
+        // new core is booting from (#344 finding 5). `teardown` tells it first, and last: its
+        // views die with the host, and it writes nothing more.
+        chrome.hostEvent("teardown", null)
+        tabs.dropAll()
         orientationSensor.follow(false)
         // Not the request engine: it is the process's, and a custom tab may still be using it.
         // The chrome too: a WebView that outlives its activity keeps its document – and the
@@ -2135,11 +2152,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // itself if its renderer died.
         (chrome.parent as? ViewGroup)?.removeView(chrome)
         runCatching { chrome.destroy() }
+        // Whatever that core still asks to write is refused from here (`ZenStorage` logs it).
+        storage.close()
         io.shutdownNow()
     }
 
     companion object {
         private const val TAG = "ZenHost"
+        /** The storage's refusals: a write from a destroyed or superseded host (`Storage.close`, `Storage.Lease`). */
+        private const val STORAGE_TAG = "ZenStorage"
 
         /** The chrome's base light scrim (`--zen-scrim` before any space theme is applied). */
         private const val DEFAULT_SCRIM = "#49484a47"

@@ -235,3 +235,34 @@ export function cdpFontFamilyChanges(
   }
   return any ? changes : null
 }
+
+/** Whether the sizes an open page has (`has`) differ from the setting's (`wanted`): the change Blink restyles on its own. */
+export function fontSizesMove(has: PageFontSettings, wanted: PageFontSettings): boolean {
+  const a = chromiumFontPreferences(has)
+  const b = chromiumFontPreferences(wanted)
+  return (
+    a.defaultFontSize !== b.defaultFontSize ||
+    a.defaultMonospaceFontSize !== b.defaultMonospaceFontSize ||
+    a.minimumFontSize !== b.minimumFontSize
+  )
+}
+
+/**
+ * Told to an open document once a family changed and no size did (`views.ts` on the desktop in
+ * the preload's isolated world, `PageFonts.kt` on Android through `evaluateJavascript`). A
+ * generic-family change alone leaves the open document looking as it did: Blink's `kFontFamily`
+ * invalidation ends in `StyleEngine::FontsNeedUpdate`, which since the reduced font-loading
+ * invalidations only recomputes the elements whose style depends on font metrics (`ex`, `ch`,
+ * `font-size-adjust`) – right for an `@font-face` load, where the family list stays and only
+ * the face behind it changes, but the standard family's *name* is baked into every element's
+ * computed font as its style is resolved (`FontBuilder::StandardFontFamily`), so text a page
+ * leaves to the browser keeps the old face until something else recomputes its style. A size
+ * change does that (`kStyle` → `StyleEngine::InitialStyleChanged`, every element); a family
+ * alone needs asking. Registering an unused custom property asks exactly that
+ * (`StyleEngine::PropertyRegistryChanged` marks every element for recalc and drops the
+ * matched-properties cache) and renders nothing: no DOM mutation, no stylesheet, nothing a
+ * page can see short of registering the same unguessable name. The name is fresh each time,
+ * as a name registers once per document.
+ */
+export const FONT_RESTYLE_SCRIPT =
+  "(() => { try { CSS.registerProperty({ name: '--zenium-fonts-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), syntax: '*', inherits: false }) } catch {} })()"

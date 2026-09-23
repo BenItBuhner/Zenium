@@ -549,7 +549,8 @@ function FormDialog({
       description={form.description}
       under={under}
       onClose={close}
-      body={form.body}
+      // A picker's list of options is a list body here: the same dialog, the same footer form.
+      body={form.body && 'list'}
       initial={(root) => root.querySelector<HTMLElement>('input, textarea')}
     >
       {form.render(close)}
