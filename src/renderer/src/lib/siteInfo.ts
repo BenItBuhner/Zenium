@@ -1,5 +1,6 @@
 import type { Rect, Tab } from '@shared/types'
 import { pushBackSurface } from './back'
+import type { LevelId } from './siteInfoCopy'
 import { createStore } from './store'
 import {
   captureActiveTab,
@@ -17,10 +18,16 @@ export interface SiteInfoState {
   anchor: Rect | null
   /** Bumped by actions so the sheet reads the site again. */
   revision: number
+  /**
+   * The level the surface opens on (omnibox-38): the overview from the site icon and the
+   * shield; Permissions from the pill's in-use chip and its blocked-permission icons, which
+   * speak of one permission and lead straight to its row. Read once, as the surface mounts.
+   */
+  level: LevelId
 }
 
 export const siteInfoStore = createStore<SiteInfoState>(
-  { tabId: null, anchor: null, revision: 0 },
+  { tabId: null, anchor: null, revision: 0, level: 'overview' },
   'site-info'
 )
 
@@ -65,19 +72,22 @@ export function siteInfoIsOpen(): boolean {
  * Open the site information for `tab`, from the site icon at `anchor`. The live page is
  * captured first so the dimmed snapshot can stand in behind the sheet (hosts hide page views
  * under chrome overlays). `from` is the chip that opened it: when the sheet closes, the
- * keyboard goes back there rather than to the page (design language v2 §9.22).
+ * keyboard goes back there rather than to the page (design language v2 §9.22). `level` opens
+ * the surface on one of its levels rather than the overview (the in-use chip and the blocked-
+ * permission icons open it on Permissions, omnibox-38).
  */
 export async function openSiteInfo(
   tab: Tab,
   anchor: Rect | null = null,
-  from: HTMLElement | null = null
+  from: HTMLElement | null = null,
+  { level = 'overview' }: { level?: LevelId } = {}
 ): Promise<void> {
   if (siteInfoStore.get().tabId === tab.id) return
   await captureActiveTab(tab.id)
   run('focus.chrome', undefined)
   opener = from
   uiStore.set({ siteInfoOpen: true, drawerOpen: false })
-  siteInfoStore.set({ tabId: tab.id, anchor, revision: 0 })
+  siteInfoStore.set({ tabId: tab.id, anchor, revision: 0, level })
 }
 
 /** Dismiss with the spring (a tap outside, the back gesture, Escape). */
@@ -127,7 +137,7 @@ export const siteInfoBack = {
 function finishClose(): void {
   const from = opener
   opener = null
-  siteInfoStore.set({ tabId: null, anchor: null })
+  siteInfoStore.set({ tabId: null, anchor: null, level: 'overview' })
   if (uiStore.get().siteInfoOpen) uiStore.set({ siteInfoOpen: false })
   invalidateSnapshot()
   // Escape, a click outside, the back gesture: the keyboard returns to the chip that opened the

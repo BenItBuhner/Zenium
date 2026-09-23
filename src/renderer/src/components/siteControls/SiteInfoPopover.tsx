@@ -72,6 +72,7 @@ export function SiteInfoPopover({
   anchor,
   bar,
   closing,
+  level: initialLevel = 'overview',
   onDismiss,
   onClosed
 }: {
@@ -81,13 +82,18 @@ export function SiteInfoPopover({
   bar: Rect | null
   /** The store let go of the site (another surface took over, the tab closed): leave now. */
   closing: boolean
+  /**
+   * The level it opens on: the overview, or Permissions from the pill's in-use chip and its
+   * blocked-permission icons (omnibox-38), with the overview a Back away as from any level.
+   */
+  level?: LevelId
   /** Escape, a press outside, a window resize: the owner starts the exit. */
   onDismiss: () => void
   onClosed: () => void
 }): JSX.Element {
   const { info, loading } = useSiteSnapshot(tab)
   const [nav, setNav] = useState<{ level: LevelId; direction: LevelDirection }>({
-    level: 'overview',
+    level: initialLevel,
     direction: 'none'
   })
   const [busy, setBusy] = useState(false)
@@ -653,6 +659,7 @@ function PermissionsLevel({
             key={p.permission}
             label={permissionLabel(p.permission)}
             control
+            data-permission={p.permission}
             trailing={
               <Menulist<PermissionChoice>
                 value={p.decision}
@@ -746,16 +753,21 @@ function formatDate(ms: number): string {
 export function SiteInfoDesktopLayer({ state }: { state: UIState }): JSX.Element | null {
   const tabId = siteInfoStore.use((s) => s.tabId)
   const anchor = siteInfoStore.use((s) => s.anchor)
+  const level = siteInfoStore.use((s) => s.level)
   const tab = tabId ? state.tabs[tabId] : undefined
   // The popover's subject: the store's tab once it names one, followed while it changes, and kept
   // as last seen while the popover leaves – after the user dismissed it, the tab closed or the
-  // store moved on. Settled during render, so the exit never waits on an effect.
-  const [held, setHeld] = useState<{ tab: Tab; anchor: Rect | null; dismissed: boolean } | null>(
-    null
-  )
+  // store moved on. Settled during render, so the exit never waits on an effect. The level it
+  // opened on is held with them: the store's word is for the mount, and it is read there once.
+  const [held, setHeld] = useState<{
+    tab: Tab
+    anchor: Rect | null
+    level: LevelId
+    dismissed: boolean
+  } | null>(null)
   let shown = held
   if (tab && held === null) {
-    shown = { tab, anchor, dismissed: false }
+    shown = { tab, anchor, level, dismissed: false }
     setHeld(shown)
   } else if (tab && held && held.tab.id === tab.id && held.tab !== tab) {
     shown = { ...held, tab }
@@ -780,6 +792,7 @@ export function SiteInfoDesktopLayer({ state }: { state: UIState }): JSX.Element
       anchor={shown.anchor}
       bar={bar}
       closing={closing}
+      level={shown.level}
       onDismiss={onDismiss}
       onClosed={onClosed}
     />

@@ -105,6 +105,8 @@ function state(
     // Tooltips quote the chord from the active key table (the default Chrome set here).
     shortcuts: defaultShortcuts('linux', 'chrome'),
     blockedPopups: {},
+    // No site has a stored permission decision: no blocked-permission icon in the pill.
+    permissionRules: [],
     // The host runs the translation engine (every desktop build); no tab has left idle.
     translate: { available: true, tabs: {} },
     securityPrompts: [],
@@ -381,6 +383,124 @@ describe('desktop pill (NavRow)', () => {
     expect(one.getAttribute('aria-expanded')).toBe('true')
     act(() => uiStore.set({ blockedPopupsPanel: null }))
     expect(one.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  // omnibox-38: the pill's word on the page's live capture and on the permissions the user
+  // blocked on the site, both leading to the site information's Permissions level.
+  describe('the in-use chip and the blocked-permission icons (omnibox-38)', () => {
+    const using = (capture: Tab['capture']): Tab => tab(page.url, { readerable: true, capture })
+    /** The state with the site's stored decisions. */
+    const withRules = (t: Tab, rules: UIState['permissionRules']): UIState => ({
+      ...state(t),
+      permissionRules: rules
+    })
+    const deny = (
+      permission: string,
+      origin = 'https://example.com'
+    ): UIState['permissionRules'][0] => ({
+      origin,
+      permission,
+      decision: 'deny'
+    })
+
+    it('shows the in-use chip while the page captures, named and drawn for what it holds', () => {
+      const call = using({ camera: true, microphone: true, display: false })
+      const el = render(<NavRow state={state(call)} tab={call} compact={false} />)
+      const chip = el.querySelector<HTMLElement>('[data-capture-chip]')!
+      expectChip(chip, 'This page is using your camera and microphone')
+      expect(chip.getAttribute('data-capture-chip')).toBe('camera')
+      expect(chip.title).toBe('This page is using your camera and microphone')
+      expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(chip.getAttribute('aria-expanded')).toBe('false')
+      // The shield's chassis (§9.3's 28 px icon button in the window family), its glyph at the
+      // row's stroke.
+      expect(chip.classList.contains('zen-v2-blocked-chip')).toBe(true)
+      expect(chip.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
+      // In the tab order right after the site icon, before the tools.
+      const pill = el.querySelector<HTMLElement>('[role="group"]')!
+      expect(labels(focusable(pill).slice(1, 3))).toEqual([
+        'Site information',
+        'This page is using your camera and microphone'
+      ])
+
+      const mic = using({ camera: false, microphone: true, display: false })
+      act(() => root!.render(<NavRow state={state(mic)} tab={mic} compact={false} />))
+      expect(chip.getAttribute('data-capture-chip')).toBe('microphone')
+      expect(chip.getAttribute('aria-label')).toBe('This page is using your microphone')
+
+      const share = using({ camera: false, microphone: false, display: true })
+      act(() => root!.render(<NavRow state={state(share)} tab={share} compact={false} />))
+      expect(chip.getAttribute('data-capture-chip')).toBe('display')
+      expect(chip.getAttribute('aria-label')).toBe('This page is sharing your screen')
+
+      // Nothing captured: no chip.
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      expect(el.querySelector('[data-capture-chip]')).toBeNull()
+    })
+
+    it('shows a crossed-out icon at rest for each permission the user blocked on the site', () => {
+      const rules = [
+        deny('notifications'),
+        deny('camera'),
+        deny('geolocation', 'https://other.example'),
+        { origin: 'https://example.com', permission: 'microphone', decision: 'allow' as const }
+      ]
+      const el = render(<NavRow state={withRules(page, rules)} tab={page} compact={false} />)
+      const icons = Array.from(el.querySelectorAll<HTMLElement>('[data-blocked-permission]'))
+      // The pill's order, whatever the rules': camera, microphone, location, notifications.
+      expect(icons.map((i) => i.getAttribute('data-blocked-permission'))).toEqual([
+        'camera',
+        'notifications'
+      ])
+      expect(labels(icons)).toEqual(['Camera blocked', 'Notifications blocked'])
+      for (const icon of icons) {
+        expectChip(icon, icon.getAttribute('aria-label')!)
+        expect(icon.getAttribute('aria-haspopup')).toBe('dialog')
+        expect(icon.classList.contains('zen-v2-blocked-chip')).toBe(true)
+        expect(icon.querySelector('svg')?.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
+      }
+      // An allow is no icon, nor is a block on another site.
+      expect(el.querySelector('[data-blocked-permission="microphone"]')).toBeNull()
+      expect(el.querySelector('[data-blocked-permission="geolocation"]')).toBeNull()
+      // The block lifted: the icon goes.
+      act(() =>
+        root!.render(
+          <NavRow state={withRules(page, [deny('camera')])} tab={page} compact={false} />
+        )
+      )
+      expect(labels(Array.from(el.querySelectorAll('[data-blocked-permission]')))).toEqual([
+        'Camera blocked'
+      ])
+    })
+
+    it('opens the site information on its Permissions level from either chip, and hands the keyboard back to it', async () => {
+      const call = using({ camera: true, microphone: false, display: false })
+      const el = render(
+        <NavRow state={withRules(call, [deny('microphone')])} tab={call} compact={false} />
+      )
+      const inUse = el.querySelector<HTMLElement>('[data-capture-chip]')!
+      await openFromChip(inUse)
+      expect(siteInfoStore.get().tabId).toBe('t1')
+      expect(siteInfoStore.get().level).toBe('permissions')
+      expect(uiStore.get().urlbar.open).toBe(false)
+      expect(inUse.getAttribute('aria-expanded')).toBe('true')
+      await dismiss()
+      expect(document.activeElement).toBe(inUse)
+      expect(siteInfoStore.get().level).toBe('overview')
+
+      const blocked = el.querySelector<HTMLElement>('[data-blocked-permission="microphone"]')!
+      await openFromChip(blocked)
+      expect(siteInfoStore.get().level).toBe('permissions')
+      expect(blocked.getAttribute('aria-expanded')).toBe('true')
+      await dismiss()
+      expect(document.activeElement).toBe(blocked)
+
+      // The site icon still opens the overview.
+      const site = el.querySelector<HTMLElement>('[aria-label="Site information"]')!
+      await openFromChip(site)
+      expect(siteInfoStore.get().level).toBe('overview')
+      await dismiss()
+    })
   })
 
   it('marks Reader View pressed while the tab is in it', () => {
