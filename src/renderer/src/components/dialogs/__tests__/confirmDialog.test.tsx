@@ -541,6 +541,106 @@ describe('the way back (§9.5, §9.22)', () => {
   })
 })
 
+describe('the picker form (role, body, confirmDisabled, under; MW-32..35)', () => {
+  const picker = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[role="dialog"][data-confirm]:not([data-leaving])')
+
+  it('is a dialog at 400 with its body before the footer, the verb disabled and Enter from the container nothing while it waits', async () => {
+    const onConfirm = vi.fn()
+    render(
+      <Prompt
+        role="dialog"
+        action="Connect"
+        description={undefined}
+        body={<div data-body-list role="radiogroup" aria-label="Devices" />}
+        confirmDisabled
+        onConfirm={onConfirm}
+      />
+    )
+    await settle()
+    expect(dialog()).toBeNull()
+    const d = picker()!
+    expect(d.getAttribute('aria-modal')).toBe('true')
+    expect(d.style.width).toBe('400px')
+    const body = d.querySelector('.zen-confirm-dialog-body')!
+    expect(body.children).toHaveLength(2)
+    expect(body.firstElementChild!.hasAttribute('data-body-list')).toBe(true)
+    expect(body.lastElementChild!.classList.contains('zen-confirm-dialog-footer')).toBe(true)
+    const [cancel, verb] = buttons(d)
+    expect(verb.textContent).toBe('Connect')
+    expect(verb.disabled).toBe(true)
+    expect(verb.hasAttribute('data-primary')).toBe(true)
+    expect(cancel.disabled).toBe(false)
+    // The container holds the keyboard as on a question; the ring rule covers the dialog role.
+    expect(document.activeElement).toBe(d)
+    expect(bare).toContain(":root [role='dialog'][tabindex='-1']:focus-visible")
+    expect(press(d, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).not.toHaveBeenCalled()
+    click(verb)
+    expect(onConfirm).not.toHaveBeenCalled()
+    // Armed: Enter from the container is the verb.
+    render(
+      <Prompt
+        role="dialog"
+        action="Connect"
+        description={undefined}
+        body={<div data-body-list />}
+        confirmDisabled={false}
+        onConfirm={onConfirm}
+      />
+    )
+    await settle()
+    expect(verb.disabled).toBe(false)
+    expect(press(d, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+  })
+
+  it('a field the body marks data-autofocus takes the keyboard at the open in the container’s place, and its Enter is the verb', async () => {
+    const onConfirm = vi.fn()
+    render(
+      <Prompt
+        role="dialog"
+        action="Pair"
+        body={<input data-autofocus="" aria-label="PIN" />}
+        onConfirm={onConfirm}
+      />
+    )
+    await settle()
+    const d = picker()!
+    const field = d.querySelector<HTMLInputElement>('input')!
+    expect(document.activeElement).toBe(field)
+    expect(press(field, 'Enter').defaultPrevented).toBe(true)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+    // Tab from the field steps on as the browser does; Shift+Tab from it wraps to the verb.
+    expect(press(field, 'Tab').defaultPrevented).toBe(false)
+    expect(press(field, 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(buttons(d)[1])
+  })
+
+  it('under another dialog it is inert, and takes the keyboard back on its container once the upper one leaves with the focus fallen to body', async () => {
+    render(<Prompt role="dialog" body={<div />} under />)
+    await settle()
+    const d = picker()!
+    expect(d.hasAttribute('inert')).toBe(true)
+    // Held by nothing while inert: as the cover lifts, the container takes the keyboard.
+    act(() => (document.activeElement as HTMLElement | null)?.blur())
+    expect(document.activeElement).toBe(document.body)
+    render(<Prompt role="dialog" body={<div />} under={false} />)
+    await settle()
+    expect(d.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement).toBe(d)
+    // Where something else has the focus as the cover lifts, it keeps it.
+    const other = document.createElement('button')
+    document.body.appendChild(other)
+    render(<Prompt role="dialog" body={<div />} under />)
+    await settle()
+    act(() => other.focus())
+    render(<Prompt role="dialog" body={<div />} under={false} />)
+    await settle()
+    expect(document.activeElement).toBe(other)
+  })
+})
+
 describe('the chrome and the motion (main.css)', () => {
   const rule = (selector: string): string => {
     const at = bare.indexOf(`${selector} {`)

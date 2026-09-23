@@ -53,7 +53,8 @@ export interface ConfirmDialogProps {
    * The body's content between the title block and the footer where the prompt carries more
    * than the check row: a picker's list, a form's field (§9.13, §9.12). A prompt with a body
    * takes §9.20's 400 as one with the check row does – and the 320 notice, body or not, when it
-   * stands over another dialog in the slot.
+   * stands over another dialog in the slot. A field the body marks `data-autofocus` takes the
+   * keyboard as the prompt opens, in the container's place (§9.22: a form starts in its field).
    */
   body?: ReactNode
   /**
@@ -127,7 +128,8 @@ export interface ConfirmDialogProps {
  * (`components/devices`). They keep every rule above – the container focus, Tab's wrap, Enter as
  * the verb where the verb is the primary, Escape and the scrim as Cancel, the width by content
  * and by place – and add only what a choice needs: a verb that waits (`confirmDisabled`) until
- * there is one, and an `under` state for the lower of two (§9.24).
+ * there is one, a field that takes the keyboard at the open (`data-autofocus`), and an `under`
+ * state for the lower of two (§9.24).
  */
 export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
   return (
@@ -196,7 +198,10 @@ function ConfirmPanel({
       active instanceof HTMLElement && active !== document.body && !root.contains(active)
         ? active
         : null
-    root.focus({ preventScroll: true })
+    // A form's keyboard starts in its field (§9.22: the page's `prompt()`, the pairing PIN),
+    // where the body marks one; a question's on the container, no verb preselected.
+    const field = root.querySelector<HTMLElement>('[data-autofocus]')
+    ;(field ?? root).focus({ preventScroll: true })
     return () => {
       const wanted = latest.current.returnFocus
       const target =

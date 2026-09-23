@@ -303,15 +303,15 @@ function Host({ host }: { host: string }): JSX.Element {
  * The Bluetooth pairing prompt (`devicePairings`): "Pair with <device>" on the same chassis,
  * over the chooser when one is up (§9.20: the 320 notice whatever it carries, stacked) and
  * alone otherwise. Three forms, by what the OS wants: `confirm` is the title block and Cancel |
- * Pair; `providePin` adds a six-digit field (§9.12) with Pair at .4 until the digits are in –
- * Enter in the field is Pair, as the field is not a control that owns its Enter; `confirmPin`
+ * Pair; `providePin` adds a six-digit field (§9.12) that takes the keyboard at the open, with
+ * Pair at .4 until the digits are in – Enter in the field is Pair, as the field is not a
+ * control that owns its Enter; `confirmPin`
  * shows the device's PIN large, in `tabular-nums`, to compare. Pair is the primary and the
  * prompt's default: nothing here destroys anything. Cancel, Escape and the scrim send null.
  */
 export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.Element {
   const answered = useRef(false)
   const [pin, setPin] = useState('')
-  const field = useRef<HTMLInputElement>(null)
   const fieldId = useId()
   const needsPin = prompt.kind === 'providePin'
   const ready = !needsPin || isCompletePin(pin)
@@ -324,11 +324,6 @@ export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.
       response: confirmed ? { confirmed: true, ...(needsPin ? { pin } : {}) } : null
     })
   }
-
-  // The field takes the keyboard as the prompt opens: the digits are the whole interaction.
-  useEffect(() => {
-    if (needsPin) field.current?.focus({ preventScroll: true })
-  }, [needsPin])
 
   return (
     <ConfirmDialog
@@ -348,7 +343,6 @@ export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.
             {(aria) => (
               <V2Field
                 {...aria}
-                ref={field}
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
@@ -357,12 +351,17 @@ export function PairingDialog({ prompt }: { prompt: DevicePairingPrompt }): JSX.
                 placeholder="000000"
                 value={pin}
                 className="zen-device-pairing-input"
+                // The digits are the whole interaction: the field takes the keyboard at the open.
+                data-autofocus=""
                 onChange={(e) => setPin(sanitizePin(e.target.value))}
               />
             )}
           </V2FormField>
         ) : prompt.kind === 'confirmPin' ? (
-          <p className="zen-device-pairing-pin" aria-label={`PIN ${prompt.pin.split('').join(' ')}`}>
+          <p
+            className="zen-device-pairing-pin"
+            aria-label={`PIN ${prompt.pin.split('').join(' ')}`}
+          >
             {prompt.pin}
           </p>
         ) : undefined

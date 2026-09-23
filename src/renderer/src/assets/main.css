@@ -566,7 +566,8 @@
  * body's gutter as the check row does (their own 16 puts the text back on the title's edge),
  * clipped and scrolling past five rows – Chrome's chooser shows about as many – with §9.20's
  * ring room given back from the gutter so a focused row's ring is whole inside the scroller
- * (the `.zen-bm-popover-body` rule further down, the same modifier by context). A picked row
+ * (the `.zen-bm-popover-body` rule further down, the same modifier by context; at two classes
+ * it wins over the primitive's own `width: 100%` further down whatever the order). A picked row
  * takes the primitive's selected fill (§9.6, the `[role='radio'][aria-checked='true']` rule)
  * and its trailing check is `.zen-v2-row-trail`. Under the list the scanning line (§9.30's 16
  * spinner, the words at 69%, a row's own geometry and no hairline over it – §10's lines rule)
@@ -589,7 +590,7 @@
   flex-direction: column;
   overflow-y: auto;
 }
-.zen-device-chooser-list > .zen-v2-row {
+.zen-device-chooser-list > .zen-device-chooser-row {
   width: calc(100% - 2 * var(--v2-ring-room));
   margin-inline: var(--v2-ring-room);
   padding-inline: calc(16px - var(--v2-ring-room));
