@@ -15,6 +15,7 @@ import android.support.v4.media.MediaMetadataCompat
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -103,6 +104,17 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     private val probedVoices = LinkedHashMap<String, String>()
     /** The menu step's first session sample past `loading`, when the engine bound under its poll. */
     private var firstSpoken: JSONObject? = null
+    /**
+     * The article's tab: the seeded [TAB], until the no-engine relaunch loses it and the article
+     * is re-opened under the id the core gives the new tab ([noEngine]).
+     */
+    private var tabId = TAB
+    /**
+     * `-e loseSeededTab true`: the seeded tab closed through the core right before the no-engine
+     * relaunch, standing in for the race that loses it ([noEngine]), so the re-open is exercised
+     * on a run the race itself spares. Off by default: the nightly records the race as it falls.
+     */
+    private val loseSeededTab = InstrumentationRegistry.getArguments().getString("loseSeededTab") == "true"
 
     @Test
     fun record() {
@@ -220,7 +232,10 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
      * is started again with the host saying no ([ReadAloud.availabilityOverride] = false: what
      * the package manager answers on a build without an engine), and the menu and the selection
      * toolbar are read for the items that must not be there. Google's own process-text item
-     * ("Read aloud", sentence case) is the system's and stays whatever the app says.
+     * ("Read aloud", sentence case) is the system's and stays whatever the app says. The
+     * relaunch can lose the seeded article's tab (the wave-5 race, below): the loss is counted
+     * in a non-failing finding and the article re-opened, so the scene's checks are made either
+     * way.
      */
     private fun noEngine() {
         finding("\n3.2 no speech engine: the entries are absent")
@@ -230,7 +245,31 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             poll(5_000) { readAloud() == null }
         }
         ReadAloud.availabilityOverride = false
+        if (loseSeededTab) {
+            // The race stood in for: the seeded tab closed through the core before the relaunch,
+            // so the new core's boot read finds the tab-less session the race leaves behind and
+            // the re-open below runs on a boot the race itself spared.
+            coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(TAB)}}")
+            poll(5_000) { tab() == null }
+            finding("  stand-in for the race (-e loseSeededTab true): the seeded tab closed through the core before the relaunch; ${describeTab()}")
+        }
         launch()
+        // The relaunch can lose the seeded tab: `Host.destroy()` tells the outgoing chrome its
+        // views are destroyed, the outgoing core reads that as the page going away and closes
+        // `tab_demo`, and its persist of the tab-less session, on a storage thread the destroy
+        // does not stop, races the new core's boot read of state.json (the Android program's
+        // wave-5 fix; the nightly's phone-b run lost the tab this way and this scene's checks
+        // with it). Session restore is not this driver's claim, so the loss is a finding with a
+        // stable wording – countable across the nightly's runs once the FAIL is gone – and never
+        // a check; the article is re-opened in the new session so the scene goes on, the driver
+        // following the id the core gives the new tab ([tabId]).
+        val survived = poll(6_000) { tab() != null }
+        if (survived) {
+            finding("  seeded tab survived the relaunch: yes")
+        } else {
+            finding("  seeded tab survived the relaunch: no (the outgoing core closed it on destroy — the wave-5 race); re-opening the article")
+            tabId = jsonString(coreInvoke("tab.create", "{\"url\":${JSONObject.quote("$ORIGIN/")},\"active\":true}"))
+        }
         awaitLoaded("$ORIGIN/")
         poll(15_000) { tab()?.optBoolean("readerable") == true }
         val caps = coreState().getJSONObject("capabilities")
@@ -326,7 +365,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             firstSpoken = past
             finding("  NOTE the engine bound before the busy state could be measured (status ${past?.optString("status") ?: status()}, index ${past?.optInt("sentenceIndex", -1) ?: -1}); the design still busy-light.png stands for it")
         }
-        check("a real touch on Listen to This Page starts a session on the article's tab", came && session?.optString("tabId") == TAB)
+        check("a real touch on Listen to This Page starts a session on the article's tab", came && session?.optString("tabId") == tabId)
         check("the session's source is the page (from: top), not the reader document", session?.optString("source") == "page")
         val panel = poll(8_000) { panelUp() }
         finding("  the docked player: ${if (panel) "in the tree ('$PANEL_LABEL' region, ${panelBounds()})" else "NOT in the tree"}; chrome surface up=${chromeSurfaceUp()}")
@@ -879,10 +918,10 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         return ok
     }
 
-    private fun tab(): JSONObject? = coreState().getJSONObject("tabs").optJSONObject(TAB)
+    private fun tab(): JSONObject? = coreState().getJSONObject("tabs").optJSONObject(tabId)
 
     private fun describeTab(): String {
-        val tab = tab() ?: return "tab $TAB gone"
+        val tab = tab() ?: return "tab $tabId gone"
         return "url=${tab.optString("url")} title=\"${tab.optString("title").take(50)}…\" readerable=${tab.optBoolean("readerable")}"
     }
 
@@ -915,7 +954,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     /** The page's height in CSS px as the frame gives it (the docked panel shortens it, §9.32). */
     private fun pageHeight(): Int {
         var h = 0
-        instrumentation.runOnMainSync { h = host.tabs.get(TAB)?.height ?: 0 }
+        instrumentation.runOnMainSync { h = host.tabs.get(tabId)?.height ?: 0 }
         return h
     }
 
@@ -1148,7 +1187,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         var result = ""
         val latch = CountDownLatch(1)
         instrumentation.runOnMainSync {
-            val view = host.tabs.get(TAB)
+            val view = host.tabs.get(tabId)
             if (view == null) latch.countDown()
             else view.evaluateJavascript(code) { value ->
                 result = value ?: ""
@@ -1193,7 +1232,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         var origin: IntArray? = null
         var scale = 0f
         instrumentation.runOnMainSync {
-            val view = host.tabs.get(TAB) ?: return@runOnMainSync
+            val view = host.tabs.get(tabId) ?: return@runOnMainSync
             origin = IntArray(2).also { view.getLocationOnScreen(it) }
             @Suppress("DEPRECATION")
             scale = view.scale
