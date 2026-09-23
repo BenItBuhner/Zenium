@@ -10447,9 +10447,12 @@
 /*
  * Sub-headings in a pane (§9.27): the 15/600 heading's box ends 8 above the first row's box
  * (14 to its text through the row's 6 padding, Zen's Vertical Tabs group); one that carries a
- * description keeps the phone's 4 to the description and the description's 8 to the row.
+ * description keeps the phone's 4 to the description and the description's 8 to the row. A
+ * desktop dialog's body is the same desktop surface (the lead's #314 ruling: the 8 below, not
+ * the primitive's phone 4), so its headings take the one rule – the phone sheet's keep the 4.
  */
-.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
+.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)),
+.zen-settings-dialog-body .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
   margin-bottom: 8px;
 }
 /*
