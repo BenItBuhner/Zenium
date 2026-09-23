@@ -146,6 +146,18 @@
       "estimate": 3.5
     },
     {
+      "id": "inactive-tabs",
+      "class": "InactiveTabsDemo",
+      "shard": "phone-a",
+      "mirrors": "android-inactive-tabs-demo.yml",
+      "dir": "inactive-tabs-demo",
+      "env": {
+        "DEMO_THEME": "light"
+      },
+      "estimate": 6,
+      "note": "The Inactive tabs surface (TAB-20 / SET-34) on the overview demo's profile: the archive pass through the drivers' clock, the sheet's rows, restore, Close all's prompt, the Settings group, in both colour schemes (eleven scenes). On phone-a beside the Settings tab demo, whose environment it takes; phone-a and phone-d stood level at 55 minutes."
+    },
+    {
       "id": "pdf-viewer",
       "class": "PdfViewerDemo",
       "shard": "phone-a",

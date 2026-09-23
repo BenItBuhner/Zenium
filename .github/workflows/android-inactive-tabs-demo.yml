@@ -1,0 +1,62 @@
+name: Android Inactive tabs demo
+
+# Records the Inactive tabs surface (TAB-20 / SET-34: Chrome's archived tabs) on a
+# hardware-accelerated Android emulator: the switcher's segment row without its entry at zero,
+# the archive pass at +22 days through the drivers' clock filing five idle tabs and the entry
+# with its badge, the Inactive tabs sheet under a finger with its rows and its Restore all |
+# Close all footer, one row's Close to Recently closed, a row restoring its tab to the start of
+# the grid with the overview leaving onto it (the motion frame by frame), the dark chrome's
+# entry and list, Close all's prompt stacked over the list and its Cancel, the list emptying to
+# its sentence row by row, Settings › Tab Management's Inactive tabs group beside Sleeping tabs
+# in both schemes, Move to inactive › Never bringing the archived tabs back and putting the
+# auto-close row at .4, and Close all confirmed emptying the archive for good.
+# Dispatch-only, like the other demos: it takes about six minutes and says nothing about a change
+# being correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
+# this file only picks the driver and the demo it runs.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W5-5's verification run on the #384 branch; off before the PR is marked ready).
+  push:
+    branches:
+      - cursor/android-inactive-tabs-8e20
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-inactive-tabs-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Inactive tabs demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.InactiveTabsDemo
+        DEMO_DIR=inactive-tabs-demo
+        DEMO_OUT=artifacts/android-inactive-tabs-demo
+        DEMO_VIDEO=android-inactive-tabs-demo.mp4
+        DEMO_THEME=light
+      artifact-name: android-inactive-tabs-demo
+      artifact-path: artifacts/android-inactive-tabs-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Inactive tabs demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.InactiveTabsDemo
+        DEMO_DIR=inactive-tabs-demo
+        DEMO_OUT=artifacts/android-inactive-tabs-demo
+        DEMO_VIDEO=android-inactive-tabs-demo.mp4
+        DEMO_THEME=light
+      artifact-name: android-inactive-tabs-demo-second-boot
+      artifact-path: artifacts/android-inactive-tabs-demo/
