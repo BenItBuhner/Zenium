@@ -16,7 +16,9 @@ import type { SiteInfoSnapshot } from '@shared/siteInfo'
  * the confirmation came from, the popover staying up, with the focus on the footer verb that
  * opened it, as Cancel's button does – the control recorded as the level was pushed, found again
  * by name in the re-mounted footer, the footer's first danger verb only as the fallback (#413
- * A2); the deed is in the danger ink (`data-danger`), no primary. The primitive's own contract is
+ * A2); each landing is ONE move – `Level`'s `focus` names the container on the way in and the
+ * opener on the way back, nothing queued behind a first-control focus (#413 ruling 5) – and the
+ * deed is in the danger ink (`data-danger`), no primary. The primitive's own contract is
  * dialogs/__tests__/confirmDialog.test.tsx's.
  */
 
@@ -301,6 +303,65 @@ describe('the site-information popover’s confirmations', () => {
     await settle()
     expect(level('clear-cookies')).toBeNull()
     expect(popover()!.dataset.level).toBe('cookies')
+  })
+
+  it('each transition lands the keyboard in ONE move (#413 ruling 5): exactly one focusin as the confirmation comes, on its container; exactly one as it is cancelled, on the verb that opened it', async () => {
+    await open()
+    const landings: EventTarget[] = []
+    const onFocusIn = (e: FocusEvent): void => {
+      if (e.target) landings.push(e.target)
+    }
+    const opener = buttonNamed('Clear site data')
+    act(() => opener.focus())
+    document.addEventListener('focusin', onFocusIn)
+    try {
+      clickOnly(opener)
+      await settle()
+      const d = level('clear-data')!
+      expect(document.activeElement).toBe(d)
+      expect(landings).toEqual([d])
+
+      landings.length = 0
+      pressEscape()
+      await settle()
+      expect(popover()!.dataset.level).toBe('overview')
+      const back = buttonNamed('Clear site data')
+      expect(document.activeElement).toBe(back)
+      expect(landings).toEqual([back])
+
+      // Into the cookies level (a list level: its first control, the back button, one landing),
+      // its confirmation, and Cancel's button back – one move each.
+      landings.length = 0
+      const cookiesRow = [
+        ...popover()!.querySelectorAll<HTMLElement>('button, [role="button"]')
+      ].find((el) => el.textContent?.startsWith('Cookies and site data'))!
+      clickOnly(cookiesRow)
+      await settle()
+      expect(popover()!.dataset.level).toBe('cookies')
+      expect(landings).toHaveLength(1)
+      expect(landings[0]).toBe(document.activeElement)
+
+      const cookiesOpener = buttonNamed('Clear cookies')
+      act(() => cookiesOpener.focus())
+      landings.length = 0
+      clickOnly(cookiesOpener)
+      await settle()
+      const c = level('clear-cookies')!
+      expect(document.activeElement).toBe(c)
+      expect(landings).toEqual([c])
+
+      const cancel = buttonNamed('Cancel')
+      act(() => cancel.focus())
+      landings.length = 0
+      clickOnly(cancel)
+      await settle()
+      expect(popover()!.dataset.level).toBe('cookies')
+      const cookiesBack = buttonNamed('Clear cookies')
+      expect(document.activeElement).toBe(cookiesBack)
+      expect(landings).toEqual([cookiesBack])
+    } finally {
+      document.removeEventListener('focusin', onFocusIn)
+    }
   })
 
   it('the return is to the control that opened the level – recorded as it was pushed and found again by name in the re-mounted footer, not the footer’s first danger verb; only an open that recorded nothing falls to that heuristic', async () => {

@@ -316,23 +316,43 @@ function unanchoredPlacement(
 export type LevelDirection = 'forward' | 'back' | 'none'
 
 /**
+ * Where the keyboard lands as a level arrives (§9.22, §10.4), the dialog's vocabulary
+ * (`DesktopDialog`'s `initialFocus`): its first control – the list level's rule, the back button
+ * – the level's own container (`tabIndex -1`, no ring: a level with nothing to arm), or an
+ * element of the caller's choosing found in the arriving level – a confirmation's held
+ * container on the way in, the control that opened it on the way back – falling back to the
+ * first control, then the container, when the function finds nothing.
+ */
+export type LevelFocus = 'first' | 'container' | ((root: HTMLElement) => HTMLElement | null)
+
+/**
  * A level of a popover with detail levels (v1 §7 motion, the site-information target): keyed by
  * the level it shows, it pushes in on `SPRING_GENTLE` – 24 px from the end edge when going
  * deeper, from the start edge when coming back – and fades in with it; `none` (the first level
- * on open) lands at once, as does reduced motion. Keyboard reach moves to the level's first
- * control (its back button) so the arrow of attention follows the push.
+ * on open) lands at once, as does reduced motion, and moves no focus (the popover's own open
+ * placed it). Keyboard reach moves once, to where `focus` says (§9.22): the level's first
+ * control (its back button) by default, so the arrow of attention follows the push; one move
+ * and no more – a level whose container or opener is the target is focused there directly,
+ * never through its first control first, so assistive technology hears one landing per
+ * transition. `focus` is read as the level arrives.
  */
 export function Level({
   direction,
+  focus = 'first',
   className,
   children
 }: {
   direction: LevelDirection
+  focus?: LevelFocus
   className?: string
   children: ReactNode
 }): JSX.Element {
   const [t, setT] = useState(direction === 'none' ? 1 : 0)
   const root = useRef<HTMLDivElement>(null)
+  const latestFocus = useRef(focus)
+  useLayoutEffect(() => {
+    latestFocus.current = focus
+  })
   useEffect(() => {
     if (direction === 'none') return
     const spring = new SpringAnimation(
@@ -342,7 +362,7 @@ export function Level({
     )
     spring.start(0, 0, 100)
     const el = root.current
-    if (el) (focusableIn(el)[0] ?? el).focus({ preventScroll: true })
+    if (el) levelFocusTarget(el, latestFocus.current).focus({ preventScroll: true })
     return () => {
       spring.stop()
     }
@@ -358,6 +378,18 @@ export function Level({
       {children}
     </div>
   )
+}
+
+/**
+ * The element a level's `focus` names in `root`: its first control, its container, or the
+ * caller's – falling back to the first control, then the container, when the caller's finds
+ * nothing (the opener it named has left the popover, say).
+ */
+function levelFocusTarget(root: HTMLElement, focus: LevelFocus): HTMLElement {
+  if (focus === 'container') return root
+  const first = focusableIn(root)[0] ?? root
+  if (focus === 'first') return first
+  return focus(root) ?? first
 }
 
 /**
