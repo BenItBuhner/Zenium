@@ -761,7 +761,7 @@ function anyPrivateTab(state: UIState | null): boolean {
 function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAVE_MS): void {
   const top = topBackSurface()
   if (!top || !SHEET_SURFACE.test(top.name) || performance.now() > deadline) {
-    then()
+    whenSheetLanded(then, deadline)
     return
   }
   dispatchBackEvent('commit')
@@ -773,6 +773,27 @@ function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAV
     closeSheets(then, deadline)
   }
   setTimeout(gone, 50)
+}
+
+/**
+ * Runs `then` once the frame's sheet chassis has landed, or at the deadline: `FrameDialogHost`
+ * on a phone carries `data-sheet-up` while anything of a dialog's sheet shows, and keeps a
+ * panel its owner took out on the way down (`data-leaving`) until the spring rests, when the
+ * chrome stops being inert with it (the spring's last frames may sit at 0 before it rests, so
+ * the kept panel is what is waited for). A dialog the reset closed by other means than a back
+ * – the new tab page's shortcut sheet, which goes with its tab (`closeNewTabPage`) – is still
+ * on its way down when the next state's steps would press the page under it.
+ */
+function whenSheetLanded(then: () => void, deadline: number): void {
+  const host = document.querySelector('.zen-frame-dialogs')
+  const up =
+    host !== null &&
+    (host.hasAttribute('data-sheet-up') || host.querySelector('[data-leaving]') !== null)
+  if (!up || performance.now() > deadline) {
+    then()
+    return
+  }
+  setTimeout(() => whenSheetLanded(then, deadline), 50)
 }
 
 /**
@@ -2568,11 +2589,70 @@ function applyNewTabPose(
       return
     }
     if (!target.private) previewNewTab = { tabId, activeId }
+    // At the pose: the steps (a tile's hold, its menu's Edit), then the held drag, if any.
+    const then = target.then ?? []
+    const drag = target.drag
+    const afterPose = (): void => {
+      const afterSteps = (): void => (drag ? dragTile(drag, finish) : finish())
+      if (then.length) setTimeout(() => steps(then, afterSteps), STEP_SETTLE_MS)
+      else afterSteps()
+    }
     whenMorph(
       () => fakeboxMorphStore.get().tabId === tabId,
-      () => afterFrames(2, () => takeNewTabPose(target.pose, finish))
+      () => afterFrames(2, () => takeNewTabPose(target.pose, afterPose))
     )
   })
+}
+
+/** How many moves the held finger's travel is dealt out in, and how long each takes. */
+const DRAG_MOVES = 8
+const DRAG_MOVE_MS = 40
+
+/**
+ * Hold a new tab page tile and carry it (`drag=<tile>:<dx>,<dy>`, NTP-06): the pointer's
+ * events as Chromium sends a touch's – down on the tile's button, the long-press time (its
+ * timer lifts the tile, `useLongPress` → `useTileReorder`), then the finger's moves in even
+ * steps to the destination, where it stays down. The grid is left mid-reorder: the tile in the
+ * hand over its neighbours, the draft order drawn and the others glided. `finish` runs once the
+ * moves are dealt out and the glide has had its frames.
+ */
+function dragTile(drag: { text: string; dx: number; dy: number }, finish: () => void): void {
+  const button = pressable(drag.text)
+  if (!button) {
+    finish()
+    return
+  }
+  const box = button.getBoundingClientRect()
+  const x0 = box.left + box.width / 2
+  const y0 = box.top + box.height / 2
+  const init: PointerEventInit = {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    pointerType: 'touch',
+    isPrimary: true,
+    clientX: x0,
+    clientY: y0,
+    button: 0,
+    buttons: 1
+  }
+  button.dispatchEvent(new PointerEvent('pointerdown', init))
+  let move = 0
+  const step = (): void => {
+    move += 1
+    const k = move / DRAG_MOVES
+    button.dispatchEvent(
+      new PointerEvent('pointermove', {
+        ...init,
+        button: -1,
+        clientX: x0 + drag.dx * k,
+        clientY: y0 + drag.dy * k
+      })
+    )
+    if (move < DRAG_MOVES) setTimeout(step, DRAG_MOVE_MS)
+    else afterFrames(3, finish)
+  }
+  setTimeout(step, PRESS_HOLD_MS)
 }
 
 /**

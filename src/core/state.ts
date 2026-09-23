@@ -75,6 +75,7 @@ import {
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
+import { sanitizeHomepage } from '../shared/homepage'
 import {
   allSearchEngines,
   defaultSearchEngineOf,
@@ -587,6 +588,7 @@ export class BrowserState {
     this.settings.agents = sanitizeAgentSettings(data.settings?.agents)
     this.settings.updates = sanitizeUpdateSettings(data.settings?.updates)
     this.settings.phoneBar = sanitizePhoneBar(data.settings?.phoneBar)
+    this.settings.homepage = sanitizeHomepage(data.settings?.homepage)
     this.settings.passwords = sanitizePasswordSettings(data.settings?.passwords)
     this.settings.autofill = sanitizeAutofillSettings(data.settings?.autofill)
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)

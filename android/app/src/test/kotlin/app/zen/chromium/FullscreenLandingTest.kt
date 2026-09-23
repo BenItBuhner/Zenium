@@ -3,6 +3,7 @@ package app.zen.chromium
 import app.zen.chromium.FullscreenLanding.Window
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -138,5 +139,22 @@ class FullscreenLandingTest {
         landing.onExit(1_000)
         assertFalse(landing.settling)
         assertFalse(landing.settle(portraitNoNavBar, 1_000))
+    }
+
+    @Test
+    fun theLandingsOrientationIsKnownFromTheEntryUntilTheExitHasSettled() {
+        // The tab host holds the frames laid out for the other orientation to it (BH-32).
+        val landing = FullscreenLanding()
+        assertNull(landing.landsOnPortrait())
+        landing.onEnter(portrait)
+        assertEquals(true, landing.landsOnPortrait())
+        landing.onExit(1_000)
+        assertTrue(landing.settle(landscapeBarsHidden, 1_000))
+        assertEquals(true, landing.landsOnPortrait())
+        assertFalse(landing.settle(portrait, 1_500))
+        assertNull(landing.landsOnPortrait())
+        // A fullscreen begun on a landscape screen lands on one.
+        landing.onEnter(landscape)
+        assertEquals(false, landing.landsOnPortrait())
     }
 }

@@ -1900,11 +1900,16 @@ export class Menus {
     )
   }
 
-  /** Long-press on a new tab page tile: open it elsewhere, pin it, or take it off the page. */
-  showTopSiteContextMenu(url: string, title: string, win: ZenWindow): void {
+  /**
+   * Long-press on a new tab page tile: open it elsewhere, pin it, edit it (a shortcut's name and
+   * address, NTP-06: the chrome's edit sheet over the page in `tabId`), move it a slot along the
+   * grid, or take it off the page.
+   */
+  showTopSiteContextMenu(url: string, title: string, tabId: string | null, win: ZenWindow): void {
     if (!isNavigableUrl(url)) return
     const { tabs, state, newTab } = this.browser
-    const pinned = state.newTabDevice.shortcuts.some((s) => s.url === url)
+    const shortcut = state.newTabDevice.shortcuts.find((s) => s.url === url)
+    const pageTab = tabId ?? tabs.activeTabFor(win)?.id ?? null
     this.popup(
       [
         {
@@ -1916,15 +1921,49 @@ export class Menus {
           click: () => this.browser.platform.clipboard.writeText(url)
         },
         { type: 'separator' },
+        ...(shortcut && pageTab
+          ? [
+              {
+                label: 'Edit Shortcut…',
+                click: () => newTab.openShortcutDialog(pageTab, shortcut.id, win)
+              }
+            ]
+          : []),
+        ...(shortcut ? this.moveShortcutItems(shortcut.id) : []),
         {
-          label: pinned ? 'Unpin Shortcut' : 'Pin Shortcut',
-          click: () => (pinned ? newTab.unpin(url) : newTab.pin(url, title))
+          label: shortcut ? 'Unpin Shortcut' : 'Pin Shortcut',
+          click: () => (shortcut ? newTab.unpin(url) : newTab.pin(url, title))
         },
         { label: 'Remove', click: () => newTab.remove(url) }
       ],
       win,
       'topsite'
     )
+  }
+
+  /**
+   * Move Left / Move Right for a pinned tile (NTP-06; the #348 design gate's addendum): the
+   * hold-and-drag's accessible path – a screen reader's, a keyboard's – one slot at a time in
+   * the grid's order, the space menu's two rows, greyed at the ends (§9.17: disabled, not
+   * hidden), writing the same `newtab.reorderShortcuts` the drop does.
+   */
+  private moveShortcutItems(id: string): MenuItemTemplate[] {
+    const { state, newTab } = this.browser
+    const ids = state.newTabDevice.shortcuts.map((s) => s.id)
+    const idx = ids.indexOf(id)
+    const moveTo = (to: number): void => {
+      const next = ids.filter((other) => other !== id)
+      next.splice(to, 0, id)
+      newTab.reorderShortcuts(next)
+    }
+    return [
+      { label: 'Move Left', enabled: idx > 0, click: () => moveTo(idx - 1) },
+      {
+        label: 'Move Right',
+        enabled: idx >= 0 && idx < ids.length - 1,
+        click: () => moveTo(idx + 1)
+      }
+    ]
   }
 
   // ---------------------------------------------------------------------------
@@ -3046,9 +3085,9 @@ export class Menus {
     if (phone) {
       this.popup(
         [
-          // Chrome's icon row heads the phone's menu: Forward, the star, Download page, Page
-          // info and Reload / Stop, which the chrome draws as a row of icon buttons from each
-          // item's glyph.
+          // Chrome's icon row heads the phone's menu: Forward, Home while a homepage is set,
+          // the star, Download page, Page info and Reload / Stop, which the chrome draws as a
+          // row of icon buttons from each item's glyph.
           ...this.phoneIconRow(active, win),
           separator,
           newTab,
@@ -3264,6 +3303,22 @@ export class Menus {
         enabled: Boolean(active?.canGoForward),
         click: () => active && tabs.goForward(active.id)
       },
+      // Home (TB-15 / NTP-30, v2 §9.13): a button wherever it lives – the bar's item when the
+      // user adds it, this glyph otherwise, never a text row among New Tab and New Private Tab
+      // (a row reads as a destination). The tab goes to the homepage; with the homepage off
+      // there is no Home anywhere, as Chrome's button leaves the toolbar. Not repeating it here
+      // while the bar carries it is §9.13's rule for the whole row, a follow-up once the menu
+      // model can see the bar as the chrome draws it.
+      ...(this.browser.newTab.homepageUrl() !== null
+        ? [
+            {
+              label: 'Home',
+              glyph: 'home',
+              enabled: Boolean(active),
+              click: () => active && this.browser.goHome(active.id, win)
+            } satisfies MenuItemTemplate
+          ]
+        : []),
       // The star (TB-16), with Chrome's flow as the phone's Bookmarks submenu ran it before: a
       // page that is not bookmarked is saved and toasted with Edit, a bookmarked one opens its
       // editor. `checked` is the fill; the label says which of the two a press does (§9.13's

@@ -12,6 +12,13 @@
 export const TOAST_CARD = {
   /** From the frame's edges, on every side (`--zen-message-inset`). */
   insetPx: 8,
+  /**
+   * The most a card spans (`--zen-message-max-width`): where the frame is wider – a phone
+   * turned landscape, rotate-to-fullscreen's common case – the card caps here and centres, as
+   * Material's snackbar and Chrome's message cards do (§9.33, amended at PR #366's gate);
+   * banners take the same cap.
+   */
+  maxWidthPx: 560,
   /** The row's height on a phone (`--v2-row`): a toast with nothing but its text is one row tall. */
   rowPx: 44,
   /** The card radius (`--v2-radius-card`). */

@@ -1945,11 +1945,13 @@ describe('the section model', () => {
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {
     // Without a layout every row shows; the phone shell's list has no Bookmarks group (no bar).
+    // Home (the phone's homepage, SET-36) follows the URL bar group: the chrome's controls.
     expect(section('look').groups.map((g) => g.id)).toEqual([
       'appearance',
       'app-icon',
       'bookmarks',
       'url-bar',
+      'home',
       'pages',
       'sites',
       'site-exceptions',
@@ -1960,6 +1962,7 @@ describe('the section model', () => {
       'appearance',
       'app-icon',
       'url-bar',
+      'home',
       'pages',
       'sites',
       'site-exceptions',
@@ -4698,5 +4701,141 @@ describe('ID-08’s Sync category on a phone', () => {
       const labels = allRows(model.groups).map((r) => r.label)
       expect(labels.filter((l) => l.startsWith('Turn off'))).toEqual(['Turn off sync'])
     }
+  })
+})
+
+describe('SET-36 / NTP-30: the Home group of Look and Feel on a phone', () => {
+  const homeGroup = (s: UIState = state()): RowGroup => {
+    const group = section('look', s).groups.find((g) => g.id === 'home')
+    if (!group) throw new Error('no Home group')
+    return group
+  }
+  const withHomepage = (homepage: Settings['homepage'], patch: Partial<UIState> = {}): UIState =>
+    state(patch, { homepage })
+
+  it('is the phone’s, headed Home, with the Homepage value row and the §9.13 picker: Off, New tab page, Specific page', () => {
+    const group = homeGroup()
+    expect(group.heading).toBe('Home')
+    expect(group.layouts).toEqual(['phone'])
+    expect(group.rows.map((r) => r.id)).toEqual(['homepage'])
+    const homepage = group.rows[0]
+    if (homepage.kind !== 'value') throw new Error('not a value row')
+    expect(homepage.label).toBe('Homepage')
+    expect(currentOptionLabel(homepage)).toBe('New tab page')
+    // Home is a button wherever it lives (§9.13): the copy names one thing.
+    expect(homepage.sheetDescription).toBe('Where the Home button goes.')
+    expect(homepage.options.map((o) => [o.label, o.description ?? ''])).toEqual([
+      ['Off', 'No Home button.'],
+      ['New tab page', ''],
+      ['Specific page', 'Enter an address below, or use the current page.']
+    ])
+    // The search finds it by the words a user has for it.
+    expect(searchRows(phoneSections(), 'home button').map((h) => h.row.id)).toContain('homepage')
+  })
+
+  it('a choice patches the mode and keeps the address; Specific page reveals the Address row and Use current page', () => {
+    const c = context(withHomepage({ mode: 'newtab', url: 'https://kept.example/' }))
+    const look = buildSection(PAGE.sections[0], c.ctx)
+    const homepage = row(look, 'homepage')
+    if (homepage.kind !== 'value') throw new Error('not a value row')
+    homepage.onChange('url')
+    expect(c.patches).toEqual([{ homepage: { mode: 'url', url: 'https://kept.example/' } }])
+
+    const group = homeGroup(withHomepage({ mode: 'url', url: '' }))
+    expect(group.rows.map((r) => r.id)).toEqual([
+      'homepage',
+      'homepage-address',
+      'homepage-use-current'
+    ])
+    const address = group.rows[1]
+    if (address.kind !== 'field') throw new Error('not a field row')
+    // A §9.12 URL field: the address keyboard, the host as its hint, "Not set" until one is.
+    expect(address).toMatchObject({
+      label: 'Address',
+      input: 'url',
+      value: '',
+      display: 'Not set',
+      placeholder: 'example.com',
+      layouts: ['phone']
+    })
+  })
+
+  it('the Address sheet refuses what is not a web page and keeps the sheet up; a host becomes its https page', () => {
+    const c = context(withHomepage({ mode: 'url', url: '' }))
+    const look = buildSection(PAGE.sections[0], c.ctx)
+    const address = row(look, 'homepage-address')
+    if (address.kind !== 'field') throw new Error('not a field row')
+    expect(address.onCommit('zen://settings')).toBe('Enter a web address, like example.com')
+    expect(address.onCommit('   ')).toBe('Enter a web address, like example.com')
+    expect(c.patches).toEqual([])
+    expect(address.onCommit('news.ycombinator.com')).toBeUndefined()
+    expect(c.patches).toEqual([{ homepage: { mode: 'url', url: 'https://news.ycombinator.com/' } }])
+  })
+
+  it('shows the page set: the row reads Specific page, the option and the field carry the address without its scheme', () => {
+    const group = homeGroup(withHomepage({ mode: 'url', url: 'https://news.ycombinator.com/' }))
+    const homepage = group.rows[0]
+    if (homepage.kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(homepage)).toBe('Specific page')
+    expect(homepage.options[2]).toMatchObject({
+      label: 'Specific page',
+      description: 'news.ycombinator.com'
+    })
+    const address = group.rows[1]
+    if (address.kind !== 'field') throw new Error('not a field row')
+    expect(address.value).toBe('news.ycombinator.com')
+    expect(address.display).toBe('news.ycombinator.com')
+  })
+
+  it('Use current page names the page Settings was opened from and writes it; without one it is disabled and says what to do', () => {
+    const c = context(withHomepage({ mode: 'url', url: '' }))
+    const look = buildSection(PAGE.sections[0], c.ctx)
+    const current = row(look, 'homepage-use-current')
+    if (current.kind !== 'action') throw new Error('not an action row')
+    // The Settings tab's opener is the site (`SETTINGS.openerTabId`).
+    expect(current.disabled).toBe(false)
+    expect(current.description).toBe('news.example')
+    current.onPress?.()
+    expect(c.patches).toEqual([{ homepage: { mode: 'url', url: 'https://news.example/' } }])
+
+    // Settings opened from nowhere (the menu of a blank tab): nothing to use.
+    const orphan = tab('settings', 'zen://settings', { title: 'Settings' })
+    const nowhere = withHomepage(
+      { mode: 'url', url: '' },
+      { tabs: { site: SITE, settings: orphan } }
+    )
+    const idle = row(section('look', nowhere), 'homepage-use-current')
+    if (idle.kind !== 'action') throw new Error('not an action row')
+    expect(idle.disabled).toBe(true)
+    expect(idle.description).toBe('Open a page, then come back to Settings from it.')
+
+    // An opener that is an internal page is no page of the user's either…
+    const internal = withHomepage(
+      { mode: 'url', url: '' },
+      { tabs: { site: tab('site', 'zen://history'), settings: SETTINGS } }
+    )
+    const fromInternal = row(section('look', internal), 'homepage-use-current')
+    if (fromInternal.kind !== 'action') throw new Error('not an action row')
+    expect(fromInternal.disabled).toBe(true)
+
+    // …and a private window's page is never offered as the homepage.
+    const priv = withHomepage(
+      { mode: 'url', url: '' },
+      { window: { ...state().window, kind: 'private' } }
+    )
+    const fromPrivate = row(section('look', priv), 'homepage-use-current')
+    if (fromPrivate.kind !== 'action') throw new Error('not an action row')
+    expect(fromPrivate.disabled).toBe(true)
+  })
+
+  it('Off and New tab page show the value row alone', () => {
+    expect(homeGroup(withHomepage({ mode: 'off', url: '' })).rows.map((r) => r.id)).toEqual([
+      'homepage'
+    ])
+    expect(
+      homeGroup(withHomepage({ mode: 'newtab', url: 'https://kept.example/' })).rows.map(
+        (r) => r.id
+      )
+    ).toEqual(['homepage'])
   })
 })

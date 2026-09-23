@@ -566,11 +566,17 @@ class TabWebView(
     /**
      * The document-start script: the page-controls rules this tab lays pages out by (viewport
      * rewriting for zoom, desktop layout and force-zoom happens in the page, from the same rules
-     * the core and this host share) followed by the page script itself. Re-registered whenever
-     * the rules or the view's width change; the live page is told over the message channel too.
+     * the core and this host share) and the host's word on rotate-to-fullscreen – a phone's
+     * window's alone ([PageHost.rotateToFullscreen], MED-02) – followed by the page script itself.
+     * Re-registered whenever the rules or the view's width change (a screen crossing the tablet
+     * line – a fold, a floating window; never a split, whose class stays the display's – resizes
+     * the view, so the next document hears the new class; the live one keeps the word it was born
+     * with, as Chrome's gate never changes with the window); the live page is told the rules over
+     * the message channel too.
      */
     private fun startScriptSource(): String =
-        "window.__zenPageRules=" + host.pageRulesJson.toString() + ";window.__zenDeviceWidth=" + deviceWidth() + ";" + host.pageScript
+        "window.__zenPageRules=" + host.pageRulesJson.toString() + ";window.__zenDeviceWidth=" + deviceWidth() +
+            ";window.__zenRotateToFullscreen=" + host.rotateToFullscreen + ";" + host.pageScript
 
     private fun registerStartScript() {
         documentScript?.remove()
@@ -603,6 +609,19 @@ class TabWebView(
     }
 
     /**
+     * While this page's element is fullscreen the engine draws the page in the view it handed
+     * the fullscreen layer, and here – the view the core lays over the whole window meanwhile –
+     * nothing but the page's background colour (WebView's `NullAwViewMethods`). That flat colour
+     * would cover the chrome the layer's reveal uncovers as the chrome's bar slides off (MOT-32,
+     * [FullscreenReveal]), so nothing is drawn instead; the host invalidates the view at the
+     * fullscreen's two ends, and the page's picture is back with the exit.
+     */
+    override fun onDraw(canvas: Canvas) {
+        if (host.fullscreenTab === this) return
+        super.onDraw(canvas)
+    }
+
+    /**
      * A message from the page script in one of the tab's frames. The script runs in every frame,
      * but the main document alone speaks for the tab, save for a frame's own fullscreen
      * ([PageMessageRoute.heardFrom]): an embed's video goes fullscreen from its frame's document,
@@ -623,7 +642,7 @@ class TabWebView(
             is PageMessageRoute.EvalResult -> pendingEvals.remove(route.id)?.invoke(route.value)
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
             is PageMessageRoute.Fullscreen ->
-                host.fullscreenVideo(this, route.active, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
+                host.fullscreenVideo(this, route.active, route.video, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
             is PageMessageRoute.Forward ->
                 if (route.message.optString("type") == "share") host.preparePageMessage(route.message) { host.viewEvent(tabId, "pageMessage", it) }
                 else host.viewEvent(tabId, "pageMessage", route.message)
