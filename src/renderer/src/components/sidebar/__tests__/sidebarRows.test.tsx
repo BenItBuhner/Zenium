@@ -239,13 +239,15 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     const chevron = header.querySelector('svg.lucide-chevron-down')!
     expect(chevron.getAttribute('class')).toContain('text-[var(--v2-control-text-deemphasized)]')
     expect(chevron.getAttribute('class')).not.toContain('opacity-60')
-    // The colour is the group's (TAB-16's desktop half): the 3 px bar down the block's leading
-    // edge and the 10 dot in the glyph slot, in place of the 8 px hairlined swatch.
+    // The colour is the group's (TAB-16's desktop half): the 10 dot in the glyph slot, in place
+    // of the 8 px hairlined swatch – and nowhere else on the block (§9.36: no bar).
     expect(header.querySelector('span.h-2.w-2')).toBeNull()
     const block = header.parentElement!
-    expect(block.hasAttribute('data-group-bar')).toBe(true)
-    expect(block.style.getPropertyValue('--zen-group-rgb')).toBe('76 141 255')
-    expect(header.querySelector('.zen-group-row-glyph .zen-group-row-dot')).not.toBeNull()
+    expect(block.hasAttribute('data-group-bar')).toBe(false)
+    expect(block.style.getPropertyValue('--zen-group-rgb')).toBe('')
+    const glyph = header.querySelector<HTMLElement>('.zen-group-row-glyph')!
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe('76 141 255')
+    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
   })
 
   it('gives the New Tab row the row’s height and font in full ink', () => {

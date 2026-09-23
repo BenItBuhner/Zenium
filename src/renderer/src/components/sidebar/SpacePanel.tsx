@@ -447,12 +447,13 @@ function FolderRow({
   // tabs closed, its pages kept (TAB-16) – as a row whose tap opens it.
   //
   // The desktop's row (TAB-16's desktop half, tabs-15): Zen's folder header on §5's 32 row, the
-  // group's colour as a 3 px bar down the block's leading edge (`.zen-group-fold[data-group-bar]`,
-  // the §9.35 rail column's precedent) and the same dot, ring or own icon in the glyph slot;
-  // the count as the 13 aside while open, and as §9.19's badge – the pill in the window family
-  // – while folded, where it is what the header says of its rows; a SAVED folder stays in the
-  // strip as a saved group, a disclosure like any folder whose rows, while it is unfolded, are
-  // the pages it kept (`SavedPageRow`), and whose menu and editor open it.
+  // group's colour in the glyph slot alone – the same dot, saved ring or own icon as the tablet's
+  // (`GroupRowGlyph`) – and the rows' 20 px indent as the bracket that says which rows are the
+  // folder's (§9.36: no group line down the block, no fill across the row); the count as the 13
+  // aside while open, and as §9.19's badge – the pill in the window family – while folded, where
+  // it is what the header says of its rows; a SAVED folder stays in the strip as a saved group,
+  // a disclosure like any folder whose rows, while it is unfolded, are the pages it kept
+  // (`SavedPageRow`), and whose menu and editor open it.
   const tablet = viewportStore.use((v) => v.formFactor === 'tablet')
   const row = groupRowOf(folder, tabs)
   const saved = row.kind === 'saved'
@@ -491,17 +492,7 @@ function FolderRow({
   )
   const { onContextMenu: holdMenu, ...hold } = press.handlers
   return (
-    <div
-      ref={shell}
-      className="zen-group-fold flex flex-col gap-0.5"
-      data-group-bar={tablet ? undefined : ''}
-      data-group-kind={row.kind}
-      style={
-        tablet
-          ? undefined
-          : ({ '--zen-group-rgb': groupColorChannels(folder.color) } as CSSProperties)
-      }
-    >
+    <div ref={shell} className="zen-group-fold flex flex-col gap-0.5" data-group-kind={row.kind}>
       <div
         ref={header}
         className={cn('zen-tab', compact && 'justify-center px-0', tablet && 'zen-group-row')}

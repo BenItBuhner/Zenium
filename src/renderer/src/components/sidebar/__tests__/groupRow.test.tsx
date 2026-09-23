@@ -535,7 +535,7 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(memberRows()).toEqual(['one', 'two'])
   })
 
-  it('leaves the desktop’s folder row on its own contract: Zen’s 32 header with the group’s glyph and colour bar, the fold the state’s alone', () => {
+  it('leaves the desktop’s folder row on its own contract: Zen’s 32 header with the group’s glyph and no bar, the fold the state’s alone', () => {
     // Stale `savedTabs` beside live members are no saved group: the row is an open folder's.
     panel(
       grouped(),
@@ -548,12 +548,12 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(row.getAttribute('aria-description')).toBe('Folder, 2 tabs')
     expect(row.getAttribute('aria-expanded')).toBe('true')
     // The same glyph as the tablet's in the favicon slot – the dot for the default icon – and
-    // the colour bar on the fold block (desktopGroups.test.tsx has the desktop's own contract).
+    // no bar on the fold block (desktopGroups.test.tsx has the desktop's own contract).
     const glyph = row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
     expect(glyph.hasAttribute('data-saved')).toBe(false)
     expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
     expect(row.textContent).not.toContain('📁')
-    expect(shell().hasAttribute('data-group-bar')).toBe(true)
+    expect(shell().hasAttribute('data-group-bar')).toBe(false)
     expect(shell().dataset.groupKind).toBe('open')
     expect(row.querySelector('[data-testid="group-count"]')?.textContent).toBe('2')
     expect(row.querySelector('[data-testid="group-row-count"]')).toBeNull()

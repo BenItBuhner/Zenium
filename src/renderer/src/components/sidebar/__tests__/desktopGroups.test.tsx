@@ -24,7 +24,8 @@ import { SpacePanel } from '../SpacePanel'
  * which kept their pages stays in the strip as a SAVED group – a disclosure header with the
  * saved ring in the glyph slot and the saved count, folded by default, its pages as rows under
  * it while it is unfolded (deemphasised: a page, not a live tab) whose press opens the folder;
- * the group's colour as a 3 px bar down the block's leading edge and in the header's glyph;
+ * the group's colour in the header's glyph alone, the rows' indent the bracket that says which
+ * rows are the group's (§9.36: no bar down the block, no fill across the row);
  * the count as §9.19's badge in the window family while the header is folded (full ink, never
  * dimmed with the row – #287's rule) and as the 13 aside while open; the header a disclosure
  * for the keyboard (aria-expanded; Enter, Space fold it through the strip), the page rows in
@@ -239,9 +240,9 @@ describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () 
     ])
     expect(rows[0]!.querySelector('[data-testid="saved-page-title"]')?.textContent).toBe('Alpha')
     expect(rows[1]!.getAttribute('aria-description')).toBe('Saved page 2 of 3, opens the folder')
-    // The rows are drawn inside the fold block after the header, so the bar runs beside them –
-    // as a run of their own, outside any tablist (a11y-02: a tablist holds tabs alone, and a
-    // saved page is a button that opens the folder).
+    // The rows are drawn inside the fold block after the header, indented as the folder's tabs
+    // are – as a run of their own, outside any tablist (a11y-02: a tablist holds tabs alone, and
+    // a saved page is a button that opens the folder).
     expect(shell().firstElementChild).toBe(header())
     const run = shell().querySelector<HTMLElement>('[data-saved-pages="g"]')!
     expect(shell().children).toHaveLength(2)
@@ -377,7 +378,7 @@ describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () 
     ).toEqual(['alpha', 'beta', 'gamma'])
   })
 
-  it('reads an empty folder as one of no tabs, folded or not, with no bar of a saved group', () => {
+  it('reads an empty folder as one of no tabs, folded or not, never as a saved group', () => {
     panel([tab('home')], [folder({ collapsed: true })])
     expect(header().getAttribute('aria-description')).toBe('Folder, 0 tabs')
     expect(header().hasAttribute('data-saved')).toBe(false)
@@ -387,44 +388,32 @@ describe('the saved group on the desktop sidebar (TAB-16’s desktop half)', () 
 })
 
 describe('the group’s colour (M2) and the folded count badge (M3)', () => {
-  it('draws the folder’s colour as the 3 px bar on the fold block’s leading edge and in the glyph, never as a fill across the row', () => {
+  it('draws the folder’s colour in the glyph alone – no bar down the fold block, never a fill across the row', () => {
     panel([tab('home'), tab('a', { folderId: 'g' })], [folder({ color: 'green' })])
     const block = shell()
     expect(block.className).toContain('zen-group-fold')
-    expect(block.hasAttribute('data-group-bar')).toBe(true)
-    expect(block.style.getPropertyValue('--zen-group-rgb')).toMatch(/^\d+ \d+ \d+$/)
     const glyph = header().querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
-    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toBe(
-      block.style.getPropertyValue('--zen-group-rgb')
-    )
-    // The header's own background is the row's: no colour of the group on it.
+    expect(glyph.style.getPropertyValue('--zen-group-rgb')).toMatch(/^\d+ \d+ \d+$/)
+    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
+    // The block carries no colour and no bar (§9.36: the rows' indent is the bracket); the
+    // header's own background is the row's: no colour of the group on it.
+    expect(block.hasAttribute('data-group-bar')).toBe(false)
+    expect(block.style.getPropertyValue('--zen-group-rgb')).toBe('')
+    expect(block.getAttribute('style')).toBeNull()
     expect(header().style.background).toBe('')
     expect(header().style.backgroundColor).toBe('')
-    // The stylesheet: the block positioned for the bar; the bar 3 wide at radius 1.5, 8 in from
-    // the block's ends, on the leading edge, over the rows' fills, not for the pointer.
-    expect(rule('.zen-group-fold[data-group-bar]')).toContain('position: relative')
-    const bar = rule('.zen-group-fold[data-group-bar]::before')
-    expect(bar).toContain('position: absolute')
-    expect(bar).toContain('top: 8px')
-    expect(bar).toContain('bottom: 8px')
-    expect(bar).toContain('left: 0')
-    expect(bar).toContain('width: 3px')
-    expect(bar).toContain('border-radius: 1.5px')
-    expect(bar).toContain('background: rgb(var(--zen-group-rgb))')
-    expect(bar).toContain('pointer-events: none')
-    expect(bar).toContain('z-index: 1')
-    // The bar shares the header's first 3 px, where the §1 ring (2 px, 2 inside the edge) would
-    // stand under it: the header rises over the bar while it wears the ring, so the ring paints
-    // whole (§9.20) – a positioned `.zen-tab`, one level above the bar's, and only then.
-    expect(rule('.zen-tab')).toContain('position: relative')
-    const ringed = rule('.zen-group-fold[data-group-bar] > .zen-tab:focus-visible')
-    expect(ringed).toContain('z-index: 2')
-    expect(ringed).not.toContain('outline')
-    expect(css).not.toMatch(/\.zen-group-fold\[data-group-bar\] > \.zen-tab \{/)
-    // A colourless folder's bar is the grey default, never none.
+    // The stylesheet knows no bar and gives the header no layering for a ring over one: the §1
+    // ring – 2 px, 2 inside the header's edge – paints whole on its own (§9.20).
+    expect(css).not.toContain('data-group-bar')
+    expect(css).not.toMatch(/\.zen-group-fold[^{]*::before/)
+    expect(css).not.toMatch(/\.zen-group-fold[^{]*:focus-visible/)
+    // A colourless folder's dot is the grey default, never none.
     panel([tab('home'), tab('a', { folderId: 'g' })], [folder({ color: undefined })])
-    expect(shell().hasAttribute('data-group-bar')).toBe(true)
-    expect(shell().style.getPropertyValue('--zen-group-rgb')).toMatch(/^\d+ \d+ \d+$/)
+    expect(
+      header()
+        .querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
+        .style.getPropertyValue('--zen-group-rgb')
+    ).toMatch(/^\d+ \d+ \d+$/)
   })
 
   it('shows the folded header’s count as §9.19’s badge in the window family – full ink, tabular – and the open header’s as the 13 aside', () => {
@@ -478,6 +467,5 @@ describe('the group’s colour (M2) and the folded count badge (M3)', () => {
     const glyph = header().querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
     expect(glyph.querySelector('.zen-group-row-icon')?.textContent).toBe('🔬')
     expect(glyph.querySelector('.zen-group-row-dot')).toBeNull()
-    expect(shell().hasAttribute('data-group-bar')).toBe(true)
   })
 })
