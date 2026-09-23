@@ -290,7 +290,9 @@ class CustomTabsDemo : DemoHarness("customtabs-demo-state.json", "customtabs", "
         assertTrue("the swipe up reached the caller", awaitTrue(6_000) { callerHits.contains("SWIPE_UP") })
         assertTrue("setSecondaryToolbarViews took (updateVisuals answered true)", awaitTrue(6_000) { secondaryApplied == true })
         assertTrue("the secondary toolbar grew the bar", awaitTrue(6_000) { barHeight() > before })
-        SystemClock.sleep(1_200)
+        // The caller's toasts (the button's, then the swipe's; 3.5 s each, queued) sit over the
+        // bar's buttons for a while: the still waits them out.
+        SystemClock.sleep(4_000)
         Log.i(tag, "secondary toolbar: bar $before -> ${barHeight()} px, page ends at ${pageBottom()}, bar at ${barRect()}")
         assertTrue("the page's viewport ends above the taller bar", pageEndsAboveBar())
         shot(name)
