@@ -18,6 +18,7 @@ import { getHost } from '@shared/url'
 import { MAX_NEW_TAB_SHORTCUTS, newTabSections } from '@shared/newTab'
 import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
+import { useFakeboxSurface } from '@renderer/hooks/useFakeboxSurface'
 import { run } from '@renderer/lib/api'
 import {
   fakeboxMorphStore,
@@ -107,6 +108,10 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
   const growPhase = newTabGrowStore.use((s) => s.phase)
   const image = wallpaperImageStore.use()
   const backdrop = useWindowBackdrop()
+  // The gear fades under the arriving omnibox with the column (`.zen-ntp-fades`): it carries the
+  // morph's value itself (lib/fakeboxMorph.ts; the column is registered with the field).
+  const gearRef = useRef<HTMLButtonElement>(null)
+  useFakeboxSurface(gearRef)
 
   useEffect(() => {
     if (sections.wallpaper) void loadWallpaperImage()
@@ -164,6 +169,7 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
         )}
       </div>
       <button
+        ref={gearRef}
         type="button"
         className="zen-ntp-fades zen-toolbar-button absolute h-11 w-11"
         style={dock === 'bottom' ? { right: 12, top: 12 } : { right: 12, bottom: 12 }}
