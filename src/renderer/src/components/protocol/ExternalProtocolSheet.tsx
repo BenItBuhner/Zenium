@@ -165,7 +165,7 @@ function Body({
 }): JSX.Element {
   const words = wordsFor(request.scheme)
   return (
-    <div className={phone ? 'flex flex-col pb-1' : 'flex flex-col gap-4 pb-1 pt-1'}>
+    <div className={phone ? 'flex flex-col' : 'flex flex-col gap-4 pb-1 pt-1'}>
       <div
         className={
           phone

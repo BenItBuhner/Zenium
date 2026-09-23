@@ -55,6 +55,53 @@ describe('stripItemKind', () => {
     expect(stripItemKind('header:x')).toBe('header')
     expect(stripItemKind('folder:x')).toBe('folder')
     expect(stripItemKind('tab:x')).toBe('tab')
+    expect(stripItemKind('saved:g:0')).toBe('saved')
+  })
+})
+
+// A saved folder (TAB-16's desktop half): its header with the pages it kept as rows under it,
+// then a loose row.
+const SAVED_STRIP: StripItem[] = [
+  item('folder:g', null, true),
+  item('saved:g:0', 'folder:g'),
+  item('saved:g:1', 'folder:g'),
+  item('tab:r1')
+]
+const savedAt = (key: string): number => SAVED_STRIP.findIndex((it) => it.key === key)
+
+describe("stripIntent: a saved folder's page rows", () => {
+  it('walk like rows: Down and Up along them, Left up to the header, Right and Left into and out of the fold', () => {
+    expect(stripIntent(SAVED_STRIP, savedAt('folder:g'), 'ArrowDown')).toEqual({
+      type: 'focus',
+      index: savedAt('saved:g:0')
+    })
+    expect(stripIntent(SAVED_STRIP, savedAt('saved:g:0'), 'ArrowDown')).toEqual({
+      type: 'focus',
+      index: savedAt('saved:g:1')
+    })
+    expect(stripIntent(SAVED_STRIP, savedAt('saved:g:1'), 'ArrowDown')).toEqual({
+      type: 'focus',
+      index: savedAt('tab:r1')
+    })
+    expect(stripIntent(SAVED_STRIP, savedAt('saved:g:1'), 'ArrowLeft')).toEqual({
+      type: 'focus',
+      index: savedAt('folder:g')
+    })
+    expect(stripIntent(SAVED_STRIP, savedAt('folder:g'), 'ArrowRight')).toEqual({
+      type: 'focus',
+      index: savedAt('saved:g:0')
+    })
+    expect(stripIntent(SAVED_STRIP, savedAt('folder:g'), 'ArrowLeft')).toEqual({
+      type: 'fold',
+      expanded: false
+    })
+  })
+
+  it('Enter and Space activate a page row – it opens the folder – and Delete closes nothing there', () => {
+    expect(stripIntent(SAVED_STRIP, savedAt('saved:g:0'), 'Enter')).toEqual({ type: 'activate' })
+    expect(stripIntent(SAVED_STRIP, savedAt('saved:g:1'), ' ')).toEqual({ type: 'activate' })
+    expect(stripIntent(SAVED_STRIP, savedAt('saved:g:0'), 'Delete')).toBeNull()
+    expect(stripIntent(SAVED_STRIP, savedAt('folder:g'), 'Delete')).toBeNull()
   })
 })
 
@@ -351,6 +398,38 @@ describe('stripKeyDown', () => {
     expect(stripKeyDown(keyEvent(byId('r1'), 'Escape'))).toBe(true)
     expect(document.activeElement).toBe(document.body)
     expect(run).toHaveBeenCalledWith('focus.content', undefined)
+  })
+
+  it("Enter and Space on a saved folder's page row open the folder; Delete closes nothing and moves nowhere", () => {
+    document.body.innerHTML = `
+      <aside data-pane="tabs">
+        <div data-tab-scroller data-active="true">
+          <div role="tablist" aria-orientation="vertical">
+            <div id="g" role="button" data-strip-item="folder:g" aria-expanded="true" tabindex="-1">Trip</div>
+            <div id="s0" role="button" data-strip-item="saved:g:0" data-strip-parent="folder:g" tabindex="-1">Page one</div>
+            <div id="s1" role="button" data-strip-item="saved:g:1" data-strip-parent="folder:g" tabindex="-1">Page two</div>
+            <div id="r1" role="tab" data-strip-item="tab:r1" data-active="true" tabindex="0">Active</div>
+          </div>
+        </div>
+      </aside>`
+    byId('s0').focus()
+    expect(stripKeyDown(keyEvent(byId('s0'), 'Enter'))).toBe(true)
+    expect(run).toHaveBeenCalledWith('folder.open', { folderId: 'g' })
+    expect(stripKeyDown(keyEvent(byId('s1'), ' '))).toBe(true)
+    expect(run).toHaveBeenLastCalledWith('folder.open', { folderId: 'g' })
+    expect(run).not.toHaveBeenCalledWith('tab.activate', expect.anything())
+    vi.mocked(run).mockClear()
+    expect(stripKeyDown(keyEvent(byId('s0'), 'Delete'))).toBe(false)
+    expect(document.activeElement?.id).toBe('s0')
+    expect(run).not.toHaveBeenCalled()
+    // The arrows: Down along the pages to the loose row, Left from a page up to the header.
+    expect(stripKeyDown(keyEvent(byId('s0'), 'ArrowDown'))).toBe(true)
+    expect(document.activeElement?.id).toBe('s1')
+    expect(stripKeyDown(keyEvent(byId('s1'), 'ArrowDown'))).toBe(true)
+    expect(document.activeElement?.id).toBe('r1')
+    byId('s1').focus()
+    expect(stripKeyDown(keyEvent(byId('s1'), 'ArrowLeft'))).toBe(true)
+    expect(document.activeElement?.id).toBe('g')
   })
 })
 

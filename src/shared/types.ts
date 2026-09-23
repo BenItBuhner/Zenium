@@ -5232,6 +5232,12 @@ export interface Events {
    * the inline rename on the group card.
    */
   'folder.edit': { folderId: string }
+  /**
+   * Ask before the folder is deleted (the desktop folder menu's "Delete Folder" on a folder that
+   * holds tabs or saved pages): the chrome shows its §9.23 prompt and runs `folder.delete` with
+   * `unpack: false` when the user confirms. A folder with nothing in it is deleted without asking.
+   */
+  'folder.confirmDelete': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */
@@ -5293,6 +5299,13 @@ export interface Events {
    * the swap between the live page and its cover.
    */
   'view.drawn': { tabId: string; visible: boolean }
+  /**
+   * A hardware keyboard's Tab ran past the active page's last tabbable (`forward`) or its
+   * Shift+Tab past the first (`backward`) and the host handed the chrome the keyboard – the
+   * Android host, whose page and chrome are WebViews side by side (`FocusHandoff.kt`; A11Y-09):
+   * the chrome lands the focus on its first or last control (`lib/panes.ts`).
+   */
+  'focus.fromPage': { direction: 'forward' | 'backward' }
   /**
    * The host has drawn `tabId`'s page view at a new size (CSS px) – raised by the Android host
    * after every change of the view's size, once the page has content at it – for the chrome's

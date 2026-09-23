@@ -10,6 +10,7 @@ import type { ReadAloudHostMessage } from '@shared/readAloud'
 import { installNotificationPolyfill } from '@shared/notificationScript'
 import { installShareBridge, installShareShim, type ShareOutcome } from '@shared/share'
 import { installTextFragmentScript, type TextFragmentHostMessage } from '@shared/textFragmentScript'
+import { focusEdge } from '@shared/focusEdge'
 import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
 import { rememberClearedSelection } from './selectionMemory'
 import { installViewportController, type PageRulesConfig } from './viewport'
@@ -138,6 +139,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         id?: string
         hint?: PageHint | null
         result?: string
+        edge?: string
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
@@ -200,6 +202,13 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         }
         if (viewport) viewport.update(config)
         else viewport = installViewportController(config)
+      } else if (data.type === 'focus' && topFrame) {
+        // A hardware keyboard's Tab entering the page from the chrome (A11Y-09): the host gave
+        // this view the keyboard, Blink's initial focus on the first tabbable as a keyboard focus
+        // (the ring's condition; `TabWebView.focusEdge`), and the landing is confirmed on the
+        // document's first tabbable or moved to its last, read here (`@shared/focusEdge`). The top
+        // frame's: a frame element in the order stands for its document.
+        focusEdge(data.edge === 'last' ? 'last' : 'first', document)
       }
     } catch {
       /* ignore */

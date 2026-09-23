@@ -17,16 +17,18 @@ import { browserStore, uiStore } from './ui'
  * (the tree pattern); Escape gives the keyboard back to the page, as Chrome leaves a pane.
  *
  * Each item marks itself `data-strip-item` with its key – `tab:<id>` for a row or a tile,
- * `header:<spaceId>` for the pinned header, `folder:<id>` for a folder header – and, when a header
- * folds it, `data-strip-parent` with the header's key; headers carry `aria-expanded`. The pure part
- * ({@link stripIntent}) says what a key means for a list of items; {@link stripKeyDown} reads the
- * document and carries it out.
+ * `header:<spaceId>` for the pinned header, `folder:<id>` for a folder header,
+ * `saved:<folderId>:<index>` for a saved folder's page row (TAB-16's desktop half: a page kept
+ * by a folder whose tabs closed, not a live tab – Enter or Space opens the folder, Delete closes
+ * nothing) – and, when a header folds it, `data-strip-parent` with the header's key; headers carry
+ * `aria-expanded`. The pure part ({@link stripIntent}) says what a key means for a list of items;
+ * {@link stripKeyDown} reads the document and carries it out.
  */
 
-export type StripItemKind = 'tile' | 'header' | 'folder' | 'tab'
+export type StripItemKind = 'tile' | 'header' | 'folder' | 'tab' | 'saved'
 
 export interface StripItem {
-  /** `tile:<tabId>`, `tab:<tabId>`, `header:<spaceId>` or `folder:<folderId>`. */
+  /** `tile:<tabId>`, `tab:<tabId>`, `header:<spaceId>`, `folder:<folderId>` or `saved:<folderId>:<n>`. */
   key: string
   /** The key of the header that folds this item, if one does. */
   parent: string | null
@@ -43,10 +45,16 @@ export type StripIntent =
 
 export function stripItemKind(key: string): StripItemKind {
   const kind = key.slice(0, key.indexOf(':'))
-  return kind === 'tile' || kind === 'header' || kind === 'folder' ? kind : 'tab'
+  return kind === 'tile' || kind === 'header' || kind === 'folder' || kind === 'saved'
+    ? kind
+    : 'tab'
 }
 
-const idOf = (key: string): string => key.slice(key.indexOf(':') + 1)
+/** The key's id: what follows the kind; for a saved page row, the folder's id ahead of the index. */
+const idOf = (key: string): string => {
+  const id = key.slice(key.indexOf(':') + 1)
+  return stripItemKind(key) === 'saved' ? id.slice(0, id.lastIndexOf(':')) : id
+}
 
 /** The axis a strip lays its items along: the sidebar's column, or the horizontal strip's row. */
 export type StripAxis = 'x' | 'y'
@@ -119,7 +127,8 @@ export function stripIntent(
     case ' ':
       return isHeader ? { type: 'fold', expanded: !item.expanded } : { type: 'activate' }
     case 'Delete':
-      return isHeader ? null : { type: 'close' }
+      // A saved page row is no live tab: nothing to close.
+      return isHeader || kind === 'saved' ? null : { type: 'close' }
     case 'Escape':
       return { type: 'leave' }
     default:
@@ -234,7 +243,9 @@ function perform(
       entries[intent.index]?.el.focus()
       return
     case 'activate':
-      run('tab.activate', { tabId: id, keepFocus: true })
+      // A saved folder's page row opens the folder: its pages come back as its tabs (TAB-16).
+      if (kind === 'saved') run('folder.open', { folderId: id })
+      else run('tab.activate', { tabId: id, keepFocus: true })
       return
     case 'fold':
       if (kind === 'header') run('space.togglePinnedCollapsed', { spaceId: id })

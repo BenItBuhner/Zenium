@@ -647,6 +647,30 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('download=')).toEqual({ kind: 'idle' })
   })
 
+  it('pins the layering at its seams: unresponsive over error over screenshot over the messages, and qr between download and popups', () => {
+    // The parser's order is the doc sentence's: the earlier surface wins the spec when two are
+    // given, whatever the parameters' order in the string.
+    expect(parsePreviewSpec('error=-105&unresponsive').kind).toBe('unresponsive')
+    expect(parsePreviewSpec('unresponsive&error=-105').kind).toBe('unresponsive')
+    expect(parsePreviewSpec('screenshot=card&error=-105').kind).toBe('error')
+    expect(parsePreviewSpec('unresponsive&screenshot=card').kind).toBe('unresponsive')
+    expect(parsePreviewSpec('toast=Saved&screenshot=card').kind).toBe('screenshot')
+    expect(parsePreviewSpec('screenshot=card&banners=1&progress=0.5').kind).toBe('screenshot')
+    // A crash stands ahead of the unresponsive prompt; a network state ahead of the crash.
+    expect(parsePreviewSpec('unresponsive&crash=').kind).toBe('crash')
+    expect(parsePreviewSpec('crash=&network=offline').kind).toBe('network')
+    // `qr` sits between `download` and `popups`: a transfer wins it, it wins the blocked pop-ups.
+    expect(parsePreviewSpec('qr=&download=a.bin').kind).toBe('download')
+    expect(parsePreviewSpec('popups=2&qr=wifi')).toEqual({ kind: 'qr', script: 'wifi' })
+    expect(parsePreviewSpec('qr=')).toEqual({ kind: 'qr', script: 'url' })
+    expect(parsePreviewSpec('media=audio&qr=').kind).toBe('media')
+    // Past `popups`: the security prompt, voice, the overview, the URL bar's editor, idle.
+    expect(parsePreviewSpec('prompt=http-auth&popups=1').kind).toBe('popups')
+    expect(parsePreviewSpec('voice=&prompt=http-auth').kind).toBe('prompt')
+    expect(parsePreviewSpec('overview&voice=').kind).toBe('voice')
+    expect(parsePreviewSpec('urlbar=&overview').kind).toBe('overview')
+  })
+
   it('raises a permission prompt from the active page, behind the menu but ahead of the bars', () => {
     expect(parsePreviewSpec('prompt=camera')).toEqual({ kind: 'permission', permission: 'camera' })
     expect(parsePreviewSpec('prompt=notifications&find=x')).toEqual({

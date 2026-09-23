@@ -193,6 +193,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'tab.startRename',
   'folder.startRename',
   'folder.edit',
+  'folder.confirmDelete',
   'tab.editPinnedUrl',
   'tab.pickIcon',
   'menu.show',

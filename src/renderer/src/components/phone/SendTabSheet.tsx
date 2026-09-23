@@ -52,9 +52,11 @@ function SendTabSheet({ state, tab }: { state: UIState; tab: Tab }): JSX.Element
   return (
     <PhoneSheet
       name="send-tab"
-      // A list sheet: the centred 48 header (§9.16), Chrome's title in sentence case.
+      // A list sheet: the centred 48 header (§9.16), Chrome's title in sentence case; it opens
+      // on its first row (§9.22) and stands at most 80 % of the frame (§9.20).
       title={{ pose: 'header', text: 'Send to your devices' }}
       focus="first"
+      body="list"
       onClose={closeSendTabSheet}
       sheetRef={sheet}
       contentKey={devices.map((device) => device.id).join('/')}
