@@ -8187,6 +8187,14 @@
 .zen-v2-icon-button.zen-print-page-step {
   border-radius: 9999px;
 }
+/* The tab overview's Inactive tabs entry (TAB-20; §9.34 modifier): the icon button let grow past
+   its square for the §9.19 count badge trailing the glyph after 8, the pair inset 12 so the
+   glyph's edge stands at the segment row's 16 gutter. */
+.zen-v2-icon-button.zen-overview-inactive {
+  width: auto;
+  gap: 8px;
+  padding: 0 12px;
+}
 
 /*
  * The shared v2 link (§9.10; the first surface to land it was the extension details' Source

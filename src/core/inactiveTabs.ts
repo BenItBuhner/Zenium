@@ -77,9 +77,13 @@ export class InactiveTabsService {
 
   constructor(private readonly browser: Browser) {}
 
-  /** Hosts with the archive (`capabilities.inactiveTabs`: Android); elsewhere nothing runs. */
+  /**
+   * Hosts with the archive (`capabilities.inactiveTabs`: Android); elsewhere nothing runs. The
+   * flag is read as exactly `true`: a host whose capabilities leave it out (an older platform
+   * table, a test's stub) has no archive rather than a truthy accident.
+   */
   enabled(): boolean {
-    return this.browser.state.capabilities.inactiveTabs
+    return this.browser.state.capabilities.inactiveTabs === true
   }
 
   start(): void {
