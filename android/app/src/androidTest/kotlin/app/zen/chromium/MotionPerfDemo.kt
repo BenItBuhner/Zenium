@@ -905,7 +905,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         for ((i, f) in window.withIndex()) {
             if (i == 0) continue
             val y = Math.abs(f[3])
-            if (y >= fullOffset - 0.5) continue
+            if (fullOffset > 0.5 && y >= fullOffset - 0.5) continue
             if (Math.abs(y - lastY) >= 0.5) withFrame += f
             lastY = y
         }
