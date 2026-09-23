@@ -1442,7 +1442,10 @@ export interface HistoryVisit {
 }
 
 export interface HistoryQuery {
-  /** Every whitespace-separated term must occur in the title or URL (case-insensitive). */
+  /**
+   * Every whitespace-separated term must start a word in the title or URL (case-folded; the
+   * scheme and `www.` do not count), as Chrome's history search reads a query (`wordMatch.ts`).
+   */
   text?: string
   /** Inclusive lower bound of `visitTime`. */
   fromMs?: number
