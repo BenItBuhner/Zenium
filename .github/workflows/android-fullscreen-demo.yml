@@ -12,8 +12,15 @@ name: Android fullscreen video demo
 # the toast card measured for the hint's twin; While using the app: straight to the camera app,
 # its shutter and Done under fingers, the photo's name and size in the page) and the plain image
 # input's chooser with Camera beside the files, the photo taken through it; then a same-origin
-# iframe's clip going fullscreen from its own document (the turn on the frame's report, the hint)
-# and a canvas going fullscreen with no video in it (the hint, no turn) (see FullscreenDemo).
+# iframe's clip going fullscreen from its own document (the turn on the frame's report, the hint),
+# a canvas going fullscreen with no video in it (the exit hint every time, MED-03: a finger takes
+# it away early, the dark scheme's twin goes on its own; no turn), the chrome kept mounted around
+# a fullscreen with its bar translating off its edge and back on the return's clock (MOT-32, the
+# away store's phases on record, the pair under reduced motion when the WebView follows the
+# animator scale live) and rotate-to-fullscreen (MED-02: the screen turned through the system's
+# user rotation with auto-rotate off, the host's sensor stood in for – a paused clip takes no
+# turn, a playing one goes fullscreen and leaves on the turn back, the portrait clip's edge cases)
+# (see FullscreenDemo).
 # The recipe: the media demo's. The hint is drawn in the page's top layer through the `popover`
 # attribute, which the API 34 image's WebView 113 predates (Chrome 114), so – as the media demos
 # do for other reasons – the demo runs on an AOSP image with a Chromium snapshot SystemWebView.apk

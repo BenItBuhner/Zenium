@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
 import { REDUCED_FADE_MS } from '@shared/toastCard'
 import {
   beginLanding,
@@ -28,10 +28,11 @@ export function fadeInChrome(el: HTMLElement): Animation | null {
  * `settling` on its insets) has the fade at once; so has a tab whose landing is not coming – the
  * chrome's first placements since the exit leave it out, because the page closed itself while
  * fullscreen or was closed at the exit, or another tab has the screen (`landingLost`); a landing
- * that never comes has it at `LANDING_TIMEOUT_MS`. Returns what ends the return: the hold
- * released, the fade cancelled.
+ * that never comes has it at `LANDING_TIMEOUT_MS`. `onFade` runs as the fade starts – what
+ * else moves with the return (the phone bar sliding back onto its edge, MOT-32) starts there,
+ * never under the hold. Returns what ends the return: the hold released, the fade cancelled.
  */
-export function returnChrome(el: HTMLElement, tabId: string): () => void {
+export function returnChrome(el: HTMLElement, tabId: string, onFade?: () => void): () => void {
   const since = beginLanding(tabId)
   let animation: Animation | null = null
   let unsubscribe: (() => void) | null = null
@@ -48,6 +49,7 @@ export function returnChrome(el: HTMLElement, tabId: string): () => void {
     // The fade's first keyframe is the hold's opacity: nothing shows between the two.
     el.style.opacity = ''
     animation = fadeInChrome(el)
+    onFade?.()
   }
   if (due()) fade()
   else {
@@ -67,20 +69,27 @@ export function returnChrome(el: HTMLElement, tabId: string): () => void {
 
 /**
  * The chrome comes back from a page's fullscreen (MED-01) on a 120 ms opacity fade in place –
- * §11.3's fade is the reduced-motion form of every appearance, and with nothing to spring (the
- * bar and the pill return to where they were) full motion has no other form – so the page is
- * laid out once, as the chrome's frames are placed, and nothing but opacity moves. The fade runs
- * once the page's view has landed (§11.5: on the landing, not over the platform's shrink), the
- * chrome held at nothing until then – or at once when the page is gone at the exit and no
- * landing is coming (`returnChrome`). A layout effect: the hold is on before the returned
- * chrome's first paint, so it is never seen at full strength first. The first showing of the
- * chrome (no fullscreen before it) is not a return and does not fade.
+ * §11.3's fade is the reduced-motion form of every appearance, and the frame and the pill's
+ * slot return to where they were – so the page is laid out once, as the chrome's frames are
+ * placed, and nothing but opacity moves on the window; the phone bar, off its edge for the
+ * fullscreen, slides back onto it with the fade (`onFade`; MOT-32, lib/fullscreenMotion.ts),
+ * transform alone on its own layer. The fade runs once the page's view has landed (§11.5: on
+ * the landing, not over the platform's shrink), the chrome held at nothing until then – or at
+ * once when the page is gone at the exit and no landing is coming (`returnChrome`). A layout
+ * effect: the hold is on before the returned chrome's first paint, so it is never seen at full
+ * strength first. The first showing of the chrome (no fullscreen before it) is not a return and
+ * does not fade. `onFade` is read as the fade starts, not kept from the render that saw the exit.
  */
 export function useFullscreenReturn(
   root: RefObject<HTMLElement | null>,
-  fullscreenTabId: string | null
+  fullscreenTabId: string | null,
+  onFade?: () => void
 ): void {
   const wasFullscreen = useRef<string | null>(null)
+  const fadeHook = useRef(onFade)
+  useEffect(() => {
+    fadeHook.current = onFade
+  })
   useLayoutEffect(() => {
     if (fullscreenTabId !== null) {
       wasFullscreen.current = fullscreenTabId
@@ -91,6 +100,6 @@ export function useFullscreenReturn(
     wasFullscreen.current = null
     const el = root.current
     if (!el) return
-    return returnChrome(el, tabId)
+    return returnChrome(el, tabId, () => fadeHook.current?.())
   }, [fullscreenTabId, root])
 }

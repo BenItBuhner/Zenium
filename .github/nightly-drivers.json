@@ -1033,9 +1033,9 @@
       "env": {
         "DEMO_REVOKE": "android.permission.CAMERA"
       },
-      "timeout": 900,
-      "estimate": 5,
-      "note": "CAMERA revoked before the driver, granted back after."
+      "timeout": 1200,
+      "estimate": 8,
+      "note": "CAMERA revoked before the driver, granted back after. Thirteen scenes with the exit hint's touch, the chrome's motion pair and rotate-to-fullscreen's eight turns of the screen (MOT-32, MED-02, MED-03)."
     },
     {
       "id": "a11y-chrome-private",

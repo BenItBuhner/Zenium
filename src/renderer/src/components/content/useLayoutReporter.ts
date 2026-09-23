@@ -173,8 +173,22 @@ export function useLayoutReporter(
   const reportedHidden = useRef(false)
   /** When the current wait for a cover began, or null outside one. */
   const waitingSince = useRef<number | null>(null)
+  // A page's element in fullscreen (MOT-32): the chrome stays mounted and laid out under the
+  // host's fullscreen layer, and nothing it lays out meanwhile is a placement – the core puts
+  // the fullscreen tab's view over the whole window itself and keeps the layout from before
+  // the fullscreen to put it back by at the exit; a report made under the layer (the bars
+  // gone, the frame taller by the insets) would stand in for that layout and lay the page out
+  // once more at the exit, and the frame it names is not the one the page comes back to. So
+  // nothing is reported while a fullscreen is on, and the first layout after it is reported
+  // whatever the last one said: the return fade waits on that report's placement
+  // (`lib/fullscreenLanding.ts`), so a layout the same as before the fullscreen must still be
+  // named – as it was when the chrome was remounted at every exit.
+  const fullscreenTabId = state.window.htmlFullscreenTabId
+  const wasFullscreen = useRef(fullscreenTabId !== null)
 
   useEffect(() => {
+    if (wasFullscreen.current && fullscreenTabId === null) lastSent.current = ''
+    wasFullscreen.current = fullscreenTabId !== null
     let deadline: ReturnType<typeof setTimeout> | null = null
     const evaluate = (): void => {
       let hidden = contentHidden
@@ -208,63 +222,45 @@ export function useLayoutReporter(
       send(hidden)
     }
     const send = (hidden: boolean): void => {
-      let report: LayoutReport
-      const fullscreenTabId = state.window.htmlFullscreenTabId
-      if (fullscreenTabId && state.tabs[fullscreenTabId]) {
-        report = {
-          placements: [
-            {
-              tabId: fullscreenTabId,
-              rect: { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight },
-              radius: 0
-            }
-          ],
-          glance: null,
-          contentHidden: false,
-          sidePanel: null
-        }
-      } else if (!area) {
-        return
-      } else {
-        const tab = activeTab(state)
-        const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
-        const radius =
-          parseFloat(
-            getComputedStyle(document.documentElement).getPropertyValue('--zen-content-radius')
-          ) || 0
-        let placements = placementsFor(area, visibleTabIds(state), group, radius, gap).map((p) => {
-          const c = viewCover(area, p.rect, band)
-          return c ? { ...p, cover: c } : p
-        })
-        // The phone draws its new tab page in the chrome (`NewTabPage`); the blank page's view
-        // would only cover it.
-        if (formFactor === 'phone')
-          placements = placements.filter((p) => state.tabs[p.tabId]?.url !== BLANK_URL)
-        // An empty pane of a split is chrome too (`EmptyPane`, split-04): its field, its "Choose
-        // a tab" button and the URL bar floating in it draw where the blank view would be.
-        if (group) placements = placements.filter((p) => !isEmptySplitPane(state, p.tabId))
-        let glance: LayoutReport['glance'] = null
-        if (state.glance) {
-          // The parent is frozen behind the glance card; the card itself appears once its open
-          // animation has run.
-          if (glanceActive) {
-            placements = placements.filter(
-              (p) =>
-                p.tabId !== state.glance!.parentTabId && !(group && group.tabIds.includes(p.tabId))
-            )
-            if (ui.glanceReady) {
-              const rect = glanceRect(area)
-              const c = viewCover(area, rect, band)
-              glance = { tabId: state.glance.tabId, rect, radius: 12, ...(c ? { cover: c } : {}) }
-            }
+      if (fullscreenTabId !== null || !area) return
+      const tab = activeTab(state)
+      const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
+      const radius =
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue('--zen-content-radius')
+        ) || 0
+      let placements = placementsFor(area, visibleTabIds(state), group, radius, gap).map((p) => {
+        const c = viewCover(area, p.rect, band)
+        return c ? { ...p, cover: c } : p
+      })
+      // The phone draws its new tab page in the chrome (`NewTabPage`); the blank page's view
+      // would only cover it.
+      if (formFactor === 'phone')
+        placements = placements.filter((p) => state.tabs[p.tabId]?.url !== BLANK_URL)
+      // An empty pane of a split is chrome too (`EmptyPane`, split-04): its field, its "Choose
+      // a tab" button and the URL bar floating in it draw where the blank view would be.
+      if (group) placements = placements.filter((p) => !isEmptySplitPane(state, p.tabId))
+      let glance: LayoutReport['glance'] = null
+      if (state.glance) {
+        // The parent is frozen behind the glance card; the card itself appears once its open
+        // animation has run.
+        if (glanceActive) {
+          placements = placements.filter(
+            (p) =>
+              p.tabId !== state.glance!.parentTabId && !(group && group.tabIds.includes(p.tabId))
+          )
+          if (ui.glanceReady) {
+            const rect = glanceRect(area)
+            const c = viewCover(area, rect, band)
+            glance = { tabId: state.glance.tabId, rect, radius: 12, ...(c ? { cover: c } : {}) }
           }
         }
-        report = {
-          placements,
-          glance,
-          contentHidden: hidden,
-          sidePanel: panelOpen ? panelArea : null
-        }
+      }
+      const report: LayoutReport = {
+        placements,
+        glance,
+        contentHidden: hidden,
+        sidePanel: panelOpen ? panelArea : null
       }
       const key = JSON.stringify(report)
       if (key === lastSent.current) return
@@ -292,7 +288,8 @@ export function useLayoutReporter(
     gap,
     band,
     waitsForCover,
-    formFactor
+    formFactor,
+    fullscreenTabId
   ])
 
   return { area, contentHidden: contentHidden || pageAway }

@@ -6998,10 +6998,13 @@
  * The phone's message layer is the content frame's box and clips to it: cards arrive from and
  * leave by its edges. Banners hang from the top edge, each on its slot by transform, touching
  * (§9.21); the toast sits at the bottom edge, a leaving one and its successor in the same cell.
- * The inset is from a card to the frame's edge; `messages/stack.ts` mirrors it.
+ * The inset is from a card to the frame's edge; `messages/stack.ts` mirrors it. A card spans the
+ * frame up to its cap and centres where the frame is wider (§9.33; `@shared/toastCard` carries
+ * both numbers for the page-drawn twin).
  */
 :root {
   --zen-message-inset: 8px;
+  --zen-message-max-width: 560px;
 }
 .zen-message-layer {
   position: absolute;
@@ -7015,6 +7018,8 @@
   top: var(--zen-message-inset);
   left: var(--zen-message-inset);
   right: var(--zen-message-inset);
+  max-width: var(--zen-message-max-width);
+  margin: 0 auto;
 }
 .zen-message-stack > .zen-message {
   position: absolute;
@@ -7028,6 +7033,8 @@
   bottom: var(--zen-message-inset);
   left: var(--zen-message-inset);
   right: var(--zen-message-inset);
+  max-width: var(--zen-message-max-width);
+  margin: 0 auto;
   display: grid;
 }
 .zen-message-toasts > * {
@@ -7097,8 +7104,23 @@
  * inside the bar element. At the hidden rest the root carries `data-bar-hidden`: the bar takes no
  * touches (the page has its band) but stays in the accessibility tree, where focus brings it
  * back. Under reduced motion the finger still moves the bar one to one; only the snap jumps.
+ *
+ * Around a page's fullscreen the same bar leaves by the same transform (MOT-32,
+ * lib/fullscreenMotion.ts): `--zen-fullscreen-away` is 0 with the bar in place and 1 with it
+ * off its edge by its own height – the box hangs its inset padding past the clip line, so 100 %
+ * of it is the whole bar past that line, whatever the inset stands at as the system bars go and
+ * come – written per frame on the bar element itself, registered here as its own property like
+ * the hide's, and added to the hide's travel in the one transform: a bar hidden on scroll when
+ * the page goes fullscreen comes home under the gate closing while it leaves for the edge, and
+ * the two springs sum in the layer's transform, never a layout. The bar itself stays mounted,
+ * with its state, under the fullscreen layer the host reveals over it at the same pace.
  */
 @property --zen-bar-hide {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+@property --zen-fullscreen-away {
   syntax: '<number>';
   inherits: false;
   initial-value: 0;
@@ -7128,10 +7150,18 @@
   will-change: transform;
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
-  transform: translate3d(0, calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0);
+  transform: translate3d(
+    0,
+    calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel) + var(--zen-fullscreen-away) * 100%),
+    0
+  );
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='top'] {
-  transform: translate3d(0, calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0);
+  transform: translate3d(
+    0,
+    calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel) - var(--zen-fullscreen-away) * 100%),
+    0
+  );
 }
 :root[data-bar-hidden] .zen-phone-bar,
 :root[data-form-factor='phone'] .zen-phone-bar[aria-hidden='true'] {
