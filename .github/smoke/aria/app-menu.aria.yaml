@@ -14,6 +14,7 @@
   - menuitem "Zoom (100%)"
   - menuitem "Print…"
   - menuitem "Save Page As…"
+  - menuitem "Web Capture…"
   - menuitem "Translate Page…"
   - menuitem "Reader View" [disabled]
   - menuitem "Listen to This Page" [disabled]

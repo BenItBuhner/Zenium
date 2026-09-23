@@ -29,6 +29,22 @@ import { presentExtensionUrl } from '@core/extensions/runtime/extensionUrls'
  * element then gets the `load` it expected, or, when the recovery could not (not web-accessible,
  * a subframe, no such file), the attribute back and the `error` it was already firing. The
  * refusal never reaches the extension's own handlers.
+ *
+ * A module graph a content script `import()`s has no element: the page's `script-src` refuses
+ * the fetch itself (Buyhatke's CRXJS loaders on flipkart.com, `script-src 'nonce-…'`, compat
+ * round 9, row 7), the promise rejects, and the only trace is the document's
+ * `securitypolicyviolation` event, which the bootstrap also hands here (`onViolation`). A
+ * request carries the nonce of the script that made it, and a nonce the policy names lets the
+ * request through, so on a WebView without isolated worlds, where the module would evaluate on
+ * the page's real global anyway and the host's bracket gives it the extension's `chrome` there
+ * (`extensionModuleChrome.ts`), the graph is fetched again by a `<script type="module">` of the
+ * document's carrying the page's own nonce (read from its nonced elements: the `nonce` IDL
+ * attribute keeps what the content attribute hides): its `import` descendants inherit the
+ * nonce, and the graph evaluates as the content script's `import()` would have had it. The
+ * loader's own promise stays rejected, which Buyhatke's (`onExecute?.()` on a module that
+ * exports none) never minds. In an isolated world the module would evaluate in the world, whose
+ * policy is the document's on a WebView, and a module of the page's world would find no
+ * `chrome`: there the refusal is recorded and nothing is retried.
  */
 
 /** What the bootstrap lends the recovery: the attached extensions, the bridge and a file read. */
@@ -40,6 +56,40 @@ export interface ScriptRecoveryHost {
   /** Read an extension file's text the way the extension's own `fetch` would (the relay's). */
   readText?(extId: string, url: string): Promise<string>
   error(...args: unknown[]): void
+  /** Notices that are not the runtime's failures (a refusal it can only record). */
+  warn?(...args: unknown[]): void
+  /** The document whose policy refused a module import: where the nonced retry goes. */
+  document?: ModuleDocumentLike
+  /**
+   * Whether a module evaluated on the page's real global finds the extension's `chrome` there
+   * (the `with` fallback's bracket): only then is a refused module graph retried from a module
+   * script of the page's; in an isolated world the refusal is recorded instead.
+   */
+  pageModules?: boolean
+}
+
+/** A `securitypolicyviolation` event, the little of it the recovery reads. */
+export interface ViolationEventLike {
+  blockedURI?: unknown
+  effectiveDirective?: unknown
+  violatedDirective?: unknown
+  disposition?: unknown
+}
+
+/** The document a refused module import is retried in, the little of it the recovery uses. */
+export interface ModuleDocumentLike {
+  scripts?: ArrayLike<{ src?: unknown; nonce?: unknown }>
+  head?: { appendChild(node: object): unknown } | null
+  documentElement?: { appendChild(node: object): unknown } | null
+  createElement(tag: string): ModuleScriptLike
+}
+
+/** The `<script type="module">` the retry inserts. */
+export interface ModuleScriptLike extends ScriptLike {
+  type?: unknown
+  nonce?: unknown
+  addEventListener(type: string, listener: () => void): void
+  remove?(): void
 }
 
 /** The little of a `<script>` / `<link>` element and its `error` event the recovery reads. */
@@ -62,11 +112,16 @@ export interface ErrorEventLike {
 export interface ScriptRecovery {
   /** The window's capturing `error` listener. */
   onError(event: ErrorEventLike): void
+  /** The window's capturing `securitypolicyviolation` listener: a refused module import. */
+  onViolation(event: ViolationEventLike): void
   /** The host's answer to `request`: `error` null when the file ran in the main world. */
   done(id: string, error: string | null): void
-  /** Requests still waiting for the host (tests, diagnostics). */
+  /** Requests still waiting for the host, and module retries still loading (tests, diagnostics). */
   pending(): number
 }
+
+/** The directives a refused script fetch is reported under (`script-src-elem` falls back to `script-src`). */
+const SCRIPT_DIRECTIVES = new Set(['script-src-elem', 'script-src'])
 
 /** The document's constructed-sheet surface the stylesheet recovery uses. */
 interface AdoptingDocument {
@@ -100,6 +155,85 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
     waiting.set(id, { script, url: src })
     respell(script, 'src', presentExtensionUrl(src))
     host.request(id, extId, src)
+  }
+
+  const retried = new Set<string>()
+  let modules = 0
+
+  /** The page's own nonce, from any nonced script of the document (the IDL attribute keeps it). */
+  const pageNonce = (doc: ModuleDocumentLike): string | null => {
+    const scripts = doc.scripts
+    if (!scripts) return null
+    for (let i = 0; i < scripts.length; i += 1) {
+      const nonce = scripts[i]?.nonce
+      if (typeof nonce === 'string' && nonce !== '') return nonce
+    }
+    return null
+  }
+
+  /** Whether a `<script>` of the document loads `url` (spelled either way): the element's own recovery. */
+  const inScripts = (doc: ModuleDocumentLike, url: string): boolean => {
+    const scripts = doc.scripts
+    if (!scripts) return false
+    const shown = presentExtensionUrl(url)
+    for (let i = 0; i < scripts.length; i += 1) {
+      const src = scripts[i]?.src
+      if (src === url || src === shown) return true
+    }
+    return false
+  }
+
+  const retryModule = (url: string): void => {
+    const doc = host.document
+    if (!doc) return
+    if (!host.pageModules) {
+      ;(host.warn ?? host.error)(
+        `[Zenium] ${url}: the page's policy refused the extension's module, and the isolated world cannot load one past it (recorded)`
+      )
+      return
+    }
+    const nonce = pageNonce(doc)
+    if (nonce === null) {
+      host.error(`[Zenium] ${url} could not load past the page's policy: the page lends no nonce`)
+      return
+    }
+    let element: ModuleScriptLike
+    try {
+      element = doc.createElement('script')
+      element.type = 'module'
+      element.nonce = nonce
+      // A Trusted Types sink: an enforcing page without the shield's policy refuses the string.
+      element.src = url
+    } catch (reason) {
+      host.error(`[Zenium] ${url} could not be retried past the page's policy: ${String(reason)}`)
+      return
+    }
+    // Its own `error` is not a classic `<script src>` for the host to run.
+    RECOVERED.add(element)
+    modules += 1
+    const settle = (): void => {
+      modules -= 1
+      try {
+        element.remove?.()
+      } catch {
+        /* already gone */
+      }
+    }
+    element.addEventListener('load', settle)
+    element.addEventListener('error', () => {
+      settle()
+      host.error(
+        `[Zenium] ${url} could not load past the page's policy from a module script with its nonce`
+      )
+    })
+    const parent = doc.head ?? doc.documentElement
+    try {
+      if (!parent) throw new Error('the document has no element to hold a script')
+      parent.appendChild(element)
+    } catch (reason) {
+      settle()
+      host.error(`[Zenium] ${url} could not be retried past the page's policy: ${String(reason)}`)
+    }
   }
 
   const recoverStyle = (link: ScriptLike, href: string, extId: string): void => {
@@ -155,6 +289,23 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
       event.stopImmediatePropagation()
       recoverScript(target, src, extId)
     },
+    onViolation(event) {
+      if (!event || typeof event !== 'object') return
+      // A report-only policy blocks nothing.
+      if (event.disposition !== undefined && event.disposition !== 'enforce') return
+      const directive = String(event.effectiveDirective || event.violatedDirective || '').split(
+        /\s/
+      )[0]
+      if (!directive || !SCRIPT_DIRECTIVES.has(directive)) return
+      const blocked = typeof event.blockedURI === 'string' ? event.blockedURI : ''
+      if (extensionFor(blocked) === null) return
+      // A `<script src>` of the document (the page's, or this retry's own): the element's `error`
+      // is where that one is recovered or given up.
+      if (host.document && inScripts(host.document, blocked)) return
+      if (retried.has(blocked)) return
+      retried.add(blocked)
+      retryModule(blocked)
+    },
     done(id, error) {
       const entry = waiting.get(id)
       if (!entry) return
@@ -167,7 +318,7 @@ export function createScriptRecovery(host: ScriptRecoveryHost): ScriptRecovery {
       respell(entry.script, 'src', entry.url)
       entry.script.dispatchEvent(new Event('error'))
     },
-    pending: () => waiting.size + styles
+    pending: () => waiting.size + styles + modules
   }
 }
 

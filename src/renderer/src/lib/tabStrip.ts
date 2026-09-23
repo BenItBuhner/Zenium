@@ -56,19 +56,37 @@ const idOf = (key: string): string => {
   return stripItemKind(key) === 'saved' ? id.slice(0, id.lastIndexOf(':')) : id
 }
 
+/** The axis a strip lays its items along: the sidebar's column, or the horizontal strip's row. */
+export type StripAxis = 'x' | 'y'
+
+/**
+ * The horizontal strip's arrows (v2 §9.37, the WAI-ARIA tabs pattern turned): Left and Right
+ * walk the items as Up and Down walk the sidebar's, and Up and Down take over what Left and
+ * Right do there – fold and unfold a header, step into its rows, go back up to it.
+ */
+const TURNED: Readonly<Record<string, string>> = {
+  ArrowRight: 'ArrowDown',
+  ArrowLeft: 'ArrowUp',
+  ArrowDown: 'ArrowRight',
+  ArrowUp: 'ArrowLeft'
+}
+
 /**
  * What `key`, pressed on `items[at]`, means. `columns` is how many tiles the Essentials grid
  * puts on one line: Down from a tile goes to the tile under it while there is one. Null for a key
  * the strip does not take (Tab, letters, chords): the browser or the shortcut table has it.
+ * `axis` is the list's: along `x` the arrows are turned (`TURNED`).
  */
 export function stripIntent(
   items: readonly StripItem[],
   at: number,
-  key: string,
-  columns = 1
+  pressed: string,
+  columns = 1,
+  axis: StripAxis = 'y'
 ): StripIntent | null {
   const item = items[at]
   if (!item) return null
+  const key = axis === 'x' ? (TURNED[pressed] ?? pressed) : pressed
   const kind = stripItemKind(item.key)
   const last = items.length - 1
   const kindAt = (i: number): StripItemKind | null =>
@@ -196,11 +214,14 @@ export function stripKeyDown(e: KeyboardEvent<HTMLElement>): boolean {
   const at = entries.findIndex((entry) => entry.el === el)
   if (at === -1) return false
   const columns = stripItemKind(entries[at].item.key) === 'tile' ? tileColumns(el) : 1
+  // The root says which way its items run (`data-strip-axis`; the sidebar says nothing: `y`).
+  const axis: StripAxis = root.dataset.stripAxis === 'x' ? 'x' : 'y'
   const intent = stripIntent(
     entries.map((entry) => entry.item),
     at,
     e.key,
-    columns
+    columns,
+    axis
   )
   if (!intent) return false
   e.preventDefault()

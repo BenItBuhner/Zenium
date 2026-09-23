@@ -318,17 +318,66 @@ object ExtensionScripts {
      * A served module's text bracketed for a one-realm WebView: `globalThis.__zenExtModule(id)`
      * shares the text's first line (line numbers, and so source maps, stay) and
      * `__zenExtModuleEnd(id)` takes a line of its own after whatever the file ended in. While
-     * the module's body evaluates, the page's real `chrome` answers with the extension's (the
-     * bootstrap's accessor, `extensionModuleChrome.ts`); both calls are guarded, so the same
-     * text also runs where the brackets were never installed. The TypeScript twin is
-     * `wrapModuleText`; `extensionModuleChrome.test.ts` and `ExtensionScriptsTest` pin the shape.
+     * the module's body evaluates, the page's real `chrome`, `self` and `globalThis` answer with
+     * the extension's (the bootstrap's accessors, `extensionModuleChrome.ts`); both calls are
+     * guarded, so the same text also runs where the brackets were never installed. The prologue
+     * also binds `chrome` in the module's own scope (`let chrome = <the entry>`), so a handler the
+     * module runs later keeps the extension's (Buyhatke's Vite chunks read `chrome.storage` from
+     * theirs); a webpack chunk ([isWebpackChunk]) binds `self` the same way for the registry its
+     * factories read; a module declaring `chrome` itself ([declaresChrome]) keeps the bare entry.
+     * The TypeScript twin is `wrapModuleText`; `extensionModuleChrome.test.ts` and
+     * `ExtensionScriptsTest` pin the shape.
      */
     fun moduleChromeWrap(text: String, extensionId: String): String =
-        moduleChromeOpen(extensionId) + text + moduleChromeClose(extensionId)
+        moduleChromeOpen(extensionId, text) + text + moduleChromeClose(extensionId)
 
-    /** The bracket ahead of a served module's text; ASCII, so it prefixes the file's UTF-8 bytes as it is. */
-    fun moduleChromeOpen(extensionId: String): String =
-        "globalThis.__zenExtModule&&globalThis.__zenExtModule(${JSONObject.quote(extensionId)});"
+    /** How far into a served script the host looks for a webpack chunk's registration. */
+    const val WEBPACK_CHUNK_HEAD = 512
+
+    /**
+     * A webpack chunk's registration, as webpack writes it at the top of every non-entry chunk
+     * of a `web`-like target: `(self.webpackChunk<name>=self.webpackChunk<name>||[]).push([...`,
+     * the global spelled `self`, `globalThis` or `window` by `output.globalObject`; a directive,
+     * a comment or a one-line polyfill (`"undefined"!=typeof browser&&(chrome=browser);`) may
+     * come first. The same expression is `WEBPACK_CHUNK` in `extensionModuleChrome.ts`.
+     */
+    private val WEBPACK_CHUNK = Regex("""\((self|globalThis|window)\.(webpackChunk\w*)\s*=\s*\1\.\2\s*\|\|\s*\[\]\)\s*\.push\s*\(""")
+
+    /** Whether the head of a served script is a webpack chunk's registration ([WEBPACK_CHUNK]). */
+    fun isWebpackChunk(head: String): Boolean = WEBPACK_CHUNK.containsMatchIn(head.take(WEBPACK_CHUNK_HEAD))
+
+    /** How far into a served module the host looks for a declaration of `chrome` of its own. */
+    const val MODULE_SCAN_HEAD = 1 shl 20
+
+    /**
+     * A binding named `chrome` a module may declare itself: a declaration keyword before the
+     * name, an `import` of it (default, namespace or `as chrome`), or the name alone between the
+     * braces or commas of a destructuring pattern or an import list. Read conservatively: a match
+     * inside a function body or a string costs the module only the module-scoped binding, a miss
+     * would cost it its whole text. The same expression is `OWN_CHROME` in `extensionModuleChrome.ts`.
+     */
+    private val OWN_CHROME = Regex(
+        """(?:^|[^\w$.])(?:(?:let|const|var|class|function)\s+chrome|function\s*\*\s*chrome|import\s+chrome|import\s*\*\s*as\s+chrome|as\s+chrome)(?![\w$])|[{,]\s*chrome\s*(?=[,}]|=(?!=))"""
+    )
+
+    /** Whether the head of a served module declares a `chrome` of its own ([OWN_CHROME]). */
+    fun declaresChrome(head: String): Boolean = OWN_CHROME.containsMatchIn(head.take(MODULE_SCAN_HEAD))
+
+    /**
+     * The bracket ahead of a served module's text, given the text's head ([MODULE_SCAN_HEAD]
+     * chars are enough); ASCII, so it prefixes the file's UTF-8 bytes as it is. The entry is
+     * the module-scoped `chrome` (a `let`, so the module's own functions keep the extension's
+     * later); a webpack chunk is one `push` expression and declares nothing at its top level, so
+     * its prologue binds `self` the same way; a module declaring `chrome` itself keeps the bare
+     * entry, since a second declaration would be a SyntaxError for the file.
+     */
+    fun moduleChromeOpen(extensionId: String, head: String = ""): String {
+        val id = JSONObject.quote(extensionId)
+        val chrome = "let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule($id):globalThis.chrome"
+        if (isWebpackChunk(head)) return "$chrome,self=globalThis.__zenExtModuleSelf?globalThis.__zenExtModuleSelf($id):globalThis.self;"
+        if (declaresChrome(head)) return "globalThis.__zenExtModule&&globalThis.__zenExtModule($id);"
+        return "$chrome;"
+    }
 
     /** The bracket after a served module's text, on a line of its own. */
     fun moduleChromeClose(extensionId: String): String =

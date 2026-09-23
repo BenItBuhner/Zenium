@@ -100,6 +100,12 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // The script's media tracking (`installMediaTracking`) answers the `play` above with a report on
+  // a 40 ms timer. The file's last test can end inside that window, and the timer then runs against
+  // a document vitest has already taken down (`HTMLVideoElement is not defined`, an unhandled error
+  // that fails the whole run: CI run 35841597547 on #383, whose one change was a Kotlin file).
+  // `pagehide` is the script's own end of a page: every evaluation's listener clears its report.
+  window.dispatchEvent(new Event('pagehide'))
   vi.unstubAllGlobals()
   document.body.innerHTML = ''
 })

@@ -74,6 +74,13 @@ export interface EngineConfig {
    * injection). The host then routes `scripting.executeScript` through the world's own endpoint.
    */
   world?: boolean
+  /**
+   * Chars a message envelope (`runtime.sendMessage`'s, `port.postMessage`'s, serialized) may
+   * have; a longer one is refused in the sender's realm with Chrome's error for a message over
+   * `kMaxMessageLength` (64 MB there, [MAX_MESSAGE_LENGTH] here by default). The host sets it
+   * from its heap (`ext.env`'s `messageLimit`): a message the host would refuse never crosses.
+   */
+  maxMessageLength?: number
 }
 
 export interface EngineTransport {
@@ -214,6 +221,12 @@ const EXTENSION_ID = /^[a-p]{32}$/
 /** Chrome's `runtime.lastError` for a native messaging host that does not exist. */
 export const NATIVE_HOST_NOT_FOUND = 'Specified native messaging host not found.'
 
+/** Chrome's error for a message over its maximum (`messaging_util::kMessageTooLongError`). */
+export const MESSAGE_TOO_LONG = 'Message length exceeded maximum allowed length.'
+
+/** Chrome's `kMaxMessageLength`, 64 MB, as the default when the host names no limit. */
+export const MAX_MESSAGE_LENGTH = 64 * 1024 * 1024
+
 const isExtensionId = (value: unknown): value is string =>
   typeof value === 'string' && EXTENSION_ID.test(value)
 
@@ -238,14 +251,46 @@ export function createEmulatedEngine(
     }, 0)
   }
 
-  const post = (message: Record<string, unknown>): void => {
+  /** [message] stamped for the host and serialized; undefined (logged) when it cannot be. */
+  const serialize = (message: Record<string, unknown>): string | undefined => {
     message.token = config.token
     message.ep = config.endpointId
     try {
-      transport.post(primordials.stringify(message))
+      return primordials.stringify(message)
+    } catch (error) {
+      primordials.error('[Zenium] extension bridge post failed', error)
+      return undefined
+    }
+  }
+
+  const deliver = (text: string): void => {
+    try {
+      transport.post(text)
     } catch (error) {
       primordials.error('[Zenium] extension bridge post failed', error)
     }
+  }
+
+  const post = (message: Record<string, unknown>): void => {
+    const text = serialize(message)
+    if (text !== undefined) deliver(text)
+  }
+
+  const maxMessageLength = config.maxMessageLength ?? MAX_MESSAGE_LENGTH
+
+  /**
+   * Posts a messaging envelope after Chrome's `kMaxMessageLength` check, made here in the
+   * sender's realm on the serialized text: over the limit nothing is posted and the caller gets
+   * `tooLong()` thrown, as Chrome throws from `runtime.sendMessage` and `port.postMessage`. The
+   * limit is the host's, so a message its bridge would refuse on raw length (the phone's heap,
+   * not Chrome's 64 MB) stops in the realm that built it: a popup broadcasting its whole store
+   * to its pages on every change hears the error in place of a dead process.
+   */
+  const postMeasured = (message: Record<string, unknown>, tooLong: () => Error): void => {
+    const text = serialize(message)
+    if (text === undefined) return
+    if (text.length > maxMessageLength) throw tooLong()
+    deliver(text)
   }
 
   const call = (ns: string, method: string, args: unknown[]): Promise<unknown> =>
@@ -382,19 +427,35 @@ export function createEmulatedEngine(
    * reported to it as an error, as Chrome reports it ("The message port closed before a response
    * was received."); the promise form resolves with undefined there.
    */
-  const sendMessage = (target: MessageTarget, data: unknown, callback: boolean): Promise<unknown> =>
-    new Promise((resolve, reject) => {
-      const id = ++seq
+  const sendMessage = (
+    target: MessageTarget,
+    data: unknown,
+    callback: boolean
+  ): Promise<unknown> => {
+    const id = ++seq
+    const reply = new Promise<unknown>((resolve, reject) => {
       pending.set(id, { resolve, reject })
-      post({
-        t: 'msg',
-        id,
-        target,
-        data: data === undefined ? null : data,
-        ...(callback ? { callback: true } : {}),
-        ...(userScript ? { userScript: true } : {})
-      })
     })
+    try {
+      // Chrome throws the oversized-message TypeError from `sendMessage` itself, synchronously,
+      // before any promise or callback is in play.
+      postMeasured(
+        {
+          t: 'msg',
+          id,
+          target,
+          data: data === undefined ? null : data,
+          ...(callback ? { callback: true } : {}),
+          ...(userScript ? { userScript: true } : {})
+        },
+        () => new TypeError(MESSAGE_TOO_LONG)
+      )
+    } catch (error) {
+      pending.delete(id)
+      throw error
+    }
+    return reply
+  }
 
   /** `runtime.sendMessage([extensionId], message, [options], [callback])`. */
   const parseSendMessageArgs = (
@@ -427,7 +488,11 @@ export function createEmulatedEngine(
         const entry = ports.get(portId)
         if (!entry || !entry.connected)
           throw new Error('Attempting to use a disconnected port object')
-        if (!local) post({ t: 'portMsg', portId, data: message === undefined ? null : message })
+        if (!local)
+          postMeasured(
+            { t: 'portMsg', portId, data: message === undefined ? null : message },
+            () => new Error(MESSAGE_TOO_LONG)
+          )
       },
       disconnect: () => {
         const entry = ports.get(portId)

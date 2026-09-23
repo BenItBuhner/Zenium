@@ -245,7 +245,7 @@ class ExtensionScriptsTest {
         val id = "oldceeleldhonbafppcapldpdifcinji"
         val text = "import x from \"./x.js\";\nexport const y = x + 1;\n//# sourceMappingURL=content.js.map"
         val wrapped = ExtensionScripts.moduleChromeWrap(text, id)
-        assertTrue(wrapped.startsWith("globalThis.__zenExtModule&&globalThis.__zenExtModule(\"$id\");import x from"))
+        assertTrue(wrapped.startsWith("let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule(\"$id\"):globalThis.chrome;import x from"))
         assertTrue(wrapped.endsWith("\n;globalThis.__zenExtModuleEnd&&globalThis.__zenExtModuleEnd(\"$id\");"))
         val lines = wrapped.lines()
         assertEquals(text.lines().size + 1, lines.size)
@@ -254,5 +254,70 @@ class ExtensionScriptsTest {
         assertTrue(ExtensionScripts.isScriptPath("chunks/a.MJS"))
         assertFalse(ExtensionScripts.isScriptPath("content.json"))
         assertFalse(ExtensionScripts.isScriptPath("styles.css"))
+    }
+
+    @Test
+    fun aWebpackChunkGetsTheModuleScopedChromeAndSelfInItsPrologueAndAnyOtherModuleTheChromeAlone() {
+        val id = "ajphlblkfpppdpkgokiejbjfohfohhmk"
+        // Mote's sidebar.bundle.js: a polyfill line, a directive, then the registration.
+        val mote = "\"undefined\"!=typeof browser&&(chrome=browser);\"use strict\";(self.webpackChunk_mote_plugin=self.webpackChunk_mote_plugin||[]).push([[6380],{83325(e,t,i){}}]);"
+        assertTrue(ExtensionScripts.isWebpackChunk(mote))
+        assertTrue(ExtensionScripts.isWebpackChunk("/*! chunk */\n(globalThis.webpackChunk=globalThis.webpackChunk||[]).push([[1],{}]);"))
+        assertTrue(ExtensionScripts.isWebpackChunk("(window.webpackChunkapp = window.webpackChunkapp || []).push([[2], {}]);"))
+        assertFalse(ExtensionScripts.isWebpackChunk("(self.webpackChunkA=self.webpackChunkB||[]).push([[1],{}]);"))
+        assertFalse(ExtensionScripts.isWebpackChunk("import x from \"./x.js\";\nexport const y = x + 1;"))
+        assertFalse(ExtensionScripts.isWebpackChunk("/".repeat(600) + "(self.webpackChunk=self.webpackChunk||[]).push([[1],{}]);"))
+
+        val chunkOpen = ExtensionScripts.moduleChromeOpen(id, mote)
+        val chrome = "let chrome=globalThis.__zenExtModule?globalThis.__zenExtModule(\"$id\"):globalThis.chrome"
+        assertEquals("$chrome,self=globalThis.__zenExtModuleSelf?globalThis.__zenExtModuleSelf(\"$id\"):globalThis.self;", chunkOpen)
+        // Buyhatke's Vite chunk: `chrome` read from its handlers later, none declared: the module-scoped `chrome`.
+        val vite = "import{c as F,a6 as Be}from\"./utility_all2-CnXvRtz4.js\";const Ke=e=>F({type:\"GOODIE_SPIN_LIST\",goodieId:e}),de=async e=>{const a=await chrome.storage.local.get([e]);return a[e]};export{Ke as a,de as b};"
+        assertEquals("$chrome;", ExtensionScripts.moduleChromeOpen(id, vite))
+        assertEquals("$chrome;", ExtensionScripts.moduleChromeOpen(id, "export const a = 1;"))
+        assertEquals("$chrome;", ExtensionScripts.moduleChromeOpen(id))
+        // A module declaring `chrome` itself keeps the bare entry.
+        val bare = "globalThis.__zenExtModule&&globalThis.__zenExtModule(\"$id\");"
+        assertEquals(bare, ExtensionScripts.moduleChromeOpen(id, "const chrome = globalThis.chrome ?? browser; export { chrome };"))
+        assertEquals(bare, ExtensionScripts.moduleChromeOpen(id, "import chrome from \"./polyfill.js\";"))
+        // The wrap chooses by the text, on the first line either way; ASCII, as the file's prefix.
+        val wrapped = ExtensionScripts.moduleChromeWrap(mote, id)
+        assertTrue(wrapped.startsWith(chunkOpen + "\"undefined\"!=typeof browser"))
+        assertEquals(mote.lines().size + 1, wrapped.lines().size)
+        assertTrue(chunkOpen.all { it.code < 128 })
+        assertTrue(ExtensionScripts.moduleChromeWrap(vite, id).startsWith("$chrome;import{c as F"))
+    }
+
+    @Test
+    fun aModuleDeclaringChromeItselfIsToldByItsFirstMiBConservatively() {
+        for (text in listOf(
+            "let chrome = globalThis.chrome;",
+            "var chrome=browser;",
+            "class chrome {}",
+            "function chrome(){}",
+            "async function chrome(){}",
+            "function* chrome(){}",
+            "import chrome from \"./polyfill.js\";",
+            "import * as chrome from \"./polyfill.js\";",
+            "import{x as chrome}from\"./polyfill.js\";",
+            "import{a,chrome}from\"./polyfill.js\";",
+            "const{chrome}=globalThis;",
+            "const {runtime, chrome = browser} = globalThis;",
+            // Conservative: a match inside a string or a function body costs only the binding.
+            "const s = \"let chrome\";",
+            "function f(){const chrome=1;return chrome}"
+        )) assertTrue(text, ExtensionScripts.declaresChrome(text))
+        for (text in listOf(
+            "chrome.runtime.getURL(\"x\");",
+            "const c = window.chrome, d = globalThis.chrome;",
+            "const o = {chrome: 1, chromeVersion: 2};",
+            "let chromeX = 1, unchrome = 2;",
+            "if (chrome === browser) {}",
+            "import{c as F,a6 as Be}from\"./utility_all2-CnXvRtz4.js\";import\"./preload-helper-DwIMeJeZ.js\";"
+        )) assertFalse(text, ExtensionScripts.declaresChrome(text))
+        // Beyond the first MiB the host does not look: a declaration there is the documented limit.
+        assertEquals(1 shl 20, ExtensionScripts.MODULE_SCAN_HEAD)
+        assertFalse(ExtensionScripts.declaresChrome("x".repeat(ExtensionScripts.MODULE_SCAN_HEAD) + ";let chrome = 1;"))
+        assertTrue(ExtensionScripts.declaresChrome("x".repeat(ExtensionScripts.MODULE_SCAN_HEAD - 16) + ";let chrome = 1;"))
     }
 }
