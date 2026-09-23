@@ -1916,6 +1916,11 @@ export type ShortcutAction =
   | 'window.newPrivate'
   | 'window.close'
   | 'window.minimize'
+  /**
+   * Chrome's More tools › Name window…: the chrome opens the prompt that gives the window a
+   * name of the user's (`ZenWindow.name`). Unbound in both presets, as in Chrome.
+   */
+  | 'window.name'
   | 'app.quit'
   /** Open the application menu from the keyboard (Alt+F / F10 on Windows and Linux). */
   | 'menu.app'
@@ -1990,6 +1995,11 @@ export type ShortcutAction =
   | 'bookmark.allTabs'
   | 'bookmark.toggleBar'
   | 'history.sidebar'
+  /**
+   * Chrome's Delete browsing data (Ctrl+Shift+Delete, Firefox's Clear Recent History chord): the
+   * chrome opens the dialog (`siteControls/ClearBrowsingDataDialog`) over the page.
+   */
+  | 'privacy.clearBrowsingData'
   | 'downloads.open'
   | 'devtools.toggle'
   | 'devtools.inspector'
@@ -2884,6 +2894,12 @@ export interface WindowState {
   prompt: WindowPrompt | null
   /** The web app a standalone window shows (`chrome` `app`); null for browser windows. */
   app: AppWindowInfo | null
+  /**
+   * The name the user gave the window (Chrome's Name window…), trimmed; null while it has none.
+   * The OS title bar reads `<name> — Zenium` instead of the active tab's title, and tab search
+   * names the window by it. A host with one window (Android) carries the field inert.
+   */
+  name: string | null
 }
 
 /**
@@ -4474,6 +4490,13 @@ export interface Commands {
 
   'window.minimize': { args: void; result: void }
   'window.toggleMaximize': { args: void; result: void }
+  /**
+   * The chrome's empty caption room was double-clicked (the sidebar's empty space; the tab
+   * strip's blank band is a drag region the OS handles itself): the window does what a
+   * double-clicked title bar does on this OS – maximise / restore on Windows and Linux, the
+   * user's "Double-click a window's title bar to" choice on macOS (`ZenWindow.captionDoubleClick`).
+   */
+  'window.captionDoubleClick': { args: void; result: void }
   'window.close': { args: void; result: void }
   'window.toggleFullscreen': { args: void; result: void }
   /**
@@ -4497,6 +4520,11 @@ export interface Commands {
   'window.openUrl': { args: { url: string; kind: WindowKind }; result: void }
   /** Blank windows: move every local tab back into one of the real spaces. */
   'window.moveTabsToSpace': { args: { spaceId: string }; result: void }
+  /**
+   * The Name window prompt's answer: the window's name (trimmed by the core; empty or null
+   * clears it), kept with the session and read into the OS title bar (`WindowState.name`).
+   */
+  'window.setName': { args: { name: string | null }; result: void }
 
   /**
    * Open an internal page (`shared/internalPages.ts`) in its tab. A page with `reuse: 'window'`
@@ -5165,6 +5193,16 @@ export interface Events {
    * chrome opens Settings on its Import category with the import dialog up over it.
    */
   'import.open': void
+  /**
+   * Ctrl+Shift+Delete or the app menu's Delete Browsing Data… row: the chrome opens the Delete
+   * browsing data dialog (`siteControls/ClearBrowsingDataDialog`) over whatever is up.
+   */
+  'clearBrowsingData.open': void
+  /**
+   * More Tools › Name Window… (or the tab strip's row): the chrome opens the Name window prompt
+   * (`windowName/NameWindowDialog`) over the page, its field holding the current name.
+   */
+  'windowName.open': void
   /** The PDF viewer document in a tab reported where it stands (`shared/pdfViewerProtocol.ts`). */
   'pdf.changed': { tabId: string; report: PdfViewerReport }
   /**
