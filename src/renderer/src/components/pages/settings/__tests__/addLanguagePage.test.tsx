@@ -12,9 +12,9 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 import { run } from '@renderer/lib/api'
-import { AddLanguagePage, addLanguageList } from '../AddLanguagePage'
+import { AddLanguagePage } from '../AddLanguagePage'
 import { DrillInBackContext } from '../drillIn'
-import { addLanguageTargets } from '../languages'
+import { addLanguageList, addLanguageTargets } from '../languages'
 import type { SectionContext } from '../sections'
 
 /*

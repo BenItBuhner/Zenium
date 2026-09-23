@@ -519,8 +519,11 @@ function StepButton({
     const next = Math.min(row.max, Math.max(row.min, value + direction * row.step))
     if (next !== row.value) row.onChange(next)
   }
+  // The hold's timers step from the latest value, not the one the press rendered with.
   const latest = useRef(step)
-  latest.current = step
+  useEffect(() => {
+    latest.current = step
+  })
   const timer = useRef<{ kind: 'delay' | 'repeat'; id: number } | null>(null)
   // The pointer took this press: the click that follows it has stepped already.
   const pressed = useRef(false)

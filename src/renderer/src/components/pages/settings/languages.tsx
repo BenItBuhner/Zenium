@@ -1,3 +1,4 @@
+import type { InternalPageQuery } from '@shared/internalPages'
 import { LANGUAGES_MAX } from '@shared/languages'
 import { run } from '@renderer/lib/api'
 import {
@@ -48,6 +49,12 @@ export const ADD_LANGUAGE_PAGE = 'add'
 export type AddLanguageList = 'preferred' | 'always' | 'never'
 
 export const ADD_LANGUAGE_LISTS: readonly AddLanguageList[] = ['preferred', 'always', 'never']
+
+/** The list the address names (`?list=`), the preferred list for an address that names none or another. */
+export function addLanguageList(query: InternalPageQuery): AddLanguageList {
+  const list = query.list
+  return ADD_LANGUAGE_LISTS.find((l) => l === list) ?? 'preferred'
+}
 
 /** What one Add language row adds to: the page's and the dialog's title, the languages left, the write. */
 export interface AddLanguageTarget {

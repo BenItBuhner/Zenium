@@ -6,7 +6,7 @@ import { run } from '@renderer/lib/api'
 import { filterLanguageChoices } from '@renderer/lib/languageCatalogue'
 import { PickList } from '../../translate/pickers'
 import { useDrillInBack } from './drillIn'
-import { ADD_LANGUAGE_LISTS, addLanguageTargets, type AddLanguageList } from './languages'
+import { addLanguageList, addLanguageTargets } from './languages'
 import type { SectionContext } from './sections'
 
 /**
@@ -99,10 +99,4 @@ export function AddLanguagePage({
       </div>
     </div>
   )
-}
-
-/** The list the address names (`?list=`), the preferred list for an address that names none or another. */
-export function addLanguageList(query: InternalPageQuery): AddLanguageList {
-  const list = query.list
-  return ADD_LANGUAGE_LISTS.find((l) => l === list) ?? 'preferred'
 }
