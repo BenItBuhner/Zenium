@@ -23,12 +23,20 @@ export interface WindowPromptText {
   tabsWarning: boolean
 }
 
-/** Chrome's sentence, the plural form for several; what "and …" names is what ends them. */
+/**
+ * What the answer does to the downloads, said in the verb's own word (§9.1: quit, as the button
+ * and the menu say) and as it happens: quitting interrupts them – the regular ones park
+ * resumable, the private session's end takes its own – and closing the last private window
+ * cancels the private ones, which cannot resume. The strings live here alone, so the lead's
+ * ruling on the final sentence (#357, Q3) lands as one edit.
+ */
 export function downloadsSentence(downloads: WindowPromptDownloads): string {
-  const end = downloads.end === 'quit' ? 'exit Zenium' : 'close the private window'
-  return downloads.count === 1
-    ? `A download is currently in progress. Do you want to cancel the download and ${end}?`
-    : `${downloads.count} downloads are currently in progress. Do you want to cancel the downloads and ${end}?`
+  const one = downloads.count === 1
+  const state = one ? '1 download is in progress' : `${downloads.count} downloads are in progress`
+  const them = one ? 'it' : 'them'
+  const outcome =
+    downloads.end === 'quit' ? `quitting interrupts ${them}` : `closing this window cancels ${them}`
+  return `${state}; ${outcome}.`
 }
 
 export function windowPromptText(prompt: WindowPrompt): WindowPromptText {

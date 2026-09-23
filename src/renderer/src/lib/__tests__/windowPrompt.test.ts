@@ -6,8 +6,8 @@ import { downloadsSentence, windowPromptText } from '../windowPrompt'
  * The words of the window prompt (lib/windowPrompt.ts; v2 draft §9.23; downloads-35): the tabs
  * warning as it was, the download sentence – singular and plural – as the title block's second
  * description paragraph under it, or standing alone as the description when nothing about the
- * tabs is asked. What "and …" names is what ends the downloads: quitting, or closing the private
- * window.
+ * tabs is asked. The sentence says what the answer does (§9.1: quit, the verb's word): quitting
+ * interrupts the downloads; closing the last private window cancels the private ones.
  */
 
 function prompt(patch: Partial<WindowPrompt>): WindowPrompt {
@@ -15,19 +15,34 @@ function prompt(patch: Partial<WindowPrompt>): WindowPrompt {
 }
 
 describe('the download sentence', () => {
-  it("is Chrome's, singular and plural, naming what ends the downloads", () => {
+  it('says what quitting does, singular and plural, in the verb’s own word', () => {
     expect(downloadsSentence({ count: 1, end: 'quit' })).toBe(
-      'A download is currently in progress. Do you want to cancel the download and exit Zenium?'
+      '1 download is in progress; quitting interrupts it.'
     )
     expect(downloadsSentence({ count: 2, end: 'quit' })).toBe(
-      '2 downloads are currently in progress. Do you want to cancel the downloads and exit Zenium?'
+      '2 downloads are in progress; quitting interrupts them.'
     )
+  })
+
+  it('says what closing the last private window does: its downloads are cancelled, since they cannot resume', () => {
     expect(downloadsSentence({ count: 1, end: 'private-window' })).toBe(
-      'A download is currently in progress. Do you want to cancel the download and close the private window?'
+      '1 download is in progress; closing this window cancels it.'
     )
     expect(downloadsSentence({ count: 3, end: 'private-window' })).toBe(
-      '3 downloads are currently in progress. Do you want to cancel the downloads and close the private window?'
+      '3 downloads are in progress; closing this window cancels them.'
     )
+  })
+
+  it('never says exit, or cancel where the download only pauses', () => {
+    for (const downloads of [
+      { count: 1, end: 'quit' as const },
+      { count: 2, end: 'quit' as const },
+      { count: 2, end: 'private-window' as const }
+    ]) {
+      const sentence = downloadsSentence(downloads)
+      expect(sentence).not.toMatch(/exit/i)
+      if (downloads.end === 'quit') expect(sentence).not.toMatch(/cancel/i)
+    }
   })
 })
 
@@ -58,8 +73,7 @@ describe('with downloads in progress', () => {
     expect(text).toEqual({
       title: 'Quit Zenium?',
       description: 'You are about to quit with 3 tabs open.',
-      downloadDescription:
-        '2 downloads are currently in progress. Do you want to cancel the downloads and exit Zenium?',
+      downloadDescription: '2 downloads are in progress; quitting interrupts them.',
       verb: 'Quit',
       tabsWarning: true
     })
@@ -68,9 +82,7 @@ describe('with downloads in progress', () => {
       prompt({ kind: 'close-tabs', count: 2, downloads: { count: 1, end: 'quit' } })
     )
     expect(closing.title).toBe('Close 2 tabs?')
-    expect(closing.downloadDescription).toBe(
-      'A download is currently in progress. Do you want to cancel the download and exit Zenium?'
-    )
+    expect(closing.downloadDescription).toBe('1 download is in progress; quitting interrupts it.')
     expect(closing.verb).toBe('Close tabs')
   })
 
@@ -79,8 +91,7 @@ describe('with downloads in progress', () => {
       windowPromptText(prompt({ kind: 'quit', count: 0, downloads: { count: 1, end: 'quit' } }))
     ).toEqual({
       title: 'Quit Zenium?',
-      description:
-        'A download is currently in progress. Do you want to cancel the download and exit Zenium?',
+      description: '1 download is in progress; quitting interrupts it.',
       downloadDescription: null,
       verb: 'Quit',
       tabsWarning: false
@@ -96,8 +107,7 @@ describe('with downloads in progress', () => {
       )
     ).toEqual({
       title: 'Close private window?',
-      description:
-        'A download is currently in progress. Do you want to cancel the download and close the private window?',
+      description: '1 download is in progress; closing this window cancels it.',
       downloadDescription: null,
       verb: 'Close window',
       tabsWarning: false
