@@ -6075,7 +6075,8 @@
     right: 0;
     margin: 0 auto;
     width: min(320px, 100% - 16px);
-    animation: zen-toast-in 160ms var(--zen-ease);
+    /* The toast's rise, the one number the sidebar's `.zen-toast` runs it at. */
+    animation: zen-toast-in 180ms var(--zen-ease);
   }
   /* One line (§9.33): a file's name is cut to the line by `ToastText`; the line never breaks. */
   .zen-capture-toast .zen-message-text {
