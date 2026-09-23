@@ -39,7 +39,7 @@ import {
 } from '@renderer/lib/siteInfoCopy'
 import { siteChip, siteChipRects } from '@renderer/lib/surfaces'
 import { pushToast } from '@renderer/lib/ui'
-import { useConfirmKeyboard } from '../dialogs/ConfirmDialog'
+import { useConfirmKeyboard } from '../dialogs/confirmKeyboard'
 import { Favicon } from '../sidebar/Favicon'
 import { V2Button } from '../v2/controls'
 import {

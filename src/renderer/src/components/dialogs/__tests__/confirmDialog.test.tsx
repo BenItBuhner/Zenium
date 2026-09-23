@@ -30,8 +30,8 @@ vi.mock('@renderer/lib/api', () => ({
 
 const { FrameDialogHost, useFrameDialog } = await import('@renderer/lib/portals')
 const { useEscape } = await import('@renderer/hooks/useEscape')
-const { ConfirmDialog, OWN_ENTER, PickerDialog, PromptDialog, useConfirmKeyboard } =
-  await import('../ConfirmDialog')
+const { ConfirmDialog, PickerDialog, PromptDialog } = await import('../ConfirmDialog')
+const { OWN_ENTER, useConfirmKeyboard } = await import('../confirmKeyboard')
 type Props = Parameters<typeof ConfirmDialog>[0]
 type PromptProps = Parameters<typeof PromptDialog>[0]
 type PickerProps = Parameters<typeof PickerDialog>[0]
@@ -812,7 +812,7 @@ describe('the picker (PickerDialog, a list body on the primitive)', () => {
   })
 })
 
-describe('the exported keyboard (useConfirmKeyboard) on a bare container', () => {
+describe('the exported keyboard (useConfirmKeyboard, dialogs/confirmKeyboard.ts) on a bare container', () => {
   /**
    * Any held container – no dialog, no host: a `tabIndex -1` box with a text field and two
    * buttons, held by the hook alone. `inner` puts the ref on a body inside it and names the box
