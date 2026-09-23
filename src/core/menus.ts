@@ -1886,7 +1886,8 @@ export class Menus {
 
   /**
    * Long-press on a new tab page tile: open it elsewhere, pin it, edit it (a shortcut's name and
-   * address, NTP-06: the chrome's edit sheet over the page in `tabId`), or take it off the page.
+   * address, NTP-06: the chrome's edit sheet over the page in `tabId`), move it a slot along the
+   * grid, or take it off the page.
    */
   showTopSiteContextMenu(url: string, title: string, tabId: string | null, win: ZenWindow): void {
     if (!isNavigableUrl(url)) return
@@ -1912,6 +1913,7 @@ export class Menus {
               }
             ]
           : []),
+        ...(shortcut ? this.moveShortcutItems(shortcut.id) : []),
         {
           label: shortcut ? 'Unpin Shortcut' : 'Pin Shortcut',
           click: () => (shortcut ? newTab.unpin(url) : newTab.pin(url, title))
@@ -1921,6 +1923,31 @@ export class Menus {
       win,
       'topsite'
     )
+  }
+
+  /**
+   * Move Left / Move Right for a pinned tile (NTP-06; the #348 design gate's addendum): the
+   * hold-and-drag's accessible path – a screen reader's, a keyboard's – one slot at a time in
+   * the grid's order, the space menu's two rows, greyed at the ends (§9.17: disabled, not
+   * hidden), writing the same `newtab.reorderShortcuts` the drop does.
+   */
+  private moveShortcutItems(id: string): MenuItemTemplate[] {
+    const { state, newTab } = this.browser
+    const ids = state.newTabDevice.shortcuts.map((s) => s.id)
+    const idx = ids.indexOf(id)
+    const moveTo = (to: number): void => {
+      const next = ids.filter((other) => other !== id)
+      next.splice(to, 0, id)
+      newTab.reorderShortcuts(next)
+    }
+    return [
+      { label: 'Move Left', enabled: idx > 0, click: () => moveTo(idx - 1) },
+      {
+        label: 'Move Right',
+        enabled: idx >= 0 && idx < ids.length - 1,
+        click: () => moveTo(idx + 1)
+      }
+    ]
   }
 
   // ---------------------------------------------------------------------------

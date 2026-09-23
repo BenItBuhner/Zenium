@@ -2394,7 +2394,7 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     return topLabels(h.shown())
   }
 
-  it('a pinned tile: Open in New Tab, Copy Link, then Edit Shortcut…, Unpin Shortcut and Remove', () => {
+  it('a pinned tile: Open in New Tab, Copy Link, then Edit Shortcut…, Move Left, Move Right, Unpin Shortcut and Remove', () => {
     const h = pageHarness(ANDROID, { formFactor: 'phone' })
     const id = h.browser.newTab.addShortcut('Docs', 'https://docs.example/')!
     expect(tileMenu(h, 'https://docs.example/', 'Docs')).toEqual([
@@ -2402,6 +2402,8 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
       'Copy Link',
       '-',
       'Edit Shortcut…',
+      'Move Left',
+      'Move Right',
       'Unpin Shortcut',
       'Remove'
     ])
@@ -2412,6 +2414,32 @@ describe("the phone's new tab tile menu (NTP-06)", () => {
     // Unpin takes the tile off the pinned list; Remove hides its host from the page as well.
     h.click('Unpin Shortcut')
     expect(h.browser.state.newTabDevice.shortcuts.find((s) => s.id === id)).toBeUndefined()
+  })
+
+  it('Move Left / Move Right step a pinned tile one slot along the grid – the drag’s accessible path – and are greyed at the ends (§9.17)', () => {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    const a = h.browser.newTab.addShortcut('A', 'https://a.example/')!
+    const b = h.browser.newTab.addShortcut('B', 'https://b.example/')!
+    const c = h.browser.newTab.addShortcut('C', 'https://c.example/')!
+    const order = (): string[] => h.browser.state.newTabDevice.shortcuts.map((s) => s.id)
+    const move = (url: string, label: string): MenuItemTemplate => {
+      tileMenu(h, url, '')
+      return item(h.shown(), label)
+    }
+    // At the start Move Left is off, Move Right steps the tile past its neighbour.
+    expect(move('https://a.example/', 'Move Left').enabled).toBe(false)
+    expect(move('https://a.example/', 'Move Right').enabled).toBe(true)
+    move('https://a.example/', 'Move Right').click?.()
+    expect(order()).toEqual([b, a, c])
+    // In the middle both are on; at the end Move Right is off.
+    expect(move('https://a.example/', 'Move Left').enabled).toBe(true)
+    move('https://a.example/', 'Move Right').click?.()
+    expect(order()).toEqual([b, c, a])
+    expect(move('https://a.example/', 'Move Right').enabled).toBe(false)
+    move('https://a.example/', 'Move Left').click?.()
+    expect(order()).toEqual([b, a, c])
+    // A most visited tile is not a slot: no Move rows for it.
+    expect(tileMenu(h, 'https://often.example/', 'Often')).not.toContain('Move Left')
   })
 
   it('a most visited tile has no edit – it is the history’s – and offers Pin instead', () => {
