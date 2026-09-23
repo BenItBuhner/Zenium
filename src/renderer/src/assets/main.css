@@ -4336,8 +4336,10 @@
    * (§9.12) over the shared `.zen-v2-field`, the shared `.zen-v2-row` for the actions with a
    * leading 16 px glyph (§9.34). Only what those do not say lives here: the form's 12 to the
    * hairline under it (the swatches are a row of controls, not text), the hairline in the gutter
-   * with 4 below (§6, §9.20's list panel), the swatch row's geometry (nine 28 px targets at an
-   * 8 px gap; the swatch itself is the card radio's swatch form, unlayered further down), the
+   * with 4 below (§6, §9.20's list panel), the swatch row's geometry (§9.14 to the letter: nine
+   * 28 px targets touching, so the 20 px discs sit 8 apart on a 28 pitch and the nine discs run
+   * 244 wide, the first's left edge to the ninth's right, the targets 252; the swatch itself is
+   * the card radio's swatch form, unlayered further down), the
    * actions' 4 px inset below, and the tab count trailing the close row. The header row the
    * bubble hangs from keeps its hover fill while the bubble is up, as an anchor does (§9.20).
    */
@@ -4346,7 +4348,7 @@
   }
   .zen-group-editor-swatches {
     display: flex;
-    gap: 8px;
+    gap: 0;
   }
   .zen-group-editor-actions {
     display: flex;
@@ -7542,6 +7544,25 @@
 }
 .zen-group-fold[data-folding] {
   overflow: hidden;
+}
+
+/*
+ * The desktop's folder as a tab group (TAB-16's desktop half, tabs-15; `SpacePanel`'s
+ * `FolderRow`): the group's colour (`--zen-group-rgb`, Chrome's nine) in the header's glyph slot
+ * alone – the 10 dot, the 2 px saved ring or the folder's own icon, `.zen-group-row-glyph` above
+ * as the tablet row draws it – and the rows' 20 px indent as the bracket that says which rows
+ * are the folder's (§9.36): no group line down the block's edge, and never a fill across the row
+ * (§9.29 – the row's fills are the window's hover and active). Nothing stands in the header's
+ * first pixels, so its §1 ring – 2 px, 2 inside its edge – paints whole on its own (§9.20). The
+ * count, folded and open alike, is the tablet row's 13 tabular aside at 69% – the tabs the
+ * folder holds, or the pages a saved one keeps – never a badge (§9.36). A saved folder's page
+ * rows (`SavedPageRow`) wear the sleeping row's 69% on glyph and title: a page, not a live tab;
+ * they keep the live row's trailing 24 px slot, empty, so a title's edge holds as the folder
+ * closes and opens.
+ */
+.zen-saved-page .zen-tab-favicon,
+.zen-saved-page .zen-tab-title {
+  opacity: 0.69;
 }
 
 /*

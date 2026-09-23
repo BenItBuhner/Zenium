@@ -10,6 +10,7 @@ import {
   type MediaSessionSourceHandle
 } from '../shared/mediaSession'
 import type { Browser } from './browser'
+import type { ZenWindow } from './window'
 
 /**
  * Chrome shows no media controls for a clip this short (a notification sound, a UI effect):
@@ -457,6 +458,72 @@ export class MediaSessionService {
       private: isPrivate,
       source: 'page'
     })
+  }
+
+  /**
+   * The media hub's and the media sheet's Picture-in-picture button (`media.pictureInPicture`).
+   * A host whose window goes into picture-in-picture (Android) takes the tab's video the OS way
+   * through {@link enterPictureInPicture}, refusing quietly what it cannot show. Every other host
+   * – the desktop, whose `mediaSession` host is MPRIS on Linux and nothing elsewhere – has no
+   * such window: the page's own video goes into its floating window, as `page.pip` puts it there
+   * ({@link togglePictureInPicture}), and the user is told why when it cannot.
+   */
+  pictureInPicture(tabId: string, win: ZenWindow): Promise<boolean> {
+    if (this.browser.platform.mediaSession?.enterPictureInPicture) {
+      return this.enterPictureInPicture(tabId)
+    }
+    return this.togglePictureInPicture(tabId, win)
+  }
+
+  /**
+   * Picture-in-picture for the tab's video, the way this host has it (`page.pip`: the shortcut,
+   * the toolbar, the video menu's item; the media hub's button on the desktop). Says why when it
+   * cannot; resolves whether a video went into (or left) its small window.
+   */
+  async togglePictureInPicture(tabId: string, win: ZenWindow): Promise<boolean> {
+    const view = this.browser.tabs.view(tabId)
+    if (!view) return false
+    const tab = this.browser.tabs.tab(tabId)
+    if (tab && this.browser.tabs.isPrivate(tab)) {
+      // Withheld from private tabs, as Chrome withholds it from Incognito (ruled 2026-09-21).
+      this.browser.toast("Picture-in-Picture isn't available in private tabs.", 'info', win)
+      return false
+    }
+    if (!this.browser.state.capabilities.pictureInPicture) {
+      this.browser.toast('Picture-in-Picture is not available on this device.', 'info', win)
+      return false
+    }
+    // A host whose window itself goes into PiP (Android): the OS shows the page's video.
+    const entered = this.browser.platform.mediaSession?.enterPictureInPicture
+      ? await this.enterPictureInPicture(tabId)
+      : await this.toggleInPage(tabId)
+    if (!entered) this.browser.toast('No video available for Picture-in-Picture', 'info', win)
+    return entered
+  }
+
+  /**
+   * The page's own picture-in-picture (the desktop): a video in the small window leaves it; else
+   * the largest video with a frame to show that does not forbid it goes in. False when the page
+   * has no such video or refuses (a page without a user gesture, a document that is gone).
+   */
+  private async toggleInPage(tabId: string): Promise<boolean> {
+    const view = this.browser.tabs.view(tabId)
+    if (!view) return false
+    try {
+      const result: unknown = await view.executeJavaScript(
+        `(async () => {
+          if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return true }
+          const videos = [...document.querySelectorAll('video')].filter(v => v.readyState > 0 && !v.disablePictureInPicture)
+          const video = videos.sort((a, b) => (b.clientWidth * b.clientHeight) - (a.clientWidth * a.clientHeight))[0]
+          if (!video) return false
+          await video.requestPictureInPicture()
+          return true
+        })()`
+      )
+      return result === true
+    } catch {
+      return false
+    }
   }
 
   /**

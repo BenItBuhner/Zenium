@@ -5225,6 +5225,12 @@ export interface Events {
    * the inline rename on the group card.
    */
   'folder.edit': { folderId: string }
+  /**
+   * Ask before the folder is deleted (the desktop folder menu's "Delete Folder" on a folder that
+   * holds tabs or saved pages): the chrome shows its §9.23 prompt and runs `folder.delete` with
+   * `unpack: false` when the user confirms. A folder with nothing in it is deleted without asking.
+   */
+  'folder.confirmDelete': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */

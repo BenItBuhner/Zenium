@@ -141,6 +141,38 @@ describe('the Zen preset (macOS)', () => {
   })
 })
 
+describe('Stop', () => {
+  it('is ⌘. on macOS in both presets, as in Chrome, Safari and Firefox', () => {
+    for (const preset of ['zen', 'chrome'] as const) {
+      expect(key('key_stop', 'darwin', preset)).toEqual(cmd('.'))
+      expect(bindingFor(defaultShortcuts('darwin', preset), 'nav.stop')).toEqual(cmd('.'))
+      expect(
+        matchShortcut(defaultShortcuts('darwin', preset), {
+          key: '.',
+          control: false,
+          alt: false,
+          shift: false,
+          meta: true
+        })?.action
+      ).toBe('nav.stop')
+    }
+  })
+
+  it('stays off the table on Windows and Linux: Escape is Stop there, owned by the chrome and the page', () => {
+    for (const platform of ['linux', 'win32'] as Platform[]) {
+      for (const preset of ['zen', 'chrome'] as const) {
+        expect(key('key_stop', platform, preset)).toBeNull()
+        expect(extras('key_stop', platform, preset)).toEqual([])
+        expect(
+          defaultShortcuts(platform, preset).some(
+            (s) => s.binding?.key === 'Escape' || s.extraBindings.some((b) => b.key === 'Escape')
+          )
+        ).toBe(false)
+      }
+    }
+  })
+})
+
 describe('the Chrome preset', () => {
   const chrome = (id: string, platform: Platform = 'linux'): KeyBinding | null =>
     key(id, platform, 'chrome')
