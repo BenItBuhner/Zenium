@@ -570,9 +570,9 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     // --- the group leave ---------------------------------------------------------------------------
 
     /**
-     * A group's leave, as it stands (v2 §11.4, ruling 3: the frame of a group whose every card
-     * has left departs as a card does, never a cut – these scenes measure what the frame does
-     * today, the fix's before). The group is made off the record with the overview closed – the
+     * A group's leave (v2 §11.4, ruling 3: the frame of a group whose every card has left departs
+     * as a card does, never a cut – these scenes measured what the frame did before the fix, and
+     * read what it does now). The group is made off the record with the overview closed – the
      * [LEAVE_GROUP_NAME] group, [LEAVE_URLS]: two tabs created unloaded at addresses with no digit
      * in them – and stands second in the grid (`tabOrderOf`: the groups first, in their order,
      * Docs before it), every loose card and the New Tab card below it. Then, in the open overview:
@@ -589,8 +589,8 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      *  - `overview-group-leave-close`: the last card's close X; the scene is the tap and
      *    [LEAVE_SETTLE_MS] after it, with the same look [LEAVE_PEEK_MS] in.
      *
-     * What stands, at 60 Hz on the preview host (the driver PR's local runs, on main's product
-     * code): no cut, and not the cards' leave either. The frame shrinks on the gentle spring
+     * What stood, at 60 Hz on the preview host (the driver PR's local runs, on main's product
+     * code before the fix): no cut, and not the cards' leave either. The frame shrinks on the gentle spring
      * (293 -> 0 px over ~430 ms in the search scene, 285 -> 0 in the close's; its rest and unmount
      * ~490 ms after the key, ~575 after the tap) with its cards' exits fading over it (~365 ms
      * after the key, ~350 after the tap) – but its shell, put out of the flow as `position:
@@ -602,6 +602,17 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
      * search scene and ~460 in the close's, everything still ~900 ms after the key, ~1 s after
      * the tap. [leaveBox] reads the mechanism on the device: the grid's `scrollTop` against the
      * shell's top before the input and one frame into the shrink.
+     *
+     * What stands with the fix (the same host, the same driver, two records each): the leave.
+     * The group's cell leaves the grid on the commit its cards are gone (~26 ms after the key,
+     * ~120 after the tap; no height is written) and the group's one exit – the frame with its
+     * cards drawn in it – fades where the card stood on the exit spring (23 frames, ~350 ms,
+     * 1 -> 0, from the commit's frame or the next) while every cell below glides up from that
+     * same commit (`releaseLagMs` 0, ~305 px in the search scene, ~297 in the close's, one
+     * spring, ~390-480 ms) – one wave, at rest ~450 ms after the key and ~600 after the tap, in
+     * place of ~925 and ~1000. The same for the last card swiped off (the frame leaves with its
+     * slot empty, `flown`): ~390 ms from the close, in place of ~880. [leaveNumbers] names the
+     * shape `leave`, and its `frameGhost*` fields read that exit.
      *
      * Each scene's line reads the frame against its cards' exits off the probe's timeline
      * ([leaveNumbers]). Afterwards the group's tabs are closed if any remain and the folder is
