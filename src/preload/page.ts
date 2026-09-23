@@ -22,6 +22,7 @@ import {
   installScreenCaptureShim
 } from '../shared/screenCapture'
 import { installCaptureReporter, installCaptureShim } from '../shared/captureState'
+import { installEditingFocusReporter } from '../shared/editingFocus'
 import { installShareBridge, installShareShim } from '../shared/share'
 import { installTextFragmentScript } from '../shared/textFragmentScript'
 import { installGeolocationBridge, installGeolocationShim } from '../shared/geolocation'
@@ -194,6 +195,11 @@ if (process.isMainFrame) {
     onReadAloud: (listener) => onHost('readAloud', listener)
   })
   installLeaveSite(send)
+  // Whether a text field of this frame has the keyboard (history-14): the browser leaves the
+  // caret's ⌘← / ⌘→ to it instead of going Back / Forward (`KeyboardHandler.setEditing`).
+  installEditingFocusReporter({
+    send: (editing) => ipcRenderer.send('zen:page', { type: 'editing', editing })
+  })
   const webPage = location.protocol === 'https:' || location.protocol === 'http:'
   // The media hub and MPRIS (MW-16, MW-18) read the page's Media Session; a local video file
   // counts too. The report leaves the tab's audible flag to the engine's own events.

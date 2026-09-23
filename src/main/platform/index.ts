@@ -7,6 +7,7 @@ import {
   net,
   session,
   shell,
+  systemPreferences,
   type IpcMainEvent,
   type Session,
   type WebContents
@@ -48,6 +49,8 @@ import type {
   ThemeHost
 } from '../../core/platform'
 import type { ZenWindow } from '../../core/window'
+import type { WindowSwitches } from '../cli'
+import { MediaAccessGate, mediaRefusedMessage } from './mediaAccess'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import {
@@ -230,10 +233,26 @@ export class ElectronPlatform implements Platform {
   downloadsShell: ElectronDownloadsShell | null = null
   browser!: Browser
   private readonly profileDir: string
+  /**
+   * macOS's own camera / microphone consent (os-59, `mediaAccess.ts`), asked before the first
+   * site prompt for a device; a refusal is told to the user once per device per run.
+   */
+  private readonly mediaAccess = new MediaAccessGate({
+    platform: process.platform,
+    system: systemPreferences,
+    onRefused: (kind, status) => {
+      console.warn(`[zen] media: the system withholds the ${kind} (${status})`)
+      this.browser?.toast(mediaRefusedMessage(kind), 'error')
+    }
+  })
 
   constructor(
     private readonly userDataDir: string,
-    options: { holdBackgroundWork?: boolean } = {}
+    options: {
+      holdBackgroundWork?: boolean
+      /** The launch's `--kiosk` / `--start-maximized` (`cli.ts`), for every browser window. */
+      windowSwitches?: WindowSwitches
+    } = {}
   ) {
     this.info = {
       os: process.platform as PlatformOs,
@@ -253,7 +272,7 @@ export class ElectronPlatform implements Platform {
     this.shortcuts = new ElectronShortcuts(join(this.profileDir, 'webapps'), (id, details) =>
       this.browser.webApps.onPinned(id, details)
     )
-    this.windows = new ElectronWindowFactory()
+    this.windows = new ElectronWindowFactory(options.windowSwitches)
     this.translate = new ElectronTranslateHost(userDataDir, () =>
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
     )
@@ -500,9 +519,10 @@ export class ElectronPlatform implements Platform {
 
   /**
    * Build the browser, wire IPC and sessions, and restore the windows (`windows: false` holds
-   * the browser windows back for a run that begins on an app window alone, `Browser.start`).
+   * the browser windows back for a run that begins on an app window alone,
+   * `restoreLastSession` is the `--restore-last-session` switch; both `Browser.start`'s).
    */
-  start(options: { windows?: boolean } = {}): Browser {
+  start(options: { windows?: boolean; restoreLastSession?: boolean } = {}): Browser {
     const browser = new Browser(this)
     this.browser = browser
     this.windows.bind(browser)
@@ -693,6 +713,19 @@ export class ElectronPlatform implements Platform {
       // A page locking the keyboard keeps Esc: the fullscreen hint says to hold it instead.
       if (permission === 'keyboardLock' && tabId)
         this.browser.fullscreen.keyboardLockRequested(tabId)
+      // The camera and the microphone are the system's to give first on macOS (os-59): its
+      // dialog comes before the site's prompt, and its refusal answers the request in the
+      // engine's stead – no site prompt whose Allow the system would not honour, and nothing
+      // remembered against the site. Off macOS the gate lets every request through.
+      if (permission === 'media' && request.mediaTypes && request.mediaTypes.length > 0) {
+        void this.mediaAccess
+          .allows(request.mediaTypes)
+          .then((systemAllows) =>
+            systemAllows ? permissions.decide(permission, url, request) : false
+          )
+          .then(callback)
+        return
+      }
       void permissions.decide(permission, url, request).then(callback)
     })
     ses.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) =>

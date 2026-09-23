@@ -728,18 +728,33 @@ const DEFS: Def[] = [
 
   // --- Navigation -------------------------------------------------------------
   {
+    // Chrome's History menu says ⌘[ and ⌘] and takes ⌘← and ⌘→ as well (history-14). The arrows
+    // are the caret's line-start and line-end keys in a text field, which `KeyboardHandler`
+    // leaves them to; the Zen preset keeps to the brackets.
     id: 'goBackKb',
     action: 'nav.back',
     group: 'navigation',
     label: 'Back',
-    ...both({ key: 'ArrowLeft', mods: ALT, perPlatform: { darwin: { key: '[', mods: META } } })
+    zen: { key: 'ArrowLeft', mods: ALT, perPlatform: { darwin: { key: '[', mods: META } } },
+    chrome: {
+      key: 'ArrowLeft',
+      mods: ALT,
+      perPlatform: { darwin: { key: '[', mods: META } },
+      extra: [{ key: 'ArrowLeft', mods: META, platforms: MAC }]
+    }
   },
   {
     id: 'goForwardKb',
     action: 'nav.forward',
     group: 'navigation',
     label: 'Forward',
-    ...both({ key: 'ArrowRight', mods: ALT, perPlatform: { darwin: { key: ']', mods: META } } })
+    zen: { key: 'ArrowRight', mods: ALT, perPlatform: { darwin: { key: ']', mods: META } } },
+    chrome: {
+      key: 'ArrowRight',
+      mods: ALT,
+      perPlatform: { darwin: { key: ']', mods: META } },
+      extra: [{ key: 'ArrowRight', mods: META, platforms: MAC }]
+    }
   },
   {
     id: 'key_reload',

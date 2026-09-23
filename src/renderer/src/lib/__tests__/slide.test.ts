@@ -275,6 +275,40 @@ describe('SlideMotion.flip', () => {
     expect(frames.size).toBe(0)
   })
 
+  it('record moves the baseline to where the rows are, so a layout moved between commits is no FLIP (a group’s fold)', () => {
+    const { motion, rows } = list(3)
+    // A block above r1 and r2 folds shut between commits: the layout moves them up a row's
+    // height a frame at a time, no commit between. Without the baseline following, the next
+    // commit would find them a row from where it last saw them and spring them across it.
+    for (const step of [10, 20, 30, SHIFT]) {
+      rows[1].layout.top = SHIFT - step
+      rows[2].layout.top = 2 * SHIFT - step
+      motion.record()
+    }
+    motion.flip()
+    expect(translationOf(rows[1].style)).toBe(0)
+    expect(translationOf(rows[2].style)).toBe(0)
+    expect(frames.size).toBe(0)
+    // A row the list has not placed yet is left to `flip`, which enters it.
+    const fresh = row(2 * SHIFT)
+    motion.attach('r3', fresh.el)
+    motion.record()
+    motion.flip()
+    expect(fresh.style.clipPath).not.toBe('')
+    settle()
+    // A row still sliding records its layout, not its drawn place.
+    motion.slide(new Map([['r2', -SHIFT]]))
+    runFrames(2)
+    const partway = translationOf(rows[2].style)
+    expect(partway).toBeLessThan(0)
+    motion.record()
+    motion.slide(new Map())
+    settle()
+    expect(translationOf(rows[2].style)).toBe(0)
+    motion.flip()
+    expect(frames.size).toBe(0)
+  })
+
   it('releaseSoon slides rows home unless a commit lands first', () => {
     // Only the timers: the animation frames stay on the test's own clock.
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
