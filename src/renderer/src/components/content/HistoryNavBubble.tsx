@@ -15,11 +15,18 @@ import { reducedMotion } from '@renderer/lib/motion/spring'
 
 /**
  * The page frame's side the drag began at and its vertical centre, off the root: it is laid
- * along that side of the content frame with no width of its own, so its box is the side.
+ * along that side of the content frame with no width of its own, so its box is the side. The
+ * clip is the root's parent – the viewport whose `overflow: hidden` clips the DOM disc – read in
+ * the same frame as the side (one layout for both).
  */
 function measureAnchor(root: HTMLElement, edge: HistoryNavEdge): BubbleAnchor {
   const rect = root.getBoundingClientRect()
-  return { x: edge === 'left' ? rect.left : rect.right, centerY: (rect.top + rect.bottom) / 2 }
+  const frame = (root.parentElement ?? root).getBoundingClientRect()
+  return {
+    x: edge === 'left' ? rect.left : rect.right,
+    centerY: (rect.top + rect.bottom) / 2,
+    clip: { left: frame.left, top: frame.top, right: frame.right, bottom: frame.bottom }
+  }
 }
 
 /**
@@ -33,8 +40,9 @@ function measureAnchor(root: HTMLElement, edge: HistoryNavEdge): BubbleAnchor {
  *
  * Where the pages are layered above the chrome (Android), nothing drawn here at a page's side
  * could show: with a host bound (`setHistoryNavHost`) the disc is the host's, fed the same
- * frames as the disc's box in window px, and the root stays as the drag's state on the DOM
- * (`data-phase`, `data-edge`, `data-armed`) for whoever reads it.
+ * frames as the disc's box in window px with the viewport's box as its clip (the frame's
+ * `overflow: hidden` the DOM disc emerges under), and the root stays as the drag's state on the
+ * DOM (`data-phase`, `data-edge`, `data-armed`) for whoever reads it.
  */
 export function HistoryNavBubble(): JSX.Element | null {
   const phase = historyNavStore.use((s) => s.phase)

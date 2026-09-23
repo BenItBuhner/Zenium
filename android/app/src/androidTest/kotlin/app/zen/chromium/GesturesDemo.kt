@@ -18,6 +18,7 @@ import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.abs
 
 /**
  * The gesture cluster of the Android parity matrix (GN-04, GN-08, GN-19, GN-10) on the device,
@@ -29,7 +30,8 @@ import java.io.File
  *   bubble out (`SideSlideLayout.java`); the disc rides the finger, arms past the threshold, and
  *   a release past it goes back; a release short of it springs the disc away and navigates nothing.
  *   The disc is the host's view above the pages (`HistoryNavBubbleView`; the chrome's DOM lies
- *   under them), read off the view; the drag's state is the chrome root's `data-*`.
+ *   under them) in a layer clipped to the page frame, read off the view; the drag's state is the
+ *   chrome root's `data-*`.
  * - GN-19: in the switcher a horizontal drag over the pane carries the segment's line with the
  *   finger and fades the pane in step; a release past a third of the width (or a fling) picks the
  *   neighbouring segment, a short one settles back (`HubPaneSwipeGestureHandler.java`).
@@ -203,6 +205,11 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
         // (HistoryNavBubbleView), moved on translation, scale and alpha alone: it is visible,
         // opaque, its leading edge past the threshold, and grown by the armed 15 %.
         claim("the native disc is up above the pages, riding its translation, grown as armed", disc.up && disc.leadingEdgeDp > NAV_THRESHOLD_DP && disc.scale > 1.1f)
+        // The disc's layer clips it to the page frame (the DOM disc's `overflow: hidden`): the
+        // frame sits in from the window's edge, and the disc must come out from the frame's side,
+        // not show over the gutter. The DOM's box, unshifted: the layer is in window px.
+        val frameBox = domBox("document.querySelector('[data-testid=\"history-nav\"]').parentElement")?.also { it.offset(-domShiftX, -domShiftY) }
+        claim("the disc's layer clips to the page frame's box (clip ${disc.clip}; frame $frameBox)", disc.clip != null && frameBox != null && disc.clip.within(frameBox, 2))
         noteScene(scene)
         shot("03-edge-drag-armed")
         f.up()
@@ -463,21 +470,32 @@ class GesturesDemo : DemoHarness("gestures-demo-state.json", "gestures", "gestur
     private fun bubbleArmed(): Boolean =
         js("(function(){var e=document.querySelector('[data-testid=\"history-nav\"]');return e&&e.hasAttribute('data-armed')?'armed':''})()") == "armed"
 
-    /** What the host's disc (HistoryNavBubbleView) shows: up at all, how far its leading edge stands in, its scale. */
-    private class NativeDisc(val up: Boolean, val leadingEdgeDp: Float, val scale: Float, val alpha: Float) {
-        override fun toString(): String = "up=$up leadingEdge=${"%.1f".format(leadingEdgeDp)}dp scale=${"%.3f".format(scale)} alpha=${"%.2f".format(alpha)}"
+    /**
+     * What the host's disc (HistoryNavBubbleView) shows: up at all (its layer up with it), how far
+     * its leading edge stands in, its scale, and the layer's clip (the page frame's box).
+     */
+    private class NativeDisc(val up: Boolean, val leadingEdgeDp: Float, val scale: Float, val alpha: Float, val clip: Rect?) {
+        override fun toString(): String =
+            "up=$up leadingEdge=${"%.1f".format(leadingEdgeDp)}dp scale=${"%.3f".format(scale)} alpha=${"%.2f".format(alpha)} clip=${clip?.toShortString() ?: "none"}"
     }
 
     private fun nativeDisc(): NativeDisc = onMain {
+        val layer = host.historyNavBubbleLayer
         val view = host.historyNavBubble
         NativeDisc(
-            view.visibility == View.VISIBLE && view.alpha > 0.01f,
+            layer.visibility == View.VISIBLE && view.visibility == View.VISIBLE && view.alpha > 0.01f,
             // A left-edge drag: the disc's right side, from the window's left, in dp.
             (view.translationX + view.width) / density,
             view.scaleX,
-            view.alpha
+            view.alpha,
+            layer.clipBounds
         )
     }
+
+    /** Every side of this box within `tolerance` px of the other's. */
+    private fun Rect.within(other: Rect, tolerance: Int): Boolean =
+        abs(left - other.left) <= tolerance && abs(top - other.top) <= tolerance &&
+            abs(right - other.right) <= tolerance && abs(bottom - other.bottom) <= tolerance
 
     private fun popupRows(): Int =
         js("(function(){return String(document.querySelectorAll('[data-testid=\"back-history-entry\"]').length)})()").toIntOrNull() ?: 0

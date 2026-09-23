@@ -7,18 +7,21 @@ import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.animation.PathInterpolator
+import android.widget.FrameLayout
 import org.json.JSONObject
 import kotlin.math.roundToInt
 
 /**
  * One frame of the history navigation bubble as the chrome laid it (`chrome.historyNavBubble`,
  * from `HistoryNavBubble.tsx` off `lib/historyNav.ts`'s machine), in device px of the window:
- * the disc's box at scale 1, its scale about its centre, its opacity, and whether letting go
- * would navigate. Null means the bubble is down.
+ * the disc's box at scale 1, its scale about its centre, its opacity, whether letting go would
+ * navigate, and the page frame's box it is clipped to. Null means the bubble is down.
  */
 class HistoryNavBubbleFrame(
     val edge: HistoryNavClassifier.Edge,
@@ -32,8 +35,19 @@ class HistoryNavBubbleFrame(
     /** The arrow takes the accent (Chrome's `NavigationBubble.setImageTint`). */
     val armed: Boolean,
     /** Motion is reduced: an opacity change fades over 120 ms; the box still follows the finger (v2 §11.3). */
-    val reduced: Boolean
+    val reduced: Boolean,
+    /**
+     * The page frame's box: the disc is drawn only inside it, as the DOM disc under the frame's
+     * `overflow: hidden` – it comes out from beyond the frame's side, not over the gutter between
+     * the frame and the window's edge. Null when the chrome sent none: unclipped.
+     */
+    val clip: Clip?
 ) {
+    /** A box in device px (a plain value: `android.graphics.Rect` is a stub on the JVM, the layer makes one of it). */
+    data class Clip(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+        fun toRect(): Rect = Rect(left, top, right, bottom)
+    }
+
     companion object {
         /** `chrome.historyNavBubble`'s arguments (CSS px) → device px; null for `{ visible: false }`. */
         fun parse(args: JSONObject, density: Float): HistoryNavBubbleFrame? {
@@ -48,10 +62,63 @@ class HistoryNavBubbleFrame(
                 args.num("scale", 1.0).toFloat().coerceAtLeast(0f),
                 args.num("opacity", 1.0).toFloat().coerceIn(0f, 1f),
                 args.optBoolean("armed", false),
-                args.optBoolean("reduced", false)
+                args.optBoolean("reduced", false),
+                args.optJSONObject("clip")?.let { clip ->
+                    val left = (clip.num("left") * density).roundToInt()
+                    val top = (clip.num("top") * density).roundToInt()
+                    val right = (clip.num("right") * density).roundToInt()
+                    val bottom = (clip.num("bottom") * density).roundToInt()
+                    // An empty box is no clip.
+                    if (right > left && bottom > top) Clip(left, top, right, bottom) else null
+                }
             )
         }
     }
+}
+
+/**
+ * The layer the bubble's disc rides in, laid over the whole window above the pages
+ * ([MainActivity]): it clips the disc to the page frame's box the chrome sends with each frame,
+ * as the frame's `overflow: hidden` clips the DOM disc, so the disc comes out from beyond the
+ * frame's side and nothing of it shows over the gutter to the window's edge or a sidebar. Gone
+ * while the bubble is down, so an idle window pays nothing for it; touches pass through it as
+ * through the disc.
+ */
+class HistoryNavBubbleLayer(context: Context) : FrameLayout(context) {
+    /** The disc itself; the layer moves nothing – the disc rides its own translation, scale and alpha. */
+    val disc = HistoryNavBubbleView(context)
+    /** The clip as last set, so a frame carrying the same box (every frame of a drag) sets nothing. */
+    private var clip: HistoryNavBubbleFrame.Clip? = null
+
+    init {
+        visibility = GONE
+        isClickable = false
+        isFocusable = false
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        addView(disc, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
+    /** One frame from the chrome; null takes the bubble down. */
+    fun apply(frame: HistoryNavBubbleFrame?) {
+        disc.apply(frame)
+        if (frame == null) {
+            visibility = GONE
+            clip = null
+            clipBounds = null
+            return
+        }
+        // A property of the render node, no redraw: set when the box differs (once per drag).
+        if (frame.clip != clip) {
+            clip = frame.clip
+            clipBounds = frame.clip?.toRect()
+        }
+        if (visibility != VISIBLE) visibility = VISIBLE
+    }
+
+    fun retint(tokens: V2Ink) = disc.retint(tokens)
+
+    /** The layer takes no touch: what is under it is the page's. */
+    override fun onTouchEvent(event: MotionEvent): Boolean = false
 }
 
 /**

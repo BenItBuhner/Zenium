@@ -410,6 +410,20 @@ export interface HistoryNavHostFrame {
   armed: boolean
   /** Motion is reduced: an opacity change fades over 120 ms; the box still follows the finger. */
   reduced: boolean
+  /**
+   * The page frame's box the disc is clipped to, as the DOM disc is by the frame's
+   * `overflow: hidden`: the disc comes out from beyond the frame's side, and what is still beyond
+   * it is not drawn – over the gutter between the frame and the window's edge, or the sidebar.
+   */
+  clip: BubbleClip
+}
+
+/** A box in window CSS px, left / top / right / bottom as `DOMRect` has them. */
+export interface BubbleClip {
+  left: number
+  top: number
+  right: number
+  bottom: number
 }
 
 /** The host that draws the disc (Android's bridge); hosts whose chrome is on top set none. */
@@ -429,10 +443,14 @@ export function historyNavHost(): HistoryNavHost | null {
   return bubbleHost
 }
 
-/** What the disc is laid against: the page frame's side the drag began at, and its vertical centre (window CSS px). */
+/**
+ * What the disc is laid against: the page frame's side the drag began at, its vertical centre,
+ * and the frame's box that clips it (window CSS px).
+ */
 export interface BubbleAnchor {
   x: number
   centerY: number
+  clip: BubbleClip
 }
 
 /** The host's frame for the machine's: the disc's box against `anchor`, the visuals as the DOM disc draws them. */
@@ -452,7 +470,8 @@ export function bubbleHostFrame(
     scale,
     opacity,
     armed: state.armed,
-    reduced
+    reduced,
+    clip: anchor.clip
   }
 }
 

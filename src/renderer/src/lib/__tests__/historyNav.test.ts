@@ -96,7 +96,9 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
   })
 
   it("lays a host's disc against the page's side: a whole disc out at rest, its leading edge `offset` in", () => {
-    const anchorLeft = { x: 0, centerY: 400 }
+    // The page frame: 360 wide from x 6 (the phone's gutter), 100 to 700 tall.
+    const clip = { left: 6, top: 100, right: 366, bottom: 700 }
+    const anchorLeft = { x: 6, centerY: 400, clip }
     const state = (edge: HistoryNavEdge, armed = false): HistoryNavState => ({
       tabId: 't1',
       edge,
@@ -106,13 +108,14 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
     const rest = bubbleHostFrame({ offset: 0, hide: 0, grow: 0 }, state('left'), anchorLeft, false)
     expect(rest).toEqual({
       edge: 'left',
-      left: -44,
+      left: 6 - 44,
       top: 378,
       size: 44,
       scale: 1,
       opacity: 0,
       armed: false,
-      reduced: false
+      reduced: false,
+      clip
     })
     const armed = bubbleHostFrame(
       { offset: 96, hide: 0, grow: 1 },
@@ -120,14 +123,16 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
       anchorLeft,
       true
     )
-    // The leading (right) edge stands 96 in: left + size = 96.
-    expect(armed.left + armed.size).toBe(96)
+    // The leading (right) edge stands 96 in from the frame's side: left + size = 6 + 96.
+    expect(armed.left + armed.size).toBe(6 + 96)
+    // The clip is the frame's box, the same every frame of the drag.
+    expect(armed.clip).toBe(clip)
     expect(armed.scale).toBeCloseTo(1 + ARMED_GROWTH, 9)
     expect(armed.opacity).toBe(1)
     expect(armed.armed).toBe(true)
     expect(armed.reduced).toBe(true)
 
-    const anchorRight = { x: 360, centerY: 400 }
+    const anchorRight = { x: 366, centerY: 400, clip }
     const rightRest = bubbleHostFrame(
       { offset: 0, hide: 0, grow: 0 },
       state('right'),
@@ -135,7 +140,7 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
       false
     )
     // At rest the disc's left side is on the page's right side: the whole disc out.
-    expect(rightRest.left).toBe(360)
+    expect(rightRest.left).toBe(366)
     const rightIn = bubbleHostFrame(
       { offset: 96, hide: 0, grow: 0 },
       state('right'),
@@ -143,7 +148,7 @@ describe("the disc's visuals (the DOM disc's and a host's, one mapping)", () => 
       false
     )
     // The leading (left) edge stands 96 in from the right side.
-    expect(rightIn.left).toBe(360 - 96)
+    expect(rightIn.left).toBe(366 - 96)
     expect(rightIn.edge).toBe('right')
   })
 })

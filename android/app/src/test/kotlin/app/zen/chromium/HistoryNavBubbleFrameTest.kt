@@ -61,4 +61,19 @@ class HistoryNavBubbleFrameTest {
         assertFalse(f.armed)
         assertFalse(f.reduced)
     }
+
+    @Test
+    fun theClipIsThePageFramesBoxInDevicePx() {
+        // The phone's frame: 6 CSS px in from the window's left, 360 wide; 10.5 px rounds to 11.
+        val f = frame(
+            """{"edge":"left","left":-38,"top":378,"size":44,"clip":{"left":6,"top":100.4,"right":366,"bottom":700}}"""
+        )!!
+        assertEquals(HistoryNavBubbleFrame.Clip(11, 176, 641, 1225), f.clip)
+    }
+
+    @Test
+    fun noClipOrAnEmptyOneLeavesTheDiscUnclipped() {
+        assertNull(frame("""{"edge":"left","left":-44,"top":378,"size":44}""")!!.clip)
+        assertNull(frame("""{"edge":"left","left":-44,"top":378,"size":44,"clip":{"left":6,"top":100,"right":6,"bottom":700}}""")!!.clip)
+    }
 }
