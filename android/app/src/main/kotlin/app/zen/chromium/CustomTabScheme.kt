@@ -37,7 +37,10 @@ object CustomTabScheme {
         val navigationBarDivider: Int?,
         /** Whether the toolbar's glyphs, text and status bar icons are light (on a dark toolbar). */
         val lightToolbarForeground: Boolean,
-        val lightNavigationForeground: Boolean
+        val lightNavigationForeground: Boolean,
+        /** The caller's bottom toolbar (`EXTRA_SECONDARY_TOOLBAR_COLOR`), the toolbar's colour when unnamed. */
+        val secondaryToolbar: Int,
+        val lightSecondaryForeground: Boolean
     )
 
     /** The effective scheme: `scheme` is [SYSTEM], [LIGHT] or [DARK] (anything else counts as [SYSTEM]). */
@@ -58,6 +61,8 @@ object CustomTabScheme {
         // A caller that colours the toolbar but not the navigation bar gets a matching bar, as in
         // Chrome; with no colours at all the bar takes Zenium's page colour.
         val navigationBar = opaque(params.navigationBar ?: params.toolbar ?: defaults.navigationBar)
+        // Chrome's rule again: the bottom toolbar takes the toolbar's colour unless named itself.
+        val secondaryToolbar = opaque(params.secondaryToolbar ?: toolbar)
         return Resolved(
             dark = isDark,
             toolbar = toolbar,
@@ -65,7 +70,9 @@ object CustomTabScheme {
             navigationBar = navigationBar,
             navigationBarDivider = params.navigationBarDivider?.let(::opaque),
             lightToolbarForeground = needsLightForeground(toolbar),
-            lightNavigationForeground = needsLightForeground(navigationBar)
+            lightNavigationForeground = needsLightForeground(navigationBar),
+            secondaryToolbar = secondaryToolbar,
+            lightSecondaryForeground = needsLightForeground(secondaryToolbar)
         )
     }
 
