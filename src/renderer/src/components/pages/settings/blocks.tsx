@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
+import type { CSSProperties, JSX, KeyboardEvent, ReactNode } from 'react'
 import { useContext, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, CircleAlert, Copy, Globe } from 'lucide-react'
@@ -20,7 +20,7 @@ import {
 } from '@shared/appIcon'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
-import { searchTemplateProblem } from '@shared/search'
+import { SEARCH_SCOPES, searchTemplateProblem } from '@shared/search'
 import { inputToUrl } from '@shared/url'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
@@ -622,34 +622,90 @@ export function FaviconGlyph({ src }: { src: string | null | undefined }): JSX.E
   )
 }
 
+/** What the search-engine form submits: the three fields, trimmed, the shortcut as typed. */
+export interface SearchEngineFormValues {
+  name: string
+  /** The template, `%s` where the terms go (`searchTemplateProblem` has passed it). */
+  url: string
+  /** The shortcut as typed, `@` or not; the engine keeps it as `@word`, lower case. */
+  shortcut: string
+}
+
 /**
- * Search › Add search engine (Chrome's form): a name and the search URL with `%s` where the
- * terms go, the template checked as it is typed (`searchTemplateProblem`), the button held until
- * both are in; the browser adds the engine and the sheet closes.
+ * Why `shortcut` cannot be an engine's keyword, or null when it can – the engine's own rule
+ * (`shared/search.ts`: a stored keyword is `@` and one word of at most 64 characters,
+ * `/^@\S{1,64}$/`, lower case; `matchEngineWord` takes no word with a space) with `@` allowed
+ * off, since the engine adds it – and Zenium's own scopes (`SEARCH_SCOPES`: `@bookmarks`,
+ * `@history`, `@tabs`), which `matchKeywordWord` answers before any engine, so an engine given
+ * one could never be reached. Empty is the caller's to hold the button on (an engine always has
+ * a keyword: the one it derives from the name, `uniqueEngineKeyword`); another engine's word is
+ * the caller's to refuse (`problem`), since the form does not hold the list.
+ */
+function searchShortcutProblem(shortcut: string): string | null {
+  const word = shortcut.trim().toLowerCase()
+  if (!word) return null
+  if (/\s/.test(word)) return 'A shortcut is one word, with no spaces'
+  const keyword = word.startsWith('@') ? word : `@${word}`
+  if (!/^@\S{1,64}$/.test(keyword)) return 'The shortcut is too long'
+  if (SEARCH_SCOPES.some((s) => s.keyword === keyword))
+    return `${keyword} is one of Zenium’s own shortcuts`
+  return null
+}
+
+/**
+ * Search › Add search engine and › Edit search engine, one form (Chrome's, W4-10): a name, the
+ * shortcut typed in the address bar before a space (Chrome's Shortcut column) and the search URL
+ * with `%s` where the terms go, each checked once left or on Enter (`searchShortcutProblem`,
+ * `searchTemplateProblem`), the button held until the three are in. `initial` fills the fields
+ * from the engine being edited; the verb is the caller's – "Add" for a new engine, "Save" for an
+ * edit – as the sheet's title is. The caller adds or saves, and the sheet closes; what it
+ * refuses shows as the form's validation line.
  */
 export function SearchEngineForm({
-  onAdd,
+  initial,
+  action,
+  problem,
+  onSubmit,
   close
 }: {
-  onAdd: (name: string, url: string) => Promise<unknown> | void
+  /** The engine being edited, as the fields start; absent, the form adds one. */
+  initial?: SearchEngineFormValues
+  /** The primary button's verb: "Add" for a new engine, "Save" for an edit. */
+  action: string
+  /**
+   * Why the typed shortcut cannot be this engine's, beyond the engine's own rules – another
+   * engine already answering to it, which only the caller's list can tell; or nothing.
+   */
+  problem?: (shortcut: string) => string | null | undefined
+  onSubmit: (values: SearchEngineFormValues) => Promise<unknown> | void
   close: () => void
 }): JSX.Element {
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [shortcut, setShortcut] = useState(initial?.shortcut ?? '')
+  const [url, setUrl] = useState(initial?.url ?? '')
   const [error, setError] = useState<string | null>(null)
   const [touched, setTouched] = useState(false)
-  const problem = searchTemplateProblem(url)
-  const ready = Boolean(name.trim()) && !problem
+  const shortcutProblem = searchShortcutProblem(shortcut) ?? problem?.(shortcut.trim()) ?? null
+  const urlProblem = searchTemplateProblem(url)
+  const ready = Boolean(name.trim()) && Boolean(shortcut.trim()) && !shortcutProblem && !urlProblem
   const submit = (): void => {
     if (!ready) {
       setTouched(true)
       return
     }
-    void Promise.resolve(onAdd(name.trim(), url.trim()))
+    void Promise.resolve(
+      onSubmit({ name: name.trim(), url: url.trim(), shortcut: shortcut.trim() })
+    )
       .then(close)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Could not add the engine'))
+      .catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : `Could not ${action.toLowerCase()} the engine`)
+      )
   }
-  const shown = error ?? (touched && url.trim() ? problem : null)
+  const onEnter = (e: KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') submit()
+  }
+  const shownShortcut = touched && shortcut.trim() ? shortcutProblem : null
+  const shownUrl = error ?? (touched && url.trim() ? urlProblem : null)
   return (
     <div className="zen-settings-form" data-testid="search-engine-form">
       <Field id="search-engine-name" label="Name">
@@ -661,13 +717,44 @@ export function SearchEngineForm({
           autoCorrect="off"
           spellCheck={false}
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value)
+            setError(null)
+          }}
+          onKeyDown={onEnter}
         />
+      </Field>
+      <Field
+        id="search-engine-shortcut"
+        label="Shortcut"
+        description={
+          shownShortcut ? undefined : 'Type it in the address bar, then a space, to search here.'
+        }
+      >
+        <input
+          id="search-engine-shortcut"
+          className="zen-settings-input zen-v2-field"
+          placeholder="@wikipedia"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          aria-invalid={shownShortcut ? true : undefined}
+          value={shortcut}
+          onChange={(e) => {
+            setShortcut(e.target.value)
+            setError(null)
+          }}
+          onBlur={() => setTouched(true)}
+          onKeyDown={onEnter}
+        />
+        {shownShortcut && <ValidationMessage message={shownShortcut} />}
       </Field>
       <Field
         id="search-engine-url"
         label="URL with %s in place of query"
-        description={shown ? undefined : 'Example: https://en.wikipedia.org/w/index.php?search=%s'}
+        description={
+          shownUrl ? undefined : 'Example: https://en.wikipedia.org/w/index.php?search=%s'
+        }
       >
         <input
           id="search-engine-url"
@@ -677,20 +764,18 @@ export function SearchEngineForm({
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          aria-invalid={shown ? true : undefined}
+          aria-invalid={shownUrl ? true : undefined}
           value={url}
           onChange={(e) => {
             setUrl(e.target.value)
             setError(null)
           }}
           onBlur={() => setTouched(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
-          }}
+          onKeyDown={onEnter}
         />
-        {shown && <ValidationMessage message={shown} />}
+        {shownUrl && <ValidationMessage message={shownUrl} />}
       </Field>
-      <SheetActions action="Add" disabled={!ready} onCancel={close} onAction={submit} />
+      <SheetActions action={action} disabled={!ready} onCancel={close} onAction={submit} />
     </div>
   )
 }

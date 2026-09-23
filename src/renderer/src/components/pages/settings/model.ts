@@ -96,6 +96,12 @@ export interface SwitchRow extends RowBase {
   kind: 'switch'
   checked: boolean
   onChange(checked: boolean): void
+  /**
+   * The control's own glyph in the row's leading slot on the label's line (§9.2; `--v2-icon`,
+   * 16 on the desktop) – a Customize toolbar row showing the button it stands for (§10.5,
+   * W4-10). The other kinds' slot, before the label: on the desktop after the box.
+   */
+  leading?: ReactNode
 }
 
 /** Opens or does something. Destructive actions confirm in a sheet, never inline (§10.4). */

@@ -155,6 +155,7 @@ export function RowView({
           row={row}
           caption={caption}
           description={row.description}
+          leading={row.leading}
           role="switch"
           checked={row.checked}
           trailing={<span className="zen-v2-switch" aria-hidden="true" />}
@@ -697,8 +698,11 @@ function ControlRow({
 /**
  * A boolean on the desktop (§10.5, §6): Zen's 16 px checkbox left of the label, the description
  * under the label; the whole row is the checkbox's label, so a press anywhere on it toggles.
- * Disabled as a dependent row, the check-row primitive puts the .4 on the row's content (§9.30)
- * and `aria-disabled` keeps the row's fill off.
+ * A row with a `leading` glyph seats it between the box and the label in the shared slot
+ * (§10.5's Customize toolbar rows: the control's glyph after the box), on the label's line as
+ * the box is (§9.2), hidden from the name the label gives the checkbox. Disabled as a dependent
+ * row, the check-row primitive puts the .4 on the row's content (§9.30) and `aria-disabled`
+ * keeps the row's fill off.
  */
 function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.Element {
   const disabled = row.disabled === true
@@ -715,6 +719,11 @@ function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.E
         disabled={disabled}
         onChange={(e) => row.onChange(e.target.checked)}
       />
+      {row.leading && (
+        <span className="zen-settings-leading" aria-hidden="true">
+          {row.leading}
+        </span>
+      )}
       <RowText label={row.label} description={row.description} caption={caption} />
     </label>
   )

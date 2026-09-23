@@ -2771,9 +2771,12 @@ function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
           form: {
             title: 'Add search engine',
             description: 'Put %s in the URL where the search terms go.',
+            // `search.addEngine` takes the name and the template; the engine derives the
+            // shortcut from the name (`customSearchEngine`) until the command carries one.
             render: (close) => (
               <SearchEngineForm
-                onAdd={(name, url) => cmd('search.addEngine', { name, url })}
+                action="Add"
+                onSubmit={({ name, url }) => cmd('search.addEngine', { name, url })}
                 close={close}
               />
             )
