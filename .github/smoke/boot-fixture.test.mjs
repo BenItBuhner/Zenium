@@ -4,6 +4,7 @@ import {
   BOOT_PAGES,
   FIND_MATCHES,
   FIND_WORD,
+  HANGING_PATH,
   bootPageUrls,
   bootPages,
   isWebPage,
@@ -143,5 +144,62 @@ describe('startBootFixture', () => {
       expect.arrayContaining([BOOT_PAGES.first.path, BOOT_PAGES.handoff.path, '/favicon.ico'])
     )
     expect(fixture.requests[0].host).toBe(`127.0.0.1:${fixture.port}`)
+  })
+
+  it('names the address that never answers, under no page’s path', () => {
+    expect(fixture.hanging).toEqual({ path: HANGING_PATH, url: `${fixture.origin}${HANGING_PATH}` })
+    expect(Object.values(BOOT_PAGES).map((p) => p.path)).not.toContain(HANGING_PATH)
+    expect(HANGING_PATH).toMatch(/^\/[a-z-]+\.html$/)
+  })
+
+  it('holds a request for it without a byte in answer, and lets go when the client does', async () => {
+    const req = http.get({ host: '127.0.0.1', port: fixture.port, path: HANGING_PATH })
+    let answered = false
+    req.on('response', () => (answered = true))
+    req.on('error', () => undefined)
+    await new Promise((r) => {
+      const poll = setInterval(() => {
+        if (fixture.held() === 1) {
+          clearInterval(poll)
+          r()
+        }
+      }, 5)
+    })
+    // The request is logged like any other, and sits there: nothing came back.
+    expect(fixture.requests.at(-1).path).toBe(HANGING_PATH)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(answered).toBe(false)
+    expect(fixture.held()).toBe(1)
+    // The client gives up (a stopped navigation closes its socket): the server forgets it.
+    req.destroy()
+    await new Promise((r) => {
+      const poll = setInterval(() => {
+        if (fixture.held() === 0) {
+          clearInterval(poll)
+          r()
+        }
+      }, 5)
+    })
+    expect(answered).toBe(false)
+  })
+
+  it('ends a held request when the server closes', async () => {
+    const own = await startBootFixture()
+    const req = http.get({ host: '127.0.0.1', port: own.port, path: HANGING_PATH })
+    const ended = new Promise((r) => {
+      req.on('error', (err) => r(err.code))
+      req.on('response', () => r('response'))
+    })
+    await new Promise((r) => {
+      const poll = setInterval(() => {
+        if (own.held() === 1) {
+          clearInterval(poll)
+          r()
+        }
+      }, 5)
+    })
+    await own.close()
+    expect(await ended).toBe('ECONNRESET')
+    expect(own.held()).toBe(0)
   })
 })

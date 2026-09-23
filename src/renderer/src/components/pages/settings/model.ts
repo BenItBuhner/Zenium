@@ -153,7 +153,8 @@ export interface FormSheet {
   /**
    * The body is a list of rows rather than a form (the site-data viewer): the desktop dialog
    * stands at most 80% of the frame and scrolls under its title block, and its footer takes the
-   * list form – a hairline in the gutter, the buttons at 12 (§9.20; `data-body="list"`).
+   * list form – a hairline in the gutter, the buttons at 12 (§9.20; `data-body="list"`); the
+   * phone sheet takes the same cap at its expanded detent (`BottomSheet`'s `body`).
    */
   body?: 'list'
   render(close: () => void): ReactNode

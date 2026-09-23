@@ -65,10 +65,10 @@ object PromptSheetSpec {
      * from the peers to the sheet's bottom edge is the gutter plus the inset the host reports – its
      * three hosts: 16 where it reports none (the preview host), 40 over a 24 gesture bar, 64 over a
      * 48 three-button bar, the sheet running edge to edge beneath the bar. Natively the Material
-     * sheet pads its bottom by the inset and the footer brings the 16 ([FOOTER_BOTTOM_DP]).
-     * `V2TokensPinTest` holds the three hosts to the formula – and the web chassis's
-     * `8 + max(8, inset)` (`.zen-sheet-footer` over `BottomSheet.tsx`'s floor) as the known
-     * drift over a real inset, until Android primitives pass 4 adds the inset to its 16 too.
+     * sheet pads its bottom by the inset and the footer brings the 16 ([FOOTER_BOTTOM_DP]); the
+     * web chassis makes the same 16 of `.zen-sheet-footer`'s 8 over `BottomSheet.tsx`'s own 8
+     * (`SHEET_EDGE_PAD`) and adds the inset to it. `V2TokensPinTest` holds both to the formula on
+     * the three hosts.
      */
     fun footerToEdge(gutter: Int, inset: Int): Int = gutter + inset
 
@@ -133,9 +133,8 @@ object PromptSheetSpec {
     /**
      * §9.11 / §9.25: the footer's 16 above its peers (`.zen-sheet-footer`'s `padding-top`), the peers at an
      * 8 gap, and §9.25's 16 below them, above the host's safe-area inset the sheet pads for
-     * ([footerToEdge]: 16 + the inset to the sheet's edge). The web chassis's `.zen-sheet-footer`
-     * stands at 8 over `BottomSheet.tsx`'s 8 floor – the same 16 where the host reports no inset, 8
-     * short over a real one: the line Android primitives pass 4 changes, pinned as the drift till then.
+     * ([footerToEdge]: 16 + the inset to the sheet's edge) – the web chassis's `.zen-sheet-footer`
+     * 8 over `BottomSheet.tsx`'s `SHEET_EDGE_PAD` 8, the inset added to both, pinned equal.
      */
     const val FOOTER_TOP_DP = 16
     const val FOOTER_BOTTOM_DP = 16
@@ -193,7 +192,7 @@ object PromptSheetSpec {
  * through the bar to the screen's bottom, the content stops above it) – 16 to the edge where it
  * reports none, 40 over a 24 gesture bar, 64 over a 48 three-button bar
  * ([PromptSheetSpec.footerToEdge]: the gutter plus the inset, §9.25's formula, the web chassis's
- * `8 + max(8, inset)` the drift primitives pass 4 corrects). The sheet stands at most
+ * `8 + 8 + inset` the same numbers). The sheet stands at most
  * [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
  * under the status bar: a long body scrolls between the pinned block and the pinned footer
  * rather than pushing either off. The keyboard lifts the sheet and takes its room from the body.

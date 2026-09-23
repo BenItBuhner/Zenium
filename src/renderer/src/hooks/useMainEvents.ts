@@ -14,7 +14,7 @@ import { noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { applyHostInsets } from '@renderer/lib/insets'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
-import { focusPane, pageTookKeyboard } from '@renderer/lib/panes'
+import { focusPane, pageHandedKeyboard, pageTookKeyboard } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
@@ -52,6 +52,7 @@ import {
 } from '@renderer/lib/ui'
 import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
+import { requestFolderDelete } from '@renderer/lib/folderDelete'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { openOverview } from '@renderer/lib/gestures/stage'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
@@ -304,6 +305,12 @@ export function useMainEvents(): void {
         if (isPhone()) uiStore.set({ renamingFolderId: folderId })
         else openGroupEditor(folderId)
       }),
+      // The desktop folder menu's "Delete Folder" on a folder with tabs or saved pages: the
+      // §9.23 prompt over the page (TAB-16's desktop half); the answer runs `folder.delete`.
+      onEvent('folder.confirmDelete', ({ folderId }) => {
+        closeUrlbar()
+        requestFolderDelete(folderId)
+      }),
       onEvent('tab.editPinnedUrl', ({ tabId }) => uiStore.set({ editingPinnedUrlTabId: tabId })),
       onEvent('tab.pickIcon', ({ tabId }) => uiStore.set({ iconPickerTabId: tabId })),
       onEvent('bookmark.star', (star) => {
@@ -417,6 +424,9 @@ export function useMainEvents(): void {
       onEvent('view.drawn', ({ tabId, visible }) => {
         if (followsCover()) onViewDrawn(tabId, visible)
       }),
+      // A hardware keyboard's Tab past the page's end (Shift+Tab past its start) came to the
+      // chrome: the focus lands on its first (last) control, ringed as the keyboard's (A11Y-09).
+      onEvent('focus.fromPage', ({ direction }) => pageHandedKeyboard(direction)),
       // The host drew a page view at a new size: the return from a fullscreen lands on it.
       onEvent('view.sized', ({ tabId, width, height }) => noteViewSized(tabId, width, height)),
       // Tab card pictures (lib/thumbnails.ts): the host's captures, the tabs' navigations and

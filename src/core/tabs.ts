@@ -1832,7 +1832,10 @@ export class TabManager {
    * it before, and the last one is what the group keeps. A group closing as one
    * (`closeFolderTabs`) has its pages set already, the whole group's; a private member leaves
    * nothing behind – no page, no last use – as it leaves no recently closed entry, and the
-   * group's live members are its regular ones (`regularFolderTabs`).
+   * group's live members are its regular ones (`regularFolderTabs`). A saved group folds shut:
+   * the desktop sidebar lists a saved group's pages under its header only when it is unfolded
+   * (collapsed by default, Chrome's saved-group chip), and the tab that brings it back to life
+   * unfolds it again (`folderOpened` – Open Folder, a reopened closed tab, a move into it).
    */
   private saveFolderOnLastClose(tab: Tab, closedAt: number): void {
     const folderId = tab.folderId
@@ -1841,6 +1844,7 @@ export class TabManager {
     if (!folder || regularFolderTabs(this.model, folderId).length > 0) return
     folder.savedTabs = [savedGroupTab(tab)]
     folder.lastUsedAt = closedAt
+    folder.collapsed = true
   }
 
   /**
@@ -1859,6 +1863,7 @@ export class TabManager {
     if (members.length === 0) return
     folder.savedTabs = members.map(savedGroupTab)
     folder.lastUsedAt = Date.now()
+    folder.collapsed = true
     this.closingFolders.add(folderId)
     try {
       for (const t of members) this.closeTab(t.id, true, win)

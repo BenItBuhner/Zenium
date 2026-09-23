@@ -672,7 +672,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `fail=<error>` – with `retrying=<n>` for a network failure the stand-in downloader retries on
  * its own n more times, the row counting down to each attempt – `deleted` for a finished file
  * since gone from disk, `private`, `url=<url>` (an `http:` one is refused as insecure under the
- * stand-in's https referrer, HB-44), `mime=<type>`), `media=<variant>` for the active page
+ * stand-in's https referrer, HB-44), `mime=<type>`), `qr=<script>` for QR scanning from the
+ * active tab with the stand-in camera playing that script back (`previewQrScript`; `qr=` is the
+ * default run to a decoded address), `media=<variant>` for the active page
  * reporting media as one of PREVIEW_MEDIA (the Now playing chip in the pill; `&player` opens the
  * in-app player on it), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the
  * list of them, `&allowed` remembers the site as allowed), `prompt=http-auth` /
@@ -693,9 +695,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `readAloud` over `reader`, `reader` over `network`, `network` over `crash`, `crash` over
  * `unresponsive`, `unresponsive` over `error`, `error` over `screenshot`, `screenshot` over
  * the messages, the messages over
- * `webapp`, `webapp` over `media`, `media` over `download`, `download` over `popups`, `popups`
- * over the security `prompt`, that over `voice`, `voice` over `overview`, and `overview` over
- * `urlbar`. A leading `#` (the URL hash as read) is ignored.
+ * `webapp`, `webapp` over `media`, `media` over `download`, `download` over `qr`, `qr` over
+ * `popups`, `popups` over the security `prompt`, that over `voice`, `voice` over `overview`,
+ * and `overview` over `urlbar`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)

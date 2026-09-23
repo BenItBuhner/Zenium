@@ -3,6 +3,7 @@ import { useEffect, useId, useRef } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { sheetInitialFocus } from '@renderer/lib/popover'
+import type { SheetBody } from '@renderer/lib/motion/sheet'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { takeSheetOpener } from './phonePanel'
@@ -34,16 +35,23 @@ import { takeSheetOpener } from './phonePanel'
 
 /**
  * What takes the focus as the sheet opens (§9.22):
- *  - `first`: the first button of the body (a prompt's Cancel);
- *  - `dialog`: the sheet itself, for a form – its field is first in the order but a text field
- *    never takes the focus on its own on a phone (the keyboard would come up with the sheet), so
- *    the dialog does, named by its title;
- *  - `checked`: a §9.13 picker's current option – the row that is checked or selected – else
- *    the first row, else Cancel: the chassis's own order (`sheetInitialFocus`, lib/popover.ts,
- *    what `BottomSheet` does for a sheet that names no focus), for a sheet of radio rows.
+ *  - `first`: the first row or button of the body – a list sheet's first row (Recently closed,
+ *    the extensions list, a device picker: rows that are targets, `PhoneListRow`'s
+ *    `role="button"` or a `button`), a menu sheet's first item;
+ *  - `dialog`: the sheet itself, named by its title – for a title-and-notice sheet (a prompt:
+ *    landing on its Cancel is §9.22's named failure, the way out read first) and for a form
+ *    whose first control is a text field, which never takes the focus on its own on a phone
+ *    (the keyboard would come up with the sheet);
+ *  - `checked`: a §9.13 picker's current option – the row that is checked, selected or current
+ *    – else the first row or control, else the dialog: the chassis's own order
+ *    (`sheetInitialFocus`, lib/popover.ts, what `BottomSheet` does for a sheet that names no
+ *    focus, the form exception included), for a sheet of radio rows or a list with a current entry.
  * Omitted, the sheet leaves the focus to the chassis: that same order.
  */
 export type SheetFocus = 'first' | 'dialog' | 'checked'
+
+/** `first`'s target: the body's first row or button that can take a press. */
+const FIRST_CONTROL = 'button:not(:disabled), a[href], [role="button"]:not([aria-disabled="true"])'
 
 /**
  * The sheet's title in one of its two poses, the consumer's choice (§9.16, §9.23):
@@ -111,6 +119,11 @@ interface Props {
   fitContent?: boolean
   /** Come in expanded: an editor whose body is the document (`BottomSheet`'s `openExpanded`). */
   openExpanded?: boolean
+  /**
+   * The body is a list of rows: the sheet stands at most 80 % of the layer and the list scrolls
+   * under the title (§9.20, `BottomSheet`'s `body`); a form or a prompt stands as tall as it is.
+   */
+  body?: SheetBody
   handleLabel?: string
   /** Another sheet stands over this one (§9.24): Escape is that sheet's until it has gone. */
   under?: boolean
@@ -143,6 +156,7 @@ function Chassis({
   contentKey,
   fitContent,
   openExpanded,
+  body: bodyKind,
   handleLabel = 'Resize sheet',
   under = false,
   sheetRef,
@@ -194,6 +208,7 @@ function Chassis({
       contentKey={contentKey}
       fitContent={fitContent}
       openExpanded={openExpanded}
+      body={bodyKind}
       handleLabel={handleLabel}
       labelledBy={titleId}
       describedBy={title.pose === 'block' ? descriptionId : undefined}
@@ -270,7 +285,7 @@ function useFocusOnOpen(body: RefObject<HTMLElement | null>, focus: SheetFocus |
         ? dialog
         : focus === 'checked'
           ? dialog && sheetInitialFocus(dialog, el)
-          : el.querySelector<HTMLElement>('button:not(:disabled), a[href]')
+          : el.querySelector<HTMLElement>(FIRST_CONTROL)
     target?.focus({ preventScroll: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- on open only
   }, [])

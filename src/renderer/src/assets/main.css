@@ -3654,7 +3654,13 @@
     line-height: var(--v2-line-body);
     color: var(--v2-text-deemphasized);
   }
-  /* The footer of a prompt (§9.11): peers split the width at an 8 px gap, the primary trailing. */
+  /*
+   * The footer of a prompt (§9.11): peers split the width at an 8 px gap, the primary trailing.
+   * Its 8 below stands over the chassis's own 8 + the host's bottom inset (`BottomSheet`'s
+   * `SHEET_EDGE_PAD`): §9.25's 16 + inset from the buttons to the sheet's bottom edge – 16 at no
+   * inset, 40 over a 24 gesture bar, 64 over a 48 three-button bar – the native chassis's
+   * `footerToEdge`, which `V2TokensPinTest` holds this rule to.
+   */
   .zen-sheet-footer {
     display: flex;
     gap: 8px;
@@ -4031,15 +4037,6 @@
     line-height: var(--v2-line-small);
     color: var(--v2-text-deemphasized);
   }
-  .zen-siteinfo-footer {
-    display: flex;
-    flex-shrink: 0;
-    justify-content: flex-end;
-    gap: 8px;
-    margin: 0 16px;
-    padding: 12px 0;
-    border-top: 1px solid var(--v2-border);
-  }
   /* The root level sits under the title block, whose own 16 below is the gap to the rows (§9.23). */
   .zen-siteinfo-under-title {
     padding-top: 0;
@@ -4329,8 +4326,10 @@
    * (§9.12) over the shared `.zen-v2-field`, the shared `.zen-v2-row` for the actions with a
    * leading 16 px glyph (§9.34). Only what those do not say lives here: the form's 12 to the
    * hairline under it (the swatches are a row of controls, not text), the hairline in the gutter
-   * with 4 below (§6, §9.20's list panel), the swatch row's geometry (nine 28 px targets at an
-   * 8 px gap; the swatch itself is the card radio's swatch form, unlayered further down), the
+   * with 4 below (§6, §9.20's list panel), the swatch row's geometry (§9.14 to the letter: nine
+   * 28 px targets touching, so the 20 px discs sit 8 apart on a 28 pitch and the nine discs run
+   * 244 wide, the first's left edge to the ninth's right, the targets 252; the swatch itself is
+   * the card radio's swatch form, unlayered further down), the
    * actions' 4 px inset below, and the tab count trailing the close row. The header row the
    * bubble hangs from keeps its hover fill while the bubble is up, as an anchor does (§9.20).
    */
@@ -4339,7 +4338,7 @@
   }
   .zen-group-editor-swatches {
     display: flex;
-    gap: 8px;
+    gap: 0;
   }
   .zen-group-editor-actions {
     display: flex;
@@ -7524,6 +7523,25 @@
 }
 
 /*
+ * The desktop's folder as a tab group (TAB-16's desktop half, tabs-15; `SpacePanel`'s
+ * `FolderRow`): the group's colour (`--zen-group-rgb`, Chrome's nine) in the header's glyph slot
+ * alone – the 10 dot, the 2 px saved ring or the folder's own icon, `.zen-group-row-glyph` above
+ * as the tablet row draws it – and the rows' 20 px indent as the bracket that says which rows
+ * are the folder's (§9.36): no group line down the block's edge, and never a fill across the row
+ * (§9.29 – the row's fills are the window's hover and active). Nothing stands in the header's
+ * first pixels, so its §1 ring – 2 px, 2 inside its edge – paints whole on its own (§9.20). The
+ * count, folded and open alike, is the tablet row's 13 tabular aside at 69% – the tabs the
+ * folder holds, or the pages a saved one keeps – never a badge (§9.36). A saved folder's page
+ * rows (`SavedPageRow`) wear the sleeping row's 69% on glyph and title: a page, not a live tab;
+ * they keep the live row's trailing 24 px slot, empty, so a title's edge holds as the folder
+ * closes and opens.
+ */
+.zen-saved-page .zen-tab-favicon,
+.zen-saved-page .zen-tab-title {
+  opacity: 0.69;
+}
+
+/*
  * The drawer (`TabletDrawer`): the expanded sidebar over the page in a window too narrow to
  * dock it, on the phone Spaces drawer's panel (`.zen-drawer-panel`: the space-tinted panel
  * colour, blurred, flush with the window's edge and rounded towards the content). The sidebar's
@@ -9709,10 +9727,16 @@
   corner-shape: inherit;
   pointer-events: none;
 }
+/*
+ * The body's 8 under its last row or its inline actions (`SheetActions` in a prompt or a field
+ * sheet) stands over the chassis's own 8 + inset (`BottomSheet`'s `SHEET_EDGE_PAD`), so the
+ * last control meets §9.25's one formula – 16 + the host's inset to the sheet's bottom edge –
+ * as the chassis's `.zen-sheet-footer` does; 16 here stacked a second 8 on it (24 at no inset).
+ */
 .zen-settings-sheet-body {
   display: flex;
   flex-direction: column;
-  padding-bottom: 16px;
+  padding-bottom: 8px;
   color: var(--v2-text);
 }
 .zen-settings-sheet-rows {
@@ -10172,9 +10196,9 @@
 /*
  * §9.20's second footer form, for a dialog whose body is a row list and ends in buttons (the
  * site-data viewer's Clear all under its list): a hairline in the gutter with the list's 4
- * inset above it (§6's separator margin) and the buttons at 12 above and below, 16 at the sides
- * – the site-information popover's form (`.zen-siteinfo-footer`). The list's own end inset is
- * the 4 above the line, so the body's 16 goes; the prompt form's 16 stays for a form's footer.
+ * inset above it (§6's separator margin) and the buttons at 12 above and below, 16 at the sides.
+ * The list's own end inset is the 4 above the line, so the body's 16 goes; the prompt form's 16
+ * stays for a form's footer.
  */
 .zen-settings-dialog[data-body='list']
   > .zen-settings-dialog-body:has(+ .zen-settings-dialog-footer) {

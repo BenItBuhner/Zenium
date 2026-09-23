@@ -21,6 +21,7 @@ import {
   fieldOverflow,
   REDUCED_MOTION_FADE_MS,
   SheetMotion,
+  type SheetBody,
   type SheetDetent,
   type SheetDetents
 } from '@renderer/lib/motion/sheet'
@@ -38,6 +39,15 @@ import { cn } from '@renderer/lib/utils'
  * ours before the WebView starts a scroll it could not perform anyway.
  */
 const SLOP = 6
+
+/**
+ * The sheet's own padding (px) under its footer, above the host's bottom inset, which the sheet
+ * adds in full (§9.25): with `.zen-sheet-footer`'s 8 under the buttons the footer stands 16 +
+ * inset from the sheet's bottom edge – 16 where the host reports none (the preview host), 40
+ * over a 24 gesture bar, 64 over a 48 three-button bar – the native chassis's `footerToEdge`
+ * (`NativePromptSheet.kt`), which `V2TokensPinTest` reads this constant against.
+ */
+export const SHEET_EDGE_PAD = 8
 
 export interface BottomSheetHandle {
   /** Slide the sheet off the screen; `then` runs once it is gone, right before `onDismissed`. */
@@ -107,6 +117,14 @@ interface Props {
    * scrolls from the start. A sheet of rows or a control panel keeps the peek (§9.13).
    */
   openExpanded?: boolean
+  /**
+   * The body is a list of rows (Recently closed, the extensions list, a device picker, a
+   * document's outline): the sheet stands at most 80 % of the layer at its expanded detent and
+   * the list scrolls under the title (§9.20, `SHEET_LIST_MAX_SHARE`; the desktop dialog's
+   * `data-body="list"`, the same mark on the sheet). A form or a prompt (`content`, the default)
+   * stands as tall as its content, to the top margin.
+   */
+  body?: SheetBody
 }
 
 type Zone = 'grip' | 'body' | 'scrim'
@@ -212,7 +230,8 @@ export function BottomSheet({
   className,
   hosted = false,
   fitContent = false,
-  openExpanded = false
+  openExpanded = false,
+  body = 'content'
 }: Props): JSX.Element {
   const layerRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
@@ -425,14 +444,16 @@ export function BottomSheet({
       chrome:
         (gripRef.current?.offsetHeight ?? 0) +
         (footerRef.current?.offsetHeight ?? 0) +
-        Math.max(8, insetBottom.current)
+        SHEET_EDGE_PAD +
+        insetBottom.current
     }
     sheet.style.height = height
     detents.current = computeDetents(
       intrinsic,
       layer.clientHeight,
       insetTop.current,
-      insetBottom.current
+      insetBottom.current,
+      body
     )
     const m = motion()
     if (m.isOpen) m.refresh()
@@ -912,9 +933,10 @@ export function BottomSheet({
           'zen-sheet zen-sheet-detents absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',
           className
         )}
-        style={{ paddingBottom: Math.max(8, insets.bottom), opacity: 0, pointerEvents: 'none' }}
+        style={{ paddingBottom: SHEET_EDGE_PAD + insets.bottom, opacity: 0, pointerEvents: 'none' }}
         data-locked="true"
         data-surface="page"
+        data-body={body === 'list' ? 'list' : undefined}
       >
         <div ref={gripRef} data-sheet-grip className="zen-sheet-grip shrink-0">
           <button

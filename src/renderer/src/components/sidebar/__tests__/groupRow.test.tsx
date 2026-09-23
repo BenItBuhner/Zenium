@@ -46,7 +46,8 @@ import { SpacePanel } from '../SpacePanel'
  * the tabs indented 24 beneath while open; a tap folds it, the block's height on SPRING_GENTLE
  * with the rows it had kept drawn until the spring rests; a hold brings the group's menu at the
  * finger; a SAVED group – its tabs closed, its pages kept (TAB-16) – as a row with the ring and
- * the count of its pages whose tap opens it; the desktop's row untouched.
+ * the count of its pages whose tap opens it; the desktop's row on its own contract (TAB-16's
+ * desktop half – desktopGroups.test.tsx), its fold no spring.
  */
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
@@ -534,7 +535,8 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(memberRows()).toEqual(['one', 'two'])
   })
 
-  it('leaves the desktop’s folder row as it was', () => {
+  it('leaves the desktop’s folder row on its own contract: Zen’s 32 header with the group’s glyph and no bar, the fold the state’s alone', () => {
+    // Stale `savedTabs` beside live members are no saved group: the row is an open folder's.
     panel(
       grouped(),
       [folder({ savedTabs: [{ url: 'https://x.example/', title: 'X' }] })],
@@ -544,8 +546,17 @@ describe('the tablet sidebar’s group row (TABLET-04, §9.36)', () => {
     expect(row.className).not.toContain('zen-group-row')
     expect(row.hasAttribute('data-saved')).toBe(false)
     expect(row.getAttribute('aria-description')).toBe('Folder, 2 tabs')
-    expect(row.querySelector('[data-testid="group-row-glyph"]')).toBeNull()
-    expect(row.textContent).toContain('📁')
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+    // The same glyph as the tablet's in the favicon slot – the dot for the default icon – and
+    // no bar on the fold block (desktopGroups.test.tsx has the desktop's own contract).
+    const glyph = row.querySelector<HTMLElement>('[data-testid="group-row-glyph"]')!
+    expect(glyph.hasAttribute('data-saved')).toBe(false)
+    expect(glyph.querySelector('.zen-group-row-dot')).not.toBeNull()
+    expect(row.textContent).not.toContain('📁')
+    expect(shell().hasAttribute('data-group-bar')).toBe(false)
+    expect(shell().dataset.groupKind).toBe('open')
+    expect(row.querySelector('[data-testid="group-count"]')?.textContent).toBe('2')
+    expect(row.querySelector('[data-testid="group-row-count"]')).toBeNull()
     // The desktop's fold is the state's alone: no spring, the rows gone with the state.
     panel(grouped(), [folder({ collapsed: true })], 'desktop')
     expect(folds()).toEqual([])

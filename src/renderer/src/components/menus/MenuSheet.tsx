@@ -143,7 +143,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       <div
         key={path.length}
         className={cn(
-          'flex flex-col pb-1',
+          'flex flex-col pb-2',
           nav.direction > 0 && 'zen-drawer-right',
           nav.direction < 0 && 'zen-drawer-left'
         )}
