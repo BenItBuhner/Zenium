@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lucide "picture-in-picture-2": the custom tab's Minimize button, the page shrinking into a
+     floating card (Chrome's minimized custom tab). Tinted at runtime. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M21,9 V6 a2,2 0 0 0 -2,-2 H4 a2,2 0 0 0 -2,2 v10 c0,1.1 0.9,2 2,2 h4 M14,13 h6 a2,2 0 0 1 2,2 v3 a2,2 0 0 1 -2,2 h-6 a2,2 0 0 1 -2,-2 v-3 a2,2 0 0 1 2,-2 Z" />
+</vector>

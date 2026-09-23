@@ -1,6 +1,8 @@
 package app.zen.chromium
 
+import android.animation.ValueAnimator
 import android.app.PendingIntent
+import android.app.PictureInPictureParams
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentCallbacks2
@@ -8,10 +10,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.MutableContextWrapper
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -21,6 +26,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.browser.customtabs.CustomTabsCallback
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
+import androidx.core.os.BundleCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -32,19 +38,24 @@ import kotlin.math.abs
 /**
  * Another app's custom tab, rendered by Zenium: a [TabWebView] (the same page class, clients and
  * plumbing as a tab of the browser window) under a native toolbar in the caller's colours, with
- * the caller's close control, action button and menu items, closing back into the caller's task
- * with the caller's exit animation. "Open in Zenium" hands the live page to the browser window.
+ * the caller's close control, action button and menu items, the caller's bottom toolbar
+ * ([CustomTabBottomBar], CCT-07) above the navigation bar, closing back into the caller's task
+ * with the caller's exit animation. "Open in Zenium" hands the live page to the browser window;
+ * Minimize shrinks the tab into a floating picture-in-picture card (CCT-11) and the platform's
+ * expand control brings it back.
  *
  * Reached through [LinkDispatchActivity] (or `MainActivity.handleIntent` when aimed at the
  * browser directly), always in the task of whoever started it and never in the browser's own:
  * the manifest gives it its own (empty) affinity, so a `singleTask` browser cannot swallow it.
  */
-class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTabFindBar.Listener {
+class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTabFindBar.Listener, CustomTabBottomBar.Listener, CustomTabSessions.Visuals {
     lateinit var config: CustomTabConfig
         private set
     lateinit var host: CustomTabHost
         private set
     lateinit var toolbar: CustomTabToolbar
+        private set
+    lateinit var bottomBar: CustomTabBottomBar
         private set
 
     private lateinit var shell: FrameLayout
@@ -56,11 +67,23 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
     private var findBar: CustomTabFindBar? = null
     private var topInset = 0
     private var bottomInset = 0
+    /** The soft keyboard is up: the bottom toolbar steps aside for it, as Chrome's does. */
+    private var keyboardUp = false
     private var toolbarShown = true
     private var toolbarAnimating = false
     private var scrolledSinceTurn = 0
     private var lastScrollY = 0
     private var currentUrl = ""
+    /** The caller's `PendingIntent` for a swipe up on the bottom toolbar; the caller can set it later. */
+    private var swipeUpIntent: PendingIntent? = null
+    /** The intent that hears the bottom toolbar's RemoteViews clicks; replaced by the caller's later views. */
+    private var remoteClickIntent: PendingIntent? = null
+    /** The bottom bar's height the page was last laid out for, so a change can slide instead of jump. */
+    private var laidOutBarHeight = 0
+    private val barSlide = Spring(SPRING_STIFFNESS, SPRING_DAMPING, onFrame = { bottomBar.translationY = it }, onRest = { bottomBar.translationY = 0f; layoutPage() })
+    /** Minimize's card, in the shell only while the tab is in picture-in-picture. */
+    private var minimizedCard: CustomTabMinimizedCard? = null
+    private var minimized = false
     /** While set, [getPackageName] answers with the caller's package (see [closeToCaller]). */
     private var packageForAnimation: String? = null
 
@@ -87,9 +110,17 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
         host = CustomTabHost(this, pageContainer, fullscreenLayer, config.scheme.dark)
         toolbar = CustomTabToolbar(this, config, this)
         statusStrip = View(this).apply { setBackgroundColor(config.scheme.toolbar) }
+        bottomBar = CustomTabBottomBar(this, config.scheme, this)
+        swipeUpIntent = config.swipeUpIntent
+        remoteClickIntent = config.remoteViews?.clickIntent
+        bottomBar.setRemoteViews(config.remoteViews)
+        bottomBar.setButtons(config.bottomButtons)
+        bottomBar.swipeUpEnabled = swipeUpIntent != null
+        bottomBar.visibility = if (bottomBar.hasContent) View.VISIBLE else View.GONE
         shell.addView(pageContainer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         shell.addView(toolbar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
         shell.addView(statusStrip, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, Gravity.TOP))
+        shell.addView(bottomBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         shell.addView(fullscreenLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(shell)
         applyScheme()
@@ -99,12 +130,16 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             topInset = bars.top
             bottomInset = maxOf(bars.bottom, ime.bottom)
+            keyboardUp = ime.bottom > bars.bottom
             shell.setPadding(bars.left, 0, bars.right, 0)
             toolbar.setTopInset(bars.top)
             statusStrip.layoutParams = (statusStrip.layoutParams as FrameLayout.LayoutParams).apply { height = bars.top }
+            bottomBar.setBottomInset(bars.bottom)
+            bottomBar.visibility = if (bottomBar.hasContent && !keyboardUp && !minimized) View.VISIBLE else View.GONE
             layoutPage()
             WindowInsetsCompat.CONSUMED
         }
+        CustomTabSessions.attach(config.session, this)
 
         // Back: the page's history first (predictively, like a tab of the browser), then out to
         // the caller. The callback never lets go, so the system never finishes us without the
@@ -185,17 +220,32 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
         }
     }
 
-    /** Place the page under the toolbar (or under the status bar alone when it is hidden). */
+    /**
+     * Place the page under the toolbar (or under the status bar alone when it is hidden) and
+     * above the caller's bottom toolbar (or the navigation bar alone while the bottom toolbar is
+     * hidden with it, or gone for the keyboard): the page's viewport never runs under the bar.
+     */
     private fun layoutPage() {
         val lp = pageContainer.layoutParams as FrameLayout.LayoutParams
         lp.topMargin = topInset + if (toolbarShown) toolbar.barHeight else 0
-        lp.bottomMargin = bottomInset
+        val barHeight = currentBarHeight()
+        laidOutBarHeight = barHeight
+        lp.bottomMargin = CustomTabBottomBarRules.pageBottomMargin(bottomInset, barHeight, toolbarShown && barHeight > 0)
         pageContainer.layoutParams = lp
         (divider?.layoutParams as? FrameLayout.LayoutParams)?.let {
             it.bottomMargin = bottomInset
             divider?.layoutParams = it
             divider?.visibility = if (bottomInset > 0) View.VISIBLE else View.GONE
         }
+    }
+
+    /** The bottom toolbar's height as the page should allow for it now; 0 when there is none to show. */
+    private fun currentBarHeight(): Int {
+        if (bottomBar.visibility != View.VISIBLE) return 0
+        val laidOut = bottomBar.barHeight
+        if (laidOut > 0) return laidOut
+        val width = (if (shell.width > 0) shell.width else resources.displayMetrics.widthPixels) - shell.paddingLeft - shell.paddingRight
+        return bottomBar.measureBarHeight(width.coerceAtLeast(1))
     }
 
     // --- toolbar hiding on scroll (EXTRA_ENABLE_URLBAR_HIDING) ----------------------------------
@@ -222,31 +272,171 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
      * The toolbar slides up behind the status bar strip ([statusStrip], drawn over it in the same
      * colour) and the page follows it: the page is first grown by the bar's height behind it (one
      * relayout, drawn where it was), then both translate together so nothing jumps and no gap
-     * opens at the bottom.
+     * opens at the bottom. The caller's bottom toolbar goes with it, down past the navigation
+     * bar (§11.5's bottom dock: the page grows under it at the first frame, the bar slides off
+     * what is now the page's own strip), as Chrome's bottom bar rides the browser controls.
      */
     private fun hideToolbar() {
         if (!toolbarShown || toolbarAnimating) return
         toolbarShown = false
         toolbarAnimating = true
         val h = toolbar.barHeight.toFloat()
+        val bar = currentBarHeight()
         layoutPage()
         pageContainer.translationY = h
         toolbar.animate().translationY(-h).setDuration(TOOLBAR_MS).start()
+        if (bar > 0) {
+            barSlide.stop()
+            bottomBar.stopSettling()
+            bottomBar.animate().translationY(CustomTabBottomBarRules.hiddenTranslation(bar, bottomInset).toFloat()).setDuration(TOOLBAR_MS).start()
+        }
         pageContainer.animate().translationY(0f).setDuration(TOOLBAR_MS).withEndAction { toolbarAnimating = false }.start()
     }
 
+    /** The reverse: the bars return first, the page gives the bottom toolbar its strip back at the rest. */
     private fun showToolbar() {
         if (toolbarShown) return
         toolbarShown = true
         toolbarAnimating = true
         val h = toolbar.barHeight.toFloat()
         toolbar.animate().translationY(0f).setDuration(TOOLBAR_MS).start()
+        if (bottomBar.translationY != 0f) bottomBar.animate().translationY(0f).setDuration(TOOLBAR_MS).start()
         pageContainer.animate().translationY(h).setDuration(TOOLBAR_MS).withEndAction {
             pageContainer.translationY = 0f
             layoutPage()
             toolbarAnimating = false
         }.start()
     }
+
+    // --- the caller's bottom toolbar (CCT-07) -------------------------------------------------------
+
+    override fun onRemoteViewClick(id: Int) {
+        val intent = remoteClickIntent ?: return
+        sendToCaller(intent, Intent().putExtra(CustomTabsIntent.EXTRA_REMOTEVIEWS_CLICKED_ID, id))
+    }
+
+    override fun onBottomButton(button: CustomTabConfig.ActionButton) = sendToCaller(button.intent)
+
+    override fun onSwipeUp() {
+        swipeUpIntent?.let { sendToCaller(it) }
+    }
+
+    /**
+     * The bar's own height changed (the caller's later `setSecondaryToolbarViews`, typically the
+     * secondary toolbar it reveals after a swipe up). Shown, the bar's edge slides from where it
+     * was to where it is on §11's spring and the page takes the new height at the rest; hidden,
+     * it simply parks the bar further off. The first layout is not a change.
+     */
+    override fun onBarHeightChanged() {
+        if (minimized) return
+        val now = currentBarHeight()
+        val was = laidOutBarHeight
+        if (!toolbarShown) {
+            bottomBar.translationY = CustomTabBottomBarRules.hiddenTranslation(now, bottomInset).toFloat()
+            laidOutBarHeight = now
+            return
+        }
+        if (was == 0 || now == was || toolbarAnimating) {
+            layoutPage()
+            return
+        }
+        if (now < was) layoutPage()
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            bottomBar.translationY = 0f
+            layoutPage()
+            return
+        }
+        barSlide.animate((now - was).toFloat(), 0f, 0f)
+    }
+
+    /**
+     * The caller's later visuals (`CustomTabsService.updateVisuals` for this tab's session): new
+     * bottom toolbar views (or none), a new swipe-up intent (or none), a new icon for one of its
+     * buttons. True when anything named in the bundle was applied.
+     */
+    override fun applyVisuals(bundle: Bundle): Boolean {
+        var applied = false
+        if (bundle.containsKey(CustomTabsIntent.EXTRA_REMOTEVIEWS)) {
+            val remote = CustomTabConfig.remoteViews(bundle)
+            remoteClickIntent = remote?.clickIntent
+            bottomBar.setRemoteViews(remote)
+            bottomBar.visibility = if (bottomBar.hasContent && !keyboardUp && !minimized) View.VISIBLE else View.GONE
+            if (!bottomBar.hasContent) layoutPage()
+            applied = true
+        }
+        if (bundle.containsKey(CustomTabsIntent.EXTRA_SECONDARY_TOOLBAR_SWIPE_UP_GESTURE)) {
+            swipeUpIntent = BundleCompat.getParcelable(bundle, CustomTabsIntent.EXTRA_SECONDARY_TOOLBAR_SWIPE_UP_GESTURE, PendingIntent::class.java)
+            bottomBar.swipeUpEnabled = swipeUpIntent != null
+            applied = true
+        }
+        bundle.getBundle(CustomTabsIntent.EXTRA_ACTION_BUTTON_BUNDLE)?.let { button ->
+            val icon = BundleCompat.getParcelable(button, CustomTabsIntent.KEY_ICON, Bitmap::class.java) ?: return@let
+            val description = button.getString(CustomTabsIntent.KEY_DESCRIPTION) ?: ""
+            val id = button.getInt(CustomTabsIntent.KEY_ID, CustomTabButtons.TOP_BAR_ID)
+            applied = (if (id == CustomTabButtons.TOP_BAR_ID) toolbar.updateAction(icon, description) else bottomBar.updateButton(id, icon, description)) || applied
+        }
+        return applied
+    }
+
+    // --- Minimize (CCT-11) ----------------------------------------------------------------------------
+
+    /**
+     * The tab into a floating picture-in-picture window, Chrome's 16:9 card, grown out of the
+     * toolbar. Only this activity ever enters picture-in-picture; the browser window's is the
+     * video's. The system may refuse (a policy, a task that cannot); then nothing changes.
+     */
+    override fun onMinimize() {
+        if (minimized || isFinishing || host.fullscreenTab != null) return
+        closeFind()
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(CustomTabMinimize.ASPECT_WIDTH, CustomTabMinimize.ASPECT_HEIGHT))
+        val source = Rect()
+        if (toolbar.getGlobalVisibleRect(source)) builder.setSourceRectHint(source)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setSeamlessResizeEnabled(false)
+            builder.setAutoEnterEnabled(false)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val card = CustomTabMinimize.card(page?.title, currentUrl.ifEmpty { config.url })
+            builder.setTitle(card.title)
+            if (card.host != card.title) builder.setSubtitle(card.host)
+        }
+        runCatching { enterPictureInPictureMode(builder.build()) }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        val event = CustomTabMinimize.event(minimized, isInPictureInPictureMode) ?: return
+        minimized = isInPictureInPictureMode
+        if (minimized) showMinimizedCard() else hideMinimizedCard()
+        CustomTabSessions.minimized(config.session, event)
+    }
+
+    /** The card over everything; the page waits paused and out of sight, its title and favicon on the card. */
+    private fun showMinimizedCard() {
+        val card = minimizedCard ?: CustomTabMinimizedCard(this, config.scheme.dark).also { minimizedCard = it }
+        card.show(CustomTabMinimize.card(page?.title, currentUrl.ifEmpty { config.url }), page?.favicon)
+        if (card.parent == null) shell.addView(card, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        pageContainer.visibility = View.INVISIBLE
+        toolbar.visibility = View.INVISIBLE
+        statusStrip.visibility = View.INVISIBLE
+        bottomBar.visibility = View.GONE
+        divider?.visibility = View.GONE
+        page?.onPause()
+    }
+
+    private fun hideMinimizedCard() {
+        minimizedCard?.let(shell::removeView)
+        pageContainer.visibility = View.VISIBLE
+        toolbar.visibility = View.VISIBLE
+        statusStrip.visibility = View.VISIBLE
+        bottomBar.visibility = if (bottomBar.hasContent && !keyboardUp) View.VISIBLE else View.GONE
+        page?.onResume()
+        layoutPage()
+    }
+
+    /** The tab is in its floating card. */
+    val isMinimized: Boolean get() = minimized
 
     // --- toolbar controls --------------------------------------------------------------------------
 
@@ -272,9 +462,12 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
         }
     }
 
-    /** The caller's `PendingIntent` for a button or menu item, told which page it was pressed on. */
-    private fun sendToCaller(pendingIntent: PendingIntent) {
-        val fill = Intent().setData(Uri.parse(currentUrl.ifEmpty { config.url }))
+    /**
+     * The caller's `PendingIntent` for a button, menu item, bottom toolbar click or swipe, told
+     * which page it was pressed on (`fill` carries anything more, such as the clicked id).
+     */
+    private fun sendToCaller(pendingIntent: PendingIntent, fill: Intent = Intent()) {
+        fill.setData(Uri.parse(currentUrl.ifEmpty { config.url }))
         try {
             pendingIntent.send(this, 0, fill)
         } catch (e: PendingIntent.CanceledException) {
@@ -408,6 +601,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
     }
 
     override fun onDestroy() {
+        CustomTabSessions.detach(config.session, this)
+        barSlide.stop()
         host.destroy()
         super.onDestroy()
     }
@@ -428,5 +623,8 @@ class CustomTabActivity : BrowserActivity(), CustomTabToolbar.Listener, CustomTa
         private const val TOOLBAR_MS = 200L
         /** Scroll distance in one direction before the toolbar moves. */
         private const val SCROLL_THRESHOLD_DP = 40
+        /** §11 SPRING_SNAPPY, for the bottom toolbar's edge when the caller changes its height. */
+        private const val SPRING_STIFFNESS = 420f
+        private const val SPRING_DAMPING = 40f
     }
 }
