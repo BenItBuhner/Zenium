@@ -201,7 +201,10 @@ export function Sidebar({
       {/* The flyout's box (`useRailFlyout`): the aside's whole box at rest, and – out – the rail
           plus the panel beside it over the frame, the panel's surface drawn from the rail's edge
           (`--zen-rail-rest`) on the window's own background (fixed, so the gradient is the
-          window's under it) with the frame's shadow rule at both its edges. */}
+          window's under it) with the frame's shadow rule at both its edges. `data-flyout-rows`
+          keys main.css's flyout rules – the surface, the rows across the seam – and is set in
+          the commit that lays the rows out in their expanded form, so the rules and the rows'
+          form switch together: never a compact row under the flyout's glyph lead. */}
       <div
         ref={flyoutRef}
         className={cn(
@@ -213,6 +216,7 @@ export function Sidebar({
           flyoutBox ? ({ '--zen-rail-rest': `${COLLAPSED_WIDTH}px` } as CSSProperties) : undefined
         }
         data-rail-flyout={flyoutBox || undefined}
+        data-flyout-rows={flyoutOut || undefined}
         data-side={side}
       >
         {flyoutBox && <div className="zen-texture" aria-hidden />}

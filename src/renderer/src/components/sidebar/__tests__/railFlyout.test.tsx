@@ -365,11 +365,11 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
   })
 
   it('is the cascade’s surface (§9.20): the panel from the rail’s edge on the window’s own gradient fixed to the viewport, the frame’s shadow rule spreading its hairline 1 px into the rail, at 40, the title cut while the width moves', () => {
-    expect(rule('.zen-rail-flyout[data-flyout]')).toContain('z-index: 40')
+    expect(rule('.zen-rail-flyout[data-flyout-rows]')).toContain('z-index: 40')
     // The box itself draws nothing: the panel's surface is its ::before, beginning at the
     // rail's width – so the shadow's 1 px spread lands in the rail's last column, the frame's
     // own hairline column at rest.
-    const surface = rule('.zen-rail-flyout[data-flyout]::before')
+    const surface = rule('.zen-rail-flyout[data-flyout-rows]::before')
     expect(surface).toContain('inset: 0 0 0 var(--zen-rail-rest)')
     expect(surface).toContain('background: var(--zen-bg)')
     expect(surface).toContain('background-attachment: fixed')
@@ -378,10 +378,10 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     expect(css).toMatch(
       /--zen-frame-shadow:\s*0 0 0 1px rgb\(var\(--zen-fg-rgb\) \/ 0\.08\), 0 2px 14px rgb\(0 0 0 \/ 0\.08\)/
     )
-    expect(rule(".zen-rail-flyout[data-flyout][data-side='right']::before")).toContain(
+    expect(rule(".zen-rail-flyout[data-flyout-rows][data-side='right']::before")).toContain(
       'inset: 0 var(--zen-rail-rest) 0 0'
     )
-    const grain = rule('.zen-rail-flyout[data-flyout] > .zen-texture')
+    const grain = rule('.zen-rail-flyout[data-flyout-rows] > .zen-texture')
     expect(grain).toContain('left: var(--zen-rail-rest)')
     expect(grain).toContain('background-attachment: fixed')
     expect(rule('.zen-rail-flyout[data-flyout-moving] .zen-tab-title')).toContain(
@@ -393,7 +393,7 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     // The tile is the compact row's box: the rail's width less the list's inset each side, the
     // scrollbar's gutter while the rows overflow, and the row's indent (the rows' ml-5).
     const vars = rule(
-      '.zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg),\n  .zen-rail-flyout[data-flyout] .zen-space-header,\n  .zen-rail-flyout[data-flyout] .zen-split-row'
+      '.zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg),\n  .zen-rail-flyout[data-flyout-rows] .zen-space-header,\n  .zen-rail-flyout[data-flyout-rows] .zen-split-row'
     )
     expect(vars.replace(/\s+/g, ' ')).toContain(
       '--zen-tile-width: calc( var(--zen-rail-rest) - 2 * var(--zen-list-inset) - var(--zen-list-gutter, 0px) - var(--zen-row-indent, 0px) )'
@@ -401,26 +401,26 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     expect(vars).toContain('--zen-glyph-lead: calc((var(--zen-tile-width) - 16px) / 2)')
     expect(
       rule(
-        '.zen-rail-flyout[data-flyout] .zen-tab[data-indent]:not(.zen-split-seg),\n  .zen-rail-flyout[data-flyout] .zen-split-row[data-indent]'
+        '.zen-rail-flyout[data-flyout-rows] .zen-tab[data-indent]:not(.zen-split-seg),\n  .zen-rail-flyout[data-flyout-rows] .zen-split-row[data-indent]'
       )
     ).toContain('--zen-row-indent: 1.25rem')
     // The row's own fill gives way to the two halves, under the row's content.
     expect(
       rule(
-        '.zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg),\n  .zen-rail-flyout[data-flyout] .zen-space-header'
+        '.zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg),\n  .zen-rail-flyout[data-flyout-rows] .zen-space-header'
       )
     ).toContain('background: none')
-    expect(rule('.zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)')).toContain(
+    expect(rule('.zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)')).toContain(
       'padding-left: 0'
     )
     const tile = rule(
-      '.zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::before,\n  .zen-rail-flyout[data-flyout] .zen-space-header::before'
+      '.zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)::before,\n  .zen-rail-flyout[data-flyout-rows] .zen-space-header::before'
     )
     expect(tile).toContain('left: 0')
     expect(tile).toContain('width: var(--zen-tile-width)')
     expect(tile).toContain('background: var(--zen-tile-fill)')
     const panel = rule(
-      '.zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::after,\n  .zen-rail-flyout[data-flyout] .zen-space-header::after'
+      '.zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)::after,\n  .zen-rail-flyout[data-flyout-rows] .zen-space-header::after'
     )
     expect(panel).toContain('left: var(--zen-rail-rest)')
     expect(panel).toContain('right: 0')
@@ -428,7 +428,7 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     // The glyph where the compact row centred it; the title at the panel row's 10, after the
     // row's 9 gap.
     const glyph = rule(
-      '.zen-rail-flyout[data-flyout]\n    .zen-tab:not(.zen-split-seg)\n    > :is(.zen-tab-favicon, .zen-group-row-glyph),\n  .zen-rail-flyout[data-flyout] .zen-tab[data-new-tab] > svg'
+      '.zen-rail-flyout[data-flyout-rows]\n    .zen-tab:not(.zen-split-seg)\n    > :is(.zen-tab-favicon, .zen-group-row-glyph),\n  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-new-tab] > svg'
     )
     expect(glyph).toContain('margin-left: var(--zen-glyph-lead)')
     expect(glyph).toContain(
@@ -437,29 +437,41 @@ describe('the collapsed rail’s flyout (tabs-03): at rest', () => {
     // Hover lights both halves; the parent row its tile alone; the active row outranks it.
     expect(
       rule(
-        ".zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg):hover,\n  .zen-rail-flyout[data-flyout] .zen-tab[data-editing]:not(.zen-split-seg, [data-active='true']),\n  .zen-rail-flyout[data-flyout] .zen-space-header:hover"
+        ".zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg):hover,\n  .zen-rail-flyout[data-flyout-rows]\n    .zen-tab[data-editing]:not(.zen-split-seg, [data-active='true']),\n  .zen-rail-flyout[data-flyout-rows] .zen-space-header:hover"
       )
     ).toContain('--zen-row-fill: var(--v2-window-fill-hover)')
     const lit = rule(
-      '.zen-rail-flyout[data-flyout] .zen-tab[data-flyout-anchor]:not(.zen-split-seg),\n  .zen-rail-flyout[data-flyout] .zen-space-header[data-flyout-anchor]'
+      '.zen-rail-flyout[data-flyout-rows] .zen-tab[data-flyout-anchor]:not(.zen-split-seg),\n  .zen-rail-flyout[data-flyout-rows] .zen-space-header[data-flyout-anchor]'
     )
     expect(lit).toContain('--zen-tile-fill: var(--v2-window-fill-hover)')
     expect(lit).not.toContain('--zen-row-fill')
     expect(css.indexOf('.zen-tab[data-flyout-anchor]:not(.zen-split-seg)')).toBeLessThan(
-      css.indexOf(".zen-rail-flyout[data-flyout] .zen-tab[data-active='true']:not(.zen-split-seg)")
+      css.indexOf(
+        ".zen-rail-flyout[data-flyout-rows] .zen-tab[data-active='true']:not(.zen-split-seg)"
+      )
     )
     expect(rule('.zen-essential[data-flyout-anchor]')).toContain(
       'background: var(--v2-window-fill-hover)'
     )
     // The split group's rail column, boxed at the tile's width (the rule of its own, after the
     // one it shares the tile's measure in); the progress bar in the panel.
-    const split = css.match(/\}\n {2}\.zen-rail-flyout\[data-flyout\] \.zen-split-row \{([^}]*)\}/)
+    const split = css.match(
+      /\}\n {2}\.zen-rail-flyout\[data-flyout-rows\] \.zen-split-row \{([^}]*)\}/
+    )
     expect(split).not.toBeNull()
     expect(split![1]).toContain('width: var(--zen-tile-width)')
     expect(split![1]).toContain('align-self: flex-start')
     expect(
-      rule('.zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg) > .zen-tab-progress')
+      rule('.zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg) > .zen-tab-progress')
     ).toContain('left: calc(var(--zen-rail-rest) + 10px)')
+  })
+
+  it('keys every rule on the rows’ mark, none on the machine’s phase: `opening` – the picture on its way, the rows still the rail’s – styles nothing, so no glyph lead lands on a compact row', () => {
+    // The phase attribute is the machine's word for tests and drives; the rules read the
+    // Sidebar's `data-flyout-rows`, set in the commit that lays the rows out expanded.
+    expect(css).not.toMatch(/\.zen-rail-flyout\[data-flyout\]/)
+    expect(css).not.toMatch(/\[data-flyout=/)
+    expect(css).toMatch(/\.zen-rail-flyout\[data-flyout-rows\] \.zen-tab/)
   })
 })
 
@@ -482,15 +494,20 @@ describe('the collapsed rail’s flyout (tabs-03): the pointer', () => {
     expect(pageHidden(uiStore.get())).toBe(true)
     expect(starts).toEqual([])
     expect(width()).toBe('')
+    // Opening, the rows are still the rail's: no titles, and no mark for the flyout's rules.
+    expect(titles()).toEqual([])
+    expect(flyout().hasAttribute('data-flyout-rows')).toBe(false)
     // The core's word: the width sets off, the rail's 56 → the rail plus the panel, 296, on
     // the sidebar's spring.
     viewHidden()
     expect(flyout().dataset.flyout).toBe('out')
     expect(flyout().hasAttribute('data-flyout-moving')).toBe(true)
     expect(starts).toEqual([{ config: SPRING_GENTLE, from: COLLAPSED_WIDTH, to: OUT }])
-    // The rows in their expanded form from the first frame: titles, the New Tab row.
+    // The rows in their expanded form from the first frame: titles, the New Tab row – and the
+    // rows' mark with them, in the same commit.
     expect(titles()).toEqual(['HOME PAGE', 'DOCS PAGE', 'NEWS PAGE'])
     expect(newTabRow()).toBe('New Tab')
+    expect(flyout().hasAttribute('data-flyout-rows')).toBe(true)
     const widths = settle()
     expect(widths.length).toBeGreaterThan(10)
     expect(monotone(widths, 1)).toBe(true)
@@ -677,17 +694,21 @@ describe('the collapsed rail’s flyout (tabs-03): the pointer', () => {
     wait(1)
     expect(flyout().dataset.flyout).toBe('folding')
     expect(flyout().hasAttribute('data-flyout-moving')).toBe(true)
-    // Folding, the rows keep their expanded form: a title is cut at the edge, not dropped.
+    // Folding, the rows keep their expanded form: a title is cut at the edge, not dropped – and
+    // the rows' mark stays with them, the rules across the seam holding to the rest.
     expect(titles()).toHaveLength(3)
+    expect(flyout().hasAttribute('data-flyout-rows')).toBe(true)
     // Still the page's picture under it until the rest.
     expect(uiStore.get().railFlyout).toBe(true)
     const widths = settle()
     expect(widths.length).toBeGreaterThan(10)
     expect(monotone(widths, -1)).toBe(true)
     expect(widths.every((w) => w >= COLLAPSED_WIDTH)).toBe(true)
-    // At rest: the box back at the aside's width, the flag down, the live page back.
+    // At rest: the box back at the aside's width, the flag down, the live page back, the rows
+    // the rail's again and unmarked.
     expect(flyout().hasAttribute('data-flyout')).toBe(false)
     expect(flyout().hasAttribute('data-flyout-moving')).toBe(false)
+    expect(flyout().hasAttribute('data-flyout-rows')).toBe(false)
     expect(width()).toBe('')
     expect(uiStore.get().railFlyout).toBe(false)
     expect(uiStore.get().snapshotTabId).toBeNull()

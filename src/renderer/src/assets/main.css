@@ -1738,15 +1738,18 @@
    * and bottom fall outside the window, where the root's `overflow: hidden` clips them. It is
    * the window's chrome, not a panel: no radius, no blur, no border. Above the frame at 40 with
    * the compact sidebar's reveal, under the hover card (80) and the chrome layer's popovers and
-   * menus (100), which its rows raise. `data-flyout` is on from the open's first frame to the
-   * fold's rest; while the width moves (`data-flyout-moving`) a title is cut at the edge rather
-   * than re-ellipsised every frame – the ellipsis is the resting form's. A rail on the right
-   * (`data-side`) mirrors the surface.
+   * menus (100), which its rows raise. `data-flyout-rows` is the Sidebar's mark that the rows
+   * draw in their expanded form: on from the frame the width sets off to the fold's rest, in
+   * the very commit that lays the rows out, so these rules never meet a row in the rail's form
+   * – the machine's phase (`data-flyout`: `opening` while the picture is on its way and the
+   * rows are still the rail's, then `out`, `folding`) styles nothing. While the width moves
+   * (`data-flyout-moving`) a title is cut at the edge rather than re-ellipsised every frame –
+   * the ellipsis is the resting form's. A rail on the right (`data-side`) mirrors the surface.
    */
-  .zen-rail-flyout[data-flyout] {
+  .zen-rail-flyout[data-flyout-rows] {
     z-index: 40;
   }
-  .zen-rail-flyout[data-flyout]::before {
+  .zen-rail-flyout[data-flyout-rows]::before {
     content: '';
     position: absolute;
     inset: 0 0 0 var(--zen-rail-rest);
@@ -1757,14 +1760,14 @@
     transition: background 600ms var(--zen-ease);
     pointer-events: none;
   }
-  .zen-rail-flyout[data-flyout][data-side='right']::before {
+  .zen-rail-flyout[data-flyout-rows][data-side='right']::before {
     inset: 0 var(--zen-rail-rest) 0 0;
   }
-  .zen-rail-flyout[data-flyout] > .zen-texture {
+  .zen-rail-flyout[data-flyout-rows] > .zen-texture {
     left: var(--zen-rail-rest);
     background-attachment: fixed;
   }
-  .zen-rail-flyout[data-flyout][data-side='right'] > .zen-texture {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] > .zen-texture {
     left: 0;
     right: var(--zen-rail-rest);
   }
@@ -1792,9 +1795,9 @@
    * `SplitGroupRow`), boxed at the tile's width, its segments untouched here. The indent is the
    * rows' `ml-5` (`data-indent`).
    */
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg),
-  .zen-rail-flyout[data-flyout] .zen-space-header,
-  .zen-rail-flyout[data-flyout] .zen-split-row {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header,
+  .zen-rail-flyout[data-flyout-rows] .zen-split-row {
     --zen-tile-fill: transparent;
     --zen-row-fill: transparent;
     --zen-tile-width: calc(
@@ -1803,22 +1806,22 @@
     );
     --zen-glyph-lead: calc((var(--zen-tile-width) - 16px) / 2);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg),
-  .zen-rail-flyout[data-flyout] .zen-space-header {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header {
     position: relative;
     background: none;
   }
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg) {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg) {
     padding-left: 0;
   }
-  .zen-rail-flyout[data-flyout] .zen-tab[data-indent]:not(.zen-split-seg),
-  .zen-rail-flyout[data-flyout] .zen-split-row[data-indent] {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-indent]:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout-rows] .zen-split-row[data-indent] {
     --zen-row-indent: 1.25rem;
   }
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::before,
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::after,
-  .zen-rail-flyout[data-flyout] .zen-space-header::before,
-  .zen-rail-flyout[data-flyout] .zen-space-header::after {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)::before,
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)::after,
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header::before,
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header::after {
     content: '';
     position: absolute;
     top: 0;
@@ -1828,114 +1831,115 @@
     pointer-events: none;
     transition: background 120ms var(--zen-ease);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::before,
-  .zen-rail-flyout[data-flyout] .zen-space-header::before {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)::before,
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header::before {
     left: 0;
     width: var(--zen-tile-width);
     background: var(--zen-tile-fill);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg)::after,
-  .zen-rail-flyout[data-flyout] .zen-space-header::after {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg)::after,
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header::after {
     left: var(--zen-rail-rest);
     right: 0;
     background: var(--zen-row-fill);
   }
   /* The leading glyph: the row's favicon or mask, the folder's mark, the New Tab row's +. */
-  .zen-rail-flyout[data-flyout]
+  .zen-rail-flyout[data-flyout-rows]
     .zen-tab:not(.zen-split-seg)
     > :is(.zen-tab-favicon, .zen-group-row-glyph),
-  .zen-rail-flyout[data-flyout] .zen-tab[data-new-tab] > svg {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-new-tab] > svg {
     margin-left: var(--zen-glyph-lead);
     margin-right: calc(var(--zen-rail-rest) + 10px - 16px - 9px - var(--zen-glyph-lead));
   }
   /* The pinned header keeps its 14 glyph at its own 8 padding, its name 8 after; the name moves
      to the panel's 10. */
-  .zen-rail-flyout[data-flyout] .zen-space-header-name {
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header-name {
     margin-left: calc(var(--zen-rail-rest) + 10px - 8px - 14px - 8px);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg):hover,
-  .zen-rail-flyout[data-flyout] .zen-tab[data-editing]:not(.zen-split-seg, [data-active='true']),
-  .zen-rail-flyout[data-flyout] .zen-space-header:hover {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg):hover,
+  .zen-rail-flyout[data-flyout-rows]
+    .zen-tab[data-editing]:not(.zen-split-seg, [data-active='true']),
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header:hover {
     --zen-tile-fill: var(--v2-window-fill-hover);
     --zen-row-fill: var(--v2-window-fill-hover);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab[data-flyout-anchor]:not(.zen-split-seg),
-  .zen-rail-flyout[data-flyout] .zen-space-header[data-flyout-anchor] {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-flyout-anchor]:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout-rows] .zen-space-header[data-flyout-anchor] {
     --zen-tile-fill: var(--v2-window-fill-hover);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab[data-drop-into]:not(.zen-split-seg) {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-drop-into]:not(.zen-split-seg) {
     --zen-tile-fill: var(--v2-control-fill-hover);
     --zen-row-fill: var(--v2-control-fill-hover);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab[data-active='true']:not(.zen-split-seg) {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-active='true']:not(.zen-split-seg) {
     --zen-tile-fill: var(--v2-window-fill);
     --zen-row-fill: var(--v2-window-fill);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab[data-selected]:not(.zen-split-seg) {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-selected]:not(.zen-split-seg) {
     --zen-tile-fill: rgb(var(--zen-accent-rgb) / 0.16);
     --zen-row-fill: rgb(var(--zen-accent-rgb) / 0.16);
     box-shadow: none;
   }
-  .zen-rail-flyout[data-flyout] .zen-tab[data-selected]:not(.zen-split-seg)::before,
-  .zen-rail-flyout[data-flyout] .zen-tab[data-selected]:not(.zen-split-seg)::after {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-selected]:not(.zen-split-seg)::before,
+  .zen-rail-flyout[data-flyout-rows] .zen-tab[data-selected]:not(.zen-split-seg)::after {
     box-shadow: inset 0 0 0 1.5px rgb(var(--zen-accent-rgb) / 0.7);
   }
-  .zen-rail-flyout[data-flyout] .zen-tab:not(.zen-split-seg) > .zen-tab-progress {
+  .zen-rail-flyout[data-flyout-rows] .zen-tab:not(.zen-split-seg) > .zen-tab-progress {
     left: calc(var(--zen-rail-rest) + 10px);
   }
   .zen-essential[data-flyout-anchor] {
     background: var(--v2-window-fill-hover);
   }
-  .zen-rail-flyout[data-flyout] .zen-split-row {
+  .zen-rail-flyout[data-flyout-rows] .zen-split-row {
     width: var(--zen-tile-width);
     align-self: flex-start;
   }
   /* The rail on the right: the tile at the row's end, the panel's row before it, the row's
      content run from the end – the glyph in the tile where the compact row drew it (the tab
      row's centred, the pinned header's 8 in), the title before it, its text at the glyph. */
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab:not(.zen-split-seg),
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-tab:not(.zen-split-seg),
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-space-header {
     flex-direction: row-reverse;
   }
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab:not(.zen-split-seg) {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-tab:not(.zen-split-seg) {
     padding-left: 8px;
     padding-right: 0;
   }
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab:not(.zen-split-seg)::before,
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header::before {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-tab:not(.zen-split-seg)::before,
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-space-header::before {
     left: auto;
     right: 0;
   }
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab:not(.zen-split-seg)::after,
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header::after {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-tab:not(.zen-split-seg)::after,
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-space-header::after {
     left: 0;
     right: var(--zen-rail-rest);
   }
-  .zen-rail-flyout[data-flyout][data-side='right']
+  .zen-rail-flyout[data-flyout-rows][data-side='right']
     .zen-tab:not(.zen-split-seg)
     > :is(.zen-tab-favicon, .zen-group-row-glyph),
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab[data-new-tab] > svg {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-tab[data-new-tab] > svg {
     margin-right: var(--zen-glyph-lead);
     margin-left: calc(var(--zen-rail-rest) + 10px - 16px - 9px - var(--zen-glyph-lead));
   }
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header > :first-child {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-space-header > :first-child {
     margin-right: calc(var(--zen-tile-width) - 8px - 14px - 8px);
   }
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-space-header-name {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-space-header-name {
     margin-left: 0;
     margin-right: calc(var(--zen-rail-rest) + 10px - var(--zen-tile-width));
     text-align: right;
   }
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-tab-title {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-tab-title {
     text-align: right;
   }
-  .zen-rail-flyout[data-flyout][data-side='right']
+  .zen-rail-flyout[data-flyout-rows][data-side='right']
     .zen-tab:not(.zen-split-seg)
     > .zen-tab-progress {
     left: 10px;
     right: calc(var(--zen-rail-rest) + 10px);
   }
-  .zen-rail-flyout[data-flyout][data-side='right'] .zen-split-row {
+  .zen-rail-flyout[data-flyout-rows][data-side='right'] .zen-split-row {
     align-self: flex-end;
   }
 

@@ -95,8 +95,12 @@ export interface RailFlyoutOptions {
  *
  * Returns whether the rows draw in their expanded form (titles, the New Tab row): from the
  * moment the width sets off until the fold rests, so a title clips as the width shrinks rather
- * than vanishing while the flyout is still wide. The width itself is written on `box` per frame
- * beside `data-flyout` (`opening` | `out` | `folding`; absent at rest), never through React.
+ * than vanishing while the flyout is still wide. The Sidebar marks `box` `data-flyout-rows`
+ * from it – the key of main.css's flyout rules, so the rules and the rows' form switch in one
+ * commit. The width itself is written on `box` per frame beside the machine's phase,
+ * `data-flyout` (`opening` | `out` | `folding`; absent at rest), never through React; the
+ * phase styles nothing – `opening` (the picture on its way, the rows still the rail's) would
+ * otherwise put the flyout's glyph lead on a compact row for a frame or three.
  */
 export function useRailFlyout(
   aside: RefObject<HTMLElement | null>,
