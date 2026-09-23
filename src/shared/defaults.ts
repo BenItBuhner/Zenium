@@ -218,6 +218,7 @@ export const DEFAULT_SETTINGS: Settings = {
   appIcon: APP_ICON_DEFAULT,
   toolbarLayout: 'single',
   sidebarSide: 'left',
+  devtoolsDock: 'bottom',
   sidebarWidth: 240,
   sidebarExpanded: true,
   sidebarExpandOnHover: false,

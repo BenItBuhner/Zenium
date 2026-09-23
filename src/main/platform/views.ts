@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import type {
   CertificateDetails,
+  DevtoolsDock,
   NavigationSnapshot,
   NavigationSnapshotEntry,
   NewTabPageCommand,
@@ -27,6 +28,12 @@ import type {
   Rect,
   Tab
 } from '../../shared/types'
+import {
+  DEVTOOLS_DOCK_HOOK_SCRIPT,
+  DEVTOOLS_SEAM_SCRIPT,
+  devtoolsMoveScript,
+  dockFromConsoleMessage
+} from './devtoolsFrontend'
 import { refusedFromDocument } from '../../shared/internalPages'
 import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
 import type { SafeBrowsingHit } from '../../shared/privacy'
@@ -273,6 +280,11 @@ export class ElectronTabView implements TabView {
    */
   onNavigationTarget: ((source: WebContents, url: string) => () => void) | null = null
   private events!: TabViewEvents
+  /**
+   * DevTools frontends already dressed (`dressDevtools`): each opening makes a new frontend
+   * `WebContents`, and a dock change must not dress the standing one twice.
+   */
+  private readonly dressedFrontends = new WeakSet<WebContents>()
   /** The user chose to leave: the next `beforeunload` objection is overruled. */
   private leaveApproved = false
   /** The last navigation this host started, for the "Leave site?" replay. */
@@ -391,7 +403,10 @@ export class ElectronTabView implements TabView {
     wc.on('media-paused', () => ev.onMediaStateChanged(false))
     wc.on('enter-html-full-screen', () => ev.onEnterHtmlFullscreen())
     wc.on('leave-html-full-screen', () => ev.onLeaveHtmlFullscreen())
-    wc.on('devtools-opened', () => ev.onDevtoolsOpened())
+    wc.on('devtools-opened', () => {
+      this.dressDevtools()
+      ev.onDevtoolsOpened()
+    })
     wc.on('devtools-closed', () => ev.onDevtoolsClosed())
     wc.on('found-in-page', (_e, result) => ev.onFoundInPage(result))
     wc.on('zoom-changed', (_e, direction) => ev.onZoomChanged(direction))
@@ -873,24 +888,76 @@ export class ElectronTabView implements TabView {
 
   // --- page operations -----------------------------------------------------------
 
-  openDevTools(mode: 'toggle' | 'inspect' | 'console'): void {
+  /**
+   * The toolbox at `dock` (design language v2 §9.29): Electron docks it inside the page's own
+   * view – the frontend covers the view and lays the page out in the hole its split widget
+   * leaves, `bottom`, `right` or `left` – or gives it a window of its own (`undocked`, Chrome's
+   * undock, with the dock buttons still in its menu; `detach`, which loses them, is the Browser
+   * Console's alone). The dock names are Electron's own modes. Passing one makes Electron
+   * persist it as the frontend's `currentDockState`, so the toolbox's own buttons and the app
+   * menu's rows read the same state.
+   */
+  openDevTools(mode: 'toggle' | 'inspect' | 'console', dock: DevtoolsDock): void {
     const wc = this.wc
+    if (wc.isDestroyed()) return
     if (mode === 'toggle' && wc.isDevToolsOpened()) {
       wc.closeDevTools()
       return
     }
-    wc.openDevTools({ mode: 'detach', activate: true })
+    wc.openDevTools({ mode: dock, activate: true })
     if (mode === 'inspect') wc.inspectElement(0, 0)
   }
 
   /**
-   * Chrome's "Inspect": the inspector opens (detached, like every tab view's) on the node under
-   * the click. `inspectElement` takes the `context-menu` event's own coordinates.
+   * Chrome's "Inspect": the inspector opens on the node under the click, at the remembered dock
+   * when it was closed. `inspectElement` takes the `context-menu` event's own coordinates.
    */
-  inspectElementAt(x: number, y: number): void {
+  inspectElementAt(x: number, y: number, dock: DevtoolsDock): void {
     const wc = this.wc
-    if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: 'detach', activate: true })
+    if (wc.isDestroyed()) return
+    if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: dock, activate: true })
     wc.inspectElement(x, y)
+  }
+
+  /**
+   * Move an open toolbox to `dock` (the app menu's rows): through the frontend's own
+   * `DockController`, the path its buttons take, so the toolbox keeps its panel and drawer and
+   * persists the state as the user's. Should this Chromium keep the module elsewhere, the
+   * toolbox is closed and reopened at the dock instead.
+   */
+  setDevtoolsDock(dock: DevtoolsDock): void {
+    const wc = this.wc
+    if (wc.isDestroyed() || !wc.isDevToolsOpened()) return
+    const frontend = wc.devToolsWebContents
+    const reopen = (): void => {
+      if (wc.isDestroyed()) return
+      wc.closeDevTools()
+      wc.openDevTools({ mode: dock, activate: true })
+    }
+    if (!frontend || frontend.isDestroyed()) {
+      reopen()
+      return
+    }
+    frontend.executeJavaScript(devtoolsMoveScript(dock), true).catch(reopen)
+  }
+
+  /**
+   * The toolbox as §9.29 has it, each time one opens (`devtools-opened`, after the frontend has
+   * loaded): the seam between the page and a docked toolbox takes the chrome's `--v2-border`
+   * hairline, and the frontend's own dock buttons are read back – it says the new dock on its
+   * console, the host tells the core (`onDevtoolsDockChanged`), so the menu's checked row is
+   * where the toolbox stands. Nothing else of the toolbox is touched: it draws its own theme.
+   */
+  private dressDevtools(): void {
+    const frontend = this.wc.devToolsWebContents
+    if (!frontend || frontend.isDestroyed() || this.dressedFrontends.has(frontend)) return
+    this.dressedFrontends.add(frontend)
+    frontend.on('console-message', (event) => {
+      const dock = dockFromConsoleMessage(event.message)
+      if (dock) this.events?.onDevtoolsDockChanged?.(dock)
+    })
+    frontend.executeJavaScript(DEVTOOLS_DOCK_HOOK_SCRIPT, true).catch(() => undefined)
+    frontend.executeJavaScript(DEVTOOLS_SEAM_SCRIPT, true).catch(() => undefined)
   }
 
   downloadURL(url: string, options?: { saveAs?: boolean }): void {

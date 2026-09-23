@@ -39,6 +39,12 @@
  * the host looks for one in the first `MODULE_SCAN_HEAD` of the text (a file is never read
  * whole into the heap for it), which is where a minified chunk keeps every top-level name it
  * did not rename.
+ *
+ * A webpack chunk itself is not served bracketed to a page's graph but as a stub that calls
+ * `__zenExtChunk(<id>, <url>)` and awaits it: the chunk runs as a block of the content script's
+ * scope instead, where its bare identifiers resolve as the script's own do
+ * (`extensionChunkRelay.ts`); the stub imports the chunk plain, bracketed, when that answers
+ * false.
  */
 
 export interface ModuleChrome {
@@ -53,16 +59,19 @@ export interface ModuleChrome {
 const ENTER = '__zenExtModule'
 const LEAVE = '__zenExtModuleEnd'
 const SELF = '__zenExtModuleSelf'
+const CHUNK = '__zenExtChunk'
 
 /**
  * Install the module brackets and the `chrome` accessor on `win` (the page's real global), once
  * per global; `chromeFor` answers an attached extension's `chrome` or undefined, `scopeFor` its
- * content scripts' `self` (the scope proxy) or undefined.
+ * content scripts' `self` (the scope proxy) or undefined, `chunkFor` runs a webpack chunk of
+ * the extension's graph in its scope (`__zenExtChunk`, the stub's call; `ChunkRelay.claim`).
  */
 export function installModuleChrome(
   win: object,
   chromeFor: (extensionId: string) => unknown,
-  scopeFor?: (extensionId: string) => object | undefined
+  scopeFor?: (extensionId: string) => object | undefined,
+  chunkFor?: (extensionId: unknown, url: unknown) => unknown
 ): ModuleChrome {
   const g = win as Record<string, unknown>
   const existing = g[ENTER] as
@@ -156,11 +165,13 @@ export function installModuleChrome(
   const result: ModuleChrome = { accessor, selfAccessor, current }
   const enterFn = enter as ((id: string) => unknown) & { __zenModuleChrome?: ModuleChrome }
   enterFn.__zenModuleChrome = result
-  for (const [name, value] of [
+  const slots: Array<readonly [string, unknown]> = [
     [ENTER, enterFn],
     [LEAVE, leave],
     [SELF, selfOf]
-  ] as const) {
+  ]
+  if (chunkFor) slots.push([CHUNK, (id: unknown, url: unknown): unknown => chunkFor(id, url)])
+  for (const [name, value] of slots) {
     try {
       Object.defineProperty(win, name, {
         value,

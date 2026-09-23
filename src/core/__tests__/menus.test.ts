@@ -459,11 +459,12 @@ const DESKTOP_APP_MENU = [
   'More Tools > Split View',
   'More Tools > Change Theme…',
   'More Tools > -',
-  'More Tools > Take Screenshot',
-  'More Tools > Capture Full Page',
-  'More Tools > -',
   'More Tools > Resources',
   'More Tools > Developer Tools',
+  'More Tools > Dock to Bottom',
+  'More Tools > Dock to Right',
+  'More Tools > Dock to Left',
+  'More Tools > Undock',
   'Help',
   'Help > Zenium Help',
   'Help > Keyboard Shortcuts',
@@ -480,6 +481,16 @@ const DESKTOP_APP_MENU = [
  * the app's.
  */
 const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
+
+/**
+ * The tablet's More Tools keeps the two captures (its chrome has no Web Capture… overlay), in
+ * their own group before the resources and the developer's rows.
+ */
+const TABLET_CAPTURES = [
+  'More Tools > Take Screenshot',
+  'More Tools > Capture Full Page',
+  'More Tools > -'
+]
 
 const DESKTOP_ONLY = [
   'Search Tabs…',
@@ -634,6 +645,142 @@ describe('the app menu', () => {
     expect(allItems(phone.shown()).map((i) => i.label)).not.toContain('Name Window…')
   })
 
+  describe('the developer tools dock rows (design language v2 §9.29)', () => {
+    /** The More Tools submenu as the desktop draws it. */
+    const moreTools = (h: Harness): MenuItemTemplate[] => {
+      appMenu(h)
+      return item(h.shown(), 'More Tools').submenu!
+    }
+    const dockRows = (h: Harness): MenuItemTemplate[] =>
+      moreTools(h).filter((i) =>
+        /^(Dock to Bottom|Dock to Right|Dock to Left|Undock)$/.test(i.label ?? '')
+      )
+
+    it('follow Developer Tools as the toolbox’s four radio rows – bottom, right, left, undocked – the remembered dock checked, the bottom to begin with', () => {
+      const h = harness(DESKTOP)
+      const rows = moreTools(h)
+      const devtools = rows.findIndex((i) => i.label === 'Developer Tools')
+      expect(labels(rows.slice(devtools))).toEqual([
+        'Developer Tools',
+        'Dock to Bottom',
+        'Dock to Right',
+        'Dock to Left',
+        'Undock'
+      ])
+      for (const row of dockRows(h)) {
+        expect(row.type).toBe('radio')
+        // A preference, not a page action: it stands without an active page.
+        expect(row.enabled).not.toBe(false)
+        expect(row.action).toBeUndefined()
+      }
+      expect(dockRows(h).map((r) => r.checked)).toEqual([true, false, false, false])
+      // Every row Title Case (§9.1).
+      for (const row of dockRows(h)) expect(row.label).toMatch(/^[A-Z]/)
+    })
+
+    it('a row remembers its dock and moves every open toolbox there; a choice made inside the toolbox – left included – checks its row', () => {
+      const h = pageHarness()
+      // A toolbox up on the page (its host said `onDevtoolsOpened`).
+      h.browser.state.devtoolsOpenFor.add(h.tabId)
+      h.viewCalls.length = 0
+      dockRows(h)[1].click?.()
+      expect(h.browser.state.settings.devtoolsDock).toBe('right')
+      expect(h.viewCalls).toEqual(['setDevtoolsDock("right")'])
+      expect(dockRows(h).map((r) => r.checked)).toEqual([false, true, false, false])
+      // Dock to Left goes the same way as Dock to Right (the lead's ruling 4 on #414).
+      h.viewCalls.length = 0
+      dockRows(h)[2].click?.()
+      expect(h.browser.state.settings.devtoolsDock).toBe('left')
+      expect(h.viewCalls).toEqual(['setDevtoolsDock("left")'])
+      expect(dockRows(h).map((r) => r.checked)).toEqual([false, false, true, false])
+      h.viewCalls.length = 0
+      dockRows(h)[3].click?.()
+      expect(h.browser.state.settings.devtoolsDock).toBe('undocked')
+      expect(h.viewCalls).toEqual(['setDevtoolsDock("undocked")'])
+      expect(dockRows(h).map((r) => r.checked)).toEqual([false, false, false, true])
+      // The same row again: nothing to store, the toolboxes still told where to stand.
+      h.viewCalls.length = 0
+      dockRows(h)[3].click?.()
+      expect(h.viewCalls).toEqual(['setDevtoolsDock("undocked")'])
+      // With no toolbox up the choice is kept for the next opening alone.
+      h.browser.state.devtoolsOpenFor.clear()
+      h.viewCalls.length = 0
+      dockRows(h)[0].click?.()
+      expect(h.browser.state.settings.devtoolsDock).toBe('bottom')
+      expect(h.viewCalls).toEqual([])
+      // The toolbox's own Dock to left, read back through the host: kept, and its row checked –
+      // the group never stands all unchecked.
+      h.browser.tabs.setDevtoolsDock('left', h.win, { move: false })
+      expect(h.browser.state.settings.devtoolsDock).toBe('left')
+      expect(dockRows(h).map((r) => r.checked)).toEqual([false, false, true, false])
+    })
+
+    it('open the toolbox at the remembered dock from the row, the chords and the context menu alike', () => {
+      const h = pageHarness()
+      h.viewCalls.length = 0
+      deepItem(moreTools(h), 'Developer Tools').click?.()
+      expect(h.viewCalls).toEqual(['openDevTools("toggle","bottom")'])
+      h.browser.updateSettings({ devtoolsDock: 'right' }, h.win)
+      h.viewCalls.length = 0
+      deepItem(moreTools(h), 'Developer Tools').click?.()
+      h.browser.actions.run('devtools.console', { sourceTabId: h.tabId, win: h.win })
+      h.browser.actions.run('devtools.inspector', { sourceTabId: h.tabId, win: h.win })
+      expect(h.viewCalls).toEqual([
+        'openDevTools("toggle","right")',
+        'openDevTools("console","right")',
+        'openDevTools("inspect","right")'
+      ])
+    })
+
+    it('are the hosts’ with developer tools, as the Developer Tools row is: none on Android', () => {
+      const tablet = harness(ANDROID, 'tablet')
+      appMenu(tablet)
+      const everywhere = allItems(tablet.shown()).map((i) => i.label)
+      for (const label of [
+        'Developer Tools',
+        'Dock to Bottom',
+        'Dock to Right',
+        'Dock to Left',
+        'Undock'
+      ])
+        expect(everywhere).not.toContain(label)
+      // A profile whose dock is not one the host knows reads as the bottom (state.ts).
+      const h = harness(DESKTOP)
+      h.browser.updateSettings({ devtoolsDock: 'sideways' as never }, h.win)
+      expect(h.browser.state.settings.devtoolsDock).toBe('bottom')
+    })
+  })
+
+  it('folds the desktop’s Take Screenshot and Capture Full Page into Web Capture… (the #396 review’s ruling 3); the tablet keeps its two rows', () => {
+    const desktop = harness(DESKTOP)
+    const desktopMenu = appMenu(desktop)
+    const everywhere = allItems(desktop.shown()).map((i) => i.label)
+    expect(everywhere).not.toContain('Take Screenshot')
+    expect(everywhere).not.toContain('Capture Full Page')
+    expect(desktopMenu).toContain('Save and Share > Web Capture…')
+    // More Tools: two rows and a separator fewer than the row had – eight of its own, the four
+    // dock rows after them, two separators.
+    const moreTools = item(desktop.shown(), 'More Tools').submenu!
+    expect(moreTools.filter((i) => i.type !== 'separator')).toHaveLength(12)
+    expect(separators(moreTools)).toBe(2)
+    // The tablet's chrome has no Web Capture… overlay, so its More Tools keeps the two captures
+    // in their own group before the resources.
+    const tablet = harness(DESKTOP, 'tablet')
+    const tabletMenu = appMenu(tablet)
+    for (const label of TABLET_CAPTURES) expect(tabletMenu).toContain(label)
+    expect(tabletMenu.indexOf('More Tools > Capture Full Page')).toBe(
+      tabletMenu.indexOf('More Tools > Take Screenshot') + 1
+    )
+    expect(tabletMenu).not.toContain('Save and Share > Web Capture…')
+    const tabletMore = item(tablet.shown(), 'More Tools').submenu!
+    expect(separators(tabletMore)).toBe(3)
+    // The rows keep their actions where they stand, so the palette and the Zen preset's chord
+    // (`key_screenshot`) still reach them on the tablet; the phone's flat list keeps them too.
+    expect(deepItem(tablet.shown(), 'Take Screenshot').action).toBe('page.screenshot')
+    expect(deepItem(tablet.shown(), 'Capture Full Page').action).toBe('page.captureFullPage')
+    expect(appMenu(harness(ANDROID, 'phone'))).toContain('Take Screenshot')
+  })
+
   it('loses nothing the flat menu could do: every one of its thirty-two rows, on a host with every capability, is a row or a submenu row now', () => {
     /**
      * The flat menu of main at a8cca556 as the Linux build drew it on a web page with a
@@ -702,7 +849,13 @@ describe('the app menu', () => {
     h.browser.tabs.closeTab(closed.id, false, h.win)
     appMenu(h)
     const everywhere = allItems(h.shown()).map((i) => i.label)
-    for (const label of before) expect(everywhere, label).toContain(label)
+    // The flat menu's two captures are the desktop's one Web Capture… row now (the #396
+    // review's ruling 3): the overlay takes the visible area and the full page both, so
+    // nothing the two rows did is lost, and More Tools is two rows and a separator shorter.
+    const foldedIntoWebCapture = new Set(['Take Screenshot', 'Capture Full Page'])
+    for (const label of before)
+      expect(everywhere, label).toContain(foldedIntoWebCapture.has(label) ? 'Web Capture…' : label)
+    for (const label of foldedIntoWebCapture) expect(everywhere).not.toContain(label)
     expect(topLabels(h.shown()).filter((l) => l !== '-')).toHaveLength(20)
     expect(separators(h.shown())).toBe(3)
     expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
@@ -721,8 +874,9 @@ describe('the app menu', () => {
     // Compact Mode is the desktop's hover-revealed sidebar (the tablet's rail is the toolbar's
     // toggle) and the tablet has no bookmarks bar; everything else of the desktop's list is the
     // tablet's too, its host permitting. Both rows live in submenus now (§6 "Menus"). Web
-    // capture's overlay is the desktop chrome's, so its row is too; Name Window… names an OS
-    // title bar the tablet's one window does not have.
+    // capture's overlay is the desktop chrome's, so its row is too – which is why the tablet's
+    // More Tools keeps Take Screenshot and Capture Full Page, the rows the desktop folded into
+    // it; Name Window… names an OS title bar the tablet's one window does not have.
     const tabletChrome = DESKTOP_APP_MENU.filter(
       (label) =>
         label !== 'More Tools > Compact Mode' &&
@@ -730,6 +884,7 @@ describe('the app menu', () => {
         label !== 'Bookmarks > Show Bookmarks Bar' &&
         label !== 'Save and Share > Web Capture…'
     )
+    tabletChrome.splice(tabletChrome.indexOf('More Tools > Resources'), 0, ...TABLET_CAPTURES)
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(tabletChrome)
   })
 
@@ -1113,6 +1268,65 @@ describe('the app menu', () => {
     expect(closeRow()).toMatchObject({ enabled: true })
     h.browser.handleCommand(h.win, 'tab.closePrivate', undefined)
     expect(closeRow()).toMatchObject({ enabled: false })
+  })
+
+  describe('in a private window (profiles-25)', () => {
+    const top = (h: Harness, win: ZenWindow): string[] => {
+      h.browser.handleCommand(win, 'app.menu', {})
+      return topLabels(h.shown())
+    }
+
+    it('closes the window group with Close Private Window – the counted verb for more – and carries no note; a regular window’s menu is as it was', () => {
+      const h = harness(DESKTOP)
+      const priv = h.browser.openWindow('private', h.win)!
+      expect(priv.isPrivate).toBe(true)
+      const menu = top(h, priv)
+      expect(menu.slice(0, 6)).toEqual([
+        'New Tab',
+        'Search Tabs…',
+        'New Window',
+        'New Private Window',
+        'Close Private Window',
+        '-'
+      ])
+      // No note row says the state: the theme, the sidebar's header and the private new tab
+      // page's heading do (§6). One row more than the regular menu, no separator more.
+      expect(h.shown().some((i) => i.note)).toBe(false)
+      expect(menu.filter((l) => l !== '-')).toHaveLength(19)
+      expect(separators(h.shown())).toBe(3)
+      // The count is in the verb, Firefox's way: no parentheses (§6).
+      h.browser.openWindow('private', h.win)
+      const two = top(h, priv)
+      expect(two).toContain('Close 2 Private Windows')
+      expect(two.some((l) => /Close Private Windows? \(\d+\)/.test(l))).toBe(false)
+      // The regular window says nothing of them.
+      expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
+    })
+
+    it('keeps the Now Playing… row at the head with the media hub folded: four separators, the window group under it', () => {
+      const h = pageHarness(DESKTOP)
+      const priv = h.browser.openWindow('private', h.win)!
+      const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
+      h.browser.state.media = [
+        { tabId: theirs.id, playing: true, title: 'Nocturne', session: true }
+      ]
+      expect(appMenuFolded(h, priv).slice(0, 3)).toEqual(['Now Playing…', '-', 'New Tab'])
+      expect(separators(h.shown())).toBe(4)
+    })
+
+    it('Close 2 Private Windows closes every private window – the asking one last – and no other', async () => {
+      const h = harness(DESKTOP)
+      const first = h.browser.openWindow('private', h.win)!
+      const second = h.browser.openWindow('private', h.win)!
+      h.browser.handleCommand(first, 'app.menu', {})
+      const row = deepItem(h.shown(), 'Close 2 Private Windows')
+      expect(row.enabled).not.toBe(false)
+      row.click?.()
+      await settle()
+      expect(second.closeApproved).toBe(true)
+      expect(first.closeApproved).toBe(true)
+      expect(h.win.closeApproved).toBe(false)
+    })
   })
 
   it('on a phone follows the capabilities, not the platform name', () => {
@@ -1753,11 +1967,16 @@ describe('the page context menu', () => {
     expect(menu).not.toContain('Inspect Element')
   })
 
-  it('inspects the clicked node, not the document corner', () => {
+  it('inspects the clicked node, not the document corner, at the remembered dock (§9.29)', () => {
     const h = pageHarness()
     h.menu(pageParams({ x: 333, y: 44 }))
     h.click('Inspect Element')
-    expect(h.viewCalls).toEqual(['inspectElementAt(333,44)'])
+    expect(h.viewCalls).toEqual(['inspectElementAt(333,44,"bottom")'])
+    h.browser.updateSettings({ devtoolsDock: 'right' }, h.win)
+    h.viewCalls.length = 0
+    h.menu(pageParams({ x: 1, y: 2 }))
+    h.click('Inspect Element')
+    expect(h.viewCalls).toEqual(['inspectElementAt(1,2,"right")'])
   })
 
   it('offers a way out of fullscreen while the page is in it', () => {

@@ -424,6 +424,47 @@ describe('the theme blend (MOT-14, v2 §11.6)', () => {
   })
 })
 
+describe('the frame radius the theme writes (v2 §2, §9.29)', () => {
+  /** `stateOn('r1')` with the developer tools open on the tabs named, at the dock named. */
+  const withDevtools = (open: string[], devtoolsDock: 'bottom' | 'right' | 'undocked'): UIState => {
+    const base = stateOn('r1')
+    return { ...base, devtoolsOpenFor: open, settings: { ...base.settings, devtoolsDock } }
+  }
+  const radius = (): string => rootStyle().getPropertyValue('--zen-content-radius')
+  afterEach(() => {
+    rootStyle().removeProperty('--zen-content-radius')
+    rootStyle().removeProperty('--zen-padding')
+  })
+
+  it("writes the desktop's 10 px and the phone's 14 px, from the first paint", () => {
+    formFactor = 'desktop'
+    render(stateOn('r1'))
+    expect(radius()).toBe('10px')
+    rerender({ ...stateOn('r1'), settings: { ...stateOn('r1').settings, borderless: true } })
+    expect(radius()).toBe('0px')
+    act(() => root?.unmount())
+    formFactor = 'phone'
+    render(stateOn('r1'))
+    expect(radius()).toBe('14px')
+  })
+
+  it('yields to a square box while a toolbox is docked in the frame, and rounds again as it undocks or closes', () => {
+    formFactor = 'desktop'
+    render(withDevtools(['r1'], 'bottom'))
+    expect(radius()).toBe('0px')
+    rerender(withDevtools(['r1'], 'right'))
+    expect(radius()).toBe('0px')
+    // Undocked, the toolbox is a window of its own: the frame is whole again.
+    rerender(withDevtools(['r1'], 'undocked'))
+    expect(radius()).toBe('10px')
+    // A toolbox open on the tab out of view is not in the frame.
+    rerender(withDevtools(['x1'], 'bottom'))
+    expect(radius()).toBe('10px')
+    rerender(withDevtools([], 'bottom'))
+    expect(radius()).toBe('10px')
+  })
+})
+
 describe('the private theme the phone blends to', () => {
   /** WCAG contrast of two opaque colours. */
   const contrast = (a: RGB, b: RGB): number => {
