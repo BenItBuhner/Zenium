@@ -124,39 +124,45 @@ export const CAPTURE_MAX_PIXELS = 36_000_000
  */
 export const CAPTURE_MAX_HEIGHT = 12_000
 
-/** `error.name` of the budget refusal (the message survives the IPC bridge; the name is in it too). */
+/**
+ * `error.name` of the budget refusal. It crosses Electron's IPC bridge: `ipcMain.handle`'s
+ * rejection reaches the chrome as `Error invoking remote method 'zen:cmd': ` + `String(error)`,
+ * which is `name: message` – so the desktop's renderer reads `CaptureTooLarge: The capture
+ * would be …` (measured on the packaged build), and Android's chrome, in the core's own realm,
+ * gets the error itself with its name.
+ */
 export const CAPTURE_TOO_LARGE = 'CaptureTooLarge'
 
 /**
- * A request past the budget. The message is the UI's to show, sentence-cased and complete; the
- * name leads it (`CaptureTooLarge: …`) because Electron's `ipcMain.handle` rejection carries
- * only the message across, so `isCaptureTooLarge` reads either.
+ * A request past the budget. The message is the UI's to show as it is: sentence-cased and
+ * complete, with what was asked for and what to do; the name travels beside it
+ * (`isCaptureTooLarge` reads either form, `captureErrorMessage` leaves the sentence alone).
  */
 export class CaptureTooLargeError extends Error {
   readonly pixels: number
 
   constructor(pixels: number, size: { width: number; height: number }) {
     super(
-      `${CAPTURE_TOO_LARGE}: The capture would be ${formatInt(size.width)} × ${formatInt(size.height)} pixels, more than the ${Math.round(CAPTURE_MAX_PIXELS / 1_000_000)} megapixels a capture can hold. Zoom out or select a smaller area.`
+      `The capture would be ${formatInt(size.width)} × ${formatInt(size.height)} pixels, more than the ${Math.round(CAPTURE_MAX_PIXELS / 1_000_000)} megapixels a capture can hold. Zoom out or select a smaller area.`
     )
     this.name = CAPTURE_TOO_LARGE
     this.pixels = pixels
   }
 }
 
-/** Whether an error (or an IPC rejection's message) is the budget refusal. */
+/** Whether an error – the core's own, or the desktop bridge's rejection carrying `name: message` – is the budget refusal. */
 export function isCaptureTooLarge(error: unknown): boolean {
   if (error instanceof Error)
     return error.name === CAPTURE_TOO_LARGE || error.message.includes(`${CAPTURE_TOO_LARGE}:`)
   return typeof error === 'string' && error.includes(`${CAPTURE_TOO_LARGE}:`)
 }
 
-/** The message of a `page.capture` rejection as the UI shows it: Electron's IPC prefix and the name gone. */
+/** The message of a `page.capture` rejection as the UI shows it: Electron's IPC prefix and the error's name gone. */
 export function captureErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)
   return raw
-    .replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '')
-    .replace(new RegExp(`^${CAPTURE_TOO_LARGE}: `), '')
+    .replace(/^Error invoking remote method '[^']*': /, '')
+    .replace(new RegExp(`^(?:Error|${CAPTURE_TOO_LARGE}): `), '')
 }
 
 function formatInt(n: number): string {

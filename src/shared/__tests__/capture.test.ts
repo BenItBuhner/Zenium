@@ -140,16 +140,18 @@ describe('captureBudget', () => {
 })
 
 describe('CaptureTooLargeError', () => {
-  it('is named, says the size and what to do, and survives the IPC bridge as its message', () => {
+  it('is named, says the size and what to do, and is recognised on both sides of the IPC bridge', () => {
     const error = new CaptureTooLargeError(69_120_000, { width: 3840, height: 18_000 })
     expect(error.name).toBe(CAPTURE_TOO_LARGE)
     expect(error.pixels).toBe(69_120_000)
     expect(error.message).toBe(
-      'CaptureTooLarge: The capture would be 3,840 × 18,000 pixels, more than the 36 megapixels a capture can hold. Zoom out or select a smaller area.'
+      'The capture would be 3,840 × 18,000 pixels, more than the 36 megapixels a capture can hold. Zoom out or select a smaller area.'
     )
+    // `String(error)` is what Electron's `ipcMain.handle` rejection carries: the name leads.
+    expect(String(error)).toBe(`CaptureTooLarge: ${error.message}`)
     expect(isCaptureTooLarge(error)).toBe(true)
-    // What the renderer gets from `ipcRenderer.invoke`: a plain Error with the prefixed message.
-    const overIpc = new Error(`Error invoking remote method 'zen:cmd': Error: ${error.message}`)
+    // What the renderer gets from `ipcRenderer.invoke` (measured on the packaged build).
+    const overIpc = new Error(`Error invoking remote method 'zen:cmd': ${String(error)}`)
     expect(isCaptureTooLarge(overIpc)).toBe(true)
     expect(isCaptureTooLarge(new Error('Tab not found'))).toBe(false)
     expect(isCaptureTooLarge('CaptureTooLarge: …')).toBe(true)
@@ -158,13 +160,18 @@ describe('CaptureTooLargeError', () => {
 
   it('reads as one sentence for the UI, the prefix and the name gone', () => {
     const error = new CaptureTooLargeError(1, { width: 7000, height: 7000 })
-    expect(
-      captureErrorMessage(
-        new Error(`Error invoking remote method 'zen:cmd': Error: ${error.message}`)
-      )
-    ).toBe(
+    const sentence =
       'The capture would be 7,000 × 7,000 pixels, more than the 36 megapixels a capture can hold. Zoom out or select a smaller area.'
-    )
+    // Over the desktop's bridge.
+    expect(
+      captureErrorMessage(new Error(`Error invoking remote method 'zen:cmd': ${String(error)}`))
+    ).toBe(sentence)
+    // The error itself (Android's chrome shares the core's realm).
+    expect(captureErrorMessage(error)).toBe(sentence)
+    // Any other rejection: the bridge's prefix and a plain Error's name go, the words stay.
+    expect(
+      captureErrorMessage(new Error("Error invoking remote method 'zen:cmd': Error: Tab not found"))
+    ).toBe('Tab not found')
     expect(captureErrorMessage(new Error('Tab not found'))).toBe('Tab not found')
     expect(captureErrorMessage('plain')).toBe('plain')
   })

@@ -303,7 +303,7 @@ describe('page.capture', () => {
     const attempt = command(f, 'page.capture', { tabId: tab.id, mode: 'fullPage' })
     await expect(attempt).rejects.toMatchObject({
       name: CAPTURE_TOO_LARGE,
-      message: `${CAPTURE_TOO_LARGE}: The capture would be 3,840 × ${(CAPTURE_MAX_HEIGHT * 1.5).toLocaleString('en-US')} pixels, more than the 36 megapixels a capture can hold. Zoom out or select a smaller area.`
+      message: `The capture would be 3,840 × ${(CAPTURE_MAX_HEIGHT * 1.5).toLocaleString('en-US')} pixels, more than the 36 megapixels a capture can hold. Zoom out or select a smaller area.`
     })
     expect(f.captures).toEqual([])
     // A region of the same page within the budget goes through.
