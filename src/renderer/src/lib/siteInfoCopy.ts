@@ -1,14 +1,17 @@
-import type { Tab, UIState } from '@shared/types'
+import type { DeviceGrant, DeviceKind, Tab, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { builtInDefault } from '@shared/contentSettings'
 import {
   cookieBytes,
   describeSite,
   formatBytes,
+  permissionLabel,
   type SiteInfoSnapshot,
+  type SitePermission,
   type SiteSecurity
 } from '@shared/siteInfo'
 import type { MenulistOption } from '@renderer/components/siteControls/primitives'
+import { DEVICE_KIND_ORDER, DEVICE_KIND_WORDS, grantsByKind } from '@renderer/lib/devices'
 
 /**
  * The words of the desktop site-information popover (`components/siteControls/SiteInfoPopover`):
@@ -16,9 +19,18 @@ import type { MenulistOption } from '@renderer/components/siteControls/primitive
  * so they can be read and tested on their own.
  */
 
-/** The popover's levels: the overview and the four it pushes in to. */
+/**
+ * The popover's levels: the overview, the four it pushes in to, and – a level under Permissions –
+ * the devices of one kind the site is connected to (`devices:usb`, …; MW-32..35).
+ */
 export type LevelId =
-  'overview' | 'connection' | 'cookies' | 'permissions' | 'clear-data' | 'clear-cookies'
+  | 'overview'
+  | 'connection'
+  | 'cookies'
+  | 'permissions'
+  | 'clear-data'
+  | 'clear-cookies'
+  | `devices:${DeviceKind}`
 
 export function security(info: SiteInfoSnapshot | null, url: string): SiteSecurity {
   // The host's reading is of the connection under the page; an extension page has none to speak
@@ -135,5 +147,76 @@ export const SITE_INFO_LEVELS: readonly LevelId[] = [
   'cookies',
   'permissions',
   'clear-data',
-  'clear-cookies'
+  'clear-cookies',
+  ...DEVICE_KIND_ORDER.map((kind): LevelId => `devices:${kind}`)
 ]
+
+/** The kind a `devices:<kind>` level shows; null for any other level. */
+export function deviceLevelKind(level: LevelId): DeviceKind | null {
+  if (!level.startsWith('devices:')) return null
+  const kind = level.slice('devices:'.length) as DeviceKind
+  return DEVICE_KIND_ORDER.includes(kind) ? kind : null
+}
+
+/**
+ * Whether the Permissions level carries the Sound row (Chrome's page info shows it for a tab
+ * that plays or has played sound, or whose site has its own answer): the site has a stored
+ * `sound` decision, or the tab is audible or muted.
+ */
+export function showsSoundRow(permissions: readonly SitePermission[], tab: Tab): boolean {
+  return permissions.some((p) => p.permission === 'sound') || tab.audible || tab.muted
+}
+
+/** The Sound row's value: the stored decision, else the default (Allow). */
+export function soundChoice(permissions: readonly SitePermission[]): PermissionChoice {
+  return permissions.find((p) => p.permission === 'sound')?.decision ?? 'default'
+}
+
+/**
+ * The permission rows of the Permissions level in order: the stored decisions as the engine
+ * lists them (Sound among them where it is stored), then Sound at its default where the tab
+ * earns the row without a decision.
+ */
+export function permissionRows(
+  permissions: readonly SitePermission[],
+  tab: Tab
+): Array<{ permission: string; decision: PermissionChoice }> {
+  const rows: Array<{ permission: string; decision: PermissionChoice }> = permissions.map((p) => ({
+    permission: p.permission,
+    decision: p.decision
+  }))
+  if (showsSoundRow(permissions, tab) && !permissions.some((p) => p.permission === 'sound'))
+    rows.push({ permission: 'sound', decision: 'default' })
+  return rows
+}
+
+/**
+ * The device rows of the Permissions level: one per kind the site is connected to, in the
+ * catalogue's order, each with its count; a kind with no grants shows nothing.
+ */
+export function deviceRows(
+  grants: readonly DeviceGrant[],
+  origin: string
+): Array<{ kind: DeviceKind; label: string; count: number }> {
+  return grantsByKind(grants, origin).map(({ kind, grants: own }) => ({
+    kind,
+    label: DEVICE_KIND_WORDS[kind].label,
+    count: own.length
+  }))
+}
+
+/**
+ * The overview's Permissions value: "None", or the stored permissions' labels and the device
+ * kinds the site is connected to, comma-separated ("Camera, USB devices").
+ */
+export function permissionsSummary(
+  permissions: readonly SitePermission[],
+  grants: readonly DeviceGrant[],
+  origin: string
+): string {
+  const names = [
+    ...permissions.map((p) => permissionLabel(p.permission)),
+    ...deviceRows(grants, origin).map((r) => r.label)
+  ]
+  return names.length === 0 ? 'None' : names.join(', ')
+}

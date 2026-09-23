@@ -289,6 +289,21 @@ describe('the private pose: a private tab in view', () => {
     expect(heard.map((e) => e.detail?.containerId)).toEqual([PRIVATE_CONTAINER_ID])
   })
 
+  it('keeps New Private Tab in view however long the list: the row stands in the column’s foot, outside the rows’ scroller (tabs-28)', () => {
+    sidebar({ tabs: regularScene(), active: 'bank' })
+    const scroller = q<HTMLElement>('[data-tab-scroller][data-active="true"]')!
+    expect(scroller).not.toBeNull()
+    expect(scroller.dataset.fadeAxis).toBe('y')
+    expect(scroller.contains(newTabRow())).toBe(false)
+    const foot = newTabRow().closest<HTMLElement>('[data-strip-foot]')!
+    expect(foot).not.toBeNull()
+    expect(foot.classList.contains('zen-list-foot')).toBe(true)
+    expect(scroller.nextElementSibling).toBe(foot)
+    // One column holds them both: the veil's `inert` lands on it (the lock's test below).
+    expect(scroller.parentElement).toBe(foot.parentElement)
+    expect(scroller.parentElement?.hasAttribute('data-tab-panel')).toBe(true)
+  })
+
   it('returns to the regular pose as a regular tab comes into view, the private rows gone with it', () => {
     // No Web Animations API: the still leaves on its timer (the overview's own fallback).
     const proto = HTMLElement.prototype as { animate?: unknown }

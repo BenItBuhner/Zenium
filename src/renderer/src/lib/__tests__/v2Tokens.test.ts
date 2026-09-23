@@ -100,6 +100,11 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The tab row's throbber (components/sidebar/Favicon.tsx, tabs-41): its two phases in the
   // control roles' deemphasised ink and accent (§9.29), the v1 inks as fallbacks off a surface.
   ['.zen-tab-throbber {', '.zen-tab-favicon-in {'],
+  // The collapsed rail's flyout (components/sidebar/Sidebar.tsx, useRailFlyout.ts; tabs-03,
+  // §9.20's cascade, §9.29): a row's tile and its panel half across the seam in the window
+  // family – hover, the lit parent row, drop-into, active – and the pinned header's hover. Its
+  // block ends where the overlay header's comment begins.
+  ['.zen-rail-flyout[data-flyout-rows] {', '/*\n   * The overlay header (design language v2 §9.7'],
   // The overlay header (§9.7, overlays/OverlayShell.tsx): the title on the type scale, the
   // hairline in the border token once the body scrolls under it.
   ['.zen-overlay-header {', '/* The 1px outline is a spread shadow'],

@@ -217,6 +217,7 @@ export const DEFAULT_SETTINGS: Settings = {
   colorScheme: 'system',
   appIcon: APP_ICON_DEFAULT,
   toolbarLayout: 'single',
+  toolbarPins: {},
   sidebarSide: 'left',
   devtoolsDock: 'bottom',
   sidebarWidth: 240,

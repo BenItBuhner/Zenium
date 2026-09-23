@@ -46,7 +46,8 @@ import {
   INACTIVE_TABS_ARCHIVE_DAYS,
   spaceLabel
 } from '@shared/defaults'
-import { resolveDownloadSettings } from '@shared/downloads'
+import { DEFAULT_DOWNLOAD_SETTINGS, resolveDownloadSettings } from '@shared/downloads'
+import { TOOLBAR_CONTROLS, toolbarPinned, withToolbarPin } from '@shared/toolbarPins'
 import {
   MAX_NEW_TAB_SHORTCUTS,
   newTabPresetChoices,
@@ -68,7 +69,7 @@ import {
   type ReadAloudVoice,
   type ReadAloudVoicesResult
 } from '@shared/readAloud'
-import { engineHost } from '@shared/search'
+import { engineHost, isActiveSearchEngine } from '@shared/search'
 import {
   SHORTCUT_GROUP_LABELS,
   SHORTCUT_PRESETS,
@@ -80,9 +81,10 @@ import {
   shortcutHint
 } from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
-import { displayUrl, inputToUrl } from '@shared/url'
+import { displayUrl, getDomain, inputToUrl, isWebPageUrl } from '@shared/url'
 import { homepageAddress, homepageDisplay } from '@shared/homepage'
 import { languageName } from '@shared/languageNames'
+import { HELP_URL, ISSUES_URL } from '@shared/links'
 import { catalogueLanguageName } from '@renderer/lib/languageCatalogue'
 import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
 import {
@@ -108,7 +110,9 @@ import {
 import type { AutofillSettingsData, VaultGate } from '@renderer/lib/autofillSettings'
 import { requestDefaultBrowser } from '@renderer/lib/defaultBrowser'
 import { downloadLocationLabel } from '@renderer/lib/downloadText'
+import { versionLine } from '@renderer/lib/about'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
+import { openPage } from '@renderer/lib/pages'
 import {
   NEW_TAB_LAYOUT_HINT,
   NEW_TAB_PRESET_DESCRIPTIONS,
@@ -167,8 +171,11 @@ import {
   ZoomBlock
 } from './blocks'
 import { importGroups } from '../../import/importRows'
+import { AboutVersionBlock } from './AboutVersionBlock'
+import { CustomizeToolbarForm } from './CustomizeToolbarForm'
 import { extensionsGroups } from './extensions'
 import { LayoutCards } from './LayoutCards'
+import { SearchEngineEditForm } from './SearchEngineEditForm'
 import {
   choice,
   onLayout,
@@ -414,6 +421,15 @@ function lookSection({
   // tabs (§9.37): there the expanded width is the layout's, not the setting's. The phone and
   // the tablet have shells of their own, which the layout never reaches (nor does its row).
   const railSet = (formFactor ?? 'desktop') === 'desktop' && forcesRail(s.toolbarLayout)
+  // What the Reset to default row has to undo: the folded pins and the downloads button's key.
+  const toolbarChanges =
+    TOOLBAR_CONTROLS.filter((control) => !toolbarPinned(s.toolbarPins, control)).length +
+    (resolveDownloadSettings(s).alwaysShowButton !== DEFAULT_DOWNLOAD_SETTINGS.alwaysShowButton
+      ? 1
+      : 0)
+  // The hover flyout is the Collapsed sidebar layout's alone: the one layout whose rail still
+  // carries the tab rows a flyout would show in full.
+  const hoverRail = (formFactor ?? 'desktop') === 'desktop' && s.toolbarLayout === 'collapsed'
   const groups: RowGroup[] = [
     {
       id: 'appearance',
@@ -451,6 +467,69 @@ function lookSection({
             <LayoutCards value={s.toolbarLayout} onChange={(v) => set({ toolbarLayout: v })} />
           )
         },
+        // The desktop bar's optional controls (settings-36; Chrome's toolbar customisation).
+        // "Show forward button" is the Customise toolbar dialog's Forward row by another name –
+        // one setting, `toolbarPins.forward` (`shared/toolbarPins.ts`) – and the dialog holds
+        // every control the bar can fold into the app menu; Reset puts the default bar back,
+        // the downloads button's own key (`downloads.alwaysShowButton`) included, since the
+        // dialog binds it as its Downloads row. The Reset row stands only while there is
+        // something to reset – never a disabled row on the first screen (§10.4 as amended for
+        // #297; the Downloads "Use the default folder" row is the precedent). The phone and the
+        // tablet keep their own bars.
+        {
+          kind: 'switch',
+          id: 'show-forward-button',
+          label: 'Show forward button',
+          keywords: ['toolbar', 'forward', 'navigation', 'customise toolbar'],
+          layouts: ['desktop'],
+          checked: toolbarPinned(s.toolbarPins, 'forward'),
+          onChange: (v) => set({ toolbarPins: withToolbarPin(s.toolbarPins, 'forward', v) })
+        },
+        {
+          kind: 'action',
+          id: 'customize-toolbar',
+          label: 'Customise toolbar',
+          description: 'Choose which controls show beside the address bar.',
+          keywords: [
+            'toolbar',
+            'customise toolbar',
+            'customize toolbar',
+            'pin',
+            'unpin',
+            'buttons',
+            'reader view',
+            'translate',
+            'bookmark',
+            'media',
+            'downloads'
+          ],
+          layouts: ['desktop'],
+          button: 'Customise…',
+          form: {
+            title: 'Customise toolbar',
+            description: 'Choose the controls beside the address bar and how they show.',
+            body: 'list',
+            render: (close) => <CustomizeToolbarForm state={state} set={set} close={close} />
+          }
+        },
+        ...(toolbarChanges > 0
+          ? [
+              {
+                kind: 'action',
+                id: 'toolbar-reset',
+                label: 'Your toolbar',
+                description: `${toolbarChanges} ${toolbarChanges === 1 ? 'control differs' : 'controls differ'} from the default bar.`,
+                keywords: ['reset', 'defaults', 'toolbar'],
+                layouts: ['desktop'],
+                button: 'Reset to default',
+                onPress: () =>
+                  set({
+                    toolbarPins: {},
+                    downloads: { alwaysShowButton: DEFAULT_DOWNLOAD_SETTINGS.alwaysShowButton }
+                  })
+              } satisfies SettingsRow
+            ]
+          : []),
         {
           kind: 'switch',
           id: 'tabs-right',
@@ -476,6 +555,24 @@ function lookSection({
           checked: s.sidebarExpanded && !railSet,
           disabled: railSet,
           onChange: (v) => set({ sidebarExpanded: v })
+        },
+        {
+          kind: 'switch',
+          id: 'sidebar-expand-on-hover',
+          label: 'Expand on hover',
+          // The Collapsed sidebar layout's own row (tabs-03): the rail flies out over the page
+          // after a short dwell and folds back when the pointer leaves. Under the other three
+          // layouts there is no rail to fly out (or, under Horizontal tabs, no tab rows in it),
+          // so the row is a §10.4 dependent row of the layout card – .4, `aria-disabled`, still
+          // laid out, its description the way back to the layout that uses it.
+          description: hoverRail
+            ? 'Rest the pointer on the sidebar to show it in full until the pointer leaves.'
+            : 'Only in the Collapsed sidebar layout.',
+          keywords: ['flyout', 'hover', 'collapsed sidebar', 'rail'],
+          layouts: ['desktop'],
+          checked: s.sidebarExpandOnHover && hoverRail,
+          disabled: !hoverRail,
+          onChange: (v) => set({ sidebarExpandOnHover: v })
         },
         {
           kind: 'switch',
@@ -1366,9 +1463,10 @@ function newTabSection({ state, set }: SectionContext): RowGroup[] {
 // Tab Management
 // ---------------------------------------------------------------------------
 
-function tabsSection({ state, set }: SectionContext): RowGroup[] {
+function tabsSection({ state, tab, set }: SectionContext): RowGroup[] {
   const s = state.settings
   const windows = state.capabilities.windows
+  const currentSite = currentUnloadSite(state, tab)
   // #129's session rows follow the desktop panel: a crash offer and a "Close N tabs?" question
   // are a windowed host's (Android's runs end by the process going, its pages just come back).
   const sessionRows: SettingsRow[] = windows
@@ -1595,6 +1693,27 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
             })
             return undefined
           }
+        },
+        // Chrome's "Add current site" (Performance › Always keep these sites active): the site
+        // Settings was opened from, one press; a dependent row of the switch like the two
+        // fields (§10.4), and laid out at .4 with its reason when there is no site to add.
+        {
+          kind: 'action',
+          id: 'unloading-add-current',
+          label: 'Add current site',
+          description: currentSite.listed
+            ? `${currentSite.listed} is already on the list.`
+            : currentSite.domain
+              ? `${currentSite.domain} – every page of the site stays loaded.`
+              : 'Open a page, then come back to Settings from it.',
+          keywords: ['never unload', 'current site', 'this site', 'keep active'],
+          disabled: !s.unloadEnabled || currentSite.domain === null,
+          button: 'Add',
+          onPress: () => {
+            const domain = currentSite.domain
+            if (domain && !s.unloadExcludedDomains.includes(domain))
+              set({ unloadExcludedDomains: [...s.unloadExcludedDomains, domain] })
+          }
         }
       ]
     },
@@ -1602,6 +1721,29 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
   )
   if (state.capabilities.inactiveTabs) groups.push(...inactiveTabsGroups(s, set))
   return groups
+}
+
+/**
+ * The site "Add current site" puts on the never-unload list: the registrable domain (eTLD+1) of
+ * the page Settings was opened from – the tab's opener, as Use current page reads it – which is
+ * what the core's unload pass matches an entry against (`sleepCandidates`: `domainOf(tab.url)`
+ * equals the entry), so `mail.google.com` goes on as `google.com` and every page of the site
+ * stays loaded. `listed` names the domain when it is on the list already – the row is laid out
+ * at .4 and says so rather than adding a twin. No site for a chrome page (Settings opened from
+ * the menu of a blank tab or from History), an extension page, or a private window, whose sites
+ * are nothing to remember.
+ */
+function currentUnloadSite(
+  state: UIState,
+  tab: Tab
+): { domain: string | null; listed: string | null } {
+  const opener = tab.openerTabId ? state.tabs[tab.openerTabId] : undefined
+  if (!opener || state.window.kind === 'private' || !isWebPageUrl(opener.url))
+    return { domain: null, listed: null }
+  const domain = getDomain(opener.url)
+  if (!domain) return { domain: null, listed: null }
+  const listed = state.settings.unloadExcludedDomains.some((d) => d.toLowerCase() === domain)
+  return listed ? { domain: null, listed: domain } : { domain, listed: null }
 }
 
 /**
@@ -2504,12 +2646,21 @@ function privateLockGroups({ state, screenLock }: SectionContext): RowGroup[] {
  * host it searches; the user's engines are listed under the picker with Make default and
  * Remove, and a form adds one by name and `%s` template.
  */
-function searchSection({ state, set }: SectionContext): RowGroup[] {
+function searchSection({ state, set, formFactor }: SectionContext): RowGroup[] {
   const s = state.settings
   // An extension's engine (`chrome_settings_overrides`) is not the user's to pick or remove; it
   // is the default only through the extension, which the URL bar follows (`defaultSearchEngineOf`).
   const engines = state.searchEngines.filter((e) => e.source !== 'extension')
   const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
+  // A deactivated engine (settings-43) is offered nowhere – not as the default, not by shortcut
+  // – and the desktop lists it under Inactive; the default engine reads active whatever a peer's
+  // list says. The other layouts keep every engine under Added (the rows that deactivate are
+  // the desktop's).
+  const isActive = (e: SearchEngine): boolean =>
+    isActiveSearchEngine(e) || e.id === s.searchEngineId
+  const active = engines.filter(isActive)
+  const splitInactive = formFactor === 'desktop'
+  const inactiveOwn = splitInactive ? own.filter((e) => !isActive(e)) : []
   const glyph = (e: SearchEngine): ReactNode => <EngineGlyph engine={e} />
   /**
    * The picker's heading for the user's engines; the shipped ones (no `source`) sit above any
@@ -2526,7 +2677,7 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           id: 'search-engine',
           label: 'Default search engine',
           value: s.searchEngineId,
-          options: engines.map((e) => ({
+          options: active.map((e) => ({
             value: e.id,
             label: e.name,
             description: pickerGroup(e) ? (engineHost(e) ?? undefined) : undefined,
@@ -2577,7 +2728,7 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           kind: 'info',
           id: 'search-keywords',
           label: 'Engine keywords',
-          description: `Type a keyword, then a space: ${engines.map((e) => e.keyword).join(' · ')}`
+          description: `Type a keyword, then a space: ${active.map((e) => e.keyword).join(' · ')}`
         }
       ]
     },
@@ -2586,57 +2737,27 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
       heading: 'Added search engines',
       description:
         'Engines you added, and engines from sites you visited that offer one. Sites in private tabs are never listed.',
-      // The row's second line carries the engine's shortcut (Chrome's Shortcut column) beside
-      // its standing – the default, or a visited site's – and the host it searches.
-      rows: own.map((e) =>
-        item(
-          `search-engine:${e.id}`,
-          e.name,
-          [
-            e.id === s.searchEngineId
-              ? 'Default search engine'
-              : e.source === 'discovered'
-                ? 'Recently visited'
-                : null,
-            e.keyword,
-            e.id === s.searchEngineId ? null : (engineHost(e) ?? e.searchUrl)
-          ]
-            .filter((part): part is string => Boolean(part))
-            .join(' · '),
-          [
-            {
-              kind: 'action',
-              id: `search-engine:${e.id}:default`,
-              label: 'Make default',
-              description: `Searches from the URL bar use ${e.name}.`,
-              disabled: e.id === s.searchEngineId,
-              onPress: () => set({ searchEngineId: e.id })
-            },
-            {
-              kind: 'action',
-              id: `search-engine:${e.id}:remove`,
-              label: 'Remove',
-              description:
-                e.source === 'discovered'
-                  ? 'The site offers it again on your next visit.'
-                  : undefined,
-              destructive: true,
-              confirm: {
-                title: `Remove ${e.name}?`,
-                description:
-                  e.id === s.searchEngineId
-                    ? 'The URL bar goes back to the default engine.'
-                    : undefined,
-                action: 'Remove'
-              },
-              onPress: () => run('search.removeEngine', { id: e.id })
-            }
-          ],
-          { leading: glyph(e), keywords: [e.keyword, engineHost(e) ?? ''] }
-        )
+      rows: (splitInactive ? own.filter(isActive) : own).map((e) =>
+        searchEngineItem(e, state, set, glyph(e))
       ),
       empty: 'No search engines added yet'
     },
+    // The engines taken out of the omnibox (settings-43; Chrome's Inactive shortcuts): kept
+    // with their shortcut, answering to nothing until activated. No empty state: the group
+    // comes with the first engine deactivated and goes with the last activated.
+    ...(inactiveOwn.length > 0
+      ? [
+          {
+            id: 'inactive-search-engines',
+            heading: 'Inactive',
+            description: 'Engines kept but not offered in the address bar until you activate them.',
+            layouts: ['desktop'] as const,
+            rows: inactiveOwn.map((e) =>
+              searchEngineItem(e, state, set, glyph(e), { underInactiveHeading: true })
+            )
+          } satisfies RowGroup
+        ]
+      : []),
     {
       id: 'add-search-engine',
       heading: null,
@@ -2661,6 +2782,111 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
       ]
     }
   ]
+}
+
+/**
+ * One of the user's engines under Added or Inactive (omnibox-09, settings-43; Chrome's Site
+ * search rows): the row's second line carries the engine's standing – the default, a visited
+ * site's, inactive – its shortcut (Chrome's Shortcut column) and the host it searches; its
+ * sheet offers Make default (an active engine; the default's is held), Edit – the Add form
+ * pre-filled with a Shortcut field, the desktop's – Deactivate or Activate (the desktop's; the
+ * default engine stays active), and Remove. Under the desktop's Inactive heading the row does
+ * not say "Inactive" again – the heading says it, as Added's rows do not say "Added" (§9.17) –
+ * and carries its source instead; on the phone and the tablet, where every engine sits under
+ * Added, an inactive engine's row is the one place that says so.
+ */
+function searchEngineItem(
+  e: SearchEngine,
+  state: UIState,
+  set: SectionContext['set'],
+  leading: ReactNode,
+  { underInactiveHeading = false }: { underInactiveHeading?: boolean } = {}
+): SettingsRow {
+  const s = state.settings
+  const isDefault = e.id === s.searchEngineId
+  const inactive = !isDefault && !isActiveSearchEngine(e)
+  const standing = isDefault
+    ? 'Default search engine'
+    : inactive && !underInactiveHeading
+      ? 'Inactive'
+      : e.source === 'discovered'
+        ? 'Recently visited'
+        : null
+  const rows: SettingsRow[] = []
+  if (!inactive)
+    rows.push({
+      kind: 'action',
+      id: `search-engine:${e.id}:default`,
+      label: 'Make default',
+      description: `Searches from the URL bar use ${e.name}.`,
+      disabled: isDefault,
+      onPress: () => set({ searchEngineId: e.id })
+    })
+  rows.push(
+    {
+      kind: 'action',
+      id: `search-engine:${e.id}:edit`,
+      label: 'Edit',
+      description: 'The name, the shortcut and the URL the terms go into.',
+      layouts: ['desktop'],
+      button: 'Edit…',
+      form: {
+        title: 'Edit search engine',
+        description: 'Put %s in the URL where the search terms go.',
+        render: (close) => (
+          <SearchEngineEditForm
+            engine={e}
+            engines={state.searchEngines}
+            onSave={(edits) => cmd('search.updateEngine', { id: e.id, ...edits })}
+            close={close}
+          />
+        )
+      }
+    },
+    inactive
+      ? {
+          kind: 'action',
+          id: `search-engine:${e.id}:activate`,
+          label: 'Activate',
+          description: `${e.keyword} works in the URL bar again.`,
+          layouts: ['desktop'],
+          onPress: () => run('search.setEngineActive', { id: e.id, active: true })
+        }
+      : {
+          kind: 'action',
+          id: `search-engine:${e.id}:deactivate`,
+          label: 'Deactivate',
+          description: isDefault
+            ? 'The default search engine stays active.'
+            : `Keeps ${e.name} in the list but out of the URL bar until you activate it.`,
+          layouts: ['desktop'],
+          disabled: isDefault,
+          onPress: () => run('search.setEngineActive', { id: e.id, active: false })
+        },
+    {
+      kind: 'action',
+      id: `search-engine:${e.id}:remove`,
+      label: 'Remove',
+      description:
+        e.source === 'discovered' ? 'The site offers it again on your next visit.' : undefined,
+      destructive: true,
+      confirm: {
+        title: `Remove ${e.name}?`,
+        description: isDefault ? 'The URL bar goes back to the default engine.' : undefined,
+        action: 'Remove'
+      },
+      onPress: () => run('search.removeEngine', { id: e.id })
+    }
+  )
+  return item(
+    `search-engine:${e.id}`,
+    e.name,
+    [standing, e.keyword, isDefault ? null : (engineHost(e) ?? e.searchUrl)]
+      .filter((part): part is string => Boolean(part))
+      .join(' · '),
+    rows,
+    { leading, keywords: [e.keyword, engineHost(e) ?? '', inactive ? 'inactive' : ''] }
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -4535,31 +4761,72 @@ function updatesSection({ state, set }: SectionContext): RowGroup[] {
 // About
 // ---------------------------------------------------------------------------
 
+/**
+ * About (settings-73, shortcuts-menus-164; Chrome's chrome://settings/help): the version block
+ * – wordmark, version with its channel, engine, copyright – then the update row in one of two
+ * states: "Check for updates" (or "Update to <version>") leading to the Updates page, or, once
+ * an update is downloaded (`phase: 'ready'`), "Relaunch to update" with the relaunch on the row
+ * itself, as Chrome's About turns into a Relaunch button. "Get help" and "Report an issue" go
+ * where the app menu's Help submenu goes (`shared/links.ts`); "Open-source licences" opens the
+ * `zen://licences` page tab.
+ */
 function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
   const engineHost = state.platform === 'android' ? 'Android System WebView' : 'Electron'
   const update = state.updates
   const newer = update.phase === 'available' || update.phase === 'ready' ? update.release : null
   const rows: SettingsRow[] = [
     {
-      kind: 'info',
+      kind: 'custom',
       id: 'version',
       label: 'Zenium',
-      description: `Version ${state.version} · running on Chromium via ${engineHost}${newer ? ` · ${newer.version} is available` : ''}`,
-      keywords: ['version', state.version]
+      description: versionLine(state.version, update.target),
+      keywords: ['version', state.version, 'channel', 'copyright', 'licence', engineHost],
+      render: () => (
+        <AboutVersionBlock version={state.version} target={update.target} engineHost={engineHost} />
+      )
     }
   ]
   if (state.capabilities.updates) {
-    rows.push({
-      kind: 'action',
-      id: 'check-updates',
-      label: newer ? `Update to ${newer.version}` : 'Check for updates',
-      leaves: 'chevron',
-      onPress: () => {
-        navigate('updates')
-        if (!newer) run('updates.check', undefined)
-      }
-    })
+    rows.push(
+      update.phase === 'ready'
+        ? {
+            kind: 'action',
+            id: 'relaunch-to-update',
+            label: 'Relaunch to update',
+            description: `${newer?.version ?? 'The update'} is downloaded and installs when Zenium relaunches.`,
+            button: 'Relaunch',
+            onPress: () => run('updates.install', undefined)
+          }
+        : {
+            kind: 'action',
+            id: 'check-updates',
+            label: newer ? `Update to ${newer.version}` : 'Check for updates',
+            leaves: 'chevron',
+            onPress: () => {
+              navigate('updates')
+              if (!newer) run('updates.check', undefined)
+            }
+          }
+    )
   }
+  rows.push(
+    {
+      kind: 'action',
+      id: 'get-help',
+      label: 'Get help',
+      description: 'Zenium’s guide on GitHub.',
+      leaves: 'external',
+      onPress: () => run('app.openExternal', { url: HELP_URL })
+    },
+    {
+      kind: 'action',
+      id: 'report-issue',
+      label: 'Report an issue',
+      description: 'Tell the project what went wrong, on GitHub.',
+      leaves: 'external',
+      onPress: () => run('app.openExternal', { url: ISSUES_URL })
+    }
+  )
   // The browser role has a category of its own on the desktop OSes (Default Browser, the
   // desktop's content); Android keeps the one row here.
   if (state.capabilities.defaultBrowser && state.platform === 'android') {
@@ -4601,6 +4868,15 @@ function aboutSection({ state, navigate }: SectionContext): RowGroup[] {
       description: 'zen-browser.app – this port is not affiliated with the Zen team.',
       leaves: 'external',
       onPress: () => run('app.openExternal', { url: 'https://zen-browser.app' })
+    },
+    {
+      kind: 'action',
+      id: 'licences',
+      label: 'Open-source licences',
+      description: 'The software Zenium is built with, and the licence each part comes under.',
+      keywords: ['credits', 'licenses', 'open source', 'third party'],
+      leaves: 'chevron',
+      onPress: () => openPage('licences')
     }
   )
   return [{ id: 'about', heading: 'About', rows }]

@@ -149,3 +149,57 @@ export class LevelMotion {
     this.onChange(state)
   }
 }
+
+/** How far the pane under the travelling one shifts, as a fraction of the track's width. */
+const LEVEL_UNDER_SHIFT = 0.3
+/** The opacity the pane under dims to as it is covered; it is whole again as it is uncovered. */
+const LEVEL_UNDER_DIM = 0.5
+
+/**
+ * Paints one frame of a `LevelMotion` onto its panes (one element per level id). The pane
+ * arriving is in flow and sizes the track; the pane leaving is laid over it (`data-leaving`)
+ * and slides out; every other pane is `hidden`. The deeper of the two travels the whole width
+ * from the trailing edge OVER the other (`data-over`: above in the stacking order, the
+ * surface's own background behind it), drawn whole – opacity 1 – from its first frame: what
+ * arrives is painted with its content at once, and what leaves stays painted until it is off
+ * the track. The one under it shifts by a third and dims to `LEVEL_UNDER_DIM` as it is covered
+ * (§11: transform and opacity only; no duration or curve of its own – the spring's `t` is the
+ * one input). The pane leaving is out of the tree for assistive technology from its first
+ * frame, the one arriving in it from its own – a focus left in the pane leaving is moved by the
+ * surface before the frame is read (the site-information sheet's `enter` / `leave`).
+ */
+export function paintLevels(
+  motion: LevelMotion,
+  panes: Map<string, HTMLElement>,
+  width: number
+): void {
+  const { from, to, t } = motion.current
+  const moving = from !== to
+  for (const [id, el] of panes) {
+    const arriving = id === to
+    const leaving = moving && id === from
+    if (!arriving && !leaving) {
+      el.hidden = true
+      el.removeAttribute('data-leaving')
+      el.removeAttribute('data-over')
+      el.removeAttribute('aria-hidden')
+      el.style.transform = ''
+      el.style.opacity = ''
+      el.style.willChange = ''
+      continue
+    }
+    el.hidden = false
+    el.toggleAttribute('data-leaving', leaving)
+    const over = moving && (motion.pushing ? arriving : leaving)
+    el.toggleAttribute('data-over', over)
+    const shown = arriving ? t : 1 - t
+    const x = !moving ? 0 : over ? (1 - shown) * width : -LEVEL_UNDER_SHIFT * (1 - shown) * width
+    el.style.transform = x ? `translate3d(${x.toFixed(2)}px, 0, 0)` : ''
+    // The spring may overshoot its rest by a little (§11); the dim is bounded, never past its floor.
+    const covered = 1 - Math.min(1, Math.max(0, shown))
+    el.style.opacity = !moving || over ? '' : (1 - (1 - LEVEL_UNDER_DIM) * covered).toFixed(3)
+    el.style.willChange = moving ? 'transform, opacity' : ''
+    if (leaving) el.setAttribute('aria-hidden', 'true')
+    else el.removeAttribute('aria-hidden')
+  }
+}

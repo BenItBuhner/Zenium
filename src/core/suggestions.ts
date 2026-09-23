@@ -9,6 +9,7 @@ import {
   buildSearchUrl,
   buildSuggestUrl,
   engineKeywords,
+  isActiveSearchEngine,
   matchKeyword,
   parseSuggestPayload,
   searchTermsFromUrl,
@@ -428,6 +429,8 @@ export class SuggestionService {
       }
     }
     for (const engine of engines) {
+      // A deactivated engine (settings-43) is offered nowhere until activated.
+      if (!isActiveSearchEngine(engine)) continue
       const hit = engineKeywords(engine).find((k) => k.startsWith(q))
       if (!hit) continue
       out.push({

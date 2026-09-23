@@ -90,6 +90,7 @@ const state = {
   tabs: { t1: tab },
   containers: [{ id: 'default', name: 'No Container', color: 'toolbar', icon: 'circle' }],
   extensions: [],
+  deviceGrants: [],
   siteData: { clearsAtNextLaunch: false },
   settings: {}
 } as unknown as UIState
